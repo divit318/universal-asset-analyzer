@@ -54,6 +54,14 @@ export interface HistoryPoint {
   close: number;
 }
 
+/** A single autocomplete hit for the symbol search typeahead. */
+export interface SymbolSuggestion {
+  symbol: string;
+  name: string;
+  exchange: string | null;
+  type: string | null; // "Equity", "ETF", "Cryptocurrency", …
+}
+
 export interface Filing {
   form: string;
   filedAt: string; // ISO date
@@ -81,6 +89,13 @@ export interface WatchlistItem {
   addedAt: string; // ISO timestamp
 }
 
+export type ScreenerSortField =
+  | "marketCap"
+  | "changePercent"
+  | "price"
+  | "volume"
+  | "peRatio";
+
 export interface ScreenerCriteria {
   sector?: string | null;
   minPrice?: number | null;
@@ -88,6 +103,12 @@ export interface ScreenerCriteria {
   minChangePercent?: number | null;
   maxChangePercent?: number | null;
   minMarketCap?: number | null; // in dollars
+  maxMarketCap?: number | null; // in dollars
+  minPE?: number | null;
+  maxPE?: number | null;
+  minVolume?: number | null;
+  sortField?: ScreenerSortField | null;
+  sortDir?: "asc" | "desc" | null;
 }
 
 export interface ScreenerRow {
@@ -97,12 +118,161 @@ export interface ScreenerRow {
   price: number;
   changePercent: number;
   marketCap: number | null;
+  peRatio: number | null;
+  volume: number | null;
 }
 
 export interface Sp500Constituent {
   symbol: string;
   name: string;
   sector: string;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Fundamental screener — rich per-company metrics + composite scores         */
+/* -------------------------------------------------------------------------- */
+
+/** The five proprietary composite scores, each 0-100 (null when too sparse). */
+export interface CompositeScores {
+  value: number | null;
+  growth: number | null;
+  quality: number | null;
+  financialHealth: number | null;
+  momentum: number | null;
+  overall: number | null;
+}
+
+/**
+ * A single investable company with every screener metric.
+ * Percentages are stored in percent units (e.g. 16.6 means 16.6%); ratios are
+ * stored as ratios (e.g. D/E 0.8, EV/EBITDA 14.2). `null` means unavailable.
+ */
+export interface StockMetrics {
+  symbol: string;
+  name: string;
+  sector: string | null;
+  industry: string | null;
+
+  // Company / price (the live layer, refreshed per screen)
+  price: number | null;
+  marketCap: number | null;
+
+  // Valuation
+  forwardPE: number | null;
+  evToEbitda: number | null;
+  fcfYield: number | null; // %
+
+  // Growth
+  revenueGrowthYoY: number | null; // %
+  revenueCagr3y: number | null; // %
+  epsGrowthYoY: number | null; // %
+  epsCagr3y: number | null; // %
+
+  // Quality
+  roic: number | null; // % (estimate)
+  roe: number | null; // %
+  grossMargin: number | null; // %
+  operatingMargin: number | null; // %
+
+  // Financial strength
+  debtToEquity: number | null; // ratio
+  netDebtToEbitda: number | null; // ratio
+  currentRatio: number | null;
+
+  // Cash flow
+  fcfMargin: number | null; // %
+  fcfGrowthYoY: number | null; // %
+
+  // Shareholder returns
+  dividendYield: number | null; // %
+  buybackYield: number | null; // % (net; negative = dilution)
+
+  // Momentum
+  oneYearReturn: number | null; // %
+  distanceFrom52WkHigh: number | null; // % (negative = below the high)
+
+  // Market factors
+  institutionalOwnership: number | null; // %
+  earningsSurprisePct: number | null; // %
+
+  scores: CompositeScores;
+}
+
+/**
+ * The fundamentals-only slice that gets cached. Excludes everything derived
+ * from the live price layer (price, market cap, FCF yield, momentum) and the
+ * scores, which are recomputed after the price merge.
+ */
+export type StockFundamentals = Omit<
+  StockMetrics,
+  | "price"
+  | "marketCap"
+  | "fcfYield"
+  | "oneYearReturn"
+  | "distanceFrom52WkHigh"
+  | "scores"
+> & { ebitda: number | null; freeCashflow: number | null };
+
+/** A live price snapshot merged onto the cached fundamentals at screen time. */
+export interface PriceSnapshot {
+  symbol: string;
+  price: number | null;
+  marketCap: number | null;
+  oneYearReturn: number | null;
+  distanceFrom52WkHigh: number | null;
+}
+
+/** Inclusive numeric range filter; either bound may be null/absent. */
+export interface Range {
+  min?: number | null;
+  max?: number | null;
+}
+
+/** Every filterable dimension. All ranges are optional. */
+export interface FundamentalScreenerCriteria {
+  sector?: string | null;
+  industry?: string | null;
+  marketCap?: Range; // in dollars
+  forwardPE?: Range;
+  evToEbitda?: Range;
+  fcfYield?: Range;
+  revenueGrowthYoY?: Range;
+  revenueCagr3y?: Range;
+  epsGrowthYoY?: Range;
+  epsCagr3y?: Range;
+  roic?: Range;
+  roe?: Range;
+  grossMargin?: Range;
+  operatingMargin?: Range;
+  debtToEquity?: Range;
+  netDebtToEbitda?: Range;
+  currentRatio?: Range;
+  fcfMargin?: Range;
+  fcfGrowthYoY?: Range;
+  dividendYield?: Range;
+  buybackYield?: Range;
+  oneYearReturn?: Range;
+  distanceFrom52WkHigh?: Range;
+  institutionalOwnership?: Range;
+  earningsSurprisePct?: Range;
+  // Composite-score floors
+  valueScore?: Range;
+  growthScore?: Range;
+  qualityScore?: Range;
+  financialHealthScore?: Range;
+  overallScore?: Range;
+  sortField?: string | null;
+  sortDir?: "asc" | "desc" | null;
+}
+
+export type DatasetStage = "empty" | "building" | "ready" | "error";
+
+export interface DatasetStatus {
+  stage: DatasetStage;
+  total: number; // universe size
+  ready: number; // enriched so far
+  builtAt: string | null; // ISO
+  error?: string | null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -211,14 +381,39 @@ export interface ScoreBucket {
   factors: ScoreFactor[];
 }
 
-export type Recommendation = "BUY" | "HOLD" | "SELL";
+export type Recommendation =
+  | "STRONG_BUY"
+  | "BUY"
+  | "HOLD"
+  | "SELL"
+  | "STRONG_SELL";
+
+/** Price/technical momentum signal derived from the daily price history. */
+export interface MomentumSignal {
+  score: number; // 0-100
+  pctFrom52WkHigh: number | null; // negative = below the high
+  pctFrom52WkLow: number | null; // positive = above the low
+  vsSma50: number | null; // % above/below the 50-day SMA
+  vsSma200: number | null; // % above/below the 200-day SMA
+  return3m: number | null; // % over ~63 trading days
+  trend: "up" | "down" | "flat";
+}
+
+/** The three independent decision signals that drive the recommendation. */
+export interface DecisionSignals {
+  fundamentals: number; // 0-100 (== total)
+  analysts: number | null; // 0-100
+  momentum: number | null; // 0-100
+}
 
 export interface ScoreResult {
-  total: number; // 0-100
+  total: number; // fundamental score, 0-100
+  composite: number; // blended decision score, 0-100
   buckets: ScoreBucket[];
   recommendation: Recommendation;
   confidence: number; // 0-100
   rationale: string;
+  signals: DecisionSignals;
 }
 
 export type RiskLevel = "low" | "medium" | "high";
@@ -256,4 +451,5 @@ export interface FundamentalsData {
   insider: InsiderActivity;
   score: ScoreResult;
   risks: RiskItem[];
+  momentum: MomentumSignal | null;
 }

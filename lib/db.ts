@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import type { WatchlistItem } from "./types";
+import type { StockFundamentals, WatchlistItem } from "./types";
 
 let db: DatabaseSync | null = null;
 
@@ -19,6 +19,11 @@ function getDb(): DatabaseSync {
       symbol   TEXT PRIMARY KEY,
       name     TEXT NOT NULL,
       added_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS fundamentals_cache (
+      symbol     TEXT PRIMARY KEY,
+      data       TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
     );
   `);
   return db;
@@ -60,4 +65,44 @@ export function removeFromWatchlist(symbol: string): void {
   getDb()
     .prepare("DELETE FROM watchlist WHERE symbol = ?")
     .run(symbol.toUpperCase());
+}
+
+/* -------------------------------------------------------------------------- */
+/* Fundamentals cache (screener dataset persistence)                          */
+/* -------------------------------------------------------------------------- */
+
+/** Upsert one company's cached fundamentals with the current timestamp. */
+export function putFundamentals(rows: StockFundamentals[]): void {
+  const now = Date.now();
+  const stmt = getDb().prepare(
+    `INSERT INTO fundamentals_cache (symbol, data, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(symbol) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
+  );
+  for (const row of rows) stmt.run(row.symbol, JSON.stringify(row), now);
+}
+
+interface CacheRow {
+  data: string;
+  updated_at: number;
+}
+
+/** Load cached fundamentals newer than `maxAgeMs`, plus the newest timestamp. */
+export function getFreshFundamentals(maxAgeMs: number): {
+  rows: StockFundamentals[];
+  builtAt: number | null;
+} {
+  const cutoff = Date.now() - maxAgeMs;
+  const rows = getDb()
+    .prepare("SELECT data, updated_at FROM fundamentals_cache WHERE updated_at >= ?")
+    .all(cutoff) as unknown as CacheRow[];
+  let builtAt: number | null = null;
+  const parsed = rows.map((r) => {
+    if (builtAt == null || r.updated_at > builtAt) builtAt = r.updated_at;
+    return JSON.parse(r.data) as StockFundamentals;
+  });
+  return { rows: parsed, builtAt };
+}
+
+export function clearFundamentals(): void {
+  getDb().prepare("DELETE FROM fundamentals_cache").run();
 }

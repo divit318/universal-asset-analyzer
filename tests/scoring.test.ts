@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { assessRisks, computeScore, scoreValuation } from "@/lib/scoring";
+import {
+  analystSignal,
+  assessRisks,
+  computeMomentum,
+  computeScore,
+  scoreValuation,
+} from "@/lib/scoring";
 import type {
   AnalystConsensus,
   FundamentalsSnapshot,
+  HistoryPoint,
   InsiderActivity,
 } from "@/lib/types";
 
@@ -73,14 +80,14 @@ describe("computeScore", () => {
     expect(r.total).toBeLessThanOrEqual(100);
   });
 
-  it("rates strong fundamentals BUY", () => {
+  it("rates strong fundamentals on the buy side", () => {
     const r = computeScore(snap(), null, analyst());
     expect(r.total).toBeGreaterThanOrEqual(70);
-    expect(r.recommendation).toBe("BUY");
-    expect(r.rationale).toContain("BUY");
+    expect(["BUY", "STRONG_BUY"]).toContain(r.recommendation);
+    expect(r.rationale).toMatch(/Buy/);
   });
 
-  it("rates weak fundamentals SELL", () => {
+  it("rates weak fundamentals on the sell side", () => {
     const weak = snap({
       pegRatio: 4,
       forwardPE: 40,
@@ -95,15 +102,89 @@ describe("computeScore", () => {
       totalCash: 1e9,
       ebitda: 2e9,
     });
-    const r = computeScore(weak, null, analyst({ upsidePercent: -20, recommendationKey: "sell" }));
+    const bearish = analyst({
+      upsidePercent: -20,
+      recommendationKey: "sell",
+      strongBuy: 0,
+      buy: 1,
+      hold: 3,
+      sell: 8,
+      strongSell: 5,
+    });
+    const r = computeScore(weak, null, bearish);
     expect(r.total).toBeLessThan(45);
-    expect(r.recommendation).toBe("SELL");
+    expect(["SELL", "STRONG_SELL"]).toContain(r.recommendation);
+  });
+
+  it("blends momentum into the composite", () => {
+    const bullish = computeScore(snap(), null, analyst(), {
+      score: 90,
+      pctFrom52WkHigh: -2,
+      pctFrom52WkLow: 60,
+      vsSma50: 8,
+      vsSma200: 20,
+      return3m: 18,
+      trend: "up",
+    });
+    const bearish = computeScore(snap(), null, analyst(), {
+      score: 10,
+      pctFrom52WkHigh: -40,
+      pctFrom52WkLow: 2,
+      vsSma50: -12,
+      vsSma200: -25,
+      return3m: -22,
+      trend: "down",
+    });
+    expect(bullish.composite).toBeGreaterThan(bearish.composite);
+    expect(bullish.signals.momentum).toBe(90);
   });
 
   it("confidence stays within 0-95", () => {
     const r = computeScore(snap(), null, analyst());
     expect(r.confidence).toBeGreaterThanOrEqual(0);
     expect(r.confidence).toBeLessThanOrEqual(95);
+  });
+});
+
+describe("computeMomentum", () => {
+  const series = (closes: number[]): HistoryPoint[] =>
+    closes.map((close, i) => ({ date: `2024-01-${i + 1}`, close }));
+
+  it("returns null without enough history", () => {
+    expect(computeMomentum(series([1, 2, 3]))).toBeNull();
+  });
+
+  it("scores a steady uptrend higher than a downtrend", () => {
+    const up = computeMomentum(series(Array.from({ length: 220 }, (_, i) => 100 + i)));
+    const down = computeMomentum(series(Array.from({ length: 220 }, (_, i) => 320 - i)));
+    expect(up!.score).toBeGreaterThan(down!.score);
+    expect(up!.trend).toBe("up");
+    expect(down!.trend).toBe("down");
+  });
+});
+
+describe("analystSignal", () => {
+  it("rates a buy-heavy consensus above a sell-heavy one", () => {
+    const buy = analystSignal(analyst({ strongBuy: 10, buy: 8, hold: 1, sell: 0, strongSell: 0 }));
+    const sell = analystSignal(analyst({ strongBuy: 0, buy: 0, hold: 1, sell: 6, strongSell: 8, upsidePercent: -15 }));
+    expect(buy!).toBeGreaterThan(sell!);
+  });
+
+  it("returns null with no coverage", () => {
+    const none = analystSignal(
+      analyst({
+        strongBuy: 0,
+        buy: 0,
+        hold: 0,
+        sell: 0,
+        strongSell: 0,
+        recommendationKey: null,
+        upsidePercent: null,
+        epsRevisionsUp30d: null,
+        epsRevisionsDown30d: null,
+      }),
+    );
+    expect(none).toBeNull();
   });
 });
 

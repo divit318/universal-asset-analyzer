@@ -12,6 +12,7 @@ import {
 } from "@/lib/format";
 import { Sparkline } from "./_components/sparkline";
 import { FundamentalsSection } from "./_components/fundamentals-section";
+import { SymbolSearch } from "./_components/symbol-search";
 
 export default function ResearchPage() {
   const [symbol, setSymbol] = useState("");
@@ -90,12 +91,11 @@ export default function ResearchPage() {
         }}
         className="flex gap-2"
       >
-        <input
+        <SymbolSearch
           value={symbol}
-          onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-          placeholder="e.g. AAPL, MSFT, NVDA"
-          className="flex-1 rounded-lg border border-border bg-surface px-4 py-2.5 font-mono text-sm outline-none placeholder:text-muted focus:border-accent"
-          aria-label="Ticker symbol"
+          onChange={setSymbol}
+          onSelect={(sym) => submit(sym)}
+          loading={loading}
         />
         <button
           type="submit"

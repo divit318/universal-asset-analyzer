@@ -79,7 +79,7 @@ export function FundamentalsSection({ symbol }: { symbol: string }) {
     <div className="flex flex-col gap-6">
       <h2 className="text-lg font-medium">Institutional analysis</h2>
 
-      <ScoreCard score={data.score} />
+      <ScoreCard score={data.score} momentum={data.momentum} />
 
       <div className="grid gap-4 lg:grid-cols-2">
         {statements ? <MarginTrendChart statements={statements} /> : null}

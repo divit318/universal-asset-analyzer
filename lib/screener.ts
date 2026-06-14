@@ -1,4 +1,8 @@
-import type { ScreenerCriteria, ScreenerRow } from "./types";
+import type {
+  ScreenerCriteria,
+  ScreenerRow,
+  ScreenerSortField,
+} from "./types";
 
 /**
  * Apply screener criteria to a set of rows. Pure and order-preserving so it can
@@ -49,6 +53,20 @@ export function parseCriteria(input: Record<string, unknown>): ScreenerCriteria 
   const str = (v: unknown): string | null =>
     typeof v === "string" && v.trim() !== "" ? v.trim() : null;
 
+  const SORT_FIELDS: ScreenerSortField[] = [
+    "marketCap",
+    "changePercent",
+    "price",
+    "volume",
+    "peRatio",
+  ];
+  const sortField =
+    typeof input.sortField === "string" &&
+    (SORT_FIELDS as string[]).includes(input.sortField)
+      ? (input.sortField as ScreenerSortField)
+      : null;
+  const sortDir = input.sortDir === "asc" ? "asc" : input.sortDir === "desc" ? "desc" : null;
+
   return {
     sector: str(input.sector),
     minPrice: num(input.minPrice),
@@ -56,5 +74,11 @@ export function parseCriteria(input: Record<string, unknown>): ScreenerCriteria 
     minChangePercent: num(input.minChangePercent),
     maxChangePercent: num(input.maxChangePercent),
     minMarketCap: num(input.minMarketCap),
+    maxMarketCap: num(input.maxMarketCap),
+    minPE: num(input.minPE),
+    maxPE: num(input.maxPE),
+    minVolume: num(input.minVolume),
+    sortField,
+    sortDir,
   };
 }

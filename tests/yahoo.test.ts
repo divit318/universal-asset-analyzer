@@ -1,5 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { mapHistory, mapQuote } from "@/lib/yahoo";
+import { mapHistory, mapQuote, mapSuggestion } from "@/lib/yahoo";
+
+describe("mapSuggestion", () => {
+  it("maps a Yahoo equity hit", () => {
+    expect(
+      mapSuggestion({
+        symbol: "AAPL",
+        longname: "Apple Inc.",
+        shortname: "Apple",
+        exchDisp: "NASDAQ",
+        typeDisp: "Equity",
+        isYahooFinance: true,
+      }),
+    ).toEqual({ symbol: "AAPL", name: "Apple Inc.", exchange: "NASDAQ", type: "Equity" });
+  });
+
+  it("drops non-Yahoo or symbol-less rows", () => {
+    expect(mapSuggestion({ isYahooFinance: false })).toBeNull();
+    expect(mapSuggestion({ symbol: "X", isYahooFinance: undefined })).toBeNull();
+  });
+});
 
 describe("mapQuote", () => {
   it("maps a full raw quote", () => {
