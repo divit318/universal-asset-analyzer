@@ -1,36 +1,51 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Universal Asset Analyzer
 
-## Getting Started
+Inspect and analyze assets of any type — files, images, and data — in one place.
+Built on Next.js 16 (App Router, Turbopack, React 19).
 
-First, run the development server:
+## Getting started
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Scripts
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Command          | Description                          |
+| ---------------- | ------------------------------------ |
+| `npm run dev`    | Start the dev server (Turbopack)     |
+| `npm run build`  | Production build                     |
+| `npm run start`  | Serve the production build           |
+| `npm run lint`   | Run ESLint                           |
 
-## Learn More
+> Note: as of Next.js 16, `next build` no longer runs the linter — run `npm run lint` separately.
 
-To learn more about Next.js, take a look at the following resources:
+## Project structure
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```
+app/
+  _components/        Shared UI (non-routable, underscore-prefixed)
+  analyze/            /analyze — demo analysis page
+  api/analyze/        POST /api/analyze — analysis route handler
+  layout.tsx          Root layout (header, fonts, metadata)
+  page.tsx            Landing page
+lib/
+  types.ts            Domain types (Asset, AnalysisResult)
+  analyze.ts          Analysis core (classify, formatBytes, analyze)
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The `lib/` module is the domain core and is shared by both the page and the API
+route. Kind-specific deep analysis hangs off the `kind` switch in `lib/analyze.ts`
+as the project grows.
 
-## Deploy on Vercel
+## Conventions (Next.js 16)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+This project follows the conventions documented in `node_modules/next/dist/docs/`
+(see `AGENTS.md`). Notably:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `params` and `searchParams` are async (`Promise`) and must be awaited.
+- API endpoints use `route.ts` with named method exports (`GET`, `POST`, …).
+- Turbopack is the default bundler.
+- The `@/*` import alias maps to the project root.
