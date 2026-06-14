@@ -11,6 +11,7 @@ import {
   formatPercent,
 } from "@/lib/format";
 import { Sparkline } from "./_components/sparkline";
+import { FundamentalsSection } from "./_components/fundamentals-section";
 
 export default function ResearchPage() {
   const [symbol, setSymbol] = useState("");
@@ -211,6 +212,8 @@ function ResearchResult({
           </ul>
         )}
       </section>
+
+      <FundamentalsSection symbol={quote.symbol} />
     </div>
   );
 }

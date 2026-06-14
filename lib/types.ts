@@ -104,3 +104,156 @@ export interface Sp500Constituent {
   name: string;
   sector: string;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Fundamentals — financial statements (EDGAR)                                */
+/* -------------------------------------------------------------------------- */
+
+export interface AnnualPoint {
+  fy: number;
+  value: number;
+}
+
+export interface FinancialStatements {
+  symbol: string;
+  fiscalYears: number[];
+  revenue: AnnualPoint[];
+  grossProfit: AnnualPoint[];
+  operatingIncome: AnnualPoint[];
+  netIncome: AnnualPoint[];
+  freeCashFlow: AnnualPoint[]; // operating cash flow − capex
+  grossMargin: AnnualPoint[];
+  operatingMargin: AnnualPoint[];
+  netMargin: AnnualPoint[];
+  revenueCagr: number | null;
+  fcfCagr: number | null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Fundamentals — Yahoo snapshot, analyst, insider                            */
+/* -------------------------------------------------------------------------- */
+
+export interface FundamentalsSnapshot {
+  symbol: string;
+  price: number | null;
+  trailingPE: number | null;
+  forwardPE: number | null;
+  pegRatio: number | null;
+  priceToBook: number | null;
+  dividendYield: number | null;
+  returnOnEquity: number | null;
+  returnOnAssets: number | null;
+  grossMargins: number | null;
+  operatingMargins: number | null;
+  profitMargins: number | null;
+  ebitdaMargins: number | null;
+  revenueGrowth: number | null;
+  earningsGrowth: number | null;
+  debtToEquity: number | null; // normalized to a ratio (e.g. 0.79)
+  currentRatio: number | null;
+  quickRatio: number | null;
+  freeCashflow: number | null;
+  totalCash: number | null;
+  totalDebt: number | null;
+  ebitda: number | null;
+}
+
+export interface AnalystConsensus {
+  targetMean: number | null;
+  targetHigh: number | null;
+  targetLow: number | null;
+  upsidePercent: number | null;
+  recommendationKey: string | null;
+  numberOfOpinions: number | null;
+  strongBuy: number;
+  buy: number;
+  hold: number;
+  sell: number;
+  strongSell: number;
+  epsRevisionsUp30d: number | null;
+  epsRevisionsDown30d: number | null;
+  epsSurprises: number[];
+}
+
+export type InsiderTxType = "buy" | "sell" | "other";
+
+export interface InsiderTransaction {
+  name: string;
+  type: InsiderTxType;
+  shares: number | null;
+  value: number | null;
+  date: string;
+  text: string;
+}
+
+export interface InsiderActivity {
+  transactions: InsiderTransaction[];
+  netValue: number; // buy value − sell value across returned window
+  buyCount: number;
+  sellCount: number;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Scoring + risk                                                             */
+/* -------------------------------------------------------------------------- */
+
+export interface ScoreFactor {
+  label: string;
+  points: number;
+  max: number;
+  detail: string;
+}
+
+export interface ScoreBucket {
+  name: string;
+  points: number;
+  max: number;
+  factors: ScoreFactor[];
+}
+
+export type Recommendation = "BUY" | "HOLD" | "SELL";
+
+export interface ScoreResult {
+  total: number; // 0-100
+  buckets: ScoreBucket[];
+  recommendation: Recommendation;
+  confidence: number; // 0-100
+  rationale: string;
+}
+
+export type RiskLevel = "low" | "medium" | "high";
+
+export interface RiskItem {
+  category: string;
+  level: RiskLevel;
+  reason: string;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Peer comparison                                                            */
+/* -------------------------------------------------------------------------- */
+
+export interface PeerMetricSet {
+  pe: number | null;
+  roe: number | null;
+  revenueGrowth: number | null;
+  debtToEquity: number | null;
+}
+
+export interface PeerComparison {
+  sector: string;
+  peerCount: number;
+  target: PeerMetricSet;
+  median: PeerMetricSet;
+}
+
+/** Combined payload served by /api/fundamentals. */
+export interface FundamentalsData {
+  snapshot: FundamentalsSnapshot;
+  statements: FinancialStatements | null;
+  statementsError: string | null;
+  analyst: AnalystConsensus;
+  insider: InsiderActivity;
+  score: ScoreResult;
+  risks: RiskItem[];
+}

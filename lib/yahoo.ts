@@ -69,6 +69,16 @@ export function mapHistory(rows: RawChartQuote[]): HistoryPoint[] {
     }));
 }
 
+/** Raw quoteSummary passthrough for the fundamentals layer. */
+export async function getQuoteSummary(
+  symbol: string,
+  modules: string[],
+): Promise<unknown> {
+  return yahooFinance.quoteSummary(symbol, {
+    modules,
+  } as unknown as Parameters<typeof yahooFinance.quoteSummary>[1]);
+}
+
 export async function getQuote(symbol: string): Promise<Quote> {
   try {
     const raw = await yahooFinance.quote(symbol);
