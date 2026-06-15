@@ -1,16 +1,32 @@
 import Link from "next/link";
 
+const NAV = [
+  { href: "/research", label: "Research" },
+  { href: "/research/india", label: "India" },
+  { href: "/scanner", label: "Scanner" },
+  { href: "/compare", label: "Compare" },
+  { href: "/watchlist", label: "Watchlist" },
+  { href: "/screener", label: "Screener" },
+];
+
 export function SiteHeader() {
   return (
-    <header className="border-b border-black/[.08] dark:border-white/[.145]">
-      <nav className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between px-6">
+    <header className="border-b border-border bg-surface/50 backdrop-blur">
+      <nav className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between px-6">
         <Link href="/" className="font-mono text-sm font-semibold tracking-tight">
-          asset<span className="text-zinc-400">/</span>analyzer
+          <span className="text-accent">◆</span> asset
+          <span className="text-muted">/</span>analyzer
         </Link>
-        <div className="flex items-center gap-6 text-sm text-zinc-600 dark:text-zinc-400">
-          <Link href="/analyze" className="transition-colors hover:text-foreground">
-            Analyze
-          </Link>
+        <div className="flex items-center gap-1 text-sm">
+          {NAV.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className="rounded-md px-3 py-1.5 text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+            >
+              {item.label}
+            </Link>
+          ))}
         </div>
       </nav>
     </header>

@@ -1,25 +1,57 @@
 import Link from "next/link";
 
+const MODULES = [
+  {
+    href: "/research",
+    title: "Research",
+    desc: "Look up any ticker for a live Yahoo Finance quote, price history, recent SEC/EDGAR filings, and a local-AI analysis.",
+    icon: "🔎",
+  },
+  {
+    href: "/watchlist",
+    title: "Watchlist",
+    desc: "Save symbols to a local SQLite-backed watchlist and track live prices at a glance.",
+    icon: "⭐",
+  },
+  {
+    href: "/screener",
+    title: "Screener",
+    desc: "Filter the S&P 500 universe by sector, price, daily move, and market cap to surface ideas.",
+    icon: "📊",
+  },
+];
+
 export default function Home() {
   return (
-    <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col justify-center px-6 py-24">
-      <div className="flex max-w-2xl flex-col gap-6">
-        <p className="font-mono text-sm text-zinc-500">Universal Asset Analyzer</p>
+    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-12 px-6 py-20">
+      <div className="flex max-w-2xl flex-col gap-4">
+        <p className="font-mono text-sm text-accent">Universal Asset Analyzer</p>
         <h1 className="text-4xl font-semibold leading-tight tracking-tight text-balance sm:text-5xl">
-          Inspect any asset, understand it instantly.
+          Research equities with live data and local AI.
         </h1>
-        <p className="text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-          Drop in a file, image, or blob of data and get a structured breakdown —
-          type, size, and content-level insights — without leaving the browser.
+        <p className="text-lg leading-8 text-muted">
+          Quotes from Yahoo Finance, filings from SEC EDGAR, and analysis from a
+          model running on your own machine via Ollama — no API keys required.
         </p>
-        <div className="flex flex-col gap-3 sm:flex-row">
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        {MODULES.map((m) => (
           <Link
-            href="/analyze"
-            className="flex h-11 items-center justify-center rounded-full bg-foreground px-6 text-sm font-medium text-background transition-opacity hover:opacity-90"
+            key={m.href}
+            href={m.href}
+            className="group flex flex-col gap-3 rounded-xl border border-border bg-surface p-6 transition-colors hover:border-accent/50 hover:bg-surface-2"
           >
-            Start analyzing
+            <span className="text-2xl">{m.icon}</span>
+            <h2 className="text-lg font-medium">
+              {m.title}
+              <span className="ml-1 text-muted transition-transform group-hover:translate-x-0.5 inline-block">
+                →
+              </span>
+            </h2>
+            <p className="text-sm leading-6 text-muted">{m.desc}</p>
           </Link>
-        </div>
+        ))}
       </div>
     </main>
   );
