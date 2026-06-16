@@ -23,6 +23,7 @@ function makeCompany(overrides: Partial<ScreenerInCompany> = {}): ScreenerInComp
     roe: 14,
     debt: 2000,
     changePercent: 1.2,
+    promoterHolding: 54.2,
     ratios: [
       {
         name: "Price to Earning",
@@ -40,10 +41,8 @@ function makeCompany(overrides: Partial<ScreenerInCompany> = {}): ScreenerInComp
     ],
     peers: [],
     shareholding: [
-      { holding: "promoter", name: "Promoters", values: ["55.0", "54.5", "54.2"] },
       { holding: "fii", name: "FIIs", values: ["12.3", "13.1", "14.0"] },
       { holding: "dii", name: "DIIs", values: ["8.0", "8.5", "9.0"] },
-      { holding: "retail", name: "Public", values: ["24.7", "23.9", "22.8"] },
     ],
     ...overrides,
   };
@@ -72,13 +71,13 @@ describe("getRatio", () => {
 });
 
 describe("getPromoterHolding", () => {
-  it("returns latest promoter holding", () => {
+  it("returns promoterHolding field", () => {
     const c = makeCompany();
     expect(getPromoterHolding(c)).toBe(54.2);
   });
 
-  it("returns null when no promoter row", () => {
-    const c = makeCompany({ shareholding: [] });
+  it("returns null when promoterHolding is null", () => {
+    const c = makeCompany({ promoterHolding: null });
     expect(getPromoterHolding(c)).toBeNull();
   });
 });

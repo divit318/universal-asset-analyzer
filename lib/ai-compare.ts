@@ -6,7 +6,7 @@
  * cheaper, which has better quality, which has better growth, and a verdict.
  */
 
-import { runPrompt } from "./ai";
+import { runPrompt, getActiveModelName } from "./ai";
 import { getFundamentals } from "./fundamentals";
 import { getFinancialStatements } from "./statements";
 import { getHistory, getQuote } from "./yahoo";
@@ -208,39 +208,42 @@ export async function compareStocks(
   const b = resultB.value;
 
   const prompt = buildComparePrompt(a, b);
-  const model = process.env.AI_PROVIDER === "ollama"
-    ? (process.env.OLLAMA_MODEL ?? "mistral")
-    : (process.env.CLAUDE_MODEL ?? "claude-sonnet-4-6");
+  const model = getActiveModelName();
 
-  const raw = await runPrompt(prompt, { maxTokens: 1500, json: true });
-  const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
+  type FlatAI = {
+    overview?: string; valuation?: string; quality?: string; growth?: string;
+    financialHealth?: string; momentum?: string; verdict?: string;
+    winner?: string | null; winnerRationale?: string;
+    sections?: ComparisonResult["sections"];
+  };
 
-  let aiSections: Omit<ComparisonResult, "model" | "symbolA" | "symbolB" | "metricTable" | "stockData">;
+  let flat: FlatAI = {};
   try {
-    aiSections = JSON.parse(cleaned) as typeof aiSections;
+    const raw = await runPrompt(prompt, { maxTokens: 1500, json: true });
+    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
+    flat = JSON.parse(cleaned) as FlatAI;
   } catch {
-    aiSections = {
-      sections: {
-        overview: raw,
-        valuation: "",
-        quality: "",
-        growth: "",
-        financialHealth: "",
-        momentum: "",
-        verdict: "",
-      },
-      winner: null,
-      winnerRationale: "",
-    };
+    // AI unavailable — metric table still works
   }
+
+  // The prompt returns a flat object; normalise into sections shape.
+  const sections: ComparisonResult["sections"] = flat.sections ?? {
+    overview: flat.overview ?? (Object.keys(flat).length === 0 ? "AI analysis unavailable. Set OLLAMA_API_KEY or ANTHROPIC_API_KEY to enable." : ""),
+    valuation: flat.valuation ?? "",
+    quality: flat.quality ?? "",
+    growth: flat.growth ?? "",
+    financialHealth: flat.financialHealth ?? "",
+    momentum: flat.momentum ?? "",
+    verdict: flat.verdict ?? "",
+  };
 
   return {
     model,
     symbolA: a.symbol,
     symbolB: b.symbol,
-    sections: aiSections.sections,
-    winner: aiSections.winner ?? null,
-    winnerRationale: aiSections.winnerRationale ?? "",
+    sections,
+    winner: flat.winner ?? null,
+    winnerRationale: flat.winnerRationale ?? "",
     metricTable: buildMetricTable(a, b),
   };
 }

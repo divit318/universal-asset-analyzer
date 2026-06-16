@@ -6,7 +6,7 @@
  * concentration risks, and a portfolio-level summary.
  */
 
-import { runPrompt } from "./ai";
+import { runPrompt, getActiveModelName } from "./ai";
 import { getQuote } from "./yahoo";
 import { getFundamentals } from "./fundamentals";
 import { computeScore, computeMomentum, assessRisks } from "./scoring";
@@ -129,9 +129,7 @@ export async function generateWatchlistDigest(
   const summaries = await Promise.all(capped.map(summariseOne));
 
   const prompt = buildDigestPrompt(summaries);
-  const model = process.env.AI_PROVIDER === "ollama"
-    ? (process.env.OLLAMA_MODEL ?? "mistral")
-    : (process.env.CLAUDE_MODEL ?? "claude-sonnet-4-6");
+  const model = getActiveModelName();
 
   let parsed: {
     summary: string;
