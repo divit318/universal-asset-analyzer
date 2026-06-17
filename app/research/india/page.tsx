@@ -79,10 +79,10 @@ export default function IndiaResearchPage() {
   const changePct = data?.quote?.changePercent ?? data?.company?.changePercent;
 
   const TABS: { id: Tab; label: string }[] = [
-    { id: "overview", label: "Overview" },
-    { id: "peers", label: `Peers (${data?.derived.peers.length ?? 0})` },
-    { id: "shareholding", label: "Shareholding" },
-    { id: "ratios", label: "All Ratios" },
+    { id: "overview", label: "Key Metrics" },
+    { id: "peers", label: `Peer Comparison (${data?.derived.peers.length ?? 0})` },
+    { id: "shareholding", label: "Who Owns It" },
+    { id: "ratios", label: "10-Year Ratios" },
   ];
 
   return (

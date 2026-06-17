@@ -28,13 +28,13 @@ interface ComparisonResult {
 }
 
 const SECTION_LABELS: { key: keyof ComparisonResult["sections"]; label: string }[] = [
-  { key: "overview", label: "Overview" },
-  { key: "valuation", label: "Valuation" },
-  { key: "quality", label: "Quality" },
-  { key: "growth", label: "Growth" },
-  { key: "financialHealth", label: "Financial Health" },
-  { key: "momentum", label: "Momentum" },
-  { key: "verdict", label: "Verdict" },
+  { key: "overview", label: "What Are These Companies" },
+  { key: "valuation", label: "Which Is Cheaper" },
+  { key: "quality", label: "Which Has Better Quality" },
+  { key: "growth", label: "Which Is Growing Faster" },
+  { key: "financialHealth", label: "Stronger Balance Sheet" },
+  { key: "momentum", label: "Price Momentum" },
+  { key: "verdict", label: "Final Verdict" },
 ];
 
 const POPULAR_PAIRS = [

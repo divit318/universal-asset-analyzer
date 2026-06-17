@@ -22,12 +22,12 @@ interface ChatMessage {
 }
 
 const SECTIONS: { key: keyof DeepAnalysisResult["sections"]; label: string }[] = [
-  { key: "summary", label: "Summary" },
-  { key: "investmentCase", label: "Investment Case" },
-  { key: "competitivePosition", label: "Competitive Position" },
-  { key: "risks", label: "Risks" },
-  { key: "keyMetrics", label: "Key Metrics" },
-  { key: "verdict", label: "Verdict" },
+  { key: "summary", label: "Executive Summary" },
+  { key: "investmentCase", label: "Why Own / Avoid" },
+  { key: "competitivePosition", label: "vs Sector Peers" },
+  { key: "risks", label: "Top Risks" },
+  { key: "keyMetrics", label: "Watch These Numbers" },
+  { key: "verdict", label: "Buy / Hold / Sell" },
 ];
 
 const STARTER_QUESTIONS = [
@@ -110,9 +110,9 @@ export function AiDeepPanel({
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-base font-semibold">AI Research</h2>
+          <h2 className="text-base font-semibold">AI Equity Research</h2>
           <p className="text-xs text-muted">
-            Grounded in all available data — score, analyst consensus, insider activity, peer comparison, SEC statements
+            Structured research note grounded in scoring engine, analyst consensus, insider activity, peer comparison &amp; SEC filings
           </p>
         </div>
         <div className="flex gap-2">
@@ -120,14 +120,14 @@ export function AiDeepPanel({
             onClick={() => { setMode("chat"); setChatHistory([]); }}
             className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${mode === "chat" ? "border-accent text-accent" : "border-border hover:bg-surface-2"}`}
           >
-            Ask AI
+            Ask a Question
           </button>
           <button
             onClick={runAnalysis}
             disabled={loading}
             className="rounded-lg bg-accent-strong px-4 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
           >
-            {loading && mode !== "chat" ? "Analyzing…" : "Deep Analysis"}
+            {loading && mode !== "chat" ? "Analyzing…" : "Generate Research Note"}
           </button>
         </div>
       </div>

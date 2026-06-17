@@ -1,13 +1,13 @@
 import Link from "next/link";
 
 const NAV = [
-  { href: "/research", label: "Research" },
-  { href: "/research/india", label: "India" },
-  { href: "/scanner", label: "Scanner" },
-  { href: "/compare", label: "Compare" },
-  { href: "/watchlist", label: "Watchlist" },
-  { href: "/screener", label: "Screener" },
-  { href: "/ic-report", label: "IC Report" },
+  { href: "/research", label: "Stock Research" },
+  { href: "/research/india", label: "India Markets" },
+  { href: "/screener", label: "Stock Screener" },
+  { href: "/compare", label: "Side-by-Side Compare" },
+  { href: "/scanner", label: "Market Scanner" },
+  { href: "/watchlist", label: "My Watchlist" },
+  { href: "/ic-report", label: "Deep Research" },
 ];
 
 export function SiteHeader() {
