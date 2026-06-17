@@ -43,7 +43,7 @@ function ConfidenceBar({ value }: { value: number }) {
 export function SignalCard({ signal }: { signal: EventSignal }) {
   const dir = DIR_STYLE[signal.direction];
   const positive = (signal.quote?.changePercent ?? 0) >= 0;
-  const researchHref = `/research?symbol=${encodeURIComponent(signal.ticker)}`;
+  const researchHref = `/stocks/${encodeURIComponent(signal.ticker)}`;
 
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4 transition-colors hover:border-border/80 hover:bg-surface-2">

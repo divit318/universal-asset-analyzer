@@ -345,7 +345,7 @@ export default function ScreenerPage() {
                       <td className="px-3 py-2.5 text-muted">{i + 1}</td>
                       <td className="px-3 py-2.5">
                         <Link
-                          href={`/research?symbol=${encodeURIComponent(m.symbol)}`}
+                          href={`/stocks/${encodeURIComponent(m.symbol)}`}
                           className="font-mono font-semibold text-accent hover:underline"
                         >
                           {m.symbol}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { Quote } from "@/lib/types";
 import type { ScreenerInCompany, ScreenerInPeer, ScreenerInShareholding } from "@/lib/screener-in";
 import { formatCurrency, formatPercent } from "@/lib/format";
@@ -30,6 +31,7 @@ interface IndiaResearchData {
 type Tab = "overview" | "peers" | "shareholding" | "ratios";
 
 export default function IndiaResearchPage() {
+  const router = useRouter();
   const [symbol, setSymbol] = useState("");
   const [input, setInput] = useState("");
   const [data, setData] = useState<IndiaResearchData | null>(null);
@@ -56,22 +58,20 @@ export default function IndiaResearchPage() {
     }
   }, []);
 
-  // Deep-link: /research/india?symbol=RELIANCE
+  // Deep-link: /research/india?symbol=RELIANCE → redirect to /stocks/RELIANCE?market=IN
   useEffect(() => {
     const param = new URLSearchParams(window.location.search).get("symbol");
     if (!param) return;
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setInput(param.toUpperCase());
-    setSymbol(param.toUpperCase());
-    /* eslint-enable react-hooks/set-state-in-effect */
-    void load(param);
+    const s = param.toUpperCase().replace(/\.(NS|BO)$/i, "");
+    router.replace(`/stocks/${encodeURIComponent(s)}?market=IN`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    setSymbol(input.trim().toUpperCase());
-    void load(input);
+    const s = input.trim().toUpperCase().replace(/\.(NS|BO)$/i, "");
+    if (!s) return;
+    router.push(`/stocks/${encodeURIComponent(s)}?market=IN`);
   }
 
   const positive = (data?.quote?.changePercent ?? data?.company?.changePercent ?? 0) >= 0;

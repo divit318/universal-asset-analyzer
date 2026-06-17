@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { AiAnalysis, ResearchData } from "@/lib/types";
 import {
   formatCompact,
@@ -15,6 +16,7 @@ import { FundamentalsSection } from "./_components/fundamentals-section";
 import { SymbolSearch } from "./_components/symbol-search";
 
 export default function ResearchPage() {
+  const router = useRouter();
   const [symbol, setSymbol] = useState("");
   const [data, setData] = useState<ResearchData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -40,24 +42,17 @@ export default function ResearchPage() {
   }, []);
 
   function submit(raw: string) {
-    if (!raw.trim()) return;
-    setLoading(true);
-    setError(null);
-    setData(null);
-    setSaved(false);
-    void runResearch(raw);
+    const sym = raw.trim().toUpperCase();
+    if (!sym) return;
+    // Navigate to unified stock view
+    router.push(`/stocks/${encodeURIComponent(sym)}`);
   }
 
-  // Deep-link support: /research?symbol=AAPL auto-runs on load. This is a
-  // deliberate one-time initialization from the URL, so seeding state on mount
-  // is exactly what we want here.
+  // Deep-link support: /research?symbol=AAPL redirects to /stocks/AAPL
   useEffect(() => {
     const param = new URLSearchParams(window.location.search).get("symbol");
     if (!param) return;
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setSymbol(param.toUpperCase());
-    submit(param);
-    /* eslint-enable react-hooks/set-state-in-effect */
+    router.replace(`/stocks/${encodeURIComponent(param.toUpperCase())}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

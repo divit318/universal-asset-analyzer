@@ -140,7 +140,7 @@ export default function WatchlistPage() {
         <div className="rounded-xl border border-border bg-surface p-8 text-center">
           <p className="text-muted">Your watchlist is empty.</p>
           <Link href="/research" className="mt-2 inline-block text-sm text-accent hover:underline">
-            Find symbols in Research →
+            Search and add symbols →
           </Link>
         </div>
       ) : (
@@ -173,7 +173,7 @@ export default function WatchlistPage() {
                     <tr key={item.symbol} className="bg-surface hover:bg-surface-2">
                       <td className="px-4 py-3">
                         <Link
-                          href={`/research?symbol=${item.symbol}`}
+                          href={`/stocks/${item.symbol}`}
                           className="font-mono font-semibold text-accent hover:underline"
                         >
                           {item.symbol}
