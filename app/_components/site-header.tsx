@@ -7,6 +7,7 @@ const NAV = [
   { href: "/compare", label: "Compare" },
   { href: "/watchlist", label: "Watchlist" },
   { href: "/screener", label: "Screener" },
+  { href: "/ic-report", label: "IC Report" },
 ];
 
 export function SiteHeader() {
