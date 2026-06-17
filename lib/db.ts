@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import type { StockFundamentals, WatchlistItem } from "./types";
+import type { PortfolioPosition, StockFundamentals, WatchlistItem } from "./types";
 
 let db: DatabaseSync | null = null;
 
@@ -24,6 +24,13 @@ function getDb(): DatabaseSync {
       symbol     TEXT PRIMARY KEY,
       data       TEXT NOT NULL,
       updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS portfolio (
+      symbol   TEXT PRIMARY KEY,
+      name     TEXT NOT NULL,
+      shares   REAL NOT NULL,
+      avg_cost REAL NOT NULL,
+      added_at TEXT NOT NULL
     );
   `);
   return db;
@@ -105,4 +112,58 @@ export function getFreshFundamentals(maxAgeMs: number): {
 
 export function clearFundamentals(): void {
   getDb().prepare("DELETE FROM fundamentals_cache").run();
+}
+
+/* -------------------------------------------------------------------------- */
+/* Portfolio positions                                                         */
+/* -------------------------------------------------------------------------- */
+
+interface PortfolioRow {
+  symbol: string;
+  name: string;
+  shares: number;
+  avg_cost: number;
+  added_at: string;
+}
+
+export function listPortfolio(): PortfolioPosition[] {
+  const rows = getDb()
+    .prepare("SELECT symbol, name, shares, avg_cost, added_at FROM portfolio ORDER BY added_at DESC")
+    .all() as unknown as PortfolioRow[];
+  return rows.map((r) => ({
+    symbol: r.symbol,
+    name: r.name,
+    shares: r.shares,
+    avgCost: r.avg_cost,
+    addedAt: r.added_at,
+  }));
+}
+
+export function upsertPosition(
+  symbol: string,
+  name: string,
+  shares: number,
+  avgCost: number,
+): PortfolioPosition {
+  const pos: PortfolioPosition = {
+    symbol: symbol.toUpperCase(),
+    name,
+    shares,
+    avgCost,
+    addedAt: new Date().toISOString(),
+  };
+  getDb()
+    .prepare(
+      `INSERT INTO portfolio (symbol, name, shares, avg_cost, added_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(symbol) DO UPDATE SET name = excluded.name, shares = excluded.shares,
+         avg_cost = excluded.avg_cost`,
+    )
+    .run(pos.symbol, pos.name, pos.shares, pos.avgCost, pos.addedAt);
+  return pos;
+}
+
+export function removePosition(symbol: string): void {
+  getDb()
+    .prepare("DELETE FROM portfolio WHERE symbol = ?")
+    .run(symbol.toUpperCase());
 }

@@ -41,6 +41,14 @@ export default function ScreenerPage() {
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // NL screener state
+  const [nlPrompt, setNlPrompt] = useState("");
+  const [nlModel, setNlModel] = useState("");
+  const [nlModels, setNlModels] = useState<string[]>([]);
+  const [nlLoading, setNlLoading] = useState(false);
+  const [nlError, setNlError] = useState<string | null>(null);
+  const [nlApplied, setNlApplied] = useState<string | null>(null);
+
   const buildBody = useCallback(
     (offset: number, sf = sortField, sd = sortDir) => {
       const filters: Record<string, { min: number | null; max: number | null }> = {};
@@ -105,6 +113,18 @@ export default function ScreenerPage() {
     };
   }, [status, run]);
 
+  // Fetch installed Ollama models for the NL screener model picker.
+  useEffect(() => {
+    fetch("/api/screener/nl")
+      .then((r) => r.json())
+      .then((d: { models?: string[] }) => {
+        const models = d.models ?? [];
+        setNlModels(models);
+        if (models.length > 0) setNlModel(models[0]);
+      })
+      .catch(() => {/* Ollama offline — NL screener degrades gracefully */});
+  }, []);
+
   // First load: trigger the build + show whatever's ready. A one-time kickoff
   // from mount is exactly the intended behavior here.
   useEffect(() => {
@@ -123,6 +143,59 @@ export default function ScreenerPage() {
     setIndustry("");
     setSortField("overallScore");
     setSortDir("desc");
+    setNlApplied(null);
+    setNlError(null);
+  }
+
+  async function runNlScreen() {
+    if (!nlPrompt.trim() || !nlModel) return;
+    setNlLoading(true);
+    setNlError(null);
+    setNlApplied(null);
+    try {
+      const res = await fetch("/api/screener/nl", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: nlPrompt.trim(), model: nlModel }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "NL screener failed");
+
+      const c = json.criteria as Record<string, unknown>;
+      const next = emptyRanges();
+      let sf = "overallScore";
+      let sd: "asc" | "desc" = "desc";
+      let newSector = "";
+      let newIndustry = "";
+
+      for (const [key, val] of Object.entries(c)) {
+        if (key === "sortField" && typeof val === "string") { sf = val; continue; }
+        if (key === "sortDir" && (val === "asc" || val === "desc")) { sd = val; continue; }
+        if (key === "sector" && typeof val === "string") { newSector = val; continue; }
+        if (key === "industry" && typeof val === "string") { newIndustry = val; continue; }
+        if (val && typeof val === "object") {
+          const r = val as { min?: number | null; max?: number | null };
+          // marketCap arrives in dollars; the UI input expects $B (buildBody scales × 1e9)
+          const scale = key === "marketCap" ? 1e-9 : 1;
+          next[key] = {
+            min: r.min != null ? String(r.min * scale) : "",
+            max: r.max != null ? String(r.max * scale) : "",
+          };
+        }
+      }
+
+      setRanges(next);
+      setSector(newSector);
+      setIndustry(newIndustry);
+      setSortField(sf);
+      setSortDir(sd);
+      setNlApplied(nlPrompt.trim());
+      void run(0, sf, sd);
+    } catch (err) {
+      setNlError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setNlLoading(false);
+    }
   }
 
   function applyPreset(p: Preset) {
@@ -185,6 +258,58 @@ export default function ScreenerPage() {
         </p>
         <DatasetBar status={status} loading={loading} onRefresh={refreshData} />
       </header>
+
+      {/* AI Natural Language Screener */}
+      {nlModels.length > 0 ? (
+        <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold">AI Screen</span>
+            <span className="rounded-full bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
+              Local · {nlModel.split(":")[0]}
+            </span>
+          </div>
+          <p className="text-xs text-muted">
+            Describe what you&apos;re looking for in plain English and the AI will translate it into a screen.
+          </p>
+          <textarea
+            value={nlPrompt}
+            onChange={(e) => setNlPrompt(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void runNlScreen();
+            }}
+            placeholder='e.g. "Large-cap tech companies with strong growth and clean balance sheets"'
+            rows={3}
+            className="w-full resize-none rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none placeholder:text-muted focus:border-accent"
+          />
+          <div className="flex items-center gap-2">
+            {nlModels.length > 1 ? (
+              <select
+                value={nlModel}
+                onChange={(e) => setNlModel(e.target.value)}
+                className="rounded-lg border border-border bg-surface-2 px-2 py-1.5 text-xs outline-none focus:border-accent"
+              >
+                {nlModels.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            ) : null}
+            <button
+              onClick={() => void runNlScreen()}
+              disabled={nlLoading || !nlPrompt.trim()}
+              className="rounded-lg bg-accent-strong px-4 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {nlLoading ? "Analyzing…" : "Apply ↵"}
+            </button>
+          </div>
+          {nlError ? (
+            <p className="text-xs text-negative">{nlError}</p>
+          ) : nlApplied ? (
+            <p className="text-xs text-positive">
+              Screen applied — filters set from your description.
+            </p>
+          ) : null}
+        </section>
+      ) : null}
 
       {/* Quick screens */}
       <section className="flex flex-col gap-2">

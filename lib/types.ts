@@ -89,6 +89,14 @@ export interface WatchlistItem {
   addedAt: string; // ISO timestamp
 }
 
+export interface PortfolioPosition {
+  symbol: string;
+  name: string;
+  shares: number;
+  avgCost: number; // per share, in USD
+  addedAt: string; // ISO timestamp
+}
+
 export type ScreenerSortField =
   | "marketCap"
   | "changePercent"
