@@ -361,8 +361,8 @@ function StockContent() {
             <section className="flex flex-col gap-3">
               <h2 className="text-base font-semibold">Historical Ratios</h2>
               <div className="flex flex-col gap-4">
-                {indiaData.company.ratios.map((r) => (
-                  <div key={r.name} className="rounded-xl border border-border bg-surface p-4">
+                {indiaData.company.ratios.map((r, ri) => (
+                  <div key={`${r.name}-${ri}`} className="rounded-xl border border-border bg-surface p-4">
                     <h3 className="mb-3 text-sm font-medium">{r.name}</h3>
                     <div className="flex flex-wrap gap-3">
                       {r.values.map((v, i) => (
