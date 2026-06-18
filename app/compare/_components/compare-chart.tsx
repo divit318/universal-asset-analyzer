@@ -2,10 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Bar,
-  BarChart,
   CartesianGrid,
-  Cell,
   Line,
   LineChart,
   ReferenceLine,
@@ -285,6 +282,40 @@ function AnnualTooltip({
   );
 }
 
+/* ─── annual labeled dot ─────────────────────────────────────────────────── */
+function AnnualDot(props: {
+  cx?: number;
+  cy?: number;
+  value?: number | null;
+  color: string;
+  metric: Metric;
+}) {
+  const { cx, cy, value, color, metric } = props;
+  if (cx == null || cy == null || value == null) return null;
+  const cfg = getMetricConfig(metric);
+  const label = cfg.formatFn(value);
+  const below = cfg.isGrowth && value < 0;
+  const labelY = below ? cy + 17 : cy - 9;
+
+  return (
+    <g>
+      <circle cx={cx} cy={cy} r={4} fill={color} stroke="#14161a" strokeWidth={1.5} />
+      <text
+        x={cx}
+        y={labelY}
+        textAnchor="middle"
+        fontSize={9}
+        fontWeight="700"
+        fill={color}
+        fontFamily="'ui-monospace','SFMono-Regular',monospace"
+        opacity={0.9}
+      >
+        {label}
+      </text>
+    </g>
+  );
+}
+
 /* ─── end-of-line dot ────────────────────────────────────────────────────── */
 function EndDot(props: {
   cx?: number;
@@ -500,6 +531,19 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
     return [min - pad, max + pad + (max - min) * 0.08];
   }, [chartData, symbols, isPrice]);
 
+  /* ── y-axis domain (annual chart) — extra room for value labels ── */
+  const annualYDomain = useMemo<[number | "auto", number | "auto"]>(() => {
+    if (!isAnnual) return ["auto", "auto"];
+    const vals = annualData.flatMap((pt) =>
+      symbols.map((s) => pt[s]).filter((v): v is number => typeof v === "number"),
+    );
+    if (!vals.length) return ["auto", "auto"];
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const span = max - min || Math.abs(max) * 0.2 || 10;
+    return [min - span * 0.25, max + span * 0.30];
+  }, [annualData, symbols, isAnnual]);
+
   const tickInterval = useMemo(() => {
     const n = chartData.length;
     if (n <= 30) return Math.max(1, Math.floor(n / 5));
@@ -677,21 +721,21 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
         </div>
       )}
 
-      {/* ── annual bar chart ── */}
+      {/* ── annual line chart ── */}
       {isAnnual && (
-        <div className="relative pb-4 pt-1">
+        <div className="relative pb-4 pt-2">
           {annualData.length === 0 && (
             <div className="flex h-[320px] items-center justify-center text-xs text-muted">
-              No annual data available.
+              No annual data available — SEC filings may not be indexed yet.
             </div>
           )}
           {annualData.length > 0 && (
-            <ResponsiveContainer width="100%" height={320}>
-              <BarChart data={annualData} margin={{ top: 10, right: 20, left: 4, bottom: 4 }} barGap={2} barCategoryGap="25%">
+            <ResponsiveContainer width="100%" height={340}>
+              <LineChart data={annualData} margin={{ top: 28, right: 24, left: 4, bottom: 4 }}>
                 <CartesianGrid stroke="#272b33" strokeDasharray="3 3" vertical={false} />
                 <XAxis
                   dataKey="fy"
-                  tick={{ fill: "#9aa3af", fontSize: 10 }}
+                  tick={{ fill: "#9aa3af", fontSize: 11 }}
                   tickLine={false}
                   axisLine={{ stroke: "#272b33" }}
                 />
@@ -700,29 +744,38 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
                   tickLine={false}
                   axisLine={false}
                   tickFormatter={yFormatter}
+                  domain={annualYDomain}
                   width={64}
                 />
                 <Tooltip
                   content={<AnnualTooltip metric={metric} symbols={symbols} colors={colors} />}
-                  cursor={{ fill: "#272b33", opacity: 0.5 }}
+                  cursor={{ stroke: "#9aa3af", strokeWidth: 1, strokeDasharray: "4 4" }}
                 />
-                {cfg.isGrowth && <ReferenceLine y={0} stroke="#4b5563" strokeWidth={1} strokeDasharray="4 4" />}
+                {cfg.isGrowth && (
+                  <ReferenceLine y={0} stroke="#4b5563" strokeWidth={1} strokeDasharray="4 4" />
+                )}
                 {symbols.map((sym, i) => (
-                  <Bar key={sym} dataKey={sym} fill={colors[i]} radius={[3, 3, 0, 0]} opacity={0.85}>
-                    {annualData.map((entry) => {
-                      const v = entry[sym];
-                      const isNeg = cfg.isGrowth && typeof v === "number" && v < 0;
-                      return (
-                        <Cell
-                          key={`cell-${sym}-${entry.fy}`}
-                          fill={isNeg ? "#ef4444" : colors[i]}
-                          opacity={0.85}
-                        />
-                      );
-                    })}
-                  </Bar>
+                  <Line
+                    key={sym}
+                    type="linear"
+                    dataKey={sym}
+                    stroke={colors[i]}
+                    strokeWidth={2.2}
+                    connectNulls={false}
+                    dot={(dotProps: { cx?: number; cy?: number; value?: number | null }) => (
+                      <AnnualDot
+                        key={`adot-${sym}-${dotProps.cx}`}
+                        cx={dotProps.cx}
+                        cy={dotProps.cy}
+                        value={dotProps.value}
+                        color={colors[i]}
+                        metric={metric}
+                      />
+                    )}
+                    activeDot={{ r: 5, fill: colors[i], stroke: "#14161a", strokeWidth: 2 }}
+                  />
                 ))}
-              </BarChart>
+              </LineChart>
             </ResponsiveContainer>
           )}
         </div>
