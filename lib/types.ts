@@ -342,6 +342,8 @@ export interface FundamentalsSnapshot {
   totalCash: number | null;
   totalDebt: number | null;
   ebitda: number | null;
+  enterpriseToEbitda: number | null;
+  priceToSalesTrailing12Months: number | null;
 }
 
 export interface AnalystConsensus {

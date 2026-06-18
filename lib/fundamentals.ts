@@ -106,7 +106,7 @@ interface RawInstitutionHolder {
 
 interface RawSummary {
   financialData?: RawFinancialData;
-  summaryDetail?: { trailingPE?: number; forwardPE?: number; dividendYield?: number };
+  summaryDetail?: { trailingPE?: number; forwardPE?: number; dividendYield?: number; priceToSalesTrailing12Months?: number };
   defaultKeyStatistics?: {
     forwardPE?: number;
     pegRatio?: number;
@@ -118,6 +118,8 @@ interface RawSummary {
     sharesShort?: unknown;
     trailingEps?: unknown;
     forwardEps?: unknown;
+    enterpriseToEbitda?: number;
+    enterpriseToRevenue?: number;
   };
   recommendationTrend?: { trend?: RawTrendPoint[] };
   earningsTrend?: { trend?: RawEarningsTrendPoint[] };
@@ -183,6 +185,8 @@ export function mapSnapshot(symbol: string, raw: RawSummary): FundamentalsSnapsh
     totalCash: n(fd.totalCash),
     totalDebt: n(fd.totalDebt),
     ebitda: n(fd.ebitda),
+    enterpriseToEbitda: n(ks.enterpriseToEbitda),
+    priceToSalesTrailing12Months: n(sd.priceToSalesTrailing12Months),
   };
 }
 

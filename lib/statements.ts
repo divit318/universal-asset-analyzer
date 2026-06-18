@@ -11,10 +11,23 @@ const TAGS = {
     "Revenues",
     "RevenueFromContractWithCustomerExcludingAssessedTax",
     "SalesRevenueNet",
+    "RevenueFromContractWithCustomerIncludingAssessedTax",
+    "SalesRevenueGoodsNet",
+    "SalesRevenueServicesNet",
   ],
-  grossProfit: ["GrossProfit"],
-  operatingIncome: ["OperatingIncomeLoss"],
-  netIncome: ["NetIncomeLoss"],
+  grossProfit: [
+    "GrossProfit",
+    "GrossProfitLoss",
+  ],
+  operatingIncome: [
+    "OperatingIncomeLoss",
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+  ],
+  netIncome: [
+    "NetIncomeLoss",
+    "NetIncomeLossAvailableToCommonStockholdersBasic",
+    "ProfitLoss",
+  ],
   opCashFlow: [
     "NetCashProvidedByUsedInOperatingActivities",
     "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations",
@@ -22,6 +35,7 @@ const TAGS = {
   capex: [
     "PaymentsToAcquirePropertyPlantAndEquipment",
     "PaymentsToAcquireProductiveAssets",
+    "PurchaseOfPropertyPlantAndEquipment",
   ],
 } as const;
 
@@ -46,7 +60,7 @@ export function extractAnnual(concept: Concept): AnnualPoint[] {
     if (e.start && e.end) {
       const days =
         (new Date(e.end).getTime() - new Date(e.start).getTime()) / 86_400_000;
-      if (days < 350 || days > 380) continue; // keep annual flows only
+      if (days < 330 || days > 400) continue; // keep annual flows only (allow 52/53-week years)
     }
     if (e.fy == null) continue;
     const prev = byFy.get(e.fy);

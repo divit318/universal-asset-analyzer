@@ -184,25 +184,32 @@ function getSnapshotValue(entry: CompareEntry, metric: SnapshotMetric): number |
   const quote = entry.quote;
   if (!snap || !quote) return null;
 
-  if (metric === "pe") return snap.trailingPE;
+  if (metric === "pe") return snap.trailingPE ?? snap.forwardPE;
+
   if (metric === "roe") return snap.returnOnEquity != null ? snap.returnOnEquity * 100 : null;
+
   if (metric === "roic") {
     const roe = snap.returnOnEquity;
     const de = snap.debtToEquity;
     if (roe == null) return null;
-    if (de == null) return roe * 100;
-    return (roe / (1 + de / 100)) * 100;
+    // ROIC ≈ ROE / (1 + D/E) — same fallback formula as enrich.ts
+    if (de == null || de === 0) return roe * 100;
+    return (roe / (1 + de)) * 100;
   }
+
   if (metric === "evEbitda") {
+    // Prefer Yahoo's pre-computed ratio; fall back to manual calculation
+    if (snap.enterpriseToEbitda != null) return snap.enterpriseToEbitda;
     const mc = quote.marketCap;
-    const debt = snap.totalDebt;
-    const cash = snap.totalCash;
     const ebitda = snap.ebitda;
     if (mc == null || ebitda == null || ebitda === 0) return null;
-    const ev = mc + (debt ?? 0) - (cash ?? 0);
+    const ev = mc + (snap.totalDebt ?? 0) - (snap.totalCash ?? 0);
     return ev / ebitda;
   }
+
   if (metric === "ps") {
+    // Prefer Yahoo's pre-computed trailing 12-month P/S
+    if (snap.priceToSalesTrailing12Months != null) return snap.priceToSalesTrailing12Months;
     const mc = quote.marketCap;
     if (mc == null) return null;
     const rev = entry.statements?.revenue;
@@ -211,6 +218,7 @@ function getSnapshotValue(entry: CompareEntry, metric: SnapshotMetric): number |
     if (!latestRev) return null;
     return mc / latestRev;
   }
+
   return null;
 }
 
@@ -558,7 +566,7 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
   if (!symbols.length) return null;
 
   return (
-    <div className="rounded-xl border border-border bg-surface overflow-hidden">
+    <div className="rounded-xl border border-border bg-surface overflow-visible">
 
       {/* ── controls row ── */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
@@ -607,7 +615,7 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
           </button>
 
           {metricOpen && (
-            <div className="absolute right-0 top-full z-50 mt-1.5 w-52 overflow-hidden rounded-lg border border-border bg-surface shadow-xl">
+            <div className="absolute right-0 top-full z-50 mt-1.5 w-56 overflow-y-auto rounded-lg border border-border bg-surface shadow-xl" style={{ maxHeight: "min(400px, 70vh)" }}>
               {METRIC_GROUPS.map((group) => (
                 <div key={group.header}>
                   <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted border-t border-border first:border-t-0">

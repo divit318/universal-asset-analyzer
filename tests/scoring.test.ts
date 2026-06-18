@@ -36,6 +36,8 @@ const snap = (o: Partial<FundamentalsSnapshot> = {}): FundamentalsSnapshot => ({
   totalCash: 5e9,
   totalDebt: 3e9,
   ebitda: 4e9,
+  enterpriseToEbitda: null,
+  priceToSalesTrailing12Months: null,
   ...o,
 });
 
