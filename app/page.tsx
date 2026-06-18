@@ -14,10 +14,22 @@ const MODULES = [
     icon: "⭐",
   },
   {
+    href: "/portfolio",
+    title: "Portfolio",
+    desc: "Track your holdings with live P&L, cost basis, allocation breakdown, and performance over time.",
+    icon: "💼",
+  },
+  {
     href: "/screener",
     title: "Screener",
     desc: "Filter the S&P 500 universe by sector, price, daily move, and market cap to surface ideas.",
     icon: "📊",
+  },
+  {
+    href: "/compare",
+    title: "Compare",
+    desc: "Side-by-side comparison of up to 5 symbols across valuation, growth, quality, and momentum.",
+    icon: "⚖️",
   },
 ];
 

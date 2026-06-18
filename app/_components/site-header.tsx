@@ -5,6 +5,7 @@ const NAV = [
   { href: "/watchlist", label: "Watchlist" },
   { href: "/portfolio", label: "Portfolio" },
   { href: "/screener", label: "Screener" },
+  { href: "/compare", label: "Compare" },
 ];
 
 export function SiteHeader() {

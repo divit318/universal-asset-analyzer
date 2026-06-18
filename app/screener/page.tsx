@@ -524,7 +524,7 @@ function Cell({ col, value }: { col: ColumnDef; value: number | null }) {
   const cls = value < 0 ? "text-negative" : "";
   return (
     <span className={`font-mono ${cls}`}>
-      {value >= 0 ? "" : ""}
+      {value >= 0 ? "+" : ""}
       {value.toFixed(1)}%
     </span>
   );

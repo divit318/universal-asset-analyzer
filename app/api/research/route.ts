@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getHistory, getQuote } from "@/lib/yahoo";
+import { getHistory, getQuote, getQuoteSummary, getSectorEtf } from "@/lib/yahoo";
 import { getRecentFilings } from "@/lib/edgar";
 import type { ResearchData } from "@/lib/types";
 
@@ -28,8 +28,11 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: message }, { status: 404 });
   }
 
-  const [history, filingsResult] = await Promise.all([
-    getHistory(symbol),
+  // Fetch 5 years of history, SPY benchmark, sector profile, and filings in parallel.
+  const [history, spyHistory, profileResult, filingsResult] = await Promise.all([
+    getHistory(symbol, 1825),
+    getHistory("SPY", 1825),
+    getQuoteSummary(symbol, ["assetProfile"]).catch(() => null),
     getRecentFilings(symbol).then(
       (filings) => ({ filings, error: null as string | null }),
       (err: unknown) => ({
@@ -39,11 +42,25 @@ export async function GET(request: Request) {
     ),
   ]);
 
+  // Resolve sector ETF then fetch its history (best-effort).
+  const sector = (profileResult as Record<string, unknown> | null)?.assetProfile != null
+    ? ((profileResult as Record<string, Record<string, unknown>>).assetProfile?.sector as string | null) ?? null
+    : null;
+  const sectorEtf = getSectorEtf(sector);
+  const sectorHistory = sectorEtf
+    ? await getHistory(sectorEtf, 1825).catch(() => [] as typeof spyHistory)
+    : [];
+
   const payload: ResearchData = {
     quote,
     history,
     filings: filingsResult.filings,
     edgarError: filingsResult.error,
+    benchmarks: {
+      spy: spyHistory,
+      sectorEtf,
+      sector: sectorHistory,
+    },
   };
   return NextResponse.json(payload);
 }

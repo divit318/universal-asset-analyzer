@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { AiAnalysis, ResearchData } from "@/lib/types";
+import type { ResearchData } from "@/lib/types";
+import { DownloadIcon } from "./_components/download-icon";
 import {
   formatCompact,
   formatCurrency,
@@ -10,9 +11,10 @@ import {
   formatNumber,
   formatPercent,
 } from "@/lib/format";
-import { Sparkline } from "./_components/sparkline";
+import { InteractiveChart } from "./_components/interactive-chart";
 import { FundamentalsSection } from "./_components/fundamentals-section";
 import { SymbolSearch } from "./_components/symbol-search";
+import { ResearchCopilot } from "./_components/copilot/research-copilot";
 
 export default function ResearchPage() {
   const [symbol, setSymbol] = useState("");
@@ -80,7 +82,8 @@ export default function ResearchPage() {
       <div className="flex flex-col gap-2">
         <h1 className="text-2xl font-semibold tracking-tight">Research</h1>
         <p className="text-muted">
-          Enter a ticker for a live quote, price history, SEC filings, and AI analysis.
+          Enter a ticker for a live quote, fundamentals, and an AI Equity Research
+          Copilot that analyzes the company entirely through local Ollama models.
         </p>
       </div>
 
@@ -128,8 +131,28 @@ function ResearchResult({
   onSave: () => void;
   saved: boolean;
 }) {
-  const { quote, history, filings, edgarError } = data;
+  const { quote, history, filings, edgarError, benchmarks } = data;
   const positive = quote.changePercent >= 0;
+  const [downloading, setDownloading] = useState(false);
+
+  async function downloadReport() {
+    setDownloading(true);
+    try {
+      const res = await fetch(`/api/report?symbol=${encodeURIComponent(quote.symbol)}`);
+      if (!res.ok) throw new Error("Report generation failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${quote.symbol}_Equity_Research_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      /* non-critical */
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   const stats: [string, string][] = [
     ["Market cap", formatMarketCap(quote.marketCap)],
@@ -158,16 +181,31 @@ function ResearchResult({
             </span>
           </div>
         </div>
-        <button
-          onClick={onSave}
-          disabled={saved}
-          className="rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-surface-2 disabled:opacity-60"
-        >
-          {saved ? "★ Saved" : "☆ Watchlist"}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={downloadReport}
+            disabled={downloading}
+            title="Download PDF Research Report"
+            className="flex items-center gap-2 rounded-lg border border-accent/50 bg-accent/10 px-4 py-2 text-sm text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
+          >
+            <DownloadIcon />
+            {downloading ? "Generating…" : "Excel Report"}
+          </button>
+          <button
+            onClick={onSave}
+            disabled={saved}
+            className="rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-surface-2 disabled:opacity-60"
+          >
+            {saved ? "★ Saved" : "☆ Watchlist"}
+          </button>
+        </div>
       </div>
 
-      <Sparkline data={history} />
+      <InteractiveChart
+        symbol={quote.symbol}
+        history={history}
+        benchmarks={benchmarks ?? { spy: [], sectorEtf: null, sector: [] }}
+      />
 
       {/* Stats */}
       <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-3">
@@ -179,7 +217,7 @@ function ResearchResult({
         ))}
       </dl>
 
-      <AiPanel data={data} />
+      <ResearchCopilot symbol={quote.symbol} name={quote.name} />
 
       {/* Filings */}
       <section className="flex flex-col gap-3">
@@ -215,59 +253,5 @@ function ResearchResult({
 
       <FundamentalsSection symbol={quote.symbol} />
     </div>
-  );
-}
-
-function AiPanel({ data }: { data: ResearchData }) {
-  const [result, setResult] = useState<AiAnalysis | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function analyze() {
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    try {
-      const res = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ quote: data.quote, filings: data.filings }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "AI analysis failed");
-      setResult(json as AiAnalysis);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "AI analysis failed");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-6">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="text-lg font-medium">AI analysis</h2>
-        <button
-          onClick={analyze}
-          disabled={loading}
-          className="rounded-lg bg-accent-strong px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
-          {loading ? "Analyzing…" : "Analyze with Ollama"}
-        </button>
-      </div>
-      {error ? <p className="text-sm text-negative">{error}</p> : null}
-      {result ? (
-        <>
-          <p className="whitespace-pre-wrap text-sm leading-6 text-foreground">
-            {result.analysis}
-          </p>
-          <p className="font-mono text-xs text-muted">model: {result.model}</p>
-        </>
-      ) : !error ? (
-        <p className="text-sm text-muted">
-          Generate a research summary from the data above using a local LLM.
-        </p>
-      ) : null}
-    </section>
   );
 }
