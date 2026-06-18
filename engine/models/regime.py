@@ -165,16 +165,19 @@ def run_regime_detection(
     n_iter: int = 50,
 ) -> pl.DataFrame:
     """End-to-end: train HMM on full history and return regime DataFrame."""
-    if len(price_df) < 126:
-        return pl.DataFrame(schema={
-            "symbol": pl.Utf8, "date": pl.Date,
-            "regime": pl.Int32, "regime_label": pl.Utf8,
-            "prob_bull": pl.Float64, "prob_bear": pl.Float64,
-            "prob_range": pl.Float64, "prob_crash": pl.Float64,
-            "prob_recovery": pl.Float64,
-        })
+    _empty = pl.DataFrame(schema={
+        "symbol": pl.Utf8, "date": pl.Date,
+        "regime": pl.Int32, "regime_label": pl.Utf8,
+        "prob_bull": pl.Float64, "prob_bear": pl.Float64,
+        "prob_range": pl.Float64, "prob_crash": pl.Float64,
+        "prob_recovery": pl.Float64,
+    })
 
-    df = price_df.sort("date")
+    # Require at least 126 rows with non-null close prices
+    df = price_df.sort("date").filter(pl.col("close").is_not_null() & pl.col("close").gt(0))
+    if len(df) < 126:
+        return _empty
+
     close = df["close"].to_numpy().astype(np.float64)
     volume = df["volume"].fill_null(0).to_numpy().astype(np.float64)
     dates = df["date"].to_list()
