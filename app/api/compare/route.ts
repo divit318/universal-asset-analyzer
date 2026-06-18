@@ -43,7 +43,7 @@ function computeOneYearReturn(history: { date: string; close: number }[]): numbe
 /** GET /api/compare?symbols=AAPL,MSFT,GOOGL — up to 5 symbols. */
 export async function GET(request: Request) {
   const raw = new URL(request.url).searchParams.get("symbols") ?? "";
-  const symbols = raw.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean).slice(0, 5);
+  const symbols = [...new Set(raw.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean))].slice(0, 5);
   if (symbols.length < 1) {
     return NextResponse.json({ error: "At least one symbol is required" }, { status: 400 });
   }

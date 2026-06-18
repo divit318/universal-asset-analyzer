@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getFundamentals } from "@/lib/fundamentals";
-import { getFinancialStatements } from "@/lib/statements";
+import { getFinancialStatements, getFinancialStatementsYahoo } from "@/lib/statements";
 import { getFundamentalsTimeSeries, getHistory } from "@/lib/yahoo";
 import { assessRisks, computeMomentum, computeScore } from "@/lib/scoring";
 import type { FinancialStatements, FundamentalsData, HistoryPoint, ValuationPoint } from "@/lib/types";
@@ -118,16 +118,27 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: message }, { status: 404 });
   }
 
-  // Fetch statements (EDGAR), 5yr price history (for momentum + valuation),
+  // Fetch statements, 5yr price history (for momentum + valuation),
   // and the annual fundamentals time series all in parallel.
+  // Yahoo Finance is tried first (works for all markets); EDGAR is the fallback
+  // for deeper US history when Yahoo returns fewer than 3 fiscal years.
   const [statementsResult, history, timeSeries] = await Promise.all([
-    getFinancialStatements(symbol).then(
-      (s) => ({ statements: s as FinancialStatements | null, error: null as string | null }),
-      (err: unknown) => ({
-        statements: null,
-        error: err instanceof Error ? err.message : "EDGAR statements unavailable",
-      }),
-    ),
+    (async (): Promise<{ statements: FinancialStatements | null; error: string | null }> => {
+      const yahoo = await getFinancialStatementsYahoo(symbol);
+      if (yahoo && yahoo.fiscalYears.length >= 3) return { statements: yahoo, error: null };
+      // fallback to EDGAR for US-listed companies with deeper history
+      const edgar = await getFinancialStatements(symbol).catch((e: unknown) => ({
+        err: e instanceof Error ? e.message : "EDGAR statements unavailable",
+      }));
+      if ("err" in edgar) {
+        // If EDGAR also fails, return Yahoo result even if short (better than nothing)
+        if (yahoo) return { statements: yahoo, error: null };
+        return { statements: null, error: edgar.err };
+      }
+      // prefer whichever source has more years
+      const best = yahoo && yahoo.fiscalYears.length >= edgar.fiscalYears.length ? yahoo : edgar;
+      return { statements: best, error: null };
+    })(),
     getHistory(symbol, 1825),
     getFundamentalsTimeSeries(symbol).catch(() => [] as Record<string, unknown>[]),
   ]);

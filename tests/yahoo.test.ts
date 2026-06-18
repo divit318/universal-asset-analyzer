@@ -75,8 +75,8 @@ describe("mapHistory", () => {
       { date: "2024-01-03T00:00:00Z", close: 103 },
     ]);
     expect(points).toEqual([
-      { date: "2024-01-01", close: 100 },
-      { date: "2024-01-03", close: 103 },
+      { date: "2024-01-01", close: 100, adjClose: 100 },
+      { date: "2024-01-03", close: 103, adjClose: 103 },
     ]);
   });
 });
