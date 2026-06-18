@@ -41,6 +41,7 @@ from engine.data.loader import (
     export_scorecard_snapshot,
     export_detail_snapshots,
 )
+from engine.data.nse_enrichment import enrich_fundamentals
 from engine.features.factory import build_features
 from engine.models.regime import run_regime_detection
 from engine.models.factors import compute_all_factors, compute_ic_weights, _DEFAULT_WEIGHTS
@@ -342,6 +343,32 @@ def run_daily(
                     log(f"  fundamentals batch {i // fund_batch_size + 1} error: {e}")
         else:
             log("  All fundamentals up to date.")
+
+        # NSE enrichment: fill earnings_surprise_pct, eps/revenue CAGR,
+        # institutional_ownership, buyback_yield for Indian symbols.
+        # Also computes CAGR from quarterly financials for US symbols.
+        # Runs only for symbols that are missing these fields (or stale >30 days).
+        enrich_syms = []
+        for sym in syms_to_fetch:
+            try:
+                row = conn.execute("""
+                    SELECT earnings_surprise_pct, eps_cagr_3y, revenue_cagr_3y,
+                           updated_at
+                    FROM fundamentals WHERE symbol = ?
+                """, [sym]).fetchone()
+                if (row is None or
+                        row[0] is None or row[1] is None or row[2] is None):
+                    enrich_syms.append(sym)
+            except Exception:
+                enrich_syms.append(sym)
+
+        if enrich_syms:
+            log(f"Enriching {len(enrich_syms)} symbols with NSE/quarterly data...")
+            try:
+                n_enriched = enrich_fundamentals(conn, enrich_syms)
+                log(f"  NSE enrichment: {n_enriched} symbols updated")
+            except Exception as e:
+                log(f"  NSE enrichment error: {e}")
 
     if symbols is None:
         symbols = get_symbols_with_prices(min_days=252)
