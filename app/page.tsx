@@ -26,6 +26,11 @@ const MODULES = [
     title: "Deep Research",
     desc: "Full IC-grade pipeline — signal detection, 9-agent investigation, bull/bear thesis, DCF valuation, and a committee report.",
   },
+  {
+    href: "/engine",
+    title: "Quant Engine",
+    desc: "Systematic 10-factor scorecard: HMM regime detection, factor scoring, Monte Carlo DCF, quantile forecasts, and Kelly-optimal position sizing. No LLM in the loop.",
+  },
 ];
 
 export default function Home() {

@@ -6,6 +6,7 @@ const NAV = [
   { href: "/compare", label: "Compare" },
   { href: "/watchlist", label: "Watchlist" },
   { href: "/ic-report", label: "Deep Research" },
+  { href: "/engine", label: "Quant Engine" },
 ];
 
 export function SiteHeader() {
