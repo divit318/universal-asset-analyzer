@@ -21,11 +21,16 @@ Key architectural guarantees vs original:
 from __future__ import annotations
 
 import json
+import warnings
 from datetime import date, datetime
 from typing import Optional
 
 import numpy as np
 import polars as pl
+
+# hmmlearn emits ConvergenceWarning when n_iter is hit before tol — this is expected
+# at n_iter=50 and the model is still usable. Suppress to avoid log noise.
+warnings.filterwarnings("ignore", message="Model is not converging", category=UserWarning)
 
 from engine.data.loader import (
     get_db,
@@ -356,10 +361,17 @@ def run_daily(
             log(f"  {sym} features error: {e}")
 
         try:
-            regime_df = run_regime_detection(price_df, sym)
-            _upsert_df(conn, regime_df, "regime_daily",
-                       ["symbol", "date", "regime", "regime_label",
-                        "prob_bull", "prob_bear", "prob_range", "prob_crash", "prob_recovery"])
+            # Skip HMM re-training if regime is already computed for the latest price date
+            latest_price_date = price_df.sort("date")["date"][-1]
+            existing_regime = conn.execute(
+                "SELECT COUNT(*) FROM regime_daily WHERE symbol = ? AND date = ?",
+                [sym, latest_price_date]
+            ).fetchone()[0]
+            if existing_regime == 0:
+                regime_df = run_regime_detection(price_df, sym)
+                _upsert_df(conn, regime_df, "regime_daily",
+                           ["symbol", "date", "regime", "regime_label",
+                            "prob_bull", "prob_bear", "prob_range", "prob_crash", "prob_recovery"])
         except Exception as e:
             log(f"  {sym} regime error: {e}")
 
@@ -476,11 +488,13 @@ def run_daily(
             w.get("momentum", 0.25) * momentum_score +
             w.get("quality",  0.30) * quality_score  +
             w.get("value",    0.20) * value_score     +
-            w.get("low_vol",  0.15) * regime_score    +    # regime proxies tail-risk sensitivity
+            w.get("low_vol",  0.15) * low_vol_score   +
             w.get("revision", 0.10) * forecast_score
         )
+        # Regime score enters as an overlay on top of the factor composite
+        composite += 0.10 * regime_score
         # MC upside enters as a separate overlay, not in the factor composite
-        composite += 0.10 * mc_upside_clipped
+        composite += 0.05 * mc_upside_clipped
 
         # Confidence: average |z| across factors that agreed on direction
         # High confidence = multiple independent factors all pointing the same way

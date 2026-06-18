@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import warnings
 import numpy as np
 import polars as pl
 from hmmlearn.hmm import GaussianHMM
+
+warnings.filterwarnings("ignore", message="Model is not converging", category=UserWarning)
 
 REGIME_LABELS = {0: "Bull", 1: "Bear", 2: "Range", 3: "Crash", 4: "Recovery"}
 
@@ -42,7 +45,7 @@ def _make_obs(close: np.ndarray, volume: np.ndarray) -> np.ndarray:
     return obs, valid
 
 
-def train_hmm(close: np.ndarray, volume: np.ndarray, n_iter: int = 200) -> GaussianHMM:
+def train_hmm(close: np.ndarray, volume: np.ndarray, n_iter: int = 50) -> GaussianHMM:
     """
     Train a Gaussian HMM with N_STATES states.
     Returns trained model.
@@ -153,7 +156,7 @@ def predict_regimes(
 def run_regime_detection(
     price_df: pl.DataFrame,
     symbol: str,
-    n_iter: int = 200,
+    n_iter: int = 50,
 ) -> pl.DataFrame:
     """End-to-end: train HMM on full history and return regime DataFrame."""
     if len(price_df) < 126:
