@@ -113,15 +113,7 @@ export async function POST(req: NextRequest) {
       });
       py.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
 
-      const timer = setTimeout(() => {
-        if (activeEngineProcess === py) activeEngineProcess = null;
-        py.kill();
-        send("ERROR: Engine run timed out after 10 minutes");
-        controller.close();
-      }, 600_000);
-
       py.on("close", (code) => {
-        clearTimeout(timer);
         if (activeEngineProcess === py) activeEngineProcess = null;
         if (code !== 0) {
           send(`ERROR: ${stderr.trim() || "Engine run failed (exit " + code + ")"}`);
