@@ -53,6 +53,9 @@ def train_hmm(close: np.ndarray, volume: np.ndarray, n_iter: int = 50) -> Gaussi
     obs, valid = _make_obs(close, volume)
     obs_clean = obs[valid]
 
+    if len(obs_clean) < N_STATES * 10:
+        raise ValueError(f"Insufficient valid observations for HMM: {len(obs_clean)} rows after NaN/inf filter")
+
     model = GaussianHMM(
         n_components=N_STATES,
         covariance_type="diag",
@@ -103,6 +106,9 @@ def predict_regimes(
     """
     obs, valid = _make_obs(close, volume)
     obs_clean = obs[valid]
+
+    if len(obs_clean) == 0:
+        raise ValueError("No valid observations after NaN/inf filter in predict_regimes")
 
     state_seq = model.predict(obs_clean)
     posteriors = model.predict_proba(obs_clean)

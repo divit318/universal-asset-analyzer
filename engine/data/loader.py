@@ -346,11 +346,22 @@ def fetch_ohlcv(
         conn.close()
         return 0
 
-    df = pl.DataFrame(rows)
+    # Explicit schema prevents type-inference failures when yfinance returns
+    # mixed int/float volumes or nulls scattered across the batch.
+    df = pl.DataFrame(rows, schema={
+        "symbol":    pl.Utf8,
+        "date":      pl.Utf8,
+        "open":      pl.Float64,
+        "high":      pl.Float64,
+        "low":       pl.Float64,
+        "close":     pl.Float64,
+        "adj_close": pl.Float64,
+        "volume":    pl.Float64,   # cast to BIGINT in SQL; Float64 accepts int/float/null
+    })
     conn.register("_price_tmp", df.to_arrow())
     conn.execute("""
         INSERT OR REPLACE INTO price_daily
-        SELECT symbol, date::DATE, open, high, low, close, adj_close, volume
+        SELECT symbol, date::DATE, open, high, low, close, adj_close, volume::BIGINT
         FROM _price_tmp
     """)
     conn.unregister("_price_tmp")
