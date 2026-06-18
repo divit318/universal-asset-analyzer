@@ -170,7 +170,7 @@ def _load_ic_weights(conn, lookback_days: int = 252) -> dict[str, float]:
         "momentum": rows["momentum_score"].to_numpy()[:len(fwd_ret)].tolist(),
         "quality":  rows["quality_score"].to_numpy()[:len(fwd_ret)].tolist(),
         "value":    rows["value_score"].to_numpy()[:len(fwd_ret)].tolist(),
-        "low_vol":  rows["regime_score"].to_numpy()[:len(fwd_ret)].tolist(),  # proxy
+        "low_vol":  rows["low_vol_score"].to_numpy()[:len(fwd_ret)].tolist(),
         "revision": rows["forecast_score"].to_numpy()[:len(fwd_ret)].tolist(),
     }
 
@@ -421,6 +421,7 @@ def run_daily(
         momentum_score = float(fac.get("momentum") or 0.0)
         quality_score  = float(fac.get("quality")  or 0.0)
         value_score    = float(fac.get("value")    or 0.0)
+        low_vol_score  = float(fac.get("low_vol")  or 0.0)
 
         # Regime score: probability-weighted expected return (mathematically justified)
         regime_score = 0.0
@@ -458,7 +459,7 @@ def run_daily(
 
         # Confidence: average |z| across factors that agreed on direction
         # High confidence = multiple independent factors all pointing the same way
-        factor_zs = [momentum_score, quality_score, value_score, regime_score, forecast_score]
+        factor_zs = [momentum_score, quality_score, value_score, low_vol_score, regime_score, forecast_score]
         agreeing  = [abs(z) for z in factor_zs if np.sign(z) == np.sign(composite)]
         confidence = float(np.clip(np.mean(agreeing) / 2.0 if agreeing else 0.1, 0.0, 1.0))
 
@@ -476,6 +477,7 @@ def run_daily(
             "momentum_score": round(momentum_score, 4),
             "quality_score":  round(quality_score, 4),
             "value_score":    round(value_score, 4),
+            "low_vol_score":  round(low_vol_score, 4),
             "regime_score":   round(regime_score, 4),
             "forecast_score": round(forecast_score, 4),
             "mc_upside":      round(mc_upside, 4),
@@ -488,17 +490,17 @@ def run_daily(
     scorecard_df = pl.DataFrame(scorecard_rows) if scorecard_rows else pl.DataFrame(schema={
         "symbol": pl.Utf8, "date": pl.Date,
         "momentum_score": pl.Float64, "quality_score": pl.Float64,
-        "value_score": pl.Float64, "regime_score": pl.Float64,
-        "forecast_score": pl.Float64, "mc_upside": pl.Float64,
-        "kelly_fraction": pl.Float64, "composite_score": pl.Float64,
-        "signal": pl.Utf8, "confidence": pl.Float64,
+        "value_score": pl.Float64, "low_vol_score": pl.Float64,
+        "regime_score": pl.Float64, "forecast_score": pl.Float64,
+        "mc_upside": pl.Float64, "kelly_fraction": pl.Float64,
+        "composite_score": pl.Float64, "signal": pl.Utf8, "confidence": pl.Float64,
     })
 
     if not scorecard_df.is_empty():
         _upsert_df(conn, scorecard_df, "scorecard_daily", [
             "symbol", "date", "momentum_score", "quality_score", "value_score",
-            "regime_score", "forecast_score", "mc_upside", "kelly_fraction",
-            "composite_score", "signal", "confidence",
+            "low_vol_score", "regime_score", "forecast_score", "mc_upside",
+            "kelly_fraction", "composite_score", "signal", "confidence",
         ])
 
     conn.close()

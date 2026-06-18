@@ -13,6 +13,7 @@ interface ScorecardRow {
   momentum_score: number;
   quality_score: number;
   value_score: number;
+  low_vol_score: number;
   regime_score: number;
   forecast_score: number;
   mc_upside: number;
@@ -135,6 +136,11 @@ const FACTOR_META: Record<string, { label: string; desc: string; formula: string
     label: "Regime",
     desc: "HMM posterior probability-weighted expected return. E[R] = Σ P(regime_i) × μ_i.",
     formula: "Σ P(state) × annualised_μ(state)  /  max_μ  →  normalised to [−3, 3]",
+  },
+  low_vol_score: {
+    label: "Low Vol",
+    desc: "Low-volatility factor. Negative of 63-day realized annualised vol. Lower vol = higher raw score.",
+    formula: "−σ(log_ret, 63d) × √252  →  cross-sectional z-score",
   },
   forecast_score: {
     label: "Forecast",
@@ -649,6 +655,7 @@ export default function EnginePage() {
     ["momentum_score",  "Momentum z"],
     ["quality_score",   "Quality z"],
     ["value_score",     "Value z"],
+    ["low_vol_score",   "Low Vol z"],
     ["regime_score",    "Regime"],
     ["forecast_score",  "Forecast"],
     ["mc_upside",       "MC Upside"],
@@ -793,6 +800,7 @@ export default function EnginePage() {
                       <td className="px-4 py-3 text-right font-mono text-xs">{row.momentum_score >= 0 ? "+" : ""}{row.momentum_score.toFixed(3)}</td>
                       <td className="px-4 py-3 text-right font-mono text-xs">{row.quality_score >= 0 ? "+" : ""}{row.quality_score.toFixed(3)}</td>
                       <td className="px-4 py-3 text-right font-mono text-xs">{row.value_score >= 0 ? "+" : ""}{row.value_score.toFixed(3)}</td>
+                      <td className="px-4 py-3 text-right font-mono text-xs">{(row.low_vol_score ?? 0) >= 0 ? "+" : ""}{(row.low_vol_score ?? 0).toFixed(3)}</td>
                       <td className="px-4 py-3 text-right font-mono text-xs">{row.regime_score >= 0 ? "+" : ""}{row.regime_score.toFixed(3)}</td>
                       <td className="px-4 py-3 text-right font-mono text-xs">{row.forecast_score >= 0 ? "+" : ""}{row.forecast_score.toFixed(3)}</td>
                       <td className={`px-4 py-3 text-right font-mono text-xs ${row.mc_upside >= 0 ? "text-positive" : "text-negative"}`}>

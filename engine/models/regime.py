@@ -16,21 +16,29 @@ def _make_obs(close: np.ndarray, volume: np.ndarray) -> np.ndarray:
     """
     Build 3-feature observation matrix:
     [log_return_1d, realized_vol_5d, log_volume_ratio]
+
+    Zero-volume handling: replace zeros with median volume before computing log ratio
+    to avoid log(0) = -inf which propagates NaN into HMM startprob_.
     """
     ret = np.diff(np.log(close), prepend=np.nan)
     vol5 = np.array([
         ret[max(0, i - 4) : i + 1].std() * np.sqrt(252) if i >= 4 else np.nan
         for i in range(len(ret))
     ])
+    # Replace zero/negative volume with median to avoid log(0) = -inf
+    vol_clean = volume.copy()
+    median_vol = np.median(vol_clean[vol_clean > 0]) if np.any(vol_clean > 0) else 1.0
+    vol_clean[vol_clean <= 0] = median_vol
+
     vol_ma20 = np.array([
-        volume[max(0, i - 19) : i + 1].mean() if i >= 19 else volume[:i + 1].mean()
-        for i in range(len(volume))
+        vol_clean[max(0, i - 19) : i + 1].mean() if i >= 19 else vol_clean[:i + 1].mean()
+        for i in range(len(vol_clean))
     ])
-    log_vol_ratio = np.log(volume / (vol_ma20 + 1e-10))
+    log_vol_ratio = np.log(vol_clean / (vol_ma20 + 1e-10))
 
     obs = np.column_stack([ret, vol5, log_vol_ratio])
-    # Remove leading NaN rows
-    valid = ~np.any(np.isnan(obs) | np.isinf(obs), axis=1)
+    # Remove rows with any NaN or Inf (leading rows, and any inf from log of bad prices)
+    valid = ~np.any(~np.isfinite(obs), axis=1)
     return obs, valid
 
 
@@ -110,10 +118,6 @@ def predict_regimes(
         sem = state_map[int(raw)]
         semantic_seq[offset + i] = sem
 
-    # Remap posteriors to semantic columns
-    raw_order = list(state_map.keys())  # raw state IDs
-    for raw_idx, raw_state in enumerate(model.transmat_.shape[0] * [None]):
-        pass
     # posteriors columns = raw state IDs 0..N_STATES-1 in model order
     for raw_state, sem_state in state_map.items():
         probs[offset:, sem_state] = posteriors[:, raw_state]

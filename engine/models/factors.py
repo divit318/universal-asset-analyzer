@@ -108,15 +108,22 @@ def compute_value_score(fund: dict) -> float | None:
     fcf_margin = _safe("fcf_margin")
     div_yield = _safe("dividend_yield")
 
+    # All components in yield space (unitless, higher = cheaper/more value).
+    # fcf_margin / fwd_pe was WRONG: fcf_margin/rev and 1/pe have different denominators.
+    # Instead: fcf_margin is stored as % of revenue; we use it directly as a quality
+    # signal only if no other yield is available. It is NOT a market-cap yield.
+    # Valid components: earnings yield, EBITDA yield, dividend yield.
     components = []
     if fwd_pe and fwd_pe > 1.0:
-        components.append(1.0 / fwd_pe)                              # earnings yield
-        if fcf_margin and fcf_margin > 0:
-            components.append((fcf_margin / 100.0) / fwd_pe * 100)  # FCF yield proxy
+        components.append(1.0 / fwd_pe)          # earnings yield = EPS/Price
     if ev_ebitda and ev_ebitda > 1.0:
-        components.append(1.0 / ev_ebitda)
+        components.append(1.0 / ev_ebitda)        # EBITDA/EV
     if div_yield and div_yield > 0:
-        components.append(div_yield / 100.0)
+        components.append(div_yield / 100.0)      # already fraction if stored as %
+    # FCF margin is revenue-based, not market-cap-based — cannot form a price yield.
+    # Included only as a tiebreaker when no other yield is available.
+    if not components and fcf_margin and fcf_margin > 0:
+        components.append(fcf_margin / 100.0)
 
     return float(np.mean(components)) if components else None
 

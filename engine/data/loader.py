@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS scorecard_daily (
     momentum_score  DOUBLE,
     quality_score   DOUBLE,
     value_score     DOUBLE,
+    low_vol_score   DOUBLE,
     regime_score    DOUBLE,
     forecast_score  DOUBLE,
     mc_upside       DOUBLE,
@@ -175,13 +176,19 @@ def get_db() -> duckdb.DuckDBPyConnection:
 
 def _migrate_schema(conn: duckdb.DuckDBPyConnection) -> None:
     """Add columns that were not present in the initial schema. Safe to call repeatedly."""
-    existing = {r[0] for r in conn.execute(
+    fund_cols = {r[0] for r in conn.execute(
         "SELECT column_name FROM information_schema.columns WHERE table_name='fundamentals'"
     ).fetchall()}
-    if "shares_outstanding" not in existing:
+    if "shares_outstanding" not in fund_cols:
         conn.execute("ALTER TABLE fundamentals ADD COLUMN shares_outstanding DOUBLE")
-    if "market_cap" not in existing:
+    if "market_cap" not in fund_cols:
         conn.execute("ALTER TABLE fundamentals ADD COLUMN market_cap DOUBLE")
+
+    scorecard_cols = {r[0] for r in conn.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='scorecard_daily'"
+    ).fetchall()}
+    if "low_vol_score" not in scorecard_cols:
+        conn.execute("ALTER TABLE scorecard_daily ADD COLUMN low_vol_score DOUBLE")
 
 
 def migrate_sqlite_to_duckdb(force: bool = False) -> int:
