@@ -57,7 +57,7 @@ export async function GET(request: Request) {
   );
 
   // Build response — convert prices to USD where possible
-  const data: Record<string, { date: string; close: number }[]> = {};
+  const data: Record<string, { date: string; close: number; adjClose: number }[]> = {};
   const convertedSymbols: string[] = [];
 
   for (const r of results) {
@@ -68,10 +68,14 @@ export async function GET(request: Request) {
 
     if (needsConversion) convertedSymbols.push(symbol);
 
-    data[symbol] = history.map((p) => ({
-      date: p.date,
-      close: needsConversion ? +(p.close * rate!).toFixed(4) : p.close,
-    }));
+    data[symbol] = history.map((p) => {
+      const adj = p.adjClose ?? p.close;
+      return {
+        date: p.date,
+        close: needsConversion ? +(p.close * rate!).toFixed(4) : p.close,
+        adjClose: needsConversion ? +(adj * rate!).toFixed(4) : adj,
+      };
+    });
   }
 
   return Response.json({ ...data, _meta: { currencies: currencyMap, convertedToUsd: convertedSymbols } });

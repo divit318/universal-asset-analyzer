@@ -51,7 +51,8 @@ export interface Quote {
 
 export interface HistoryPoint {
   date: string; // ISO date
-  close: number;
+  close: number;       // raw (unadjusted) closing price
+  adjClose?: number;   // dividend + split-adjusted close (for total return)
   volume?: number;
 }
 

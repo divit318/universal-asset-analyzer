@@ -22,7 +22,7 @@ type AnnualMetric = "revenueGrowth" | "epsGrowth" | "fcfGrowth" | "grossMargin" 
 type SnapshotMetric = "pe" | "evEbitda" | "ps" | "roic" | "roe";
 type Metric = PriceMetric | AnnualMetric | SnapshotMetric;
 
-interface RawPoint { date: string; close: number }
+interface RawPoint { date: string; close: number; adjClose: number }
 type HistoryMap = Record<string, RawPoint[]>;
 interface ChartPoint { date: string; [symbol: string]: string | number | null }
 interface AnnualChartPoint { fy: string; [symbol: string]: string | number | null }
@@ -470,33 +470,38 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
     )].sort();
     if (!allDates.length) return [];
 
+    // Price Return uses raw close; Total Return uses dividend-adjusted close
+    const usesAdj = metric === "totalReturn";
+    const priceOf = (p: RawPoint) => usesAdj ? p.adjClose : p.close;
+
     const baseline: Record<string, number> = {};
     if (metric === "return" || metric === "totalReturn") {
       for (const sym of symbols) {
         const pts = filtered[sym];
-        if (pts?.length) baseline[sym] = pts[0].close;
+        if (pts?.length) baseline[sym] = priceOf(pts[0]);
       }
     }
 
-    const lookup: Record<string, Map<string, number>> = {};
+    const lookup: Record<string, Map<string, RawPoint>> = {};
     for (const sym of symbols) {
-      lookup[sym] = new Map((filtered[sym] ?? []).map((p) => [p.date, p.close]));
+      lookup[sym] = new Map((filtered[sym] ?? []).map((p) => [p.date, p]));
     }
 
     return allDates.map((date) => {
       const pt: ChartPoint = { date };
       for (const sym of symbols) {
-        const close = lookup[sym]?.get(date) ?? null;
-        if (close == null) { pt[sym] = null; continue; }
+        const raw = lookup[sym]?.get(date) ?? null;
+        if (raw == null) { pt[sym] = null; continue; }
+        const price = priceOf(raw); // adj or raw depending on metric
         if (metric === "return" || metric === "totalReturn") {
           const base = baseline[sym];
-          pt[sym] = base ? +((close / base - 1) * 100).toFixed(3) : null;
+          pt[sym] = base ? +((price / base - 1) * 100).toFixed(3) : null;
         } else if (metric === "price") {
-          pt[sym] = close;
+          pt[sym] = raw.close; // always raw price for Stock Price chart
         } else {
           const mcap = marketCaps[sym];
           const latestClose = filtered[sym]?.[filtered[sym].length - 1]?.close;
-          pt[sym] = mcap && latestClose ? +(mcap * (close / latestClose)) : null;
+          pt[sym] = mcap && latestClose ? +(mcap * (raw.close / latestClose)) : null;
         }
       }
       return pt;

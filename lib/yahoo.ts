@@ -55,18 +55,20 @@ export function mapQuote(raw: RawQuote): Quote {
 interface RawChartQuote {
   date?: Date | string | null;
   close?: number | null;
+  adjclose?: number | null;
   volume?: number | null;
 }
 
 /** Map raw chart rows into clean history points, dropping gaps. Pure. */
 export function mapHistory(rows: RawChartQuote[]): HistoryPoint[] {
   return rows
-    .filter((r): r is { date: Date | string; close: number; volume?: number | null } =>
+    .filter((r): r is { date: Date | string; close: number; adjclose?: number | null; volume?: number | null } =>
       r.close != null && r.date != null,
     )
     .map((r) => ({
       date: new Date(r.date).toISOString().slice(0, 10),
       close: r.close,
+      adjClose: r.adjclose ?? r.close, // fallback to close if adjclose absent
       ...(r.volume != null ? { volume: r.volume } : {}),
     }));
 }
