@@ -1,67 +1,49 @@
 /**
- * GET  /api/engine?symbols=AAPL,MSFT  — fetch latest scorecard rows from DuckDB
- * POST /api/engine                     — trigger a daily run (subprocess)
+ * GET  /api/engine?symbols=AAPL,MSFT  — read latest scorecard from Parquet snapshot
+ * POST /api/engine                     — trigger a daily run (subprocess, streams stdout)
+ *
+ * Reads NEVER touch engine.duckdb — they go to scorecard_snapshot.parquet which is
+ * written atomically (tmp + rename) at the end of each engine run. This eliminates
+ * all read/write lock contention regardless of whether the engine is currently running.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { spawn } from "child_process";
+import { spawn, execFileSync } from "child_process";
 import path from "path";
 import fs from "fs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const DUCKDB_PATH = path.join(process.cwd(), "data", "engine.duckdb");
+const SNAPSHOT_PATH = path.join(process.cwd(), "data", "scorecard_snapshot.parquet");
 
 // Track the active engine process. DuckDB allows only one writer at a time —
 // spawning a second process without killing the first causes "Conflicting lock".
 let activeEngineProcess: ReturnType<typeof spawn> | null = null;
 
-// We query DuckDB via Python subprocess since there's no stable Node DuckDB
-// binding for ARM. The scorecard is written daily; reads are from a snapshot.
-// For reads we use a lightweight SQLite mirror written by the Python engine,
-// or fall back to spawning a one-shot Python query.
+async function readScorecardSnapshot(symbols?: string[]): Promise<object[]> {
+  if (!fs.existsSync(SNAPSHOT_PATH)) return [];
 
-async function queryScorecard(symbols?: string[]): Promise<object[]> {
+  // Read Parquet via a minimal Python one-liner — fast, no DuckDB involved
+  const filter = symbols?.length
+    ? `df = df[df["symbol"].isin(${JSON.stringify(symbols)})]`
+    : "";
+  const script = `
+import polars as pl, json, sys
+df = pl.read_parquet(${JSON.stringify(SNAPSHOT_PATH)})
+${filter}
+print(df.to_pandas().to_json(orient="records", date_format="iso"))
+`.trim();
+
   return new Promise((resolve, reject) => {
-    const script = symbols && symbols.length > 0
-      ? `
-import duckdb, json, sys
-conn = duckdb.connect("${DUCKDB_PATH}", read_only=True)
-syms = ${JSON.stringify(symbols)}
-placeholders = ",".join("?" for _ in syms)
-rows = conn.execute(
-  f"SELECT * FROM scorecard_daily WHERE symbol IN ({placeholders}) ORDER BY composite_score DESC",
-  syms
-).fetchdf()
-conn.close()
-print(rows.to_json(orient="records", date_format="iso"))
-`
-      : `
-import duckdb, json, sys
-conn = duckdb.connect("${DUCKDB_PATH}", read_only=True)
-rows = conn.execute(
-  "SELECT * FROM scorecard_daily WHERE date = (SELECT MAX(date) FROM scorecard_daily) ORDER BY composite_score DESC"
-).fetchdf()
-conn.close()
-print(rows.to_json(orient="records", date_format="iso"))
-`;
-
     const py = spawn("python3", ["-c", script]);
-    let out = "";
-    let err = "";
-    py.stdout.on("data", (d) => { out += d.toString(); });
-    py.stderr.on("data", (d) => { err += d.toString(); });
+    let out = ""; let err = "";
+    py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
+    py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
     py.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(err || "Python query failed"));
-        return;
-      }
-      try {
-        resolve(JSON.parse(out.trim()) as object[]);
-      } catch {
-        reject(new Error("Failed to parse scorecard JSON"));
-      }
+      if (code !== 0) { reject(new Error(err || "Parquet read failed")); return; }
+      try { resolve(JSON.parse(out.trim()) as object[]); }
+      catch { reject(new Error("Failed to parse snapshot JSON")); }
     });
   });
 }
@@ -72,12 +54,15 @@ export async function GET(req: NextRequest) {
     ? symbolsParam.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean)
     : undefined;
 
-  if (!fs.existsSync(DUCKDB_PATH)) {
-    return NextResponse.json({ error: "Engine database not initialized. Run POST /api/engine first." }, { status: 404 });
+  if (!fs.existsSync(SNAPSHOT_PATH)) {
+    return NextResponse.json(
+      { error: "No scorecard data yet. Run the engine first.", scorecard: [], count: 0 },
+      { status: 200 }  // 200 so UI shows empty state, not an error banner
+    );
   }
 
   try {
-    const rows = await queryScorecard(symbols);
+    const rows = await readScorecardSnapshot(symbols);
     return NextResponse.json({ scorecard: rows, count: rows.length });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });

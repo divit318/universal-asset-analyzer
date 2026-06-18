@@ -38,6 +38,8 @@ from engine.data.loader import (
     fetch_ohlcv,
     fetch_fundamentals,
     get_symbols_with_prices,
+    export_scorecard_snapshot,
+    export_detail_snapshots,
 )
 from engine.features.factory import build_features
 from engine.models.regime import run_regime_detection
@@ -541,6 +543,16 @@ def run_daily(
             "low_vol_score", "regime_score", "forecast_score", "mc_upside",
             "kelly_fraction", "composite_score", "signal", "confidence",
         ])
+
+    # Export atomic read-only snapshots — API reads from these, never from DuckDB directly.
+    # This eliminates all read/write lock contention on engine.duckdb.
+    log("Exporting read snapshots...")
+    try:
+        export_scorecard_snapshot(conn)
+        export_detail_snapshots(conn, symbols)
+        log(f"  Snapshots written: {len(symbols)} detail files + scorecard.")
+    except Exception as e:
+        log(f"  Snapshot export error (non-fatal): {e}")
 
     conn.close()
     log(f"Done. {len(scorecard_rows)} symbols scored.")

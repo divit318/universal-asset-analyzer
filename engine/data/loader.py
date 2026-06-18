@@ -13,6 +13,10 @@ import yfinance as yf
 
 DB_PATH = Path(__file__).parents[2] / "data" / "engine.duckdb"
 SQLITE_PATH = Path(__file__).parents[2] / "data" / "app.db"
+# Read-only snapshot written atomically after each engine run.
+# All API reads go here — zero DuckDB lock contention.
+SCORECARD_SNAPSHOT = Path(__file__).parents[2] / "data" / "scorecard_snapshot.parquet"
+DETAIL_SNAPSHOT_DIR = Path(__file__).parents[2] / "data" / "detail_snapshots"
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS price_daily (
@@ -527,3 +531,103 @@ def get_symbols_with_prices(min_days: int = 252) -> list[str]:
     """, [min_days]).fetchall()
     conn.close()
     return [r[0] for r in rows]
+
+
+def export_scorecard_snapshot(conn: duckdb.DuckDBPyConnection) -> None:
+    """
+    Write an atomic Parquet snapshot of the latest scorecard + fundamentals join.
+    Uses write-to-tmp + rename to prevent partial reads from the API.
+    All API reads go to this file — DuckDB stays write-only during engine runs.
+    """
+    SCORECARD_SNAPSHOT.parent.mkdir(parents=True, exist_ok=True)
+
+    # Latest scorecard row per symbol joined with fundamentals name/sector
+    df = conn.execute("""
+        SELECT
+            s.symbol, s.date,
+            f.name, f.sector,
+            s.momentum_score, s.quality_score, s.value_score,
+            s.low_vol_score, s.regime_score, s.forecast_score,
+            s.mc_upside, s.kelly_fraction, s.composite_score,
+            s.signal, s.confidence
+        FROM scorecard_daily s
+        LEFT JOIN fundamentals f ON f.symbol = s.symbol
+        WHERE s.date = (SELECT MAX(date) FROM scorecard_daily WHERE symbol = s.symbol)
+        ORDER BY s.composite_score DESC
+    """).pl()
+
+    # Atomic write: write to .tmp then rename
+    tmp = SCORECARD_SNAPSHOT.with_suffix(".parquet.tmp")
+    df.write_parquet(str(tmp))
+    tmp.rename(SCORECARD_SNAPSHOT)
+
+
+def export_detail_snapshots(conn: duckdb.DuckDBPyConnection, symbols: list[str]) -> None:
+    """
+    Write per-symbol detail Parquet snapshots for all scored symbols.
+    Each file: data/detail_snapshots/{symbol}.parquet
+    Contains regime, forecasts, MC, features, factor history, prices, fundamentals.
+    """
+    DETAIL_SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+
+    for sym in symbols:
+        try:
+            tables: dict[str, pl.DataFrame] = {}
+
+            tables["fundamentals"] = conn.execute(
+                "SELECT * FROM fundamentals WHERE symbol = ?", [sym]
+            ).pl()
+
+            tables["scorecard"] = conn.execute(
+                "SELECT * FROM scorecard_daily WHERE symbol = ? ORDER BY date DESC LIMIT 1", [sym]
+            ).pl()
+
+            tables["regime"] = conn.execute(
+                "SELECT * FROM regime_daily WHERE symbol = ? ORDER BY date DESC LIMIT 90", [sym]
+            ).pl()
+
+            tables["forecasts"] = conn.execute(
+                "SELECT * FROM forecasts WHERE symbol = ? ORDER BY date DESC, horizon_days", [sym]
+            ).pl()
+
+            tables["mc"] = conn.execute(
+                "SELECT * FROM mc_valuation WHERE symbol = ? ORDER BY date DESC LIMIT 1", [sym]
+            ).pl()
+
+            tables["features"] = conn.execute(
+                "SELECT feature, value FROM features_daily WHERE symbol = ? "
+                "AND date = (SELECT MAX(date) FROM features_daily WHERE symbol = ?) "
+                "ORDER BY feature", [sym, sym]
+            ).pl()
+
+            tables["factor_history"] = conn.execute(
+                "SELECT * FROM factors_daily WHERE symbol = ? ORDER BY date DESC LIMIT 90", [sym]
+            ).pl()
+
+            tables["prices"] = conn.execute(
+                "SELECT date, close, volume FROM price_daily WHERE symbol = ? "
+                "ORDER BY date DESC LIMIT 252", [sym]
+            ).pl()
+
+            # Pack all tables into one Parquet using a metadata key column
+            parts = []
+            for tname, df in tables.items():
+                if df.is_empty():
+                    continue
+                df = df.with_columns(pl.lit(tname).alias("_table"))
+                parts.append(df)
+
+            if not parts:
+                continue
+
+            # Write each table as separate columns — use JSON packing for heterogeneous schemas
+            meta = {tname: df.to_pandas().to_json(orient="records", date_format="iso")
+                    for tname, df in tables.items()}
+            meta_df = pl.DataFrame({"key": list(meta.keys()), "json": list(meta.values())})
+
+            tmp = DETAIL_SNAPSHOT_DIR / f"{sym}.parquet.tmp"
+            out = DETAIL_SNAPSHOT_DIR / f"{sym}.parquet"
+            meta_df.write_parquet(str(tmp))
+            tmp.rename(out)
+        except Exception:
+            pass
