@@ -516,9 +516,11 @@ def run_daily(
         prob_up      = float(fc.get("prob_up") or 0.5)
         forecast_score = (prob_up - 0.5) * 2.0   # maps [0,1] → [-1, 1]
 
-        # MC upside: clip to [-2, 2] so a bad revenue estimate doesn't dominate
+        # MC upside: clip to [-1, 1]. WACC ±200bps causes ±23-44% TV swing →
+        # MC signal is directional at best, not precise. Tighter clip prevents
+        # a bad revenue proxy (EBITDA/op_margin for banks/utilities) from dominating.
         mc_upside = float(mc.get("upside_to_p50") or 0.0)
-        mc_upside_clipped = float(np.clip(mc_upside, -2.0, 2.0))
+        mc_upside_clipped = float(np.clip(mc_upside, -1.0, 1.0))
 
         # IC-weighted composite — NO composite_factor re-entry (removes double-counting)
         # revision_score = earnings revision z-score (from factors_daily)
@@ -542,10 +544,14 @@ def run_daily(
         agreeing  = [abs(z) for z in factor_zs if np.sign(z) == np.sign(composite)]
         confidence = float(np.clip(np.mean(agreeing) / 2.0 if agreeing else 0.1, 0.0, 1.0))
 
-        # Kelly from forecast model
-        p50_ret  = float(fc.get("p50") or 0.0)
-        exp_gain = max(abs(p50_ret), 0.01)
-        exp_loss = max(abs(p50_ret) * 0.5, 0.005)
+        # Kelly from forecast model — gain/loss from quantile distribution, not p50*0.5
+        p10_ret = float(fc.get("p10") or 0.0)
+        p25_ret = float(fc.get("p25") or 0.0)
+        p50_ret = float(fc.get("p50") or 0.0)
+        p75_ret = float(fc.get("p75") or 0.0)
+        # b = p75 / |p25| is more calibrated than p50 / (p50*0.5)
+        exp_gain = max(abs(p75_ret), abs(p50_ret), 0.01)
+        exp_loss = max(abs(p25_ret), abs(p10_ret) * 0.5, 0.005)
         kelly    = kelly_fraction_single(prob_up, exp_gain, exp_loss)
 
         signal = _compute_signal(composite, confidence)
@@ -566,6 +572,22 @@ def run_daily(
             "signal":          signal,
             "confidence":      round(confidence, 4),
         })
+
+    # Kelly portfolio normalisation: if sum of all kelly fractions > 1.0,
+    # scale proportionally so portfolio sums to 1.0, then re-apply 15% cap.
+    # This prevents implicit leverage when many signals fire simultaneously.
+    if scorecard_rows:
+        kelly_vals = np.array([r["kelly_fraction"] for r in scorecard_rows], dtype=float)
+        kelly_sum = kelly_vals.sum()
+        if kelly_sum > 1.0:
+            kelly_vals = kelly_vals / kelly_sum        # proportional normalisation
+            kelly_vals = np.clip(kelly_vals, 0.0, 0.15)  # re-apply per-stock cap
+            # re-normalise after cap (some may have been clipped)
+            cap_sum = kelly_vals.sum()
+            if cap_sum > 0:
+                kelly_vals = kelly_vals / cap_sum
+            for i, r in enumerate(scorecard_rows):
+                r["kelly_fraction"] = round(float(kelly_vals[i]), 4)
 
     scorecard_df = pl.DataFrame(scorecard_rows) if scorecard_rows else pl.DataFrame(schema={
         "symbol": pl.Utf8, "date": pl.Date,

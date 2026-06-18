@@ -48,7 +48,8 @@ def _make_obs(close: np.ndarray, volume: np.ndarray) -> np.ndarray:
 def train_hmm(close: np.ndarray, volume: np.ndarray, n_iter: int = 50) -> GaussianHMM:
     """
     Train a Gaussian HMM with N_STATES states.
-    Returns trained model.
+    Runs 3 restarts (seeds 42/43/44), returns the best model by log-likelihood.
+    Multiple restarts reduce label instability from random initialisation.
     """
     obs, valid = _make_obs(close, volume)
     obs_clean = obs[valid]
@@ -56,15 +57,26 @@ def train_hmm(close: np.ndarray, volume: np.ndarray, n_iter: int = 50) -> Gaussi
     if len(obs_clean) < N_STATES * 10:
         raise ValueError(f"Insufficient valid observations for HMM: {len(obs_clean)} rows after NaN/inf filter")
 
-    model = GaussianHMM(
-        n_components=N_STATES,
-        covariance_type="diag",
-        n_iter=n_iter,
-        random_state=42,
-        tol=1e-4,
-    )
-    model.fit(obs_clean)
-    return model
+    best_model = None
+    best_score = -np.inf
+    for seed in (42, 43, 44):
+        model = GaussianHMM(
+            n_components=N_STATES,
+            covariance_type="diag",
+            n_iter=n_iter,
+            random_state=seed,
+            tol=1e-4,
+        )
+        model.fit(obs_clean)
+        try:
+            score = model.score(obs_clean)
+        except Exception:
+            score = -np.inf
+        if score > best_score:
+            best_score = score
+            best_model = model
+
+    return best_model
 
 
 def _map_states(model: GaussianHMM) -> dict[int, int]:

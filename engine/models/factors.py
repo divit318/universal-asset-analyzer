@@ -143,26 +143,35 @@ def compute_low_vol_score(price_df: pl.DataFrame) -> float | None:
     return float(-vol)
 
 
-def compute_revision_score(fund: dict) -> float | None:
+def compute_revision_score(fund: dict, days_since_update: int | None = None) -> float | None:
     """
     Earnings revision: analyst upgrade momentum proxy.
-    earnings_surprise_pct is Bernstein-style: % of quarters beating consensus.
+    earnings_surprise_pct is YoY EPS change as beat/miss proxy.
     eps_growth_yoy captures the magnitude of actual revision.
-    Weighted equally after normalisation.
+
+    Staleness decay: weight = min(1, 30/days_since_update).
+    NSE quarterly filings go stale after ~90 days; penalise stale data linearly.
     """
-    surprise  = fund.get("earnings_surprise_pct")
+    surprise   = fund.get("earnings_surprise_pct")
     eps_growth = fund.get("eps_growth_yoy")
 
     vals = []
     if surprise is not None and np.isfinite(float(surprise)):
-        # earnings_surprise_pct in our DB is 0-100 (beat %)
-        # Normalise to [-1, 1]: 50% beat = neutral
-        vals.append((float(surprise) - 50.0) / 50.0)
+        vals.append(float(np.tanh(float(surprise) / 50.0)))   # tanh bounds to [-1,1]
     if eps_growth is not None and np.isfinite(float(eps_growth)):
-        # EPS growth is in %, normalise by tanh to bound it
         vals.append(float(np.tanh(float(eps_growth) / 50.0)))
 
-    return float(np.mean(vals)) if vals else None
+    if not vals:
+        return None
+
+    score = float(np.mean(vals))
+
+    # Apply staleness discount: fresh (<30d) = full weight, stale (>90d) = 1/3 weight
+    if days_since_update is not None and days_since_update > 0:
+        staleness_weight = float(np.clip(30.0 / days_since_update, 1.0 / 3.0, 1.0))
+        score *= staleness_weight
+
+    return score
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +298,22 @@ def compute_all_factors(
         fund = fund_map.get(sym) or {}
         raw["quality"][sym]   = compute_quality_score(fund)
         raw["value"][sym]     = compute_value_score(fund)
-        raw["revision"][sym]  = compute_revision_score(fund)
+        # Pass days_since_update for staleness discounting of earnings data
+        updated_at = fund.get("updated_at")
+        days_stale: int | None = None
+        if updated_at is not None:
+            try:
+                from datetime import date as _date, datetime as _dt
+                if hasattr(updated_at, "date"):
+                    d = updated_at.date()
+                elif isinstance(updated_at, str):
+                    d = _dt.fromisoformat(updated_at[:10]).date()
+                else:
+                    d = updated_at
+                days_stale = max(0, (_date.today() - d).days)
+            except Exception:
+                pass
+        raw["revision"][sym] = compute_revision_score(fund, days_since_update=days_stale)
 
     z: dict[str, dict[str, float]] = {k: cross_sectional_zscore(v) for k, v in raw.items()}
 
