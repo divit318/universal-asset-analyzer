@@ -151,8 +151,9 @@ def _load_ic_weights(conn, lookback_days: int = 252) -> dict[str, float]:
     """
     try:
         rows = conn.execute("""
-            SELECT s.symbol, s.date, s.momentum_score, s.quality_score,
-                   s.value_score, s.regime_score, s.forecast_score,
+            SELECT s.symbol, s.date,
+                   s.momentum_score, s.quality_score, s.value_score,
+                   s.low_vol_score, s.revision_score,
                    p_fwd.close AS fwd_close, p_cur.close AS cur_close
             FROM scorecard_daily s
             JOIN price_daily p_fwd ON p_fwd.symbol = s.symbol
@@ -172,14 +173,21 @@ def _load_ic_weights(conn, lookback_days: int = 252) -> dict[str, float]:
         return _DEFAULT_WEIGHTS
 
     fwd_ret = np.log(rows["fwd_close"].to_numpy() / rows["cur_close"].to_numpy())
-    fwd_ret = fwd_ret[np.isfinite(fwd_ret)]
+    valid_mask = np.isfinite(fwd_ret)
+    fwd_ret = fwd_ret[valid_mask]
+    if len(fwd_ret) < 50:
+        return _DEFAULT_WEIGHTS
+
+    def _col(name: str) -> list:
+        arr = rows[name].to_numpy() if name in rows.columns else np.zeros(len(rows))
+        return arr[valid_mask].tolist()
 
     factor_history = {
-        "momentum": rows["momentum_score"].to_numpy()[:len(fwd_ret)].tolist(),
-        "quality":  rows["quality_score"].to_numpy()[:len(fwd_ret)].tolist(),
-        "value":    rows["value_score"].to_numpy()[:len(fwd_ret)].tolist(),
-        "low_vol":  rows["low_vol_score"].to_numpy()[:len(fwd_ret)].tolist(),
-        "revision": rows["forecast_score"].to_numpy()[:len(fwd_ret)].tolist(),
+        "momentum": _col("momentum_score"),
+        "quality":  _col("quality_score"),
+        "value":    _col("value_score"),
+        "low_vol":  _col("low_vol_score"),
+        "revision": _col("revision_score"),
     }
 
     return compute_ic_weights(factor_history, fwd_ret.tolist(), _DEFAULT_WEIGHTS)
@@ -461,6 +469,7 @@ def run_daily(
         quality_score  = float(fac.get("quality")  or 0.0)
         value_score    = float(fac.get("value")    or 0.0)
         low_vol_score  = float(fac.get("low_vol")  or 0.0)
+        revision_score = float(fac.get("revision") or 0.0)
 
         # Regime score: probability-weighted expected return (mathematically justified)
         regime_score = 0.0
@@ -485,13 +494,15 @@ def run_daily(
         mc_upside_clipped = float(np.clip(mc_upside, -2.0, 2.0))
 
         # IC-weighted composite — NO composite_factor re-entry (removes double-counting)
+        # revision_score = earnings revision z-score (from factors_daily)
+        # forecast_score = LightGBM prob_up signal — separate overlay, not a factor weight
         w = ic_weights
         composite = (
             w.get("momentum", 0.25) * momentum_score +
             w.get("quality",  0.30) * quality_score  +
             w.get("value",    0.20) * value_score     +
             w.get("low_vol",  0.15) * low_vol_score   +
-            w.get("revision", 0.10) * forecast_score
+            w.get("revision", 0.10) * revision_score
         )
         # Regime score enters as an overlay on top of the factor composite
         composite += 0.10 * regime_score
@@ -500,7 +511,7 @@ def run_daily(
 
         # Confidence: average |z| across factors that agreed on direction
         # High confidence = multiple independent factors all pointing the same way
-        factor_zs = [momentum_score, quality_score, value_score, low_vol_score, regime_score, forecast_score]
+        factor_zs = [momentum_score, quality_score, value_score, low_vol_score, revision_score, regime_score]
         agreeing  = [abs(z) for z in factor_zs if np.sign(z) == np.sign(composite)]
         confidence = float(np.clip(np.mean(agreeing) / 2.0 if agreeing else 0.1, 0.0, 1.0))
 
@@ -513,44 +524,48 @@ def run_daily(
         signal = _compute_signal(composite, confidence)
 
         scorecard_rows.append({
-            "symbol":         sym,
-            "date":           run_date,
-            "momentum_score": round(momentum_score, 4),
-            "quality_score":  round(quality_score, 4),
-            "value_score":    round(value_score, 4),
-            "low_vol_score":  round(low_vol_score, 4),
-            "regime_score":   round(regime_score, 4),
-            "forecast_score": round(forecast_score, 4),
-            "mc_upside":      round(mc_upside, 4),
-            "kelly_fraction": round(kelly, 4),
+            "symbol":          sym,
+            "date":            run_date,
+            "momentum_score":  round(momentum_score, 4),
+            "quality_score":   round(quality_score, 4),
+            "value_score":     round(value_score, 4),
+            "low_vol_score":   round(low_vol_score, 4),
+            "revision_score":  round(revision_score, 4),
+            "regime_score":    round(regime_score, 4),
+            "forecast_score":  round(forecast_score, 4),
+            "mc_upside":       round(mc_upside, 4),
+            "kelly_fraction":  round(kelly, 4),
             "composite_score": round(composite, 4),
-            "signal":         signal,
-            "confidence":     round(confidence, 4),
+            "signal":          signal,
+            "confidence":      round(confidence, 4),
         })
 
     scorecard_df = pl.DataFrame(scorecard_rows) if scorecard_rows else pl.DataFrame(schema={
         "symbol": pl.Utf8, "date": pl.Date,
         "momentum_score": pl.Float64, "quality_score": pl.Float64,
         "value_score": pl.Float64, "low_vol_score": pl.Float64,
-        "regime_score": pl.Float64, "forecast_score": pl.Float64,
-        "mc_upside": pl.Float64, "kelly_fraction": pl.Float64,
-        "composite_score": pl.Float64, "signal": pl.Utf8, "confidence": pl.Float64,
+        "revision_score": pl.Float64, "regime_score": pl.Float64,
+        "forecast_score": pl.Float64, "mc_upside": pl.Float64,
+        "kelly_fraction": pl.Float64, "composite_score": pl.Float64,
+        "signal": pl.Utf8, "confidence": pl.Float64,
     })
 
     if not scorecard_df.is_empty():
         _upsert_df(conn, scorecard_df, "scorecard_daily", [
             "symbol", "date", "momentum_score", "quality_score", "value_score",
-            "low_vol_score", "regime_score", "forecast_score", "mc_upside",
-            "kelly_fraction", "composite_score", "signal", "confidence",
+            "low_vol_score", "revision_score", "regime_score", "forecast_score",
+            "mc_upside", "kelly_fraction", "composite_score", "signal", "confidence",
         ])
 
     # Export atomic read-only snapshots — API reads from these, never from DuckDB directly.
-    # This eliminates all read/write lock contention on engine.duckdb.
+    # Only symbols that actually produced a scorecard row go into the snapshot —
+    # this ensures the UI shows exactly the requested universe, not a mix of all past runs.
+    scored_symbols = [r["symbol"] for r in scorecard_rows]
     log("Exporting read snapshots...")
     try:
-        export_scorecard_snapshot(conn)
-        export_detail_snapshots(conn, symbols)
-        log(f"  Snapshots written: {len(symbols)} detail files + scorecard.")
+        export_scorecard_snapshot(conn, scorecard_df)
+        export_detail_snapshots(conn, scored_symbols)
+        log(f"  Snapshots written: {len(scored_symbols)} detail files + scorecard.")
     except Exception as e:
         log(f"  Snapshot export error (non-fatal): {e}")
 

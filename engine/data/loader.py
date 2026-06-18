@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS scorecard_daily (
     quality_score   DOUBLE,
     value_score     DOUBLE,
     low_vol_score   DOUBLE,
+    revision_score  DOUBLE,
     regime_score    DOUBLE,
     forecast_score  DOUBLE,
     mc_upside       DOUBLE,
@@ -193,6 +194,8 @@ def _migrate_schema(conn: duckdb.DuckDBPyConnection) -> None:
     ).fetchall()}
     if "low_vol_score" not in scorecard_cols:
         conn.execute("ALTER TABLE scorecard_daily ADD COLUMN low_vol_score DOUBLE")
+    if "revision_score" not in scorecard_cols:
+        conn.execute("ALTER TABLE scorecard_daily ADD COLUMN revision_score DOUBLE")
 
 
 def migrate_sqlite_to_duckdb(force: bool = False) -> int:
@@ -544,30 +547,29 @@ def get_symbols_with_prices(min_days: int = 252) -> list[str]:
     return [r[0] for r in rows]
 
 
-def export_scorecard_snapshot(conn: duckdb.DuckDBPyConnection) -> None:
+def export_scorecard_snapshot(
+    conn: duckdb.DuckDBPyConnection,
+    scored_df: "pl.DataFrame",
+) -> None:
     """
-    Write an atomic Parquet snapshot of the latest scorecard + fundamentals join.
+    Write an atomic Parquet snapshot of THIS run's scorecard joined with fundamentals.
+    Only contains symbols from the current run — never mixes universes.
     Uses write-to-tmp + rename to prevent partial reads from the API.
-    All API reads go to this file — DuckDB stays write-only during engine runs.
     """
     SCORECARD_SNAPSHOT.parent.mkdir(parents=True, exist_ok=True)
 
-    # Latest scorecard row per symbol joined with fundamentals name/sector
-    df = conn.execute("""
-        SELECT
-            s.symbol, s.date,
-            f.name, f.sector,
-            s.momentum_score, s.quality_score, s.value_score,
-            s.low_vol_score, s.regime_score, s.forecast_score,
-            s.mc_upside, s.kelly_fraction, s.composite_score,
-            s.signal, s.confidence
-        FROM scorecard_daily s
-        LEFT JOIN fundamentals f ON f.symbol = s.symbol
-        WHERE s.date = (SELECT MAX(date) FROM scorecard_daily WHERE symbol = s.symbol)
-        ORDER BY s.composite_score DESC
-    """).pl()
+    if scored_df.is_empty():
+        return
 
-    # Atomic write: write to .tmp then rename
+    # Join current run's scorecard with fundamentals name/sector
+    fund_df = conn.execute("SELECT symbol, name, sector FROM fundamentals").pl()
+    df = scored_df.join(fund_df, on="symbol", how="left")
+
+    # Reorder: symbol, date, name, sector first for readability
+    front_cols = ["symbol", "date", "name", "sector"]
+    rest = [c for c in df.columns if c not in front_cols]
+    df = df.select(front_cols + rest)
+
     tmp = SCORECARD_SNAPSHOT.with_suffix(".parquet.tmp")
     df.write_parquet(str(tmp))
     tmp.rename(SCORECARD_SNAPSHOT)
