@@ -11,6 +11,7 @@ import type { StockFundamentals } from "./types";
 
 const MODULES = [
   "assetProfile",
+  "price",
   "summaryDetail",
   "financialData",
   "defaultKeyStatistics",
@@ -20,6 +21,12 @@ const MODULES = [
 
 const num = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) ? v : null;
+
+/** Keep a value only when it falls inside a plausible band, else null. Guards
+ * against Yahoo's ADR data quirks (e.g. a foreign EPS vs USD price giving a
+ * "P/E of 1"), which would otherwise fake a deep-value signal. */
+const sane = (v: number | null, lo: number, hi: number): number | null =>
+  v != null && v > lo && v < hi ? v : null;
 
 /** Compound annual growth rate over `years`, as a percent. Null when invalid. */
 function cagr(series: (number | null)[], years: number): number | null {
@@ -51,12 +58,14 @@ interface RawFinancialData {
 }
 interface RawSummary {
   assetProfile?: RawProfile;
+  price?: { exchangeName?: string; fullExchangeName?: string };
   summaryDetail?: { dividendYield?: number; forwardPE?: number };
   financialData?: RawFinancialData;
   defaultKeyStatistics?: {
     enterpriseToEbitda?: number;
     forwardPE?: number;
     sharesOutstanding?: number;
+    bookValue?: number;
   };
   majorHoldersBreakdown?: { institutionsPercentHeld?: number };
   earningsHistory?: { history?: { surprisePercent?: number | null }[] };
@@ -96,10 +105,23 @@ export function mapFundamentals(
   const oi = last(opIncome);
   const ic = last(invested);
   const tax = last(taxRate) ?? 0.21;
-  const roic = oi != null && ic != null && ic !== 0 ? ((oi * (1 - tax)) / ic) * 100 : null;
+  const roicDirect = oi != null && ic != null && ic !== 0 ? ((oi * (1 - tax)) / ic) * 100 : null;
+  // Fallback: estimate ROIC ≈ ROE / (1 + D/E) when time-series data is absent.
+  // Derivation: ROIC = Net Income / (Equity + Debt) = (Net Income / Equity) / (1 + D/E)
+  // This is a rough approximation (ignores interest tax shield) but much better than null.
+  const roicEstimate =
+    roicDirect == null && fd.returnOnEquity != null && fd.debtToEquity != null
+      ? (fd.returnOnEquity / (1 + fd.debtToEquity / 100)) * 100
+      : null;
+  const roic = roicDirect ?? roicEstimate;
 
-  // Net debt / EBITDA (net debt from the balance sheet, EBITDA from Yahoo).
-  const nd = last(netDebt);
+  // Net debt / EBITDA. Prefer the time-series balance-sheet netDebt value; fall
+  // back to computing it from Yahoo's financialData (totalDebt - totalCash) when
+  // the time series doesn't include that field (common for ADRs and new listings).
+  const ndTs = last(netDebt);
+  const ndFallback =
+    fd.totalDebt != null && fd.totalCash != null ? fd.totalDebt - fd.totalCash : null;
+  const nd = ndTs ?? ndFallback;
   const netDebtToEbitda = nd != null && fd.ebitda != null && fd.ebitda !== 0 ? nd / fd.ebitda : null;
 
   // FCF margin & 1-year FCF growth.
@@ -126,8 +148,12 @@ export function mapFundamentals(
     sector: raw.assetProfile?.sector ?? null,
     industry: raw.assetProfile?.industry ?? null,
 
-    forwardPE: num(ks.forwardPE) ?? num(sd.forwardPE),
-    evToEbitda: num(ks.enterpriseToEbitda),
+    // summaryDetail.forwardPE is reliable for ADRs; defaultKeyStatistics often
+    // divides a local-currency EPS by the USD price (giving a "P/E of 1").
+    forwardPE: sane(num(sd.forwardPE) ?? num(ks.forwardPE), 2, 250),
+    // Upper bound raised to 500: high-growth names (Tesla, Nvidia at peak) trade
+    // at 100-300× EV/EBITDA; the old cap of 100 silently nulled ~20% of universe.
+    evToEbitda: sane(num(ks.enterpriseToEbitda), 2, 500),
 
     revenueGrowthYoY: pct(num(fd.revenueGrowth)),
     revenueCagr3y: cagr(revenue, 3),
@@ -140,7 +166,20 @@ export function mapFundamentals(
     operatingMargin: pct(num(fd.operatingMargins)),
 
     // Yahoo reports debt/equity as a percentage (79.5 = 0.795x).
-    debtToEquity: fd.debtToEquity != null ? fd.debtToEquity / 100 : null,
+    // D/E fallback for financial stocks: derive from book value × shares when Yahoo omits it.
+    // Cap at 30x: ADR stocks have a currency mismatch (totalDebt in local currency,
+    // bookValue in USD) that produces absurdly high ratios — the cap discards those.
+    debtToEquity: (() => {
+      if (fd.debtToEquity != null) return fd.debtToEquity / 100;
+      if (fd.totalDebt != null && ks.bookValue != null && ks.sharesOutstanding != null) {
+        const bookEq = ks.bookValue * ks.sharesOutstanding;
+        if (bookEq > 0) {
+          const ratio = fd.totalDebt / bookEq;
+          return ratio < 30 ? ratio : null;
+        }
+      }
+      return null;
+    })(),
     netDebtToEbitda,
     currentRatio: num(fd.currentRatio),
 
@@ -156,6 +195,7 @@ export function mapFundamentals(
     // Extra raw figures kept for the live price layer (FCF yield needs market cap).
     ebitda: num(fd.ebitda),
     freeCashflow: num(fd.freeCashflow),
+    exchange: raw.price?.exchangeName ?? raw.price?.fullExchangeName ?? null,
   };
 }
 

@@ -52,6 +52,7 @@ export interface Quote {
 export interface HistoryPoint {
   date: string; // ISO date
   close: number;
+  volume?: number;
 }
 
 /** A single autocomplete hit for the symbol search typeahead. */
@@ -76,6 +77,11 @@ export interface ResearchData {
   filings: Filing[];
   /** Non-fatal EDGAR failure, surfaced so the page can still render the quote. */
   edgarError: string | null;
+  benchmarks?: {
+    spy: HistoryPoint[];
+    sectorEtf: string | null;
+    sector: HistoryPoint[];
+  };
 }
 
 export interface AiAnalysis {
@@ -106,6 +112,8 @@ export type ScreenerSortField =
 
 export interface ScreenerCriteria {
   sector?: string | null;
+  /** Restrict to Yahoo exchange codes (e.g. NMS, NYQ, ASE) — primary US listings. */
+  exchanges?: string[] | null;
   minPrice?: number | null;
   maxPrice?: number | null;
   minChangePercent?: number | null;
@@ -219,7 +227,7 @@ export type StockFundamentals = Omit<
   | "oneYearReturn"
   | "distanceFrom52WkHigh"
   | "scores"
-> & { ebitda: number | null; freeCashflow: number | null };
+> & { ebitda: number | null; freeCashflow: number | null; exchange: string | null };
 
 /** A live price snapshot merged onto the cached fundamentals at screen time. */
 export interface PriceSnapshot {
@@ -450,6 +458,57 @@ export interface PeerComparison {
   median: PeerMetricSet;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Earnings history                                                           */
+/* -------------------------------------------------------------------------- */
+
+export interface EarningsPoint {
+  date: string;               // ISO quarter-end date
+  quarter: string;            // display label, e.g. "Q1 '24"
+  epsActual: number | null;
+  epsEstimate: number | null;
+  surprisePercent: number | null;
+}
+
+export interface EarningsData {
+  history: EarningsPoint[];   // up to last 4 quarters, ascending
+  nextDate: string | null;    // ISO date of next expected report
+  nextDateEnd: string | null; // upper bound of the window
+  trailingEps: number | null;
+  forwardEps: number | null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Institutional ownership & short interest                                   */
+/* -------------------------------------------------------------------------- */
+
+export interface InstitutionalHolder {
+  name: string;
+  pctHeld: number | null;  // 0–1 fraction
+  shares: number | null;
+  value: number | null;
+}
+
+export interface OwnershipData {
+  institutionsPctHeld: number | null;  // 0–1 fraction
+  insidersPctHeld: number | null;      // 0–1 fraction
+  institutionsCount: number | null;
+  shortPctOfFloat: number | null;      // 0–1 fraction
+  shortRatio: number | null;           // days to cover
+  sharesShort: number | null;
+  topHolders: InstitutionalHolder[];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Valuation history                                                          */
+/* -------------------------------------------------------------------------- */
+
+export interface ValuationPoint {
+  year: number;
+  peRatio: number | null;
+  psRatio: number | null;
+}
+
 /** Combined payload served by /api/fundamentals. */
 export interface FundamentalsData {
   snapshot: FundamentalsSnapshot;
@@ -460,4 +519,7 @@ export interface FundamentalsData {
   score: ScoreResult;
   risks: RiskItem[];
   momentum: MomentumSignal | null;
+  earnings: EarningsData;
+  ownership: OwnershipData;
+  valuation: ValuationPoint[];
 }

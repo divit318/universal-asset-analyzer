@@ -16,8 +16,9 @@ import type { DatasetStatus, StockFundamentals, StockMetrics } from "./types";
 const UNIVERSE_LIMIT = Number(process.env.SCREENER_UNIVERSE_LIMIT) || 1000;
 const FUNDAMENTALS_TTL_MS = 12 * 60 * 60 * 1000;
 const PRICE_TTL_MS = 5 * 60 * 1000;
-const CONCURRENCY = 6;
+const CONCURRENCY = 4;
 const PERSIST_EVERY = 25;
+const MAX_PASSES = 5; // retry rate-limited symbols in waves until coverage holds
 
 const fundamentals = new Map<string, StockFundamentals>();
 let universe: UniverseEntry[] = [];
@@ -26,6 +27,12 @@ let buildPromise: Promise<void> | null = null;
 let priceLayer: { map: Map<string, RichQuote>; at: number } | null = null;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// OTC / pink-sheet listings are usually foreign ADRs whose financials are in a
+// different currency than their USD market cap, which poisons ratios like FCF
+// yield. Long-term investors want clean primary US listings, so we drop them.
+const isOtc = (exchange: string | null | undefined): boolean =>
+  exchange != null && /otc|pink|other/i.test(exchange);
 
 async function mapPool<T>(
   items: T[],
@@ -39,12 +46,13 @@ async function mapPool<T>(
   await Promise.all(workers);
 }
 
-async function withRetry<T>(fn: () => Promise<T>, attempts = 2): Promise<T | null> {
+async function withRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T | null> {
   for (let a = 0; a < attempts; a++) {
     try {
       return await fn();
     } catch {
-      await sleep(300 * (a + 1));
+      // Exponential backoff with jitter to ride out Yahoo rate-limiting.
+      await sleep(500 * 2 ** a + Math.random() * 400);
     }
   }
   return null;
@@ -60,13 +68,15 @@ async function build(): Promise<void> {
     // Hydrate from the SQLite cache first (survives restarts).
     const { rows, builtAt } = getFreshFundamentals(FUNDAMENTALS_TTL_MS);
     for (const row of rows) {
-      if (inUniverse.has(row.symbol)) fundamentals.set(row.symbol, row);
+      if (inUniverse.has(row.symbol) && !isOtc(row.exchange)) fundamentals.set(row.symbol, row);
     }
     status.ready = fundamentals.size;
     if (builtAt) status.builtAt = new Date(builtAt).toISOString();
 
-    // Enrich whatever's still missing.
-    const missing = universe.filter((u) => !fundamentals.has(u.symbol));
+    // Enrich whatever's still missing, in waves. A symbol is "resolved" once we
+    // either cache it or identify it as OTC; only genuine fetch failures (most
+    // often rate-limit drops) are retried on the next pass, so the dataset
+    // converges to near-full coverage instead of stalling at the first wave.
     let pending: StockFundamentals[] = [];
     const flush = () => {
       if (pending.length) {
@@ -75,17 +85,31 @@ async function build(): Promise<void> {
       }
     };
 
-    await mapPool(missing, CONCURRENCY, async (entry) => {
-      const data = await withRetry(() => enrichSymbol(entry.symbol, entry.name));
-      if (data) {
-        fundamentals.set(entry.symbol, data);
-        pending.push(data);
-        if (pending.length >= PERSIST_EVERY) flush();
-      }
-      status.ready = fundamentals.size;
-    });
-    flush();
+    const resolved = new Set(fundamentals.keys());
+    let remaining = universe.filter((u) => !resolved.has(u.symbol));
+    for (let pass = 0; pass < MAX_PASSES && remaining.length > 0; pass++) {
+      await mapPool(remaining, CONCURRENCY, async (entry) => {
+        const data = await withRetry(() => enrichSymbol(entry.symbol, entry.name));
+        if (data) {
+          resolved.add(entry.symbol);
+          // Keep only clean US primary listings; OTC names are resolved-but-dropped.
+          if (!isOtc(data.exchange)) {
+            fundamentals.set(entry.symbol, data);
+            pending.push(data);
+            if (pending.length >= PERSIST_EVERY) flush();
+          }
+        }
+        status.ready = fundamentals.size;
+      });
+      flush();
+      const next = universe.filter((u) => !resolved.has(u.symbol));
+      if (next.length === remaining.length) break; // a pass with zero progress
+      remaining = next;
+      if (remaining.length) await sleep(3000); // brief cool-off between waves
+    }
 
+    // Force the price layer to rebuild against the full symbol set next screen.
+    priceLayer = null;
     status = {
       stage: "ready",
       total: universe.length,
@@ -133,11 +157,15 @@ function assembleMetrics(prices: Map<string, RichQuote>): StockMetrics[] {
   const out: StockMetrics[] = [];
   for (const f of fundamentals.values()) {
     const p = prices.get(f.symbol);
+    if (isOtc(p?.exchange ?? null)) continue;
     const marketCap = p?.marketCap ?? null;
-    const fcfYield =
+    const rawFcfYield =
       f.freeCashflow != null && marketCap && marketCap !== 0
         ? (f.freeCashflow / marketCap) * 100
         : null;
+    // A |yield| above ~40% almost always means an FX mismatch (foreign-currency
+    // FCF over a USD market cap), not a real bargain — drop it.
+    const fcfYield = rawFcfYield != null && Math.abs(rawFcfYield) <= 40 ? rawFcfYield : null;
 
     const base = {
       symbol: f.symbol,

@@ -24,7 +24,9 @@ export async function getUniverse(limit = 1000): Promise<UniverseEntry[]> {
   const pageSize = 250;
   for (let offset = 0; offset < limit; offset += pageSize) {
     const { rows } = await runScreener(
-      { sortField: "marketCap", sortDir: "desc" },
+      // Primary US exchanges only (Nasdaq / NYSE / NYSE American) so the universe
+      // is clean US-listed equities, not foreign OTC/pink-sheet ADRs.
+      { sortField: "marketCap", sortDir: "desc", exchanges: ["NMS", "NYQ", "ASE"] },
       Math.min(pageSize, limit - offset),
       offset,
     );

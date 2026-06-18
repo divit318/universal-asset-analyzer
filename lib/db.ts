@@ -32,6 +32,22 @@ function getDb(): DatabaseSync {
       avg_cost REAL NOT NULL,
       added_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS research_session (
+      id         TEXT PRIMARY KEY,
+      symbol     TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS research_message (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      role       TEXT NOT NULL,
+      content    TEXT NOT NULL,
+      meta       TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_research_message_session
+      ON research_message (session_id, id);
   `);
   return db;
 }
@@ -166,4 +182,64 @@ export function removePosition(symbol: string): void {
   getDb()
     .prepare("DELETE FROM portfolio WHERE symbol = ?")
     .run(symbol.toUpperCase());
+}
+
+/* -------------------------------------------------------------------------- */
+/* Research copilot sessions + messages (Memory Layer persistence)            */
+/* -------------------------------------------------------------------------- */
+
+export interface StoredMessage {
+  role: "user" | "assistant";
+  content: string;
+  meta: string | null; // JSON: citations, suggestions, reasoning
+  createdAt: string;
+}
+
+/** Create the session row if it doesn't exist yet. */
+export function ensureSession(id: string, symbol: string): void {
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO research_session (id, symbol, created_at, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at`,
+    )
+    .run(id, symbol.toUpperCase(), now, now);
+}
+
+/** Append one message to a session. */
+export function appendMessage(
+  sessionId: string,
+  role: "user" | "assistant",
+  content: string,
+  meta: string | null = null,
+): void {
+  getDb()
+    .prepare(
+      `INSERT INTO research_message (session_id, role, content, meta, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(sessionId, role, content, meta, new Date().toISOString());
+}
+
+interface MessageRow {
+  role: "user" | "assistant";
+  content: string;
+  meta: string | null;
+  created_at: string;
+}
+
+/** Load a session's messages in chronological order. */
+export function getSessionMessages(sessionId: string): StoredMessage[] {
+  const rows = getDb()
+    .prepare(
+      "SELECT role, content, meta, created_at FROM research_message WHERE session_id = ? ORDER BY id ASC",
+    )
+    .all(sessionId) as unknown as MessageRow[];
+  return rows.map((r) => ({
+    role: r.role,
+    content: r.content,
+    meta: r.meta,
+    createdAt: r.created_at,
+  }));
 }

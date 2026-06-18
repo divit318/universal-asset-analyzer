@@ -55,18 +55,45 @@ export function mapQuote(raw: RawQuote): Quote {
 interface RawChartQuote {
   date?: Date | string | null;
   close?: number | null;
+  volume?: number | null;
 }
 
 /** Map raw chart rows into clean history points, dropping gaps. Pure. */
 export function mapHistory(rows: RawChartQuote[]): HistoryPoint[] {
   return rows
-    .filter((r): r is { date: Date | string; close: number } =>
+    .filter((r): r is { date: Date | string; close: number; volume?: number | null } =>
       r.close != null && r.date != null,
     )
     .map((r) => ({
       date: new Date(r.date).toISOString().slice(0, 10),
       close: r.close,
+      ...(r.volume != null ? { volume: r.volume } : {}),
     }));
+}
+
+/** Maps sector names (Yahoo Finance format) to their SPDR sector ETF tickers. */
+export const SECTOR_ETF: Record<string, string> = {
+  Technology: "XLK",
+  Financials: "XLF",
+  "Financial Services": "XLF",
+  "Health Care": "XLV",
+  Healthcare: "XLV",
+  "Consumer Discretionary": "XLY",
+  "Consumer Cyclical": "XLY",
+  "Consumer Staples": "XLP",
+  "Consumer Defensive": "XLP",
+  Energy: "XLE",
+  Utilities: "XLU",
+  "Real Estate": "XLRE",
+  Materials: "XLB",
+  "Basic Materials": "XLB",
+  Industrials: "XLI",
+  "Communication Services": "XLC",
+};
+
+export function getSectorEtf(sector: string | null | undefined): string | null {
+  if (!sector) return null;
+  return SECTOR_ETF[sector] ?? null;
 }
 
 /** Raw quoteSummary passthrough for the fundamentals layer. */
@@ -74,9 +101,14 @@ export async function getQuoteSummary(
   symbol: string,
   modules: string[],
 ): Promise<unknown> {
-  return yahooFinance.quoteSummary(symbol, {
-    modules,
-  } as unknown as Parameters<typeof yahooFinance.quoteSummary>[1]);
+  // validateResult:false — yahoo-finance2 v3 otherwise *throws* when Yahoo adds
+  // or changes a field vs its schema, discarding otherwise-good data. With many
+  // modules per call that happens constantly, so we opt out of strict validation.
+  return yahooFinance.quoteSummary(
+    symbol,
+    { modules } as unknown as Parameters<typeof yahooFinance.quoteSummary>[1],
+    { validateResult: false } as unknown as Parameters<typeof yahooFinance.quoteSummary>[2],
+  );
 }
 
 /** Annual financial-statement time series (revenue, EPS, FCF, shares, …). */
@@ -84,11 +116,15 @@ export async function getFundamentalsTimeSeries(
   symbol: string,
   fromYear = new Date().getFullYear() - 6,
 ): Promise<Record<string, unknown>[]> {
-  const result = await yahooFinance.fundamentalsTimeSeries(symbol, {
-    period1: `${fromYear}-01-01`,
-    type: "annual",
-    module: "all",
-  } as unknown as Parameters<typeof yahooFinance.fundamentalsTimeSeries>[1]);
+  const result = await yahooFinance.fundamentalsTimeSeries(
+    symbol,
+    {
+      period1: `${fromYear}-01-01`,
+      type: "annual",
+      module: "all",
+    } as unknown as Parameters<typeof yahooFinance.fundamentalsTimeSeries>[1],
+    { validateResult: false } as unknown as Parameters<typeof yahooFinance.fundamentalsTimeSeries>[2],
+  );
   return Array.isArray(result) ? (result as Record<string, unknown>[]) : [];
 }
 
@@ -100,6 +136,7 @@ export interface RichQuote {
   marketCap: number | null;
   oneYearReturn: number | null; // %
   distanceFrom52WkHigh: number | null; // % (negative = below the high)
+  exchange: string | null;
 }
 
 interface RawRichQuote extends RawQuote {
@@ -118,6 +155,7 @@ export function mapRichQuote(raw: RawRichQuote): RichQuote {
     oneYearReturn: raw.fiftyTwoWeekChangePercent ?? null,
     distanceFrom52WkHigh:
       price != null && high ? ((price - high) / high) * 100 : null,
+    exchange: raw.fullExchangeName ?? null,
   };
 }
 
@@ -230,6 +268,30 @@ export async function searchSymbols(
           (TYPE_RANK[b.type?.toUpperCase() ?? ""] ?? 9),
       );
     return mapped.slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
+/** Raw subset of a Yahoo search "news" result. */
+export interface RawNews {
+  title?: string;
+  publisher?: string;
+  link?: string;
+  providerPublishTime?: number | Date;
+}
+
+/**
+ * Recent news headlines for a symbol via Yahoo search. Best-effort: returns []
+ * on failure so the copilot's context assembly never blocks on news.
+ */
+export async function getNews(symbol: string, count = 8): Promise<RawNews[]> {
+  try {
+    const res = (await yahooFinance.search(symbol, {
+      quotesCount: 0,
+      newsCount: count,
+    } as unknown as Parameters<typeof yahooFinance.search>[1])) as { news?: RawNews[] };
+    return res.news ?? [];
   } catch {
     return [];
   }

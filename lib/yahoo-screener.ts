@@ -92,6 +92,16 @@ export function buildQuery(c: ScreenerCriteria): Operand {
   };
 
   if (c.sector) operands.push({ operator: "eq", operands: ["sector", c.sector] });
+  if (c.exchanges && c.exchanges.length) {
+    operands.push(
+      c.exchanges.length === 1
+        ? { operator: "eq", operands: ["exchange", c.exchanges[0]] }
+        : {
+            operator: "or",
+            operands: c.exchanges.map((e) => ({ operator: "eq", operands: ["exchange", e] })),
+          },
+    );
+  }
   add("gte", "intradayprice", c.minPrice);
   add("lte", "intradayprice", c.maxPrice);
   add("gte", "percentchange", c.minChangePercent);

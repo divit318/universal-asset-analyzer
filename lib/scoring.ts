@@ -118,7 +118,7 @@ export function scoreHealth(s: FundamentalsSnapshot) {
     s.totalDebt != null && s.totalCash != null && s.ebitda != null && s.ebitda !== 0
       ? (s.totalDebt - s.totalCash) / s.ebitda
       : null;
-  return bucket("Financial health", [
+  return bucket("Financial Health", [
     mk("Debt / equity", s.debtToEquity, 2, 0.2, 8, (v) => `D/E ${ratio(v)}`),
     mk("Current ratio", s.currentRatio, 0.8, 2, 6, (v) => `Current ${ratio(v)}`),
     mk("Net debt / EBITDA", netDebtToEbitda, 4, 0, 6, (v) => `Net debt/EBITDA ${ratio(v)}`),
