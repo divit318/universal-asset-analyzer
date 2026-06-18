@@ -31,6 +31,7 @@ from engine.data.loader import (
     get_db,
     migrate_sqlite_to_duckdb,
     fetch_ohlcv,
+    fetch_fundamentals,
     get_symbols_with_prices,
 )
 from engine.features.factory import build_features
@@ -297,11 +298,35 @@ def run_daily(
         for i in range(0, len(syms_to_fetch), batch_size):
             batch = syms_to_fetch[i:i + batch_size]
             try:
-                from engine.data.loader import fetch_ohlcv
                 n = fetch_ohlcv(batch, period="5y")
-                log(f"  batch {i // batch_size + 1}: {n} rows")
+                log(f"  OHLCV batch {i // batch_size + 1}: {n} rows")
             except Exception as e:
-                log(f"  batch {i // batch_size + 1} error: {e}")
+                log(f"  OHLCV batch {i // batch_size + 1} error: {e}")
+
+        # Fetch fundamentals for symbols that are missing them or stale (>7 days)
+        log(f"Fetching fundamentals for {len(syms_to_fetch)} symbols...")
+        conn2 = get_db()
+        stale = conn2.execute("""
+            SELECT DISTINCT p.symbol FROM price_daily p
+            LEFT JOIN fundamentals f ON f.symbol = p.symbol
+            WHERE f.symbol IS NULL
+               OR f.updated_at < now() - INTERVAL '7 DAY'
+               OR f.forward_pe IS NULL
+        """).fetchall()
+        conn2.close()
+        stale_syms = [r[0] for r in stale if r[0] in set(syms_to_fetch)]
+        if stale_syms:
+            log(f"  Fetching fundamentals for {len(stale_syms)} symbols (missing/stale)...")
+            fund_batch_size = 10  # yfinance Ticker.info is per-symbol, keep batches small
+            for i in range(0, len(stale_syms), fund_batch_size):
+                batch = stale_syms[i:i + fund_batch_size]
+                try:
+                    n = fetch_fundamentals(batch)
+                    log(f"  fundamentals batch {i // fund_batch_size + 1}: {n} upserted")
+                except Exception as e:
+                    log(f"  fundamentals batch {i // fund_batch_size + 1} error: {e}")
+        else:
+            log("  All fundamentals up to date.")
 
     if symbols is None:
         symbols = get_symbols_with_prices(min_days=252)

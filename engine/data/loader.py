@@ -372,6 +372,115 @@ def fetch_ohlcv(
     return len(rows)
 
 
+def fetch_fundamentals(symbols: list[str]) -> int:
+    """
+    Fetch fundamentals from yfinance Ticker.info for each symbol and upsert
+    into the fundamentals table. Covers all symbols — US and Indian (.NS).
+    Returns number of rows upserted.
+    """
+    conn = get_db()
+
+    def _sf(v) -> float | None:
+        try:
+            f = float(v)
+            return f if f == f else None
+        except (TypeError, ValueError):
+            return None
+
+    upserted = 0
+    for sym in symbols:
+        try:
+            info = yf.Ticker(sym).info
+            if not info or info.get("quoteType") not in ("EQUITY", "ETF", "MUTUALFUND", None):
+                # quoteType missing on some tickers — try anyway
+                if not info:
+                    continue
+
+            # Revenue growth: yfinance gives revenueGrowth as a fraction (0.125 = 12.5%)
+            rev_growth = _sf(info.get("revenueGrowth"))
+            rev_growth_pct = rev_growth * 100.0 if rev_growth is not None else None
+
+            # Margins: yfinance gives as fractions — convert to %
+            def _pct(key):
+                v = _sf(info.get(key))
+                return v * 100.0 if v is not None else None
+
+            # ROE/ROA are fractions in yfinance
+            roe = _sf(info.get("returnOnEquity"))
+            roe_pct = roe * 100.0 if roe is not None else None
+
+            # ROIC approximation: returnOnAssets * (1 + D/E) if returnOnAssets available
+            roa = _sf(info.get("returnOnAssets"))
+            d_e = _sf(info.get("debtToEquity"))
+            if roa is not None and d_e is not None:
+                roic = roa * 100.0 * (1.0 + max(d_e, 0) / 100.0)
+            elif roa is not None:
+                roic = roa * 100.0
+            else:
+                roic = None
+
+            # FCF margin: freeCashflow / totalRevenue
+            fcf = _sf(info.get("freeCashflow"))
+            rev = _sf(info.get("totalRevenue"))
+            fcf_margin = (fcf / rev * 100.0) if (fcf is not None and rev and rev > 0) else None
+
+            # EPS growth YoY: (forwardEps - trailingEps) / |trailingEps|
+            fwd_eps = _sf(info.get("forwardEps"))
+            trail_eps = _sf(info.get("trailingEps"))
+            if fwd_eps and trail_eps and abs(trail_eps) > 1e-6:
+                eps_growth = (fwd_eps - trail_eps) / abs(trail_eps) * 100.0
+            else:
+                eps_growth = None
+
+            # Dividend yield: yfinance gives as fraction
+            div_yield = _sf(info.get("dividendYield"))
+            div_yield_pct = div_yield * 100.0 if div_yield is not None else None
+
+            conn.execute("""
+                INSERT OR REPLACE INTO fundamentals (
+                    symbol, name, sector, industry,
+                    forward_pe, ev_to_ebitda,
+                    revenue_growth_yoy,
+                    eps_growth_yoy,
+                    roic, roe,
+                    gross_margin, operating_margin,
+                    debt_to_equity, current_ratio,
+                    fcf_margin,
+                    dividend_yield,
+                    ebitda, free_cashflow,
+                    shares_outstanding, market_cap,
+                    updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,now())
+            """, [
+                sym,
+                info.get("longName") or info.get("shortName"),
+                info.get("sector"),
+                info.get("industry"),
+                _sf(info.get("forwardPE")),
+                _sf(info.get("enterpriseToEbitda")),
+                rev_growth_pct,
+                eps_growth,
+                roic,
+                roe_pct,
+                _pct("grossMargins"),
+                _pct("operatingMargins"),
+                _sf(info.get("debtToEquity")),
+                _sf(info.get("currentRatio")),
+                fcf_margin,
+                div_yield_pct,
+                _sf(info.get("ebitda")),
+                fcf,
+                _sf(info.get("sharesOutstanding")),
+                _sf(info.get("marketCap")),
+            ])
+            upserted += 1
+        except Exception:
+            pass
+
+    conn.close()
+    return upserted
+
+
 def get_price_matrix(
     symbols: list[str],
     start: Optional[str] = None,
