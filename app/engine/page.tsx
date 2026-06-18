@@ -10,10 +10,13 @@ import Link from "next/link";
 interface ScorecardRow {
   symbol: string;
   date: string;
+  name?: string;
+  sector?: string;
   momentum_score: number;
   quality_score: number;
   value_score: number;
   low_vol_score: number;
+  revision_score: number;
   regime_score: number;
   forecast_score: number;
   mc_upside: number;
@@ -141,6 +144,11 @@ const FACTOR_META: Record<string, { label: string; desc: string; formula: string
     label: "Low Vol",
     desc: "Low-volatility factor. Negative of 63-day realized annualised vol. Lower vol = higher raw score.",
     formula: "−σ(log_ret, 63d) × √252  →  cross-sectional z-score",
+  },
+  revision_score: {
+    label: "Revision",
+    desc: "Earnings revision momentum. Analyst beat rate and EPS growth YoY, normalised and averaged.",
+    formula: "(beat_pct − 50) / 50  +  tanh(eps_growth / 50)  →  cross-sectional z-score",
   },
   forecast_score: {
     label: "Forecast",
@@ -363,7 +371,7 @@ function DetailPanel({ symbol, onClose }: { symbol: string; onClose: () => void 
                 <div className="mt-1 flex items-center justify-between rounded-lg border border-border bg-surface-2 px-3 py-2">
                   <div className="flex flex-col">
                     <span className="text-xs font-semibold uppercase tracking-wide text-muted">Composite</span>
-                    <span className="text-xs text-muted">IC-weighted Σ wᵢ · zᵢ + 0.10 · MC_upside</span>
+                    <span className="text-xs text-muted">IC-weighted Σ wᵢ · zᵢ + 0.10 · regime + 0.05 · MC_upside</span>
                   </div>
                   <div className="flex items-center gap-3">
                     <ZBar value={sc.composite_score} />
@@ -679,6 +687,7 @@ export default function EnginePage() {
     ["quality_score",   "Quality z"],
     ["value_score",     "Value z"],
     ["low_vol_score",   "Low Vol z"],
+    ["revision_score",  "Revision z"],
     ["regime_score",    "Regime"],
     ["forecast_score",  "Forecast"],
     ["mc_upside",       "MC Upside"],
@@ -824,10 +833,13 @@ export default function EnginePage() {
                     onClick={() => setExpanded(expanded === row.symbol ? null : row.symbol)}
                   >
                       <td className="px-4 py-3">
-                        <Link href={`/stocks/${row.symbol}`} className="font-mono font-semibold text-accent hover:underline"
-                          onClick={(e) => e.stopPropagation()}>
-                          {row.symbol}
-                        </Link>
+                        <div className="flex flex-col gap-0.5">
+                          <Link href={`/stocks/${row.symbol}`} className="font-mono font-semibold text-accent hover:underline"
+                            onClick={(e) => e.stopPropagation()}>
+                            {row.symbol}
+                          </Link>
+                          {row.name && <span className="text-xs text-muted truncate max-w-[140px]">{row.name}</span>}
+                        </div>
                       </td>
                       {/* Composite with bar */}
                       <td className="px-4 py-3">
@@ -837,6 +849,7 @@ export default function EnginePage() {
                       <td className="px-4 py-3 text-right font-mono text-xs">{row.quality_score >= 0 ? "+" : ""}{row.quality_score.toFixed(3)}</td>
                       <td className="px-4 py-3 text-right font-mono text-xs">{row.value_score >= 0 ? "+" : ""}{row.value_score.toFixed(3)}</td>
                       <td className="px-4 py-3 text-right font-mono text-xs">{(row.low_vol_score ?? 0) >= 0 ? "+" : ""}{(row.low_vol_score ?? 0).toFixed(3)}</td>
+                      <td className="px-4 py-3 text-right font-mono text-xs">{(row.revision_score ?? 0) >= 0 ? "+" : ""}{(row.revision_score ?? 0).toFixed(3)}</td>
                       <td className="px-4 py-3 text-right font-mono text-xs">{row.regime_score >= 0 ? "+" : ""}{row.regime_score.toFixed(3)}</td>
                       <td className="px-4 py-3 text-right font-mono text-xs">{row.forecast_score >= 0 ? "+" : ""}{row.forecast_score.toFixed(3)}</td>
                       <td className={`px-4 py-3 text-right font-mono text-xs ${row.mc_upside >= 0 ? "text-positive" : "text-negative"}`}>
