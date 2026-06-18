@@ -1,0 +1,413 @@
+"""DuckDB data layer — schema init, SQLite migration, OHLCV fetch, price matrix."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from pathlib import Path
+from typing import Optional
+
+import duckdb
+import polars as pl
+import yfinance as yf
+
+DB_PATH = Path(__file__).parents[2] / "data" / "engine.duckdb"
+SQLITE_PATH = Path(__file__).parents[2] / "data" / "app.db"
+
+_DDL = """
+CREATE TABLE IF NOT EXISTS price_daily (
+    symbol      VARCHAR NOT NULL,
+    date        DATE NOT NULL,
+    open        DOUBLE,
+    high        DOUBLE,
+    low         DOUBLE,
+    close       DOUBLE,
+    adj_close   DOUBLE,
+    volume      BIGINT,
+    PRIMARY KEY (symbol, date)
+);
+
+CREATE TABLE IF NOT EXISTS fundamentals (
+    symbol                  VARCHAR PRIMARY KEY,
+    name                    VARCHAR,
+    sector                  VARCHAR,
+    industry                VARCHAR,
+    forward_pe              DOUBLE,
+    ev_to_ebitda            DOUBLE,
+    revenue_growth_yoy      DOUBLE,
+    revenue_cagr_3y         DOUBLE,
+    eps_growth_yoy          DOUBLE,
+    eps_cagr_3y             DOUBLE,
+    roic                    DOUBLE,
+    roe                     DOUBLE,
+    gross_margin            DOUBLE,
+    operating_margin        DOUBLE,
+    debt_to_equity          DOUBLE,
+    net_debt_to_ebitda      DOUBLE,
+    current_ratio           DOUBLE,
+    fcf_margin              DOUBLE,
+    fcf_growth_yoy          DOUBLE,
+    dividend_yield          DOUBLE,
+    buyback_yield           DOUBLE,
+    institutional_ownership DOUBLE,
+    earnings_surprise_pct   DOUBLE,
+    ebitda                  DOUBLE,
+    free_cashflow           DOUBLE,
+    shares_outstanding      DOUBLE,
+    market_cap              DOUBLE,
+    updated_at              TIMESTAMP DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS features_daily (
+    symbol  VARCHAR NOT NULL,
+    date    DATE NOT NULL,
+    feature VARCHAR NOT NULL,
+    value   DOUBLE,
+    PRIMARY KEY (symbol, date, feature)
+);
+
+CREATE TABLE IF NOT EXISTS regime_daily (
+    symbol          VARCHAR NOT NULL,
+    date            DATE NOT NULL,
+    regime          INTEGER,        -- 0=Bull 1=Bear 2=Range 3=Crash 4=Recovery
+    regime_label    VARCHAR,
+    prob_bull       DOUBLE,
+    prob_bear       DOUBLE,
+    prob_range      DOUBLE,
+    prob_crash      DOUBLE,
+    prob_recovery   DOUBLE,
+    PRIMARY KEY (symbol, date)
+);
+
+CREATE TABLE IF NOT EXISTS factors_daily (
+    symbol          VARCHAR NOT NULL,
+    date            DATE NOT NULL,
+    momentum        DOUBLE,
+    quality         DOUBLE,
+    value           DOUBLE,
+    low_vol         DOUBLE,
+    revision        DOUBLE,
+    composite       DOUBLE,
+    PRIMARY KEY (symbol, date)
+);
+
+CREATE TABLE IF NOT EXISTS forecasts (
+    symbol          VARCHAR NOT NULL,
+    date            DATE NOT NULL,
+    horizon_days    INTEGER NOT NULL,
+    p10             DOUBLE,
+    p25             DOUBLE,
+    p50             DOUBLE,
+    p75             DOUBLE,
+    p90             DOUBLE,
+    prob_up         DOUBLE,
+    PRIMARY KEY (symbol, date, horizon_days)
+);
+
+CREATE TABLE IF NOT EXISTS mc_valuation (
+    symbol          VARCHAR NOT NULL,
+    date            DATE NOT NULL,
+    intrinsic_p10   DOUBLE,
+    intrinsic_p25   DOUBLE,
+    intrinsic_p50   DOUBLE,
+    intrinsic_p75   DOUBLE,
+    intrinsic_p90   DOUBLE,
+    wacc            DOUBLE,
+    terminal_growth DOUBLE,
+    PRIMARY KEY (symbol, date)
+);
+
+CREATE TABLE IF NOT EXISTS scorecard_daily (
+    symbol          VARCHAR NOT NULL,
+    date            DATE NOT NULL,
+    momentum_score  DOUBLE,
+    quality_score   DOUBLE,
+    value_score     DOUBLE,
+    regime_score    DOUBLE,
+    forecast_score  DOUBLE,
+    mc_upside       DOUBLE,
+    kelly_fraction  DOUBLE,
+    composite_score DOUBLE,
+    signal          VARCHAR,
+    confidence      DOUBLE,
+    PRIMARY KEY (symbol, date)
+);
+"""
+
+_CAMEL_TO_SNAKE = {
+    "symbol": "symbol",
+    "name": "name",
+    "sector": "sector",
+    "industry": "industry",
+    "forwardPE": "forward_pe",
+    "evToEbitda": "ev_to_ebitda",
+    "revenueGrowthYoY": "revenue_growth_yoy",
+    "revenueCagr3y": "revenue_cagr_3y",
+    "epsGrowthYoY": "eps_growth_yoy",
+    "epsCagr3y": "eps_cagr_3y",
+    "roic": "roic",
+    "roe": "roe",
+    "grossMargin": "gross_margin",
+    "operatingMargin": "operating_margin",
+    "debtToEquity": "debt_to_equity",
+    "netDebtToEbitda": "net_debt_to_ebitda",
+    "currentRatio": "current_ratio",
+    "fcfMargin": "fcf_margin",
+    "fcfGrowthYoY": "fcf_growth_yoy",
+    "dividendYield": "dividend_yield",
+    "buybackYield": "buyback_yield",
+    "institutionalOwnership": "institutional_ownership",
+    "earningsSurprisePct": "earnings_surprise_pct",
+    "ebitda": "ebitda",
+    "freeCashflow": "free_cashflow",
+}
+
+
+def get_db() -> duckdb.DuckDBPyConnection:
+    """Return a DuckDB connection, initialising schema on first call."""
+    conn = duckdb.connect(str(DB_PATH))
+    conn.execute("PRAGMA threads=8")  # use all P-cores on Apple Silicon
+    conn.execute(_DDL)
+    # Idempotent migrations for columns added after initial schema creation
+    _migrate_schema(conn)
+    return conn
+
+
+def _migrate_schema(conn: duckdb.DuckDBPyConnection) -> None:
+    """Add columns that were not present in the initial schema. Safe to call repeatedly."""
+    existing = {r[0] for r in conn.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='fundamentals'"
+    ).fetchall()}
+    if "shares_outstanding" not in existing:
+        conn.execute("ALTER TABLE fundamentals ADD COLUMN shares_outstanding DOUBLE")
+    if "market_cap" not in existing:
+        conn.execute("ALTER TABLE fundamentals ADD COLUMN market_cap DOUBLE")
+
+
+def migrate_sqlite_to_duckdb(force: bool = False) -> int:
+    """
+    Migrate fundamentals_cache from SQLite JSON blobs → DuckDB columnar table.
+    Returns number of rows upserted.  Idempotent when force=False.
+    """
+    conn = get_db()
+
+    if not force:
+        existing = conn.execute("SELECT COUNT(*) FROM fundamentals").fetchone()[0]
+        if existing > 0:
+            conn.close()
+            return existing
+
+    if not SQLITE_PATH.exists():
+        conn.close()
+        return 0
+
+    sqlite_conn = sqlite3.connect(str(SQLITE_PATH))
+    rows = sqlite_conn.execute(
+        "SELECT symbol, data FROM fundamentals_cache"
+    ).fetchall()
+    sqlite_conn.close()
+
+    records: list[dict] = []
+    for symbol, raw in rows:
+        try:
+            blob = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        rec: dict = {}
+        for camel, snake in _CAMEL_TO_SNAKE.items():
+            val = blob.get(camel)
+            rec[snake] = val
+        if rec.get("symbol") is None:
+            rec["symbol"] = symbol
+        records.append(rec)
+
+    if not records:
+        conn.close()
+        return 0
+
+    df = pl.DataFrame(records, infer_schema_length=len(records))
+
+    # Ensure all expected columns exist (fill missing with null)
+    target_cols = list(_CAMEL_TO_SNAKE.values())
+    for col in target_cols:
+        if col not in df.columns:
+            df = df.with_columns(pl.lit(None).alias(col))
+
+    # Cast numeric columns to Float64
+    float_cols = [c for c in target_cols if c not in ("symbol", "name", "sector", "industry")]
+    df = df.with_columns([pl.col(c).cast(pl.Float64, strict=False) for c in float_cols])
+
+    conn.register("_mig_tmp", df.to_arrow())
+    conn.execute("""
+        INSERT OR REPLACE INTO fundamentals
+        SELECT
+            symbol, name, sector, industry,
+            forward_pe, ev_to_ebitda,
+            revenue_growth_yoy, revenue_cagr_3y,
+            eps_growth_yoy, eps_cagr_3y,
+            roic, roe, gross_margin, operating_margin,
+            debt_to_equity, net_debt_to_ebitda, current_ratio,
+            fcf_margin, fcf_growth_yoy,
+            dividend_yield, buyback_yield,
+            institutional_ownership, earnings_surprise_pct,
+            ebitda, free_cashflow,
+            now()
+        FROM _mig_tmp
+    """)
+    conn.unregister("_mig_tmp")
+
+    n = conn.execute("SELECT COUNT(*) FROM fundamentals").fetchone()[0]
+    conn.close()
+    return n
+
+
+def fetch_ohlcv(
+    symbols: list[str],
+    period: str = "5y",
+    interval: str = "1d",
+) -> int:
+    """
+    Download OHLCV from yfinance and upsert into price_daily.
+    Returns total rows inserted.
+    """
+    conn = get_db()
+
+    tickers = yf.download(
+        symbols,
+        period=period,
+        interval=interval,
+        auto_adjust=True,
+        progress=False,
+        threads=True,
+    )
+
+    if tickers.empty:
+        conn.close()
+        return 0
+
+    # yfinance multi-ticker returns MultiIndex columns: (field, symbol)
+    single = len(symbols) == 1
+    rows: list[dict] = []
+
+    def _safe_float(v) -> float | None:
+        try:
+            f = float(v)
+            return f if f == f else None  # NaN check
+        except (TypeError, ValueError):
+            return None
+
+    def _safe_int(v) -> int | None:
+        f = _safe_float(v)
+        return int(f) if f is not None else None
+
+    if single:
+        sym = symbols[0]
+        for date, row in tickers.iterrows():
+            rows.append({
+                "symbol": sym,
+                "date": str(date.date()),
+                "open": _safe_float(row.get("Open")),
+                "high": _safe_float(row.get("High")),
+                "low": _safe_float(row.get("Low")),
+                "close": _safe_float(row.get("Close")),
+                "adj_close": _safe_float(row.get("Close")),
+                "volume": _safe_int(row.get("Volume")),
+            })
+    else:
+        for sym in symbols:
+            try:
+                sub = tickers.xs(sym, axis=1, level=1)
+            except KeyError:
+                continue
+            for date, row in sub.iterrows():
+                rows.append({
+                    "symbol": sym,
+                    "date": str(date.date()),
+                    "open": _safe_float(row.get("Open")),
+                    "high": _safe_float(row.get("High")),
+                    "low": _safe_float(row.get("Low")),
+                    "close": _safe_float(row.get("Close")),
+                    "adj_close": _safe_float(row.get("Close")),
+                    "volume": _safe_int(row.get("Volume")),
+                })
+
+    if not rows:
+        conn.close()
+        return 0
+
+    df = pl.DataFrame(rows)
+    conn.register("_price_tmp", df.to_arrow())
+    conn.execute("""
+        INSERT OR REPLACE INTO price_daily
+        SELECT symbol, date::DATE, open, high, low, close, adj_close, volume
+        FROM _price_tmp
+    """)
+    conn.unregister("_price_tmp")
+
+    # Fetch shares_outstanding + market_cap and upsert into fundamentals
+    for sym in symbols:
+        try:
+            fi = yf.Ticker(sym).fast_info
+            shares = getattr(fi, "shares", None)
+            mktcap = getattr(fi, "market_cap", None)
+            if shares or mktcap:
+                conn.execute("""
+                    UPDATE fundamentals
+                    SET shares_outstanding = ?, market_cap = ?
+                    WHERE symbol = ?
+                """, [float(shares) if shares else None,
+                      float(mktcap) if mktcap else None,
+                      sym])
+        except Exception:
+            pass
+
+    conn.close()
+    return len(rows)
+
+
+def get_price_matrix(
+    symbols: list[str],
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> pl.LazyFrame:
+    """
+    Return a zero-copy DuckDB→Polars LazyFrame of adj_close prices.
+    Shape: rows=dates, cols=symbols (pivoted).
+    """
+    conn = get_db()
+
+    where_parts = [f"symbol IN ({','.join('?' for _ in symbols)})"]
+    params: list = list(symbols)
+    if start:
+        where_parts.append("date >= ?::DATE")
+        params.append(start)
+    if end:
+        where_parts.append("date <= ?::DATE")
+        params.append(end)
+
+    where = " AND ".join(where_parts)
+    df = conn.execute(
+        f"SELECT symbol, date, adj_close FROM price_daily WHERE {where} ORDER BY date",
+        params,
+    ).fetchdf()
+    conn.close()
+
+    lf = pl.from_pandas(df).lazy()
+    # Pivot: date × symbol
+    lf = lf.collect().pivot(
+        index="date", on="symbol", values="adj_close"
+    ).lazy()
+    return lf
+
+
+def get_symbols_with_prices(min_days: int = 252) -> list[str]:
+    """Return symbols that have at least min_days of price history."""
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT symbol FROM price_daily
+        GROUP BY symbol
+        HAVING COUNT(*) >= ?
+        ORDER BY symbol
+    """, [min_days]).fetchall()
+    conn.close()
+    return [r[0] for r in rows]
