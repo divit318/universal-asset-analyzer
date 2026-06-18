@@ -379,6 +379,7 @@ export default function ComparePage() {
               symbols={validEntries.map((e) => e.symbol)}
               colors={validEntries.map((_, i) => COLORS[i % COLORS.length])}
               marketCaps={Object.fromEntries(validEntries.map((e) => [e.symbol, e.quote?.marketCap]))}
+              entries={validEntries}
             />
           )}
 
