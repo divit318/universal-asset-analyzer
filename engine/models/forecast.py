@@ -263,7 +263,8 @@ def run_forecasts(
     close = df["close"].to_numpy().astype(np.float64)
     X, dates = _make_feature_matrix(df)
 
-    latest_date = dates[-1]
+    # dates[-1] is a numpy datetime64 or datetime.date — cast to pl.Date-compatible Python date
+    latest_date = df["date"][-1]   # polars Date scalar, safe for pl.DataFrame construction
     X_latest    = X[-1:].copy()
 
     # Verify X_latest has no NaN (if it does, we can't predict)
@@ -298,4 +299,10 @@ def run_forecasts(
             "prob_up":      dist["prob_up"],
         })
 
-    return pl.DataFrame(records) if records else empty
+    if not records:
+        return empty
+    df_out = pl.DataFrame(records)
+    # Ensure date column is pl.Date (not BLOB/object) regardless of how the scalar came in
+    if df_out["date"].dtype != pl.Date:
+        df_out = df_out.with_columns(pl.col("date").cast(pl.Date))
+    return df_out
