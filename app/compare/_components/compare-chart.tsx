@@ -417,6 +417,7 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
   const [annualPeriod, setAnnualPeriod] = useState<AnnualPeriod>("5Y");
   const [metric, setMetric] = useState<Metric>("return");
   const [historyMap, setHistoryMap] = useState<HistoryMap>({});
+  const [convertedSymbols, setConvertedSymbols] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [metricOpen, setMetricOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -442,7 +443,13 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
     setLoading(true);
     fetch(`/api/compare-history?symbols=${symbols.join(",")}&days=${maxDays(period)}`)
       .then((r) => r.json())
-      .then((data: HistoryMap) => setHistoryMap(data))
+      .then((raw: Record<string, unknown>) => {
+        const meta = raw["_meta"] as { convertedToUsd?: string[] } | undefined;
+        setConvertedSymbols(meta?.convertedToUsd ?? []);
+        // Strip _meta before storing history map
+        const { _meta: _ignored, ...historyOnly } = raw;
+        setHistoryMap(historyOnly as HistoryMap);
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [symbols, period, isPrice]);
@@ -657,6 +664,11 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
             </div>
           );
         })}
+        {isPrice && convertedSymbols.length > 0 && (
+          <span className="ml-2 rounded-md bg-amber-400/10 px-2 py-0.5 text-[10px] font-medium text-amber-400">
+            non-USD prices converted to USD
+          </span>
+        )}
         <span className="ml-auto text-xs font-medium text-muted">{cfg.label}</span>
       </div>
 

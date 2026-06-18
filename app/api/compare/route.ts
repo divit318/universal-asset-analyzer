@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getFundamentals } from "@/lib/fundamentals";
-import { getFinancialStatements } from "@/lib/statements";
+import { getFinancialStatements, getFinancialStatementsYahoo } from "@/lib/statements";
 import { getHistory, getQuote } from "@/lib/yahoo";
 import { computeMomentum, computeScore } from "@/lib/scoring";
 import type { FinancialStatements, FundamentalsSnapshot, AnalystConsensus, ScoreResult, MomentumSignal, Quote } from "@/lib/types";
@@ -56,9 +56,20 @@ export async function GET(request: Request) {
           getQuote(symbol),
           getHistory(symbol, 420),
         ]);
-        const { statements } = await getFinancialStatements(symbol)
-          .then((s) => ({ statements: s as FinancialStatements | null }))
-          .catch(() => ({ statements: null }));
+        // Try Yahoo Finance first (works for all markets, more consistent).
+        // Fall back to SEC EDGAR for deeper history when Yahoo returns < 3 FYs.
+        const yahooStatements = await getFinancialStatementsYahoo(symbol);
+        const edgarStatements = (yahooStatements?.fiscalYears.length ?? 0) < 3
+          ? await getFinancialStatements(symbol).catch(() => null)
+          : null;
+        // Prefer whichever has more fiscal years.
+        const statements: FinancialStatements | null = (() => {
+          if (!yahooStatements && !edgarStatements) return null;
+          if (!yahooStatements) return edgarStatements;
+          if (!edgarStatements) return yahooStatements;
+          return yahooStatements.fiscalYears.length >= edgarStatements.fiscalYears.length
+            ? yahooStatements : edgarStatements;
+        })();
 
         const momentum = computeMomentum(history);
         const score = computeScore(parts.snapshot, statements, parts.analyst, momentum);

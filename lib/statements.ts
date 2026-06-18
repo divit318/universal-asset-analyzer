@@ -1,4 +1,5 @@
 import type { AnnualPoint, FinancialStatements } from "./types";
+import { getFundamentalsTimeSeries } from "./yahoo";
 import { lookupCik } from "./edgar";
 
 const SEC_UA =
@@ -112,6 +113,8 @@ export function deriveStatements(
     netIncome: AnnualPoint[];
     opCashFlow: AnnualPoint[];
     capex: AnnualPoint[];
+    /** Optional: pre-computed FCF; overrides opCashFlow − capex when provided. */
+    freeCashFlowOverride?: AnnualPoint[];
   },
   maxYears = 5,
 ): FinancialStatements {
@@ -131,9 +134,11 @@ export function deriveStatements(
       .filter((fy) => num.has(fy) && rev.has(fy) && rev.get(fy)! !== 0)
       .map((fy) => ({ fy, value: num.get(fy)! / rev.get(fy)! }));
 
-  const freeCashFlow: AnnualPoint[] = fiscalYears
-    .filter((fy) => ocf.has(fy) && cx.has(fy))
-    .map((fy) => ({ fy, value: ocf.get(fy)! - cx.get(fy)! }));
+  const freeCashFlow: AnnualPoint[] = raw.freeCashFlowOverride
+    ? raw.freeCashFlowOverride.filter((p) => fiscalYears.includes(p.fy))
+    : fiscalYears
+        .filter((fy) => ocf.has(fy) && cx.has(fy))
+        .map((fy) => ({ fy, value: ocf.get(fy)! - cx.get(fy)! }));
 
   const revenue = series(rev);
 
@@ -198,4 +203,52 @@ export async function getFinancialStatements(
     opCashFlow,
     capex,
   });
+}
+
+/**
+ * Fetch annual financial statements from Yahoo Finance's fundamentalsTimeSeries.
+ * Works for all markets (US and international). Returns up to 6 fiscal years.
+ * Used as primary source or fallback when SEC EDGAR returns insufficient history.
+ */
+export async function getFinancialStatementsYahoo(
+  symbol: string,
+): Promise<FinancialStatements | null> {
+  try {
+    const ts = await getFundamentalsTimeSeries(symbol);
+    if (!ts.length) return null;
+
+    const toPoints = (field: string): AnnualPoint[] =>
+      ts
+        .flatMap((r): AnnualPoint[] => {
+          const v = typeof r[field] === "number" ? (r[field] as number) : null;
+          const rawDate = r["date"];
+          const fy =
+            rawDate instanceof Date
+              ? rawDate.getFullYear()
+              : typeof rawDate === "string"
+              ? new Date(rawDate).getFullYear()
+              : null;
+          return v != null && fy != null ? [{ fy, value: v }] : [];
+        })
+        .sort((a, b) => a.fy - b.fy);
+
+    const revenue = toPoints("totalRevenue");
+    if (!revenue.length) return null;
+
+    return deriveStatements(
+      symbol,
+      {
+        revenue,
+        grossProfit: toPoints("grossProfit"),
+        operatingIncome: toPoints("operatingIncome"),
+        netIncome: toPoints("netIncome"),
+        opCashFlow: [],
+        capex: [],
+        freeCashFlowOverride: toPoints("freeCashFlow"),
+      },
+      7, // allow up to 7 years from Yahoo time series
+    );
+  } catch {
+    return null;
+  }
 }
