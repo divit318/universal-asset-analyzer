@@ -13,6 +13,10 @@ export const dynamic = "force-dynamic";
 
 const DUCKDB_PATH = path.join(process.cwd(), "data", "engine.duckdb");
 
+// Track the active engine process. DuckDB allows only one writer at a time —
+// spawning a second process without killing the first causes "Conflicting lock".
+let activeEngineProcess: ReturnType<typeof spawn> | null = null;
+
 // We query DuckDB via Python subprocess since there's no stable Node DuckDB
 // binding for ARM. The scorecard is written daily; reads are from a snapshot.
 // For reads we use a lightweight SQLite mirror written by the Python engine,
@@ -88,36 +92,67 @@ export async function POST(req: NextRequest) {
     noForecast?: boolean;
   };
 
+  // Kill any existing engine run before starting a new one.
+  // DuckDB single-writer constraint: second process will crash with lock error.
+  if (activeEngineProcess) {
+    try { activeEngineProcess.kill("SIGKILL"); } catch { /* already dead */ }
+    activeEngineProcess = null;
+    // Brief pause to let the OS release the file lock
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
   const args = ["-m", "engine.daily_run"];
   if (body.universe) args.push("--universe", body.universe);
   else if (body.symbols?.length) args.push("--symbols", ...body.symbols);
   if (body.noFetch) args.push("--no-fetch");
   if (body.noForecast) args.push("--no-forecast");
 
-  return new Promise<NextResponse>((resolve) => {
-    const py = spawn("python3", args, {
-      cwd: process.cwd(),
-      env: { ...process.env, PYTHONUNBUFFERED: "1" },
-    });
+  // Stream stdout lines to the client in real-time so the UI can show progress.
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      const py = spawn("python3", args, {
+        cwd: process.cwd(),
+        env: { ...process.env, PYTHONUNBUFFERED: "1" },
+      });
+      activeEngineProcess = py;
 
-    let stdout = "";
-    let stderr = "";
+      let stderr = "";
 
-    py.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
-    py.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+      const send = (line: string) => {
+        controller.enqueue(encoder.encode(line + "\n"));
+      };
 
-    py.on("close", (code) => {
-      if (code !== 0) {
-        resolve(NextResponse.json({ error: stderr || "Engine run failed", stdout }, { status: 500 }));
-        return;
-      }
-      resolve(NextResponse.json({ ok: true, stdout: stdout.slice(-2000) }));
-    });
+      py.stdout.on("data", (d: Buffer) => {
+        d.toString().split("\n").filter(Boolean).forEach(send);
+      });
+      py.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
 
-    // Timeout after 10 minutes
-    setTimeout(() => {
-      py.kill();
-      resolve(NextResponse.json({ error: "Engine run timed out" }, { status: 504 }));
-    }, 600_000);
+      const timer = setTimeout(() => {
+        if (activeEngineProcess === py) activeEngineProcess = null;
+        py.kill();
+        send("ERROR: Engine run timed out after 10 minutes");
+        controller.close();
+      }, 600_000);
+
+      py.on("close", (code) => {
+        clearTimeout(timer);
+        if (activeEngineProcess === py) activeEngineProcess = null;
+        if (code !== 0) {
+          send(`ERROR: ${stderr.trim() || "Engine run failed (exit " + code + ")"}`);
+        } else {
+          send("DONE");
+        }
+        controller.close();
+      });
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-cache",
+      "X-Accel-Buffering": "no",
+    },
   });
 }

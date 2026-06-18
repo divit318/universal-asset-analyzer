@@ -618,17 +618,40 @@ export default function EnginePage() {
   }
 
   async function runEngine(noForecast: boolean) {
-    setRunning(true); setRunLog(null); setError(null);
+    setRunning(true); setRunLog(""); setError(null);
     try {
       const res = await fetch("/api/engine", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ universe: selectedUniverse, noFetch: false, noForecast }),
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error((json as { error?: string }).error ?? "Engine failed");
-      setRunLog((json as { stdout?: string }).stdout ?? "Done.");
-      await loadScorecard();
+      if (!res.ok || !res.body) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error((json as { error?: string }).error ?? "Engine failed");
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let done = false;
+      let failed = false;
+      while (!done) {
+        const { value, done: d } = await reader.read();
+        done = d;
+        if (value) {
+          const chunk = decoder.decode(value);
+          const lines = chunk.split("\n").filter(Boolean);
+          for (const line of lines) {
+            if (line.startsWith("ERROR:")) {
+              failed = true;
+              setError(line.replace("ERROR: ", ""));
+            } else if (line === "DONE") {
+              done = true;
+            } else {
+              setRunLog((prev) => (prev ?? "") + line + "\n");
+            }
+          }
+        }
+      }
+      if (!failed) await loadScorecard();
     } catch (e) { setError(e instanceof Error ? e.message : "Engine failed"); }
     finally { setRunning(false); }
   }
@@ -725,20 +748,33 @@ export default function EnginePage() {
       {error && (
         <div className="rounded-lg border border-negative/40 bg-negative/10 px-4 py-3 text-sm text-negative">{error}</div>
       )}
-      {running && (
-        <div className="flex items-center gap-3 rounded-xl border border-border bg-surface p-4 text-sm text-muted">
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
-          </span>
-          Engine running [{selectedUniverse}] — OHLCV fetch → feature factory → HMM regime → cross-sectional factors → Monte Carlo DCF → quantile forecasts → Kelly sizing…
+      {(running || runLog) && (
+        <div className="flex flex-col gap-0 rounded-xl border border-border bg-surface overflow-hidden">
+          <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
+            {running && (
+              <span className="relative flex h-2 w-2 shrink-0">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
+              </span>
+            )}
+            <span className="text-sm font-medium">
+              {running ? `Running [${selectedUniverse}]…` : `Completed [${selectedUniverse}]`}
+            </span>
+            {runLog && (
+              <span className="ml-auto text-xs text-muted">
+                {runLog.split("\n").filter(Boolean).length} steps
+              </span>
+            )}
+          </div>
+          {runLog && (
+            <pre
+              className="max-h-64 overflow-y-auto p-4 text-xs text-muted leading-relaxed"
+              ref={(el) => { if (el) el.scrollTop = el.scrollHeight; }}
+            >
+              {runLog}
+            </pre>
+          )}
         </div>
-      )}
-      {runLog && (
-        <details className="rounded-lg border border-border bg-surface">
-          <summary className="cursor-pointer px-4 py-2 text-sm text-muted">Engine log</summary>
-          <pre className="overflow-x-auto p-4 text-xs text-muted">{runLog}</pre>
-        </details>
       )}
 
       {scorecard.length > 0 ? (
