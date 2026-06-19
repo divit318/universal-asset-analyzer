@@ -19,12 +19,31 @@ Universe presets:
 
 All functions return plain list[str] of yfinance ticker symbols.
 Falls back to curated lists if screener is unavailable.
+
+SURVIVORSHIP BIAS WARNING:
+  USE_POINT_IN_TIME_UNIVERSE = False (default).
+  When False, all universes reflect CURRENT composition — survivorship bias is active.
+  Backtest CAGRs are inflated by ~6pp/yr vs Nifty 50 TRI (audit finding, 2026-06).
+  To use point-in-time composition, set USE_POINT_IN_TIME_UNIVERSE = True and
+  provide a dated CSV at engine/data/pit_universe/{universe_name}.csv with columns:
+    effective_date,symbol  (one row per constituent per effective date)
 """
 
 from __future__ import annotations
 
+import csv
 import logging
+import warnings
+from datetime import date
+from pathlib import Path
 from typing import Callable
+
+# ---------------------------------------------------------------------------
+# Point-in-time universe config
+# ---------------------------------------------------------------------------
+
+USE_POINT_IN_TIME_UNIVERSE: bool = False
+_PIT_DIR = Path(__file__).parents[1] / "engine" / "data" / "pit_universe"
 
 logger = logging.getLogger(__name__)
 
@@ -346,18 +365,72 @@ _UNIVERSE_REGISTRY: dict[str, tuple[Callable[[], list[str]], str]] = {
 }
 
 
-def get_universe_by_name(name: str) -> list[str]:
+def _load_pit_universe(name: str, as_of: date | None = None) -> list[str] | None:
+    """
+    Load point-in-time universe from CSV.
+    CSV format: effective_date (YYYY-MM-DD), symbol
+    Returns symbols active as of `as_of` date (defaults to today).
+    Returns None if no CSV exists for this universe.
+    """
+    path = _PIT_DIR / f"{name}.csv"
+    if not path.exists():
+        return None
+    as_of = as_of or date.today()
+    constituents: list[tuple[date, str]] = []
+    with open(path) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                d = date.fromisoformat(row["effective_date"])
+                constituents.append((d, row["symbol"]))
+            except (KeyError, ValueError):
+                continue
+    if not constituents:
+        return None
+    # Latest batch on or before as_of
+    valid_dates = sorted({d for d, _ in constituents if d <= as_of}, reverse=True)
+    if not valid_dates:
+        return None
+    latest = valid_dates[0]
+    return [sym for d, sym in constituents if d == latest]
+
+
+def get_universe_by_name(name: str, as_of: date | None = None) -> list[str]:
     """
     Fetch universe by preset name. Returns deduplicated list[str] of tickers.
     Raises ValueError for unknown names.
+
+    When USE_POINT_IN_TIME_UNIVERSE=True, loads from dated CSV if available.
+    When False, logs a survivorship bias warning and uses current screener.
+    Audit finding (2026-06): current composition inflates CAGR by ~6pp/yr vs TRI.
     """
     name = name.lower().strip()
     if name not in _UNIVERSE_REGISTRY:
         valid = ", ".join(sorted(_UNIVERSE_REGISTRY.keys()))
         raise ValueError(f"Unknown universe '{name}'. Valid: {valid}")
-    fn, _ = _UNIVERSE_REGISTRY[name]
-    syms = fn()
-    # Deduplicate preserving order
+
+    if USE_POINT_IN_TIME_UNIVERSE:
+        pit = _load_pit_universe(name, as_of)
+        if pit:
+            syms = pit
+        else:
+            warnings.warn(
+                f"USE_POINT_IN_TIME_UNIVERSE=True but no PIT CSV found for '{name}'. "
+                f"Falling back to current screener. Place CSV at engine/data/pit_universe/{name}.csv",
+                stacklevel=2,
+            )
+            fn, _ = _UNIVERSE_REGISTRY[name]
+            syms = fn()
+    else:
+        logger.warning(
+            "SURVIVORSHIP BIAS ACTIVE: universe '%s' fixed at current composition. "
+            "Backtest returns inflated ~6pp/yr vs Nifty50 TRI. "
+            "Set USE_POINT_IN_TIME_UNIVERSE=True with a dated CSV to suppress.",
+            name,
+        )
+        fn, _ = _UNIVERSE_REGISTRY[name]
+        syms = fn()
+
     seen: set[str] = set()
     result: list[str] = []
     for s in syms:

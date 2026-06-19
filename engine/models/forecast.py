@@ -130,11 +130,17 @@ def fit_quantile_models(
     X: np.ndarray,
     y: np.ndarray,
     quantiles: list[float] = QUANTILES,
+    symbol: str = "",
+    horizon: int = 21,
 ) -> list[lgb.Booster]:
     """
     Fit one LightGBM quantile model per quantile.
     Uses chronological 80/20 split — NOT random — to preserve time order.
+    Appends OOS calibration rows to oos_calibration_log.csv for drift tracking.
     """
+    import csv
+    from pathlib import Path
+
     valid = np.isfinite(X).all(axis=1) & np.isfinite(y)
     X_clean, y_clean = X[valid], y[valid]
 
@@ -151,7 +157,7 @@ def fit_quantile_models(
             "objective": "quantile",
             "alpha": q,
             "metric": "quantile",
-            "num_leaves": 15,          # small — prevents overfitting on a single stock
+            "num_leaves": 15,
             "learning_rate": 0.05,
             "n_estimators": 300,
             "min_child_samples": 15,
@@ -170,6 +176,25 @@ def fit_quantile_models(
             ],
         )
         models.append(model)
+
+    # OOS calibration log: append empirical coverage for proxy holdout (last 20%)
+    # Flag symbol+horizon when |empirical_coverage - nominal| > 0.10
+    if n_train < len(X_clean) and symbol:
+        log_path = Path(__file__).parents[2] / "data" / "oos_calibration_log.csv"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not log_path.exists()
+        X_oos = X_clean[n_train:]
+        y_oos = y_clean[n_train:]
+        with open(log_path, "a", newline="") as f:
+            writer = csv.writer(f)
+            if write_header:
+                writer.writerow(["symbol","horizon","quantile","nominal","empirical_coverage","error","flag"])
+            for model, q in zip(models, quantiles):
+                preds = np.array([float(model.predict(X_oos[i:i+1])[0]) for i in range(len(X_oos))])
+                empirical = float((y_oos < preds).mean())
+                err = abs(empirical - q)
+                flag = "FLAG" if err > 0.10 else "OK"
+                writer.writerow([symbol, horizon, round(q,2), round(q,2), round(empirical,4), round(err,4), flag])
 
     return models
 
@@ -282,7 +307,7 @@ def run_forecasts(
             continue
 
         # Critical: X and y are both indexed identically, training window is strictly past
-        models = fit_quantile_models(X[:train_end], y[:train_end])
+        models = fit_quantile_models(X[:train_end], y[:train_end], symbol=symbol, horizon=horizon)
         if not models:
             continue
 

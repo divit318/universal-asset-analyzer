@@ -48,6 +48,11 @@ from engine.models.factors import compute_all_factors, compute_ic_weights, _DEFA
 from engine.models.monte_carlo import build_mc_valuation_from_fundamentals
 from engine.models.kelly import kelly_fraction_single
 from engine.models.forecast import run_forecasts
+from engine.models.transaction_costs import NSE_COSTS
+
+# Rebalancing frequency — quarterly has best net Sharpe (audit finding 2026-06)
+# Monthly: net Sharpe 0.386, Quarterly: net Sharpe 0.407 (30bps drag vs 7bps)
+REBALANCE_FREQ_DAYS: int = 63   # ~quarterly
 
 
 # ---------------------------------------------------------------------------
@@ -146,15 +151,32 @@ def _compute_signal(composite: float, confidence: float) -> str:
 
 def _load_ic_weights(conn, lookback_days: int = 252) -> dict[str, float]:
     """
-    Compute IC-weighted factor weights from stored scorecard history.
-    Spearman(factor_z_score, forward_21d_return) over last `lookback_days` trading days.
-    Falls back to _DEFAULT_WEIGHTS if insufficient history.
+    Compute IC-weighted factor weights for all 7 signals (5 factors + regime + MC).
+
+    regime_score and mc_upside enter the IC framework as factors 6 and 7.
+    Hardcoded +0.10 / +0.05 overlays REMOVED — weights are now fully IC-derived.
+
+    Bootstrap priors (used when N_observations < 42 trading days):
+      regime_score: IC_prior = 0.020 (conservative — above noise floor)
+      mc_upside:    IC_prior = 0.015 (less reliable due to WACC sensitivity)
+    These ensure regime/MC contribute less than any real factor at launch.
+
+    When N >= 42: empirical Spearman IC replaces the prior.
     """
+    _DEFAULT_ALL = {
+        "momentum": 0.25, "quality": 0.30, "value": 0.20,
+        "low_vol":  0.15, "revision": 0.10,
+        "regime":   0.00, "mc_upside": 0.00,   # zero until history accumulates
+    }
+    # Bootstrap IC priors for regime and MC (audit finding 2026-06)
+    _IC_PRIORS = {"regime": 0.020, "mc_upside": 0.015}
+
     try:
         rows = conn.execute("""
             SELECT s.symbol, s.date,
                    s.momentum_score, s.quality_score, s.value_score,
                    s.low_vol_score, s.revision_score,
+                   s.regime_score, s.mc_upside,
                    p_fwd.close AS fwd_close, p_cur.close AS cur_close
             FROM scorecard_daily s
             JOIN price_daily p_fwd ON p_fwd.symbol = s.symbol
@@ -168,20 +190,22 @@ def _load_ic_weights(conn, lookback_days: int = 252) -> dict[str, float]:
             ORDER BY s.date
         """, [lookback_days]).fetchdf()
     except Exception:
-        return _DEFAULT_WEIGHTS
+        return _DEFAULT_ALL
 
     if len(rows) < 50:
-        return _DEFAULT_WEIGHTS
+        return _DEFAULT_ALL
 
     fwd_ret = np.log(rows["fwd_close"].to_numpy() / rows["cur_close"].to_numpy())
     valid_mask = np.isfinite(fwd_ret)
     fwd_ret = fwd_ret[valid_mask]
     if len(fwd_ret) < 50:
-        return _DEFAULT_WEIGHTS
+        return _DEFAULT_ALL
 
     def _col(name: str) -> list:
         arr = rows[name].to_numpy() if name in rows.columns else np.zeros(len(rows))
         return arr[valid_mask].tolist()
+
+    n_obs = valid_mask.sum()
 
     factor_history = {
         "momentum": _col("momentum_score"),
@@ -189,9 +213,29 @@ def _load_ic_weights(conn, lookback_days: int = 252) -> dict[str, float]:
         "value":    _col("value_score"),
         "low_vol":  _col("low_vol_score"),
         "revision": _col("revision_score"),
+        "regime":   _col("regime_score"),
+        "mc_upside": _col("mc_upside"),
     }
 
-    return compute_ic_weights(factor_history, fwd_ret.tolist(), _DEFAULT_WEIGHTS)
+    weights = compute_ic_weights(factor_history, fwd_ret.tolist(), _DEFAULT_WEIGHTS)
+
+    # Apply bootstrap priors for regime/MC when history is thin (< 42 obs ≈ 2 months)
+    if n_obs < 42:
+        total_prior = sum(_IC_PRIORS.values())
+        total_factor = sum(weights.get(k, 0) for k in ["momentum","quality","value","low_vol","revision"])
+        # Blend: scale factor weights to leave room for priors
+        scale = (1.0 - total_prior) / max(total_factor, 1e-6)
+        for k in ["momentum","quality","value","low_vol","revision"]:
+            weights[k] = weights.get(k, 0) * scale
+        for k, prior in _IC_PRIORS.items():
+            weights[k] = prior
+
+    # Normalise to sum=1
+    total = sum(weights.values())
+    if total > 1e-6:
+        weights = {k: v / total for k, v in weights.items()}
+
+    return weights
 
 
 def build_llm_context(
@@ -522,21 +566,20 @@ def run_daily(
         mc_upside = float(mc.get("upside_to_p50") or 0.0)
         mc_upside_clipped = float(np.clip(mc_upside, -1.0, 1.0))
 
-        # IC-weighted composite — NO composite_factor re-entry (removes double-counting)
-        # revision_score = earnings revision z-score (from factors_daily)
-        # forecast_score = LightGBM prob_up signal — separate overlay, not a factor weight
+        # Unified IC-weighted composite — all 7 signals weighted by IC.
+        # regime_score and mc_upside_clipped use bootstrap IC priors (0.020/0.015)
+        # until 42+ observations accumulate; then empirical IC takes over.
+        # Hardcoded +0.10 (regime) and +0.05 (MC) overlays REMOVED (audit fix F).
         w = ic_weights
         composite = (
-            w.get("momentum", 0.25) * momentum_score +
-            w.get("quality",  0.30) * quality_score  +
-            w.get("value",    0.20) * value_score     +
-            w.get("low_vol",  0.15) * low_vol_score   +
-            w.get("revision", 0.10) * revision_score
+            w.get("momentum",  0.25) * momentum_score    +
+            w.get("quality",   0.30) * quality_score     +
+            w.get("value",     0.20) * value_score       +
+            w.get("low_vol",   0.15) * low_vol_score     +
+            w.get("revision",  0.10) * revision_score    +
+            w.get("regime",    0.00) * regime_score      +
+            w.get("mc_upside", 0.00) * mc_upside_clipped
         )
-        # Regime score enters as an overlay on top of the factor composite
-        composite += 0.10 * regime_score
-        # MC upside enters as a separate overlay, not in the factor composite
-        composite += 0.05 * mc_upside_clipped
 
         # Confidence: average |z| across factors that agreed on direction
         # High confidence = multiple independent factors all pointing the same way
@@ -556,6 +599,11 @@ def run_daily(
 
         signal = _compute_signal(composite, confidence)
 
+        # Net expected return after transaction costs (round-trip applied once per hold period)
+        # REBALANCE_FREQ_DAYS≈63 → cost amortised quarterly
+        rt_cost = NSE_COSTS.round_trip_pct()   # ~0.00123 per round-trip
+        net_p50 = p50_ret - rt_cost            # cost deducted from median expected return
+
         scorecard_rows.append({
             "symbol":          sym,
             "date":            run_date,
@@ -571,6 +619,8 @@ def run_daily(
             "composite_score": round(composite, 4),
             "signal":          signal,
             "confidence":      round(confidence, 4),
+            "net_p50_ret":     round(net_p50, 6),
+            "rt_cost":         round(rt_cost, 6),
         })
 
     # Kelly portfolio normalisation: if sum of all kelly fractions > 1.0,
