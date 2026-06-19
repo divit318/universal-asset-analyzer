@@ -199,15 +199,64 @@ def fit_quantile_models(
     return models
 
 
+def _load_calibration_shifts(
+    symbol: str,
+    horizon: int,
+    quantiles: list[float] = QUANTILES,
+) -> dict[float, float]:
+    """
+    Load additive calibration shifts from oos_calibration_log.csv.
+
+    When empirical_coverage deviates from nominal by > 0.05:
+      - empirical > nominal: too many actuals fall below our prediction → prediction too HIGH → shift down
+      - empirical < nominal: too few actuals fall below our prediction → prediction too LOW → shift up
+
+    Returns {quantile: shift_fraction} where shift is multiplied by p90-p10 spread at call time.
+    Uses last 10 observations per quantile. Requires ≥3 to apply any correction.
+    """
+    import csv as _csv
+    from pathlib import Path
+
+    log_path = Path(__file__).parents[2] / "data" / "oos_calibration_log.csv"
+    if not log_path.exists():
+        return {q: 0.0 for q in quantiles}
+
+    rows_by_q: dict[float, list[float]] = {q: [] for q in quantiles}
+    with open(log_path, newline="") as f:
+        reader = _csv.DictReader(f)
+        for row in reader:
+            if row.get("symbol") == symbol and int(row.get("horizon", 0)) == horizon:
+                try:
+                    q = float(row["quantile"])
+                    empirical = float(row["empirical_coverage"])
+                    if q in rows_by_q:
+                        rows_by_q[q].append(empirical)
+                except (ValueError, KeyError):
+                    continue
+
+    shifts = {}
+    for q in quantiles:
+        obs = rows_by_q[q][-10:]  # most recent 10 only
+        if len(obs) < 3:
+            shifts[q] = 0.0
+            continue
+        error = float(np.mean(obs)) - q  # positive = overestimate (too high)
+        shifts[q] = float(-error * 0.5) if abs(error) >= 0.05 else 0.0
+    return shifts
+
+
 def predict_distribution(
     models: list[lgb.Booster],
     X_row: np.ndarray,
     quantiles: list[float] = QUANTILES,
+    symbol: str = "",
+    horizon: int = 21,
 ) -> dict:
     """
     Predict return distribution for a single observation row.
     prob_up derived from Gaussian fit to quantiles — no magic constants.
     Enforces quantile monotonicity via isotonic projection (pool adjacent violators).
+    Applies OOS calibration correction when oos_calibration_log.csv has ≥3 rows per quantile.
     """
     if X_row.ndim == 1:
         X_row = X_row.reshape(1, -1)
@@ -216,6 +265,14 @@ def predict_distribution(
 
     # Isotonic projection: enforce p10 <= p25 <= p50 <= p75 <= p90
     raw_preds = _isotonic_project(raw_preds)
+
+    # OOS calibration correction: shift each quantile proportional to coverage error
+    if symbol:
+        shifts = _load_calibration_shifts(symbol, horizon, quantiles)
+        spread = float(raw_preds[-1] - raw_preds[0]) or 0.10  # p90 - p10 as scale
+        for i, q in enumerate(quantiles):
+            raw_preds[i] += shifts.get(q, 0.0) * spread
+        raw_preds = _isotonic_project(raw_preds)
 
     keys = [f"p{int(q * 100)}" for q in quantiles]
     preds = dict(zip(keys, raw_preds.tolist()))
@@ -311,7 +368,7 @@ def run_forecasts(
         if not models:
             continue
 
-        dist = predict_distribution(models, X_latest)
+        dist = predict_distribution(models, X_latest, symbol=symbol, horizon=horizon)
         records.append({
             "symbol":       symbol,
             "date":         latest_date,

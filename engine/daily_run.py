@@ -49,6 +49,7 @@ from engine.models.monte_carlo import build_mc_valuation_from_fundamentals
 from engine.models.kelly import kelly_fraction_single
 from engine.models.forecast import run_forecasts
 from engine.models.transaction_costs import NSE_COSTS
+from engine.models.live_oos import append_signals, backfill_returns, compute_live_metrics, check_degradation_alerts
 
 # Rebalancing frequency — quarterly has best net Sharpe (audit finding 2026-06)
 # Monthly: net Sharpe 0.386, Quarterly: net Sharpe 0.407 (30bps drag vs 7bps)
@@ -621,6 +622,7 @@ def run_daily(
             "confidence":      round(confidence, 4),
             "net_p50_ret":     round(net_p50, 6),
             "rt_cost":         round(rt_cost, 6),
+            "prob_up":         round(prob_up, 4),
         })
 
     # Kelly portfolio normalisation: if sum of all kelly fractions > 1.0,
@@ -667,6 +669,21 @@ def run_daily(
         log(f"  Snapshots written: {len(scored_symbols)} detail files + scorecard.")
     except Exception as e:
         log(f"  Snapshot export error (non-fatal): {e}")
+
+    # Live OOS validation: log signals, backfill returns, compute metrics, alert on degradation
+    try:
+        append_signals(scorecard_rows, price_map=price_map)
+        live_metrics = compute_live_metrics()
+        if live_metrics:
+            log(f"Live OOS metrics: IC={live_metrics.get('live_IC')}, "
+                f"hit_rate={live_metrics.get('hit_rate')}, "
+                f"sharpe={live_metrics.get('sharpe_live')}, "
+                f"n={live_metrics.get('n_obs')}")
+            alerts = check_degradation_alerts(live_metrics)
+            for alert in alerts:
+                log(f"  [DEGRADATION ALERT] {alert}")
+    except Exception as e:
+        log(f"Live OOS tracking error (non-fatal): {e}")
 
     conn.close()
     log(f"Done. {len(scorecard_rows)} symbols scored.")
