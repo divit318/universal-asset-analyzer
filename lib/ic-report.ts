@@ -10,10 +10,11 @@ import { detectAllSignals, type DetectedSignal, type SignalDetectionInput } from
 import { generateQuestions, groupByAgent, type InvestigativeQuestion } from "./ic-questions";
 import { runAgentNetwork, type AgentFinding } from "./ic-agents";
 import { formThesis, type Thesis } from "./ic-thesis";
-import { runValuationEngine, type ValuationResult } from "./ic-valuation";
+import { runValuationEngine, computeRunHotCold, type ValuationResult } from "./ic-valuation";
 import type { FundamentalsSnapshot, FinancialStatements, InsiderActivity, AnalystConsensus } from "./types";
 import type { ScreenerInCompany } from "./screener-in";
 import { getActiveModelName } from "./ai";
+import { getHistory } from "./yahoo";
 
 export type ICReportStage =
   | "signals"
@@ -42,6 +43,7 @@ export interface ICReport {
   thesis: Thesis;
   valuation: ValuationResult;
   monitorables: string[];
+  runHotCold: ReturnType<typeof computeRunHotCold>;
 }
 
 export interface ICReportInput {
@@ -109,8 +111,13 @@ export async function generateICReport(
   const thesis = await formThesis(companyName, symbol, agentFindings, signals);
   emit("thesis", "Thesis formed", thesis);
 
-  // Stage 5: Valuation engine
+  // Stage 5: Valuation engine — fetch 5Y price history for run hot/cold
   emit("valuation", "Running valuation engine…");
+  const priceHistory = await getHistory(symbol, 7300).catch(() => []); // up to 20 years ≈ 7300 days
+  const runHotCold = computeRunHotCold(priceHistory);
+  if (runHotCold) {
+    emit("valuation", `Run Hot/Cold: ${runHotCold.signal} (${runHotCold.percentile}th percentile of own history)`);
+  }
   const valuation = await runValuationEngine(
     symbol,
     input.currentPrice ?? null,
@@ -119,6 +126,7 @@ export async function generateICReport(
     input.analyst ?? ({} as AnalystConsensus),
     input.screenerIn,
     input.currency ?? "$",
+    priceHistory,
   );
   emit("valuation", `Valuation: ${valuation.intrinsicValueRange} (${valuation.impliedUpside})`, valuation);
 
@@ -141,6 +149,7 @@ export async function generateICReport(
     thesis,
     valuation,
     monitorables,
+    runHotCold,
   };
 
   emit("done", "IC report complete", report);

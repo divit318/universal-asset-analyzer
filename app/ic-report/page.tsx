@@ -193,7 +193,7 @@ function ThesisSection({ thesis }: { thesis: ICReport["thesis"] }) {
   );
 }
 
-function ValuationSection({ valuation }: { valuation: ICReport["valuation"] }) {
+function ValuationSection({ valuation, runHotCold }: { valuation: ICReport["valuation"]; runHotCold: ICReport["runHotCold"] }) {
   return (
     <div className="flex flex-col gap-4">
       {/* Header summary */}
@@ -307,6 +307,71 @@ function ValuationSection({ valuation }: { valuation: ICReport["valuation"] }) {
             </Card>
           )}
         </div>
+      )}
+
+      {/* Run Hot / Cold */}
+      {runHotCold && (
+        <Card className={`border ${
+          runHotCold.signal === "run_hot" ? "border-amber-400/40 bg-amber-400/5" :
+          runHotCold.signal === "run_cold" ? "border-accent/40 bg-accent/5" : ""
+        }`}>
+          <div className="flex flex-col gap-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="mb-1 text-sm font-semibold">
+                  Run Hot / Cold — Historical Return Percentile
+                </h3>
+                <p className="text-sm text-muted">
+                  Current 1-year return of <strong className="text-foreground">{runHotCold.oneYearReturn.toFixed(1)}%</strong> is at the{" "}
+                  <strong className="text-foreground">{runHotCold.percentile}th percentile</strong> of its own return history
+                  (median: {runHotCold.medianReturn.toFixed(1)}%).
+                </p>
+                <p className="mt-1 text-xs text-muted">
+                  {runHotCold.signal === "run_hot"
+                    ? "RUN HOT — stock is in its top 20% historical return band. Counter-cyclical caution: mean reversion is the higher-probability outcome."
+                    : runHotCold.signal === "run_cold"
+                    ? "RUN COLD — stock is in its bottom 20% historical return band. Counter-cyclical opportunity: returns are historically at their most attractive."
+                    : "NEUTRAL — current returns are within the normal historical range."}
+                </p>
+              </div>
+              <span className={`shrink-0 rounded-full border px-3 py-1 text-xs font-semibold uppercase ${
+                runHotCold.signal === "run_hot" ? "border-amber-400/40 text-amber-400" :
+                runHotCold.signal === "run_cold" ? "border-accent/40 text-accent" : "border-border text-muted"
+              }`}>
+                {runHotCold.signal.replace("_", " ")}
+              </span>
+            </div>
+            {/* Multi-year CAGR windows */}
+            {runHotCold.historicalWindows && runHotCold.historicalWindows.filter((w) => w.available).length > 0 && (
+              <div>
+                <div className="mb-2 text-xs uppercase tracking-wider text-muted">Long-Run CAGR Windows — Percentile vs Own History</div>
+                <div className="flex flex-wrap gap-2">
+                  {runHotCold.historicalWindows.filter((w) => w.available).map((w) => {
+                    const hotBorder = w.signal === "run_hot" ? "border-amber-400/50 bg-amber-400/5" : w.signal === "run_cold" ? "border-accent/50 bg-accent/5" : "border-border bg-surface-2";
+                    const pctColor = w.signal === "run_hot" ? "text-amber-400" : w.signal === "run_cold" ? "text-accent" : "text-muted";
+                    return (
+                      <div key={w.years} className={`flex flex-col items-center rounded-lg border px-3 py-2 ${hotBorder}`}>
+                        <span className="text-xs font-semibold text-muted">{w.years}Y</span>
+                        <span className={`font-mono text-sm font-semibold ${w.return > 0 ? "text-positive" : "text-negative"}`}>
+                          {w.return > 0 ? "+" : ""}{w.return.toFixed(1)}%
+                        </span>
+                        <span className="text-[10px] text-muted">CAGR</span>
+                        {w.percentile != null && (
+                          <span className={`mt-0.5 text-[10px] font-semibold ${pctColor}`}>
+                            {w.percentile}th pct
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="mt-2 text-xs text-muted">
+                  Amber = run hot (≥80th pct of own N-year CAGR history) · Blue = run cold (≤20th pct) · Primary signal uses longest available window.
+                </p>
+              </div>
+            )}
+          </div>
+        </Card>
       )}
     </div>
   );
@@ -599,7 +664,7 @@ export default function ICReportPage() {
                 {activeTab === "valuation" && (
                   <section>
                     <SectionHeading>Valuation Engine</SectionHeading>
-                    <ValuationSection valuation={report.valuation} />
+                    <ValuationSection valuation={report.valuation} runHotCold={report.runHotCold} />
                   </section>
                 )}
 
@@ -676,7 +741,7 @@ export default function ICReportPage() {
             { title: "Signal Detection", desc: "13 signal types: ROCE drop, margin compression, FII selling, working capital deterioration, and more" },
             { title: "Question Generation", desc: "Converts each signal into analytical questions that go deeper than the surface data" },
             { title: "9-Agent Investigation", desc: "Business, Industry, Competition, Management, Capital Allocation, Accounting, Valuation, Governance, Risk agents run in parallel" },
-            { title: "Thesis + Valuation", desc: "Bull/Bear/Base thesis, variant perception, DCF + relative valuation, scenario analysis, IC report" },
+            { title: "Thesis + Valuation", desc: "Bull/Bear/Base thesis, variant perception, DCF + relative valuation (SOTP for conglomerates), FX sensitivity for export/import sectors, run hot/cold percentile vs own history, scenario analysis, IC report" },
           ].map(({ title, desc }) => (
             <Card key={title}>
               <h3 className="mb-2 text-sm font-semibold">{title}</h3>

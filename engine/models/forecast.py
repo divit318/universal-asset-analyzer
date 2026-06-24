@@ -102,28 +102,49 @@ def _make_targets(close: np.ndarray, horizon: int) -> np.ndarray:
 
 def _prob_up_from_quantiles(p10: float, p25: float, p50: float, p75: float, p90: float) -> float:
     """
-    Derive P(return > 0) by fitting a Gaussian to the predicted quantiles
-    (method of moments on mean and std from the IQR).
+    Distribution-free P(return > 0) via piecewise linear interpolation
+    between the five quantile knots.
 
-    IQR = p75 - p25 ≈ 1.349 * σ  (for normal distribution)
-    mean ≈ p50
+    The CDF is anchored at:
+      (p10, 0.10), (p25, 0.25), (p50, 0.50), (p75, 0.75), (p90, 0.90)
 
-    This avoids the magic constant 0.5 + p50 * 5 from the original.
+    P(X > 0) = 1 - F(0), where F is linearly interpolated between knots.
+    Below p10: linear extrapolation from the (p10, 0.10) tangent.
+    Above p90: linear extrapolation from the (p90, 0.90) tangent.
     """
-    iqr = p75 - p25
-    sigma = max(iqr / 1.349, 1e-6)
-    # P(X > 0) where X ~ N(p50, sigma)
-    z = p50 / sigma
-    # Φ(z) via rational approximation
-    return float(np.clip(_phi(z), 0.02, 0.98))
+    knots_x = np.array([p10, p25, p50, p75, p90], dtype=np.float64)
+    knots_p = np.array([0.10, 0.25, 0.50, 0.75, 0.90], dtype=np.float64)
 
+    x = 0.0  # evaluate F(0)
 
-def _phi(z: float) -> float:
-    """Standard normal CDF approximation (Abramowitz & Stegun)."""
-    t = 1.0 / (1.0 + 0.2316419 * abs(z))
-    poly = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))))
-    p = 1.0 - 0.3989422804 * np.exp(-0.5 * z ** 2) * poly
-    return p if z >= 0 else 1.0 - p
+    if x <= knots_x[0]:
+        # Extrapolate below p10 using slope of first segment (p10→p25)
+        dx = knots_x[1] - knots_x[0]
+        if abs(dx) < 1e-10:
+            cdf_at_0 = 0.10
+        else:
+            slope = (knots_p[1] - knots_p[0]) / dx
+            cdf_at_0 = knots_p[0] + slope * (x - knots_x[0])
+    elif x >= knots_x[-1]:
+        # Extrapolate above p90 using slope of last segment (p75→p90)
+        dx = knots_x[-1] - knots_x[-2]
+        if abs(dx) < 1e-10:
+            cdf_at_0 = 0.90
+        else:
+            slope = (knots_p[-1] - knots_p[-2]) / dx
+            cdf_at_0 = knots_p[-1] + slope * (x - knots_x[-1])
+    else:
+        # Find the segment containing x
+        idx = np.searchsorted(knots_x, x, side="right") - 1
+        idx = int(np.clip(idx, 0, len(knots_x) - 2))
+        dx = knots_x[idx + 1] - knots_x[idx]
+        if abs(dx) < 1e-10:
+            cdf_at_0 = float(knots_p[idx])
+        else:
+            t = (x - knots_x[idx]) / dx
+            cdf_at_0 = float(knots_p[idx] + t * (knots_p[idx + 1] - knots_p[idx]))
+
+    return float(np.clip(1.0 - cdf_at_0, 0.02, 0.98))
 
 
 def fit_quantile_models(

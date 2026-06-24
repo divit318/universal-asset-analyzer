@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 import warnings
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 import numpy as np
@@ -43,17 +43,42 @@ from engine.data.loader import (
 )
 from engine.data.nse_enrichment import enrich_fundamentals
 from engine.features.factory import build_features
-from engine.models.regime import run_regime_detection
+from engine.models.regime import run_regime_detection, fit_market_regime, predict_regimes_from_index
 from engine.models.factors import compute_all_factors, compute_ic_weights, _DEFAULT_WEIGHTS
 from engine.models.monte_carlo import build_mc_valuation_from_fundamentals
 from engine.models.kelly import kelly_fraction_single
 from engine.models.forecast import run_forecasts
-from engine.models.transaction_costs import NSE_COSTS
+from engine.models.transaction_costs import NSE_COSTS, get_us_costs
 from engine.models.live_oos import append_signals, backfill_returns, compute_live_metrics, check_degradation_alerts
 
 # Rebalancing frequency — quarterly has best net Sharpe (audit finding 2026-06)
 # Monthly: net Sharpe 0.386, Quarterly: net Sharpe 0.407 (30bps drag vs 7bps)
 REBALANCE_FREQ_DAYS: int = 63   # ~quarterly
+
+
+def is_nse_expiry_week(as_of: date | None = None) -> bool:
+    """
+    F&O expiry flag (fix 8.3): True if as_of is in the expiry week (Mon-Thu).
+    NSE F&O expires on the last Thursday of each month.
+    Expiry week = Mon through Thu of that last-Thursday week.
+    """
+    import calendar
+    d = as_of or date.today()
+    # Find last Thursday of month
+    # Get all Thursdays in this month
+    year, month = d.year, d.month
+    last_day = calendar.monthrange(year, month)[1]
+    last_thursday = None
+    for day in range(last_day, 0, -1):
+        candidate = date(year, month, day)
+        if candidate.weekday() == 3:  # Thursday = 3
+            last_thursday = candidate
+            break
+    if last_thursday is None:
+        return False
+    # Expiry week: Monday through Thursday of last-Thursday week
+    week_monday = last_thursday - timedelta(days=3)
+    return week_monday <= d <= last_thursday
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +173,33 @@ def _compute_signal(composite: float, confidence: float) -> str:
     if composite <= -0.75:
         return "SELL"
     return "HOLD"
+
+
+def _regime_conditional_value_weight(
+    base_value_weight: float,
+    universe_is_india: bool = False,
+) -> float:
+    """
+    Value weight regime-conditional scaling (fix 2.2).
+    Base: US=0.10, India=0.20 (value works better in India due to quality-momentum premium).
+    Rate-conditional: scale by clip((10Y_yield - 2) / 3, 0.5, 1.5).
+    Higher rates → value premium expands (duration discount hits growth stocks more).
+    """
+    # Market-specific base
+    base = 0.20 if universe_is_india else 0.10
+
+    # Rate-conditional scaling via current 10Y Treasury yield
+    try:
+        from engine.data.macro_loader import _yf_close
+        tnx = _yf_close("^TNX", period="5d")
+        if tnx is not None and len(tnx) > 0:
+            yield_10y = float(tnx[-1]) / 100.0  # ^TNX quoted as percent
+            rate_scale = float(np.clip((yield_10y - 0.02) / 0.03, 0.5, 1.5))
+            base = base * rate_scale
+    except Exception:
+        pass
+
+    return float(np.clip(base, 0.05, 0.40))
 
 
 def _load_ic_weights(conn, lookback_days: int = 252) -> dict[str, float]:
@@ -246,6 +298,9 @@ def build_llm_context(
     forecast_row: dict | None,
     mc_row: dict | None,
     fund: dict | None,
+    mc_result: dict | None = None,
+    live_ic: float | None = None,
+    nse_data_status: str | None = None,
 ) -> dict:
     """
     Build a strictly constrained numerical context packet for the LLM.
@@ -323,6 +378,35 @@ def build_llm_context(
             "fcf_margin_pct":   fund.get("fcf_margin"),
             "debt_to_equity":   fund.get("debt_to_equity"),
         }
+
+    # --- Model confidence / uncertainty packet (fix 10.1) ---
+    # This packet tells the LLM how reliable each component is.
+    # The LLM should hedge its language proportionally to uncertainty.
+    _ic_quality: str
+    if live_ic is None:
+        _ic_quality = "UNKNOWN"
+    elif live_ic >= 0.06:
+        _ic_quality = "HIGH"
+    elif live_ic >= 0.02:
+        _ic_quality = "MEDIUM"
+    elif live_ic >= 0.0:
+        _ic_quality = "LOW"
+    else:
+        _ic_quality = "DEGRADED"
+
+    ctx["model_confidence"] = {
+        "ic_quality":       _ic_quality,
+        "live_ic":          round(float(live_ic), 4) if live_ic is not None else None,
+        "revenue_source":   (mc_result or {}).get("revenue_source", "unknown"),
+        "beta_source":      "rolling_ols" if (mc_result or {}).get("beta_used") not in (None, 1.0) else "fallback_1.0",
+        "nse_data_status":  nse_data_status,
+        "interpretation":   (
+            "ic_quality: HIGH=model reliable, MEDIUM=use caution, LOW=hedge claims, DEGRADED=signal unreliable. "
+            "revenue_source: edgar=SEC XBRL (reliable), yfinance=derived from EBITDA/margin (less reliable). "
+            "beta_source: rolling_ols=252d OLS (precise), fallback_1.0=default (less precise). "
+            "nse_data_status: null for US stocks; FRESH/STALE/FETCH_FAILED for India stocks."
+        ),
+    }
 
     return ctx
 
@@ -427,6 +511,56 @@ def run_daily(
     fund_map  = _get_fundamentals_map(conn)
     price_map: dict[str, pl.DataFrame] = {}
 
+    # --- Load index price data (used for rolling beta and index-level HMM) ---
+    _index_nsei = _get_price_df(conn, "^NSEI")
+    _index_gspc = _get_price_df(conn, "^GSPC")
+
+    def _get_index_df(sym: str) -> pl.DataFrame | None:
+        return _index_nsei if sym.endswith(".NS") else _index_gspc
+
+    # --- Fetch macro features for HMM augmentation (fix 7.2, fix 8.2) ---
+    log("Fetching macro features for HMM augmentation...")
+    _us_macro: dict = {}
+    _india_macro: dict = {}
+    try:
+        from engine.data.macro_loader import fetch_us_macro_features, fetch_india_macro_features
+        _us_macro = fetch_us_macro_features()
+        _india_macro = fetch_india_macro_features()
+        log(f"  US macro: yield_curve={_us_macro.get('yield_curve_2s10s')}, vix_z={_us_macro.get('vix_zscore')}")
+        log(f"  India macro: fii_norm={_india_macro.get('fii_net_flow_norm')}, vix_z={_india_macro.get('india_vix_zscore')}")
+    except Exception as e:
+        log(f"  Macro fetch error (non-fatal): {e}")
+
+    # --- Train index-level HMM models once per session (fix 3.1, 3.3, 7.2, 8.2) ---
+    log("Training index-level HMM regime models (BIC state selection)...")
+    _hmm_nsei: object = None
+    _hmm_gspc: object = None
+    # US HMM: augment with vix_zscore, yield_curve_2s10s (fix 7.2)
+    _us_hmm_macro = {
+        k: _us_macro.get(k)
+        for k in ("vix_zscore", "yield_curve_2s10s")
+        if _us_macro.get(k) is not None
+    } or None
+    # India HMM: augment with india_vix_zscore, fii_net_flow_norm (fix 8.2)
+    _india_hmm_macro = {
+        k: _india_macro.get(k)
+        for k in ("india_vix_zscore", "fii_net_flow_norm")
+        if _india_macro.get(k) is not None
+    } or None
+    if _index_nsei is not None and len(_index_nsei) >= 252:
+        try:
+            _hmm_nsei = fit_market_regime(_index_nsei, macro_features=_india_hmm_macro)
+        except Exception as e:
+            log(f"  NSEI HMM training failed: {e}")
+    if _index_gspc is not None and len(_index_gspc) >= 252:
+        try:
+            _hmm_gspc = fit_market_regime(_index_gspc, macro_features=_us_hmm_macro)
+        except Exception as e:
+            log(f"  GSPC HMM training failed: {e}")
+
+    def _get_index_hmm(sym: str):
+        return _hmm_nsei if sym.endswith(".NS") else _hmm_gspc
+
     # --- Features + Regime ---
     log("Computing features and regime detection...")
     for i, sym in enumerate(symbols):
@@ -443,14 +577,21 @@ def run_daily(
             log(f"  {sym} features error: {e}")
 
         try:
-            # Skip HMM re-training if regime is already computed for the latest price date
+            # Skip HMM computation if regime already exists for latest price date
             latest_price_date = price_df.sort("date")["date"][-1]
             existing_regime = conn.execute(
                 "SELECT COUNT(*) FROM regime_daily WHERE symbol = ? AND date = ?",
                 [sym, latest_price_date]
             ).fetchone()[0]
             if existing_regime == 0:
-                regime_df = run_regime_detection(price_df, sym)
+                idx_hmm   = _get_index_hmm(sym)
+                idx_df    = _get_index_df(sym)
+                if idx_hmm is not None and idx_df is not None:
+                    # Use stock beta (from MC result if available, else default 1.0)
+                    mc_beta = None  # computed later; use 1.0 here — regime is fast
+                    regime_df = predict_regimes_from_index(idx_hmm, idx_df, price_df, sym, beta=1.0)
+                else:
+                    regime_df = run_regime_detection(price_df, sym)
                 _upsert_df(conn, regime_df, "regime_daily",
                            ["symbol", "date", "regime", "regime_label",
                             "prob_bull", "prob_bear", "prob_range", "prob_crash", "prob_recovery"])
@@ -463,6 +604,25 @@ def run_daily(
     # --- Load IC weights from history ---
     log("Computing IC weights from historical scorecard...")
     ic_weights = _load_ic_weights(conn)
+
+    # Apply regime-conditional value weight (fix 2.2)
+    _universe_is_india = bool(symbols and all(s.endswith(".NS") or s.endswith(".BO") for s in symbols))
+    _val_weight = _regime_conditional_value_weight(
+        ic_weights.get("value", 0.20),
+        universe_is_india=_universe_is_india,
+    )
+    # Re-normalise: adjust value weight and scale others proportionally
+    _old_val = ic_weights.get("value", 0.20)
+    _delta = _val_weight - _old_val
+    if abs(_delta) > 0.001:
+        _other_keys = [k for k in ic_weights if k != "value"]
+        _other_sum = sum(ic_weights.get(k, 0.0) for k in _other_keys)
+        if _other_sum > 1e-6:
+            _scale = (1.0 - _val_weight) / _other_sum
+            for k in _other_keys:
+                ic_weights[k] = ic_weights.get(k, 0.0) * _scale
+        ic_weights["value"] = _val_weight
+
     log(f"  IC weights: {json.dumps({k: round(v, 3) for k, v in ic_weights.items()})}")
 
     # --- Factors (cross-sectional with IC weights) ---
@@ -492,7 +652,10 @@ def run_daily(
         try:
             mc = build_mc_valuation_from_fundamentals(fund, current_price,
                                                        shares_outstanding=shares_float,
-                                                       rng=session_rng)
+                                                       rng=session_rng,
+                                                       price_df=price_df,
+                                                       index_df=_get_index_df(sym),
+                                                       symbol=sym)
             if mc:
                 mc_map[sym] = mc
                 run_date = price_df.sort("date")["date"][-1]
@@ -520,6 +683,15 @@ def run_daily(
                 log(f"  {sym} forecast error: {e}")
 
     # --- Scorecard Assembly ---
+    # Compute live OOS metrics before scorecard assembly so IC can gate Kelly sizing
+    _live_ic: float | None = None
+    try:
+        _pre_live_metrics = compute_live_metrics()
+        if _pre_live_metrics:
+            _live_ic = _pre_live_metrics.get("live_IC")
+    except Exception:
+        pass
+
     log("Assembling scorecard...")
     scorecard_rows = []
 
@@ -542,6 +714,12 @@ def run_daily(
         value_score    = float(fac.get("value")    or 0.0)
         low_vol_score  = float(fac.get("low_vol")  or 0.0)
         revision_score = float(fac.get("revision") or 0.0)
+        # Zero-weight revision for NSE symbols with failed fetches (fix 1.3)
+        # Prevents stale/missing data from entering composite as a signal
+        if sym.endswith(".NS"):
+            from engine.data.nse_enrichment import get_nse_status, _STATUS_FAILED
+            if get_nse_status(sym) == _STATUS_FAILED:
+                revision_score = 0.0
 
         # Regime score: probability-weighted expected return (mathematically justified)
         regime_score = 0.0
@@ -596,13 +774,21 @@ def run_daily(
         # b = p75 / |p25| is more calibrated than p50 / (p50*0.5)
         exp_gain = max(abs(p75_ret), abs(p50_ret), 0.01)
         exp_loss = max(abs(p25_ret), abs(p10_ret) * 0.5, 0.005)
-        kelly    = kelly_fraction_single(prob_up, exp_gain, exp_loss)
+        kelly    = kelly_fraction_single(prob_up, exp_gain, exp_loss, live_ic=_live_ic)
+        # F&O expiry reduction (fix 8.3): 30% Kelly reduction for .NS during expiry week
+        if sym.endswith(".NS") and is_nse_expiry_week(run_date):
+            kelly *= 0.70
 
         signal = _compute_signal(composite, confidence)
 
         # Net expected return after transaction costs (round-trip applied once per hold period)
         # REBALANCE_FREQ_DAYS≈63 → cost amortised quarterly
-        rt_cost = NSE_COSTS.round_trip_pct()   # ~0.00123 per round-trip
+        if sym.endswith(".NS"):
+            rt_cost = NSE_COSTS.round_trip_pct()
+        else:
+            _mktcap = fund_map.get(sym, {}).get("market_cap")
+            _mktcap_f = float(_mktcap) if _mktcap and np.isfinite(float(_mktcap)) else None
+            rt_cost = get_us_costs(market_cap=_mktcap_f, avg_price=current_price).round_trip_pct()
         net_p50 = p50_ret - rt_cost            # cost deducted from median expected return
 
         scorecard_rows.append({
@@ -672,7 +858,7 @@ def run_daily(
 
     # Live OOS validation: log signals, backfill returns, compute metrics, alert on degradation
     try:
-        append_signals(scorecard_rows, price_map=price_map)
+        append_signals(scorecard_rows, price_map=price_map, fund_map=fund_map)
         live_metrics = compute_live_metrics()
         if live_metrics:
             log(f"Live OOS metrics: IC={live_metrics.get('live_IC')}, "
@@ -684,6 +870,42 @@ def run_daily(
                 log(f"  [DEGRADATION ALERT] {alert}")
     except Exception as e:
         log(f"Live OOS tracking error (non-fatal): {e}")
+
+    # --- Write data_health.json (fix 11.2) ---
+    try:
+        import pathlib
+        _health: dict = {
+            "generated_at": datetime.now().isoformat(),
+            "n_symbols_scored": len(scorecard_rows),
+            "live_oos": live_metrics if "live_metrics" in dir() and live_metrics else {},
+            "nse_status": {},
+            "stale_fundamentals": [],
+        }
+        # NSE per-symbol status
+        if any(s.endswith(".NS") for s in symbols):
+            try:
+                from engine.data.nse_enrichment import get_nse_status
+                for s in symbols:
+                    if s.endswith(".NS"):
+                        _health["nse_status"][s] = get_nse_status(s)
+            except Exception:
+                pass
+        # Stale fundamentals: symbols with updated_at > 14 days ago
+        try:
+            stale_rows = conn.execute("""
+                SELECT symbol, updated_at FROM fundamentals
+                WHERE updated_at < now() - INTERVAL '14 DAY' OR updated_at IS NULL
+            """).fetchall()
+            _health["stale_fundamentals"] = [r[0] for r in stale_rows if r[0] in set(symbols)]
+        except Exception:
+            pass
+        _health_path = pathlib.Path("data/data_health.json")
+        _health_path.parent.mkdir(parents=True, exist_ok=True)
+        _health_path.write_text(json.dumps(_health, indent=2, default=str))
+        log(f"  data_health.json written ({len(_health['nse_status'])} NSE statuses, "
+            f"{len(_health['stale_fundamentals'])} stale funds)")
+    except Exception as e:
+        log(f"  data_health.json write error (non-fatal): {e}")
 
     conn.close()
     log(f"Done. {len(scorecard_rows)} symbols scored.")

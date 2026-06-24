@@ -39,7 +39,33 @@ def compute_momentum_score(price_df: pl.DataFrame) -> float | None:
     return float(ret_12m - ret_1m)
 
 
-def compute_quality_score(fund: dict) -> float | None:
+def compute_accruals_score(fund: dict) -> float | None:
+    """
+    Accruals anomaly (Sloan 1996): low accruals → higher earnings quality.
+    accruals = (net_income - operating_cash_flow) / total_assets
+    Lower accruals (more cash-backed earnings) scores higher.
+
+    Returns negated accruals ratio so higher = better quality (consistent
+    with other factor score directions).
+    """
+    def _safe(key: str) -> float | None:
+        v = fund.get(key)
+        return float(v) if v is not None and np.isfinite(float(v)) else None
+
+    net_income = _safe("net_income")
+    cfo        = _safe("operating_cashflow")
+    assets     = _safe("total_assets")
+
+    if net_income is None or cfo is None or assets is None or abs(assets) < 1e6:
+        return None
+
+    accruals = (net_income - cfo) / assets
+    # Clip to [-0.3, 0.3] before negation — extreme values are data errors
+    accruals = float(np.clip(accruals, -0.3, 0.3))
+    return -accruals  # higher score = lower accruals = better
+
+
+def compute_quality_score(fund: dict, symbol: str = "") -> float | None:
     """
     QMJ quality score — Asness et al. (2019).
 
@@ -48,9 +74,14 @@ def compute_quality_score(fund: dict) -> float | None:
 
     Sub-components:
       Profitability (40%): ROE, ROIC, gross_margin, operating_margin
-      Safety        (30%): -debt_to_equity, -net_debt_to_ebitda, current_ratio
+      Safety        (20%): -debt_to_equity, -net_debt_to_ebitda, current_ratio
       Growth        (20%): revenue_cagr_3y, eps_cagr_3y
       Payout        (10%): fcf_margin, buyback_yield
+      Accruals      (10%): -(net_income - CFO) / assets  (fix 2.4)
+
+    India only:
+      Promoter pledging penalty: if >30% pledged, subtract proportional penalty
+      from safety sub-component (fix 8.1).
 
     Returns a single float in roughly [-3, 3] range after within-group
     equal-weighting. No absolute magnitude dependency.
@@ -60,9 +91,11 @@ def compute_quality_score(fund: dict) -> float | None:
         return float(v) if v is not None and np.isfinite(float(v)) else None
 
     profitability = [_safe("roe"), _safe("roic"), _safe("gross_margin"), _safe("operating_margin")]
-    safety        = [_safe("debt_to_equity"), _safe("net_debt_to_ebitda"), _safe("current_ratio")]
+    safety_raw    = [_safe("debt_to_equity"), _safe("net_debt_to_ebitda"), _safe("current_ratio")]
     growth        = [_safe("revenue_cagr_3y"), _safe("eps_cagr_3y")]
     payout        = [_safe("fcf_margin"), _safe("buyback_yield")]
+
+    accruals_score = compute_accruals_score(fund)
 
     def _group_score(vals: list[float | None], signs: list[float]) -> float | None:
         pairs = [(v, s) for v, s in zip(vals, signs) if v is not None]
@@ -70,12 +103,21 @@ def compute_quality_score(fund: dict) -> float | None:
             return None
         return float(np.mean([v * s for v, s in pairs]))
 
-    p = _group_score(profitability, [1, 1, 1, 1])
-    sa = _group_score(safety, [-1, -1, 1])   # lower leverage = higher safety
-    g = _group_score(growth, [1, 1])
+    p  = _group_score(profitability, [1, 1, 1, 1])
+    sa = _group_score(safety_raw,    [-1, -1, 1])   # lower leverage = higher safety
+    g  = _group_score(growth, [1, 1])
     pa = _group_score(payout, [1, 1])
 
-    components = [(p, 0.40), (sa, 0.30), (g, 0.20), (pa, 0.10)]
+    # Promoter pledging penalty for Indian stocks (fix 8.1)
+    # >30% pledged → linear penalty: penalty = (pledged_pct - 30) / 70 * 2
+    # Applied as a negative offset to the safety sub-component
+    if symbol.endswith(".NS") and sa is not None:
+        pledging_pct = _safe("promoter_pledging_pct")
+        if pledging_pct is not None and pledging_pct > 30.0:
+            penalty = (pledging_pct - 30.0) / 70.0 * 2.0  # [0, 2] at 30–100%
+            sa = sa - float(np.clip(penalty, 0.0, 2.0))
+
+    components = [(p, 0.40), (sa, 0.20), (g, 0.20), (pa, 0.10), (accruals_score, 0.10)]
     valid = [(v, w) for v, w in components if v is not None]
     if len(valid) < 2:
         return None
@@ -128,6 +170,26 @@ def compute_value_score(fund: dict) -> float | None:
     return float(np.mean(components)) if components else None
 
 
+def compute_size_score(fund: dict) -> float | None:
+    """
+    Size factor (fix 9.2): smaller within large-cap universe scores higher.
+    Raw value: -log(market_cap). Negated so smaller cap = higher score.
+    Cross-sectional z-score applied later.
+
+    Returns None if market_cap is missing or non-positive.
+    """
+    mktcap = fund.get("market_cap")
+    if mktcap is None:
+        return None
+    try:
+        mc = float(mktcap)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(mc) or mc <= 0:
+        return None
+    return float(-np.log(mc))
+
+
 def compute_low_vol_score(price_df: pl.DataFrame) -> float | None:
     """
     Low-volatility factor.
@@ -143,11 +205,17 @@ def compute_low_vol_score(price_df: pl.DataFrame) -> float | None:
     return float(-vol)
 
 
-def compute_revision_score(fund: dict, days_since_update: int | None = None) -> float | None:
+def compute_revision_score(fund: dict, symbol: str = "", days_since_update: int | None = None) -> float | None:
     """
-    Earnings revision: analyst upgrade momentum proxy.
-    earnings_surprise_pct is YoY EPS change as beat/miss proxy.
-    eps_growth_yoy captures the magnitude of actual revision.
+    Earnings revision score.
+
+    US stocks (.NS suffix absent): Standardized Unexpected Earnings (SUE) +
+      analyst revision breadth (upgrades - downgrades) / total analysts.
+      SUE = (actual_eps - consensus_eps) / std(eps_surprises)
+            approximated as earnings_surprise_pct / 20 (normalises to ~[-2,2]).
+      Breadth = recommendation_mean mapped: 1=Strong Buy → +1, 5=Strong Sell → -1.
+
+    India stocks (.NS suffix): YoY EPS change + earnings_surprise_pct (NSE quarterly).
 
     Staleness decay: weight = min(1, 30/days_since_update).
     NSE quarterly filings go stale after ~90 days; penalise stale data linearly.
@@ -155,11 +223,66 @@ def compute_revision_score(fund: dict, days_since_update: int | None = None) -> 
     surprise   = fund.get("earnings_surprise_pct")
     eps_growth = fund.get("eps_growth_yoy")
 
+    is_india = symbol.endswith(".NS")
+
     vals = []
-    if surprise is not None and np.isfinite(float(surprise)):
-        vals.append(float(np.tanh(float(surprise) / 50.0)))   # tanh bounds to [-1,1]
-    if eps_growth is not None and np.isfinite(float(eps_growth)):
-        vals.append(float(np.tanh(float(eps_growth) / 50.0)))
+    if is_india:
+        # NSE: use EPS surprise + YoY growth
+        if surprise is not None and np.isfinite(float(surprise)):
+            vals.append(float(np.tanh(float(surprise) / 50.0)))
+        if eps_growth is not None and np.isfinite(float(eps_growth)):
+            vals.append(float(np.tanh(float(eps_growth) / 50.0)))
+    else:
+        # US: SUE via normalised surprise + analyst breadth via recommendation_mean
+        if surprise is not None and np.isfinite(float(surprise)):
+            # surprise stored as %; divide by 20 → ~[-2,2] for typical beats
+            sue = float(np.clip(float(surprise) / 20.0, -3.0, 3.0))
+            vals.append(float(np.tanh(sue)))
+        rec_mean = fund.get("recommendation_mean")
+        if rec_mean is not None and np.isfinite(float(rec_mean)):
+            # Yahoo Finance: 1.0=Strong Buy, 3.0=Hold, 5.0=Strong Sell
+            # Map [1, 5] → [+1, -1] linearly: breadth = (3 - rec_mean) / 2
+            breadth = float(np.clip((3.0 - float(rec_mean)) / 2.0, -1.0, 1.0))
+            vals.append(breadth)
+        # Analyst count breadth: number_of_analyst_opinions as confidence weight
+        # (no separate signal — used as confidence scalar below)
+        n_analysts = fund.get("number_of_analyst_opinions")
+        if n_analysts is not None and np.isfinite(float(n_analysts)):
+            # Scale confidence: <5 analysts → 0.5 weight, ≥20 → full weight
+            analyst_conf = float(np.clip(float(n_analysts) / 20.0, 0.5, 1.0))
+            if vals:
+                vals = [v * analyst_conf for v in vals]
+
+        # Short interest signal (fix 7.1): high short interest = bearish revision
+        # shortRatio = days to cover (DTC); shortPercentOfFloat = % of float shorted.
+        # Negative because more shorts → lower revision score.
+        # Weight: 10% of total revision score (blended with 90% of existing signal).
+        short_ratio = fund.get("shortRatio")
+        short_float = fund.get("shortPercentOfFloat")
+        short_signal: float | None = None
+        if short_ratio is not None and np.isfinite(float(short_ratio)) and float(short_ratio) >= 0:
+            # DTC: 0–5d normal, >10d very high. Tanh-bound: -tanh(dtc/5) → [0, -1]
+            dtc_signal = -float(np.tanh(float(short_ratio) / 5.0))
+            short_signal = dtc_signal
+        if short_float is not None and np.isfinite(float(short_float)) and float(short_float) >= 0:
+            # short_float: 0–1 (fraction) or 0–100 (%); normalise to fraction
+            sf = float(short_float)
+            if sf > 1.0:
+                sf /= 100.0
+            float_signal = -float(np.tanh(sf / 0.15))  # 15% float shorted → strong signal
+            if short_signal is None:
+                short_signal = float_signal
+            else:
+                short_signal = (short_signal + float_signal) / 2.0
+        if short_signal is not None:
+            # Blend: 90% existing signal + 10% short interest
+            existing_weight = 0.90
+            short_weight = 0.10
+            if vals:
+                vals = [v * existing_weight for v in vals]
+                vals.append(short_signal * short_weight / max(len(vals), 1))
+            else:
+                vals.append(short_signal * short_weight)
 
     if not vals:
         return None
@@ -200,6 +323,53 @@ def cross_sectional_zscore(values: dict[str, float | None]) -> dict[str, float]:
     z_vals = (arr_w - mean) / std
     z_map  = dict(zip(keys, z_vals.tolist()))
     return {k: z_map.get(k, 0.0) for k in values}
+
+
+def sector_neutral_zscore(
+    values: dict[str, float | None],
+    sector_map: dict[str, str],
+) -> dict[str, float]:
+    """
+    Sector-neutral z-score: z-score independently within each GICS sector,
+    then aggregate. Eliminates sector bets from factor signals.
+
+    For symbols with unknown sector or sectors with <3 members, falls back
+    to the full cross-sectional z-score for that group.
+
+    sector_map: {symbol: sector_name}
+    """
+    # Group symbols by sector
+    sector_groups: dict[str, list[str]] = {}
+    ungrouped: list[str] = []
+    for sym in values:
+        sec = sector_map.get(sym)
+        if sec:
+            sector_groups.setdefault(sec, []).append(sym)
+        else:
+            ungrouped.append(sym)
+
+    result: dict[str, float] = {}
+
+    for sector, syms in sector_groups.items():
+        sub = {s: values[s] for s in syms}
+        if len([v for v in sub.values() if v is not None]) < 3:
+            # Too few to z-score within sector — treat as ungrouped
+            ungrouped.extend(syms)
+        else:
+            z = cross_sectional_zscore(sub)
+            result.update(z)
+
+    if ungrouped:
+        sub = {s: values[s] for s in ungrouped}
+        z = cross_sectional_zscore(sub)
+        result.update(z)
+
+    # Any symbol not yet scored gets 0.0
+    for sym in values:
+        if sym not in result:
+            result[sym] = 0.0
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -272,19 +442,25 @@ def compute_all_factors(
     price_map: dict[str, pl.DataFrame],
     fund_map: dict[str, dict],
     ic_weights: dict[str, float] | None = None,
+    sector_neutral: bool = True,
 ) -> pl.DataFrame:
     """
     Compute all 5 factors for the full cross-section.
     Returns [symbol, date, momentum, quality, value, low_vol, revision, composite].
 
     composite = Σ w_i * z_i   where w_i are IC-proportional or default weights.
+
+    sector_neutral=True: z-scores are computed within GICS sectors independently
+    to eliminate sector bets. Falls back to full cross-section for sectors <3 members.
     """
     weights = ic_weights if ic_weights is not None else _DEFAULT_WEIGHTS
     today = None
 
     raw: dict[str, dict[str, float | None]] = {
-        "momentum": {}, "quality": {}, "value": {}, "low_vol": {}, "revision": {}
+        "momentum": {}, "quality": {}, "value": {}, "low_vol": {}, "revision": {}, "size": {}
     }
+    # Build sector map for sector-neutral z-scoring
+    sector_map: dict[str, str] = {}
 
     for sym, price_df in price_map.items():
         if price_df is None or len(price_df) == 0:
@@ -296,9 +472,16 @@ def compute_all_factors(
         raw["low_vol"][sym]  = compute_low_vol_score(price_df)
 
         fund = fund_map.get(sym) or {}
-        raw["quality"][sym]   = compute_quality_score(fund)
+
+        # Collect sector for sector-neutral z-scoring
+        sector = fund.get("sector") or fund.get("gics_sector")
+        if sector:
+            sector_map[sym] = str(sector)
+
+        raw["quality"][sym]   = compute_quality_score(fund, symbol=sym)
         raw["value"][sym]     = compute_value_score(fund)
-        # Pass days_since_update for staleness discounting of earnings data
+        raw["size"][sym]      = compute_size_score(fund)
+
         updated_at = fund.get("updated_at")
         days_stale: int | None = None
         if updated_at is not None:
@@ -313,9 +496,20 @@ def compute_all_factors(
                 days_stale = max(0, (_date.today() - d).days)
             except Exception:
                 pass
-        raw["revision"][sym] = compute_revision_score(fund, days_since_update=days_stale)
+        raw["revision"][sym] = compute_revision_score(fund, symbol=sym, days_since_update=days_stale)
 
-    z: dict[str, dict[str, float]] = {k: cross_sectional_zscore(v) for k, v in raw.items()}
+    # Apply sector-neutral z-scoring when sector data is available for ≥10% of universe
+    use_sector_neutral = (
+        sector_neutral and
+        len(sector_map) >= max(3, len(price_map) * 0.1)
+    )
+
+    def _zscore_fn(vals: dict[str, float | None]) -> dict[str, float]:
+        if use_sector_neutral:
+            return sector_neutral_zscore(vals, sector_map)
+        return cross_sectional_zscore(vals)
+
+    z: dict[str, dict[str, float]] = {k: _zscore_fn(v) for k, v in raw.items()}
 
     records = []
     all_symbols = set(price_map.keys())
@@ -325,14 +519,17 @@ def compute_all_factors(
         v  = z["value"].get(sym, 0.0)
         lv = z["low_vol"].get(sym, 0.0)
         r  = z["revision"].get(sym, 0.0)
+        sz = z["size"].get(sym, 0.0)
 
         # IC-weighted composite — NOT re-entering composite_factor (eliminates double-counting)
+        # Size factor (fix 9.2): 5% weight taken from low_vol (15% → 10%) and revision (10% → 5%)
         composite = (
             weights.get("momentum", 0.25) * m +
             weights.get("quality",  0.30) * q +
             weights.get("value",    0.20) * v +
-            weights.get("low_vol",  0.15) * lv +
-            weights.get("revision", 0.10) * r
+            weights.get("low_vol",  0.10) * lv +
+            weights.get("revision", 0.10) * r +
+            weights.get("size",     0.05) * sz
         )
 
         records.append({
@@ -343,6 +540,7 @@ def compute_all_factors(
             "value":     v,
             "low_vol":   lv,
             "revision":  r,
+            "size":      sz,
             "composite": composite,
         })
 
@@ -350,5 +548,5 @@ def compute_all_factors(
         "symbol": pl.Utf8, "date": pl.Date,
         "momentum": pl.Float64, "quality": pl.Float64,
         "value": pl.Float64, "low_vol": pl.Float64,
-        "revision": pl.Float64, "composite": pl.Float64,
+        "revision": pl.Float64, "size": pl.Float64, "composite": pl.Float64,
     })

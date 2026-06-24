@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 
 // ---------------------------------------------------------------------------
@@ -84,6 +84,22 @@ interface FundamentalsRow {
   free_cashflow: number | null;
 }
 
+interface OosMetrics {
+  live_IC:          number | null;
+  hit_rate:         number | null;
+  strong_buy_alpha: number | null;
+  sharpe_live:      number | null;
+  n_obs:            number;
+  ic_quality:       "HIGH" | "MEDIUM" | "LOW" | "DEGRADED" | "INSUFFICIENT";
+  data_health:      {
+    generated_at?: string;
+    n_symbols_scored?: number;
+    nse_status?: Record<string, string>;
+    stale_fundamentals?: string[];
+    live_oos?: Record<string, number | null>;
+  } | null;
+}
+
 interface FeatureRow { feature: string; value: number; }
 interface FactorPoint { date: string; momentum: number; quality: number; value: number; low_vol: number; revision: number; composite: number; }
 interface PricePoint { date: string; close: number; volume: number; }
@@ -98,6 +114,359 @@ interface DetailData {
   features: FeatureRow[];
   factor_history: FactorPoint[];
   prices: PricePoint[];
+}
+
+// ---------------------------------------------------------------------------
+// IC Report types (mirrors lib/ic-report.ts ICReport shape)
+// ---------------------------------------------------------------------------
+
+interface ValuationApproach { method: string; priceTarget: string; impliedUpside: string; assumptions: string; confidence: string; }
+interface ValuationScenario { label: string; priceTarget: string; impliedUpside: string; keyAssumptions: string[]; }
+interface ICValuation {
+  currentPrice: string; intrinsicValueRange: string; impliedUpside: string;
+  approaches: ValuationApproach[]; scenarios: ValuationScenario[];
+  dcfSensitivity: string; valuationVerdict: string;
+}
+interface ICSignal { id: string; category: string; severity: string; description: string; }
+interface AgentFinding { agent: string; agentLabel: string; questionsAnswered: number; findings: string; confidence: string; }
+interface Thesis { bull: string; bear: string; base: string; variantPerception?: string; marketExpectations?: string; keyCatalysts?: string[]; keyRisks?: string[]; keyDrivers?: string[]; }
+interface RunHotCold {
+  oneYearReturn: number;
+  medianReturn: number;
+  percentile: number;
+  signal: "run_hot" | "run_cold" | "neutral";
+}
+interface ICReport {
+  symbol: string; companyName: string; generatedAt: string; model: string;
+  signals: ICSignal[]; agentFindings: AgentFinding[]; thesis: Thesis;
+  valuation: ICValuation; monitorables: string[];
+  runHotCold: RunHotCold | null;
+}
+
+type ICJobStatus = "queued" | "running" | "done" | "error";
+interface ICJob { symbol: string; status: ICJobStatus; stage: string; report: ICReport | null; error: string | null; }
+
+// ---------------------------------------------------------------------------
+// Batch IC runner — bottom tray + full-screen report viewer
+// ---------------------------------------------------------------------------
+
+function SignalBadge({ severity, label }: { severity: string; label: string }) {
+  const cls = severity === "high" ? "bg-red-500/10 border-red-500/30 text-red-400"
+    : severity === "medium" ? "bg-amber-400/10 border-amber-400/30 text-amber-400"
+    : "bg-border/20 border-border text-muted";
+  return <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${cls}`}>{label}</span>;
+}
+
+function ICReportView({ report, currency }: { report: ICReport; currency: string }) {
+  const [agentTab, setAgentTab] = useState(0);
+  const v = report.valuation;
+
+  return (
+    <div className="flex flex-col gap-6 px-6 py-5 overflow-y-auto h-full text-sm">
+
+      {/* Header row */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-lg font-semibold">{report.symbol}</span>
+            <span className="text-muted">·</span>
+            <span className="text-muted">{report.companyName}</span>
+          </div>
+          <span className="text-xs text-muted">
+            Generated {new Date(report.generatedAt).toLocaleString()} · {report.model}
+          </span>
+        </div>
+        {/* Valuation summary pill */}
+        <div className="flex flex-col items-end gap-1">
+          <span className="font-mono text-xl font-semibold">{v.intrinsicValueRange}</span>
+          <span className={`font-mono text-sm font-medium ${v.impliedUpside.startsWith("+") ? "text-positive" : "text-negative"}`}>
+            {v.impliedUpside} vs {v.currentPrice}
+          </span>
+        </div>
+      </div>
+
+      {/* Red flag signals */}
+      {report.signals.filter(s => s.severity !== "info").length > 0 && (
+        <div className="flex flex-col gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Red Flags</span>
+          <div className="flex flex-col gap-1.5">
+            {report.signals.filter(s => s.severity !== "info").map(s => (
+              <div key={s.id} className="flex items-start gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2">
+                <SignalBadge severity={s.severity} label={s.severity} />
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-xs font-medium">{s.category.replace(/_/g," ")}</span>
+                  <span className="text-xs text-muted">{s.description}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Thesis */}
+      <div className="grid gap-3 md:grid-cols-3">
+        {(["base","bull","bear"] as const).map((k) => {
+          const text = report.thesis[k];
+          const color = k === "bull" ? "border-positive/30 bg-positive/5" : k === "bear" ? "border-negative/30 bg-negative/5" : "border-border bg-surface-2";
+          const label = k === "base" ? "Base case" : k === "bull" ? "Bull case" : "Bear case";
+          return (
+            <div key={k} className={`flex flex-col gap-1.5 rounded-lg border p-3 ${color}`}>
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">{label}</span>
+              <p className="text-xs leading-relaxed text-muted">{text}</p>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Valuation approaches */}
+      <div className="flex flex-col gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Valuation</span>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {v.approaches.map((a) => (
+            <div key={a.method} className="flex flex-col gap-1 rounded-lg border border-border bg-surface-2 p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-muted">{a.method}</span>
+                <span className={`text-[10px] font-semibold ${a.confidence === "high" ? "text-positive" : a.confidence === "low" ? "text-negative" : "text-amber-400"}`}>
+                  {a.confidence}
+                </span>
+              </div>
+              <span className="font-mono text-base font-semibold">{a.priceTarget}</span>
+              <span className={`font-mono text-xs ${a.impliedUpside.startsWith("+") ? "text-positive" : "text-negative"}`}>{a.impliedUpside}</span>
+              <p className="mt-1 text-[11px] leading-relaxed text-muted line-clamp-3">{a.assumptions}</p>
+            </div>
+          ))}
+        </div>
+        <div className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs text-muted">
+          <strong className="text-foreground">Verdict:</strong> {v.valuationVerdict}
+        </div>
+        <div className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs text-muted">
+          <strong className="text-foreground">DCF Sensitivity:</strong> {v.dcfSensitivity}
+        </div>
+      </div>
+
+      {/* Scenarios */}
+      <div className="flex flex-col gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Scenarios</span>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {v.scenarios.map((s) => {
+            const bull = s.label.toLowerCase().includes("bull");
+            const bear = s.label.toLowerCase().includes("bear");
+            const color = bull ? "border-positive/30" : bear ? "border-negative/30" : "border-border";
+            return (
+              <div key={s.label} className={`flex flex-col gap-1.5 rounded-lg border bg-surface-2 p-3 ${color}`}>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold">{s.label}</span>
+                  <span className={`font-mono text-sm font-semibold ${s.impliedUpside.startsWith("+") ? "text-positive" : "text-negative"}`}>
+                    {s.priceTarget} <span className="text-xs">({s.impliedUpside})</span>
+                  </span>
+                </div>
+                <ul className="flex flex-col gap-0.5">
+                  {s.keyAssumptions.map((a, i) => (
+                    <li key={i} className="text-[11px] text-muted before:mr-1.5 before:content-['·']">{a}</li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Run Hot / Cold */}
+      {report.runHotCold && (
+        <div className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 text-xs ${
+          report.runHotCold.signal === "run_hot" ? "border-amber-400/30 bg-amber-400/5" :
+          report.runHotCold.signal === "run_cold" ? "border-accent/30 bg-accent/5" :
+          "border-border bg-surface-2"
+        }`}>
+          <span className={`font-semibold uppercase tracking-wide ${
+            report.runHotCold.signal === "run_hot" ? "text-amber-400" :
+            report.runHotCold.signal === "run_cold" ? "text-accent" : "text-muted"
+          }`}>
+            {report.runHotCold.signal.replace("_", " ")}
+          </span>
+          <span className="text-muted">
+            1Y return {report.runHotCold.oneYearReturn.toFixed(1)}% vs own median {report.runHotCold.medianReturn.toFixed(1)}%
+            · {report.runHotCold.percentile}th percentile of own history
+          </span>
+        </div>
+      )}
+
+      {/* Agent findings */}
+      {report.agentFindings.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Agent Analysis</span>
+          <div className="flex flex-wrap gap-1">
+            {report.agentFindings.map((af, i) => (
+              <button key={af.agent} onClick={() => setAgentTab(i)}
+                className={`rounded px-2.5 py-1 text-[11px] font-medium transition-colors ${agentTab === i ? "bg-accent/15 text-accent" : "text-muted hover:bg-surface-2"}`}>
+                {af.agentLabel ?? af.agent}
+              </button>
+            ))}
+          </div>
+          {report.agentFindings[agentTab] && (
+            <div className="rounded-lg border border-border bg-surface-2 p-3">
+              <p className="text-xs leading-relaxed text-muted whitespace-pre-wrap">
+                {report.agentFindings[agentTab].findings}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Monitorables */}
+      {report.monitorables.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Watch List</span>
+          <ul className="grid gap-1 sm:grid-cols-2">
+            {report.monitorables.map((m, i) => (
+              <li key={i} className="flex items-start gap-2 rounded border border-border bg-surface-2 px-3 py-1.5 text-xs text-muted">
+                <span className="mt-0.5 shrink-0 text-accent">→</span>{m}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Stage → human-readable progress label
+const STAGE_LABEL: Record<string, string> = {
+  signals: "Detecting signals…", questions: "Generating questions…",
+  agents: "Running analyst agents…", agent_complete: "Agents running…",
+  thesis: "Forming thesis…", valuation: "Valuing…", done: "Complete",
+};
+
+function BatchICPanel({
+  jobs, activeIdx, onSelectJob, onClose, onRemoveSymbol,
+}: {
+  jobs: ICJob[]; activeIdx: number;
+  onSelectJob: (i: number) => void; onClose: () => void; onRemoveSymbol: (sym: string) => void;
+}) {
+  const activeJob = jobs[activeIdx] ?? null;
+  const doneCount = jobs.filter(j => j.status === "done").length;
+  const totalCount = jobs.length;
+
+  return (
+    /* Full-screen overlay with a slide-up animation */
+    <div className="fixed inset-0 z-50 flex flex-col bg-background/95 backdrop-blur-sm animate-in slide-in-from-bottom duration-300">
+
+      {/* Top bar */}
+      <div className="flex shrink-0 items-center gap-3 border-b border-border bg-surface px-4 py-3">
+        <span className="text-sm font-semibold">IC Reports</span>
+        <span className="rounded bg-surface-2 px-2 py-0.5 font-mono text-xs text-muted">
+          {doneCount}/{totalCount}
+        </span>
+        {/* Progress bar */}
+        <div className="flex-1 h-1 rounded-full bg-surface-2 mx-2">
+          <div
+            className="h-full rounded-full bg-accent transition-all duration-500"
+            style={{ width: totalCount ? `${(doneCount / totalCount) * 100}%` : "0%" }}
+          />
+        </div>
+        <button onClick={onClose}
+          className="ml-auto rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:bg-surface-2 hover:text-foreground">
+          ✕ Close
+        </button>
+      </div>
+
+      <div className="flex flex-1 min-h-0">
+        {/* Left sidebar — stock tabs */}
+        <div className="flex w-44 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-border bg-surface p-2">
+          {jobs.map((job, i) => {
+            const isActive = i === activeIdx;
+            const statusDot = job.status === "done" ? "bg-positive"
+              : job.status === "error" ? "bg-negative"
+              : job.status === "running" ? "bg-accent animate-pulse"
+              : "bg-border";
+            return (
+              <button key={job.symbol} onClick={() => onSelectJob(i)}
+                className={`flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors ${
+                  isActive ? "bg-accent/10 text-accent" : "text-muted hover:bg-surface-2 hover:text-foreground"
+                }`}>
+                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDot}`} />
+                <span className="flex-1 font-mono font-medium truncate">{job.symbol}</span>
+                {job.status !== "running" && (
+                  <span onClick={(e) => { e.stopPropagation(); onRemoveSymbol(job.symbol); }}
+                    className="shrink-0 text-[10px] opacity-0 group-hover:opacity-100 hover:text-negative cursor-pointer">×</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Main content — report or loading state */}
+        <div className="flex flex-1 flex-col min-h-0 min-w-0">
+          {activeJob === null && (
+            <div className="flex flex-1 items-center justify-center text-sm text-muted">Select a stock</div>
+          )}
+          {activeJob?.status === "queued" && (
+            <div className="flex flex-1 items-center justify-center flex-col gap-2 text-muted">
+              <span className="text-2xl">⏳</span>
+              <span className="text-sm">{activeJob.symbol} — queued</span>
+            </div>
+          )}
+          {activeJob?.status === "running" && (
+            <div className="flex flex-1 items-center justify-center flex-col gap-3 text-muted">
+              <span className="relative flex h-3 w-3">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
+                <span className="relative inline-flex h-3 w-3 rounded-full bg-accent" />
+              </span>
+              <span className="text-sm">{activeJob.symbol}</span>
+              <span className="text-xs">{STAGE_LABEL[activeJob.stage] ?? activeJob.stage}</span>
+            </div>
+          )}
+          {activeJob?.status === "error" && (
+            <div className="flex flex-1 items-center justify-center flex-col gap-2">
+              <span className="text-sm text-negative">Failed: {activeJob.error}</span>
+            </div>
+          )}
+          {activeJob?.status === "done" && activeJob.report && (
+            <ICReportView report={activeJob.report} currency={
+              activeJob.symbol.endsWith(".NS") || activeJob.symbol.endsWith(".BO") ? "₹" : "$"
+            } />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Bottom selection tray — shown while user is picking stocks
+function SelectionTray({
+  selected, onClear, onRemove, onRunBatch, running,
+}: {
+  selected: string[]; onClear: () => void; onRemove: (s: string) => void;
+  onRunBatch: () => void; running: boolean;
+}) {
+  if (selected.length === 0) return null;
+  return (
+    <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-border bg-surface/95 backdrop-blur-sm shadow-2xl">
+      <div className="mx-auto flex max-w-7xl items-center gap-3 px-6 py-3">
+        <span className="shrink-0 text-xs font-semibold text-muted uppercase tracking-wide">
+          {selected.length} selected
+        </span>
+        <div className="flex flex-1 flex-wrap gap-1.5 overflow-x-auto">
+          {selected.map(sym => (
+            <span key={sym}
+              className="flex items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-xs text-accent">
+              {sym}
+              <button onClick={() => onRemove(sym)}
+                className="ml-0.5 rounded-full text-accent/60 hover:text-accent leading-none">×</button>
+            </span>
+          ))}
+        </div>
+        <button onClick={onClear}
+          className="shrink-0 text-xs text-muted hover:text-foreground transition-colors px-2">
+          Clear all
+        </button>
+        <button onClick={onRunBatch} disabled={running || selected.length === 0}
+          className="shrink-0 rounded-lg bg-accent-strong px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50">
+          {running ? "Running…" : `Run IC Reports →`}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -613,6 +982,24 @@ export default function EnginePage() {
   const [sortDir, setSortDir]         = useState<"asc" | "desc">("desc");
   const [expanded, setExpanded]       = useState<string | null>(null);
   const [selectedUniverse, setSelectedUniverse] = useState("nifty50");
+  const [oosMetrics, setOosMetrics]   = useState<OosMetrics | null>(null);
+
+  // Batch IC report state
+  const [selectedSymbols, setSelectedSymbols] = useState<string[]>([]);
+  const [icJobs, setIcJobs]         = useState<ICJob[]>([]);
+  const [icPanelOpen, setIcPanelOpen] = useState(false);
+  const [icActiveIdx, setIcActiveIdx] = useState(0);
+  const [icBatchRunning, setIcBatchRunning] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  async function loadOosMetrics() {
+    try {
+      const res = await fetch("/api/engine/oos-metrics");
+      if (res.ok) setOosMetrics(await res.json() as OosMetrics);
+    } catch { /* non-fatal */ }
+  }
+
+  useEffect(() => { void loadOosMetrics(); }, []);
 
   async function loadScorecard() {
     setLoading(true); setError(null);
@@ -659,9 +1046,87 @@ export default function EnginePage() {
           }
         }
       }
-      if (!failed) await loadScorecard();
+      if (!failed) { await loadScorecard(); await loadOosMetrics(); }
     } catch (e) { setError(e instanceof Error ? e.message : "Engine failed"); }
     finally { setRunning(false); }
+  }
+
+  function toggleSymbol(sym: string) {
+    setSelectedSymbols(prev =>
+      prev.includes(sym) ? prev.filter(s => s !== sym) : [...prev, sym]
+    );
+  }
+
+  function clearSelection() { setSelectedSymbols([]); }
+
+  async function runBatchIC() {
+    if (selectedSymbols.length === 0) return;
+    // Initialise jobs as queued
+    const jobs: ICJob[] = selectedSymbols.map(sym => ({
+      symbol: sym, status: "queued", stage: "", report: null, error: null,
+    }));
+    setIcJobs(jobs);
+    setIcPanelOpen(true);
+    setIcActiveIdx(0);
+    setIcBatchRunning(true);
+    abortRef.current = new AbortController();
+
+    // Run sequentially — IC report is LLM-heavy, parallel would hit rate limits
+    for (let i = 0; i < jobs.length; i++) {
+      if (abortRef.current.signal.aborted) break;
+      const sym = jobs[i].symbol;
+
+      // Mark as running and auto-select this tab
+      setIcJobs(prev => prev.map((j, idx) => idx === i ? { ...j, status: "running", stage: "signals" } : j));
+      setIcActiveIdx(i);
+
+      try {
+        const res = await fetch("/api/ic-report", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ symbol: sym }),
+          signal: abortRef.current.signal,
+        });
+        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let report: ICReport | null = null;
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() ?? "";
+          for (const part of parts) {
+            const line = part.trim();
+            if (!line.startsWith("data:")) continue;
+            try {
+              const ev = JSON.parse(line.slice(5).trim()) as { stage: string; report?: ICReport; message?: string };
+              if (ev.stage === "done" && ev.report) {
+                report = ev.report;
+              }
+              // Update stage label in real time
+              setIcJobs(prev => prev.map((j, idx) =>
+                idx === i ? { ...j, stage: ev.stage } : j
+              ));
+            } catch { /* malformed SSE line */ }
+          }
+        }
+
+        setIcJobs(prev => prev.map((j, idx) =>
+          idx === i ? { ...j, status: report ? "done" : "error", report, error: report ? null : "No report received", stage: "done" } : j
+        ));
+      } catch (e) {
+        if ((e as Error).name === "AbortError") break;
+        setIcJobs(prev => prev.map((j, idx) =>
+          idx === i ? { ...j, status: "error", error: e instanceof Error ? e.message : "Failed", stage: "error" } : j
+        ));
+      }
+    }
+    setIcBatchRunning(false);
   }
 
   function toggleSort(col: keyof ScorecardRow) {
@@ -697,7 +1162,7 @@ export default function EnginePage() {
   const signals = ["ALL","STRONG_BUY","BUY","HOLD","SELL","STRONG_SELL"];
 
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-12">
+    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-12 pb-24">
 
       {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -753,6 +1218,62 @@ export default function EnginePage() {
           </button>
         </div>
       </div>
+
+      {/* OOS Metrics Panel */}
+      {oosMetrics && (
+        <div className="rounded-xl border border-border bg-surface overflow-hidden">
+          <div className="flex flex-wrap items-center gap-4 px-4 py-3 border-b border-border">
+            <span className="text-xs font-semibold uppercase tracking-widest text-muted">Live OOS Validation</span>
+            {/* IC Quality traffic light */}
+            {(() => {
+              const q = oosMetrics.ic_quality;
+              const dot = q === "HIGH" ? "bg-emerald-400" : q === "MEDIUM" ? "bg-amber-400" : q === "INSUFFICIENT" ? "bg-border" : "bg-red-500";
+              const label = q === "HIGH" ? "Signal Reliable" : q === "MEDIUM" ? "Signal Caution" : q === "LOW" ? "Signal Weak" : q === "DEGRADED" ? "Signal Degraded" : "Insufficient Data";
+              return (
+                <div className="flex items-center gap-1.5">
+                  <span className={`h-2 w-2 rounded-full ${dot}`} />
+                  <span className="text-xs font-medium">{label}</span>
+                </div>
+              );
+            })()}
+            {oosMetrics.ic_quality === "DEGRADED" && (
+              <span className="rounded bg-red-500/10 border border-red-500/30 px-2 py-0.5 text-xs text-red-400 font-medium">
+                ⚠ IC below floor — review model
+              </span>
+            )}
+            <button onClick={() => void loadOosMetrics()} className="ml-auto text-xs text-muted hover:text-foreground">↻ refresh</button>
+          </div>
+          <div className="grid grid-cols-2 gap-0 divide-x divide-border sm:grid-cols-4">
+            {([
+              { label: "Live IC", value: oosMetrics.live_IC, fmt: (v: number) => v.toFixed(4), color: (v: number) => v >= 0.06 ? "text-positive" : v >= 0.02 ? "text-amber-400" : "text-negative" },
+              { label: "Hit Rate", value: oosMetrics.hit_rate, fmt: (v: number) => `${(v * 100).toFixed(1)}%`, color: (v: number) => v >= 0.55 ? "text-positive" : v >= 0.50 ? "text-amber-400" : "text-negative" },
+              { label: "SB Alpha", value: oosMetrics.strong_buy_alpha, fmt: (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`, color: (v: number) => v >= 0 ? "text-positive" : "text-negative" },
+              { label: "Sharpe Live", value: oosMetrics.sharpe_live, fmt: (v: number) => v.toFixed(3), color: (v: number) => v >= 0.5 ? "text-positive" : v >= 0.3 ? "text-amber-400" : "text-negative" },
+            ] as const).map(({ label, value, fmt, color }) => (
+              <div key={label} className="flex flex-col gap-0.5 px-4 py-3">
+                <span className="text-xs text-muted">{label}</span>
+                {value !== null && isFinite(value)
+                  ? <span className={`font-mono text-sm font-semibold tabular-nums ${(color as (v: number) => string)(value)}`}>{(fmt as (v: number) => string)(value)}</span>
+                  : <span className="font-mono text-sm text-muted">—</span>
+                }
+              </div>
+            ))}
+          </div>
+          {oosMetrics.n_obs > 0 && (
+            <div className="border-t border-border px-4 py-2 text-xs text-muted">
+              {oosMetrics.n_obs} observations (84d rolling)
+              {oosMetrics.data_health?.stale_fundamentals && oosMetrics.data_health.stale_fundamentals.length > 0 && (
+                <span className="ml-3 text-amber-400">
+                  {oosMetrics.data_health.stale_fundamentals.length} stale fundamentals
+                </span>
+              )}
+              {oosMetrics.data_health?.generated_at && (
+                <span className="ml-3">· health: {new Date(oosMetrics.data_health.generated_at).toLocaleString()}</span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {error && (
         <div className="rounded-lg border border-negative/40 bg-negative/10 px-4 py-3 text-sm text-negative">{error}</div>
@@ -814,6 +1335,16 @@ export default function EnginePage() {
             <table className="w-full text-sm">
               <thead className="bg-surface-2 text-left text-xs uppercase tracking-wide text-muted">
                 <tr>
+                  <th className="px-3 py-3 w-8">
+                    <input type="checkbox" className="cursor-pointer accent-accent"
+                      checked={filtered.length > 0 && filtered.every(r => selectedSymbols.includes(r.symbol))}
+                      onChange={(e) => {
+                        if (e.target.checked) setSelectedSymbols(prev => [...new Set([...prev, ...filtered.map(r => r.symbol)])]);
+                        else setSelectedSymbols(prev => prev.filter(s => !filtered.map(r => r.symbol).includes(s)));
+                      }}
+                      title="Select/deselect all visible"
+                    />
+                  </th>
                   <th className="px-4 py-3 font-medium">Symbol</th>
                   {COLS.map(([col, label]) => (
                     <th key={col} onClick={() => toggleSort(col)}
@@ -829,9 +1360,15 @@ export default function EnginePage() {
               <tbody className="divide-y divide-border">
                 {filtered.map((row) => (
                   <tr key={row.symbol}
-                    className={`cursor-pointer bg-surface transition-colors hover:bg-surface-2 ${expanded === row.symbol ? "bg-surface-2" : ""}`}
+                    className={`cursor-pointer bg-surface transition-colors hover:bg-surface-2 ${expanded === row.symbol ? "bg-surface-2" : ""} ${selectedSymbols.includes(row.symbol) ? "bg-accent/5" : ""}`}
                     onClick={() => setExpanded(expanded === row.symbol ? null : row.symbol)}
                   >
+                      <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                        <input type="checkbox" className="cursor-pointer accent-accent"
+                          checked={selectedSymbols.includes(row.symbol)}
+                          onChange={() => toggleSymbol(row.symbol)}
+                        />
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col gap-0.5">
                           <Link href={`/stocks/${row.symbol}`} className="font-mono font-semibold text-accent hover:underline"
@@ -871,7 +1408,7 @@ export default function EnginePage() {
                 ))}
                 {expanded && (
                   <tr key={`${expanded}-detail`}>
-                    <td colSpan={COLS.length + 4} className="p-2">
+                    <td colSpan={COLS.length + 5} className="p-2">
                       <DetailPanel symbol={expanded} onClose={() => setExpanded(null)} />
                     </td>
                   </tr>
@@ -888,6 +1425,32 @@ export default function EnginePage() {
           </p>
         </div>
       ) : null}
+
+      {/* Bottom tray — visible while selecting */}
+      <SelectionTray
+        selected={selectedSymbols}
+        onClear={clearSelection}
+        onRemove={toggleSymbol}
+        onRunBatch={() => void runBatchIC()}
+        running={icBatchRunning}
+      />
+
+      {/* Full-screen IC report panel */}
+      {icPanelOpen && (
+        <BatchICPanel
+          jobs={icJobs}
+          activeIdx={icActiveIdx}
+          onSelectJob={setIcActiveIdx}
+          onRemoveSymbol={(sym) => {
+            setIcJobs(prev => prev.filter(j => j.symbol !== sym));
+            setSelectedSymbols(prev => prev.filter(s => s !== sym));
+          }}
+          onClose={() => {
+            setIcPanelOpen(false);
+            abortRef.current?.abort();
+          }}
+        />
+      )}
     </main>
   );
 }

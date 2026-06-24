@@ -12,6 +12,11 @@ const MODULES = [
     desc: "Two ways to find ideas: AI-powered news signals across Indian and global markets, or a deep fundamental screener across 500+ metrics.",
   },
   {
+    href: "/thematic",
+    title: "Thematic Research",
+    desc: "10-stage Industries & Commodities Discovery Framework. Map dependency chains, score bottlenecks, analyse supply/demand cycles, policy tailwinds, India leapfrog potential, and surface the non-obvious tier 2–4 companies.",
+  },
+  {
     href: "/compare",
     title: "Side-by-Side Compare",
     desc: "Head-to-head AI analysis of any two stocks across valuation, quality, growth, momentum, and a structured verdict.",
@@ -24,12 +29,12 @@ const MODULES = [
   {
     href: "/ic-report",
     title: "Deep Research",
-    desc: "Full IC-grade pipeline — signal detection, 9-agent investigation, bull/bear thesis, DCF valuation, and a committee report.",
+    desc: "Full IC-grade pipeline — signal detection, 9-agent investigation, bull/bear/base thesis, SOTP/DCF/relative valuation, FX sensitivity, run hot/cold percentile, and a committee report.",
   },
   {
     href: "/engine",
     title: "Quant Engine",
-    desc: "Systematic 10-factor scorecard: HMM regime detection, factor scoring, Monte Carlo DCF, quantile forecasts, and Kelly-optimal position sizing. No LLM in the loop.",
+    desc: "Systematic 10-factor scorecard: HMM regime detection, factor scoring, Monte Carlo DCF, quantile forecasts, and Kelly-optimal position sizing. Batch-run IC reports directly from the scorecard.",
   },
 ];
 

@@ -390,6 +390,86 @@ def fetch_ohlcv(
     return len(rows)
 
 
+_FINANCIAL_SECTORS = frozenset({
+    "Financial Services", "Banking", "Insurance", "Banks—Diversified",
+    "Banks—Regional", "Capital Markets", "Insurance—Life", "Insurance—Property & Casualty",
+    "Financials", "Asset Management", "Mortgage Finance",
+})
+
+
+def _compute_roic_safe(ticker, info: dict) -> float | None:
+    """
+    ROIC = NOPAT / Invested Capital from balance sheet.
+    NOPAT = EBIT × (1 - effective_tax_rate)
+    Invested Capital = Total Assets - Cash - Accounts Payable
+
+    For financial sector: use ROE as proxy (ROIC is not meaningful for banks).
+    Falls back to ROA-based approximation when balance sheet is unavailable.
+    """
+    def _sf(v) -> float | None:
+        try:
+            f = float(v)
+            return f if f == f else None
+        except (TypeError, ValueError):
+            return None
+
+    sector = info.get("sector", "")
+    if sector in _FINANCIAL_SECTORS:
+        roe = _sf(info.get("returnOnEquity"))
+        return roe * 100.0 if roe is not None else None
+
+    try:
+        bs = ticker.balance_sheet
+        if bs is None or bs.empty:
+            raise ValueError("no balance sheet")
+
+        # EBIT: try direct, fall back to operating income
+        ebit = _sf(info.get("ebit"))
+        if ebit is None:
+            ebitda = _sf(info.get("ebitda"))
+            da = _sf(info.get("depreciation"))
+            if ebitda is not None and da is not None:
+                ebit = ebitda - da
+        if ebit is None or ebit <= 0:
+            raise ValueError("no ebit")
+
+        tax_rate = _sf(info.get("effectiveTaxRate")) or 0.21
+        nopat = ebit * (1.0 - min(max(tax_rate, 0.0), 0.50))
+
+        def _bs_row(labels):
+            for lbl in labels:
+                try:
+                    v = float(bs.loc[lbl].iloc[0])
+                    if v == v:
+                        return v
+                except (KeyError, IndexError, TypeError):
+                    continue
+            return None
+
+        total_assets = _bs_row(["Total Assets"])
+        cash = _bs_row(["Cash And Cash Equivalents", "Cash", "Cash Cash Equivalents And Short Term Investments"])
+        ap   = _bs_row(["Accounts Payable", "Payables"])
+
+        if total_assets is None or total_assets <= 0:
+            raise ValueError("no total assets")
+
+        invested_capital = total_assets - (cash or 0) - (ap or 0)
+        if invested_capital <= 0:
+            raise ValueError("invested capital <= 0")
+
+        return float(nopat / invested_capital * 100.0)
+
+    except Exception:
+        # Fallback: ROA-based approximation
+        roa = _sf(info.get("returnOnAssets"))
+        d_e = _sf(info.get("debtToEquity"))
+        if roa is not None and d_e is not None:
+            return roa * 100.0 * (1.0 + max(d_e, 0) / 100.0)
+        if roa is not None:
+            return roa * 100.0
+        return None
+
+
 def fetch_fundamentals(symbols: list[str]) -> int:
     """
     Fetch fundamentals from yfinance Ticker.info for each symbol and upsert
@@ -427,15 +507,9 @@ def fetch_fundamentals(symbols: list[str]) -> int:
             roe = _sf(info.get("returnOnEquity"))
             roe_pct = roe * 100.0 if roe is not None else None
 
-            # ROIC approximation: returnOnAssets * (1 + D/E) if returnOnAssets available
-            roa = _sf(info.get("returnOnAssets"))
-            d_e = _sf(info.get("debtToEquity"))
-            if roa is not None and d_e is not None:
-                roic = roa * 100.0 * (1.0 + max(d_e, 0) / 100.0)
-            elif roa is not None:
-                roic = roa * 100.0
-            else:
-                roic = None
+            # ROIC: use NOPAT / Invested Capital from balance sheet when available.
+            # Falls back to ROA-based approximation for financials and missing data.
+            roic = _compute_roic_safe(yf.Ticker(sym), info)
 
             # FCF margin: freeCashflow / totalRevenue
             fcf = _sf(info.get("freeCashflow"))

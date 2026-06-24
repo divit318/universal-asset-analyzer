@@ -188,14 +188,30 @@ def kelly_fraction_single(
     expected_gain: float,
     expected_loss: float,
     kelly_frac: float = KELLY_FRACTION,
+    live_ic: float | None = None,
 ) -> float:
     """
     Simple Kelly for binary outcome: f = (p*b - q) / b
     where b = expected_gain / expected_loss.
+
+    IC-adaptive scaling (fix 9.1):
+    When live_ic is provided, the Kelly fraction is scaled by IC strength:
+      ic_scale = max(0, live_ic) / IC_REFERENCE  (IC_REFERENCE = 0.05)
+      kelly_frac_effective = kelly_frac * clip(ic_scale, 0, 1)
+
+    This ensures Kelly→0 as live_IC→0, preventing position sizing on
+    a model that has lost predictive content.
     """
     if expected_loss <= 0 or expected_gain <= 0:
         return 0.0
     b = expected_gain / expected_loss
     q = 1.0 - prob_up
     f = (prob_up * b - q) / b
-    return float(np.clip(f * kelly_frac, 0.0, MAX_POSITION))
+
+    effective_frac = kelly_frac
+    if live_ic is not None:
+        IC_REFERENCE = 0.05  # IC at which full Kelly fraction is applied
+        ic_scale = float(np.clip(max(0.0, live_ic) / IC_REFERENCE, 0.0, 1.0))
+        effective_frac = kelly_frac * ic_scale
+
+    return float(np.clip(f * effective_frac, 0.0, MAX_POSITION))

@@ -346,6 +346,7 @@ def get_mutual_funds(count: int = 30) -> list[str]:
 
 _UNIVERSE_REGISTRY: dict[str, tuple[Callable[[], list[str]], str]] = {
     "nifty50":          (get_nifty50,                   "India — Nifty 50"),
+    "sp500":            (get_us_largecap,                "US — S&P 500 (PIT from change log)"),
     "india_largecap":   (get_india_largecap,             "India — Large Cap (mktcap > ₹17k Cr)"),
     "india_midcap":     (get_india_midcap,               "India — Mid Cap"),
     "india_smallcap":   (get_india_smallcap,             "India — Small Cap"),
@@ -395,6 +396,76 @@ def _load_pit_universe(name: str, as_of: date | None = None) -> list[str] | None
     return [sym for d, sym in constituents if d == latest]
 
 
+def _load_sp500_pit(as_of: date | None = None) -> list[str] | None:
+    """
+    Reconstruct S&P 500 membership at `as_of` date using ADD/REMOVE change log.
+
+    Change log format (engine/data/pit_universe/sp500_changes.csv):
+      date,action,symbol
+      2020-01-13,ADD,MSFT
+      2020-01-13,REMOVE,XYZ
+
+    Reconstruction: start from a known base snapshot, apply ADD/REMOVE events
+    in chronological order up to `as_of`.
+
+    Base snapshot: engine/data/pit_universe/sp500_base.csv
+      effective_date,symbol  — all members as of the base date
+
+    Returns None if neither file exists.
+    """
+    as_of = as_of or date.today()
+
+    base_path    = _PIT_DIR / "sp500_base.csv"
+    changes_path = _PIT_DIR / "sp500_changes.csv"
+
+    if not base_path.exists():
+        return None
+
+    # Load base snapshot
+    members: set[str] = set()
+    base_date: date | None = None
+    with open(base_path) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                d = date.fromisoformat(row["effective_date"])
+                if base_date is None or d > base_date:
+                    base_date = d
+                members.add(row["symbol"])
+            except (KeyError, ValueError):
+                continue
+
+    if not members or base_date is None:
+        return None
+
+    # If as_of is before base_date, we can't reconstruct — return base as floor
+    if as_of < base_date:
+        return list(members)
+
+    # Apply ADD/REMOVE events chronologically from base_date to as_of
+    if changes_path.exists():
+        events: list[tuple[date, str, str]] = []
+        with open(changes_path) as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    d    = date.fromisoformat(row["date"])
+                    act  = row["action"].upper().strip()
+                    sym  = row["symbol"].strip()
+                    if base_date < d <= as_of and act in ("ADD", "REMOVE"):
+                        events.append((d, act, sym))
+                except (KeyError, ValueError):
+                    continue
+        events.sort(key=lambda x: x[0])
+        for _, act, sym in events:
+            if act == "ADD":
+                members.add(sym)
+            else:
+                members.discard(sym)
+
+    return sorted(members)
+
+
 def get_universe_by_name(name: str, as_of: date | None = None) -> list[str]:
     """
     Fetch universe by preset name. Returns deduplicated list[str] of tickers.
@@ -410,17 +481,32 @@ def get_universe_by_name(name: str, as_of: date | None = None) -> list[str]:
         raise ValueError(f"Unknown universe '{name}'. Valid: {valid}")
 
     if USE_POINT_IN_TIME_UNIVERSE:
-        pit = _load_pit_universe(name, as_of)
-        if pit:
-            syms = pit
+        # sp500 uses change-log reconstruction, not snapshot CSV
+        if name == "sp500":
+            sp500_pit = _load_sp500_pit(as_of)
+            if sp500_pit:
+                syms = sp500_pit
+            else:
+                warnings.warn(
+                    "USE_POINT_IN_TIME_UNIVERSE=True for 'sp500' but no base snapshot found. "
+                    "Place engine/data/pit_universe/sp500_base.csv and sp500_changes.csv. "
+                    "Falling back to current screener (survivorship bias active).",
+                    stacklevel=2,
+                )
+                fn, _ = _UNIVERSE_REGISTRY[name]
+                syms = fn()
         else:
-            warnings.warn(
-                f"USE_POINT_IN_TIME_UNIVERSE=True but no PIT CSV found for '{name}'. "
-                f"Falling back to current screener. Place CSV at engine/data/pit_universe/{name}.csv",
-                stacklevel=2,
-            )
-            fn, _ = _UNIVERSE_REGISTRY[name]
-            syms = fn()
+            pit = _load_pit_universe(name, as_of)
+            if pit:
+                syms = pit
+            else:
+                warnings.warn(
+                    f"USE_POINT_IN_TIME_UNIVERSE=True but no PIT CSV found for '{name}'. "
+                    f"Falling back to current screener. Place CSV at engine/data/pit_universe/{name}.csv",
+                    stacklevel=2,
+                )
+                fn, _ = _UNIVERSE_REGISTRY[name]
+                syms = fn()
     else:
         logger.warning(
             "SURVIVORSHIP BIAS ACTIVE: universe '%s' fixed at current composition. "

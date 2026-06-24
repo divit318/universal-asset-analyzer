@@ -27,13 +27,21 @@ import polars as pl
 from scipy.stats import spearmanr
 
 
-_LOG_DIR    = Path(__file__).parents[2] / "data"
-SIGNAL_LOG  = _LOG_DIR / "signal_log.csv"
-ALERT_LOG   = _LOG_DIR / "signal_log_alerts.csv"
+_LOG_DIR        = Path(__file__).parents[2] / "data"
+SIGNAL_LOG      = _LOG_DIR / "signal_log.csv"
+ALERT_LOG       = _LOG_DIR / "signal_log_alerts.csv"
+FUND_PIT_LOG    = _LOG_DIR / "fundamentals_pit.jsonl"   # PIT snapshot (fix 1.4)
 
 _SIGNAL_COLS = [
     "date", "symbol", "composite_score", "signal", "confidence",
     "forecast_p50", "prob_up", "fwd_return_21d",
+]
+
+# Fundamentals fields to snapshot for PIT IC calculation
+_PIT_FUND_FIELDS = [
+    "forward_pe", "ev_to_ebitda", "roic", "roe", "gross_margin",
+    "operating_margin", "revenue_growth_yoy", "eps_growth_yoy",
+    "fcf_margin", "debt_to_equity",
 ]
 
 # Degradation thresholds
@@ -46,12 +54,18 @@ _ALERT_WEEKS   = 4   # consecutive weeks below threshold before alert fires
 def append_signals(
     scorecard_rows: list[dict],
     price_map: dict[str, pl.DataFrame] | None = None,
+    fund_map: dict[str, dict] | None = None,
 ) -> None:
     """
     Append today's signals to signal_log.csv.
     If price_map is provided, also attempts to backfill fwd_return_21d for rows
     that are now 21+ trading days old.
+
+    PIT snapshot (fix 1.4): if fund_map is provided, snapshot fundamentals at
+    signal time to fundamentals_pit.jsonl. This prevents look-ahead bias when
+    computing IC — each row's fundamentals are as-of the signal date.
     """
+    import json as _json
     _LOG_DIR.mkdir(parents=True, exist_ok=True)
     write_header = not SIGNAL_LOG.exists()
 
@@ -70,6 +84,25 @@ def append_signals(
                 "prob_up":         row.get("prob_up", ""),
                 "fwd_return_21d":  "",  # filled later by backfill_returns
             })
+
+    # PIT fundamentals snapshot (fix 1.4)
+    if fund_map:
+        with open(FUND_PIT_LOG, "a") as f:
+            for row in scorecard_rows:
+                sym = row.get("symbol", "")
+                fund = fund_map.get(sym, {})
+                snapshot = {
+                    "date":   str(row.get("date", "")),
+                    "symbol": sym,
+                }
+                for field in _PIT_FUND_FIELDS:
+                    v = fund.get(field)
+                    if v is not None:
+                        try:
+                            snapshot[field] = float(v)
+                        except (TypeError, ValueError):
+                            pass
+                f.write(_json.dumps(snapshot) + "\n")
 
     if price_map:
         backfill_returns(price_map)
