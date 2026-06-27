@@ -373,6 +373,7 @@ export async function runValuationEngine(
   screenerIn?: ScreenerInCompany | null,
   currency = "$",
   priceHistory?: { date: string; close: number }[],
+  companyName?: string,
 ): Promise<ValuationResult> {
   // Compute run hot/cold percentile from 5Y history
   const runHotCold = priceHistory && priceHistory.length >= 252
@@ -385,7 +386,7 @@ export async function runValuationEngine(
     fxRate = await fetchLiveUsdInr();
   }
 
-  const conglomerate = isConglomerate(symbol, symbol);
+  const conglomerate = isConglomerate(symbol, companyName ?? symbol);
 
   const context = buildValuationContext(
     symbol, currentPrice, snapshot, statements, analyst, screenerIn, currency, fxRate, runHotCold,

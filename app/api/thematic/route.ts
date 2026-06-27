@@ -9,9 +9,11 @@
  * Final event: data: {"stage":"done","report":{...}}\n\n
  */
 
-export const dynamic = "force-dynamic";
-
 import { runThematicEngine, type ThematicProgressEvent } from "@/lib/thematic-engine";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 export async function POST(req: Request) {
   let body: { theme?: string; focusIndia?: boolean };

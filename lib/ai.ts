@@ -24,16 +24,16 @@ export type AiProvider = "ollama-cloud" | "ollama" | "claude";
 /** Human-readable model name for the active provider — use in response metadata. */
 export function getActiveModelName(): string {
   if (process.env.OLLAMA_API_KEY) return `ollama-cloud/${process.env.OLLAMA_MODEL ?? "gemma3:12b"}`;
-  const v = (process.env.AI_PROVIDER ?? "claude").toLowerCase();
-  if (v === "ollama") return process.env.OLLAMA_MODEL ?? "mistral";
-  return process.env.CLAUDE_MODEL ?? "claude-sonnet-4-6";
+  const v = (process.env.AI_PROVIDER ?? "ollama").toLowerCase();
+  if (v === "claude") return process.env.CLAUDE_MODEL ?? "claude-sonnet-4-6";
+  return process.env.OLLAMA_MODEL ?? "llama3.2";
 }
 
 function activeProvider(): AiProvider {
   // Ollama cloud key present → always use cloud regardless of AI_PROVIDER
   if (process.env.OLLAMA_API_KEY) return "ollama-cloud";
-  const v = (process.env.AI_PROVIDER ?? "claude").toLowerCase();
-  return v === "ollama" ? "ollama" : "claude";
+  const v = (process.env.AI_PROVIDER ?? "ollama").toLowerCase();
+  return v === "claude" ? "claude" : "ollama";
 }
 
 /** Call Ollama cloud (/api/chat) or local (/api/generate) and return text. */

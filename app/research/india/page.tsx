@@ -42,6 +42,7 @@ export default function IndiaResearchPage() {
   const load = useCallback(async (sym: string) => {
     const s = sym.trim().toUpperCase().replace(/\.(NS|BO)$/i, "");
     if (!s) return;
+    setSymbol(s);
     setLoading(true);
     setError(null);
     setData(null);

@@ -127,6 +127,7 @@ export async function generateICReport(
     input.screenerIn,
     input.currency ?? "$",
     priceHistory,
+    companyName,
   );
   emit("valuation", `Valuation: ${valuation.intrinsicValueRange} (${valuation.impliedUpside})`, valuation);
 

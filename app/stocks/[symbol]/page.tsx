@@ -351,7 +351,7 @@ function StockContent() {
           {tab === "ai" ? (
             <AiIndiaPanel
               company={indiaData.company}
-              quote={null}
+              quote={quoteData?.quote ?? null}
               derived={indiaData.derived}
             />
           ) : null}

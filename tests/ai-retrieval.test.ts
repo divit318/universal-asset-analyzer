@@ -56,7 +56,7 @@ function ctxFixture(over: Partial<CompanyContext> = {}): CompanyContext {
     filings: [
       { form: "10-K", filedAt: "2025-11-01", description: "Annual report", documentUrl: "https://sec.gov/aapl-10k" },
     ],
-    news: [{ title: "Apple unveils new chip", publisher: "Reuters", link: "https://x/1", publishedAt: "2026-06-10T00:00:00Z" }],
+    news: [{ headline: "Apple unveils new chip", source: "Reuters", url: "https://x/1", publishedAt: "2026-06-10T00:00:00Z", tickers: [], summary: null }],
     onWatchlist: false,
     warnings: [],
     ...over,

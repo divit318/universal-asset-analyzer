@@ -1,23 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mapNews } from "@/lib/news";
 import { mapProfile } from "@/lib/profile";
-
-describe("mapNews", () => {
-  it("maps a raw hit and converts the unix publish time", () => {
-    const item = mapNews({
-      title: "Apple beats estimates",
-      publisher: "Reuters",
-      link: "https://news/1",
-      providerPublishTime: 1_700_000_000,
-    });
-    expect(item?.title).toBe("Apple beats estimates");
-    expect(item?.publishedAt).toBe(new Date(1_700_000_000 * 1000).toISOString());
-  });
-  it("drops rows without a link or title", () => {
-    expect(mapNews({ title: "x" })).toBeNull();
-    expect(mapNews({ link: "https://x" })).toBeNull();
-  });
-});
 
 describe("mapProfile", () => {
   it("normalizes ownership percentages and pulls the business summary", () => {

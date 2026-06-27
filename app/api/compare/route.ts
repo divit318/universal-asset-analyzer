@@ -8,6 +8,7 @@ import type { FinancialStatements, FundamentalsSnapshot, AnalystConsensus, Score
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export interface CompareEntry {
   symbol: string;
@@ -97,8 +98,6 @@ export async function GET(request: Request) {
 
   return NextResponse.json({ entries });
 }
-
-export const maxDuration = 60;
 
 /**
  * POST /api/compare

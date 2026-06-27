@@ -19,8 +19,9 @@ export default function ScannerPage() {
   const [result, setResult] = useState<ScanResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function runScan(e?: React.FormEvent) {
+  async function runScan(e?: React.FormEvent, overrideQuery?: string) {
     e?.preventDefault();
+    const q = overrideQuery ?? query;
     setLoading(true);
     setError(null);
     setResult(null);
@@ -28,7 +29,7 @@ export default function ScannerPage() {
       const res = await fetch("/api/scanner", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: query.trim() || undefined, india, global, minConfidence }),
+        body: JSON.stringify({ query: q.trim() || undefined, india, global, minConfidence }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Scan failed");
@@ -156,7 +157,7 @@ export default function ScannerPage() {
                     key={t}
                     onClick={() => {
                       setQuery(t);
-                      void runScan();
+                      void runScan(undefined, t);
                     }}
                     className="rounded-full border border-border px-3 py-1 text-xs transition-colors hover:border-accent hover:text-accent"
                   >
@@ -238,7 +239,7 @@ export default function ScannerPage() {
                   key={t}
                   onClick={() => {
                     setQuery(t);
-                    setTimeout(() => void runScan(), 0);
+                    void runScan(undefined, t);
                   }}
                   className="rounded-full border border-border px-3 py-1 text-xs transition-colors hover:border-accent hover:text-accent"
                 >

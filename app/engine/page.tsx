@@ -673,7 +673,7 @@ function DetailPanel({ symbol, onClose }: { symbol: string; onClose: () => void 
   }, [symbol]);
 
   // Load on mount
-  useState(() => { void load(); });
+  useEffect(() => { void load(); }, [load]);
 
   const sc = data?.scorecard;
   const fund = data?.fundamentals;

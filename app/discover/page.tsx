@@ -100,8 +100,9 @@ function ScannerTab() {
   const [result, setResult] = useState<ScanResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function runScan(e?: React.FormEvent) {
+  async function runScan(e?: React.FormEvent, overrideQuery?: string) {
     e?.preventDefault();
+    const q = overrideQuery ?? query;
     setLoading(true);
     setError(null);
     setResult(null);
@@ -109,7 +110,7 @@ function ScannerTab() {
       const res = await fetch("/api/scanner", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: query.trim() || undefined, india, global, minConfidence }),
+        body: JSON.stringify({ query: q.trim() || undefined, india, global, minConfidence }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Scan failed");
@@ -202,7 +203,7 @@ function ScannerTab() {
                 {result.themes.map((t) => (
                   <button
                     key={t}
-                    onClick={() => { setQuery(t); void runScan(); }}
+                    onClick={() => { setQuery(t); void runScan(undefined, t); }}
                     className="rounded-full border border-border px-3 py-1 text-xs transition-colors hover:border-accent hover:text-accent"
                   >
                     {t}
@@ -273,7 +274,7 @@ function ScannerTab() {
             {["RBI rate cut", "Budget 2025 infra", "IT sector results", "Oil price rally", "FII selling"].map((t) => (
               <button
                 key={t}
-                onClick={() => { setQuery(t); setTimeout(() => void runScan(), 0); }}
+                onClick={() => { setQuery(t); void runScan(undefined, t); }}
                 className="rounded-full border border-border px-3 py-1 text-xs transition-colors hover:border-accent hover:text-accent"
               >
                 {t}

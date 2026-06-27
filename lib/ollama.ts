@@ -2,7 +2,7 @@ import type { AiAnalysis, Filing, Quote } from "./types";
 import { formatCurrency, formatMarketCap, formatPercent } from "./format";
 
 const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "mistral";
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "llama3.2";
 
 export interface AnalysisInput {
   quote: Quote;
