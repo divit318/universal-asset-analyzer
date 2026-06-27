@@ -269,7 +269,7 @@ export function buildBlocks(ctx: CompanyContext): ContextBlock[] {
   if (ctx.news.length) {
     out.push(block("news", "news", "Recent news", ctx.news
       .slice(0, 6)
-      .map((n, i) => `- [${i + 1}] ${n.title}${n.publisher ? ` — ${n.publisher}` : ""}${n.publishedAt ? ` (${n.publishedAt.slice(0, 10)})` : ""}`)
+      .map((n, i) => `- [${i + 1}] ${n.headline}${n.source ? ` — ${n.source}` : ""}${n.publishedAt ? ` (${n.publishedAt.slice(0, 10)})` : ""}`)
       .join("\n"), 35));
   }
 

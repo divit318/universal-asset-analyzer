@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { listWatchlist } from "@/lib/db";
-import { listPositions } from "@/lib/db";
+import { listPortfolio } from "@/lib/db";
 import { getQuoteSummary } from "@/lib/yahoo";
 
 export const runtime = "nodejs";
@@ -36,7 +36,7 @@ function toIso(v: unknown): string | null {
  */
 export async function GET() {
   const watchlist = listWatchlist();
-  const portfolio = listPositions();
+  const portfolio = listPortfolio();
 
   // Deduplicate symbols, tagging whether they're from watchlist, portfolio, or both.
   const symbolMap = new Map<string, { name: string; source: "watchlist" | "portfolio" }>();

@@ -67,7 +67,7 @@ function resolveCitation(tag: string, ctx: CompanyContext): Citation {
   if (tag === "news" || tag.startsWith("news")) {
     const idx = Number(tag.split(":")[1]) - 1;
     const item = Number.isInteger(idx) && idx >= 0 ? ctx.news[idx] : ctx.news[0];
-    return { tag, label: item ? `News: ${item.title.slice(0, 60)}` : "Recent news", url: item?.link ?? null };
+    return { tag, label: item ? `News: ${item.headline.slice(0, 60)}` : "Recent news", url: item?.url ?? null };
   }
   // EDGAR filings: try to match a referenced form to a filing URL.
   if (tag.startsWith("edgar")) {

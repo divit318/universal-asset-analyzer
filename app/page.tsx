@@ -3,33 +3,53 @@ import Link from "next/link";
 const MODULES = [
   {
     href: "/research",
-    title: "Research",
-    desc: "Look up any ticker for a live Yahoo Finance quote, price history, recent SEC/EDGAR filings, and a local-AI analysis.",
-    icon: "🔎",
+    title: "Stock Research",
+    desc: "Search any ticker — US or India — for a live quote, price chart, SEC filings, scoring, insider activity, earnings, ownership, and AI analysis.",
+  },
+  {
+    href: "/discover",
+    title: "Discover",
+    desc: "Two ways to find ideas: AI-powered news signals across Indian and global markets, or a deep fundamental screener across 500+ metrics.",
+  },
+  {
+    href: "/thematic",
+    title: "Thematic Research",
+    desc: "10-stage Industries & Commodities Discovery Framework. Map dependency chains, score bottlenecks, analyse supply/demand cycles, policy tailwinds, and surface non-obvious tier 2–4 companies.",
+  },
+  {
+    href: "/compare",
+    title: "Side-by-Side Compare",
+    desc: "Head-to-head comparison of up to 5 stocks across valuation, quality, growth, momentum, and a structured AI verdict.",
   },
   {
     href: "/watchlist",
     title: "Watchlist",
-    desc: "Save symbols to a local SQLite-backed watchlist and track live prices at a glance.",
-    icon: "⭐",
+    desc: "Track saved symbols with live prices, target-price and drop alerts, and an AI portfolio digest with scores and action items.",
   },
   {
     href: "/portfolio",
     title: "Portfolio",
-    desc: "Track your holdings with live P&L, cost basis, allocation breakdown, and performance over time.",
-    icon: "💼",
+    desc: "Track your holdings with live P&L, cost basis, allocation breakdown, and performance analytics over time.",
   },
   {
     href: "/screener",
     title: "Screener",
-    desc: "Filter the S&P 500 universe by sector, price, daily move, and market cap to surface ideas.",
-    icon: "📊",
+    desc: "Filter S&P 500 and global equities by sector, fundamentals, composite scores, and natural-language AI criteria.",
   },
   {
-    href: "/compare",
-    title: "Compare",
-    desc: "Side-by-side comparison of up to 5 symbols across valuation, growth, quality, and momentum.",
-    icon: "⚖️",
+    href: "/dcf",
+    title: "DCF Valuation",
+    desc: "Build a discounted cash flow model for any ticker — customize growth rates, margins, and discount rates to estimate intrinsic value.",
+  },
+  {
+    href: "/ic-report",
+    title: "Deep Research",
+    desc: "Full IC-grade pipeline — signal detection, 9-agent investigation, bull/bear/base thesis, SOTP/DCF/relative valuation, FX sensitivity, and a committee report.",
+  },
+  {
+    href: "/engine",
+    title: "Quant Engine",
+    desc: "Systematic 10-factor scorecard: HMM regime detection, factor scoring, Monte Carlo DCF, quantile forecasts, and Kelly-optimal position sizing.",
   },
 ];
 
@@ -39,23 +59,23 @@ export default function Home() {
       <div className="flex max-w-2xl flex-col gap-4">
         <p className="font-mono text-sm text-accent">Universal Asset Analyzer</p>
         <h1 className="text-4xl font-semibold leading-tight tracking-tight text-balance sm:text-5xl">
-          Research equities with live data and local AI.
+          Institutional-grade equity research, in your browser.
         </h1>
         <p className="text-lg leading-8 text-muted">
-          Quotes from Yahoo Finance, filings from SEC EDGAR, and analysis from a
-          model running on your own machine via Ollama — no API keys required.
+          Live quotes, SEC filings, fundamental scoring, peer comparison, AI analysis, and a
+          full investment committee pipeline — for US and Indian markets. Runs entirely on local
+          Ollama — no API keys required.
         </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {MODULES.map((m) => (
           <Link
             key={m.href}
             href={m.href}
             className="group flex flex-col gap-3 rounded-xl border border-border bg-surface p-6 transition-colors hover:border-accent/50 hover:bg-surface-2"
           >
-            <span className="text-2xl">{m.icon}</span>
-            <h2 className="text-lg font-medium">
+            <h2 className="text-base font-semibold">
               {m.title}
               <span className="ml-1 text-muted transition-transform group-hover:translate-x-0.5 inline-block">
                 →

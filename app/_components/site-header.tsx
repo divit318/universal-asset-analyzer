@@ -2,10 +2,15 @@ import Link from "next/link";
 
 const NAV = [
   { href: "/research", label: "Research" },
+  { href: "/discover", label: "Discover" },
+  { href: "/thematic", label: "Themes" },
+  { href: "/compare", label: "Compare" },
   { href: "/watchlist", label: "Watchlist" },
   { href: "/portfolio", label: "Portfolio" },
   { href: "/screener", label: "Screener" },
-  { href: "/compare", label: "Compare" },
+  { href: "/dcf", label: "DCF" },
+  { href: "/ic-report", label: "Deep Research" },
+  { href: "/engine", label: "Quant Engine" },
 ];
 
 export function SiteHeader() {

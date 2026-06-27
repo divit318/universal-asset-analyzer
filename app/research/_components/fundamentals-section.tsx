@@ -10,8 +10,9 @@ import { EarningsCard } from "./earnings-card";
 import { OwnershipCard } from "./ownership-card";
 import { ValuationHistoryChart } from "./valuation-history-chart";
 import { MarginTrendChart, PeerRadarChart, RevenueFcfChart } from "./charts";
+import { AiDeepPanel } from "./ai-deep-panel";
 
-export function FundamentalsSection({ symbol }: { symbol: string }) {
+export function FundamentalsSection({ symbol, quote }: { symbol: string; quote?: import("@/lib/types").Quote }) {
   const [data, setData] = useState<FundamentalsData | null>(null);
   const [peers, setPeers] = useState<PeerComparison | null>(null);
   const [loading, setLoading] = useState(true);
@@ -154,6 +155,11 @@ export function FundamentalsSection({ symbol }: { symbol: string }) {
 
       {/* Risk heatmap */}
       <RiskHeatmap risks={data.risks} />
+
+      {/* AI Deep analysis panel */}
+      {quote ? (
+        <AiDeepPanel quote={quote} fundamentals={data} peers={peers} />
+      ) : null}
 
       {statementsError ? (
         <p className="text-xs text-muted">

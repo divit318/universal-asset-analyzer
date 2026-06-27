@@ -540,3 +540,49 @@ export interface FundamentalsData {
   ownership: OwnershipData;
   valuation: ValuationPoint[];
 }
+
+/* -------------------------------------------------------------------------- */
+/* News-driven market scanner                                                 */
+/* -------------------------------------------------------------------------- */
+
+export interface NewsItem {
+  headline: string;
+  source: string;
+  url: string;
+  publishedAt: string; // ISO
+  /** Tickers explicitly mentioned or returned by the news source. */
+  tickers: string[];
+  summary: string | null;
+}
+
+export type SignalDirection = "bullish" | "bearish" | "neutral";
+export type SignalTimeframe = "short" | "medium" | "long";
+
+export interface EventSignal {
+  ticker: string;
+  name: string;
+  direction: SignalDirection;
+  /** 0-100 AI confidence in this signal. */
+  confidence: number;
+  /** Human-readable macro theme, e.g. "RBI rate pause". */
+  theme: string;
+  /** 1-2 sentence rationale. */
+  rationale: string;
+  timeframe: SignalTimeframe;
+  /** Live quote at scan time; null if fetch failed. */
+  quote: Quote | null;
+  /** Fundamental score from scoring engine; null if unavailable. */
+  fundamentalScore: number | null;
+}
+
+export interface ScanResult {
+  scannedAt: string; // ISO
+  /** Top macro/sector themes extracted from news. */
+  themes: string[];
+  /** Ranked actionable signals. */
+  signals: EventSignal[];
+  /** Source news items used for the scan. */
+  newsItems: NewsItem[];
+  /** Plain-English summary of the scan. */
+  aiSummary: string;
+}

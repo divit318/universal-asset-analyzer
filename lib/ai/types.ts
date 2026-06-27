@@ -13,23 +13,18 @@ import type {
   FundamentalsSnapshot,
   InsiderActivity,
   MomentumSignal,
+  NewsItem,
   PeerComparison,
   Quote,
   RiskItem,
   ScoreResult,
 } from "../types";
 
+export type { NewsItem };
+
 /* -------------------------------------------------------------------------- */
 /* Company intelligence (Context Layer output)                                */
 /* -------------------------------------------------------------------------- */
-
-/** A single recent news item, best-effort from Yahoo Finance. */
-export interface NewsItem {
-  title: string;
-  publisher: string | null;
-  link: string;
-  publishedAt: string | null; // ISO date
-}
 
 /** Long-form company profile (business description, ownership, people). */
 export interface CompanyProfile {
