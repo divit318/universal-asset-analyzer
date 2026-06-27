@@ -22,6 +22,7 @@ interface RawQuote {
   fiftyTwoWeekLow?: number;
   regularMarketVolume?: number;
   fullExchangeName?: string;
+  quoteType?: string;
 }
 
 /** Map a raw Yahoo quote into our domain Quote. Pure / testable. */
@@ -49,6 +50,7 @@ export function mapQuote(raw: RawQuote): Quote {
     fiftyTwoWeekLow: raw.fiftyTwoWeekLow ?? null,
     volume: raw.regularMarketVolume ?? null,
     exchange: raw.fullExchangeName ?? null,
+    assetType: raw.quoteType ?? null,
   };
 }
 

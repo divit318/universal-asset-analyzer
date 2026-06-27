@@ -15,6 +15,7 @@ import { InteractiveChart } from "./_components/interactive-chart";
 import { FundamentalsSection } from "./_components/fundamentals-section";
 import { SymbolSearch } from "./_components/symbol-search";
 import { ResearchCopilot } from "./_components/copilot/research-copilot";
+import { ResearchNotes } from "./_components/research-notes";
 
 export default function ResearchPage() {
   const [symbol, setSymbol] = useState("");
@@ -82,8 +83,8 @@ export default function ResearchPage() {
       <div className="flex flex-col gap-2">
         <h1 className="text-2xl font-semibold tracking-tight">Research</h1>
         <p className="text-muted">
-          Enter a ticker for a live quote, fundamentals, and an AI Equity Research
-          Copilot that analyzes the company entirely through local Ollama models.
+          Enter any ticker — stocks, ETFs, crypto, or international — for a live quote
+          and AI Copilot analysis powered entirely by local Ollama models.
         </p>
       </div>
 
@@ -133,6 +134,7 @@ function ResearchResult({
 }) {
   const { quote, history, filings, edgarError, benchmarks } = data;
   const positive = quote.changePercent >= 0;
+  const isEquity = !quote.assetType || quote.assetType === "EQUITY";
   const [downloading, setDownloading] = useState(false);
 
   async function downloadReport() {
@@ -217,41 +219,51 @@ function ResearchResult({
         ))}
       </dl>
 
-      <ResearchCopilot symbol={quote.symbol} name={quote.name} />
+      <ResearchCopilot symbol={quote.symbol} name={quote.name} isEquity={isEquity} />
 
-      {/* Filings */}
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">Recent SEC filings</h2>
-        {edgarError ? (
-          <p className="text-sm text-muted">EDGAR unavailable: {edgarError}</p>
-        ) : filings.length === 0 ? (
-          <p className="text-sm text-muted">No recent filings found.</p>
-        ) : (
-          <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">
-            {filings.map((f) => (
-              <li key={f.accessionNumber} className="flex items-center justify-between gap-4 bg-surface px-4 py-3">
-                <div className="min-w-0">
-                  <span className="font-mono text-sm text-accent">{f.form}</span>
-                  <p className="truncate text-sm text-muted">{f.description}</p>
-                </div>
-                <div className="flex shrink-0 items-center gap-4">
-                  <span className="text-xs text-muted">{formatDate(f.filedAt)}</span>
-                  <a
-                    href={f.documentUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-accent hover:underline"
-                  >
-                    View →
-                  </a>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      {/* SEC Filings — equities only */}
+      {isEquity ? (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-lg font-medium">Recent SEC filings</h2>
+          {edgarError ? (
+            <p className="text-sm text-muted">EDGAR unavailable: {edgarError}</p>
+          ) : filings.length === 0 ? (
+            <p className="text-sm text-muted">No recent filings found.</p>
+          ) : (
+            <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">
+              {filings.map((f) => (
+                <li key={f.accessionNumber} className="flex items-center justify-between gap-4 bg-surface px-4 py-3">
+                  <div className="min-w-0">
+                    <span className="font-mono text-sm text-accent">{f.form}</span>
+                    <p className="truncate text-sm text-muted">{f.description}</p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-4">
+                    <span className="text-xs text-muted">{formatDate(f.filedAt)}</span>
+                    <a
+                      href={f.documentUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-accent hover:underline"
+                    >
+                      View →
+                    </a>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
 
-      <FundamentalsSection symbol={quote.symbol} />
+      <ResearchNotes symbol={quote.symbol} />
+
+      {/* Fundamentals — equities only */}
+      {isEquity ? <FundamentalsSection symbol={quote.symbol} /> : (
+        <div className="rounded-xl border border-border bg-surface p-6 text-center text-sm text-muted">
+          Detailed fundamentals and SEC filings are available for US-listed equities.
+          {quote.assetType === "CRYPTOCURRENCY" ? " Crypto analysis is available via the AI Copilot above." : ""}
+        </div>
+      )}
     </div>
   );
 }

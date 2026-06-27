@@ -18,7 +18,7 @@ import { getCompanyProfile } from "../profile";
 import { getCompanyNews } from "../news";
 import { getPeerComparison } from "../peers";
 import { assessRisks, computeMomentum, computeScore } from "../scoring";
-import { listWatchlist } from "../db";
+import { listAllNotes, listWatchlist } from "../db";
 import type { CompanyContext } from "./types";
 
 /** Settle a best-effort source, recording a warning on failure. */
@@ -94,6 +94,22 @@ export async function buildCompanyContext(
     /* watchlist is non-critical context */
   }
 
+  // Cross-stock memory: include saved notes for this symbol AND any notes for
+  // peer symbols so the copilot's analysis is informed by prior conclusions.
+  let savedNotes: Array<{ symbol: string; content: string; createdAt: string }> = [];
+  try {
+    const allNotes = listAllNotes();
+    const peerSymbols = new Set(
+      peers ? [peers.sector] : []
+    );
+    savedNotes = allNotes
+      .filter((n) => n.symbol === symbol || peerSymbols.has(n.symbol))
+      .slice(0, 10)
+      .map((n) => ({ symbol: n.symbol, content: n.content, createdAt: n.createdAt }));
+  } catch {
+    /* notes are non-critical */
+  }
+
   const ctx: CompanyContext = {
     symbol,
     name: quote.name || symbol,
@@ -116,6 +132,7 @@ export async function buildCompanyContext(
     })),
     news,
     onWatchlist,
+    savedNotes,
     warnings,
   };
 

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import type { PortfolioPosition, Quote } from "@/lib/types";
 import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
+import { PortfolioAnalyticsSection } from "./_components/portfolio-analytics";
 
 interface PositionWithQuote extends PortfolioPosition {
   quote: Quote | null;
@@ -239,6 +240,11 @@ export default function PortfolioPage() {
           </table>
         </div>
       )}
+
+      {/* Portfolio analytics — sector allocation, concentration, benchmark */}
+      {!loading && positions.length > 0 ? (
+        <PortfolioAnalyticsSection positionCount={positions.length} />
+      ) : null}
 
       {showForm ? (
         <PositionModal

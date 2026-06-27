@@ -47,6 +47,8 @@ export interface Quote {
   fiftyTwoWeekLow: number | null;
   volume: number | null;
   exchange: string | null;
+  /** Yahoo Finance quoteType: "EQUITY", "ETF", "CRYPTOCURRENCY", "MUTUALFUND", etc. */
+  assetType?: string | null;
 }
 
 export interface HistoryPoint {
@@ -94,6 +96,16 @@ export interface WatchlistItem {
   symbol: string;
   name: string;
   addedAt: string; // ISO timestamp
+  targetPrice: number | null;
+  alertPctDrop: number | null;
+  notes: string | null;
+}
+
+export interface ResearchNote {
+  id: number;
+  symbol: string;
+  content: string;
+  createdAt: string; // ISO timestamp
 }
 
 export interface PortfolioPosition {
@@ -323,6 +335,8 @@ export interface FinancialStatements {
 export interface FundamentalsSnapshot {
   symbol: string;
   price: number | null;
+  sector?: string | null;
+  industry?: string | null;
   trailingPE: number | null;
   forwardPE: number | null;
   pegRatio: number | null;

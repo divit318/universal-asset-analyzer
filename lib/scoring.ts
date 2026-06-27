@@ -66,14 +66,64 @@ function bucket(name: string, results: FactorResult[]): {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Buckets                                                                    */
+/* Sector classification                                                       */
+/* -------------------------------------------------------------------------- */
+
+type SectorGroup = "financials" | "utilities" | "reits" | "default";
+
+/**
+ * Map a sector string into a broad group. Sectors with structurally different
+ * economics need different scoring thresholds — applying general/tech scales to
+ * a bank or utility produces systematically wrong scores.
+ */
+function sectorGroup(sector: string | null | undefined): SectorGroup {
+  if (!sector) return "default";
+  const s = sector.toLowerCase();
+  if (
+    s === "financials" ||
+    s === "financial services" ||
+    s.includes("bank") ||
+    s.includes("insurance") ||
+    s.includes("capital markets") ||
+    s.includes("asset management")
+  ) return "financials";
+  if (s.includes("utilit")) return "utilities";
+  if (s === "real estate" || s.includes("reit")) return "reits";
+  return "default";
+}
+
+/* -------------------------------------------------------------------------- */
+/* Buckets (sector-aware)                                                     */
 /* -------------------------------------------------------------------------- */
 
 export function scoreValuation(s: FundamentalsSnapshot, a: AnalystConsensus) {
+  const sg = sectorGroup(s.sector);
   const fwdRatio =
     s.forwardPE != null && s.trailingPE != null && s.trailingPE !== 0
       ? s.forwardPE / s.trailingPE
       : null;
+
+  if (sg === "financials") {
+    // Banks: P/E is less distorted than for industrials, but still apply tighter range
+    return bucket("Valuation", [
+      mk("Analyst upside", a.upsidePercent, -15, 30, 12, (v) => `${v >= 0 ? "+" : ""}${v.toFixed(0)}% to target`),
+      mk("Forward P/E", s.forwardPE, 18, 8, 10, (v) => `Fwd P/E ${v.toFixed(1)}`),
+      mk("Forward vs trailing P/E", fwdRatio, 1.2, 0.7, 8, () =>
+        s.forwardPE != null ? `Fwd P/E ${s.forwardPE.toFixed(1)} vs ${s.trailingPE?.toFixed(1)}` : "n/a",
+      ),
+    ]);
+  }
+  if (sg === "utilities") {
+    // Utilities trade at 14-20x P/E as a normal range — don't penalize 18x
+    return bucket("Valuation", [
+      mk("Analyst upside", a.upsidePercent, -15, 30, 12, (v) => `${v >= 0 ? "+" : ""}${v.toFixed(0)}% to target`),
+      mk("Forward P/E", s.forwardPE, 28, 13, 10, (v) => `Fwd P/E ${v.toFixed(1)}`),
+      mk("Forward vs trailing P/E", fwdRatio, 1.2, 0.6, 8, () =>
+        s.forwardPE != null ? `Fwd P/E ${s.forwardPE.toFixed(1)} vs ${s.trailingPE?.toFixed(1)}` : "n/a",
+      ),
+    ]);
+  }
+  // default / REITs
   return bucket("Valuation", [
     mk("Analyst upside", a.upsidePercent, -15, 30, 12, (v) => `${v >= 0 ? "+" : ""}${v.toFixed(0)}% to target`),
     mk("PEG ratio", s.pegRatio, 3, 0.8, 10, (v) => `PEG ${ratio(v)}`),
@@ -87,14 +137,31 @@ export function scoreQuality(
   s: FundamentalsSnapshot,
   st: FinancialStatements | null,
 ) {
-  // Prefer EDGAR-derived FCF (operating CF − capex); Yahoo's freeCashflow field
-  // is unreliable. Compare against the same year's net income.
+  const sg = sectorGroup(s.sector);
   const latestNetIncome = st?.netIncome.at(-1)?.value ?? null;
   const latestFcf = st?.freeCashFlow.at(-1)?.value ?? s.freeCashflow ?? null;
   const fcfQuality =
     latestFcf != null && latestNetIncome != null && latestNetIncome !== 0
       ? latestFcf / latestNetIncome
       : null;
+
+  if (sg === "financials") {
+    // Gross margin is not meaningful for banks; ROE is the primary quality signal
+    return bucket("Quality", [
+      mk("Return on equity", s.returnOnEquity, 0.05, 0.18, 9, (v) => `ROE ${pct(v)}`),
+      mk("Operating margin", s.operatingMargins, 0.10, 0.40, 8, (v) => `Op margin ${pct(v)}`),
+      mk("FCF / net income", fcfQuality, 0.4, 1.1, 8, (v) => `FCF/NI ${ratio(v)}`),
+    ]);
+  }
+  if (sg === "utilities") {
+    // Utilities have regulated margins; 20% op margin is solid, 30% is excellent
+    return bucket("Quality", [
+      mk("Return on equity", s.returnOnEquity, 0.05, 0.14, 9, (v) => `ROE ${pct(v)}`),
+      mk("Operating margin", s.operatingMargins, 0.08, 0.25, 8, (v) => `Op margin ${pct(v)}`),
+      mk("FCF / net income", fcfQuality, 0.4, 1.1, 8, (v) => `FCF/NI ${ratio(v)}`),
+    ]);
+  }
+  // default
   return bucket("Quality", [
     mk("Return on equity", s.returnOnEquity, 0.05, 0.25, 9, (v) => `ROE ${pct(v)}`),
     mk("Operating margin", s.operatingMargins, 0.05, 0.3, 8, (v) => `Op margin ${pct(v)}`),
@@ -106,6 +173,25 @@ export function scoreGrowth(
   s: FundamentalsSnapshot,
   st: FinancialStatements | null,
 ) {
+  const sg = sectorGroup(s.sector);
+
+  if (sg === "utilities") {
+    // Regulated utility growing revenue 5% YoY is doing very well
+    return bucket("Growth", [
+      mk("Revenue growth", s.revenueGrowth, -0.02, 0.08, 9, (v) => `Rev growth ${v >= 0 ? "+" : ""}${pct(v)}`),
+      mk("Earnings growth", s.earningsGrowth, -0.05, 0.10, 8, (v) => `EPS growth ${v >= 0 ? "+" : ""}${pct(v)}`),
+      mk("Revenue CAGR", st?.revenueCagr, -0.01, 0.06, 8, (v) => `Rev CAGR ${pct(v)}`),
+    ]);
+  }
+  if (sg === "financials" || sg === "reits") {
+    // Banks and REITs: 10-12% revenue growth is strong
+    return bucket("Growth", [
+      mk("Revenue growth", s.revenueGrowth, -0.02, 0.12, 9, (v) => `Rev growth ${v >= 0 ? "+" : ""}${pct(v)}`),
+      mk("Earnings growth", s.earningsGrowth, -0.05, 0.15, 8, (v) => `EPS growth ${v >= 0 ? "+" : ""}${pct(v)}`),
+      mk("Revenue CAGR", st?.revenueCagr, -0.01, 0.08, 8, (v) => `Rev CAGR ${pct(v)}`),
+    ]);
+  }
+  // default
   return bucket("Growth", [
     mk("Revenue growth", s.revenueGrowth, 0, 0.2, 9, (v) => `Rev growth ${v >= 0 ? "+" : ""}${pct(v)}`),
     mk("Earnings growth", s.earningsGrowth, 0, 0.25, 8, (v) => `EPS growth ${v >= 0 ? "+" : ""}${pct(v)}`),
@@ -114,10 +200,37 @@ export function scoreGrowth(
 }
 
 export function scoreHealth(s: FundamentalsSnapshot) {
+  const sg = sectorGroup(s.sector);
   const netDebtToEbitda =
     s.totalDebt != null && s.totalCash != null && s.ebitda != null && s.ebitda !== 0
       ? (s.totalDebt - s.totalCash) / s.ebitda
       : null;
+
+  if (sg === "financials") {
+    // Banks are structurally leveraged by design; D/E of 8-12x is healthy.
+    // Current ratio is not a meaningful metric for banks — omit it.
+    return bucket("Financial Health", [
+      mk("Debt / equity", s.debtToEquity, 20, 4, 8, (v) => `D/E ${ratio(v)}`),
+      mk("Net debt / EBITDA", netDebtToEbitda, 15, 2, 12, (v) => `Net debt/EBITDA ${ratio(v)}`),
+    ]);
+  }
+  if (sg === "utilities") {
+    // Utilities carry infrastructure debt; 3-4x D/E is standard and not alarming
+    return bucket("Financial Health", [
+      mk("Debt / equity", s.debtToEquity, 4, 0.5, 8, (v) => `D/E ${ratio(v)}`),
+      mk("Current ratio", s.currentRatio, 0.8, 1.8, 6, (v) => `Current ${ratio(v)}`),
+      mk("Net debt / EBITDA", netDebtToEbitda, 8, 2, 6, (v) => `Net debt/EBITDA ${ratio(v)}`),
+    ]);
+  }
+  if (sg === "reits") {
+    // REITs use debt as part of their capital structure; 3x D/E is acceptable
+    return bucket("Financial Health", [
+      mk("Debt / equity", s.debtToEquity, 4, 0.5, 8, (v) => `D/E ${ratio(v)}`),
+      mk("Current ratio", s.currentRatio, 0.8, 2, 6, (v) => `Current ${ratio(v)}`),
+      mk("Net debt / EBITDA", netDebtToEbitda, 10, 3, 6, (v) => `Net debt/EBITDA ${ratio(v)}`),
+    ]);
+  }
+  // default
   return bucket("Financial Health", [
     mk("Debt / equity", s.debtToEquity, 2, 0.2, 8, (v) => `D/E ${ratio(v)}`),
     mk("Current ratio", s.currentRatio, 0.8, 2, 6, (v) => `Current ${ratio(v)}`),
@@ -348,7 +461,7 @@ export function computeScore(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Risk heat map                                                              */
+/* Risk heat map (sector-aware)                                               */
 /* -------------------------------------------------------------------------- */
 
 function rank(level: RiskLevel): number {
@@ -362,6 +475,8 @@ export function assessRisks(
   a: AnalystConsensus,
   insider: InsiderActivity,
 ): RiskItem[] {
+  const sg = sectorGroup(s.sector);
+
   // Valuation risk
   let valLevel: RiskLevel = "low";
   const valReasons: string[] = [];
@@ -380,11 +495,16 @@ export function assessRisks(
   // Growth risk (incl. deceleration from the statements trend)
   let growthLevel: RiskLevel = "low";
   const growthReasons: string[] = [];
+  const growthThresholds = sg === "utilities"
+    ? { low: -0.01, medium: 0.03 }
+    : sg === "financials" || sg === "reits"
+      ? { low: -0.01, medium: 0.04 }
+      : { low: 0.03, medium: 0.10 };
   if (s.revenueGrowth != null) {
-    if (s.revenueGrowth < 0.03) {
+    if (s.revenueGrowth < growthThresholds.low) {
       growthLevel = worse(growthLevel, "high");
       growthReasons.push(`rev growth ${pct(s.revenueGrowth)}`);
-    } else if (s.revenueGrowth < 0.1) {
+    } else if (s.revenueGrowth < growthThresholds.medium) {
       growthLevel = worse(growthLevel, "medium");
       growthReasons.push(`rev growth ${pct(s.revenueGrowth)}`);
     }
@@ -399,19 +519,44 @@ export function assessRisks(
     }
   }
 
-  // Financial risk
+  // Financial risk — thresholds differ by sector
   let finLevel: RiskLevel = "low";
   const finReasons: string[] = [];
-  if (s.debtToEquity != null && s.debtToEquity > 1.5) {
-    finLevel = worse(finLevel, "high");
-    finReasons.push(`D/E ${ratio(s.debtToEquity)}`);
-  } else if (s.debtToEquity != null && s.debtToEquity > 0.8) {
-    finLevel = worse(finLevel, "medium");
-    finReasons.push(`D/E ${ratio(s.debtToEquity)}`);
-  }
-  if (s.currentRatio != null && s.currentRatio < 1) {
-    finLevel = worse(finLevel, "medium");
-    finReasons.push(`current ${ratio(s.currentRatio)}`);
+  if (sg === "financials") {
+    // Banks: only flag D/E > 15x as high, > 10x as medium
+    if (s.debtToEquity != null && s.debtToEquity > 15) {
+      finLevel = worse(finLevel, "high");
+      finReasons.push(`D/E ${ratio(s.debtToEquity)} (very high for a bank)`);
+    } else if (s.debtToEquity != null && s.debtToEquity > 10) {
+      finLevel = worse(finLevel, "medium");
+      finReasons.push(`D/E ${ratio(s.debtToEquity)}`);
+    }
+  } else if (sg === "utilities" || sg === "reits") {
+    // Utilities/REITs: 4x D/E high, 2.5x medium
+    if (s.debtToEquity != null && s.debtToEquity > 4) {
+      finLevel = worse(finLevel, "high");
+      finReasons.push(`D/E ${ratio(s.debtToEquity)}`);
+    } else if (s.debtToEquity != null && s.debtToEquity > 2.5) {
+      finLevel = worse(finLevel, "medium");
+      finReasons.push(`D/E ${ratio(s.debtToEquity)}`);
+    }
+    if (s.currentRatio != null && s.currentRatio < 0.8) {
+      finLevel = worse(finLevel, "medium");
+      finReasons.push(`current ${ratio(s.currentRatio)}`);
+    }
+  } else {
+    // default
+    if (s.debtToEquity != null && s.debtToEquity > 1.5) {
+      finLevel = worse(finLevel, "high");
+      finReasons.push(`D/E ${ratio(s.debtToEquity)}`);
+    } else if (s.debtToEquity != null && s.debtToEquity > 0.8) {
+      finLevel = worse(finLevel, "medium");
+      finReasons.push(`D/E ${ratio(s.debtToEquity)}`);
+    }
+    if (s.currentRatio != null && s.currentRatio < 1) {
+      finLevel = worse(finLevel, "medium");
+      finReasons.push(`current ${ratio(s.currentRatio)}`);
+    }
   }
 
   // Execution risk: insider selling, margin compression, EPS misses

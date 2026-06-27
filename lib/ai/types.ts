@@ -70,6 +70,8 @@ export interface CompanyContext {
   filings: { form: string; filedAt: string; description: string; documentUrl: string }[];
   news: NewsItem[];
   onWatchlist: boolean;
+  /** Analyst notes saved from prior research sessions — cross-stock memory. */
+  savedNotes?: { symbol: string; content: string; createdAt: string }[];
   /** Non-fatal problems gathering data, surfaced so the copilot can be candid. */
   warnings: string[];
 }

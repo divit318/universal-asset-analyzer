@@ -12,7 +12,7 @@ import { useCopilot } from "./use-copilot";
  * research actions, free-form multi-turn chat, streaming answers, grounded
  * citations, and suggested follow-ups. Replaces the old one-click "Analyze".
  */
-export function ResearchCopilot({ symbol, name }: { symbol: string; name: string }) {
+export function ResearchCopilot({ symbol, name, isEquity = true }: { symbol: string; name: string; isEquity?: boolean }) {
   const {
     status, messages, error, models, model, setModel,
     reachable, coverage, warnings, suggestions, send, stop, reset,
@@ -85,10 +85,10 @@ export function ResearchCopilot({ symbol, name }: { symbol: string; name: string
       {/* Conversation */}
       <div ref={scrollRef} className="flex max-h-[34rem] min-h-[18rem] flex-col gap-5 overflow-y-auto px-4 py-4">
         {showHero ? (
-          <Hero name={name} symbol={symbol} coverage={coverage} warnings={warnings} reachable={reachable} onPick={(q) => void send({ question: q })} />
+          <Hero name={name} symbol={symbol} coverage={coverage} warnings={warnings} reachable={reachable} isEquity={isEquity} onPick={(q) => void send({ question: q })} />
         ) : (
           messages.map((m, i) => (
-            <Message key={i} message={m} streaming={streaming && i === messages.length - 1} />
+            <Message key={i} message={m} streaming={streaming && i === messages.length - 1} symbol={symbol} />
           ))
         )}
 
@@ -164,21 +164,29 @@ function HealthBadge({ reachable, status }: { reachable: boolean; status: string
 }
 
 function Hero({
-  name, symbol, coverage, warnings, reachable, onPick,
+  name, symbol, coverage, warnings, reachable, isEquity, onPick,
 }: {
   name: string;
   symbol: string;
   coverage: ReturnType<typeof useCopilot>["coverage"];
   warnings: string[];
   reachable: boolean;
+  isEquity: boolean;
   onPick: (q: string) => void;
 }) {
-  const starters = [
-    "Is this company undervalued?",
-    "What is the bull case?",
-    "What are the key risks?",
-    "Would Buffett invest in this company?",
-  ];
+  const starters = isEquity
+    ? [
+        "Is this company undervalued?",
+        "What is the bull case?",
+        "What are the key risks?",
+        "Would Buffett invest in this company?",
+      ]
+    : [
+        "What does this asset track?",
+        "How does it compare to its benchmark?",
+        "What are the main risks of holding this?",
+        "Is now a good time to buy?",
+      ];
   const coverageItems = coverage
     ? [
         ["Fundamentals", coverage.hasFundamentals],
@@ -195,8 +203,9 @@ function Hero({
       <div>
         <p className="text-sm font-medium text-foreground">Researching {name}</p>
         <p className="mt-1 max-w-md text-xs text-muted">
-          I&apos;ve assembled a dossier for {symbol} from fundamentals, filings, analyst data, the
-          platform score, and recent news. Ask anything, or run a research action above.
+          {isEquity
+            ? `I've assembled a dossier for ${symbol} from fundamentals, filings, analyst data, the platform score, and recent news. Ask anything, or run a research action above.`
+            : `I've assembled market data and news for ${symbol}. Ask anything about this asset — price drivers, risks, holdings, or outlook.`}
         </p>
       </div>
 

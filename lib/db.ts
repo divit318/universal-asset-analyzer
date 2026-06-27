@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import type { PortfolioPosition, StockFundamentals, WatchlistItem } from "./types";
+import type { PortfolioPosition, ResearchNote, StockFundamentals, WatchlistItem } from "./types";
 
 let db: DatabaseSync | null = null;
 
@@ -16,9 +16,12 @@ function getDb(): DatabaseSync {
   db = new DatabaseSync(file);
   db.exec(`
     CREATE TABLE IF NOT EXISTS watchlist (
-      symbol   TEXT PRIMARY KEY,
-      name     TEXT NOT NULL,
-      added_at TEXT NOT NULL
+      symbol          TEXT PRIMARY KEY,
+      name            TEXT NOT NULL,
+      added_at        TEXT NOT NULL,
+      target_price    REAL,
+      alert_pct_drop  REAL,
+      notes           TEXT
     );
     CREATE TABLE IF NOT EXISTS fundamentals_cache (
       symbol     TEXT PRIMARY KEY,
@@ -48,7 +51,19 @@ function getDb(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS idx_research_message_session
       ON research_message (session_id, id);
+    CREATE TABLE IF NOT EXISTS research_notes (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      symbol     TEXT NOT NULL,
+      content    TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_research_notes_symbol
+      ON research_notes (symbol);
   `);
+  // Migrate existing watchlist rows: add new columns if the DB predates them
+  for (const col of ["target_price REAL", "alert_pct_drop REAL", "notes TEXT"]) {
+    try { db.exec(`ALTER TABLE watchlist ADD COLUMN ${col}`); } catch { /* already exists */ }
+  }
   return db;
 }
 
@@ -56,16 +71,22 @@ interface WatchlistRow {
   symbol: string;
   name: string;
   added_at: string;
+  target_price: number | null;
+  alert_pct_drop: number | null;
+  notes: string | null;
 }
 
 export function listWatchlist(): WatchlistItem[] {
   const rows = getDb()
-    .prepare("SELECT symbol, name, added_at FROM watchlist ORDER BY added_at DESC")
+    .prepare("SELECT symbol, name, added_at, target_price, alert_pct_drop, notes FROM watchlist ORDER BY added_at DESC")
     .all() as unknown as WatchlistRow[];
   return rows.map((r) => ({
     symbol: r.symbol,
     name: r.name,
     addedAt: r.added_at,
+    targetPrice: r.target_price ?? null,
+    alertPctDrop: r.alert_pct_drop ?? null,
+    notes: r.notes ?? null,
   }));
 }
 
@@ -74,6 +95,9 @@ export function addToWatchlist(symbol: string, name: string): WatchlistItem {
     symbol: symbol.toUpperCase(),
     name,
     addedAt: new Date().toISOString(),
+    targetPrice: null,
+    alertPctDrop: null,
+    notes: null,
   };
   getDb()
     .prepare(
@@ -84,10 +108,66 @@ export function addToWatchlist(symbol: string, name: string): WatchlistItem {
   return item;
 }
 
+export function updateWatchlistItem(
+  symbol: string,
+  patch: { targetPrice?: number | null; alertPctDrop?: number | null; notes?: string | null },
+): void {
+  const db = getDb();
+  if ("targetPrice" in patch) {
+    db.prepare("UPDATE watchlist SET target_price = ? WHERE symbol = ?")
+      .run(patch.targetPrice ?? null, symbol.toUpperCase());
+  }
+  if ("alertPctDrop" in patch) {
+    db.prepare("UPDATE watchlist SET alert_pct_drop = ? WHERE symbol = ?")
+      .run(patch.alertPctDrop ?? null, symbol.toUpperCase());
+  }
+  if ("notes" in patch) {
+    db.prepare("UPDATE watchlist SET notes = ? WHERE symbol = ?")
+      .run(patch.notes ?? null, symbol.toUpperCase());
+  }
+}
+
 export function removeFromWatchlist(symbol: string): void {
   getDb()
     .prepare("DELETE FROM watchlist WHERE symbol = ?")
     .run(symbol.toUpperCase());
+}
+
+/* -------------------------------------------------------------------------- */
+/* Research notes (cross-stock AI memory)                                     */
+/* -------------------------------------------------------------------------- */
+
+interface NoteRow {
+  id: number;
+  symbol: string;
+  content: string;
+  created_at: string;
+}
+
+export function listNotes(symbol: string): ResearchNote[] {
+  const rows = getDb()
+    .prepare("SELECT id, symbol, content, created_at FROM research_notes WHERE symbol = ? ORDER BY id DESC")
+    .all(symbol.toUpperCase()) as unknown as NoteRow[];
+  return rows.map((r) => ({ id: r.id, symbol: r.symbol, content: r.content, createdAt: r.created_at }));
+}
+
+export function listAllNotes(): ResearchNote[] {
+  const rows = getDb()
+    .prepare("SELECT id, symbol, content, created_at FROM research_notes ORDER BY id DESC")
+    .all() as unknown as NoteRow[];
+  return rows.map((r) => ({ id: r.id, symbol: r.symbol, content: r.content, createdAt: r.created_at }));
+}
+
+export function addNote(symbol: string, content: string): ResearchNote {
+  const now = new Date().toISOString();
+  const result = getDb()
+    .prepare("INSERT INTO research_notes (symbol, content, created_at) VALUES (?, ?, ?)")
+    .run(symbol.toUpperCase(), content.trim(), now) as unknown as { lastInsertRowid: number };
+  return { id: Number(result.lastInsertRowid), symbol: symbol.toUpperCase(), content: content.trim(), createdAt: now };
+}
+
+export function deleteNote(id: number): void {
+  getDb().prepare("DELETE FROM research_notes WHERE id = ?").run(id);
 }
 
 /* -------------------------------------------------------------------------- */

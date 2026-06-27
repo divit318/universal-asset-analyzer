@@ -273,6 +273,13 @@ export function buildBlocks(ctx: CompanyContext): ContextBlock[] {
       .join("\n"), 35));
   }
 
+  // Saved research notes — prior analytical conclusions from this and peer sessions.
+  if (ctx.savedNotes && ctx.savedNotes.length) {
+    out.push(block("savedNotes", "platform:notes", "Prior research notes (your saved conclusions)", (ctx.savedNotes ?? [])
+      .map((n) => `[${n.symbol} · ${n.createdAt.slice(0, 10)}] ${n.content.slice(0, 500)}`)
+      .join("\n\n"), 70));
+  }
+
   // Data gaps — so the model can be candid about what's missing.
   if (ctx.warnings.length) {
     out.push(block("gaps", "platform:gaps", "Data availability notes", ctx.warnings
@@ -308,7 +315,7 @@ const INTENT_SECTIONS: Record<ResearchIntent, string[]> = {
 };
 
 /** Anchors always kept regardless of intent — the company's identity. */
-const ALWAYS = new Set(["overview", "price", "platformScore", "gaps"]);
+const ALWAYS = new Set(["overview", "price", "platformScore", "gaps", "savedNotes"]);
 
 /** Rough token estimate (~4 chars/token). Good enough for budgeting. Pure. */
 export function estimateTokens(text: string): number {

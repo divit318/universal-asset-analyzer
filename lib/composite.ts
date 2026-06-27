@@ -6,6 +6,10 @@ import type { CompositeScores, StockMetrics } from "./types";
  * comparable over time, not just within one screen), then averaged within its
  * dimension. The Overall score is a weighted blend of the dimensions.
  *
+ * Scoring thresholds are sector-aware: Financials, Utilities, and REITs have
+ * structurally different economics and would be misevaluated by one-size-fits-all
+ * thresholds calibrated for general/tech companies.
+ *
  * Pure and deterministic — fully unit-testable without any network data.
  */
 
@@ -26,15 +30,101 @@ function blend(parts: (number | null)[], min = 1): number | null {
 /** The metric fields the scores read (everything on StockMetrics bar the scores). */
 export type ScorableMetrics = Omit<StockMetrics, "scores">;
 
+/* -------------------------------------------------------------------------- */
+/* Sector classification                                                       */
+/* -------------------------------------------------------------------------- */
+
+type SectorGroup = "financials" | "utilities" | "reits" | "default";
+
+/**
+ * Map Yahoo Finance sector strings to a broad group for threshold selection.
+ * Financials/banks carry structural leverage that is normal and healthy.
+ * Utilities grow slowly by regulatory design. REITs distribute most income
+ * and are capital-intensive. Everything else uses the default growth/tech scales.
+ */
+function sectorGroup(sector: string | null | undefined): SectorGroup {
+  if (!sector) return "default";
+  const s = sector.toLowerCase();
+  if (
+    s === "financials" ||
+    s === "financial services" ||
+    s.includes("bank") ||
+    s.includes("insurance") ||
+    s.includes("capital markets") ||
+    s.includes("asset management")
+  ) return "financials";
+  if (s.includes("utilit")) return "utilities";
+  if (s === "real estate" || s.includes("reit")) return "reits";
+  return "default";
+}
+
+/* -------------------------------------------------------------------------- */
+/* Sector-aware sub-scorers                                                    */
+/* -------------------------------------------------------------------------- */
+
 export function valueScore(m: ScorableMetrics): number | null {
+  const sg = sectorGroup(m.sector);
+  if (sg === "utilities") {
+    // Utilities trade at premium P/E due to stability; 18x is fairly valued, not expensive
+    return blend([
+      norm(m.forwardPE, 30, 12),
+      norm(m.evToEbitda, 20, 8),
+      norm(m.fcfYield, 0, 6),
+    ]);
+  }
+  if (sg === "financials") {
+    // P/E and EV/EBITDA aren't reliable for banks — rely on FCF yield and book value
+    return blend([
+      norm(m.forwardPE, 20, 8),
+      norm(m.fcfYield, 0, 6),
+    ]);
+  }
+  if (sg === "reits") {
+    // REITs valued on income/yield; FCF yield and dividend yield matter most
+    return blend([
+      norm(m.forwardPE, 35, 12),
+      norm(m.fcfYield, 0, 7),
+      norm(m.dividendYield, 0, 6),
+    ]);
+  }
+  // default — general/tech/consumer/industrials
   return blend([
-    norm(m.forwardPE, 40, 8), // cheaper P/E → higher
-    norm(m.evToEbitda, 22, 5), // cheaper EV/EBITDA → higher
-    norm(m.fcfYield, 0, 8), // richer FCF yield → higher
+    norm(m.forwardPE, 40, 8),
+    norm(m.evToEbitda, 22, 5),
+    norm(m.fcfYield, 0, 8),
   ]);
 }
 
 export function growthScore(m: ScorableMetrics): number | null {
+  const sg = sectorGroup(m.sector);
+  if (sg === "utilities") {
+    // Regulated utilities grow revenue at 2-5%; 8% is exceptional, not mediocre
+    return blend([
+      norm(m.revenueGrowthYoY, -2, 8),
+      norm(m.revenueCagr3y, -1, 6),
+      norm(m.epsGrowthYoY, -5, 10),
+      norm(m.epsCagr3y, -2, 8),
+    ]);
+  }
+  if (sg === "reits") {
+    // REITs grow via acquisitions + rent increases; 10% revenue growth is strong
+    return blend([
+      norm(m.revenueGrowthYoY, -2, 12),
+      norm(m.revenueCagr3y, -1, 9),
+      norm(m.epsGrowthYoY, -5, 15),
+      norm(m.epsCagr3y, -2, 10),
+    ]);
+  }
+  if (sg === "financials") {
+    // Bank revenue growth is modest; 10% is very strong for a well-run bank
+    return blend([
+      norm(m.revenueGrowthYoY, -2, 12),
+      norm(m.revenueCagr3y, -1, 8),
+      norm(m.epsGrowthYoY, -5, 15),
+      norm(m.epsCagr3y, -2, 10),
+    ]);
+  }
+  // default
   return blend([
     norm(m.revenueGrowthYoY, 0, 25),
     norm(m.revenueCagr3y, 0, 20),
@@ -44,6 +134,34 @@ export function growthScore(m: ScorableMetrics): number | null {
 }
 
 export function qualityScore(m: ScorableMetrics): number | null {
+  const sg = sectorGroup(m.sector);
+  if (sg === "financials") {
+    // Gross margin is not meaningful for banks; ROE is the key quality signal
+    // Banks targeting 10-15% ROE; 18%+ is excellent
+    return blend([
+      norm(m.roe, 5, 18),
+      norm(m.operatingMargin, 10, 40),
+      norm(m.fcfMargin, 2, 20),
+    ]);
+  }
+  if (sg === "utilities") {
+    // Utilities have regulated, stable margins; 20% op margin is solid
+    return blend([
+      norm(m.roic, 3, 12),
+      norm(m.roe, 5, 14),
+      norm(m.operatingMargin, 8, 25),
+      norm(m.fcfMargin, 2, 18),
+    ]);
+  }
+  if (sg === "reits") {
+    // REITs distribute most earnings; ROE and margins differ from industrials
+    return blend([
+      norm(m.roe, 3, 15),
+      norm(m.operatingMargin, 10, 45),
+      norm(m.fcfMargin, 5, 30),
+    ]);
+  }
+  // default
   return blend([
     norm(m.roic, 5, 25),
     norm(m.roe, 5, 30),
@@ -54,19 +172,51 @@ export function qualityScore(m: ScorableMetrics): number | null {
 }
 
 export function financialHealthScore(m: ScorableMetrics): number | null {
+  const sg = sectorGroup(m.sector);
+  if (sg === "financials") {
+    // Banks are inherently leveraged (deposits = debt); D/E of 8-12x is normal.
+    // Use a wide range and only penalize extreme outliers.
+    // Current ratio is not meaningful for banks; skip it.
+    return blend([
+      norm(m.debtToEquity, 20, 4),      // 4x = well-run bank, 20x = systemic risk
+      norm(m.netDebtToEbitda, 15, 2),   // relative to earnings power
+    ]);
+  }
+  if (sg === "utilities") {
+    // Utilities carry debt to fund infrastructure; 3x D/E is standard
+    return blend([
+      norm(m.debtToEquity, 4, 0.5),
+      norm(m.netDebtToEbitda, 8, 2),
+      norm(m.currentRatio, 0.8, 1.8),
+    ]);
+  }
+  if (sg === "reits") {
+    // REITs are capital-intensive but regulated; 2-3x D/E is typical
+    return blend([
+      norm(m.debtToEquity, 4, 0.5),
+      norm(m.netDebtToEbitda, 10, 3),
+      norm(m.currentRatio, 0.8, 2),
+    ]);
+  }
+  // default
   return blend([
-    norm(m.debtToEquity, 2, 0.1), // less leverage → higher
-    norm(m.netDebtToEbitda, 4, 0), // less net debt → higher (net cash clamps to 100)
-    norm(m.currentRatio, 0.8, 2.5), // more liquidity → higher
+    norm(m.debtToEquity, 2, 0.1),
+    norm(m.netDebtToEbitda, 4, 0),
+    norm(m.currentRatio, 0.8, 2.5),
   ]);
 }
 
 export function momentumScore(m: ScorableMetrics): number | null {
+  // Momentum is sector-agnostic — price performance relative to history
   return blend([
     norm(m.oneYearReturn, -25, 40),
-    norm(m.distanceFrom52WkHigh, -50, -2), // nearer the high → higher
+    norm(m.distanceFrom52WkHigh, -50, -2),
   ]);
 }
+
+/* -------------------------------------------------------------------------- */
+/* Composite                                                                   */
+/* -------------------------------------------------------------------------- */
 
 const WEIGHTS: [keyof CompositeScores, number][] = [
   ["quality", 0.28],

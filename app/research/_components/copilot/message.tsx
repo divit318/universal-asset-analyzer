@@ -3,10 +3,11 @@
 import { useState } from "react";
 import type { ChatMessage } from "@/lib/ai/types";
 import { Markdown } from "./markdown";
+import { SaveNoteButton } from "../research-notes";
 
 /** One conversation turn. User turns are compact; assistant turns render the
  * full research markdown plus an optional reasoning trace and source chips. */
-export function Message({ message, streaming }: { message: ChatMessage; streaming?: boolean }) {
+export function Message({ message, streaming, symbol }: { message: ChatMessage; streaming?: boolean; symbol?: string }) {
   const [showReasoning, setShowReasoning] = useState(false);
 
   if (message.role === "user") {
@@ -83,6 +84,13 @@ export function Message({ message, streaming }: { message: ChatMessage; streamin
               </span>
             ),
           )}
+        </div>
+      ) : null}
+
+      {/* Save-note action: only show on completed assistant turns with content */}
+      {!streaming && message.content && symbol ? (
+        <div className="flex justify-end pt-1">
+          <SaveNoteButton symbol={symbol} content={message.content} />
         </div>
       ) : null}
     </div>

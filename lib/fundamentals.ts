@@ -12,6 +12,7 @@ import type {
 } from "./types";
 
 const MODULES = [
+  "assetProfile",
   "financialData",
   "summaryDetail",
   "defaultKeyStatistics",
@@ -105,6 +106,7 @@ interface RawInstitutionHolder {
 }
 
 interface RawSummary {
+  assetProfile?: { sector?: string; industry?: string };
   financialData?: RawFinancialData;
   summaryDetail?: { trailingPE?: number; forwardPE?: number; dividendYield?: number; priceToSalesTrailing12Months?: number };
   defaultKeyStatistics?: {
@@ -151,6 +153,8 @@ export function mapSnapshot(symbol: string, raw: RawSummary): FundamentalsSnapsh
   return {
     symbol,
     price: n(fd.currentPrice),
+    sector: raw.assetProfile?.sector ?? null,
+    industry: raw.assetProfile?.industry ?? null,
     trailingPE: n(sd.trailingPE),
     forwardPE: n(sd.forwardPE ?? ks.forwardPE),
     pegRatio: n(ks.pegRatio),
