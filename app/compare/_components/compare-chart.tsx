@@ -440,18 +440,25 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
   // Fetch daily history only when price metric selected
   useEffect(() => {
     if (!symbols.length || !isPrice) return;
-    setLoading(true);
-    fetch(`/api/compare-history?symbols=${symbols.join(",")}&days=${maxDays(period)}`)
-      .then((r) => r.json())
-      .then((raw: Record<string, unknown>) => {
-        const meta = raw["_meta"] as { convertedToUsd?: string[] } | undefined;
-        setConvertedSymbols(meta?.convertedToUsd ?? []);
-        // Strip _meta before storing history map
-        const { _meta: _ignored, ...historyOnly } = raw;
-        setHistoryMap(historyOnly as HistoryMap);
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    // Defer to microtask so setState doesn't fire synchronously in effect body
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (cancelled) return;
+      setLoading(true);
+      fetch(`/api/compare-history?symbols=${symbols.join(",")}&days=${maxDays(period)}`)
+        .then((r) => r.json())
+        .then((raw: Record<string, unknown>) => {
+          if (cancelled) return;
+          const meta = raw["_meta"] as { convertedToUsd?: string[] } | undefined;
+          setConvertedSymbols(meta?.convertedToUsd ?? []);
+          // Strip _meta before storing history map
+          const { _meta: _ignored, ...historyOnly } = raw;
+          setHistoryMap(historyOnly as HistoryMap);
+        })
+        .catch(() => {})
+        .finally(() => { if (!cancelled) setLoading(false); });
+    });
+    return () => { cancelled = true; };
   }, [symbols, period, isPrice]);
 
   /* ── price chart data ── */

@@ -44,6 +44,11 @@ function makeCompany(overrides: Partial<ScreenerInCompany> = {}): ScreenerInComp
       { holding: "fii", name: "FIIs", values: ["12.3", "13.1", "14.0"] },
       { holding: "dii", name: "DIIs", values: ["8.0", "8.5", "9.0"] },
     ],
+    shareholdingPeriods: [],
+    annualPL: [],
+    quarterlyPL: [],
+    sector: null,
+    industry: null,
     ...overrides,
   };
 }

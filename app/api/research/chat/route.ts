@@ -11,13 +11,46 @@ import { buildBlocks, classifyIntent, selectBlocks } from "@/lib/ai/retrieval";
 import { buildMessages } from "@/lib/ai/prompt";
 import { getAction, suggestFollowUps } from "@/lib/ai/actions";
 import { extractCitations, loadHistory, persistTurn } from "@/lib/ai/memory";
-import type { ChatRequest, ChatStreamEvent, ResearchIntent } from "@/lib/ai/types";
+import type { ChatRequest, ChatStreamEvent, ResearchIntent, PortfolioContextForAI, ContextBlock } from "@/lib/ai/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const encoder = new TextEncoder();
 const line = (ev: ChatStreamEvent) => encoder.encode(JSON.stringify(ev) + "\n");
+
+function buildPortfolioContextBlock(ctx: PortfolioContextForAI): ContextBlock {
+  const lines: string[] = [
+    `Investment objective: ${ctx.objective.replace(/_/g, " ")}`,
+    `Portfolio positions: ${ctx.holdingSymbols.length} holdings`,
+  ];
+  if (ctx.holdingSymbols.length > 0) {
+    lines.push(`Holdings: ${ctx.holdingSymbols.slice(0, 10).join(", ")}${ctx.holdingSymbols.length > 10 ? ` (+${ctx.holdingSymbols.length - 10} more)` : ""}`);
+  }
+  if (ctx.sectorWeights.length > 0) {
+    const top = ctx.sectorWeights.slice(0, 5);
+    lines.push(`Top sector weights: ${top.map((s) => `${s.sector}: ${s.weight.toFixed(1)}%`).join(", ")}`);
+  }
+  if (ctx.missingSectors.length > 0) lines.push(`Missing sectors (zero exposure): ${ctx.missingSectors.join(", ")}`);
+  if (ctx.overweightSectors.length > 0) lines.push(`Overweight sectors: ${ctx.overweightSectors.join(", ")}`);
+  if (ctx.fitScore != null) {
+    lines.push(`Portfolio fit score for this stock: ${ctx.fitScore}/100 (${ctx.fitTier ?? ""})`);
+  }
+  if (ctx.fitReasons?.length) lines.push(`Fit reasons: ${ctx.fitReasons.join("; ")}`);
+  if (ctx.isInPortfolio != null) lines.push(`Currently held in portfolio: ${ctx.isInPortfolio ? "YES — already a holding" : "No — new position"}`);
+  if (ctx.suggestedAllocationPct != null) {
+    const amt = ctx.suggestedAmount != null ? ` (~$${Math.round(ctx.suggestedAmount).toLocaleString()})` : "";
+    lines.push(`Suggested position size: ${ctx.suggestedAllocationPct.toFixed(1)}% of portfolio${amt}`);
+  }
+  if (ctx.concentrationWarning) lines.push(`Concentration warning: adding this would create high sector concentration`);
+  return {
+    id: "portfolio",
+    source: "portfolio:context",
+    heading: "User Portfolio Context",
+    body: lines.join("\n"),
+    priority: 90,
+  };
+}
 
 /**
  * POST /api/research/chat — the streaming Chat API Layer.
@@ -36,9 +69,10 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  const SYMBOL_RE = /^[A-Z0-9.\-]{1,12}$/;
   const symbol = body.symbol?.trim().toUpperCase();
-  if (!symbol) {
-    return Response.json({ error: "A `symbol` is required" }, { status: 400 });
+  if (!symbol || !SYMBOL_RE.test(symbol)) {
+    return Response.json({ error: "A valid `symbol` is required (e.g. AAPL)" }, { status: 400 });
   }
 
   const action = getAction(body.action);
@@ -84,6 +118,12 @@ export async function POST(request: Request) {
   const dossierBudget = Math.min(4000, Math.max(1500, Math.round(spec.contextWindow * 0.3)));
   const blocks = selectBlocks(buildBlocks(ctx), intents, dossierBudget);
 
+  // Prepend portfolio context block when available — always included regardless of token budget.
+  const portfolioAware = !!(body.portfolioContext?.hasPortfolio);
+  if (portfolioAware) {
+    blocks.unshift(buildPortfolioContextBlock(body.portfolioContext!));
+  }
+
   const history = body.sessionId ? loadHistory(body.sessionId) : (body.messages ?? []);
   const messages = buildMessages({
     symbol: ctx.symbol,
@@ -93,6 +133,7 @@ export async function POST(request: Request) {
     history,
     question,
     action,
+    portfolioAware,
   });
 
   const suggestions = suggestFollowUps(intents, action);
@@ -117,7 +158,7 @@ export async function POST(request: Request) {
           model,
           messages,
           temperature: spec.temperature,
-          numCtx: Math.min(spec.contextWindow, 8192),
+          numCtx: spec.contextWindow,
           signal: request.signal,
         })) {
           splitter.push(delta);

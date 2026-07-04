@@ -35,10 +35,26 @@ export interface ScreenerInShareholding {
   values: string[];
 }
 
+export interface ScreenerInAnnualPL {
+  period: string;
+  sales: number | null;
+  netProfit: number | null;
+  opmPercent: number | null;
+}
+
+export interface ScreenerInQuarterlyPL {
+  period: string;
+  sales: number | null;
+  netProfit: number | null;
+  opmPercent: number | null;
+}
+
 export interface ScreenerInCompany {
   name: string;
   symbol: string;
   bseCode: string | null;
+  sector: string | null;
+  industry: string | null;
   marketCap: number | null;     // crores INR
   currentPrice: number | null;  // INR
   high52w: number | null;
@@ -54,6 +70,9 @@ export interface ScreenerInCompany {
   ratios: ScreenerInRatio[];
   peers: ScreenerInPeer[];
   shareholding: ScreenerInShareholding[];
+  shareholdingPeriods: string[];
+  annualPL: ScreenerInAnnualPL[];
+  quarterlyPL: ScreenerInQuarterlyPL[];
 }
 
 /* -------------------------------------------------------------------------- */
@@ -167,6 +186,62 @@ function scrapePromoterFromMeta(html: string): number | null {
   return m ? num(m[1]) : null;
 }
 
+/** Scrape sector and industry from the company page HTML. */
+function scrapeSector(html: string): { sector: string | null; industry: string | null } {
+  // Try several patterns screener.in uses
+  // Pattern 1: "Sector: X" in meta description
+  const sectorMeta = html.match(/Sector:\s*([^,|"<\n]+)/i);
+  if (sectorMeta) return { sector: sectorMeta[1].trim(), industry: null };
+
+  // Pattern 2: screen links with sector in href
+  const sectorLink = html.match(/href="\/screen[^"]*"[^>]*>([^<]{3,40})<\/a>\s*(?:&rsaquo;|»|›|&raquo;)\s*<a[^>]*href="\/screen[^"]*"[^>]*>([^<]{3,40})<\/a>/i);
+  if (sectorLink) return { sector: sectorLink[1].trim(), industry: sectorLink[2].trim() };
+
+  // Pattern 3: "belongs to" pattern
+  const belongsTo = html.match(/belongs?\s+to\s+(?:the\s+)?([^.<]{3,50}?)\s+sector/i);
+  if (belongsTo) return { sector: belongsTo[1].trim(), industry: null };
+
+  return { sector: null, industry: null };
+}
+
+/** Generic table scraper: returns { periods, rowMap } for any screener.in section. */
+function scrapeTableSection(html: string, startId: string, endId: string): {
+  periods: string[];
+  rowMap: Map<string, string[]>;
+} {
+  const section = between(html, `id="${startId}"`, `id="${endId}"`) ||
+                  between(html, `id="${startId}"`, '</section>') ||
+                  between(html, `id="${startId}"`, `id="`);
+  if (!section) return { periods: [], rowMap: new Map() };
+
+  const rows = [...section.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)];
+  const periods: string[] = [];
+  const rowMap = new Map<string, string[]>();
+
+  // Header row — extract period labels
+  const headerRow = rows[0]?.[1] ?? "";
+  const headerCells = [...headerRow.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)]
+    .map(([, c]) => stripTags(c).trim())
+    .filter(Boolean);
+  // First header is usually "Label" or section name — skip it
+  for (const h of headerCells.slice(1)) {
+    if (h) periods.push(h);
+  }
+
+  for (const [, row] of rows.slice(1)) {
+    const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)]
+      .map(([, c]) => stripTags(c).trim());
+    if (cells.length < 2) continue;
+    const name = cells[0].toLowerCase()
+      .replace(/\s*\+$/, "")   // trailing "+" (collapsible rows)
+      .replace(/\s+/g, " ")
+      .trim();
+    if (name) rowMap.set(name, cells.slice(1));
+  }
+
+  return { periods, rowMap };
+}
+
 /** Scrape annual ratios table (Debtor Days, D/E, Interest Coverage, etc.). */
 function scrapeRatiosTable(html: string): ScreenerInRatio[] {
   const section = between(html, 'id="ratios"', 'id="shareholding"') ||
@@ -194,6 +269,77 @@ function scrapeRatiosTable(html: string): ScreenerInRatio[] {
     if (name) ratios.push({ name, values });
   }
   return ratios;
+}
+
+/** Scrape annual P&L history (Sales, Net Profit, OPM%). */
+function scrapeAnnualPL(html: string): ScreenerInAnnualPL[] {
+  const { periods, rowMap } = scrapeTableSection(html, "profit-loss", "balance-sheet");
+  if (periods.length === 0) return [];
+
+  return periods.map((period, i) => {
+    const sales = num(rowMap.get("sales")?.[i]) ??
+                  num(rowMap.get("revenue")?.[i]) ??
+                  num(rowMap.get("net sales")?.[i]);
+    const netProfit = num(rowMap.get("net profit")?.[i]) ??
+                      num(rowMap.get("profit after tax")?.[i]) ??
+                      num(rowMap.get("pat")?.[i]);
+    const opmPercent = num(rowMap.get("opm %")?.[i]) ??
+                       num(rowMap.get("operating profit margin")?.[i]);
+    return { period, sales, netProfit, opmPercent };
+  }).filter((d) => d.sales != null);
+}
+
+/** Scrape quarterly P&L (last 8 quarters). */
+function scrapeQuarterlyPL(html: string): ScreenerInQuarterlyPL[] {
+  const { periods, rowMap } = scrapeTableSection(html, "quarters", "profit-loss");
+  if (periods.length === 0) return [];
+
+  return periods.map((period, i) => {
+    const sales = num(rowMap.get("sales")?.[i]) ??
+                  num(rowMap.get("revenue")?.[i]) ??
+                  num(rowMap.get("net sales")?.[i]);
+    const netProfit = num(rowMap.get("net profit")?.[i]) ??
+                      num(rowMap.get("profit after tax")?.[i]);
+    const opmPercent = num(rowMap.get("opm %")?.[i]);
+    return { period, sales, netProfit, opmPercent };
+  }).filter((d) => d.sales != null);
+}
+
+/** Scrape the full shareholding pattern table (all categories, all periods). */
+function scrapeShareholdingFull(html: string): {
+  data: ScreenerInShareholding[];
+  periods: string[];
+} {
+  // Try multiple end markers in priority order
+  let result = scrapeTableSection(html, "shareholding", "corporate-actions");
+  if (result.periods.length === 0) result = scrapeTableSection(html, "shareholding", "concall");
+  if (result.periods.length === 0) result = scrapeTableSection(html, "shareholding", "documents");
+
+  const { periods: usePeriods, rowMap: useRowMap } = result;
+
+  const data: ScreenerInShareholding[] = [];
+  const skipPatterns = ["no. of", "number of", "total"];
+
+  for (const [rawName, values] of useRowMap.entries()) {
+    // Skip summary/count rows
+    if (skipPatterns.some((p: string) => rawName.includes(p))) continue;
+    if (values.length === 0) continue;
+    // Only include rows that look like percentage holdings (values ≤ 100)
+    if (!values.some((v: string) => num(v) != null && (num(v) ?? 0) <= 100)) continue;
+
+    const holding = rawName.includes("promoter") ? "promoter"
+      : rawName.includes("fii") || rawName.includes("foreign") ? "fii"
+      : rawName.includes("dii") || rawName.includes("domestic") ? "dii"
+      : rawName.includes("public") || rawName.includes("retail") ? "retail"
+      : rawName.includes("government") || rawName.includes("govt") ? "govt"
+      : "other";
+
+    // Restore display name (title-case from raw name)
+    const displayName = rawName.split(" ").map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+    data.push({ holding, name: displayName, values });
+  }
+
+  return { data, periods: usePeriods };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -239,6 +385,7 @@ export async function getScreenerInCompany(symbol: string): Promise<ScreenerInCo
     if (!resolved) return null;
 
     const { name, companyId, warehouseId, slug } = resolved;
+    void companyId; // used only to confirm resolution
 
     // Fetch company page HTML + peers HTML in parallel
     const [pageRes, peersRes] = await Promise.allSettled([
@@ -263,11 +410,26 @@ export async function getScreenerInCompany(symbol: string): Promise<ScreenerInCo
     const ratios = scrapeRatiosTable(html);
     const peers = parsePeersHtml(peersHtml);
     const promoterHolding = scrapePromoterFromMeta(html);
+    const annualPL = scrapeAnnualPL(html);
+    const quarterlyPL = scrapeQuarterlyPL(html);
+    const { sector, industry } = scrapeSector(html);
+
+    // Scrape full shareholding pattern
+    const shareholdingResult = scrapeShareholdingFull(html);
+    let shareholding = shareholdingResult.data;
+    const shareholdingPeriods = shareholdingResult.periods;
+
+    // Fall back to single-period promoter if full scrape yielded nothing
+    if (shareholding.length === 0 && promoterHolding != null) {
+      shareholding = [{ holding: "promoter", name: "Promoters", values: [String(promoterHolding)] }];
+    }
 
     const data: ScreenerInCompany = {
       name,
       symbol: sym,
       bseCode: null,
+      sector,
+      industry,
       marketCap: topRatios["Market Cap"] ?? null,
       currentPrice: topRatios["Current Price"] ?? null,
       high52w: topRatios["52W High"] ?? null,
@@ -282,9 +444,10 @@ export async function getScreenerInCompany(symbol: string): Promise<ScreenerInCo
       promoterHolding,
       ratios,
       peers,
-      shareholding: promoterHolding != null
-        ? [{ holding: "promoter", name: "Promoters", values: [String(promoterHolding)] }]
-        : [],
+      shareholding,
+      shareholdingPeriods,
+      annualPL,
+      quarterlyPL,
     };
 
     cache.set(sym, { data, ts: Date.now() });

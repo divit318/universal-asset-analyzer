@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import type { PortfolioPosition, ResearchNote, StockFundamentals, WatchlistItem } from "./types";
+import type { PortfolioPosition, ResearchNote, StockFundamentals, WatchlistItem, SectorRotationEntry, TimelineEvent } from "./types";
 
 let db: DatabaseSync | null = null;
 
@@ -59,6 +59,25 @@ function getDb(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS idx_research_notes_symbol
       ON research_notes (symbol);
+    CREATE TABLE IF NOT EXISTS scanner_cache (
+      cache_key  TEXT PRIMARY KEY,
+      result     TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS sector_rotation_snapshot (
+      as_of      TEXT PRIMARY KEY,
+      data       TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS timeline_event (
+      id         TEXT PRIMARY KEY,
+      symbol     TEXT NOT NULL,
+      timestamp  TEXT NOT NULL,
+      data       TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_timeline_event_symbol
+      ON timeline_event (symbol, timestamp DESC);
   `);
   // Migrate existing watchlist rows: add new columns if the DB predates them
   for (const col of ["target_price REAL", "alert_pct_drop REAL", "notes TEXT"]) {
@@ -176,12 +195,21 @@ export function deleteNote(id: number): void {
 
 /** Upsert one company's cached fundamentals with the current timestamp. */
 export function putFundamentals(rows: StockFundamentals[]): void {
+  if (rows.length === 0) return;
   const now = Date.now();
-  const stmt = getDb().prepare(
+  const database = getDb();
+  const stmt = database.prepare(
     `INSERT INTO fundamentals_cache (symbol, data, updated_at) VALUES (?, ?, ?)
      ON CONFLICT(symbol) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
   );
-  for (const row of rows) stmt.run(row.symbol, JSON.stringify(row), now);
+  database.exec("BEGIN");
+  try {
+    for (const row of rows) stmt.run(row.symbol, JSON.stringify(row), now);
+    database.exec("COMMIT");
+  } catch (err) {
+    database.exec("ROLLBACK");
+    throw err;
+  }
 }
 
 interface CacheRow {
@@ -322,4 +350,124 @@ export function getSessionMessages(sessionId: string): StoredMessage[] {
     meta: r.meta,
     createdAt: r.created_at,
   }));
+}
+
+/* -------------------------------------------------------------------------- */
+/* Scanner v2 cache                                                            */
+/* -------------------------------------------------------------------------- */
+
+const SCANNER_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
+
+interface ScannerCacheRow {
+  result: string;
+  created_at: number;
+}
+
+export function getScannerCache(cacheKey: string): string | null {
+  const cutoff = Date.now() - SCANNER_CACHE_TTL;
+  const row = getDb()
+    .prepare("SELECT result, created_at FROM scanner_cache WHERE cache_key = ? AND created_at >= ?")
+    .get(cacheKey, cutoff) as unknown as ScannerCacheRow | undefined;
+  return row?.result ?? null;
+}
+
+export function putScannerCache(cacheKey: string, result: string): void {
+  getDb()
+    .prepare(
+      `INSERT INTO scanner_cache (cache_key, result, created_at) VALUES (?, ?, ?)
+       ON CONFLICT(cache_key) DO UPDATE SET result = excluded.result, created_at = excluded.created_at`,
+    )
+    .run(cacheKey, result, Date.now());
+  // Prune entries older than TTL
+  const cutoff = Date.now() - SCANNER_CACHE_TTL;
+  getDb().prepare("DELETE FROM scanner_cache WHERE created_at < ?").run(cutoff);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Sector Rotation snapshots                                                  */
+/* -------------------------------------------------------------------------- */
+
+const SECTOR_ROTATION_RETENTION = 730; // ~2 years of daily snapshots
+
+interface SectorRotationRow {
+  as_of: string;
+  data: string;
+}
+
+/** Most recent N snapshots, newest first. */
+export function getLatestSectorRotationSnapshots(
+  limit = 2,
+): { asOf: string; sectors: SectorRotationEntry[] }[] {
+  const rows = getDb()
+    .prepare("SELECT as_of, data FROM sector_rotation_snapshot ORDER BY as_of DESC LIMIT ?")
+    .all(limit) as unknown as SectorRotationRow[];
+  return rows.map((r) => ({ asOf: r.as_of, sectors: JSON.parse(r.data) as SectorRotationEntry[] }));
+}
+
+export function putSectorRotationSnapshot(asOf: string, sectors: SectorRotationEntry[]): void {
+  getDb()
+    .prepare(
+      `INSERT INTO sector_rotation_snapshot (as_of, data, created_at) VALUES (?, ?, ?)
+       ON CONFLICT(as_of) DO UPDATE SET data = excluded.data, created_at = excluded.created_at`,
+    )
+    .run(asOf, JSON.stringify(sectors), Date.now());
+  // Prune snapshots beyond the retention window
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - SECTOR_ROTATION_RETENTION);
+  getDb()
+    .prepare("DELETE FROM sector_rotation_snapshot WHERE as_of < ?")
+    .run(cutoff.toISOString().slice(0, 10));
+}
+
+/* -------------------------------------------------------------------------- */
+/* Investment Timeline — durable per-symbol event history                    */
+/* -------------------------------------------------------------------------- */
+
+interface TimelineEventRow {
+  id: string;
+  symbol: string;
+  timestamp: string;
+  data: string;
+}
+
+/**
+ * Insert new timeline events, ignoring any whose id already exists (events
+ * are immutable once persisted — `id` is a deterministic hash of the event's
+ * natural key, so re-syncing the same news/filing/alert is a no-op).
+ */
+export function putTimelineEvents(events: TimelineEvent[]): void {
+  if (events.length === 0) return;
+  const database = getDb();
+  const stmt = database.prepare(
+    `INSERT OR IGNORE INTO timeline_event (id, symbol, timestamp, data, created_at) VALUES (?, ?, ?, ?, ?)`,
+  );
+  const now = Date.now();
+  database.exec("BEGIN");
+  try {
+    for (const event of events) {
+      stmt.run(event.id, event.symbol, event.timestamp, JSON.stringify(event), now);
+    }
+    database.exec("COMMIT");
+  } catch (err) {
+    database.exec("ROLLBACK");
+    throw err;
+  }
+}
+
+/** All persisted events for one symbol, newest first. */
+export function listTimelineEvents(symbol: string): TimelineEvent[] {
+  const rows = getDb()
+    .prepare("SELECT id, symbol, timestamp, data FROM timeline_event WHERE symbol = ? ORDER BY timestamp DESC")
+    .all(symbol.toUpperCase()) as unknown as TimelineEventRow[];
+  return rows.map((r) => JSON.parse(r.data) as TimelineEvent);
+}
+
+/** All persisted events across a set of symbols (portfolio/watchlist scope), newest first. */
+export function listTimelineEventsForSymbols(symbols: string[]): TimelineEvent[] {
+  if (symbols.length === 0) return [];
+  const placeholders = symbols.map(() => "?").join(",");
+  const rows = getDb()
+    .prepare(`SELECT id, symbol, timestamp, data FROM timeline_event WHERE symbol IN (${placeholders}) ORDER BY timestamp DESC`)
+    .all(...symbols.map((s) => s.toUpperCase())) as unknown as TimelineEventRow[];
+  return rows.map((r) => JSON.parse(r.data) as TimelineEvent);
 }

@@ -4,7 +4,7 @@
  * Streams Server-Sent Events as each stage of the 10-stage
  * Industries & Commodities Discovery Framework completes.
  *
- * Request body: { theme: string, focusIndia?: boolean }
+ * Request body: { theme: string }
  * Each SSE event: data: <JSON>\n\n
  * Final event: data: {"stage":"done","report":{...}}\n\n
  */
@@ -16,9 +16,9 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 export async function POST(req: Request) {
-  let body: { theme?: string; focusIndia?: boolean };
+  let body: { theme?: string };
   try {
-    body = (await req.json()) as { theme?: string; focusIndia?: boolean };
+    body = (await req.json()) as { theme?: string };
   } catch {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
@@ -41,7 +41,7 @@ export async function POST(req: Request) {
         send({ stage: "init", message: `Starting thematic analysis for "${theme}"…` });
 
         const report = await runThematicEngine(
-          { theme, focusIndia: body.focusIndia ?? true },
+          { theme },
           (event) => send(event),
         );
 

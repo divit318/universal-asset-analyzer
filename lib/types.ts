@@ -5,6 +5,8 @@
  * Analyzers turn an asset into a structured, displayable result.
  */
 
+import type { OpportunityProfile } from "./opportunity-engine";
+
 export type AssetKind = "image" | "text" | "binary" | "unknown";
 
 export interface Asset {
@@ -53,6 +55,9 @@ export interface Quote {
 
 export interface HistoryPoint {
   date: string; // ISO date
+  open?: number;       // opening price
+  high?: number;       // intraday high
+  low?: number;        // intraday low
   close: number;       // raw (unadjusted) closing price
   adjClose?: number;   // dividend + split-adjusted close (for total return)
   volume?: number;
@@ -85,6 +90,8 @@ export interface ResearchData {
     sectorEtf: string | null;
     sector: HistoryPoint[];
   };
+  /** Recent company news for the "What Changed" / Latest Intelligence section. */
+  news?: NewsItem[];
 }
 
 export interface AiAnalysis {
@@ -437,6 +444,10 @@ export interface DecisionSignals {
   fundamentals: number; // 0-100 (== total)
   analysts: number | null; // 0-100
   momentum: number | null; // 0-100
+  /** 0-100, from the Capital Allocation bucket. Null when computeScore() wasn't given the inputs to score it meaningfully differently from n/a. */
+  capitalAllocation?: number | null;
+  /** 0-100, from the Sector Rotation bucket. Null when no sector rotation entry was passed to computeScore(). */
+  sectorRotation?: number | null;
 }
 
 export interface ScoreResult {
@@ -526,6 +537,25 @@ export interface ValuationPoint {
   psRatio: number | null;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Investment personality — permanent identity tag, not a transient AI take   */
+/* -------------------------------------------------------------------------- */
+
+export type InvestmentPersonalityTag =
+  | "Compounder"
+  | "Cyclical"
+  | "Turnaround"
+  | "High Growth"
+  | "Income"
+  | "Deep Value"
+  | "Defensive"
+  | "High Quality";
+
+export interface InvestmentPersonality {
+  tag: InvestmentPersonalityTag;
+  explanation: string;
+}
+
 /** Combined payload served by /api/fundamentals. */
 export interface FundamentalsData {
   snapshot: FundamentalsSnapshot;
@@ -539,6 +569,7 @@ export interface FundamentalsData {
   earnings: EarningsData;
   ownership: OwnershipData;
   valuation: ValuationPoint[];
+  personality: InvestmentPersonality;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -585,4 +616,378 @@ export interface ScanResult {
   newsItems: NewsItem[];
   /** Plain-English summary of the scan. */
   aiSummary: string;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Scanner v2 — multi-stage intelligence pipeline types                       */
+/* -------------------------------------------------------------------------- */
+
+export type SignalCategory =
+  | "macro"
+  | "company"
+  | "market"
+  | "commodity"
+  | "geopolitics"
+  | "policy"
+  | "sentiment";
+
+export interface CausalEffect {
+  order: 1 | 2;
+  description: string;
+  direction: SignalDirection;
+  affectedSectors: string[];
+  affectedTickers: string[];
+}
+
+export interface MarketEvent {
+  id: string;
+  category: SignalCategory;
+  headline: string;
+  summary: string;
+  publishedAt: string; // ISO
+  sources: { headline: string; source: string; url: string }[];
+  affectedTickers: string[];
+  affectedSectors: string[];
+  affectedThemes: string[];
+  causalChain: CausalEffect[];
+}
+
+export interface SectorImpact {
+  sector: string;
+  /** Broad ETF ticker used for live price context (e.g. XLK, XLF). */
+  etfTicker: string | null;
+  direction: SignalDirection;
+  strength: number; // 0-100
+  rationale: string;
+  keyBeneficiaries: string[]; // generic company names (not tickers)
+  keyLosers: string[];        // generic company names
+  drivingEvents: string[];    // MarketEvent ids
+}
+
+export interface OpportunityScore {
+  catalystStrength: number;   // 0-100
+  fundamentalQuality: number; // 0-100
+  valuation: number;          // 0-100
+  momentum: number;           // 0-100
+  composite: number;          // 0-100 weighted blend
+  verdict: "exceptional" | "strong" | "moderate" | "weak";
+}
+
+export interface InvestmentThesis {
+  headline: string;
+  summary: string;
+  bullCase: string[];
+  bearCase: string[];
+  keyCatalysts: string[];
+  keyRisks: string[];
+  timeHorizon: "days" | "weeks" | "months" | "quarters" | "years";
+  confidence: number; // 0-100
+  potentialWinners: string[]; // generic names
+  potentialLosers: string[];  // generic names
+}
+
+export interface ScannerOpportunity {
+  id: string;
+  ticker: string;
+  name: string;
+  isIndian: boolean;
+  direction: SignalDirection;
+  theme: string;
+  category: SignalCategory;
+  rationale: string;
+  timeframe: SignalTimeframe;
+  quote: Quote | null;
+  compositeScores: CompositeScores | null;
+  opportunityScore: OpportunityScore;
+  thesis: InvestmentThesis | null; // generated only for high-conviction
+  sourceEventIds: string[];
+  dividendYieldPct: number | null;
+  /** Shared Opportunity Engine output — categories, conviction, horizon, narrative. Set by opportunity-scorer.ts. */
+  profile: OpportunityProfile | null;
+}
+
+export interface EmergingTheme {
+  name: string;
+  description: string;
+  momentum: number;  // 0-100
+  drivingEvents: string[];
+  topTickers: string[];
+  thematicResearchUrl: string; // deep-link to /thematic?theme=...
+}
+
+export interface RiskAlert {
+  id: string;
+  headline: string;
+  severity: "high" | "medium" | "low";
+  affectedSectors: string[];
+  affectedTickers: string[];
+  rationale: string;
+}
+
+export interface MarketRegime {
+  trend: "risk-on" | "risk-off" | "neutral";
+  breadthPct: number | null; // % of sectors/stocks advancing
+  dominantSectors: string[];
+  dominantThemes: string[];
+  summary: string;
+}
+
+export interface MacroSignal {
+  ticker: string;  // e.g. "^TNX", "GC=F", "CL=F"
+  name: string;    // e.g. "10Y Treasury Yield", "Gold", "Crude Oil"
+  price: number | null;
+  changePercent: number | null;
+  trend: "rising" | "falling" | "flat";
+}
+
+/** Pipeline progress event streamed from /api/scanner/v2 */
+export type ScannerStage =
+  | "init"
+  | "collecting"
+  | "deduplicating"
+  | "classifying"
+  | "theme_detection"
+  | "causal_reasoning"
+  | "sector_impact"
+  | "company_impact"
+  | "fundamental_gate"
+  | "opportunity_scoring"
+  | "thesis_building"
+  | "assembling"
+  | "done"
+  | "error";
+
+export interface ScannerProgressEvent {
+  stage: ScannerStage;
+  message: string;
+  pct: number; // 0-100 progress
+}
+
+export interface ScannerResult {
+  scannedAt: string; // ISO
+  pipelineVersion: 2;
+  marketRegime: MarketRegime;
+  macroSignals: MacroSignal[];
+  sectorImpacts: SectorImpact[];
+  emergingThemes: EmergingTheme[];
+  events: MarketEvent[];
+  opportunities: ScannerOpportunity[];
+  /** Subset of opportunities with composite >= 70 */
+  highConviction: ScannerOpportunity[];
+  /** Subset of opportunities with composite 40-69 */
+  developing: ScannerOpportunity[];
+  riskAlerts: RiskAlert[];
+  newsItems: NewsItem[];
+  aiSummary: string;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Sector Rotation Engine                                                     */
+/* -------------------------------------------------------------------------- */
+
+export type RotationWindow = "1w" | "1m" | "3m" | "6m";
+export type RotationClass = "leading" | "strengthening" | "weakening" | "lagging";
+
+export interface SectorRotationEntry {
+  sector: string;
+  etfTicker: string;
+  returns: Record<RotationWindow, number | null>;
+  /** Primary-window return minus the equal-weight average return across all sectors. */
+  relativeStrength: number;
+  /** Acceleration proxy: change in relative strength vs. the prior snapshot. */
+  momentum: number;
+  rank: number; // 1 = strongest relative strength
+  rankChange: number | null; // positive = moved up in rank since prior snapshot
+  classification: RotationClass;
+}
+
+export interface SectorRotationSnapshot {
+  asOf: string; // ISO date (YYYY-MM-DD)
+  primaryWindow: RotationWindow;
+  sectors: SectorRotationEntry[];
+  leaders: string[];
+  laggards: string[];
+  leadershipChanges: { sector: string; fromRank: number; toRank: number }[];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Movement Explainer                                                          */
+/* -------------------------------------------------------------------------- */
+
+export type MovementSubjectKind = "symbol" | "sector" | "portfolio";
+
+export interface MovementDriver {
+  category: "earnings" | "analyst" | "macro" | "sector" | "valuation" | "news" | "technical" | "volume" | "sentiment" | "other";
+  description: string;
+  evidence: string;
+  direction: SignalDirection;
+}
+
+export interface MovementExplanation {
+  subject: string; // symbol, sector name, or "portfolio"
+  subjectKind: MovementSubjectKind;
+  asOf: string; // ISO
+  observedMove: { changePercent: number | null; windowDays: number };
+  summary: string;
+  drivers: MovementDriver[];
+  confidence: number; // 0-100
+  persistence: "transient" | "short-term" | "durable";
+}
+
+/* -------------------------------------------------------------------------- */
+/* Watchlist Intelligence                                                     */
+/* -------------------------------------------------------------------------- */
+
+export type WatchlistAlertType =
+  | "new_opportunity"
+  | "deteriorating"
+  | "breakout"
+  | "sector_leadership"
+  | "valuation";
+
+export interface WatchlistAlert {
+  type: WatchlistAlertType;
+  severity: "high" | "medium" | "low";
+  title: string;
+  description: string;
+  action: string;
+  symbol: string;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Investment Timeline                                                        */
+/* -------------------------------------------------------------------------- */
+
+export type TimelineScope = "symbol" | "portfolio" | "watchlist" | "sector";
+
+export type TimelineEventCategory =
+  | "earnings"
+  | "guidance"
+  | "product_launch"
+  | "acquisition"
+  | "divestiture"
+  | "ceo_change"
+  | "executive_departure"
+  | "share_buyback"
+  | "dividend"
+  | "regulatory_action"
+  | "lawsuit"
+  | "macro_event"
+  | "industry_event"
+  | "ai_developments"
+  | "partnership"
+  | "capacity_expansion"
+  | "margin_expansion"
+  | "margin_compression"
+  | "demand_shift"
+  | "competitive_threat"
+  | "analyst_upgrade"
+  | "analyst_downgrade"
+  | "insider_buying"
+  | "insider_selling"
+  | "valuation_inflection"
+  | "technical_breakout"
+  | "sector_rotation"
+  | "portfolio_impact";
+
+export type TimelineImpact = "bullish" | "bearish" | "neutral";
+export type ThesisDirection = "strengthened" | "weakened" | "unchanged";
+export type CatalystStatus = "pending" | "realized" | "invalidated" | "not_catalyst";
+
+export type TimelineSourceKind =
+  | "news"
+  | "filing"
+  | "earnings_calendar"
+  | "scanner"
+  | "sector_rotation"
+  | "watchlist_alert"
+  | "portfolio_alert";
+
+export interface TimelineEventSource {
+  kind: TimelineSourceKind;
+  url: string | null;
+  description: string;
+}
+
+export interface TimelineEvent {
+  id: string;
+  symbol: string;
+  timestamp: string; // ISO
+  title: string;
+  category: TimelineEventCategory;
+  importanceScore: number; // 0-100, deterministic
+  confidenceScore: number; // 0-100, deterministic (source reliability / data completeness)
+  impact: TimelineImpact;
+  affectedSegment: string | null;
+  relatedMetrics: string[];
+  source: TimelineEventSource;
+  thesisImpact: ThesisDirection | null;
+  catalystStatus: CatalystStatus;
+}
+
+export interface TimelineEventDetail {
+  eventId: string;
+  executiveSummary: string;
+  background: string;
+  rootCause: string;
+  immediateReaction: string;
+  longTermImplications: string;
+  supportingEvidence: string[];
+  bullCase: string[];
+  bearCase: string[];
+  historicalContext: string;
+  currentRelevance: string;
+  investmentTakeaway: string;
+  confidence: number; // 0-100, AI-reported
+  relatedEventIds: string[];
+  generatedAt: string;
+}
+
+export interface ThesisEvolutionPoint {
+  eventId: string;
+  timestamp: string;
+  title: string;
+  direction: ThesisDirection;
+  reason: string;
+  thesisConfidence: number; // running 0-100 score after this event
+}
+
+export interface ThesisEvolution {
+  symbol: string;
+  points: ThesisEvolutionPoint[];
+  currentConfidence: number;
+  currentStance: ThesisDirection;
+}
+
+export interface WhatChangedResult {
+  fromEventId: string;
+  subsequentEvents: TimelineEvent[];
+  assumptionsValidated: string[];
+  assumptionsFailed: string[];
+  managementExecution: string;
+  stockResponsePercent: number | null;
+  currentRelevance: string;
+  generatedAt: string;
+}
+
+export interface TimelineFilters {
+  fromDate?: string;
+  toDate?: string;
+  categories?: TimelineEventCategory[];
+  minImportance?: number;
+  minConfidence?: number;
+  impact?: TimelineImpact;
+  affectedSegment?: string;
+  relatedMetric?: string;
+  catalystOnly?: boolean;
+  openThesisOnly?: boolean;
+}
+
+export interface TimelineFeed {
+  scope: TimelineScope;
+  id: string;
+  symbols: string[];
+  events: TimelineEvent[];
+  thesisEvolution: ThesisEvolution | null;
+  generatedAt: string;
 }

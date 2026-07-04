@@ -52,6 +52,7 @@ function ctxFixture(over: Partial<CompanyContext> = {}): CompanyContext {
     score: null,
     risks: [],
     momentum: null,
+    personality: null,
     peers: null,
     filings: [
       { form: "10-K", filedAt: "2025-11-01", description: "Annual report", documentUrl: "https://sec.gov/aapl-10k" },
@@ -59,6 +60,11 @@ function ctxFixture(over: Partial<CompanyContext> = {}): CompanyContext {
     news: [{ headline: "Apple unveils new chip", source: "Reuters", url: "https://x/1", publishedAt: "2026-06-10T00:00:00Z", tickers: [], summary: null }],
     onWatchlist: false,
     warnings: [],
+    ownership: null,
+    sectorRotation: null,
+    recentTimelineEvents: [],
+    relatedOpportunities: null,
+    graphNeighbors: [],
     ...over,
   };
 }

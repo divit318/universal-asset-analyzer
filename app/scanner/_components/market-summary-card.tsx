@@ -1,0 +1,58 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import type { MarketRegime, MacroSignal } from "@/lib/types";
+
+/** Sits above MarketRegimeBanner + SectorRotationPanel — the AI narrates what those two already computed. */
+export function MarketSummaryCard({
+  regime,
+  macroSignals,
+  scannedAt,
+}: {
+  regime: MarketRegime;
+  macroSignals: MacroSignal[];
+  scannedAt: string;
+}) {
+  const [summary, setSummary] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoading(true);
+    fetch("/api/market-summary", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ regime, macroSignals }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (!cancelled) setSummary(data.summary ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setSummary(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Re-summarize only when a new scan result arrives, not on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scannedAt]);
+
+  if (loading) {
+    return <div className="h-20 animate-pulse rounded-xl border border-border bg-surface" />;
+  }
+  if (!summary) return null;
+
+  return (
+    <div className="rounded-xl border border-accent/20 bg-accent/5 px-5 py-4">
+      <span className="text-[10px] font-semibold uppercase tracking-widest text-accent">
+        AI Market Summary
+      </span>
+      <p className="mt-1.5 text-sm leading-6 text-foreground/85">{summary}</p>
+    </div>
+  );
+}

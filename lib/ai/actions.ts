@@ -149,6 +149,19 @@ export const RESEARCH_ACTIONS: ResearchAction[] = [
     followUps: ["Does any of this change the thesis?", "What are the key risks right now?", "What catalysts are coming up?"],
   },
   {
+    id: "technical",
+    label: "Technical Analysis",
+    instruction:
+      "Conduct a technical analysis of this stock. Describe the current trend (using moving average alignment and price structure), momentum (RSI and MACD signals), volatility context (Bollinger Band positioning), key support and resistance levels, and any notable candlestick pattern setups visible in recent price action. Conclude with what the technical picture suggests about near-term risk/reward — and where the technical view aligns with or diverges from the fundamental thesis.",
+    intents: ["technical", "risks", "catalysts"],
+    structured: false,
+    followUps: [
+      "Is the stock technically overbought or oversold?",
+      "What price level would confirm a breakout?",
+      "How does the technical setup compare to the fundamental valuation?",
+    ],
+  },
+  {
     id: "compare",
     label: "Compare Competitors",
     instruction:

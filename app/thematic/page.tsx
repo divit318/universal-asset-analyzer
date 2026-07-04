@@ -10,13 +10,14 @@
  *   Stage 4  Supply-Demand & Capital Cycle
  *   Stage 5  Commodity Framework
  *   Stage 6  Policy & Geopolitics
- *   Stage 7  India Leapfrog Analysis
+ *   Stage 7  Global Structural Advantage Analysis
  *   Stage 8  Company Tier Mapping
  *   Stage 9  Company Quality (from screener DB)
  *   Stage 10 Opportunity Score
  */
 
-import { useState, useRef, useCallback } from "react";
+import { Suspense, useState, useRef, useCallback, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import type {
   ThematicReport,
@@ -52,7 +53,7 @@ const STAGE_META: Record<string, { label: string; icon: string }> = {
   supply_demand:    { label: "Supply / Demand",          icon: "4" },
   commodity:        { label: "Commodity Framework",      icon: "5" },
   policy:           { label: "Policy & Geopolitics",     icon: "6" },
-  india_leapfrog:   { label: "India Leapfrog",           icon: "7" },
+  global_structural_advantage: { label: "Global Structural Advantage", icon: "7" },
   company_mapping:  { label: "Company Mapping",          icon: "8" },
   company_quality:  { label: "Company Quality",          icon: "9" },
   opportunity_score:{ label: "Opportunity Score",        icon: "10" },
@@ -182,7 +183,7 @@ function ThematicReportView({ report }: { report: ThematicReport }) {
               ["Demand Growth", report.opportunity.themeBreakdown.demandGrowth, 15],
               ["Policy", report.opportunity.themeBreakdown.policy, 10],
               ["Sub. Resistance", report.opportunity.themeBreakdown.substitutionResistance, 10],
-              ["India Edge", report.opportunity.themeBreakdown.indiaAdvantage, 5],
+              ["Structural Edge", report.opportunity.themeBreakdown.structuralAdvantage, 5],
             ] as [string, number, number][]
           ).map(([label, score, weight]) => (
             <div key={label} className="flex flex-col items-center gap-1 rounded-lg border border-border bg-surface-2 px-2 py-2.5">
@@ -403,46 +404,41 @@ function OverviewTab({ report }: { report: ThematicReport }) {
         </div>
       </SectionCard>
 
-      {/* India Leapfrog */}
-      <SectionCard title="India Leapfrog Analysis" score={report.indiaLeapfrog.score}>
+      {/* Global Structural Advantage */}
+      <SectionCard title="Global Structural Advantage Analysis" score={report.structuralAdvantage.score}>
         <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-2">
-            <Badge
-              label={report.indiaLeapfrog.canLeapfrog ? "Can Leapfrog" : "No Clear Leapfrog"}
-              variant={report.indiaLeapfrog.canLeapfrog ? "positive" : "neutral"}
-            />
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge label={`Leader: ${report.structuralAdvantage.currentLeader}`} variant="positive" />
+            <Badge label={`Fastest Improving: ${report.structuralAdvantage.fastestImproving}`} variant="accent" />
           </div>
-          <p className="text-sm leading-relaxed">{report.indiaLeapfrog.leapfrogMechanism}</p>
-          {report.indiaLeapfrog.analogies.length > 0 && (
-            <div>
-              <div className="mb-1.5 text-xs uppercase tracking-wider text-muted">Analogies</div>
-              <div className="flex flex-wrap gap-1.5">
-                {report.indiaLeapfrog.analogies.map((a, i) => <Badge key={i} label={a} variant="accent" />)}
-              </div>
+          <p className="text-sm leading-relaxed">{report.structuralAdvantage.longTermImplications}</p>
+          {report.structuralAdvantage.regions.length > 0 && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {report.structuralAdvantage.regions.map((r) => (
+                <div key={r.region} className="rounded-lg border border-border bg-surface p-3">
+                  <div className="mb-2 text-xs font-semibold text-foreground">{r.region}</div>
+                  {r.advantages.length > 0 && (
+                    <ul className="mb-2 flex flex-col gap-1">
+                      {r.advantages.map((a, i) => (
+                        <li key={i} className="flex items-start gap-1.5 text-xs text-muted">
+                          <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-positive" />{a}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {r.disadvantages.length > 0 && (
+                    <ul className="flex flex-col gap-1">
+                      {r.disadvantages.map((d, i) => (
+                        <li key={i} className="flex items-start gap-1.5 text-xs text-muted">
+                          <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-negative" />{d}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ))}
             </div>
           )}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <div className="mb-1.5 text-xs uppercase tracking-wider text-muted">Advantages</div>
-              <ul className="flex flex-col gap-1">
-                {report.indiaLeapfrog.indianAdvantages.map((a, i) => (
-                  <li key={i} className="flex items-start gap-1.5 text-xs text-muted">
-                    <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-positive" />{a}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <div className="mb-1.5 text-xs uppercase tracking-wider text-muted">Challenges</div>
-              <ul className="flex flex-col gap-1">
-                {report.indiaLeapfrog.indianChallenges.map((c, i) => (
-                  <li key={i} className="flex items-start gap-1.5 text-xs text-muted">
-                    <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-negative" />{c}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
         </div>
       </SectionCard>
 
@@ -716,7 +712,7 @@ function PolicyTable({ policies }: { policies: PolicyItem[] }) {
 function ProgressView({ events }: { events: ThematicProgressEvent[] }) {
   const stageOrder = [
     "future_state", "dependency_chain", "bottleneck", "supply_demand",
-    "commodity", "policy", "india_leapfrog", "company_mapping", "opportunity_score",
+    "commodity", "policy", "global_structural_advantage", "company_mapping", "opportunity_score",
   ];
 
   const completedStages = new Set(events.map((e) => e.stage));
@@ -761,13 +757,50 @@ function ProgressView({ events }: { events: ThematicProgressEvent[] }) {
 
 /* ─────────────────── Main page ──────────────────────────────────────── */
 
-export default function ThematicPage() {
-  const [theme, setTheme] = useState("");
+const STORAGE_KEY = "uaa_thematic_last_report";
+
+function ThematicPageInner() {
+  const searchParams = useSearchParams();
+  const themeFromQuery = searchParams.get("theme");
+
+  // Lazy initializers restore from sessionStorage on first render — no effect needed.
+  // A `?theme=` deep-link (e.g. from Scanner's "Deep Thematic Research →") always
+  // wins over any stale cached report, since we're about to auto-run it below anyway.
+  const [report, setReport] = useState<ThematicReport | null>(() => {
+    if (themeFromQuery) return null;
+    try {
+      const saved = sessionStorage.getItem(STORAGE_KEY);
+      if (saved) return JSON.parse(saved) as ThematicReport;
+    } catch { /* ignore corrupt storage */ }
+    return null;
+  });
+  const [theme, setTheme] = useState(() => {
+    if (themeFromQuery) return themeFromQuery;
+    try {
+      const saved = sessionStorage.getItem(STORAGE_KEY);
+      if (saved) return (JSON.parse(saved) as ThematicReport).theme ?? "";
+    } catch { /* ignore */ }
+    return "";
+  });
   const [running, setRunning] = useState(false);
   const [events, setEvents] = useState<ThematicProgressEvent[]>([]);
-  const [report, setReport] = useState<ThematicReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [startTime, setStartTime] = useState<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+
+  // Dynamic page title
+  useEffect(() => {
+    document.title = report ? `${report.theme} · Thematic · UAA` : "Thematic · UAA";
+    return () => { document.title = "Universal Asset Analyzer"; };
+  }, [report]);
+
+  // Elapsed timer during analysis
+  useEffect(() => {
+    if (!running || startTime == null) return;
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [running, startTime]);
 
   const run = useCallback(async (themeOverride?: string) => {
     const t = (themeOverride ?? theme).trim();
@@ -777,6 +810,8 @@ export default function ThematicPage() {
     abortRef.current = new AbortController();
 
     setRunning(true);
+    setStartTime(Date.now());
+    setElapsed(0);
     setEvents([]);
     setReport(null);
     setError(null);
@@ -785,7 +820,7 @@ export default function ThematicPage() {
       const res = await fetch("/api/thematic", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ theme: t, focusIndia: true }),
+        body: JSON.stringify({ theme: t }),
         signal: abortRef.current.signal,
       });
 
@@ -812,6 +847,7 @@ export default function ThematicPage() {
             setEvents((prev) => [...prev, evt]);
             if (evt.stage === "done" && evt.report) {
               setReport(evt.report);
+              try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(evt.report)); } catch { /* storage full */ }
             }
             if (evt.stage === "error") {
               setError(evt.message);
@@ -835,59 +871,103 @@ export default function ThematicPage() {
     void run(label);
   }
 
+  // Deep-link auto-run: a theme arriving via `?theme=` (e.g. Scanner's
+  // "Deep Thematic Research →") should populate the field AND start
+  // analysis immediately — the user should never need to re-enter it.
+  useEffect(() => {
+    if (themeFromQuery) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      void run(themeFromQuery);
+    }
+    // Only on mount — `run`'s identity changes whenever `theme` state updates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-10">
+    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-10">
       {/* Header */}
-      <div className="flex flex-col gap-2">
-        <h1 className="text-2xl font-semibold tracking-tight">Thematic Research</h1>
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-semibold tracking-tight">Thematic Research</h1>
+          <span className="rounded-full border border-purple-400/30 bg-purple-400/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-purple-400">
+            10-stage
+          </span>
+        </div>
         <p className="text-sm text-muted">
-          Industries &amp; Commodities Discovery Framework — 10-stage analysis of a macro theme.
-          Most investors study products. Elite investors study dependencies.
+          Industries &amp; Commodities Discovery Framework. Most investors study products — elite investors study the dependency chain behind them.
         </p>
       </div>
 
       {/* Search + run */}
-      <div className="flex gap-2">
-        <input
-          value={theme}
-          onChange={(e) => setTheme(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && !running && void run()}
-          placeholder="Enter a theme — e.g. AI Compute, Battery Storage, Nuclear Energy, India Semiconductor Fab…"
-          className="flex-1 rounded-lg border border-border bg-surface px-4 py-2.5 text-sm outline-none placeholder:text-muted focus:border-accent"
-          disabled={running}
-        />
-        {running ? (
-          <button
-            onClick={() => abortRef.current?.abort()}
-            className="rounded-lg border border-negative/40 bg-negative/10 px-5 py-2.5 text-sm text-negative transition-colors hover:bg-negative/20"
-          >
-            Cancel
-          </button>
-        ) : (
-          <button
-            onClick={() => void run()}
-            disabled={!theme.trim()}
-            className="rounded-lg bg-accent-strong px-6 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
-          >
-            Analyse
-          </button>
-        )}
+      <div className="flex flex-col gap-2">
+        <div className="flex gap-2">
+          <input
+            value={theme}
+            onChange={(e) => setTheme(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && !running && void run()}
+            placeholder="Enter a theme — e.g. AI Compute, Battery Storage, Nuclear Energy, India Semiconductor Fab…"
+            className="flex-1 rounded-lg border border-border bg-surface px-4 py-2.5 text-sm outline-none placeholder:text-muted focus:border-accent"
+            disabled={running}
+          />
+          {running ? (
+            <button
+              onClick={() => abortRef.current?.abort()}
+              className="rounded-lg border border-negative/40 bg-negative/10 px-5 py-2.5 text-sm text-negative transition-colors hover:bg-negative/20"
+            >
+              Cancel
+            </button>
+          ) : (
+            <button
+              onClick={() => void run()}
+              disabled={!theme.trim()}
+              className="rounded-lg bg-accent-strong px-6 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              Analyse
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-4">
+          {running && (
+            <span className="text-xs text-muted">
+              {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")} elapsed
+              <span className="ml-2 text-muted/60">(typically 5–20 min on a local model)</span>
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Preset themes */}
       {!running && !report && (
-        <div className="flex flex-col gap-3">
-          <p className="text-xs uppercase tracking-wider text-muted">Quick themes</p>
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center gap-3">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Suggested themes</p>
+            <div className="h-px flex-1 bg-border" />
+          </div>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
             {PRESET_THEMES.map((p) => (
               <button
                 key={p.label}
                 onClick={() => handlePreset(p.label)}
-                className="flex flex-col gap-0.5 rounded-lg border border-border bg-surface px-3 py-2.5 text-left transition-colors hover:border-accent hover:bg-surface-2"
+                className="flex flex-col gap-0.5 rounded-xl border border-border bg-surface px-3 py-3 text-left transition-colors hover:border-accent/40 hover:bg-surface-2"
               >
                 <span className="text-sm font-medium">{p.label}</span>
                 <span className="text-xs text-muted">{p.desc}</span>
               </button>
+            ))}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {[
+              { step: "1–3", title: "Foundation stages", desc: "Future state scoring, dependency chain (6 tiers), bottleneck identification" },
+              { step: "4–7", title: "Market dynamics", desc: "Supply-demand cycle, commodity framework, policy overlay, global structural advantage" },
+              { step: "8–10", title: "Company mapping", desc: "Tier allocation, screener quality screening, opportunity score + analyst checklist" },
+            ].map(({ step, title, desc }) => (
+              <div key={step} className="flex gap-3 rounded-xl border border-border bg-surface p-4">
+                <span className="mt-0.5 shrink-0 font-mono text-[10px] font-semibold text-muted/60">{step}</span>
+                <div>
+                  <p className="text-sm font-semibold">{title}</p>
+                  <p className="mt-0.5 text-xs leading-5 text-muted">{desc}</p>
+                </div>
+              </div>
             ))}
           </div>
         </div>
@@ -906,18 +986,14 @@ export default function ThematicPage() {
       {/* Report */}
       {report && <ThematicReportView report={report} />}
 
-      {/* Empty state */}
-      {!running && !report && !error && (
-        <div className="flex flex-col items-center gap-4 py-16 text-center text-muted">
-          <span className="text-5xl">◈</span>
-          <p className="max-w-md text-sm">
-            Enter a macro theme or pick from the presets. The engine will run all 10 stages —
-            from future state scoring to dependency chain mapping, bottleneck analysis,
-            commodity supply/demand, policy overlay, India leapfrog potential, and company tier mapping
-            against your screener universe.
-          </p>
-        </div>
-      )}
-    </main>
+    </div>
+  );
+}
+
+export default function ThematicPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-sm text-muted">Loading…</div>}>
+      <ThematicPageInner />
+    </Suspense>
   );
 }

@@ -16,6 +16,7 @@
 import { runPrompt } from "./ai";
 import { getFreshFundamentals } from "./db";
 import { fetchMarketNews } from "./news";
+import { extractJson } from "./json-extract";
 import type { StockFundamentals, NewsItem } from "./types";
 
 /* ─────────────────────────── Public types ──────────────────────────── */
@@ -28,7 +29,7 @@ export type ThematicStage =
   | "supply_demand"
   | "commodity"
   | "policy"
-  | "india_leapfrog"
+  | "global_structural_advantage"
   | "company_mapping"
   | "company_quality"
   | "opportunity_score"
@@ -112,13 +113,18 @@ export interface PolicyItem {
   estimatedCapitalUSD: string | null;
 }
 
-export interface IndiaLeapfrogScore {
-  score: number;                     // 0–10
-  canLeapfrog: boolean;
-  leapfrogMechanism: string;         // which stages can India skip
-  analogies: string[];               // UPI, mobile-first, etc.
-  indianAdvantages: string[];
-  indianChallenges: string[];
+export interface RegionStructuralAdvantage {
+  region: string;                    // e.g. "United States", "China", "India"
+  advantages: string[];
+  disadvantages: string[];
+}
+
+export interface GlobalStructuralAdvantageScore {
+  score: number;                     // 0–10 — how clear-cut/durable the global advantage dynamics are
+  currentLeader: string;             // region name
+  fastestImproving: string;          // region name
+  regions: RegionStructuralAdvantage[];
+  longTermImplications: string;      // synthesis of what this means for long-term investors
 }
 
 export interface TierCompany {
@@ -148,7 +154,7 @@ export interface OpportunityScore {
     demandGrowth: number;
     policy: number;
     substitutionResistance: number;
-    indiaAdvantage: number;
+    structuralAdvantage: number;
   };
   topCompanies: TierCompany[];       // top 5 by quality × relevance
   verdict: "exceptional" | "strong" | "moderate" | "weak" | "avoid";
@@ -172,7 +178,7 @@ export interface ThematicReport {
   supplyDemand: SupplyDemandScore;
   commodityFramework: CommodityFrameworkScore;
   policy: PolicyScore;
-  indiaLeapfrog: IndiaLeapfrogScore;
+  structuralAdvantage: GlobalStructuralAdvantageScore;
   tierCompanies: TierCompany[];
   opportunity: OpportunityScore;
   newsItems: NewsItem[];
@@ -180,7 +186,6 @@ export interface ThematicReport {
 
 export interface ThematicReportInput {
   theme: string;                     // e.g. "AI Compute Infrastructure"
-  focusIndia?: boolean;              // default true — emphasise India angle
 }
 
 /* ─────────────────────── Commodity proxy tickers ───────────────────── */
@@ -315,8 +320,7 @@ Return JSON only:
 
   try {
     const raw = await runPrompt(prompt, { maxTokens: 600, json: true });
-    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    return JSON.parse(cleaned) as FutureStateScore;
+    return extractJson<FutureStateScore>(raw);
   } catch {
     return { inevitabilityScore: 5, timeHorizon: "unknown", drivingForces: [], rationale: "AI analysis unavailable." };
   }
@@ -352,9 +356,7 @@ Return JSON only — an array of exactly 6 objects:
 
   try {
     const raw = await runPrompt(prompt, { maxTokens: 1200, json: true });
-    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    const arr = JSON.parse(cleaned) as DependencyNode[];
-    return arr.slice(0, 6);
+    return (extractJson<DependencyNode[]>(raw)).slice(0, 6);
   } catch {
     return [];
   }
@@ -389,8 +391,7 @@ Return JSON only:
 
   try {
     const raw = await runPrompt(prompt, { maxTokens: 800, json: true });
-    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    return JSON.parse(cleaned) as BottleneckScore;
+    return extractJson<BottleneckScore>(raw);
   } catch {
     return { score: 5, bottleneckTier: 4, bottleneckDescription: "Analysis unavailable.", scarceFactors: [], substituteRisk: "medium", substituteRationale: "", expansionDifficulty: "" };
   }
@@ -432,8 +433,7 @@ Return JSON only:
 
   try {
     const raw = await runPrompt(prompt, { maxTokens: 700, json: true });
-    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    return JSON.parse(cleaned) as Omit<SupplyDemandScore, "commodityProxies">;
+    return extractJson<Omit<SupplyDemandScore, "commodityProxies">>(raw);
   } catch {
     return { score: 5, demandTrajectory: "growing", supplyTrajectory: "balanced", capitalCyclePhase: "mid", demandDrivers: [], supplyConstraints: [], investmentSignal: "moderate" };
   }
@@ -464,8 +464,7 @@ Return JSON only:
 
   try {
     const raw = await runPrompt(prompt, { maxTokens: 800, json: true });
-    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    return JSON.parse(cleaned) as CommodityFrameworkScore;
+    return extractJson<CommodityFrameworkScore>(raw);
   } catch {
     return { score: 5, primaryCommodities: [], demandCatalysts: [], supplyRisks: [], substitutionRisk: "medium", recyclingEconomics: "Analysis unavailable.", reserveConcentration: "Analysis unavailable." };
   }
@@ -502,44 +501,49 @@ Return JSON only:
 
   try {
     const raw = await runPrompt(prompt, { maxTokens: 1000, json: true });
-    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    return JSON.parse(cleaned) as PolicyScore;
+    return extractJson<PolicyScore>(raw);
   } catch {
     return { score: 5, relevantPolicies: [], capitalFlowDirection: "Analysis unavailable.", geopoliticalFactors: [], indiaSpecificPolicies: [] };
   }
 }
 
-async function scoreIndiaLeapfrog(theme: string): Promise<IndiaLeapfrogScore> {
-  const prompt = `You are an India-focused investment analyst. Evaluate whether India can "leapfrog" in the theme "${theme}" — skipping mature/legacy stages and adopting the next-generation technology directly.
+async function scoreGlobalStructuralAdvantage(theme: string): Promise<GlobalStructuralAdvantageScore> {
+  const prompt = `You are a global macro investment analyst. Compare structural advantages across major regions for the theme "${theme}".
 
-Historical leapfrog examples:
-- Mobile payments: India skipped credit cards → went straight to UPI
-- Telecom: India skipped landlines → went mobile-first with Jio
-- Renewables: India building solar at scale, may skip coal-heavy grid buildout
+Candidate regions (assess only those genuinely relevant to this theme — omit the rest rather than forcing an entry):
+United States, China, India, Europe, Japan, South Korea, Taiwan, Southeast Asia, Middle East, Latin America.
 
-Assess for "${theme}":
-1. Can India skip conventional technology stages? (yes/no, why)
-2. What specific stages can India leapfrog?
-3. What are India's structural advantages?
-4. What are India's challenges or disadvantages?
-5. Score 0–10: 10 = India can dominate through leapfrogging (like UPI), 0 = India has no leapfrog advantage
+For each relevant region, identify its structural advantages (capital, talent, policy support, natural resources, supply-chain position, domestic market size, manufacturing base, etc.) and disadvantages (regulatory friction, talent gaps, capital constraints, infrastructure gaps, geopolitical exposure, etc.) for this theme specifically.
+
+Then determine:
+1. Which region currently leads in this theme, and why.
+2. Which region is improving its position fastest (closing the gap), and why.
+3. What this means for long-term investors over a 5-10 year horizon — which regions/companies benefit as this dynamic plays out.
 
 Return JSON only:
 {
-  "score": <0-10>,
-  "canLeapfrog": true | false,
-  "leapfrogMechanism": "<specific mechanism — what stages India skips and why, 2-3 sentences>",
-  "analogies": ["<analogy1>", "<analogy2>"],
-  "indianAdvantages": ["<advantage1>", "<advantage2>", "<advantage3>"],
-  "indianChallenges": ["<challenge1>", "<challenge2>"]
-}`;
+  "score": <0-10 — how clear-cut and durable the global structural-advantage dynamics are for this theme>,
+  "currentLeader": "<region name>",
+  "fastestImproving": "<region name>",
+  "regions": [
+    { "region": "<region name>", "advantages": ["<advantage1>", "<advantage2>"], "disadvantages": ["<disadvantage1>", "<disadvantage2>"] }
+  ],
+  "longTermImplications": "<3-5 sentence synthesis of long-term investment implications>"
+}
+
+Include 3-6 regions, ranked by relevance to this theme.`;
 
   try {
-    const raw = await runPrompt(prompt, { maxTokens: 700, json: true });
-    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    return JSON.parse(cleaned) as IndiaLeapfrogScore;
+    const raw = await runPrompt(prompt, { maxTokens: 1200, json: true });
+    return extractJson<GlobalStructuralAdvantageScore>(raw);
   } catch {
-    return { score: 5, canLeapfrog: false, leapfrogMechanism: "Analysis unavailable.", analogies: [], indianAdvantages: [], indianChallenges: [] };
+    return {
+      score: 5,
+      currentLeader: "Unknown",
+      fastestImproving: "Unknown",
+      regions: [],
+      longTermImplications: "Analysis unavailable.",
+    };
   }
 }
 
@@ -635,7 +639,7 @@ function computeOpportunityScore(
   supplyDemand: SupplyDemandScore,
   commodity: CommodityFrameworkScore,
   policy: PolicyScore,
-  indiaLeapfrog: IndiaLeapfrogScore,
+  structuralAdvantage: GlobalStructuralAdvantageScore,
   tierCompanies: TierCompany[],
 ): OpportunityScore {
   // Weights from Part 10.5
@@ -645,7 +649,7 @@ function computeOpportunityScore(
   const demandGrowthNorm = (commodity.score / 10) * 100;
   const policyNorm = (policy.score / 10) * 100;
   const subResistanceNorm = bottleneck.substituteRisk === "low" ? 100 : bottleneck.substituteRisk === "medium" ? 60 : 30;
-  const indiaAdvantageNorm = (indiaLeapfrog.score / 10) * 100;
+  const structuralAdvantageNorm = (structuralAdvantage.score / 10) * 100;
 
   const themeScore = Math.round(
     inevitability * 0.20 +
@@ -654,7 +658,7 @@ function computeOpportunityScore(
     demandGrowthNorm * 0.15 +
     policyNorm * 0.10 +
     subResistanceNorm * 0.10 +
-    indiaAdvantageNorm * 0.05,
+    structuralAdvantageNorm * 0.05,
   );
 
   const verdict: OpportunityScore["verdict"] =
@@ -710,9 +714,9 @@ function computeOpportunityScore(
       signal: policy.score >= 7 ? "positive" : policy.score >= 5 ? "neutral" : "negative",
     },
     {
-      question: "Does India have a leapfrog advantage?",
-      answer: indiaLeapfrog.leapfrogMechanism,
-      signal: indiaLeapfrog.score >= 7 ? "positive" : indiaLeapfrog.canLeapfrog ? "neutral" : "negative",
+      question: "Which region holds the structural advantage, and is it shifting?",
+      answer: `${structuralAdvantage.currentLeader} currently leads; ${structuralAdvantage.fastestImproving} is closing the gap fastest. ${structuralAdvantage.longTermImplications}`,
+      signal: structuralAdvantage.score >= 7 ? "positive" : structuralAdvantage.score >= 5 ? "neutral" : "negative",
     },
     {
       question: "Are reserve/supply concentrations creating geopolitical risk?",
@@ -740,7 +744,7 @@ function computeOpportunityScore(
       demandGrowth: Math.round(demandGrowthNorm),
       policy: Math.round(policyNorm),
       substitutionResistance: Math.round(subResistanceNorm),
-      indiaAdvantage: Math.round(indiaAdvantageNorm),
+      structuralAdvantage: Math.round(structuralAdvantageNorm),
     },
     topCompanies,
     verdict,
@@ -796,9 +800,13 @@ export async function runThematicEngine(
   const policy = await scorePolicy(theme, newsSummary);
   emit("policy", `Policy score: ${policy.score}/10 (${newsItems.length} news articles scanned)`, policy);
 
-  emit("india_leapfrog", "Assessing India leapfrog potential…");
-  const indiaLeapfrog = await scoreIndiaLeapfrog(theme);
-  emit("india_leapfrog", `India leapfrog score: ${indiaLeapfrog.score}/10`, indiaLeapfrog);
+  emit("global_structural_advantage", "Comparing structural advantages across regions…");
+  const structuralAdvantage = await scoreGlobalStructuralAdvantage(theme);
+  emit(
+    "global_structural_advantage",
+    `Structural advantage score: ${structuralAdvantage.score}/10 (leader: ${structuralAdvantage.currentLeader})`,
+    structuralAdvantage,
+  );
 
   emit("company_mapping", "Loading screener universe and mapping companies to tiers…");
   const { rows: dbRows } = getFreshFundamentals(7 * 24 * 60 * 60 * 1000); // 7-day cache
@@ -806,7 +814,7 @@ export async function runThematicEngine(
   emit("company_mapping", `${tierCompanies.length} companies mapped across ${new Set(tierCompanies.map((c) => c.tier)).size} tiers`, tierCompanies);
 
   emit("opportunity_score", "Computing final opportunity score…");
-  const opportunity = computeOpportunityScore(futureState, bottleneck, supplyDemand, commodityFramework, policy, indiaLeapfrog, tierCompanies);
+  const opportunity = computeOpportunityScore(futureState, bottleneck, supplyDemand, commodityFramework, policy, structuralAdvantage, tierCompanies);
   emit("opportunity_score", `Theme score: ${opportunity.themeScore}/100 (${opportunity.verdict.toUpperCase()})`, opportunity);
 
   const report: ThematicReport = {
@@ -819,7 +827,7 @@ export async function runThematicEngine(
     supplyDemand,
     commodityFramework,
     policy,
-    indiaLeapfrog,
+    structuralAdvantage,
     tierCompanies,
     opportunity,
     newsItems,

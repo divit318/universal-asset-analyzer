@@ -9,6 +9,7 @@
 
 import { runPrompt } from "./ai";
 import { getQuote } from "./yahoo";
+import { extractJson } from "./json-extract";
 import type { NewsItem, EventSignal, ScanResult, Quote } from "./types";
 
 /* -------------------------------------------------------------------------- */
@@ -88,8 +89,7 @@ interface RawScanResponse {
 async function parseAiResponse(raw: string): Promise<RawScanResponse | null> {
   try {
     // Strip markdown code fences if the model returns them despite instructions.
-    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    return JSON.parse(cleaned) as RawScanResponse;
+    return extractJson<RawScanResponse>(raw);
   } catch {
     return null;
   }

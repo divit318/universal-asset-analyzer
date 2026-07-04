@@ -6,6 +6,7 @@ import type {
   ChatMessage,
   ChatStreamEvent,
   Citation,
+  PortfolioContextForAI,
 } from "@/lib/ai/types";
 
 export interface CopilotCoverage {
@@ -97,7 +98,7 @@ export function useCopilot(symbol: string) {
   }, [symbol]);
 
   const send = useCallback(
-    async (input: { question: string; action?: string; label?: string }) => {
+    async (input: { question: string; action?: string; label?: string; portfolioContext?: PortfolioContextForAI }) => {
       const display = (input.label ?? input.question).trim();
       if (!display) return;
 
@@ -132,6 +133,7 @@ export function useCopilot(symbol: string) {
             action: input.action,
             model: model ?? undefined,
             sessionId: sessionId.current,
+            portfolioContext: input.portfolioContext,
           }),
           signal: ac.signal,
         });

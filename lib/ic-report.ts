@@ -56,6 +56,8 @@ export interface ICReportInput {
   analyst?: AnalystConsensus;
   insider?: InsiderActivity;
   screenerIn?: ScreenerInCompany | null;
+  /** Optional Ollama model override (e.g. "mistral", "llama3.2"). Falls back to OLLAMA_MODEL env var. */
+  model?: string;
 }
 
 export async function generateICReport(
@@ -103,6 +105,7 @@ export async function generateICReport(
     (finding) => {
       emit("agent_complete", `${finding.agentLabel} complete (${finding.confidence} confidence)`, finding);
     },
+    input.model,
   );
   emit("agents", `All ${agentFindings.length} agents complete`);
 
@@ -143,7 +146,7 @@ export async function generateICReport(
     symbol,
     companyName,
     generatedAt: new Date().toISOString(),
-    model: getActiveModelName(),
+    model: input.model ?? getActiveModelName(),
     signals,
     questions,
     agentFindings,

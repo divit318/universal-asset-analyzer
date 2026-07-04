@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
+import { downloadBlob } from "@/lib/download";
 import type { ICReport, ICProgressEvent, ICReportStage } from "@/lib/ic-report";
 import type { AgentFinding } from "@/lib/ic-agents";
 import type { DetectedSignal } from "@/lib/ic-signals";
+import { SymbolSearch } from "@/app/_components/symbol-search";
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -84,6 +86,12 @@ function SignalsGrid({ signals }: { signals: DetectedSignal[] }) {
   );
 }
 
+const CONF_TOOLTIP: Record<"high" | "medium" | "low", string> = {
+  high: "High confidence: data was sufficient and the AI's analysis is consistent with primary sources.",
+  medium: "Medium confidence: some data gaps or conflicting signals; take with appropriate caution.",
+  low: "Low confidence: limited data available; AI is extrapolating more than analyzing. Verify independently.",
+};
+
 function AgentGrid({ findings }: { findings: AgentFinding[] }) {
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -97,8 +105,11 @@ function AgentGrid({ findings }: { findings: AgentFinding[] }) {
           >
             <div className="mb-2 flex items-center justify-between gap-2">
               <span className="font-medium">{f.agentLabel}</span>
-              <span className={`text-xs font-semibold uppercase ${CONF_STYLE[f.confidence]}`}>
-                {f.confidence}
+              <span
+                className={`text-xs font-semibold uppercase ${CONF_STYLE[f.confidence]}`}
+                title={CONF_TOOLTIP[f.confidence]}
+              >
+                {f.confidence} conf.
               </span>
             </div>
             <ul className="space-y-1">
@@ -440,6 +451,8 @@ function ProgressTracker({
 export default function ICReportPage() {
   const [symbol, setSymbol] = useState("");
   const [exchange, setExchange] = useState<"US" | "IN">("US");
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>("");
   const [running, setRunning] = useState(false);
   const [currentStage, setCurrentStage] = useState<ICReportStage | null>(null);
   const [completedAgents, setCompletedAgents] = useState(0);
@@ -447,7 +460,60 @@ export default function ICReportPage() {
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [report, setReport] = useState<ICReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [exportErr, setExportErr] = useState<string | null>(null);
+  const [elapsedSecs, setElapsedSecs] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startTimeRef = useRef<number>(0);
+
+  // Restore last saved report from sessionStorage on mount; also read ?symbol= deep-link
+  useEffect(() => {
+    // Deep-link from Scanner: /ic-report?symbol=TICKER
+    const urlSymbol = new URLSearchParams(window.location.search).get("symbol");
+    if (urlSymbol) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSymbol(urlSymbol.toUpperCase());
+      // Detect Indian exchange by suffix
+      if (urlSymbol.toUpperCase().endsWith(".NS") || urlSymbol.toUpperCase().endsWith(".BO")) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setExchange("IN");
+      }
+      return; // don't restore stale cached report when deep-linking
+    }
+    try {
+      const saved = sessionStorage.getItem("uaa_ic_last_report");
+      if (saved) {
+        const parsed = JSON.parse(saved) as { symbol: string; exchange: "US" | "IN"; report: ICReport };
+        if (parsed.symbol && parsed.report) {
+          setSymbol(parsed.symbol);
+          setExchange(parsed.exchange ?? "US");
+          setReport(parsed.report);
+        }
+      }
+    } catch { /* ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Dynamic page title
+  useEffect(() => {
+    document.title = symbol
+      ? `${symbol.toUpperCase()} IC Report · UAA`
+      : "Deep Research · UAA";
+    return () => { document.title = "Universal Asset Analyzer"; };
+  }, [symbol]);
+
+  // Fetch available Ollama models on mount
+  useEffect(() => {
+    fetch("/api/screener/nl")
+      .then((r) => r.json())
+      .then((d: { models?: string[] }) => {
+        const models = d.models ?? [];
+        setOllamaModels(models);
+        if (models.length > 0 && !selectedModel) setSelectedModel(models[0]);
+      })
+      .catch(() => {/* Ollama offline — model picker hidden gracefully */});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const addEvent = useCallback((event: StreamEvent) => {
     setEvents((prev) => [...prev, event]);
@@ -457,6 +523,14 @@ export default function ICReportPage() {
     if (!symbol.trim()) return;
     abortRef.current?.abort();
     abortRef.current = new AbortController();
+
+    // Start elapsed timer
+    startTimeRef.current = Date.now();
+    setElapsedSecs(0);
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => {
+      setElapsedSecs(Math.floor((Date.now() - startTimeRef.current) / 1000));
+    }, 1000);
 
     setRunning(true);
     setError(null);
@@ -470,7 +544,11 @@ export default function ICReportPage() {
       const res = await fetch("/api/ic-report", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol: symbol.trim().toUpperCase(), exchange }),
+        body: JSON.stringify({
+          symbol: symbol.trim().toUpperCase(),
+          exchange,
+          ...(selectedModel ? { model: selectedModel } : {}),
+        }),
         signal: abortRef.current.signal,
       });
 
@@ -511,6 +589,14 @@ export default function ICReportPage() {
 
             if (event.stage === "done" && event.report) {
               setReport(event.report);
+              // Persist to sessionStorage for restore on next page load
+              try {
+                sessionStorage.setItem("uaa_ic_last_report", JSON.stringify({
+                  symbol: symbol.trim().toUpperCase(),
+                  exchange,
+                  report: event.report,
+                }));
+              } catch { /* ignore */ }
             }
 
             if (event.stage === "error") {
@@ -527,35 +613,43 @@ export default function ICReportPage() {
       }
     } finally {
       setRunning(false);
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     }
   }
 
   function stop() {
     abortRef.current?.abort();
     setRunning(false);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
   }
 
   const [activeTab, setActiveTab] = useState<"signals" | "agents" | "thesis" | "valuation" | "monitorables">("thesis");
 
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-10">
+    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-10">
       {/* Header */}
-      <header className="flex flex-col gap-2">
-        <h1 className="text-2xl font-semibold tracking-tight">Investment Committee Report</h1>
+      <header className="flex flex-col gap-1.5">
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-semibold tracking-tight">IC Deep Research</h1>
+          <span className="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-accent">
+            Multi-agent
+          </span>
+        </div>
         <p className="max-w-3xl text-sm text-muted">
-          Full equity research pipeline: signal detection → question generation → 9-agent investigation → thesis formation → valuation → IC report.
+          Signal detection → question generation → 9-agent investigation → thesis → valuation → exportable IC report. Fully local.
         </p>
       </header>
 
       {/* Input */}
       <div className="flex flex-wrap gap-3">
-        <input
-          value={symbol}
-          onChange={(e) => setSymbol(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && !running && run()}
-          placeholder="Ticker — e.g. AAPL or RELIANCE"
-          className="w-64 rounded-lg border border-border bg-surface px-4 py-2.5 text-sm outline-none placeholder:text-muted focus:border-accent"
-        />
+        <div className="w-80">
+          <SymbolSearch
+            value={symbol}
+            onChange={setSymbol}
+            onSelect={(sym) => setSymbol(sym)}
+            loading={false}
+          />
+        </div>
         <select
           value={exchange}
           onChange={(e) => setExchange(e.target.value as "US" | "IN")}
@@ -564,21 +658,58 @@ export default function ICReportPage() {
           <option value="US">US Markets</option>
           <option value="IN">Indian Markets (NSE/BSE)</option>
         </select>
+        {ollamaModels.length > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="rounded-full bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
+              Local AI
+            </span>
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              className="rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-accent"
+            >
+              {ollamaModels.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+        )}
         {running ? (
-          <button
-            onClick={stop}
-            className="rounded-lg border border-border px-5 py-2.5 text-sm transition-colors hover:bg-surface-2"
-          >
-            Stop
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={stop}
+              className="rounded-lg border border-border px-5 py-2.5 text-sm transition-colors hover:bg-surface-2"
+            >
+              Stop
+            </button>
+            <span className="font-mono text-sm text-muted tabular-nums">
+              {Math.floor(elapsedSecs / 60).toString().padStart(2, "0")}:{(elapsedSecs % 60).toString().padStart(2, "0")} elapsed
+            </span>
+            <span className="text-xs text-muted">
+              (IC reports typically take 3–15 min on a local model)
+            </span>
+          </div>
         ) : (
-          <button
-            onClick={run}
-            disabled={!symbol.trim()}
-            className="rounded-lg bg-accent-strong px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
-          >
-            Generate Report
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={run}
+              disabled={!symbol.trim()}
+              className="rounded-lg bg-accent-strong px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              Generate Report
+            </button>
+            {report && !running && (
+              <span className="text-xs text-muted">
+                Last report restored from cache ·{" "}
+                <button
+                  className="text-accent hover:underline"
+                  onClick={() => { setReport(null); setEvents([]); }}
+                >
+                  Clear
+                </button>
+              </span>
+            )}
+          </div>
         )}
       </div>
 
@@ -626,7 +757,7 @@ export default function ICReportPage() {
                       {report.symbol} · {new Date(report.generatedAt).toLocaleString()} · {report.model}
                     </p>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {report.signals.filter((s) => s.severity === "high").length > 0 && (
                       <span className="rounded-full border border-negative/40 bg-negative/10 px-3 py-1 text-xs font-medium text-negative">
                         {report.signals.filter((s) => s.severity === "high").length} high-severity signals
@@ -635,22 +766,42 @@ export default function ICReportPage() {
                     <span className="rounded-full border border-border px-3 py-1 text-xs text-muted">
                       {report.agentFindings.length} agents · {report.questions.length} questions
                     </span>
+                    <button
+                      onClick={() => {
+                        setExportErr(null);
+                        void downloadBlob("/api/export/ic-report", `ic-report-${report.symbol}-${new Date().toISOString().slice(0, 10)}.pdf`, "POST", { report })
+                          .catch((e: unknown) => setExportErr(e instanceof Error ? e.message : "Export failed"));
+                      }}
+                      className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-surface-2"
+                    >
+                      ↓ Export PDF
+                    </button>
+                    {exportErr && <span className="text-xs text-negative">{exportErr}</span>}
                   </div>
                 </div>
 
                 {/* Tab nav */}
                 <div className="flex gap-1 overflow-x-auto rounded-lg border border-border bg-surface p-1">
-                  {(["thesis", "valuation", "agents", "signals", "monitorables"] as const).map((tab) => (
-                    <button
-                      key={tab}
-                      onClick={() => setActiveTab(tab)}
-                      className={`shrink-0 rounded-md px-4 py-1.5 text-sm font-medium capitalize transition-colors ${
-                        activeTab === tab ? "bg-surface-2 text-foreground" : "text-muted hover:text-foreground"
-                      }`}
-                    >
-                      {tab === "monitorables" ? "Monitorables" : tab.charAt(0).toUpperCase() + tab.slice(1)}
-                    </button>
-                  ))}
+                  {(["thesis", "valuation", "agents", "signals", "monitorables"] as const).map((tab) => {
+                    const TAB_LABELS: Record<typeof tab, string> = {
+                      thesis: "Thesis",
+                      valuation: "Valuation",
+                      agents: "Agents",
+                      signals: "Signals",
+                      monitorables: "Watch Items",
+                    };
+                    return (
+                      <button
+                        key={tab}
+                        onClick={() => setActiveTab(tab)}
+                        className={`shrink-0 rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
+                          activeTab === tab ? "bg-surface-2 text-foreground" : "text-muted hover:text-foreground"
+                        }`}
+                      >
+                        {TAB_LABELS[tab]}
+                      </button>
+                    );
+                  })}
                 </div>
 
                 {/* Tab content */}
@@ -701,7 +852,7 @@ export default function ICReportPage() {
 
                 {activeTab === "monitorables" && (
                   <section>
-                    <SectionHeading>Monitorables</SectionHeading>
+                    <SectionHeading>Watch Items</SectionHeading>
                     <Card>
                       <p className="mb-4 text-sm text-muted">
                         Key metrics and events to track on an ongoing basis.
@@ -736,20 +887,43 @@ export default function ICReportPage() {
 
       {/* Landing state */}
       {!running && !report && events.length === 0 && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {[
-            { title: "Signal Detection", desc: "13 signal types: ROCE drop, margin compression, FII selling, working capital deterioration, and more" },
-            { title: "Question Generation", desc: "Converts each signal into analytical questions that go deeper than the surface data" },
-            { title: "9-Agent Investigation", desc: "Business, Industry, Competition, Management, Capital Allocation, Accounting, Valuation, Governance, Risk agents run in parallel" },
-            { title: "Thesis + Valuation", desc: "Bull/Bear/Base thesis, variant perception, DCF + relative valuation (SOTP for conglomerates), FX sensitivity for export/import sectors, run hot/cold percentile vs own history, scenario analysis, IC report" },
-          ].map(({ title, desc }) => (
-            <Card key={title}>
-              <h3 className="mb-2 text-sm font-semibold">{title}</h3>
-              <p className="text-xs leading-5 text-muted">{desc}</p>
-            </Card>
-          ))}
+        <div className="flex flex-col gap-6">
+          <div className="flex flex-col items-center gap-5 rounded-xl border border-border bg-surface py-14 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border bg-surface-2 text-muted">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+            <div className="flex flex-col gap-2">
+              <p className="text-sm font-semibold">Enter a ticker to generate a full IC report</p>
+              <p className="max-w-sm text-xs leading-5 text-muted">
+                9 AI agents investigate in parallel: growth, valuation, competition, management, capital allocation,
+                accounting, governance, risks, and optionality.
+              </p>
+            </div>
+            <p className="text-xs text-muted/60">~3–15 minutes on a local model</p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {[
+              { step: "1", title: "Signal Detection", color: "text-negative", desc: "13 signal types including ROCE drops, margin compression, FII selling, and working capital issues" },
+              { step: "2", title: "Question Generation", color: "text-amber-400", desc: "Converts each signal into deep analytical questions for the agent network to investigate" },
+              { step: "3", title: "9-Agent Network", color: "text-accent", desc: "Business, Industry, Competition, Management, Capital Allocation, Accounting, Valuation, Governance, Risk" },
+              { step: "4", title: "Thesis + Valuation", color: "text-positive", desc: "Bull/Bear/Base thesis, DCF + SOTP, run hot/cold analysis, scenario analysis, exportable IC report" },
+            ].map(({ step, title, color, desc }) => (
+              <Card key={step}>
+                <div className="mb-2 flex items-center gap-2">
+                  <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface-2 font-mono text-[10px] font-semibold ${color}`}>
+                    {step}
+                  </span>
+                  <h3 className="text-sm font-semibold">{title}</h3>
+                </div>
+                <p className="text-xs leading-5 text-muted">{desc}</p>
+              </Card>
+            ))}
+          </div>
         </div>
       )}
-    </main>
+    </div>
   );
 }

@@ -6,6 +6,7 @@
  */
 
 import { runPrompt } from "./ai";
+import { extractJson } from "./json-extract";
 import type { AgentFinding } from "./ic-agents";
 import type { DetectedSignal } from "./ic-signals";
 
@@ -67,9 +68,7 @@ Synthesise all findings into a structured thesis. Return as JSON:
 
   try {
     const raw = await runPrompt(prompt, { maxTokens: 1500, json: true });
-    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    const parsed = JSON.parse(cleaned) as Thesis;
-    return parsed;
+    return extractJson<Thesis>(raw);
   } catch {
     return {
       bull: "Thesis formation unavailable — AI response could not be parsed.",

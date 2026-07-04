@@ -12,12 +12,16 @@ import type {
   FinancialStatements,
   FundamentalsSnapshot,
   InsiderActivity,
+  InvestmentPersonality,
   MomentumSignal,
   NewsItem,
+  OwnershipData,
   PeerComparison,
   Quote,
   RiskItem,
   ScoreResult,
+  SectorRotationEntry,
+  TimelineEvent,
 } from "../types";
 
 export type { NewsItem };
@@ -61,10 +65,20 @@ export interface CompanyContext {
   score: ScoreResult | null;
   risks: RiskItem[];
   momentum: MomentumSignal | null;
+  personality: InvestmentPersonality | null;
   peers: PeerComparison | null;
   filings: { form: string; filedAt: string; description: string; documentUrl: string }[];
   news: NewsItem[];
   onWatchlist: boolean;
+  ownership: OwnershipData | null;
+  /** This company's sector's Sector Rotation Engine entry, if the sector maps to a GICS ETF. */
+  sectorRotation: SectorRotationEntry | null;
+  /** Most recent Investment Timeline milestones (persisted feed, no live sync — see buildCompanyContext). */
+  recentTimelineEvents: TimelineEvent[];
+  /** Theme + sibling symbols from the Opportunity Map, when this symbol was in the last Scanner run. */
+  relatedOpportunities: { theme: string; siblings: string[] } | null;
+  /** Top Knowledge Graph neighbors (label + relationship), when available. */
+  graphNeighbors: { label: string; relationship: string; type: string }[];
   /** Analyst notes saved from prior research sessions — cross-stock memory. */
   savedNotes?: { symbol: string; content: string; createdAt: string }[];
   /** Non-fatal problems gathering data, surfaced so the copilot can be candid. */
@@ -132,6 +146,28 @@ export interface ChatMessage {
   createdAt?: string;
 }
 
+/**
+ * The user's portfolio context serialized for AI consumption.
+ * Sent client → server on every chat turn so the copilot can give
+ * portfolio-personalized advice without accessing localStorage server-side.
+ */
+export interface PortfolioContextForAI {
+  hasPortfolio: boolean;
+  objective: string;
+  holdingSymbols: string[];
+  sectorWeights: Array<{ sector: string; weight: number }>;
+  missingSectors: string[];
+  overweightSectors: string[];
+  /** IOS-computed fit score for the stock currently being researched. */
+  fitScore?: number;
+  fitTier?: string;
+  fitReasons?: string[];
+  isInPortfolio?: boolean;
+  suggestedAllocationPct?: number;
+  suggestedAmount?: number;
+  concentrationWarning?: boolean;
+}
+
 /** Request body for POST /api/research/chat. */
 export interface ChatRequest {
   symbol: string;
@@ -142,6 +178,8 @@ export interface ChatRequest {
   model?: string;
   /** Stable session id so multi-turn history persists across reloads. */
   sessionId?: string;
+  /** User's portfolio context — makes every copilot response portfolio-aware. */
+  portfolioContext?: PortfolioContextForAI;
 }
 
 /**

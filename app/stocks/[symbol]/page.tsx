@@ -65,7 +65,7 @@ function StockContent() {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-6 py-10">
+    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-10">
       {/* Breadcrumb */}
       <nav className="flex items-center gap-1.5 text-xs text-muted">
         <Link href="/" className="hover:text-foreground">Home</Link>
@@ -382,7 +382,7 @@ function StockContent() {
           ) : null}
         </div>
       ) : null}
-    </main>
+    </div>
   );
 }
 

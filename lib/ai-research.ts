@@ -16,6 +16,7 @@ import type {
 } from "./types";
 import type { ScreenerInCompany } from "./screener-in";
 import { formatCurrency, formatPercent, formatCompact, formatMarketCap } from "./format";
+import { extractJson } from "./json-extract";
 
 /* -------------------------------------------------------------------------- */
 /* Prompt builders                                                             */
@@ -215,8 +216,7 @@ Format your response as JSON:
 
   let sections: DeepAnalysisResult["sections"];
   try {
-    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    sections = JSON.parse(cleaned) as DeepAnalysisResult["sections"];
+    sections = extractJson<DeepAnalysisResult["sections"]>(raw);
   } catch {
     // Fallback: treat raw text as summary
     sections = {
@@ -363,8 +363,7 @@ Write a structured research note with exactly these sections. Keep each 3-5 sent
 
   let sections: DeepAnalysisResult["sections"];
   try {
-    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    sections = JSON.parse(cleaned) as DeepAnalysisResult["sections"];
+    sections = extractJson<DeepAnalysisResult["sections"]>(raw);
   } catch {
     sections = {
       summary: raw,
@@ -377,6 +376,84 @@ Write a structured research note with exactly these sections. Keep each 3-5 sent
   }
 
   return { model, sections, rawText: raw };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Indian section insight — quick "so what" per page section                  */
+/* -------------------------------------------------------------------------- */
+
+export type IndianInsightSection = "financials" | "ownership" | "peers" | "valuation";
+
+export interface IndianSectionInsightInput {
+  section: IndianInsightSection;
+  company: ScreenerInCompany;
+  derived: IndianDeepAnalysisInput["derived"];
+  quote: Quote | null;
+}
+
+export async function indianSectionInsight(
+  input: IndianSectionInsightInput,
+): Promise<{ insight: string; model: string }> {
+  const { section, company, derived, quote } = input;
+  const model = getActiveModelName();
+
+  let prompt = "";
+
+  if (section === "financials") {
+    const annualSales = company.annualPL.map((d) => `${d.period}: ₹${d.sales ?? "n/a"} Cr`).join(", ");
+    const annualProfit = company.annualPL.map((d) => `${d.period}: ₹${d.netProfit ?? "n/a"} Cr`).join(", ");
+    const recentQ = company.quarterlyPL.slice(-4).map((d) => `${d.period}: ₹${d.sales ?? "n/a"} Cr sales, ₹${d.netProfit ?? "n/a"} Cr profit`).join("; ");
+    prompt = `You are a senior equity analyst. In 2-3 sentences, interpret the financial performance of ${company.name} (${company.symbol}) for an institutional investor. Focus on the trend, any inflection points, and what it means for the investment case.
+
+Annual Revenue trend: ${annualSales || "not available"}
+Annual Net Profit: ${annualProfit || "not available"}
+Recent quarters: ${recentQ || "not available"}
+ROCE: ${company.roce ?? "n/a"}%
+ROE: ${company.roe ?? "n/a"}%
+
+Be direct. Cite the most important number. Answer: is this business growing, stable, or deteriorating, and what should an investor watch?`;
+  } else if (section === "ownership") {
+    const holdingLines = company.shareholding
+      .map((s) => `${s.name}: ${s.values.at(-1) ?? "n/a"}%`)
+      .join(", ");
+    const promoterChange = (() => {
+      const pr = company.shareholding.find((s) => s.holding === "promoter");
+      if (!pr || pr.values.length < 4) return "";
+      const first = parseFloat(pr.values[0] ?? "");
+      const last = parseFloat(pr.values.at(-1) ?? "");
+      if (!isFinite(first) || !isFinite(last)) return "";
+      return ` (changed by ${(last - first).toFixed(1)}pp over the period)`;
+    })();
+    prompt = `You are a senior equity analyst. In 2-3 sentences, interpret the shareholding pattern of ${company.name} (${company.symbol}) for an institutional investor.
+
+Current holdings: ${holdingLines || "Promoter: " + (derived.promoterHolding ?? "n/a") + "%, FII: " + (derived.fiiHolding ?? "n/a") + "%, DII: " + (derived.diiHolding ?? "n/a") + "%"}
+Promoter trend${promoterChange}
+
+Explain: Are institutions accumulating or exiting? What does the promoter stake signal? What's the key ownership risk or strength?`;
+  } else if (section === "peers") {
+    const peerLines = derived.peers.slice(0, 6).map((p) => `${p.name}: P/E ${p.pe ?? "n/a"}, ROCE ${p.roce ?? "n/a"}%`).join("; ");
+    prompt = `You are a senior equity analyst. In 2-3 sentences, summarise how ${company.name} (${company.symbol}) compares to its sector peers.
+
+${company.symbol}: P/E ${company.pe ?? "n/a"}, ROCE ${company.roce ?? "n/a"}%, ROE ${company.roe ?? "n/a"}%
+Peers: ${peerLines || "not available"}
+
+Answer: where does this company rank? Is the valuation premium/discount justified by quality metrics?`;
+  } else {
+    // valuation
+    const price = quote ? `₹${quote.price.toFixed(2)}` : `₹${company.currentPrice ?? "n/a"}`;
+    prompt = `You are a senior equity analyst. In 2-3 sentences, interpret the current valuation of ${company.name} (${company.symbol}).
+
+Price: ${price}
+52W High/Low: ₹${company.high52w ?? "n/a"} / ₹${company.low52w ?? "n/a"}
+P/E: ${company.pe ?? "n/a"}, P/B: ${derived.priceToBook ?? "n/a"}, EV/EBITDA: ${derived.evToEbitda ?? "n/a"}
+ROCE: ${company.roce ?? "n/a"}%, ROE: ${company.roe ?? "n/a"}%
+Dividend yield: ${company.dividendYield ?? "n/a"}%
+
+Is the stock cheap, fair, or expensive? What justifies or undermines the valuation?`;
+  }
+
+  const raw = await runPrompt(prompt, { maxTokens: 250 });
+  return { insight: raw.trim(), model };
 }
 
 export async function indianChatWithData(

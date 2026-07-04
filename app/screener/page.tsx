@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { downloadBlob } from "@/lib/download";
 import type { DatasetStatus, StockMetrics } from "@/lib/types";
 import { SCREENER_SECTORS } from "@/lib/yahoo-screener";
 import { formatMarketCap } from "@/lib/format";
@@ -14,6 +15,8 @@ import {
   type ColumnDef,
   type Preset,
 } from "./_config";
+import { useIOSSafe } from "@/lib/ios-context";
+import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
 
 type Bounds = { min: string; max: string };
 const ALL_RANGE_KEYS = [
@@ -39,7 +42,33 @@ export default function ScreenerPage() {
   const [status, setStatus] = useState<DatasetStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [exportErr, setExportErr] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // IOS — portfolio fit scores for visible rows
+  const [fitSort, setFitSort] = useState(false);
+  const ios = useIOSSafe();
+  const fitScores = useMemo(() => {
+    if (!ios?.profileReady || !rows) return new Map<string, number>();
+    const map = new Map<string, number>();
+    for (const m of rows) {
+      const fit = ios.getPortfolioFit({
+        symbol: m.symbol,
+        sector: m.sector ?? null,
+        marketCap: m.marketCap,
+        compositeScores: m.scores,
+        dividendYield: m.dividendYield,
+      });
+      map.set(m.symbol, fit.fitScore);
+    }
+    return map;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ios?.profile.builtAt, ios?.profileReady, rows]);
+
+  const displayRows = useMemo(() => {
+    if (!fitSort || fitScores.size === 0 || !rows) return rows;
+    return [...rows].sort((a, b) => (fitScores.get(b.symbol) ?? 0) - (fitScores.get(a.symbol) ?? 0));
+  }, [fitSort, fitScores, rows]);
 
   // NL screener state
   const [nlPrompt, setNlPrompt] = useState("");
@@ -48,6 +77,13 @@ export default function ScreenerPage() {
   const [nlLoading, setNlLoading] = useState(false);
   const [nlError, setNlError] = useState<string | null>(null);
   const [nlApplied, setNlApplied] = useState<string | null>(null);
+  const [nlCriteria, setNlCriteria] = useState<Record<string, { min?: number | null; max?: number | null }> | null>(null);
+
+  // Watchlist state
+  const [watchlisted, setWatchlisted] = useState<Set<string>>(new Set());
+  const [watchAdding, setWatchAdding] = useState<Set<string>>(new Set());
+  const [ollamaOnline, setOllamaOnline] = useState<boolean | null>(null);
+  const [activePreset, setActivePreset] = useState<string | null>(null);
 
   const buildBody = useCallback(
     (offset: number, sf = sortField, sd = sortDir) => {
@@ -102,6 +138,16 @@ export default function ScreenerPage() {
     [buildBody, sortField, sortDir],
   );
 
+  // Always-current references used in session save/restore
+  // eslint-disable-next-line react-hooks/refs
+  const runRef = useRef(run);
+  // eslint-disable-next-line react-hooks/refs
+  runRef.current = run;
+  // eslint-disable-next-line react-hooks/refs
+  const _s = useRef({ ranges, sector, industry, sortField, sortDir, nlPrompt, activePreset, open });
+  // eslint-disable-next-line react-hooks/refs
+  _s.current = { ranges, sector, industry, sortField, sortDir, nlPrompt, activePreset, open };
+
   // Auto-poll while the dataset warms so results fill in without manual reloads.
   useEffect(() => {
     if (pollRef.current) clearTimeout(pollRef.current);
@@ -113,6 +159,12 @@ export default function ScreenerPage() {
     };
   }, [status, run]);
 
+  // Dynamic page title
+  useEffect(() => {
+    document.title = "Screener · UAA";
+    return () => { document.title = "Universal Asset Analyzer"; };
+  }, []);
+
   // Fetch installed Ollama models for the NL screener model picker.
   useEffect(() => {
     fetch("/api/screener/nl")
@@ -120,17 +172,46 @@ export default function ScreenerPage() {
       .then((d: { models?: string[] }) => {
         const models = d.models ?? [];
         setNlModels(models);
+        setOllamaOnline(models.length > 0);
         if (models.length > 0) setNlModel(models[0]);
       })
-      .catch(() => {/* Ollama offline — NL screener degrades gracefully */});
+      .catch(() => { setOllamaOnline(false); });
   }, []);
 
-  // First load: trigger the build + show whatever's ready. A one-time kickoff
-  // from mount is exactly the intended behavior here.
+  // Restore filter preferences from session on mount; save on unmount.
+  // Filters survive client-side navigation but reset when the tab is closed.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void run(0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    try {
+      const raw = sessionStorage.getItem("uaa_screener_state");
+      if (raw) {
+        const st = JSON.parse(raw) as { ranges?: Record<string, Bounds>; sector?: string; industry?: string; sortField?: string; sortDir?: "asc" | "desc"; nlPrompt?: string; activePreset?: string | null; open?: string[] };
+        /* eslint-disable react-hooks/set-state-in-effect */
+        if (st.ranges) setRanges(st.ranges);
+        if (st.sector !== undefined) setSector(st.sector);
+        if (st.industry !== undefined) setIndustry(st.industry);
+        if (st.sortField) setSortField(st.sortField);
+        if (st.sortDir) setSortDir(st.sortDir);
+        if (st.nlPrompt !== undefined) setNlPrompt(st.nlPrompt);
+        if (st.activePreset !== undefined) setActivePreset(st.activePreset);
+        if (st.open) setOpen(new Set(st.open));
+        /* eslint-enable react-hooks/set-state-in-effect */
+      }
+    } catch { /* ignore corrupt storage */ }
+    return () => {
+      try {
+        const { ranges: r, sector: s, industry: i, sortField: sf, sortDir: sd, nlPrompt: nl, activePreset: ap, open: o } = _s.current;
+        sessionStorage.setItem("uaa_screener_state", JSON.stringify({ ranges: r, sector: s, industry: i, sortField: sf, sortDir: sd, nlPrompt: nl, activePreset: ap, open: Array.from(o) }));
+      } catch { /* ignore */ }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // First load: trigger the build + show whatever's ready.
+  // setTimeout(0) lets restored filter state settle before fetching.
+  useEffect(() => {
+    const t = setTimeout(() => void runRef.current(0), 0);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function setRange(key: string, bound: keyof Bounds, value: string) {
@@ -145,6 +226,22 @@ export default function ScreenerPage() {
     setSortDir("desc");
     setNlApplied(null);
     setNlError(null);
+    setNlCriteria(null);
+    setActivePreset(null);
+  }
+
+  async function addToWatchlist(symbol: string, name: string) {
+    setWatchAdding((s) => new Set(s).add(symbol));
+    try {
+      await fetch("/api/watchlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol, name }),
+      });
+      setWatchlisted((s) => new Set(s).add(symbol));
+    } finally {
+      setWatchAdding((s) => { const n = new Set(s); n.delete(symbol); return n; });
+    }
   }
 
   async function runNlScreen() {
@@ -184,12 +281,18 @@ export default function ScreenerPage() {
         }
       }
 
+      const metaCriteria: Record<string, { min?: number | null; max?: number | null }> = {};
+      for (const [key, val] of Object.entries(c)) {
+        if (["sortField","sortDir","sector","industry"].includes(key)) continue;
+        if (val && typeof val === "object") metaCriteria[key] = val as { min?: number | null; max?: number | null };
+      }
       setRanges(next);
       setSector(newSector);
       setIndustry(newIndustry);
       setSortField(sf);
       setSortDir(sd);
       setNlApplied(nlPrompt.trim());
+      setNlCriteria(Object.keys(metaCriteria).length > 0 ? metaCriteria : null);
       void run(0, sf, sd);
     } catch (err) {
       setNlError(err instanceof Error ? err.message : "Something went wrong");
@@ -215,6 +318,7 @@ export default function ScreenerPage() {
     setIndustry("");
     setSortField(sf);
     setSortDir(sd);
+    setActivePreset(p.name);
     void run(0, sf, sd);
   }
 
@@ -248,7 +352,7 @@ export default function ScreenerPage() {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-10">
+    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-10">
       <header className="flex flex-col gap-2">
         <h1 className="text-2xl font-semibold tracking-tight">Fundamental Screener</h1>
         <p className="max-w-3xl text-muted">
@@ -260,7 +364,12 @@ export default function ScreenerPage() {
       </header>
 
       {/* AI Natural Language Screener */}
-      {nlModels.length > 0 ? (
+      {ollamaOnline === false ? (
+        <div className="flex items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3 text-sm text-muted">
+          <span className="text-yellow-500">⚠</span>
+          <span>AI screening is unavailable — Ollama is not running. Start Ollama to use natural-language screens.</span>
+        </div>
+      ) : nlModels.length > 0 ? (
         <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold">AI Screen</span>
@@ -298,31 +407,57 @@ export default function ScreenerPage() {
               disabled={nlLoading || !nlPrompt.trim()}
               className="rounded-lg bg-accent-strong px-4 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
             >
-              {nlLoading ? "Analyzing…" : "Apply ↵"}
+              {nlLoading ? "Analyzing…" : "Apply (Ctrl+Enter)"}
             </button>
           </div>
           {nlError ? (
             <p className="text-xs text-negative">{nlError}</p>
           ) : nlApplied ? (
-            <p className="text-xs text-positive">
-              Screen applied — filters set from your description.
-            </p>
+            <div className="flex flex-col gap-2">
+              <p className="text-xs text-positive">Screen applied from: &ldquo;{nlApplied}&rdquo;</p>
+              {nlCriteria && Object.keys(nlCriteria).length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(nlCriteria).map(([key, val]) => (
+                    <span key={key} className="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 text-xs text-accent">
+                      {nlChipLabel(key, val)}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           ) : null}
         </section>
       ) : null}
 
       {/* Quick screens */}
-      <section className="flex flex-col gap-2">
-        <span className="text-xs font-medium uppercase tracking-wide text-muted">Quick screens</span>
-        <div className="flex flex-wrap gap-2">
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center gap-3">
+          <span className="text-xs font-semibold uppercase tracking-widest text-muted/60">Starter Screens</span>
+          <div className="h-px flex-1 bg-border" />
+          {activePreset && (
+            <button onClick={reset} className="text-xs text-muted hover:text-foreground transition-colors">
+              Clear &ldquo;{activePreset}&rdquo; ×
+            </button>
+          )}
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {PRESETS.map((p) => (
             <button
               key={p.name}
               onClick={() => applyPreset(p)}
-              className="group flex flex-col rounded-lg border border-border bg-surface px-3.5 py-2 text-left transition-colors hover:border-accent hover:bg-surface-2"
+              className={`group flex flex-col gap-1.5 rounded-xl border px-4 py-3.5 text-left transition-all hover:border-accent/40 hover:bg-surface-2 ${
+                activePreset === p.name
+                  ? "border-accent/50 bg-accent/5 shadow-[0_0_0_1px_rgba(74,222,128,0.08)]"
+                  : "border-border bg-surface"
+              }`}
             >
-              <span className="text-sm font-medium">{p.name}</span>
-              <span className="text-xs text-muted">{p.tagline}</span>
+              <span className={`text-sm font-semibold transition-colors ${activePreset === p.name ? "text-accent" : "text-foreground group-hover:text-accent"}`}>
+                {p.name}
+              </span>
+              <span className="text-xs leading-4 text-muted">{p.tagline}</span>
+              {activePreset === p.name && (
+                <span className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-accent">Active</span>
+              )}
             </button>
           ))}
         </div>
@@ -383,32 +518,42 @@ export default function ScreenerPage() {
             </div>
           </div>
 
-          {SECTIONS.map((sec) => (
-            <div key={sec.title} className="rounded-xl border border-border bg-surface">
-              <button
-                onClick={() => toggleSection(sec.title)}
-                className="flex w-full items-center justify-between px-4 py-3 text-left"
-              >
-                <span className="text-sm font-semibold">{sec.title}</span>
-                <span className="text-muted">{open.has(sec.title) ? "−" : "+"}</span>
-              </button>
-              {open.has(sec.title) ? (
-                <div className="flex flex-col gap-2.5 border-t border-border px-4 py-3">
-                  <p className="text-xs text-muted">{sec.blurb}</p>
-                  {sec.fields.map((f) => (
-                    <RangeRow
-                      key={f.key}
-                      label={f.label}
-                      unit={f.unit}
-                      step={f.step}
-                      bounds={ranges[f.key]}
-                      onChange={(b, v) => setRange(f.key, b, v)}
-                    />
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ))}
+          {SECTIONS.map((sec) => {
+            const activeCount = sec.fields.filter((f) => ranges[f.key]?.min !== "" || ranges[f.key]?.max !== "").length;
+            return (
+              <div key={sec.title} className="rounded-xl border border-border bg-surface">
+                <button
+                  onClick={() => toggleSection(sec.title)}
+                  className="flex w-full items-center justify-between px-4 py-3 text-left"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold">{sec.title}</span>
+                    {!open.has(sec.title) && activeCount > 0 && (
+                      <span className="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-semibold leading-none text-background">
+                        {activeCount}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-muted">{open.has(sec.title) ? "−" : "+"}</span>
+                </button>
+                {open.has(sec.title) ? (
+                  <div className="flex flex-col gap-2.5 border-t border-border px-4 py-3">
+                    <p className="text-xs text-muted">{sec.blurb}</p>
+                    {sec.fields.map((f) => (
+                      <RangeRow
+                        key={f.key}
+                        label={f.label}
+                        unit={f.unit}
+                        step={f.step}
+                        bounds={ranges[f.key]}
+                        onChange={(b, v) => setRange(f.key, b, v)}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
 
           <div className="flex gap-2">
             <button
@@ -440,7 +585,35 @@ export default function ScreenerPage() {
               {total.toLocaleString("en-US")} match{total === 1 ? "" : "es"}
               {rows ? ` · showing ${rows.length}` : ""}
             </span>
-            <span className="text-xs">Click a column to sort</span>
+            <div className="flex items-center gap-3">
+              {ios?.profileReady && ios.profile.hasPortfolio && rows && rows.length > 0 && (
+                <button
+                  onClick={() => setFitSort((v) => !v)}
+                  className={`flex items-center gap-1.5 rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
+                    fitSort
+                      ? "border-accent/40 bg-accent/10 text-accent"
+                      : "border-border text-muted hover:border-accent/30 hover:text-accent"
+                  }`}
+                >
+                  ✦ {fitSort ? "Sorted by Fit" : "Sort by Portfolio Fit"}
+                </button>
+              )}
+              <span className="text-xs">Click a column to sort</span>
+              {rows && rows.length > 0 && (
+                <button
+                  onClick={() => {
+                    const date = new Date().toISOString().slice(0, 10);
+                    setExportErr(null);
+                    void downloadBlob("/api/export/screener", `screener-${date}.xlsx`, "POST", { rows })
+                      .catch((e: unknown) => setExportErr(e instanceof Error ? e.message : "Export failed"));
+                  }}
+                  className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1 text-xs font-medium transition-colors hover:bg-surface-2"
+                >
+                  ↓ Export Excel
+                </button>
+              )}
+              {exportErr && <span className="text-xs text-negative">{exportErr}</span>}
+            </div>
           </div>
 
           <div className="overflow-x-auto rounded-xl border border-border">
@@ -458,14 +631,30 @@ export default function ScreenerPage() {
                       className="cursor-pointer select-none px-3 py-3 text-right font-medium hover:text-foreground"
                     >
                       {c.label}
+                      {c.kind === "score" && (
+                        <span className="font-normal text-muted">/100</span>
+                      )}
                       {sortField === c.key ? (sortDir === "desc" ? " ▾" : " ▴") : ""}
                     </th>
                   ))}
+                  {ios?.profileReady && ios.profile.hasPortfolio && (
+                    <th
+                      onClick={() => setFitSort((v) => !v)}
+                      className="cursor-pointer select-none px-3 py-3 text-right font-medium text-accent hover:text-accent/80"
+                    >
+                      Portfolio Fit {fitSort ? "▾" : ""}
+                    </th>
+                  )}
+                  <th className="px-3 py-3 font-medium" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {rows && rows.length > 0 ? (
-                  rows.map((m, i) => (
+                {displayRows && displayRows.length > 0 ? (
+                  displayRows.map((m, i) => {
+                    const fit = ios?.profileReady && ios.profile.hasPortfolio
+                      ? ios.getPortfolioFit({ symbol: m.symbol, sector: m.sector ?? null, marketCap: m.marketCap, compositeScores: m.scores, dividendYield: m.dividendYield })
+                      : null;
+                    return (
                     <tr key={m.symbol} className="bg-surface hover:bg-surface-2">
                       <td className="px-3 py-2.5 text-muted">{i + 1}</td>
                       <td className="px-3 py-2.5">
@@ -483,11 +672,31 @@ export default function ScreenerPage() {
                           <Cell col={c} value={c.get(m)} />
                         </td>
                       ))}
+                      {fit && (
+                        <td className="px-3 py-2.5 text-right">
+                          <PortfolioFitBadge score={fit.fitScore} tier={fit.fitTier} showScore={false} />
+                        </td>
+                      )}
+                      <td className="px-2 py-2.5">
+                        {watchlisted.has(m.symbol) ? (
+                          <span className="text-xs text-positive">✓ Watching</span>
+                        ) : (
+                          <button
+                            onClick={() => void addToWatchlist(m.symbol, m.name ?? m.symbol)}
+                            disabled={watchAdding.has(m.symbol)}
+                            title={`Add ${m.symbol} to watchlist`}
+                            className="rounded-md border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                          >
+                            {watchAdding.has(m.symbol) ? "…" : "+ Watch"}
+                          </button>
+                        )}
+                      </td>
                     </tr>
-                  ))
+                    );
+                  })
                 ) : (
                   <tr>
-                    <td colSpan={4 + COLUMNS.length} className="px-4 py-10 text-center text-sm text-muted">
+                    <td colSpan={4 + COLUMNS.length + (ios?.profile.hasPortfolio ? 1 : 0)} className="px-4 py-10 text-center text-sm text-muted">
                       {status?.stage === "building"
                         ? "Building the dataset… results will appear as companies are analyzed."
                         : loading
@@ -511,7 +720,7 @@ export default function ScreenerPage() {
           ) : null}
         </section>
       </div>
-    </main>
+    </div>
   );
 }
 
@@ -587,6 +796,17 @@ function relativeTime(iso: string | null): string {
   const hrs = Math.round(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.round(hrs / 24)}d ago`;
+}
+
+function nlChipLabel(key: string, val: { min?: number | null; max?: number | null }): string {
+  const humanKey = key.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase()).trim();
+  const isPct = /growth|yield|margin|roe|roa|payout|change/i.test(key);
+  const isBillions = /marketcap/i.test(key);
+  const fmt = (n: number) => isBillions ? `$${n}B` : isPct ? `${n}%` : String(n);
+  if (val.min != null && val.max != null) return `${humanKey}: ${fmt(val.min)}–${fmt(val.max)}`;
+  if (val.min != null) return `${humanKey} ≥ ${fmt(val.min)}`;
+  if (val.max != null) return `${humanKey} ≤ ${fmt(val.max)}`;
+  return humanKey;
 }
 
 function RangeRow({

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { indianDeepAnalysis, indianChatWithData } from "@/lib/ai-research";
+import { indianDeepAnalysis, indianChatWithData, indianSectionInsight } from "@/lib/ai-research";
+import type { IndianInsightSection } from "@/lib/ai-research";
 import type { Quote } from "@/lib/types";
 import type { ScreenerInCompany } from "@/lib/screener-in";
 
@@ -8,7 +9,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 interface IndiaAiRequest {
-  mode: "analysis" | "chat";
+  mode: "analysis" | "chat" | "insight";
   company: ScreenerInCompany;
   quote: Quote | null;
   derived: {
@@ -25,12 +26,15 @@ interface IndiaAiRequest {
   // chat mode
   history?: { role: "user" | "assistant"; content: string }[];
   question?: string;
+  // insight mode
+  section?: IndianInsightSection;
 }
 
 /**
  * POST /api/ai/india
  * mode=analysis → structured research note for Indian stock (screener.in data)
  * mode=chat     → freeform Q&A grounded in screener.in data
+ * mode=insight  → concise "so what" for a specific page section
  */
 export async function POST(request: Request) {
   let body: IndiaAiRequest;
@@ -55,10 +59,39 @@ export async function POST(request: Request) {
       const result = await indianChatWithData({
         company: body.company,
         derived: body.derived,
-        quote: body.quote ?? { symbol: body.company.symbol, name: body.company.name, price: body.company.currentPrice ?? 0, previousClose: 0, change: 0, changePercent: body.company.changePercent ?? 0, currency: "INR", marketCap: null, peRatio: body.company.pe, dayHigh: body.company.high52w, dayLow: body.company.low52w, fiftyTwoWeekHigh: body.company.high52w, fiftyTwoWeekLow: body.company.low52w, volume: null, exchange: "NSE" },
+        quote: body.quote ?? {
+          symbol: body.company.symbol,
+          name: body.company.name,
+          price: body.company.currentPrice ?? 0,
+          previousClose: 0,
+          change: 0,
+          changePercent: body.company.changePercent ?? 0,
+          currency: "INR",
+          marketCap: null,
+          peRatio: body.company.pe,
+          dayHigh: body.company.high52w,
+          dayLow: body.company.low52w,
+          fiftyTwoWeekHigh: body.company.high52w,
+          fiftyTwoWeekLow: body.company.low52w,
+          volume: null,
+          exchange: "NSE",
+        },
         screenerIn: body.company,
         history: body.history ?? [],
         question: body.question,
+      });
+      return NextResponse.json(result);
+    }
+
+    if (body.mode === "insight") {
+      if (!body.section) {
+        return NextResponse.json({ error: "section is required for insight mode" }, { status: 400 });
+      }
+      const result = await indianSectionInsight({
+        section: body.section,
+        company: body.company,
+        derived: body.derived,
+        quote: body.quote,
       });
       return NextResponse.json(result);
     }

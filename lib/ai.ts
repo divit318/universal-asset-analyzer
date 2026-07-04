@@ -39,9 +39,9 @@ function activeProvider(): AiProvider {
 /** Call Ollama cloud (/api/chat) or local (/api/generate) and return text. */
 async function callOllama(
   prompt: string,
-  opts: { maxTokens?: number; json?: boolean; cloud: boolean },
+  opts: { maxTokens?: number; json?: boolean; cloud: boolean; model?: string },
 ): Promise<string> {
-  const model = process.env.OLLAMA_MODEL ?? "llama3.2";
+  const model = opts.model ?? process.env.OLLAMA_MODEL ?? "llama3.2";
   const userContent = opts.json
     ? `${prompt}\n\nRespond ONLY with valid JSON. No markdown, no explanation.`
     : prompt;
@@ -78,6 +78,7 @@ async function callOllama(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model, prompt: userContent, stream: false }),
+    signal: AbortSignal.timeout(90_000),
   });
   if (!res.ok) throw new Error(`Ollama local error (${res.status})`);
   const data = (await res.json()) as { response?: string; error?: string };
@@ -130,7 +131,7 @@ export async function analyzeAsset(input: AnalysisInput): Promise<AiAnalysis> {
 /** Run an arbitrary prompt through the configured provider. Returns raw text. */
 export async function runPrompt(
   prompt: string,
-  opts: { maxTokens?: number; json?: boolean } = {},
+  opts: { maxTokens?: number; json?: boolean; model?: string } = {},
 ): Promise<string> {
   const provider = activeProvider();
 

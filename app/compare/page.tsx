@@ -1,12 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { CompareEntry } from "@/app/api/compare/route";
-import { SymbolSearch } from "@/app/research/_components/symbol-search";
+import { downloadBlob } from "@/lib/download";
+import { SymbolSearch } from "@/app/_components/symbol-search";
 import { CompareRadar } from "./_components/radar-chart";
 import { CompareChart } from "./_components/compare-chart";
 import { formatCurrency, formatMarketCap, formatPercent } from "@/lib/format";
+import { useIOSSafe } from "@/lib/ios-context";
+import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
+import type { PortfolioFitAnalysis } from "@/lib/ios/types";
 
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                   */
@@ -189,27 +193,105 @@ function findWinners(values: (number | null)[], higherBetter: boolean | null): W
 /* Main page                                                                   */
 /* -------------------------------------------------------------------------- */
 
+interface AiComparison {
+  winner?: string;
+  summary?: string;
+  rationale?: string;
+  error?: string;
+  executiveSummary?: string;
+  conditionsForChange?: string;
+  confidenceScore?: number;
+  capitalAllocation?: string;
+  competitivePositioning?: string;
+  riskComparison?: string;
+}
+
+interface CategoryWinner {
+  category: string;
+  symbol: string;
+  color: string;
+}
+
+/** Aggregate metric-level winners within a section into one category winner — no AI, purely derived from already-rendered data. */
+function computeCategoryWinners(sections: SectionDef[], entries: CompareEntry[], colors: string[]): CategoryWinner[] {
+  const out: CategoryWinner[] = [];
+  for (const section of sections) {
+    const winCounts = entries.map(() => 0);
+    for (const metric of section.metrics) {
+      if (metric.higherBetter == null) continue;
+      const values = entries.map((e) => (e.error ? null : metric.getValue(e)));
+      const w = findWinners(values, metric.higherBetter);
+      if (w) winCounts[w.bestIdx]++;
+    }
+    const maxWins = Math.max(...winCounts);
+    if (maxWins === 0) continue;
+    const idx = winCounts.indexOf(maxWins);
+    out.push({ category: section.title, symbol: entries[idx].symbol, color: colors[idx % colors.length] });
+  }
+  return out;
+}
+
 export default function ComparePage() {
   const [symbols, setSymbols] = useState<string[]>([]);
   const [input, setInput] = useState("");
+  const [market, setMarket] = useState<"US" | "IN">("US");
   const [entries, setEntries] = useState<CompareEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [exportErr, setExportErr] = useState<string | null>(null);
   const [openSections, setOpenSections] = useState<Set<string>>(
-    new Set(["Valuation", "Growth", "Quality", "Financial Health"]),
+    new Set(["Portfolio Fit", "Valuation", "Growth", "Quality", "Financial Health", "Momentum", "Analyst Consensus", "Composite Scores"]),
   );
+  const [aiResult, setAiResult] = useState<AiComparison | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const aiAutoTriggered = useRef<string>("");
 
-  // Read initial symbols from URL on mount.
+  // Always-current snapshot for save-on-unmount
+  const _s = useRef({ symbols, market, entries, aiResult });
+  _s.current = { symbols, market, entries, aiResult };
+
+  // Dynamic page title
+  useEffect(() => {
+    if (symbols.length > 0) {
+      document.title = `${symbols.join(" vs ")} · Compare · UAA`;
+    } else {
+      document.title = "Compare · UAA";
+    }
+    return () => { document.title = "Universal Asset Analyzer"; };
+  }, [symbols]);
+
+  // URL deep-link or session restore on mount.
+  // URL params (?symbols=A,B,C or ?a=TICKER) take priority over session.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const syms = params
-      .get("symbols")
-      ?.split(",")
-      .map((s) => s.trim().toUpperCase())
-      .filter(Boolean) ?? [];
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (syms.length > 0) setSymbols(syms);
+    const singleTicker = params.get("a")?.trim().toUpperCase();
+    const urlSyms = singleTicker
+      ? [singleTicker]
+      : (params.get("symbols")?.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean) ?? []);
+
+    if (urlSyms.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSymbols(urlSyms);
+    } else {
+      // No URL params — restore from session (cleared on tab close)
+      try {
+        const raw = sessionStorage.getItem("uaa_compare_state");
+        if (raw) {
+          const st = JSON.parse(raw) as { symbols?: string[]; market?: "US" | "IN"; entries?: CompareEntry[]; aiResult?: AiComparison };
+          if (st.symbols?.length) setSymbols(st.symbols);
+          if (st.market) setMarket(st.market);
+          if (st.entries?.length) setEntries(st.entries);
+          if (st.aiResult) setAiResult(st.aiResult);
+        }
+      } catch { /* ignore corrupt storage */ }
+    }
   }, []);
+
+  // Save to session immediately when comparison data loads (survives navigation and reload)
+  useEffect(() => {
+    if (!entries.length) return;
+    try { sessionStorage.setItem("uaa_compare_state", JSON.stringify(_s.current)); } catch { /* ignore */ }
+  }, [entries, aiResult]);
 
   const fetchCompare = useCallback(async (syms: string[]) => {
     if (syms.length === 0) return;
@@ -240,11 +322,65 @@ export default function ComparePage() {
     void fetchCompare(symbols);
   }, [symbols, fetchCompare]);
 
+  // Reset auto-trigger when the symbol list changes
+  useEffect(() => {
+    aiAutoTriggered.current = "";
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAiResult(null);
+  }, [symbols]);
+
+  // Auto-trigger AI head-to-head when at least 2 valid entries load for the first time
+  useEffect(() => {
+    const valid = entries.filter((e) => !e.error);
+    if (valid.length < 2 || aiLoading || loading) return;
+    const key = [valid[0].symbol, valid[1].symbol].sort().join("-");
+    if (aiAutoTriggered.current === key) return;
+    aiAutoTriggered.current = key;
+    void fetchAiVerdict(valid[0].symbol, valid[1].symbol);
+  }, [entries, aiLoading, loading]);
+
+  async function fetchAiVerdict(symA: string, symB: string) {
+    setAiLoading(true);
+    setAiResult(null);
+    try {
+      const res  = await fetch("/api/compare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbolA: symA, symbolB: symB }),
+      });
+      const json = await res.json() as AiComparison & {
+        verdict?: string; analysis?: string; winnerRationale?: string;
+        sections?: { verdict?: string; capitalAllocation?: string; competitivePositioning?: string; riskComparison?: string };
+      };
+      // API returns various shapes — normalise
+      setAiResult({
+        winner:   json.winner   ?? undefined,
+        summary:  json.summary  ?? json.sections?.verdict ?? json.verdict  ?? undefined,
+        rationale: json.rationale ?? json.winnerRationale ?? json.analysis ?? undefined,
+        error:    !res.ok ? (json.error ?? "AI analysis failed") : undefined,
+        executiveSummary: json.executiveSummary ?? undefined,
+        conditionsForChange: json.conditionsForChange ?? undefined,
+        confidenceScore: json.confidenceScore ?? undefined,
+        capitalAllocation: json.capitalAllocation ?? json.sections?.capitalAllocation ?? undefined,
+        competitivePositioning: json.competitivePositioning ?? json.sections?.competitivePositioning ?? undefined,
+        riskComparison: json.riskComparison ?? json.sections?.riskComparison ?? undefined,
+      });
+    } catch (err) {
+      setAiResult({ error: err instanceof Error ? err.message : "AI analysis failed" });
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
   function addSymbol(sym: string) {
     const upper = sym.trim().toUpperCase();
-    if (!upper || symbols.includes(upper) || symbols.length >= MAX) return;
-    setSymbols((prev) => [...prev, upper]);
+    if (!upper || symbols.length >= MAX) return;
+    const withSuffix = market === "IN" && !upper.endsWith(".NS") && !upper.endsWith(".BO")
+      ? `${upper}.NS` : upper;
+    if (symbols.includes(withSuffix)) return;
+    setSymbols((prev) => [...prev, withSuffix]);
     setInput("");
+    setAiResult(null);
   }
 
   function removeSymbol(sym: string) {
@@ -267,41 +403,85 @@ export default function ComparePage() {
 
   const validEntries = entries.filter((e) => !e.error);
 
+  // IOS — portfolio fit per entry
+  const ios = useIOSSafe();
+  const fitScores = useMemo<PortfolioFitAnalysis[]>(() => {
+    if (!ios || !ios.profileReady) return [];
+    return validEntries.map((e) =>
+      ios.getPortfolioFit({
+        symbol: e.symbol,
+        sector: e.snapshot?.sector ?? null,
+        marketCap: e.quote?.marketCap ?? null,
+        scoreResult: e.score ?? null,
+        dividendYield: e.snapshot?.dividendYield != null ? e.snapshot.dividendYield * 100 : null,
+      }),
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ios?.profile.builtAt, ios?.profileReady, validEntries.length]);
+
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-10">
+    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-10">
       {/* Page header */}
       <div className="flex items-end justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Comparer</h1>
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-semibold tracking-tight">Stock Comparison</h1>
+            <span className="rounded-full border border-border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-muted">
+              Up to {MAX} stocks
+            </span>
+          </div>
           <p className="text-sm text-muted">
-            Side-by-side fundamentals for up to {MAX} stocks. Green = best on that metric, red = worst.
+            Side-by-side valuation, growth, quality, momentum, and analyst consensus. Green = best on metric, red = worst.
           </p>
         </div>
         {symbols.length > 0 && (
-          <button
-            onClick={copyUrl}
-            className="shrink-0 rounded-lg border border-border px-3 py-2 text-xs transition-colors hover:bg-surface-2"
-          >
-            Copy link ↗
-          </button>
+          <div className="flex items-center gap-2">
+            {validEntries.length > 0 && (
+              <button
+                onClick={() => {
+                  setExportErr(null);
+                  void downloadBlob("/api/export/compare", `compare-${validEntries.map((e) => e.symbol).join("-")}-${new Date().toISOString().slice(0, 10)}.xlsx`, "POST", { entries: validEntries })
+                    .catch((e: unknown) => setExportErr(e instanceof Error ? e.message : "Export failed"));
+                }}
+                className="shrink-0 rounded-lg border border-border px-3 py-2 text-xs font-medium transition-colors hover:bg-surface-2"
+              >
+                ↓ Export Excel
+              </button>
+            )}
+            {exportErr && <span className="text-xs text-negative">{exportErr}</span>}
+            <button
+              onClick={copyUrl}
+              className="shrink-0 rounded-lg border border-border px-3 py-2 text-xs transition-colors hover:bg-surface-2"
+            >
+              Copy link ↗
+            </button>
+          </div>
         )}
       </div>
 
       {/* Symbol input row */}
-      <div className="flex gap-2">
-        <SymbolSearch
-          value={input}
-          onChange={setInput}
-          onSelect={addSymbol}
-          loading={loading}
-        />
-        <button
-          onClick={() => addSymbol(input)}
-          disabled={!input.trim() || symbols.length >= MAX}
-          className="shrink-0 rounded-lg bg-accent-strong px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
-          Add
-        </button>
+      <div className="flex flex-col gap-1">
+        <div className="flex gap-2">
+          {/* US / India market toggle */}
+          <div className="flex overflow-hidden rounded-lg border border-border text-xs font-medium">
+            <button onClick={() => setMarket("US")}
+              className={`px-3 py-2 transition-colors ${market === "US" ? "bg-accent-strong text-background" : "hover:bg-surface-2"}`}>
+              🇺🇸 US
+            </button>
+            <button onClick={() => setMarket("IN")}
+              className={`px-3 py-2 transition-colors ${market === "IN" ? "bg-accent-strong text-background" : "hover:bg-surface-2"}`}>
+              🇮🇳 India
+            </button>
+          </div>
+          <SymbolSearch value={input} onChange={setInput} onSelect={addSymbol} loading={loading} />
+          <button onClick={() => addSymbol(input)} disabled={!input.trim() || symbols.length >= MAX}
+            className="shrink-0 rounded-lg bg-accent-strong px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50">
+            Add
+          </button>
+        </div>
+        {market === "IN" && (
+          <p className="text-xs text-muted">India mode — symbols will get <code className="font-mono">.NS</code> (NSE) suffix automatically. Use .BO for BSE.</p>
+        )}
       </div>
 
       {/* Active symbol chips */}
@@ -344,18 +524,47 @@ export default function ComparePage() {
       )}
 
       {!loading && symbols.length === 0 && (
-        <div className="rounded-xl border border-border bg-surface p-12 text-center">
-          <p className="text-lg font-medium">Add stocks to compare</p>
-          <p className="mt-1 text-sm text-muted">Try AAPL, MSFT, GOOGL to start.</p>
-          <div className="mt-4 flex justify-center gap-2 flex-wrap">
-            {[["AAPL", "MSFT", "GOOGL"], ["NVDA", "AMD", "INTC"], ["JPM", "BAC", "GS"]].map((group) => (
-              <button
-                key={group.join()}
-                onClick={() => group.forEach((s) => addSymbol(s))}
-                className="rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-surface-2"
-              >
-                {group.join(" · ")}
-              </button>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col items-center gap-5 rounded-xl border border-border bg-surface py-12 text-center">
+            <div className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-2 text-muted">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 3h4v12H3zM11 3h4v12h-4z" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-sm font-semibold">Add 2–5 tickers to compare side by side</p>
+              <p className="mt-1 text-xs text-muted">Fundamentals, momentum, analyst data, and AI verdict across all stocks</p>
+            </div>
+            <div className="flex flex-col items-center gap-2">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Quick start</p>
+              <div className="flex flex-wrap justify-center gap-2">
+                {[
+                  { label: "Big Tech", syms: ["AAPL", "MSFT", "GOOGL", "META"] },
+                  { label: "Semis", syms: ["NVDA", "AMD", "INTC", "TSM"] },
+                  { label: "Banks", syms: ["JPM", "BAC", "GS"] },
+                  { label: "Mag 7", syms: ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN"] },
+                ].map(({ label, syms }) => (
+                  <button
+                    key={label}
+                    onClick={() => syms.forEach((s) => addSymbol(s))}
+                    className="rounded-lg border border-border bg-surface-2 px-4 py-2 text-sm transition-colors hover:border-accent/30 hover:text-accent"
+                  >
+                    {label} <span className="ml-1 font-mono text-xs text-muted">{syms.join(" · ")}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {[
+              { title: "7 metric categories", desc: "Valuation, growth, quality, financial health, momentum, analyst consensus, and composite scores" },
+              { title: "Visual overlays", desc: "Performance chart and radar overlay to spot strengths and weaknesses at a glance" },
+              { title: "AI verdict", desc: "Local AI compares any two stocks head-to-head — winner, rationale, and key differentiators" },
+            ].map(({ title, desc }) => (
+              <div key={title} className="rounded-xl border border-border bg-surface p-4">
+                <p className="text-sm font-semibold">{title}</p>
+                <p className="mt-1 text-xs leading-5 text-muted">{desc}</p>
+              </div>
             ))}
           </div>
         </div>
@@ -363,6 +572,18 @@ export default function ComparePage() {
 
       {!loading && entries.length > 0 && (
         <>
+          {/* Incomplete data banner */}
+          {entries.some((e) => e.error) && (
+            <div className="rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 text-sm">
+              <span className="font-semibold text-yellow-600 dark:text-yellow-400">⚠ Some symbols couldn&apos;t load: </span>
+              {entries.filter((e) => e.error).map((e) => (
+                <span key={e.symbol} className="mr-2 text-yellow-600 dark:text-yellow-400 font-mono">
+                  {e.symbol} ({e.error})
+                </span>
+              ))}
+            </div>
+          )}
+
           {/* Stock header cards */}
           <div
             className="grid gap-3"
@@ -372,6 +593,112 @@ export default function ComparePage() {
               <StockCard key={e.symbol} entry={e} color={COLORS[i % COLORS.length]} colorBg={COLOR_BG[i % COLOR_BG.length]} />
             ))}
           </div>
+
+          {/* Executive Summary — auto-triggered on data load, the decision at a glance */}
+          {validEntries.length >= 2 && (
+            <div className="rounded-xl border border-accent/20 bg-accent/5 p-5">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex flex-col gap-0.5">
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-semibold">Executive Summary</h2>
+                    <span className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-accent">Local AI</span>
+                  </div>
+                  <p className="text-xs text-muted">
+                    {validEntries[0].symbol} vs {validEntries[1].symbol} — which is the better investment, and why
+                  </p>
+                </div>
+                <button
+                  onClick={() => void fetchAiVerdict(validEntries[0].symbol, validEntries[1].symbol)}
+                  disabled={aiLoading}
+                  className="rounded-lg bg-accent-strong px-4 py-2 text-xs font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+                >
+                  {aiLoading ? "Analyzing…" : aiResult ? "Re-analyze" : "Run analysis"}
+                </button>
+              </div>
+              {aiLoading && (
+                <div className="mt-4 flex flex-col gap-2">
+                  {[80, 60, 90, 50].map((w) => (
+                    <div key={w} className="h-2.5 animate-pulse rounded-full bg-surface-2" style={{ width: `${w}%` }} />
+                  ))}
+                  <p className="mt-1 text-xs text-muted">Running Ollama analysis — typically ~30s on a local model…</p>
+                </div>
+              )}
+              {!aiLoading && aiResult && (
+                <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4">
+                  {aiResult.error ? (
+                    <p className="text-sm text-negative">{aiResult.error}</p>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-3 flex-wrap">
+                        {aiResult.winner && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-muted">Winner:</span>
+                            <span className="font-mono text-sm font-semibold text-accent">{aiResult.winner}</span>
+                          </div>
+                        )}
+                        {aiResult.confidenceScore != null && (
+                          <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted">
+                            {aiResult.confidenceScore}% confidence
+                          </span>
+                        )}
+                      </div>
+                      {(aiResult.executiveSummary ?? aiResult.summary) && (
+                        <p className="text-sm leading-6 text-foreground">{aiResult.executiveSummary ?? aiResult.summary}</p>
+                      )}
+                      {aiResult.rationale && <p className="text-sm leading-6 text-muted">{aiResult.rationale}</p>}
+                      {aiResult.conditionsForChange && (
+                        <p className="text-xs leading-5 text-muted">
+                          <span className="font-semibold text-foreground">Would change if: </span>
+                          {aiResult.conditionsForChange}
+                        </p>
+                      )}
+                      {(aiResult.capitalAllocation || aiResult.competitivePositioning) && (
+                        <div className="grid gap-3 border-t border-border/60 pt-3 sm:grid-cols-2">
+                          {aiResult.capitalAllocation && (
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Capital Allocation</p>
+                              <p className="mt-1 text-xs leading-5 text-muted">{aiResult.capitalAllocation}</p>
+                            </div>
+                          )}
+                          {aiResult.competitivePositioning && (
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Competitive Positioning</p>
+                              <p className="mt-1 text-xs leading-5 text-muted">{aiResult.competitivePositioning}</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+              {!aiLoading && !aiResult && (
+                <p className="mt-3 text-xs text-muted">Analyzing {validEntries[0].symbol} vs {validEntries[1].symbol} — generating win conditions, risks, and a recommended lean…</p>
+              )}
+            </div>
+          )}
+
+          {/* Winner by category — deterministic, derived from the metric table below (no AI) */}
+          {validEntries.length >= 2 && (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface px-4 py-3">
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60 shrink-0">Winner by category</span>
+              {computeCategoryWinners(
+                SECTIONS.filter((s) => ["Valuation", "Growth", "Quality", "Financial Health", "Momentum"].includes(s.title)),
+                validEntries,
+                COLORS,
+              ).map((w) => (
+                <span key={w.category} className="rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px]">
+                  <span className="text-muted">{w.category}: </span>
+                  <span className="font-mono font-semibold" style={{ color: w.color }}>{w.symbol}</span>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Risk comparison */}
+          {validEntries.some((e) => e.risks?.length) && (
+            <RiskComparisonSection entries={validEntries} colors={COLORS} />
+          )}
 
           {/* Performance chart */}
           {validEntries.length >= 2 && (
@@ -385,6 +712,19 @@ export default function ComparePage() {
 
           {/* Radar chart */}
           {validEntries.length >= 2 && <CompareRadar entries={validEntries} />}
+
+          {/* Portfolio Fit — IOS personalized comparison */}
+          {ios?.profileReady && fitScores.length > 0 && !fitScores[0].isGeneric && (
+            <PortfolioFitSection
+              entries={validEntries}
+              fits={fitScores}
+              open={openSections.has("Portfolio Fit")}
+              onToggle={() => toggleSection("Portfolio Fit")}
+              missingSectors={ios.profile.missingSectors}
+              overweightSectors={ios.profile.overweightSectors}
+              objective={ios.profile.objective}
+            />
+          )}
 
           {/* Metric table */}
           <div className="flex flex-col gap-3">
@@ -400,7 +740,7 @@ export default function ComparePage() {
           </div>
         </>
       )}
-    </main>
+    </div>
   );
 }
 
@@ -418,7 +758,7 @@ function StockCard({ entry, color, colorBg }: { entry: CompareEntry; color: stri
     );
   }
 
-  const { quote, score, analyst } = entry;
+  const { quote, score, analyst, opportunity } = entry;
   const pos = (quote?.changePercent ?? 0) >= 0;
 
   return (
@@ -433,6 +773,12 @@ function StockCard({ entry, color, colorBg }: { entry: CompareEntry; color: stri
             {entry.symbol}
           </Link>
           <p className="mt-0.5 truncate text-xs text-muted">{entry.name}</p>
+          <Link
+            href={`/intelligence?view=timeline&scope=symbol&id=${encodeURIComponent(entry.symbol)}`}
+            className="mt-1 inline-block text-[10px] text-muted underline-offset-2 hover:text-accent hover:underline"
+          >
+            View timeline →
+          </Link>
         </div>
         {analyst?.recommendationKey && (
           <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${recColor(analyst.recommendationKey)}`}>
@@ -440,6 +786,15 @@ function StockCard({ entry, color, colorBg }: { entry: CompareEntry; color: stri
           </span>
         )}
       </div>
+
+      {opportunity && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold text-accent">
+            {opportunity.opportunityScore}/100 · {opportunity.conviction}
+          </span>
+          <span className="text-[10px] text-muted">{opportunity.categoryLabel}</span>
+        </div>
+      )}
 
       {quote && (
         <div className="mt-3">
@@ -585,4 +940,220 @@ function MetricRow({ metric, entries }: { metric: MetricDef; entries: CompareEnt
 
 function section_is_scores(metric: MetricDef): boolean {
   return metric.format === score100;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Portfolio Fit section — IOS personalized comparison                        */
+/* -------------------------------------------------------------------------- */
+
+function PortfolioFitSection({
+  entries,
+  fits,
+  open,
+  onToggle,
+  missingSectors = [],
+  overweightSectors = [],
+  objective = "",
+}: {
+  entries: CompareEntry[];
+  fits: PortfolioFitAnalysis[];
+  open: boolean;
+  onToggle: () => void;
+  missingSectors?: string[];
+  overweightSectors?: string[];
+  objective?: string;
+}) {
+  const bestIdx = fits.reduce(
+    (best, f, i) => (f.fitScore > (fits[best]?.fitScore ?? -1) ? i : best),
+    0,
+  );
+
+  const bestFit  = fits[bestIdx];
+  const bestEntry = entries[bestIdx];
+
+  // Synthesize a personalized narrative for the winner.
+  function buildWinnerNarrative(): string | null {
+    if (!bestFit || !bestEntry) return null;
+    const parts: string[] = [`${bestEntry.symbol} is your best portfolio fit (${bestFit.fitScore}/100).`];
+    if (bestFit.reasons[0]) parts.push(bestFit.reasons[0]);
+    const filledSector = missingSectors.find((s) => bestFit.dimensions.sector.score > 65 && bestFit.dimensions.sector.message?.includes(s));
+    if (filledSector) parts.push(`Fills your missing ${filledSector} gap.`);
+    if (overweightSectors.some((s) => bestFit.dimensions.sector.message?.includes(s))) {
+      parts.push(`Note: your portfolio already has concentration in ${overweightSectors[0]}.`);
+    }
+    if (bestFit.suggestedAllocationPct && bestFit.suggestedAllocationPct > 0) {
+      parts.push(`Suggested allocation: ${bestFit.suggestedAllocationPct.toFixed(1)}%.`);
+    }
+    return parts.join(" ");
+  }
+
+  const winnerNarrative = buildWinnerNarrative();
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-accent/20 bg-accent/3">
+      <button
+        onClick={onToggle}
+        className="flex w-full items-center justify-between bg-accent/5 px-4 py-3 text-left"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold">Portfolio Fit</span>
+          <span className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-accent">
+            IOS
+          </span>
+          <span className="text-[11px] text-muted">
+            {objective ? `${objective.replace(/_/g, " ")} objective · ` : ""}personalised to your portfolio
+          </span>
+        </div>
+        <span className="text-muted">{open ? "−" : "+"}</span>
+      </button>
+
+      {/* Winner narrative — always visible when section is rendered */}
+      {winnerNarrative && (
+        <div className="border-t border-border/50 bg-accent/5 px-4 py-2.5">
+          <p className="text-[11px] text-foreground/80 leading-4">{winnerNarrative}</p>
+        </div>
+      )}
+
+      {open && (
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-t border-border bg-surface">
+              <th className="px-4 py-2.5 text-left text-xs font-medium text-muted w-44">Metric</th>
+              {entries.map((e, i) => (
+                <th
+                  key={e.symbol}
+                  className="px-4 py-2.5 text-right text-xs font-mono font-bold"
+                  style={{ color: COLORS[i % COLORS.length] }}
+                >
+                  {e.symbol}
+                  {i === bestIdx && (
+                    <span className="ml-1 text-[9px] text-accent">★ Best fit</span>
+                  )}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {/* Fit score row */}
+            <tr className="bg-surface">
+              <td className="px-4 py-2.5">
+                <span className="text-xs text-foreground">Portfolio Fit Score</span>
+                <p className="text-[10px] text-muted">0-100 · higher = better fit</p>
+              </td>
+              {fits.map((f, i) => (
+                <td key={i} className={`px-4 py-2.5 text-right ${i === bestIdx ? "bg-green-500/5" : ""}`}>
+                  <PortfolioFitBadge score={f.fitScore} tier={f.fitTier} size="sm" />
+                </td>
+              ))}
+            </tr>
+            {/* Top reason row */}
+            <tr className="bg-surface">
+              <td className="px-4 py-2.5">
+                <span className="text-xs text-foreground">Key Reason</span>
+              </td>
+              {fits.map((f, i) => (
+                <td key={i} className="px-4 py-2.5 text-right text-[10px] text-muted max-w-[160px]">
+                  {f.reasons[0] ?? "—"}
+                </td>
+              ))}
+            </tr>
+            {/* Suggested allocation row */}
+            <tr className="bg-surface">
+              <td className="px-4 py-2.5">
+                <span className="text-xs text-foreground">Suggested Allocation</span>
+              </td>
+              {fits.map((f, i) => (
+                <td key={i} className="px-4 py-2.5 text-right font-mono text-xs">
+                  {f.suggestedAllocationPct > 0 ? `${f.suggestedAllocationPct.toFixed(1)}%` : "—"}
+                </td>
+              ))}
+            </tr>
+            {/* Sector dimension */}
+            <tr className="bg-surface">
+              <td className="px-4 py-2.5">
+                <span className="text-xs text-foreground">Sector Fit</span>
+              </td>
+              {fits.map((f, i) => (
+                <td key={i} className="px-4 py-2.5 text-right font-mono text-xs">
+                  <span className={f.dimensions.sector.score >= 65 ? "text-green-400" : f.dimensions.sector.score >= 45 ? "text-amber-400" : "text-red-400"}>
+                    {f.dimensions.sector.score}
+                  </span>
+                  <span className="ml-1 text-[10px] text-muted">/100</span>
+                </td>
+              ))}
+            </tr>
+            {/* Objective alignment */}
+            <tr className="bg-surface">
+              <td className="px-4 py-2.5">
+                <span className="text-xs text-foreground">Objective Alignment</span>
+              </td>
+              {fits.map((f, i) => (
+                <td key={i} className="px-4 py-2.5 text-right font-mono text-xs">
+                  <span className={f.dimensions.objective.score >= 65 ? "text-green-400" : f.dimensions.objective.score >= 45 ? "text-amber-400" : "text-red-400"}>
+                    {f.dimensions.objective.score}
+                  </span>
+                  <span className="ml-1 text-[10px] text-muted">/100</span>
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Risk comparison — reuses assessRisks() output already computed server-side  */
+/* -------------------------------------------------------------------------- */
+
+const RISK_LEVEL_STYLE: Record<string, string> = {
+  low: "text-green-400",
+  medium: "text-amber-400",
+  high: "text-red-400",
+};
+
+function RiskComparisonSection({ entries, colors }: { entries: CompareEntry[]; colors: string[] }) {
+  const categories = [...new Set(entries.flatMap((e) => (e.risks ?? []).map((r) => r.category)))];
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-border">
+      <div className="flex items-center justify-between bg-surface-2 px-4 py-3">
+        <span className="text-sm font-semibold">Risk Comparison</span>
+      </div>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-t border-border bg-surface">
+            <th className="px-4 py-2.5 text-left text-xs font-medium text-muted w-32">Category</th>
+            {entries.map((e, i) => (
+              <th key={e.symbol} className="px-4 py-2.5 text-right text-xs font-mono font-bold" style={{ color: colors[i % colors.length] }}>
+                {e.symbol}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {categories.map((cat) => (
+            <tr key={cat} className="bg-surface">
+              <td className="px-4 py-2.5 text-xs text-foreground">{cat}</td>
+              {entries.map((e) => {
+                const r = (e.risks ?? []).find((x) => x.category === cat);
+                return (
+                  <td key={e.symbol} className="px-4 py-2.5 text-right">
+                    {r ? (
+                      <span className={`text-[11px] ${RISK_LEVEL_STYLE[r.level] ?? "text-muted"}`} title={r.reason}>
+                        {r.level} — {r.reason}
+                      </span>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }

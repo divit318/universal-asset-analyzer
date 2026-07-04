@@ -12,6 +12,7 @@
  */
 
 import { runPrompt } from "./ai";
+import { extractJson } from "./json-extract";
 import type { FundamentalsSnapshot, FinancialStatements, AnalystConsensus } from "./types";
 import type { ScreenerInCompany } from "./screener-in";
 
@@ -477,8 +478,7 @@ Return as JSON:
 
   try {
     const raw = await runPrompt(prompt, { maxTokens: 2000, json: true });
-    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    return JSON.parse(cleaned) as ValuationResult;
+    return extractJson<ValuationResult>(raw);
   } catch {
     const px = currentPrice ?? snapshot.price;
     const analystTarget = analyst.targetMean;

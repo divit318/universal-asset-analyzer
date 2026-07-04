@@ -11,6 +11,7 @@ import type {
   FundamentalsSnapshot,
   HistoryPoint,
   InsiderActivity,
+  SectorRotationEntry,
 } from "@/lib/types";
 
 const snap = (o: Partial<FundamentalsSnapshot> = {}): FundamentalsSnapshot => ({
@@ -67,17 +68,60 @@ const insider = (o: Partial<InsiderActivity> = {}): InsiderActivity => ({
   ...o,
 });
 
+const sectorEntry = (o: Partial<SectorRotationEntry> = {}): SectorRotationEntry => ({
+  sector: "Technology",
+  etfTicker: "XLK",
+  returns: { "1w": 1, "1m": 4, "3m": 9, "6m": 15 },
+  relativeStrength: 2.5,
+  momentum: 1.2,
+  rank: 2,
+  rankChange: 1,
+  classification: "leading",
+  ...o,
+});
+
 describe("computeScore", () => {
-  it("buckets max out at 30/25/25/20 = 100", () => {
+  it("the original 4 fundamental buckets still max out at 30/25/25/20 = 100 (unaffected by the new buckets)", () => {
     const r = computeScore(snap(), null, analyst());
-    const maxes = r.buckets.map((b) => b.max);
+    const original = r.buckets.filter((b) => b.name !== "Capital Allocation" && b.name !== "Sector Rotation");
+    const maxes = original.map((b) => b.max);
     expect(maxes).toEqual([30, 25, 25, 20]);
     expect(maxes.reduce((a, b) => a + b)).toBe(100);
+    expect(r.total).toBe(original.reduce((s, b) => s + b.points, 0));
   });
 
-  it("total equals the sum of bucket points and is within 0-100", () => {
+  it("always includes a Capital Allocation bucket, even without statements or a sector rotation entry", () => {
     const r = computeScore(snap(), null, analyst());
-    expect(r.total).toBe(r.buckets.reduce((s, b) => s + b.points, 0));
+    const capAlloc = r.buckets.find((b) => b.name === "Capital Allocation");
+    expect(capAlloc).toBeDefined();
+    expect(r.signals.capitalAllocation).not.toBeNull();
+    expect(r.buckets.find((b) => b.name === "Sector Rotation")).toBeUndefined();
+    expect(r.signals.sectorRotation).toBeNull();
+  });
+
+  it("adds a Sector Rotation bucket only when a rotation entry is explicitly passed (including null)", () => {
+    const withEntry = computeScore(snap(), null, analyst(), null, sectorEntry());
+    expect(withEntry.buckets.find((b) => b.name === "Sector Rotation")).toBeDefined();
+    expect(withEntry.signals.sectorRotation).not.toBeNull();
+
+    const explicitNull = computeScore(snap(), null, analyst(), null, null);
+    expect(explicitNull.buckets.find((b) => b.name === "Sector Rotation")).toBeDefined();
+    expect(explicitNull.signals.sectorRotation).not.toBeNull(); // degrades to half-credit, not absent
+  });
+
+  it("India weighting leans on fundamentals/sector over analyst consensus vs. the US default", () => {
+    const bearishAnalystOnly = analyst({ upsidePercent: -20, recommendationKey: "sell", strongBuy: 0, buy: 0, hold: 1, sell: 8, strongSell: 5 });
+    const us = computeScore(snap(), null, bearishAnalystOnly, null, sectorEntry(), "US");
+    const india = computeScore(snap(), null, bearishAnalystOnly, null, sectorEntry(), "IN");
+    // Strong fundamentals + bearish analysts: India's lower analyst weight
+    // should let the strong fundamentals pull the composite higher than US's.
+    expect(india.composite).toBeGreaterThan(us.composite);
+  });
+
+  it("total equals the sum of the 4 original bucket points and is within 0-100", () => {
+    const r = computeScore(snap(), null, analyst());
+    const original = r.buckets.filter((b) => b.name !== "Capital Allocation" && b.name !== "Sector Rotation");
+    expect(r.total).toBe(original.reduce((s, b) => s + b.points, 0));
     expect(r.total).toBeGreaterThanOrEqual(0);
     expect(r.total).toBeLessThanOrEqual(100);
   });

@@ -18,6 +18,9 @@ import {
   formatNumber,
   formatPercent,
 } from "../format";
+import { describeOwnership } from "../ownership-insight";
+import { getScannerCache } from "../db";
+import type { MovementExplanation } from "../types";
 import type { CompanyContext, ContextBlock, ResearchIntent } from "./types";
 
 /* -------------------------------------------------------------------------- */
@@ -205,12 +208,80 @@ export function buildBlocks(ctx: CompanyContext): ContextBlock[] {
     ]), 30));
   }
 
-  // Ownership.
-  if (ctx.profile && (ctx.profile.institutionalOwnership != null || ctx.profile.insiderOwnership != null)) {
+  // Ownership — prefers the richer OwnershipData (institutions/insiders/short
+  // interest/top holders) over the profile's bare percentages, and appends
+  // the same deterministic narrative the Ownership tab shows (describeOwnership,
+  // lib/ownership-insight.ts) so the copilot doesn't re-derive its own read.
+  if (ctx.ownership) {
+    const o = ctx.ownership;
+    const narrative = describeOwnership(o);
+    out.push(block("ownership", "yahoo:ownership", "Ownership structure", [
+      lines([
+        ["Institutional", fpct(o.institutionsPctHeld)],
+        ["Insider", fpct(o.insidersPctHeld)],
+        ["Short % of float", fpct(o.shortPctOfFloat)],
+        ["Top holder", o.topHolders[0] ? `${o.topHolders[0].name} (${fpct(o.topHolders[0].pctHeld, 2)})` : "—"],
+      ]),
+      narrative.length ? narrative.map((n) => `- ${n}`).join("\n") : "",
+    ].filter(Boolean).join("\n"), 30));
+  } else if (ctx.profile && (ctx.profile.institutionalOwnership != null || ctx.profile.insiderOwnership != null)) {
     out.push(block("ownership", "yahoo:ownership", "Ownership structure", lines([
       ["Institutional", fpct(ctx.profile.institutionalOwnership != null ? ctx.profile.institutionalOwnership / 100 : null)],
       ["Insider", fpct(ctx.profile.insiderOwnership != null ? ctx.profile.insiderOwnership / 100 : null)],
     ]), 30));
+  }
+
+  // Sector Rotation — this company's sector rank/momentum/classification.
+  if (ctx.sectorRotation) {
+    const sr = ctx.sectorRotation;
+    out.push(block("sectorRotation", "platform:sector-rotation", "Sector Rotation", lines([
+      ["Sector", sr.sector],
+      ["Classification", sr.classification],
+      ["Rank", `#${sr.rank}/11 by relative strength`],
+      ["Relative strength", `${sr.relativeStrength >= 0 ? "+" : ""}${sr.relativeStrength.toFixed(1)}pp vs. sector average`],
+      ["1-month return", sr.returns["1m"] != null ? formatPercent(sr.returns["1m"]) : "—"],
+    ]), 40));
+  }
+
+  // Investment Timeline — most recent milestones.
+  if (ctx.recentTimelineEvents.length) {
+    out.push(block("timeline", "platform:timeline", "Recent Investment Timeline milestones", ctx.recentTimelineEvents
+      .map((e) => `- [${e.timestamp.slice(0, 10)}] ${e.title} (${e.category.replace(/_/g, " ")}, ${e.impact})`)
+      .join("\n"), 35));
+  }
+
+  // Opportunity Map — theme + sibling opportunities, when this symbol was scanned.
+  if (ctx.relatedOpportunities) {
+    const ro = ctx.relatedOpportunities;
+    out.push(block("opportunityMap", "platform:opportunity-map", "Related Opportunities (Opportunity Map)", lines([
+      ["Theme", ro.theme],
+      ["Related symbols", ro.siblings.length ? ro.siblings.join(", ") : "—"],
+    ]), 25));
+  }
+
+  // Knowledge Graph — top related entities.
+  if (ctx.graphNeighbors.length) {
+    out.push(block("knowledgeGraph", "platform:knowledge-graph", "Knowledge Graph — related entities", ctx.graphNeighbors
+      .map((n) => `- ${n.label} (${n.relationship})`)
+      .join("\n"), 25));
+  }
+
+  // Movement Explainer — only if already cached (MovementExplainerCard's
+  // autoLoad on Research already populates this); never trigger a fresh
+  // Ollama generation mid-chat just to populate context.
+  try {
+    const cached = getScannerCache(`movement:symbol:${ctx.symbol}:5`);
+    if (cached) {
+      const exp = JSON.parse(cached) as MovementExplanation;
+      if (exp.drivers.length) {
+        out.push(block("movement", "platform:movement", "Why the stock recently moved", [
+          exp.summary,
+          exp.drivers.map((d) => `- [${d.category}] ${d.description} (${d.direction})`).join("\n"),
+        ].filter(Boolean).join("\n"), 40));
+      }
+    }
+  } catch {
+    /* cache miss or parse failure — just skip the block */
   }
 
   // Platform score — the app's own proprietary view; high priority anchor.
@@ -299,18 +370,18 @@ const INTENT_SECTIONS: Record<ResearchIntent, string[]> = {
   growth: ["growth", "statements", "peers"],
   profitability: ["profitability", "statements", "peers"],
   financialHealth: ["financialHealth", "statements"],
-  competitive: ["peers", "overview", "profitability", "growth"],
+  competitive: ["peers", "overview", "profitability", "growth", "knowledgeGraph"],
   management: ["management", "insider", "ownership", "platformScore"],
   capitalAllocation: ["financialHealth", "statements", "insider", "ownership"],
   risks: ["risks", "financialHealth", "valuation", "statements"],
-  catalysts: ["growth", "analyst", "news", "technical"],
-  thesis: ["platformScore", "valuation", "growth", "profitability", "risks", "analyst"],
+  catalysts: ["growth", "analyst", "news", "technical", "timeline", "sectorRotation", "movement"],
+  thesis: ["platformScore", "valuation", "growth", "profitability", "risks", "analyst", "sectorRotation", "timeline", "movement"],
   earnings: ["statements", "analyst", "growth", "filings"],
   filings: ["filings", "statements"],
   news: ["news", "filings"],
   ownership: ["ownership", "insider"],
-  technical: ["technical", "price"],
-  comparison: ["peers", "valuation", "profitability", "growth"],
+  technical: ["technical", "price", "sectorRotation"],
+  comparison: ["peers", "valuation", "profitability", "growth", "opportunityMap"],
   general: ["platformScore", "valuation", "growth", "risks"],
 };
 

@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
+import { downloadBlob } from "@/lib/download";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -673,6 +674,7 @@ function DetailPanel({ symbol, onClose }: { symbol: string; onClose: () => void 
   }, [symbol]);
 
   // Load on mount
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [load]);
 
   const sc = data?.scorecard;
@@ -975,6 +977,7 @@ export default function EnginePage() {
   const [loading, setLoading]         = useState(false);
   const [running, setRunning]         = useState(false);
   const [error, setError]             = useState<string | null>(null);
+  const [exportErr, setExportErr]     = useState<string | null>(null);
   const [runLog, setRunLog]           = useState<string | null>(null);
   const [symbolFilter, setSymbolFilter] = useState("");
   const [signalFilter, setSignalFilter] = useState("ALL");
@@ -992,6 +995,10 @@ export default function EnginePage() {
   const [icBatchRunning, setIcBatchRunning] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Always-current snapshot of filter/sort state for save-on-unmount
+  const _s = useRef({ symbolFilter, signalFilter, sortCol, sortDir, selectedUniverse });
+  _s.current = { symbolFilter, signalFilter, sortCol, sortDir, selectedUniverse };
+
   async function loadOosMetrics() {
     try {
       const res = await fetch("/api/engine/oos-metrics");
@@ -999,7 +1006,33 @@ export default function EnginePage() {
     } catch { /* non-fatal */ }
   }
 
+  useEffect(() => {
+    document.title = "Quant Engine · UAA";
+    return () => { document.title = "Universal Asset Analyzer"; };
+  }, []);
+
   useEffect(() => { void loadOosMetrics(); }, []);
+
+  // Restore filter/sort preferences from session on mount; save on unmount
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("uaa_engine_state");
+      if (raw) {
+        const st = JSON.parse(raw) as { symbolFilter?: string; signalFilter?: string; sortCol?: keyof ScorecardRow; sortDir?: "asc" | "desc"; selectedUniverse?: string };
+        /* eslint-disable react-hooks/set-state-in-effect */
+        if (st.symbolFilter !== undefined) setSymbolFilter(st.symbolFilter);
+        if (st.signalFilter !== undefined) setSignalFilter(st.signalFilter);
+        if (st.sortCol) setSortCol(st.sortCol);
+        if (st.sortDir) setSortDir(st.sortDir);
+        if (st.selectedUniverse) setSelectedUniverse(st.selectedUniverse);
+        /* eslint-enable react-hooks/set-state-in-effect */
+      }
+    } catch { /* ignore corrupt storage */ }
+    return () => {
+      try { sessionStorage.setItem("uaa_engine_state", JSON.stringify(_s.current)); } catch { /* ignore */ }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function loadScorecard() {
     setLoading(true); setError(null);
@@ -1161,18 +1194,26 @@ export default function EnginePage() {
 
   const signals = ["ALL","STRONG_BUY","BUY","HOLD","SELL","STRONG_SELL"];
 
+  const signalDist = scorecard.reduce<Record<string, number>>((acc, r) => {
+    acc[r.signal] = (acc[r.signal] ?? 0) + 1;
+    return acc;
+  }, {});
+
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-12 pb-24">
+    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-10 pb-24">
 
       {/* Header */}
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="flex flex-col gap-2">
-          <p className="font-mono text-xs text-accent">quant/engine</p>
-          <h1 className="text-2xl font-semibold tracking-tight">Systematic Scorecard</h1>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-semibold tracking-tight">Quant Engine</h1>
+            <span className="rounded-full border border-purple-500/30 bg-purple-500/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-purple-400">
+              Systematic
+            </span>
+          </div>
           <p className="text-sm text-muted">
-            10-factor quantitative scoring across Nifty 50, Indian large/mid/small-cap,
-            US markets, ETFs, and mutual funds. Universe fetched live via screener.
-            Click any row for full mathematical working — regime, forecasts, MC valuation.
+            10-factor quantitative scorecard — momentum, quality, value, regime, forecasts, MC valuation.
+            Click any row for full mathematical working. Select rows to run batch IC reports.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -1216,6 +1257,19 @@ export default function EnginePage() {
             className="rounded-lg bg-accent-strong px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50">
             {running ? "Running…" : "Full Run + Forecasts"}
           </button>
+          {scorecard.length > 0 && (
+            <button
+              onClick={() => {
+                setExportErr(null);
+                void downloadBlob("/api/export/engine", `quant-engine-${new Date().toISOString().slice(0, 10)}.xlsx`, "POST", { rows: scorecard })
+                  .catch((e: unknown) => setExportErr(e instanceof Error ? e.message : "Export failed"));
+              }}
+              className="flex items-center gap-1.5 rounded-lg border border-border px-4 py-2 text-sm font-medium transition-colors hover:bg-surface-2"
+            >
+              ↓ Export Excel
+            </button>
+          )}
+          {exportErr && <span className="text-xs text-negative">{exportErr}</span>}
         </div>
       </div>
 
@@ -1297,13 +1351,72 @@ export default function EnginePage() {
             )}
           </div>
           {runLog && (
-            <pre
-              className="max-h-64 overflow-y-auto p-4 text-xs text-muted leading-relaxed"
+            <div
+              className="max-h-64 overflow-y-auto p-3 text-xs flex flex-col gap-0.5"
               ref={(el) => { if (el) el.scrollTop = el.scrollHeight; }}
             >
-              {runLog}
-            </pre>
+              {runLog.split("\n").filter(Boolean).map((line, i) => {
+                const isErr = /error|fail|exception/i.test(line);
+                const isOk  = /done|success|complete|saved|✓/i.test(line);
+                const isWarn = /warn|skip|stale/i.test(line);
+                const icon  = isErr ? "✗" : isOk ? "✓" : isWarn ? "⚠" : "·";
+                const cls   = isErr ? "text-negative" : isOk ? "text-positive" : isWarn ? "text-amber-400" : "text-muted";
+                return (
+                  <div key={i} className={`flex gap-2 font-mono leading-5 ${cls}`}>
+                    <span className="shrink-0 select-none">{icon}</span>
+                    <span className="break-all">{line}</span>
+                  </div>
+                );
+              })}
+            </div>
           )}
+        </div>
+      )}
+
+      {/* Scorecard summary strip */}
+      {scorecard.length > 0 && (
+        <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold">{scorecard.length} stocks scored</span>
+              {scorecard[0]?.date && (
+                <span className="text-xs text-muted">
+                  · {new Date(scorecard[0].date).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                </span>
+              )}
+            </div>
+            {scorecard[0]?.date && (() => {
+              const ageMs = Date.now() - new Date(scorecard[0].date).getTime();
+              const ageH = ageMs / 3_600_000;
+              if (ageH > 24) return <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2.5 py-0.5 text-xs text-amber-400">Stale — {Math.floor(ageH / 24)}d old</span>;
+              return <span className="rounded-full border border-positive/30 bg-positive/10 px-2.5 py-0.5 text-xs text-positive">Fresh</span>;
+            })()}
+          </div>
+          {/* Signal distribution */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Signal distribution</span>
+            {(["STRONG_BUY","BUY","HOLD","SELL","STRONG_SELL"] as const).map((sig) => {
+              const count = signalDist[sig] ?? 0;
+              if (!count) return null;
+              return (
+                <button
+                  key={sig}
+                  onClick={() => setSignalFilter(signalFilter === sig ? "ALL" : sig)}
+                  className={`flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors ${
+                    signalFilter === sig ? `${SIGNAL_BG[sig] ?? ""} ${SIGNAL_COLOR[sig] ?? ""}` : "border-border text-muted hover:bg-surface-2"
+                  }`}
+                >
+                  <span className={signalFilter !== sig ? "text-muted" : SIGNAL_COLOR[sig]}>{sig.replace("_", " ")}</span>
+                  <span className="font-mono">{count}</span>
+                </button>
+              );
+            })}
+            {signalFilter !== "ALL" && (
+              <button onClick={() => setSignalFilter("ALL")} className="text-xs text-accent hover:underline">
+                Show all
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -1418,11 +1531,54 @@ export default function EnginePage() {
           </div>
         </div>
       ) : !loading && !running ? (
-        <div className="rounded-xl border border-border bg-surface p-12 text-center">
-          <p className="text-muted">No scorecard data.</p>
-          <p className="mt-1 text-sm text-muted">
-            Click <strong className="text-foreground">Run Engine</strong> to initialise.
-          </p>
+        <div className="flex flex-col gap-6">
+          {/* Empty state CTA */}
+          <div className="flex flex-col items-center gap-5 rounded-xl border border-border bg-surface py-14 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border bg-surface-2 text-muted">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <circle cx="10" cy="10" r="2.5" />
+              </svg>
+            </div>
+            <div className="flex flex-col gap-2">
+              <p className="text-sm font-semibold">No scorecard for this universe</p>
+              <p className="max-w-sm text-xs leading-5 text-muted">
+                Select a universe and run the engine to score stocks.
+                Fast run takes ~2–5 min. Full run with forecasts takes ~10–20 min.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => void runEngine(true)} disabled={running}
+                className="rounded-lg border border-border px-5 py-2.5 text-sm transition-colors hover:bg-surface-2 disabled:opacity-50">
+                Run Engine (fast)
+              </button>
+              <button onClick={() => void runEngine(false)} disabled={running}
+                className="rounded-lg bg-accent-strong px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50">
+                Full Run + Forecasts
+              </button>
+            </div>
+          </div>
+
+          {/* Pipeline explanation */}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {[
+              { step: "1", title: "Data fetch", desc: "Price history + fundamentals per symbol" },
+              { step: "2", title: "Factor scores", desc: "Momentum, quality, value, low-vol, revision z-scores" },
+              { step: "3", title: "HMM regime", desc: "5-state regime detection (Bull/Bear/Range/Crash/Recovery)" },
+              { step: "4", title: "MC valuation", desc: "50,000-path Monte Carlo DCF per symbol" },
+              { step: "5", title: "Composite", desc: "IC-weighted signal + Kelly fraction" },
+            ].map((s) => (
+              <div key={s.step} className="flex flex-col gap-2 rounded-xl border border-border bg-surface p-4">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface-2 font-mono text-[10px] font-semibold text-muted">
+                    {s.step}
+                  </span>
+                  <span className="text-xs font-semibold text-foreground">{s.title}</span>
+                </div>
+                <p className="text-xs leading-4 text-muted">{s.desc}</p>
+              </div>
+            ))}
+          </div>
         </div>
       ) : null}
 
@@ -1451,6 +1607,6 @@ export default function EnginePage() {
           }}
         />
       )}
-    </main>
+    </div>
   );
 }

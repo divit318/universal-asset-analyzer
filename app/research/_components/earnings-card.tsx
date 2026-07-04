@@ -14,15 +14,17 @@ import {
 } from "recharts";
 import type { EarningsData } from "@/lib/types";
 
-const AXIS = "#9aa3af";
-const GRID = "#272b33";
-const POSITIVE = "#4ade80";
-const NEGATIVE = "#f87171";
-const MUTED = "#9aa3af";
+// Recharts SVG fill/stroke attrs cannot read CSS custom properties; keep hex literals
+// that mirror the design tokens (--muted, --border, --positive, --negative, --surface).
+const AXIS = "#9aa3af";   // --muted
+const GRID = "#272b33";   // --border
+const POSITIVE = "#4ade80"; // --positive
+const NEGATIVE = "#f87171"; // --negative
+const MUTED = "#9aa3af";  // --muted
 
 const TOOLTIP_STYLE = {
-  background: "#14161a",
-  border: "1px solid #272b33",
+  background: "#14161a",  // --surface
+  border: "1px solid #272b33", // --border
   borderRadius: 8,
   fontSize: 12,
   padding: "8px 12px",

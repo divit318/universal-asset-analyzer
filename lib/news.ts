@@ -25,6 +25,16 @@ function isoNow(): string {
   return new Date().toISOString();
 }
 
+/** Parse a date string from an RSS feed without throwing on malformed values. */
+function safeIso(dateStr: string): string {
+  try {
+    const d = new Date(dateStr);
+    return Number.isNaN(d.getTime()) ? isoNow() : d.toISOString();
+  } catch {
+    return isoNow();
+  }
+}
+
 /** Very minimal RSS/Atom parser — extracts <item> blocks without a dependency. */
 function parseRssItems(xml: string): { title: string; link: string; pubDate: string; description: string }[] {
   const items: { title: string; link: string; pubDate: string; description: string }[] = [];
@@ -162,7 +172,7 @@ async function fetchGoogleNews(query: string, limit = 15): Promise<NewsItem[]> {
     headline: i.title,
     source: "Google News",
     url: i.link,
-    publishedAt: new Date(i.pubDate).toISOString(),
+    publishedAt: safeIso(i.pubDate),
     tickers: [],
     summary: i.description || null,
   }));
@@ -185,7 +195,7 @@ async function fetchEconomicTimesNews(limit = 15): Promise<NewsItem[]> {
       headline: i.title,
       source: "Economic Times",
       url: i.link,
-      publishedAt: new Date(i.pubDate).toISOString(),
+      publishedAt: safeIso(i.pubDate),
       tickers: [],
       summary: i.description || null,
     }));
@@ -293,7 +303,7 @@ async function fetchMoneycontrolNews(limit = 15): Promise<NewsItem[]> {
     headline: i.title,
     source: "Moneycontrol",
     url: i.link,
-    publishedAt: new Date(i.pubDate).toISOString(),
+    publishedAt: safeIso(i.pubDate),
     tickers: [],
     summary: i.description || null,
   }));

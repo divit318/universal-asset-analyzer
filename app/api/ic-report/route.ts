@@ -9,6 +9,7 @@
  * Final event: data: {"stage":"done","report":{...}}\n\n
  */
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { getFundamentals } from "@/lib/fundamentals";
@@ -18,9 +19,9 @@ import { getScreenerInCompany } from "@/lib/screener-in";
 import { generateICReport, type ICProgressEvent } from "@/lib/ic-report";
 
 export async function POST(req: Request) {
-  let body: { symbol?: string; exchange?: string };
+  let body: { symbol?: string; exchange?: string; model?: string };
   try {
-    body = (await req.json()) as { symbol?: string; exchange?: string };
+    body = (await req.json()) as { symbol?: string; exchange?: string; model?: string };
   } catch {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
@@ -79,6 +80,7 @@ export async function POST(req: Request) {
             analyst: fundamentals?.analyst,
             insider: fundamentals?.insider,
             screenerIn,
+            model: body.model ?? undefined,
           },
           (event) => {
             send(event);

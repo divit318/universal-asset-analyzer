@@ -56,6 +56,9 @@ export function mapQuote(raw: RawQuote): Quote {
 
 interface RawChartQuote {
   date?: Date | string | null;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
   close?: number | null;
   adjclose?: number | null;
   volume?: number | null;
@@ -64,13 +67,16 @@ interface RawChartQuote {
 /** Map raw chart rows into clean history points, dropping gaps. Pure. */
 export function mapHistory(rows: RawChartQuote[]): HistoryPoint[] {
   return rows
-    .filter((r): r is { date: Date | string; close: number; adjclose?: number | null; volume?: number | null } =>
+    .filter((r): r is { date: Date | string; close: number; open?: number | null; high?: number | null; low?: number | null; adjclose?: number | null; volume?: number | null } =>
       r.close != null && r.date != null,
     )
     .map((r) => ({
       date: new Date(r.date).toISOString().slice(0, 10),
       close: r.close,
-      adjClose: r.adjclose ?? r.close, // fallback to close if adjclose absent
+      adjClose: r.adjclose ?? r.close,
+      ...(r.open != null ? { open: r.open } : {}),
+      ...(r.high != null ? { high: r.high } : {}),
+      ...(r.low != null ? { low: r.low } : {}),
       ...(r.volume != null ? { volume: r.volume } : {}),
     }));
 }

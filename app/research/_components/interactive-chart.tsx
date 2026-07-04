@@ -16,6 +16,7 @@ import {
   YAxis,
 } from "recharts";
 import type { HistoryPoint } from "@/lib/types";
+import { CandleChart } from "./candle-chart";
 
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                  */
@@ -42,7 +43,7 @@ const TOOLTIP_STYLE = {
 /* -------------------------------------------------------------------------- */
 
 type PeriodKey = "1W" | "1M" | "3M" | "6M" | "YTD" | "1Y" | "Max";
-type ChartMode = "price" | "relative";
+type ChartMode = "price" | "candles" | "relative";
 
 interface Benchmarks {
   spy: HistoryPoint[];
@@ -347,7 +348,28 @@ export function InteractiveChart({ symbol, history, benchmarks }: Props) {
             </>
           )}
           <button
-            onClick={() => setMode((m) => (m === "price" ? "relative" : "price"))}
+            onClick={() => setMode("price")}
+            className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+              mode === "price"
+                ? "bg-accent-strong text-background"
+                : "text-muted hover:bg-surface-2 hover:text-foreground"
+            }`}
+          >
+            Line
+          </button>
+          <button
+            onClick={() => setMode("candles")}
+            className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+              mode === "candles"
+                ? "bg-accent-strong text-background"
+                : "text-muted hover:bg-surface-2 hover:text-foreground"
+            }`}
+          >
+            Candles
+          </button>
+          <span className="h-4 w-px bg-border" />
+          <button
+            onClick={() => setMode((m) => (m === "relative" ? "price" : "relative"))}
             className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
               mode === "relative"
                 ? "bg-blue-500/20 text-blue-400"
@@ -481,6 +503,11 @@ export function InteractiveChart({ symbol, history, benchmarks }: Props) {
         </>
       )}
 
+      {/* ── Candles mode ─────────────────────────────────────────────────── */}
+      {mode === "candles" && (
+        <CandleChart history={history} since={since} />
+      )}
+
       {/* ── Relative performance mode ─────────────────────────────────────── */}
       {mode === "relative" && (
         <ResponsiveContainer width="100%" height={320}>
@@ -551,7 +578,7 @@ export function InteractiveChart({ symbol, history, benchmarks }: Props) {
       )}
 
       {/* ── Period performance footer ─────────────────────────────────────── */}
-      {periodLabel && (
+      {periodLabel && mode !== "candles" && (
         <div className="flex items-center justify-between border-t border-border pt-2.5 text-xs">
           <span className="text-muted">
             {period === "Max" ? "All-time" : period} performance

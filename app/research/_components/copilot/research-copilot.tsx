@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { RESEARCH_ACTIONS } from "@/lib/ai/actions";
 import { Message } from "./message";
 import { useCopilot } from "./use-copilot";
+import type { PortfolioContextForAI } from "@/lib/ai/types";
 
 /**
  * The persistent AI Equity Research Copilot. It stays attached to the currently
@@ -12,7 +13,14 @@ import { useCopilot } from "./use-copilot";
  * research actions, free-form multi-turn chat, streaming answers, grounded
  * citations, and suggested follow-ups. Replaces the old one-click "Analyze".
  */
-export function ResearchCopilot({ symbol, name, isEquity = true }: { symbol: string; name: string; isEquity?: boolean }) {
+export function ResearchCopilot({
+  symbol, name, isEquity = true, portfolioContext,
+}: {
+  symbol: string;
+  name: string;
+  isEquity?: boolean;
+  portfolioContext?: PortfolioContextForAI;
+}) {
   const {
     status, messages, error, models, model, setModel,
     reachable, coverage, warnings, suggestions, send, stop, reset,
@@ -31,7 +39,7 @@ export function ResearchCopilot({ symbol, name, isEquity = true }: { symbol: str
     const q = input.trim();
     if (!q || streaming) return;
     setInput("");
-    void send({ question: q });
+    void send({ question: q, portfolioContext });
   }
 
   const installed = models.filter((m) => m.installed);
@@ -55,7 +63,9 @@ export function ResearchCopilot({ symbol, name, isEquity = true }: { symbol: str
             className="rounded-md border border-border bg-surface-2 px-2 py-1 text-xs text-foreground focus:outline-none disabled:opacity-50"
             title="Local Ollama model"
           >
-            {installed.length === 0 ? <option value="">No models</option> : null}
+            {installed.length === 0 ? (
+            <option value="">{reachable ? "No models installed" : "Ollama offline"}</option>
+          ) : null}
             {installed.map((m) => (
               <option key={m.id} value={m.id}>{m.label}</option>
             ))}
@@ -74,7 +84,7 @@ export function ResearchCopilot({ symbol, name, isEquity = true }: { symbol: str
           <button
             key={a.id}
             disabled={streaming || status === "init"}
-            onClick={() => void send({ question: a.instruction, action: a.id, label: a.label })}
+            onClick={() => void send({ question: a.instruction, action: a.id, label: a.label, portfolioContext })}
             className="shrink-0 rounded-full border border-border bg-surface-2 px-3 py-1 text-xs text-foreground transition-colors hover:border-accent hover:text-accent disabled:opacity-40"
           >
             {a.label}

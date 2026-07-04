@@ -191,6 +191,7 @@ async function runAgent(
   domain: AgentDomain,
   questions: InvestigativeQuestion[],
   ctx: AgentContext,
+  model?: string,
 ): Promise<AgentFinding> {
   const config = AGENT_CONFIG[domain];
   const dataContext = buildDataContext(ctx, [domain]);
@@ -210,44 +211,114 @@ ${dataContext}
 QUESTIONS TO INVESTIGATE:
 ${questionList}
 
-Respond as JSON:
+IMPORTANT: Reply with ONLY a raw JSON object. No markdown, no code fences, no explanation before or after. Start your reply with { and end with }.
+
 {
-  "findings": "2-4 paragraphs of integrated findings across all questions. Be specific — cite numbers. Write for a senior investment committee.",
-  "keyInsights": ["3-5 bullet points — the most important actionable insights from your investigation"],
-  "confidence": "high|medium|low — based on data quality and completeness",
-  "dataLimitations": "null or a sentence describing what data is missing that would change your assessment"
+  "findings": "2-4 paragraphs of integrated findings. Be specific — cite numbers. Write for a senior investment committee.",
+  "keyInsights": ["3-5 bullet points — the most important actionable insights"],
+  "confidence": "high|medium|low",
+  "dataLimitations": "null or a sentence describing missing data"
 }`;
 
-  try {
-    const raw = await runPrompt(prompt, { maxTokens: 1000, json: true });
-    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    const parsed = JSON.parse(cleaned) as {
-      findings: string;
-      keyInsights: string[];
-      confidence: "high" | "medium" | "low";
-      dataLimitations: string | null;
-    };
+  const raw = await runPrompt(prompt, { maxTokens: 1200, json: true, model });
 
-    return {
-      agent: domain,
-      agentLabel: config.label,
-      questionsAnswered: questions.length,
-      findings: parsed.findings ?? "",
-      keyInsights: Array.isArray(parsed.keyInsights) ? parsed.keyInsights : [],
-      confidence: parsed.confidence ?? "low",
-      dataLimitations: parsed.dataLimitations ?? null,
-    };
-  } catch {
-    return {
-      agent: domain,
-      agentLabel: config.label,
-      questionsAnswered: questions.length,
-      findings: "Analysis unavailable — AI response could not be parsed.",
-      keyInsights: [],
-      confidence: "low",
-      dataLimitations: "AI response parsing failed.",
-    };
+  // Extract JSON: find the first { ... last } block, tolerating preamble/fences
+  const parsed = extractAgentJson(raw);
+
+  return {
+    agent: domain,
+    agentLabel: config.label,
+    questionsAnswered: questions.length,
+    findings: parsed.findings,
+    keyInsights: parsed.keyInsights,
+    confidence: parsed.confidence,
+    dataLimitations: parsed.dataLimitations,
+  };
+}
+
+/** Extract agent JSON from a raw LLM response, with multiple fallback strategies. */
+function extractAgentJson(raw: string): {
+  findings: string;
+  keyInsights: string[];
+  confidence: "high" | "medium" | "low";
+  dataLimitations: string | null;
+} {
+  // Strategy 1: find the outermost { ... } block
+  const firstBrace = raw.indexOf("{");
+  const lastBrace = raw.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    try {
+      const jsonStr = raw.slice(firstBrace, lastBrace + 1);
+      const parsed = JSON.parse(jsonStr) as {
+        findings?: string;
+        keyInsights?: string[];
+        confidence?: string;
+        dataLimitations?: string | null;
+      };
+      if (parsed.findings) {
+        return {
+          findings: parsed.findings,
+          keyInsights: Array.isArray(parsed.keyInsights) ? parsed.keyInsights : [],
+          confidence: normaliseConfidence(parsed.confidence),
+          dataLimitations: parsed.dataLimitations ?? null,
+        };
+      }
+    } catch { /* fall through */ }
   }
+
+  // Strategy 2: strip all markdown fences and retry
+  const stripped = raw
+    .replace(/```(?:json)?\s*/gi, "")
+    .replace(/```/g, "")
+    .trim();
+  try {
+    const parsed = JSON.parse(stripped) as {
+      findings?: string;
+      keyInsights?: string[];
+      confidence?: string;
+      dataLimitations?: string | null;
+    };
+    if (parsed.findings) {
+      return {
+        findings: parsed.findings,
+        keyInsights: Array.isArray(parsed.keyInsights) ? parsed.keyInsights : [],
+        confidence: normaliseConfidence(parsed.confidence),
+        dataLimitations: parsed.dataLimitations ?? null,
+      };
+    }
+  } catch { /* fall through */ }
+
+  // Strategy 3: extract prose text by aggressively stripping all JSON scaffolding
+  const cleanText = raw
+    .replace(/```(?:json)?\s*/gi, "")
+    .replace(/```/g, "")
+    // Remove trailing JSON fragments: anything from ", "keyInsights": [ onwards
+    .replace(/",?\s*"keyInsights"\s*:\s*\[[\s\S]*$/m, "")
+    .replace(/",?\s*"confidence"\s*:\s*"[^"]*"[\s\S]*$/m, "")
+    .replace(/",?\s*"dataLimitations"\s*:[\s\S]*$/m, "")
+    // Remove leading JSON open and "findings": "
+    .replace(/^\s*\{[\s\S]*?"findings"\s*:\s*"/m, "")
+    // Strip surrounding quotes left after removal
+    .replace(/^"|"$/g, "")
+    // Unescape JSON string escapes
+    .replace(/\\n/g, "\n")
+    .replace(/\\"/g, '"')
+    .trim();
+
+  return {
+    findings: cleanText || "Insufficient data for analysis.",
+    keyInsights: [],
+    confidence: "low",
+    dataLimitations: "AI response format could not be fully parsed.",
+  };
+}
+
+function normaliseConfidence(v?: string): "high" | "medium" | "low" {
+  if (!v) return "low";
+  const s = v.toLowerCase();
+  if (s.includes("high")) return "high";
+  if (s.includes("med")) return "medium";
+  return "low";
 }
 
 /* -------------------------------------------------------------------------- */
@@ -269,6 +340,7 @@ export interface AgentNetworkInput {
 export async function runAgentNetwork(
   input: AgentNetworkInput,
   onAgentComplete?: (finding: AgentFinding) => void,
+  model?: string,
 ): Promise<AgentFinding[]> {
   const ctx: AgentContext = {
     companyName: input.companyName,
@@ -286,7 +358,7 @@ export async function runAgentNetwork(
   // Run all agents in parallel
   const results = await Promise.allSettled(
     entries.map(async ([domain, questions]) => {
-      const finding = await runAgent(domain, questions, ctx);
+      const finding = await runAgent(domain, questions, ctx, model);
       onAgentComplete?.(finding);
       return finding;
     }),

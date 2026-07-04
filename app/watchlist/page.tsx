@@ -1,18 +1,95 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { downloadBlob } from "@/lib/download";
 import type { Quote, WatchlistItem } from "@/lib/types";
+import type { WatchlistDigest } from "@/lib/ai-watchlist";
 import { formatCurrency, formatDate, formatPercent } from "@/lib/format";
+import { Dialog, ConfirmDialog } from "@/app/_components/dialog";
+import { useToast } from "@/app/_components/toast";
+import { useIOSSafe } from "@/lib/ios-context";
+import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
+import { WatchlistAlerts } from "./_components/watchlist-alerts";
 
-/* -------------------------------------------------------------------------- */
-/* Helpers                                                                     */
-/* -------------------------------------------------------------------------- */
+function WatchlistDigestPanel({ digest, loading }: { digest: WatchlistDigest | null; loading: boolean }) {
+  if (loading) {
+    return (
+      <div className="rounded-xl border border-accent/20 bg-accent/5 p-5">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="h-5 w-40 animate-pulse rounded bg-surface-2" />
+          <div className="ml-auto h-4 w-16 animate-pulse rounded-full bg-surface-2" />
+        </div>
+        <div className="space-y-2">
+          {[90, 75, 60].map((w) => (
+            <div key={w} className="h-3 animate-pulse rounded bg-surface-2" style={{ width: `${w}%` }} />
+          ))}
+        </div>
+        <p className="mt-3 text-[11px] text-muted animate-pulse">AI is analyzing your watchlist…</p>
+      </div>
+    );
+  }
+  if (!digest) return null;
+
+  return (
+    <div className="rounded-xl border border-accent/20 bg-accent/5 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-accent/70">AI Watchlist Intelligence</p>
+        <span className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-accent">
+          Local AI
+        </span>
+      </div>
+      <p className="text-sm leading-6 text-foreground/90 mb-4">{digest.summary}</p>
+      {(digest.topPicks.length > 0 || digest.topConcerns.length > 0) && (
+        <div className="grid gap-3 sm:grid-cols-2 mb-4">
+          {digest.topPicks.length > 0 && (
+            <div>
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-green-400/80">Top picks</p>
+              <ul className="space-y-1">
+                {digest.topPicks.map((p, i) => (
+                  <li key={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
+                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-green-400/60" />
+                    {p}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {digest.topConcerns.length > 0 && (
+            <div>
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-red-400/80">Concerns</p>
+              <ul className="space-y-1">
+                {digest.topConcerns.map((c, i) => (
+                  <li key={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
+                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-red-400/60" />
+                    {c}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+      {digest.actionItems.length > 0 && (
+        <div className="border-t border-border pt-3">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted">Action items</p>
+          <ul className="space-y-1">
+            {digest.actionItems.map((a, i) => (
+              <li key={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
+                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent/60" />
+                {a}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function daysAgo(iso: string): number {
   return Math.floor((Date.now() - Date.parse(iso)) / 86_400_000);
 }
-
 function formatDaysAgo(iso: string): string {
   const d = daysAgo(iso);
   if (d === 0) return "today";
@@ -20,45 +97,25 @@ function formatDaysAgo(iso: string): string {
   return `${d}d ago`;
 }
 
-interface Alert {
-  type: "target_reached" | "significant_drop";
-  message: string;
-}
+interface Alert { type: "target_reached" | "significant_drop"; message: string; }
 
 function checkAlerts(item: WatchlistItem, quote: Quote | undefined): Alert[] {
   if (!quote) return [];
   const alerts: Alert[] = [];
-  if (item.targetPrice != null && quote.price >= item.targetPrice) {
-    alerts.push({
-      type: "target_reached",
-      message: `Hit target ${formatCurrency(item.targetPrice)} — now at ${formatCurrency(quote.price)}`,
-    });
-  }
-  if (item.alertPctDrop != null && quote.changePercent <= -item.alertPctDrop) {
-    alerts.push({
-      type: "significant_drop",
-      message: `Down ${formatPercent(Math.abs(quote.changePercent))} today (alert: −${item.alertPctDrop}%)`,
-    });
-  }
+  if (item.targetPrice != null && quote.price >= item.targetPrice)
+    alerts.push({ type: "target_reached", message: `Hit target ${formatCurrency(item.targetPrice)} — now at ${formatCurrency(quote.price)}` });
+  if (item.alertPctDrop != null && quote.changePercent <= -item.alertPctDrop)
+    alerts.push({ type: "significant_drop", message: `Down ${formatPercent(Math.abs(quote.changePercent))} today (alert: −${item.alertPctDrop}%)` });
   return alerts;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Alert editor modal                                                          */
-/* -------------------------------------------------------------------------- */
-
-function AlertModal({
-  item,
-  onSave,
-  onCancel,
-}: {
+function AlertModal({ item, onSave, onCancel }: {
   item: WatchlistItem;
-  onSave: (patch: { targetPrice: number | null; alertPctDrop: number | null; notes: string | null }) => Promise<void>;
+  onSave: (patch: { targetPrice: number | null; alertPctDrop: number | null }) => Promise<void>;
   onCancel: () => void;
 }) {
   const [targetPrice, setTargetPrice] = useState(item.targetPrice != null ? String(item.targetPrice) : "");
   const [alertPctDrop, setAlertPctDrop] = useState(item.alertPctDrop != null ? String(item.alertPctDrop) : "");
-  const [notes, setNotes] = useState(item.notes ?? "");
   const [saving, setSaving] = useState(false);
 
   async function save(e: React.FormEvent) {
@@ -67,83 +124,124 @@ function AlertModal({
     await onSave({
       targetPrice: targetPrice ? parseFloat(targetPrice) : null,
       alertPctDrop: alertPctDrop ? parseFloat(alertPctDrop) : null,
-      notes: notes.trim() || null,
     });
     setSaving(false);
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-sm rounded-xl border border-border bg-surface p-6 shadow-xl">
-        <h2 className="mb-4 text-lg font-semibold">{item.symbol} — Alerts & Notes</h2>
-        <form onSubmit={(e) => void save(e)} className="flex flex-col gap-4">
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted">Price target (alert when reached)</span>
+    <Dialog open title={`${item.symbol} — Price Alerts`} onClose={onCancel} className="max-w-md">
+      <p className="mb-4 text-xs text-muted">
+        Alerts are checked each time you open the watchlist.
+      </p>
+      <form onSubmit={(e) => void save(e)} className="flex flex-col gap-4">
+        <label className="flex flex-col gap-1">
+          <span className="text-xs font-medium text-muted">Price target</span>
+          <span className="text-xs text-muted/70">Alert when price reaches or exceeds this level</span>
+          <input
+            type="number" step="any" min="0" value={targetPrice}
+            onChange={(e) => setTargetPrice(e.target.value)}
+            placeholder="e.g. 200.00"
+            className="rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-sm outline-none placeholder:text-muted focus:border-accent"
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-xs font-medium text-muted">Intraday drop alert</span>
+          <span className="text-xs text-muted/70">
+            Fires when today&apos;s session decline exceeds this percentage (checks today&apos;s change, not from purchase date)
+          </span>
+          <div className="relative">
             <input
-              type="number"
-              step="any"
-              min="0"
-              value={targetPrice}
-              onChange={(e) => setTargetPrice(e.target.value)}
-              placeholder="e.g. 200.00"
-              className="rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-sm outline-none placeholder:text-muted focus:border-accent"
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted">Drop alert (% daily decline to flag)</span>
-            <input
-              type="number"
-              step="0.5"
-              min="0"
-              max="50"
-              value={alertPctDrop}
+              type="number" step="0.5" min="0" max="50" value={alertPctDrop}
               onChange={(e) => setAlertPctDrop(e.target.value)}
               placeholder="e.g. 5"
-              className="rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-sm outline-none placeholder:text-muted focus:border-accent"
+              className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-sm outline-none placeholder:text-muted focus:border-accent"
             />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted">Notes (why you're watching this)</span>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={3}
-              placeholder="Your thesis, price levels to watch, catalyst…"
-              className="resize-none rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none placeholder:text-muted focus:border-accent"
-            />
-          </label>
-          <div className="flex gap-2 pt-1">
-            <button
-              type="submit"
-              disabled={saving}
-              className="flex-1 rounded-lg bg-accent-strong py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-            <button
-              type="button"
-              onClick={onCancel}
-              className="flex-1 rounded-lg border border-border py-2.5 text-sm transition-colors hover:bg-surface-2"
-            >
-              Cancel
-            </button>
+            <span className="pointer-events-none absolute right-3 top-2 text-sm text-muted">%</span>
           </div>
-        </form>
-      </div>
-    </div>
+        </label>
+        <div className="flex gap-2 pt-1">
+          <button
+            type="submit" disabled={saving}
+            className="flex-1 rounded-lg bg-accent-strong py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {saving ? "Saving…" : "Save alerts"}
+          </button>
+          <button
+            type="button" onClick={onCancel}
+            className="flex-1 rounded-lg border border-border py-2.5 text-sm transition-colors hover:bg-surface-2"
+          >
+            Cancel
+          </button>
+        </div>
+      </form>
+    </Dialog>
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* Main page                                                                   */
-/* -------------------------------------------------------------------------- */
+function NotesModal({ item, onSave, onCancel }: {
+  item: WatchlistItem;
+  onSave: (notes: string | null) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [notes, setNotes] = useState(item.notes ?? "");
+  const [saving, setSaving] = useState(false);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    await onSave(notes.trim() || null);
+    setSaving(false);
+  }
+
+  return (
+    <Dialog open title={`${item.symbol} — Research Notes`} onClose={onCancel} className="max-w-md">
+      <p className="mb-4 text-xs text-muted">Your thesis, price levels to watch, catalyst timeline…</p>
+      <form onSubmit={(e) => void save(e)} className="flex flex-col gap-4">
+        <textarea
+          value={notes} onChange={(e) => setNotes(e.target.value)} rows={5}
+          placeholder="Why you're watching this, key levels, upcoming catalysts…"
+          className="resize-none rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none placeholder:text-muted focus:border-accent"
+        />
+        <div className="flex gap-2 pt-1">
+          <button
+            type="submit" disabled={saving}
+            className="flex-1 rounded-lg bg-accent-strong py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {saving ? "Saving…" : "Save notes"}
+          </button>
+          <button
+            type="button" onClick={onCancel}
+            className="flex-1 rounded-lg border border-border py-2.5 text-sm transition-colors hover:bg-surface-2"
+          >
+            Cancel
+          </button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
 
 export default function WatchlistPage() {
   const [items, setItems] = useState<WatchlistItem[]>([]);
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [editing, setEditing] = useState<WatchlistItem | null>(null);
+  const [exportErr, setExportErr] = useState<string | null>(null);
+  const [editingAlerts, setEditingAlerts] = useState<WatchlistItem | null>(null);
+  const [editingNotes, setEditingNotes] = useState<WatchlistItem | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<WatchlistItem | null>(null);
+  const [filter, setFilter] = useState("");
+  const [digest, setDigest] = useState<WatchlistDigest | null>(null);
+  const [digestLoading, setDigestLoading] = useState(false);
+  const digestFetched = useRef(false);
+  const toast = useToast();
+  // IOS — declared early so the digest effect can access portfolio context
+  const ios = useIOSSafe();
+
+  useEffect(() => {
+    document.title = "Watchlist · UAA";
+    return () => { document.title = "Universal Asset Analyzer"; };
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -153,7 +251,6 @@ export default function WatchlistPage() {
       const list = json.items as WatchlistItem[];
       setItems(list);
       setError(null);
-
       if (list.length > 0) {
         const symbols = list.map((i) => i.symbol).join(",");
         const qres = await fetch(`/api/quote?symbols=${encodeURIComponent(symbols)}`);
@@ -173,53 +270,185 @@ export default function WatchlistPage() {
     }
   }, []);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { void load(); }, [load]);
+
+  // Auto-fetch AI watchlist digest once items are loaded.
+  // Passes portfolio context so the digest can warn about actual holdings concentration.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load();
-  }, [load]);
+    if (items.length === 0 || digestFetched.current) return;
+    digestFetched.current = true;
+    setDigestLoading(true);
+    const portfolioContext = ios?.profile.hasPortfolio
+      ? {
+          objective: ios.profile.objective,
+          holdingSymbols: ios.profile.holdingSymbols,
+          sectorWeights: ios.profile.sectorWeights,
+          missingSectors: ios.profile.missingSectors,
+          overweightSectors: ios.profile.overweightSectors,
+        }
+      : undefined;
+    fetch("/api/ai/watchlist", {
+      method: "POST",
+      headers: portfolioContext ? { "Content-Type": "application/json" } : {},
+      body: portfolioContext ? JSON.stringify({ portfolioContext }) : undefined,
+    })
+      .then(async (r) => {
+        const json = await r.json() as WatchlistDigest & { error?: string };
+        if (r.ok && !json.error) setDigest(json);
+      })
+      .catch(() => { /* silent — Ollama offline */ })
+      .finally(() => setDigestLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.length]);
 
   async function remove(symbol: string) {
     setItems((prev) => prev.filter((i) => i.symbol !== symbol));
     await fetch(`/api/watchlist?symbol=${encodeURIComponent(symbol)}`, { method: "DELETE" });
+    toast(`${symbol} removed from watchlist`, "info");
   }
 
-  async function saveAlerts(
-    symbol: string,
-    patch: { targetPrice: number | null; alertPctDrop: number | null; notes: string | null },
-  ) {
+  async function patchItem(symbol: string, patch: { targetPrice?: number | null; alertPctDrop?: number | null; notes?: string | null }) {
     await fetch("/api/watchlist", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ symbol, ...patch }),
     });
     setItems((prev) => prev.map((i) => i.symbol === symbol ? { ...i, ...patch } : i));
-    setEditing(null);
   }
 
-  // Count how many items have active alerts firing right now
+  // IOS — portfolio fit per watchlist item
+  const [fitSort, setFitSort] = useState(false);
+
+  const quoteKeys = Object.keys(quotes).join(",");
+  const fitScores = useMemo(() => {
+    if (!ios?.profileReady) return new Map<string, number>();
+    const map = new Map<string, number>();
+    for (const item of items) {
+      const q = quotes[item.symbol];
+      const fit = ios.getPortfolioFit({
+        symbol: item.symbol,
+        sector: null,
+        marketCap: q?.marketCap ?? null,
+        isOnWatchlist: true,
+      });
+      map.set(item.symbol, fit.fitScore);
+    }
+    return map;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ios?.profile.builtAt, ios?.profileReady, items.length, quoteKeys]);
+
+  const filteredItems = [...items]
+    .filter((i) =>
+      !filter ||
+      i.symbol.toLowerCase().includes(filter.toLowerCase()) ||
+      i.name.toLowerCase().includes(filter.toLowerCase()),
+    )
+    .sort((a, b) => {
+      // When fit sort is active, rank by fit score first
+      if (fitSort && fitScores.size > 0) {
+        const af = fitScores.get(a.symbol) ?? 0;
+        const bf = fitScores.get(b.symbol) ?? 0;
+        if (bf !== af) return bf - af;
+      }
+      const aAlerts = checkAlerts(a, quotes[a.symbol]).length;
+      const bAlerts = checkAlerts(b, quotes[b.symbol]).length;
+      if (bAlerts !== aAlerts) return bAlerts - aAlerts;
+      return Date.parse(b.addedAt) - Date.parse(a.addedAt);
+    });
+
   const alertCount = items.reduce((n, item) => n + checkAlerts(item, quotes[item.symbol]).length, 0);
 
+  const gainers = Object.values(quotes).filter((q) => q.changePercent > 0).length;
+  const losers  = Object.values(quotes).filter((q) => q.changePercent < 0).length;
+  const hasQuotes = Object.keys(quotes).length > 0;
+
   return (
-    <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 px-6 py-12">
-      <div className="flex items-end justify-between gap-4">
-        <div className="flex flex-col gap-2">
+    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-10">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex flex-col gap-1">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-semibold tracking-tight">Watchlist</h1>
-            {alertCount > 0 ? (
-              <span className="rounded-full bg-negative/15 px-2.5 py-0.5 text-xs font-semibold text-negative">
-                {alertCount} alert{alertCount > 1 ? "s" : ""}
+            {alertCount > 0 && (
+              <span className="animate-pulse rounded-full border border-negative/30 bg-negative/15 px-2.5 py-0.5 text-xs font-semibold text-negative">
+                {alertCount} alert{alertCount > 1 ? "s" : ""} firing
               </span>
-            ) : null}
+            )}
           </div>
-          <p className="text-muted">Live prices, price alerts, and your research notes.</p>
+          <p className="text-sm text-muted">
+            Live prices, price targets, and research notes. Alerts check on page load.
+          </p>
         </div>
-        <button
-          onClick={() => { setLoading(true); void load(); }}
-          className="rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-surface-2"
-        >
-          ↻ Refresh
-        </button>
+        <div className="flex flex-wrap gap-2 shrink-0">
+          <Link
+            href="/intelligence?view=timeline&scope=watchlist&id=watchlist"
+            className="flex items-center rounded-lg border border-border px-4 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+          >
+            Timeline
+          </Link>
+          <Link
+            href="/intelligence?view=graph&scope=watchlist&id=watchlist"
+            className="flex items-center rounded-lg border border-border px-4 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+          >
+            Graph
+          </Link>
+          <button
+            onClick={() => { setLoading(true); void load(); }}
+            className="rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-surface-2"
+          >
+            ↻ Refresh
+          </button>
+          <button
+            onClick={() => {
+              setExportErr(null);
+              void downloadBlob("/api/export/watchlist", `watchlist-${new Date().toISOString().slice(0, 10)}.csv`)
+                .catch((e: unknown) => setExportErr(e instanceof Error ? e.message : "Export failed"));
+            }}
+            className="rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-surface-2"
+          >
+            ↓ Export
+          </button>
+        </div>
       </div>
+
+      {/* Summary strip */}
+      {!loading && items.length > 0 && hasQuotes && (
+        <div className="flex flex-wrap items-center gap-4 rounded-xl border border-border bg-surface px-5 py-3">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Watching</span>
+            <span className="font-mono text-sm font-semibold">{items.length}</span>
+          </div>
+          <span className="h-8 w-px bg-border" />
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Today</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-positive">↑ {gainers}</span>
+              <span className="text-xs text-negative">↓ {losers}</span>
+            </div>
+          </div>
+          {alertCount > 0 && (
+            <>
+              <span className="h-8 w-px bg-border" />
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Alerts</span>
+                <span className="text-xs font-semibold text-negative">{alertCount} firing</span>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* AI Watchlist Intelligence — auto-generated on load */}
+      {!loading && items.length > 0 && (digestLoading || digest) && (
+        <WatchlistDigestPanel digest={digest} loading={digestLoading} />
+      )}
+
+      {/* Structured, deterministic per-asset alerts — new opportunities, deterioration, breakouts, sector leadership, valuation */}
+      {!loading && digest && digest.alerts.length > 0 && (
+        <WatchlistAlerts alerts={digest.alerts} />
+      )}
+
+      {exportErr && <p className="text-xs text-negative">{exportErr}</p>}
 
       {error ? (
         <div className="rounded-lg border border-negative/40 bg-negative/10 px-4 py-3 text-sm text-negative">
@@ -227,74 +456,167 @@ export default function WatchlistPage() {
         </div>
       ) : null}
 
-      {loading ? (
-        <p className="text-sm text-muted">Loading…</p>
-      ) : items.length === 0 ? (
-        <div className="rounded-xl border border-border bg-surface p-8 text-center">
-          <p className="text-muted">Your watchlist is empty.</p>
-          <Link href="/research" className="mt-2 inline-block text-sm text-accent hover:underline">
-            Find symbols in Research →
-          </Link>
+      {!loading && items.length > 4 && (
+        <div className="flex gap-2">
+          <input
+            type="search"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter by ticker or name…"
+            className="flex-1 rounded-lg border border-border bg-surface px-4 py-2.5 text-sm outline-none placeholder:text-muted focus:border-accent"
+          />
+          {ios?.profileReady && ios.profile.hasPortfolio && (
+            <button
+              onClick={() => setFitSort((v) => !v)}
+              className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                fitSort
+                  ? "border-accent/40 bg-accent/10 text-accent"
+                  : "border-border text-muted hover:border-accent/30 hover:text-accent"
+              }`}
+            >
+              ✦ {fitSort ? "Sorted by Fit" : "Sort by Portfolio Fit"}
+            </button>
+          )}
         </div>
+      )}
+
+      {loading ? (
+        <div className="flex flex-col gap-3">
+          {[1, 2, 3].map((n) => (
+            <div key={n} className="h-24 animate-pulse rounded-xl border border-border bg-surface" />
+          ))}
+        </div>
+      ) : filteredItems.length === 0 && items.length === 0 ? (
+        <div className="flex flex-col items-center gap-5 rounded-xl border border-border bg-surface py-14 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border bg-surface-2 text-muted">
+            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 3a2 2 0 012-2h6a2 2 0 012 2v14l-5-3-5 3V3z" />
+            </svg>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <p className="text-sm font-semibold">Your watchlist is empty</p>
+            <p className="max-w-xs text-xs leading-5 text-muted">
+              Add symbols from Research or Screener. Set price targets, drop alerts, and thesis notes per position.
+            </p>
+          </div>
+          <div className="flex gap-3">
+            <Link href="/research" className="rounded-lg bg-accent-strong px-5 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90">
+              Research a stock →
+            </Link>
+            <Link href="/screener" className="rounded-lg border border-border px-5 py-2 text-sm transition-colors hover:bg-surface-2">
+              Browse Screener
+            </Link>
+          </div>
+        </div>
+      ) : filteredItems.length === 0 ? (
+        <p className="text-sm text-muted">No items match &ldquo;{filter}&rdquo;</p>
       ) : (
         <ul className="flex flex-col divide-y divide-border overflow-hidden rounded-xl border border-border">
-          {items.map((item) => {
+          {filteredItems.map((item) => {
             const q = quotes[item.symbol];
             const positive = q ? q.changePercent >= 0 : true;
             const alerts = checkAlerts(item, q);
-            const days = daysAgo(item.addedAt);
+            const hasAlert = alerts.length > 0;
 
             return (
-              <li key={item.symbol} className="flex flex-col gap-0 bg-surface">
+              <li
+                key={item.symbol}
+                className={`flex flex-col bg-surface transition-colors ${hasAlert ? "border-l-4 border-l-negative" : ""}`}
+              >
                 {/* Alert banners */}
                 {alerts.map((a) => (
-                  <div key={a.type} className="flex items-center gap-2 border-b border-negative/20 bg-negative/8 px-4 py-1.5">
-                    <span className="text-xs font-semibold text-negative">⚠ Alert:</span>
+                  <div
+                    key={a.type}
+                    className="flex items-center gap-2 border-b border-negative/20 bg-negative/8 px-4 py-1.5"
+                  >
+                    <span className="text-xs font-semibold text-negative">Alert:</span>
                     <span className="text-xs text-negative">{a.message}</span>
                   </div>
                 ))}
 
-                <div className="flex items-start justify-between gap-4 px-4 py-3">
-                  {/* Symbol + name + meta */}
+                <div className="flex items-start justify-between gap-4 px-4 py-4">
+                  {/* Symbol + meta */}
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <Link
-                      href={`/research?symbol=${item.symbol}`}
-                      className="font-mono text-sm font-semibold text-accent hover:underline"
-                    >
-                      {item.symbol}
-                    </Link>
-                    <p className="truncate text-sm text-muted">{item.name}</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Link
+                        href={`/research?symbol=${item.symbol}`}
+                        className="font-mono text-sm font-semibold text-accent hover:underline"
+                      >
+                        {item.symbol}
+                      </Link>
+                      {ios?.profileReady && ios.profile.hasPortfolio && fitScores.has(item.symbol) && (() => {
+                        const score = fitScores.get(item.symbol)!;
+                        const fit = ios.getPortfolioFit({ symbol: item.symbol, sector: null, marketCap: quotes[item.symbol]?.marketCap ?? null, isOnWatchlist: true });
+                        return <PortfolioFitBadge score={score} tier={fit.fitTier} showScore={true} />;
+                      })()}
+                      {hasAlert && (
+                        <span className="rounded-full bg-negative/15 px-1.5 py-0.5 text-[0.6rem] font-bold uppercase tracking-wide text-negative">
+                          Alert
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-muted">{item.name}</p>
+
                     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted">
-                      <span>Watched {formatDaysAgo(item.addedAt)}</span>
+                      <span>Added {formatDaysAgo(item.addedAt)}</span>
                       {item.targetPrice != null ? (
                         <span className="rounded-full border border-accent/30 bg-accent/5 px-1.5 py-0.5 text-accent">
                           Target {formatCurrency(item.targetPrice)}
                         </span>
                       ) : null}
                       {item.alertPctDrop != null ? (
-                        <span className="rounded-full border border-border bg-surface-2 px-1.5 py-0.5">
+                        <span
+                          className="rounded-full border border-border bg-surface-2 px-1.5 py-0.5"
+                          title="Fires when today's session decline exceeds this percentage"
+                        >
                           Drop alert −{item.alertPctDrop}%
                         </span>
                       ) : null}
                     </div>
+
                     {item.notes ? (
-                      <p className="mt-1.5 line-clamp-2 text-xs text-muted/80 italic">{item.notes}</p>
+                      <p className="mt-1.5 line-clamp-2 text-xs italic text-muted/80">
+                        &ldquo;{item.notes}&rdquo;
+                      </p>
                     ) : null}
+
+                    {/* Cross-page quick links — visible size */}
+                    <div className="mt-2.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                      <Link
+                        href={`/dcf?symbol=${item.symbol}`}
+                        className="text-muted underline-offset-2 hover:text-accent hover:underline"
+                      >
+                        DCF ↗
+                      </Link>
+                      <Link
+                        href={`/ic-report?symbol=${item.symbol}`}
+                        className="text-muted underline-offset-2 hover:text-accent hover:underline"
+                      >
+                        IC Report ↗
+                      </Link>
+                      <Link
+                        href={`/compare?symbols=${item.symbol}`}
+                        className="text-muted underline-offset-2 hover:text-accent hover:underline"
+                      >
+                        Compare ↗
+                      </Link>
+                      <Link
+                        href={`/stocks/${item.symbol}`}
+                        className="text-muted underline-offset-2 hover:text-accent hover:underline"
+                      >
+                        Deep view ↗
+                      </Link>
+                    </div>
                   </div>
 
                   {/* Price */}
                   <div className="shrink-0 text-right">
                     {q ? (
                       <>
-                        <div className="font-mono text-sm">{formatCurrency(q.price, q.currency)}</div>
+                        <div className="font-mono text-sm font-medium">{formatCurrency(q.price, q.currency)}</div>
                         <div className={`text-xs ${positive ? "text-positive" : "text-negative"}`}>
-                          {formatPercent(q.changePercent)}
+                          {formatPercent(q.changePercent)} today
                         </div>
-                        {q.volume != null ? (
-                          <div className="mt-0.5 text-[0.65rem] text-muted">
-                            Vol {(q.volume / 1_000_000).toFixed(1)}M
-                          </div>
-                        ) : null}
                       </>
                     ) : (
                       <span className="text-xs text-muted">—</span>
@@ -302,28 +624,31 @@ export default function WatchlistPage() {
                   </div>
 
                   {/* Actions */}
-                  <div className="flex shrink-0 flex-col items-end gap-1">
+                  <div className="flex shrink-0 flex-col items-end gap-1.5">
                     <button
-                      onClick={() => setEditing(item)}
-                      title="Set price alerts and notes"
-                      className="rounded-md border border-border px-2 py-1 text-xs text-muted transition-colors hover:border-accent hover:text-accent"
+                      onClick={() => setEditingAlerts(item)}
+                      className="rounded-md border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-accent hover:text-accent"
                     >
-                      ⚙ Alerts
+                      Set alerts
                     </button>
                     <button
-                      onClick={() => void remove(item.symbol)}
-                      className="rounded-md px-2 py-1 text-xs text-muted transition-colors hover:bg-negative/10 hover:text-negative"
-                      aria-label={`Remove ${item.symbol}`}
+                      onClick={() => setEditingNotes(item)}
+                      className="rounded-md border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-accent hover:text-accent"
                     >
-                      ✕
+                      Notes
+                    </button>
+                    <button
+                      onClick={() => setConfirmDelete(item)}
+                      className="rounded-md px-2.5 py-1 text-xs text-muted transition-colors hover:bg-negative/10 hover:text-negative"
+                      aria-label={`Remove ${item.symbol} from watchlist`}
+                    >
+                      Remove
                     </button>
                   </div>
                 </div>
 
-                {/* Added date footer */}
-                <div className="border-t border-border/50 px-4 py-1 text-[0.65rem] text-muted/60">
+                <div className="border-t border-border/40 px-4 py-1.5 text-xs text-muted/60">
                   Added {formatDate(item.addedAt)}
-                  {days > 7 ? ` · ${days} days on watchlist` : ""}
                 </div>
               </li>
             );
@@ -331,13 +656,39 @@ export default function WatchlistPage() {
         </ul>
       )}
 
-      {editing ? (
+      {editingAlerts ? (
         <AlertModal
-          item={editing}
-          onSave={(patch) => saveAlerts(editing.symbol, patch)}
-          onCancel={() => setEditing(null)}
+          item={editingAlerts}
+          onSave={async (patch) => {
+            await patchItem(editingAlerts.symbol, patch);
+            setEditingAlerts(null);
+            toast("Alerts updated");
+          }}
+          onCancel={() => setEditingAlerts(null)}
         />
       ) : null}
-    </main>
+
+      {editingNotes ? (
+        <NotesModal
+          item={editingNotes}
+          onSave={async (notes) => {
+            await patchItem(editingNotes.symbol, { notes });
+            setEditingNotes(null);
+            toast("Notes saved");
+          }}
+          onCancel={() => setEditingNotes(null)}
+        />
+      ) : null}
+
+      <ConfirmDialog
+        open={confirmDelete != null}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={() => { if (confirmDelete) void remove(confirmDelete.symbol); }}
+        title="Remove from watchlist"
+        message={`Remove ${confirmDelete?.symbol} from your watchlist? This will also delete any alerts and notes you've set for it.`}
+        confirmLabel="Remove"
+        danger
+      />
+    </div>
   );
 }

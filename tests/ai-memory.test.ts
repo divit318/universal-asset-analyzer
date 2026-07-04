@@ -10,8 +10,8 @@ const ctx = {
     { form: "8-K", filedAt: "2026-05-01", description: "Current report", documentUrl: "https://sec.gov/aapl-8k" },
   ],
   news: [
-    { title: "Apple ships new chip", publisher: "Reuters", link: "https://news/1", publishedAt: null },
-    { title: "Services revenue jumps", publisher: "WSJ", link: "https://news/2", publishedAt: null },
+    { headline: "Apple ships new chip", source: "Reuters", url: "https://news/1", publishedAt: null },
+    { headline: "Services revenue jumps", source: "WSJ", url: "https://news/2", publishedAt: null },
   ],
 } as unknown as CompanyContext;
 

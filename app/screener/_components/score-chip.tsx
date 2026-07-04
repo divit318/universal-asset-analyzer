@@ -9,7 +9,7 @@ export function ScoreChip({ value, lg }: { value: number | null; lg?: boolean })
       : value >= 55
         ? "bg-accent/15 text-accent border-accent/30"
         : value >= 40
-          ? "bg-amber-400/10 text-amber-400 border-amber-400/30"
+          ? "bg-warning/10 text-warning border-warning/30"
           : "bg-negative/10 text-negative border-negative/30";
   return (
     <span

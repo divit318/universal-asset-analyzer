@@ -28,9 +28,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const symbol = body.symbol?.trim();
-  if (!symbol) {
-    return NextResponse.json({ error: "`symbol` is required" }, { status: 400 });
+  const SYMBOL_RE = /^[A-Z0-9.\-]{1,12}$/;
+  const symbol = body.symbol?.trim().toUpperCase();
+  if (!symbol || !SYMBOL_RE.test(symbol)) {
+    return NextResponse.json({ error: "`symbol` must be a valid ticker (e.g. AAPL)" }, { status: 400 });
   }
 
   try {

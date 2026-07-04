@@ -79,4 +79,30 @@ describe("mapHistory", () => {
       { date: "2024-01-03", close: 103, adjClose: 103 },
     ]);
   });
+
+  it("captures OHLC fields when present", () => {
+    const points = mapHistory([
+      { date: "2024-01-01T00:00:00Z", open: 98, high: 105, low: 97, close: 102, adjclose: 102, volume: 5000000 },
+    ]);
+    expect(points).toEqual([
+      { date: "2024-01-01", open: 98, high: 105, low: 97, close: 102, adjClose: 102, volume: 5000000 },
+    ]);
+  });
+
+  it("omits OHLC fields when absent (close-only row)", () => {
+    const points = mapHistory([
+      { date: "2024-01-01T00:00:00Z", close: 50 },
+    ]);
+    // Should NOT have open/high/low keys at all
+    expect(Object.keys(points[0])).not.toContain("open");
+    expect(Object.keys(points[0])).not.toContain("high");
+    expect(Object.keys(points[0])).not.toContain("low");
+  });
+
+  it("uses adjclose when provided", () => {
+    const points = mapHistory([
+      { date: "2024-01-01T00:00:00Z", close: 100, adjclose: 95 },
+    ]);
+    expect(points[0].adjClose).toBe(95);
+  });
 });

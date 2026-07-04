@@ -166,6 +166,8 @@ _CAMEL_TO_SNAKE = {
     "earningsSurprisePct": "earnings_surprise_pct",
     "ebitda": "ebitda",
     "freeCashflow": "free_cashflow",
+    "sharesOutstanding": "shares_outstanding",
+    "marketCap": "market_cap",
 }
 
 
@@ -253,7 +255,20 @@ def migrate_sqlite_to_duckdb(force: bool = False) -> int:
 
     conn.register("_mig_tmp", df.to_arrow())
     conn.execute("""
-        INSERT OR REPLACE INTO fundamentals
+        INSERT OR REPLACE INTO fundamentals (
+            symbol, name, sector, industry,
+            forward_pe, ev_to_ebitda,
+            revenue_growth_yoy, revenue_cagr_3y,
+            eps_growth_yoy, eps_cagr_3y,
+            roic, roe, gross_margin, operating_margin,
+            debt_to_equity, net_debt_to_ebitda, current_ratio,
+            fcf_margin, fcf_growth_yoy,
+            dividend_yield, buyback_yield,
+            institutional_ownership, earnings_surprise_pct,
+            ebitda, free_cashflow,
+            shares_outstanding, market_cap,
+            updated_at
+        )
         SELECT
             symbol, name, sector, industry,
             forward_pe, ev_to_ebitda,
@@ -265,6 +280,7 @@ def migrate_sqlite_to_duckdb(force: bool = False) -> int:
             dividend_yield, buyback_yield,
             institutional_ownership, earnings_surprise_pct,
             ebitda, free_cashflow,
+            shares_outstanding, market_cap,
             now()
         FROM _mig_tmp
     """)

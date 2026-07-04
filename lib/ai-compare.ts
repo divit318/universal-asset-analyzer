@@ -10,8 +10,9 @@ import { runPrompt, getActiveModelName } from "./ai";
 import { getFundamentals } from "./fundamentals";
 import { getFinancialStatements } from "./statements";
 import { getHistory, getQuote } from "./yahoo";
-import { computeScore, computeMomentum, assessRisks } from "./scoring";
+import { computeScore, computeMomentum, assessRisks, classifyInvestmentPersonality } from "./scoring";
 import { formatCurrency, formatPercent, formatMarketCap } from "./format";
+import { extractJson } from "./json-extract";
 import type { FundamentalsData, Quote } from "./types";
 
 export interface CompareStock {
@@ -32,9 +33,18 @@ export interface ComparisonResult {
     financialHealth: string;
     momentum: string;
     verdict: string;
+    capitalAllocation: string;
+    competitivePositioning: string;
+    riskComparison: string;
   };
   winner: string | null; // symbol of the better overall pick, or null if too close
   winnerRationale: string;
+  /** One-paragraph "which is better and why", for the top-of-page executive summary. */
+  executiveSummary: string;
+  /** What would have to change for the recommendation to flip. */
+  conditionsForChange: string;
+  /** 0-100 confidence in the winner call. */
+  confidenceScore: number;
   metricTable: CompareMetricRow[];
 }
 
@@ -79,6 +89,7 @@ async function loadStock(symbol: string): Promise<CompareStock> {
       earnings: parts.earnings,
       ownership: parts.ownership,
       valuation: [],
+      personality: classifyInvestmentPersonality(score, parts.snapshot, momentum),
     },
   };
 }
@@ -151,9 +162,15 @@ Write a structured comparison. Be specific — cite numbers. Return as JSON:
   "growth": "Which is growing faster — cite revenue growth, earnings growth, CAGR if available",
   "financialHealth": "Which has a stronger balance sheet — cite D/E, current ratio, FCF",
   "momentum": "Which has better price momentum — cite trend, SMA position, score",
+  "capitalAllocation": "Which management team allocates capital better — cite FCF conversion, buybacks/dilution, reinvestment discipline from the data given",
+  "competitivePositioning": "Which has the stronger competitive position — infer from margin trends, growth durability, and market cap/scale in the data given",
+  "riskComparison": "Compare the two risk profiles directly — cite the risk categories/levels listed below for each symbol",
   "verdict": "One clear paragraph: given all the above, which is the better pick right now and why. Be decisive.",
   "winner": "${a.symbol} or ${b.symbol} or null if too close to call",
-  "winnerRationale": "One sentence max explaining the winner choice"
+  "winnerRationale": "One sentence max explaining the winner choice",
+  "executiveSummary": "2-3 sentences for a top-of-page summary: which is the better investment and why, written for someone who will only read this one paragraph",
+  "conditionsForChange": "One sentence: what would have to change (a metric, an event, a re-rating) for this recommendation to flip to the other stock",
+  "confidenceScore": "<0-100 integer — how confident are you in the winner call given the data available>"
 }`;
 }
 
@@ -216,28 +233,34 @@ export async function compareStocks(
   type FlatAI = {
     overview?: string; valuation?: string; quality?: string; growth?: string;
     financialHealth?: string; momentum?: string; verdict?: string;
+    capitalAllocation?: string; competitivePositioning?: string; riskComparison?: string;
     winner?: string | null; winnerRationale?: string;
+    executiveSummary?: string; conditionsForChange?: string; confidenceScore?: number;
     sections?: ComparisonResult["sections"];
   };
 
   let flat: FlatAI = {};
   try {
-    const raw = await runPrompt(prompt, { maxTokens: 1500, json: true });
-    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    flat = JSON.parse(cleaned) as FlatAI;
+    const raw = await runPrompt(prompt, { maxTokens: 1800, json: true });
+    flat = extractJson<FlatAI>(raw);
   } catch {
     // AI unavailable — metric table still works
   }
 
+  const aiUnavailable = Object.keys(flat).length === 0;
+
   // The prompt returns a flat object; normalise into sections shape.
   const sections: ComparisonResult["sections"] = flat.sections ?? {
-    overview: flat.overview ?? (Object.keys(flat).length === 0 ? "AI analysis unavailable. Set OLLAMA_API_KEY or ANTHROPIC_API_KEY to enable." : ""),
+    overview: flat.overview ?? (aiUnavailable ? "AI analysis unavailable. Set OLLAMA_API_KEY or ANTHROPIC_API_KEY to enable." : ""),
     valuation: flat.valuation ?? "",
     quality: flat.quality ?? "",
     growth: flat.growth ?? "",
     financialHealth: flat.financialHealth ?? "",
     momentum: flat.momentum ?? "",
     verdict: flat.verdict ?? "",
+    capitalAllocation: flat.capitalAllocation ?? "",
+    competitivePositioning: flat.competitivePositioning ?? "",
+    riskComparison: flat.riskComparison ?? "",
   };
 
   return {
@@ -247,6 +270,9 @@ export async function compareStocks(
     sections,
     winner: flat.winner ?? null,
     winnerRationale: flat.winnerRationale ?? "",
+    executiveSummary: flat.executiveSummary ?? (aiUnavailable ? sections.overview : ""),
+    conditionsForChange: flat.conditionsForChange ?? "",
+    confidenceScore: typeof flat.confidenceScore === "number" ? Math.max(0, Math.min(100, Math.round(flat.confidenceScore))) : Math.min(a.fundamentals.score.confidence, b.fundamentals.score.confidence),
     metricTable: buildMetricTable(a, b),
   };
 }

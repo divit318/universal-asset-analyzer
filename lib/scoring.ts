@@ -5,6 +5,7 @@ import type {
   FundamentalsSnapshot,
   HistoryPoint,
   InsiderActivity,
+  InvestmentPersonalityTag,
   MomentumSignal,
   Recommendation,
   RiskItem,
@@ -12,7 +13,14 @@ import type {
   ScoreBucket,
   ScoreFactor,
   ScoreResult,
+  SectorRotationEntry,
 } from "./types";
+import { sectorGroup } from "./sector";
+import type { SectorGroup } from "./sector";
+// Type-only import — lib/market.ts has zero runtime deps beyond ./types, so
+// this is safe in client bundles, unlike importing lib/sector-rotation.ts
+// (which pulls in node:sqlite via lib/db.ts).
+import type { MarketRegion } from "./market";
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
@@ -63,33 +71,6 @@ function bucket(name: string, results: FactorResult[]): {
     dataCount: results.filter((r) => r.hasData).length,
     total: results.length,
   };
-}
-
-/* -------------------------------------------------------------------------- */
-/* Sector classification                                                       */
-/* -------------------------------------------------------------------------- */
-
-type SectorGroup = "financials" | "utilities" | "reits" | "default";
-
-/**
- * Map a sector string into a broad group. Sectors with structurally different
- * economics need different scoring thresholds — applying general/tech scales to
- * a bank or utility produces systematically wrong scores.
- */
-function sectorGroup(sector: string | null | undefined): SectorGroup {
-  if (!sector) return "default";
-  const s = sector.toLowerCase();
-  if (
-    s === "financials" ||
-    s === "financial services" ||
-    s.includes("bank") ||
-    s.includes("insurance") ||
-    s.includes("capital markets") ||
-    s.includes("asset management")
-  ) return "financials";
-  if (s.includes("utilit")) return "utilities";
-  if (s === "real estate" || s.includes("reit")) return "reits";
-  return "default";
 }
 
 /* -------------------------------------------------------------------------- */
@@ -238,6 +219,48 @@ export function scoreHealth(s: FundamentalsSnapshot) {
   ]);
 }
 
+/**
+ * Capital allocation discipline: cash-generation growth, margin trajectory,
+ * and shareholder returns. Reuses fields already fetched for other buckets
+ * (st.operatingMargin is also read by assessRisks() for compression
+ * flagging — same reuse pattern already used for debtToEquity across
+ * scoreHealth() and assessRisks()) rather than fetching anything new.
+ */
+export function scoreCapitalAllocation(s: FundamentalsSnapshot, st: FinancialStatements | null) {
+  const sg = sectorGroup(s.sector);
+  const om = st?.operatingMargin ?? [];
+  const marginTrendPp = om.length >= 2 ? om.at(-1)!.value - om[0].value : null;
+
+  const dividendRange = sg === "utilities" || sg === "reits" ? { worst: 0, best: 0.06 } : { worst: 0, best: 0.04 };
+
+  return bucket("Capital Allocation", [
+    mk("FCF growth (CAGR)", st?.fcfCagr, -0.05, 0.15, 10, (v) => `FCF CAGR ${v >= 0 ? "+" : ""}${pct(v)}`),
+    mk("Operating margin trend", marginTrendPp, -0.03, 0.05, 8, (v) =>
+      `Op margin ${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}pp since ${st?.fiscalYears[0] ?? "prior period"}`,
+    ),
+    mk("Shareholder yield", s.dividendYield, dividendRange.worst, dividendRange.best, 6, (v) => `Div yield ${pct(v)}`),
+  ]);
+}
+
+/**
+ * Sector leadership: relative strength, momentum, and rank from the Sector
+ * Rotation Engine (lib/sector-rotation.ts). `entry` is passed in as plain
+ * data rather than importing that module directly, to avoid pulling
+ * node:sqlite (via lib/db.ts) into client bundles — the same precedent
+ * lib/portfolio-analytics.ts already established for this exact hazard.
+ * mk() degrades to half-credit "n/a" when entry is null, so symbols outside
+ * the 11 GICS sector ETF map need no special-casing.
+ */
+export function scoreSectorMomentum(entry: SectorRotationEntry | null) {
+  return bucket("Sector Rotation", [
+    mk("Relative strength", entry?.relativeStrength ?? null, -5, 5, 10, (v) =>
+      `${v >= 0 ? "+" : ""}${v.toFixed(1)}pp vs sector avg`,
+    ),
+    mk("Momentum", entry?.momentum ?? null, -3, 3, 8, (v) => `Momentum ${v >= 0 ? "+" : ""}${v.toFixed(1)}`),
+    mk("Rank", entry ? 12 - entry.rank : null, 0, 11, 6, () => `#${entry!.rank}/11 · ${entry!.classification}`),
+  ]);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Momentum / technical signal                                                */
 /* -------------------------------------------------------------------------- */
@@ -379,6 +402,18 @@ const REC_LABEL: Record<Recommendation, string> = {
 
 const TIER_EDGES = [25, 42, 60, 78];
 
+/**
+ * Composite signal weights, keyed by market. India research should lean on
+ * fundamentals and sector leadership rather than analyst consensus (coverage
+ * is sparser and less reliable for many NSE/BSE names) — see the "market-aware
+ * research" requirement. Renormalized automatically when a signal is missing
+ * (the wSum divide in computeScore), so these don't need to sum to exactly 1.
+ */
+const DEFAULT_SIGNAL_WEIGHTS = { fundamentals: 0.45, analysts: 0.25, momentum: 0.15, capitalAllocation: 0.07, sectorRotation: 0.08 };
+const MARKET_SIGNAL_WEIGHTS: Partial<Record<MarketRegion, typeof DEFAULT_SIGNAL_WEIGHTS>> = {
+  IN: { fundamentals: 0.55, analysts: 0.10, momentum: 0.15, capitalAllocation: 0.10, sectorRotation: 0.10 },
+};
+
 function buildRationale(
   rec: Recommendation,
   signals: DecisionSignals,
@@ -392,6 +427,7 @@ function buildRationale(
   const sig = [`fundamentals ${signals.fundamentals}`];
   if (signals.analysts != null) sig.push(`analysts ${signals.analysts}`);
   if (signals.momentum != null) sig.push(`momentum ${signals.momentum}`);
+  if (signals.sectorRotation != null) sig.push(`sector rotation ${signals.sectorRotation}`);
 
   const parts: string[] = [`${REC_LABEL[rec]} — ${sig.join(", ")} (all /100).`];
   if (strengths.length) parts.push(`Strengths: ${strengths.map((f) => f.detail).join(", ")}.`);
@@ -404,6 +440,9 @@ export function computeScore(
   statements: FinancialStatements | null,
   analyst: AnalystConsensus,
   momentum: MomentumSignal | null = null,
+  /** Pass explicitly (including `null` for "checked, no entry") to add the Sector Rotation bucket. Omit entirely to leave existing callers' output unchanged. */
+  sectorRotation?: SectorRotationEntry | null,
+  market?: MarketRegion,
 ): ScoreResult {
   const parts = [
     scoreValuation(snapshot, analyst),
@@ -416,13 +455,42 @@ export function computeScore(
 
   const analysts = analystSignal(analyst);
   const momentumScore = momentum?.score ?? null;
-  const signals: DecisionSignals = { fundamentals: total, analysts, momentum: momentumScore };
 
-  // Blend the available signals. Fundamentals anchor the call; analyst consensus
-  // and price momentum refine it. Weights renormalize when a signal is missing.
-  const weighted: [number, number][] = [[total, 0.5]];
-  if (analysts != null) weighted.push([analysts, 0.3]);
-  if (momentumScore != null) weighted.push([momentumScore, 0.2]);
+  // Capital Allocation is always computed (needs only snapshot/statements,
+  // already required args) and always contributes to the blend. Sector
+  // Rotation is opt-in — only appended when a caller explicitly threads a
+  // rotation entry through, since most existing callers don't have one.
+  const capAllocBucket = scoreCapitalAllocation(snapshot, statements).bucket;
+  const capitalAllocationScore = Math.round((capAllocBucket.points / capAllocBucket.max) * 100);
+  buckets.push(capAllocBucket);
+
+  let sectorRotationScore: number | null = null;
+  if (sectorRotation !== undefined) {
+    const sectorBucket = scoreSectorMomentum(sectorRotation).bucket;
+    sectorRotationScore = Math.round((sectorBucket.points / sectorBucket.max) * 100);
+    buckets.push(sectorBucket);
+  }
+
+  const signals: DecisionSignals = {
+    fundamentals: total,
+    analysts,
+    momentum: momentumScore,
+    capitalAllocation: capitalAllocationScore,
+    sectorRotation: sectorRotationScore,
+  };
+
+  const w = (market != null ? MARKET_SIGNAL_WEIGHTS[market] : undefined) ?? DEFAULT_SIGNAL_WEIGHTS;
+
+  // Blend the available signals. Fundamentals anchor the call; analyst consensus,
+  // price momentum, capital allocation discipline, and sector leadership refine
+  // it. Weights renormalize when a signal is missing (the wSum divide below).
+  const weighted: [number, number][] = [
+    [total, w.fundamentals],
+    [capitalAllocationScore, w.capitalAllocation],
+  ];
+  if (analysts != null) weighted.push([analysts, w.analysts]);
+  if (momentumScore != null) weighted.push([momentumScore, w.momentum]);
+  if (sectorRotationScore != null) weighted.push([sectorRotationScore, w.sectorRotation]);
   const wSum = weighted.reduce((s, [, w]) => s + w, 0);
   const composite = Math.round(weighted.reduce((s, [v, w]) => s + v * w, 0) / wSum);
 
@@ -457,6 +525,93 @@ export function computeScore(
     confidence,
     rationale: buildRationale(rec, signals, buckets),
     signals,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Investment personality — permanent identity, not a transient AI take       */
+/* -------------------------------------------------------------------------- */
+
+const CYCLICAL_SECTORS = new Set(["Consumer Cyclical", "Energy", "Industrials", "Basic Materials", "Materials"]);
+const DEFENSIVE_SECTORS = new Set(["Utilities", "Consumer Defensive", "Consumer Staples", "Healthcare"]);
+
+function bucketRatio(buckets: ScoreBucket[], name: string): number | null {
+  const b = buckets.find((x) => x.name === name);
+  return b && b.max > 0 ? b.points / b.max : null;
+}
+
+/**
+ * Deterministic classification into a permanent investment identity — no AI
+ * involved (matches "AI explains, engines decide"). Pure function of the
+ * already-computed ScoreResult + snapshot + momentum; no new I/O.
+ */
+export function classifyInvestmentPersonality(
+  score: ScoreResult,
+  snapshot: FundamentalsSnapshot,
+  momentum: MomentumSignal | null,
+): { tag: InvestmentPersonalityTag; explanation: string } {
+  const qualityR = bucketRatio(score.buckets, "Quality");
+  const valuationR = bucketRatio(score.buckets, "Valuation");
+  const growthR = bucketRatio(score.buckets, "Growth");
+  const healthR = bucketRatio(score.buckets, "Financial Health");
+  const capAllocR = bucketRatio(score.buckets, "Capital Allocation");
+  const sector = snapshot.sector ?? null;
+  const trend = momentum?.trend ?? "flat";
+
+  if (growthR != null && growthR >= 0.75 && snapshot.revenueGrowth != null && snapshot.revenueGrowth > 0.20) {
+    return {
+      tag: "High Growth",
+      explanation: `Growth bucket ${Math.round(growthR * 100)}/100 with ${pct(snapshot.revenueGrowth)} revenue growth — expanding well above the market.`,
+    };
+  }
+
+  if (valuationR != null && valuationR >= 0.75 && qualityR != null && qualityR >= 0.45) {
+    return {
+      tag: "Deep Value",
+      explanation: `Valuation bucket ${Math.round(valuationR * 100)}/100${snapshot.pegRatio != null ? ` (PEG ${ratio(snapshot.pegRatio)})` : ""} — trading cheap relative to underlying quality.`,
+    };
+  }
+
+  if (qualityR != null && qualityR >= 0.70 && growthR != null && growthR >= 0.55 && healthR != null && healthR >= 0.55) {
+    return {
+      tag: "Compounder",
+      explanation: `Quality ${Math.round(qualityR * 100)}/100, Growth ${Math.round(growthR * 100)}/100, and Financial Health ${Math.round(healthR * 100)}/100 all solid — durable compounding characteristics.`,
+    };
+  }
+
+  if (growthR != null && growthR < 0.40 && trend === "up" && capAllocR != null && capAllocR >= 0.55) {
+    return {
+      tag: "Turnaround",
+      explanation: `Growth still weak (${Math.round(growthR * 100)}/100) but capital allocation is improving (${Math.round(capAllocR * 100)}/100) with positive recent price momentum — early signs of a turn.`,
+    };
+  }
+
+  if (snapshot.dividendYield != null && snapshot.dividendYield >= 0.025 && (growthR == null || growthR < 0.55)) {
+    return {
+      tag: "Income",
+      explanation: `${pct(snapshot.dividendYield)} dividend yield with modest growth expectations — a shareholder-return-oriented holding.`,
+    };
+  }
+
+  if (sector != null && CYCLICAL_SECTORS.has(sector)) {
+    return {
+      tag: "Cyclical",
+      explanation: `${sector} is a cyclical sector — earnings and the stock typically track the broader economic cycle.`,
+    };
+  }
+
+  if (sector != null && DEFENSIVE_SECTORS.has(sector) && trend !== "down") {
+    return {
+      tag: "Defensive",
+      explanation: `${sector} tends to hold up in downturns; current momentum is ${trend === "up" ? "positive" : "stable"}, consistent with a defensive profile.`,
+    };
+  }
+
+  return {
+    tag: "High Quality",
+    explanation: qualityR != null
+      ? `Quality bucket ${Math.round(qualityR * 100)}/100 is the strongest signal available — no single dimension dominates enough for a more specific tag.`
+      : "Insufficient data for a more specific classification — defaulting to a quality-first read.",
   };
 }
 

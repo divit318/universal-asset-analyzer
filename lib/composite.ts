@@ -1,4 +1,6 @@
 import type { CompositeScores, StockMetrics } from "./types";
+import { sectorGroup } from "./sector";
+import type { SectorGroup } from "./sector";
 
 /**
  * Proprietary composite scores (0-100). Each raw metric is normalized to a
@@ -29,34 +31,6 @@ function blend(parts: (number | null)[], min = 1): number | null {
 
 /** The metric fields the scores read (everything on StockMetrics bar the scores). */
 export type ScorableMetrics = Omit<StockMetrics, "scores">;
-
-/* -------------------------------------------------------------------------- */
-/* Sector classification                                                       */
-/* -------------------------------------------------------------------------- */
-
-type SectorGroup = "financials" | "utilities" | "reits" | "default";
-
-/**
- * Map Yahoo Finance sector strings to a broad group for threshold selection.
- * Financials/banks carry structural leverage that is normal and healthy.
- * Utilities grow slowly by regulatory design. REITs distribute most income
- * and are capital-intensive. Everything else uses the default growth/tech scales.
- */
-function sectorGroup(sector: string | null | undefined): SectorGroup {
-  if (!sector) return "default";
-  const s = sector.toLowerCase();
-  if (
-    s === "financials" ||
-    s === "financial services" ||
-    s.includes("bank") ||
-    s.includes("insurance") ||
-    s.includes("capital markets") ||
-    s.includes("asset management")
-  ) return "financials";
-  if (s.includes("utilit")) return "utilities";
-  if (s === "real estate" || s.includes("reit")) return "reits";
-  return "default";
-}
 
 /* -------------------------------------------------------------------------- */
 /* Sector-aware sub-scorers                                                    */

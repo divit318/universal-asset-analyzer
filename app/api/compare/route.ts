@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { getFundamentals } from "@/lib/fundamentals";
 import { getFinancialStatements, getFinancialStatementsYahoo } from "@/lib/statements";
 import { getHistory, getQuote } from "@/lib/yahoo";
-import { computeMomentum, computeScore } from "@/lib/scoring";
+import { computeMomentum, computeScore, assessRisks } from "@/lib/scoring";
 import { compareStocks } from "@/lib/ai-compare";
-import type { FinancialStatements, FundamentalsSnapshot, AnalystConsensus, ScoreResult, MomentumSignal, Quote } from "@/lib/types";
+import { buildOpportunityProfile, type OpportunityProfile } from "@/lib/opportunity-engine";
+import type { FinancialStatements, FundamentalsSnapshot, AnalystConsensus, ScoreResult, MomentumSignal, Quote, RiskItem } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,6 +24,14 @@ export interface CompareEntry {
   oneYearReturn?: number | null;
   fcfYieldPct?: number | null;
   netDebtToEbitda?: number | null;
+  risks?: RiskItem[];
+  opportunity?: OpportunityProfile;
+}
+
+/** Pull a bucket's percentage-of-max from a ScoreResult — reuses the same bucket shape the Compare page already renders. */
+function bucketPct(score: ScoreResult, name: string): number | null {
+  const b = score.buckets.find((bk) => bk.name === name);
+  return b ? Math.round((b.points / b.max) * 100) : null;
 }
 
 function computeOneYearReturn(history: { date: string; close: number }[]): number | null {
@@ -89,7 +98,26 @@ export async function GET(request: Request) {
             ? (parts.snapshot.totalDebt - parts.snapshot.totalCash) / parts.snapshot.ebitda
             : null;
 
-        return { symbol, name: quote.name, quote, snapshot: parts.snapshot, statements, analyst: parts.analyst, score, momentum, oneYearReturn, fcfYieldPct, netDebtToEbitda };
+        const risks = assessRisks(parts.snapshot, statements, parts.analyst, parts.insider);
+
+        const opportunity = buildOpportunityProfile({
+          symbol,
+          score: score.composite,
+          dimensions: {
+            value: bucketPct(score, "Valuation"),
+            growth: bucketPct(score, "Growth"),
+            quality: bucketPct(score, "Quality"),
+            financialHealth: bucketPct(score, "Financial Health"),
+            momentum: momentum?.score ?? null,
+          },
+          confidence: score.confidence,
+          dividendYieldPct: parts.snapshot.dividendYield != null ? parts.snapshot.dividendYield * 100 : null,
+          momentum3mReturn: momentum?.return3m ?? null,
+          momentumTrend: momentum?.trend ?? null,
+          riskItems: risks,
+        });
+
+        return { symbol, name: quote.name, quote, snapshot: parts.snapshot, statements, analyst: parts.analyst, score, momentum, oneYearReturn, fcfYieldPct, netDebtToEbitda, risks, opportunity };
       } catch (err) {
         return { symbol, name: symbol, error: err instanceof Error ? err.message : "Failed to load" };
       }

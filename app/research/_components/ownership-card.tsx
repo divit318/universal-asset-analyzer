@@ -1,6 +1,7 @@
 "use client";
 
 import type { OwnershipData } from "@/lib/types";
+import { describeOwnership } from "@/lib/ownership-insight";
 
 function pct(v: number | null, decimals = 1): string {
   if (v == null) return "—";
@@ -15,12 +16,12 @@ function compact(v: number | null): string {
   return v.toFixed(0);
 }
 
-function ProgressBar({ value, color = "bg-blue-500" }: { value: number; color?: string }) {
+function ProgressBar({ value, colorClass = "bg-accent/60" }: { value: number; colorClass?: string }) {
   const clamped = Math.max(0, Math.min(100, value));
   return (
     <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
       <div
-        className={`h-full rounded-full ${color} transition-all`}
+        className={`h-full rounded-full ${colorClass} transition-all`}
         style={{ width: `${clamped}%` }}
       />
     </div>
@@ -32,14 +33,14 @@ function MetricBox({
   value,
   sub,
   barValue,
-  barColor,
+  barColorClass,
   highlight,
 }: {
   label: string;
   value: string;
   sub?: string;
   barValue?: number;
-  barColor?: string;
+  barColorClass?: string;
   highlight?: "positive" | "negative" | "neutral";
 }) {
   const valueClass =
@@ -53,8 +54,30 @@ function MetricBox({
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2/40 p-3">
       <span className="text-xs uppercase tracking-wide text-muted">{label}</span>
       <span className={`font-mono text-xl font-semibold ${valueClass}`}>{value}</span>
-      {barValue != null && <ProgressBar value={barValue} color={barColor} />}
+      {barValue != null && <ProgressBar value={barValue} colorClass={barColorClass} />}
       {sub && <span className="text-xs text-muted">{sub}</span>}
+    </div>
+  );
+}
+
+/**
+ * Deterministic (non-AI) ownership interpretation — modeled on India's
+ * TrendInsight (ownership-timeline.tsx), scoped to what Yahoo's ownership
+ * snapshot actually provides. Yahoo has no historical shareholding series
+ * (screener.in does, which is why India gets a timeline and the US doesn't)
+ * — this reads institutional conviction, insider alignment, and retail
+ * positioning from the current snapshot instead of a trend.
+ */
+function OwnershipInsight({ ownership }: { ownership: OwnershipData }) {
+  const insights = describeOwnership(ownership);
+  if (insights.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2 px-4 py-3">
+      <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Ownership Analysis</span>
+      {insights.map((ins, i) => (
+        <p key={i} className="text-xs leading-5 text-muted">{ins}</p>
+      ))}
     </div>
   );
 }
@@ -70,7 +93,6 @@ export function OwnershipCard({ ownership }: { ownership: OwnershipData }) {
   } = ownership;
   const topHolders = ownership.topHolders ?? [];
 
-  // Short interest risk level
   const shortPct = shortPctOfFloat != null ? shortPctOfFloat * 100 : null;
   const shortHighlight =
     shortPct == null ? "neutral" : shortPct > 10 ? "negative" : shortPct > 5 ? "neutral" : "positive";
@@ -88,26 +110,26 @@ export function OwnershipCard({ ownership }: { ownership: OwnershipData }) {
           label="Institutional"
           value={pct(institutionsPctHeld)}
           barValue={institutionsPctHeld != null ? institutionsPctHeld * 100 : undefined}
-          barColor="bg-blue-500"
+          barColorClass="bg-accent/60"
           sub={institutionsCount != null ? `${institutionsCount.toLocaleString()} holders` : undefined}
         />
         <MetricBox
           label="Insiders"
           value={pct(insidersPctHeld)}
           barValue={insidersPctHeld != null ? insidersPctHeld * 100 : undefined}
-          barColor="bg-amber-500"
+          barColorClass="bg-warning/70"
           sub="officers & directors"
         />
         <MetricBox
           label="Short % Float"
           value={pct(shortPctOfFloat)}
           barValue={shortPct != null ? Math.min(shortPct * 2, 100) : undefined}
-          barColor={
+          barColorClass={
             shortHighlight === "negative"
-              ? "bg-red-500"
+              ? "bg-negative"
               : shortHighlight === "neutral"
-                ? "bg-amber-500"
-                : "bg-green-500"
+                ? "bg-warning/70"
+                : "bg-positive"
           }
           highlight={shortHighlight}
           sub={sharesShort != null ? `${compact(sharesShort)} shares short` : undefined}
@@ -122,24 +144,8 @@ export function OwnershipCard({ ownership }: { ownership: OwnershipData }) {
         />
       </div>
 
-      {/* Short interest context */}
-      {shortPct != null && (
-        <div
-          className={`rounded-lg px-3 py-2 text-xs ${
-            shortPct > 10
-              ? "border border-negative/30 bg-negative/10 text-negative"
-              : shortPct > 5
-                ? "border border-amber-500/30 bg-amber-500/10 text-amber-400"
-                : "border border-positive/30 bg-positive/10 text-positive"
-          }`}
-        >
-          {shortPct > 10
-            ? `High short interest (${pct(shortPctOfFloat)}) — elevated squeeze risk or bearish sentiment.`
-            : shortPct > 5
-              ? `Moderate short interest (${pct(shortPctOfFloat)}) — worth monitoring for position changes.`
-              : `Low short interest (${pct(shortPctOfFloat)}) — shorts are not a major factor.`}
-        </div>
-      )}
+      {/* Ownership Analysis — institutional conviction, insider alignment, short interest */}
+      <OwnershipInsight ownership={ownership} />
 
       {/* Top institutional holders table */}
       {topHolders.length > 0 && (

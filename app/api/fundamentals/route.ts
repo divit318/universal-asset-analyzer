@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { getFundamentals } from "@/lib/fundamentals";
 import { getFinancialStatements, getFinancialStatementsYahoo } from "@/lib/statements";
 import { getFundamentalsTimeSeries, getHistory } from "@/lib/yahoo";
-import { assessRisks, computeMomentum, computeScore } from "@/lib/scoring";
+import { assessRisks, classifyInvestmentPersonality, computeMomentum, computeScore } from "@/lib/scoring";
+import { detectMarket } from "@/lib/market";
+import { getLatestSectorRotation, findSectorRotationEntry } from "@/lib/sector-rotation";
 import type { FinancialStatements, FundamentalsData, HistoryPoint, ValuationPoint } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -145,9 +147,19 @@ export async function GET(request: Request) {
 
   const { statements, error: statementsError } = statementsResult;
   const momentum = computeMomentum(history);
-  const score = computeScore(parts.snapshot, statements, parts.analyst, momentum);
+
+  // Market-aware scoring: symbol suffix alone (no live quote needed here)
+  // is enough for detectMarket()'s IN/JP/HK/AU/EU branches, which is what
+  // distinguishes India research's fundamentals-over-analyst-consensus
+  // weighting. Sector rotation entry is a cheap synchronous DB read.
+  const market = detectMarket({ symbol, currency: "", exchange: null, assetType: null });
+  const rotation = getLatestSectorRotation();
+  const sectorRotationEntry = findSectorRotationEntry(rotation, parts.snapshot.sector);
+
+  const score = computeScore(parts.snapshot, statements, parts.analyst, momentum, sectorRotationEntry, market);
   const risks = assessRisks(parts.snapshot, statements, parts.analyst, parts.insider);
   const valuation = buildValuation(timeSeries, history);
+  const personality = classifyInvestmentPersonality(score, parts.snapshot, momentum);
 
   const payload: FundamentalsData = {
     snapshot: parts.snapshot,
@@ -161,6 +173,7 @@ export async function GET(request: Request) {
     earnings: parts.earnings,
     ownership: parts.ownership,
     valuation,
+    personality,
   };
   return NextResponse.json(payload);
 }
