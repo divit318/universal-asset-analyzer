@@ -7,6 +7,7 @@
  */
 
 import { runPrompt } from "./ai";
+import { extractJson } from "./json-extract";
 import type { InvestigativeQuestion, AgentDomain } from "./ic-questions";
 import type { FundamentalsSnapshot, FinancialStatements, InsiderActivity, AnalystConsensus } from "./types";
 import type { ScreenerInCompany } from "./screener-in";
@@ -243,41 +244,14 @@ function extractAgentJson(raw: string): {
   confidence: "high" | "medium" | "low";
   dataLimitations: string | null;
 } {
-  // Strategy 1: find the outermost { ... } block
-  const firstBrace = raw.indexOf("{");
-  const lastBrace = raw.lastIndexOf("}");
-  if (firstBrace !== -1 && lastBrace > firstBrace) {
-    try {
-      const jsonStr = raw.slice(firstBrace, lastBrace + 1);
-      const parsed = JSON.parse(jsonStr) as {
-        findings?: string;
-        keyInsights?: string[];
-        confidence?: string;
-        dataLimitations?: string | null;
-      };
-      if (parsed.findings) {
-        return {
-          findings: parsed.findings,
-          keyInsights: Array.isArray(parsed.keyInsights) ? parsed.keyInsights : [],
-          confidence: normaliseConfidence(parsed.confidence),
-          dataLimitations: parsed.dataLimitations ?? null,
-        };
-      }
-    } catch { /* fall through */ }
-  }
-
-  // Strategy 2: strip all markdown fences and retry
-  const stripped = raw
-    .replace(/```(?:json)?\s*/gi, "")
-    .replace(/```/g, "")
-    .trim();
+  // Strategy 1: shared brace/fence extraction (lib/json-extract.ts)
   try {
-    const parsed = JSON.parse(stripped) as {
+    const parsed = extractJson<{
       findings?: string;
       keyInsights?: string[];
       confidence?: string;
       dataLimitations?: string | null;
-    };
+    }>(raw);
     if (parsed.findings) {
       return {
         findings: parsed.findings,
@@ -288,7 +262,7 @@ function extractAgentJson(raw: string): {
     }
   } catch { /* fall through */ }
 
-  // Strategy 3: extract prose text by aggressively stripping all JSON scaffolding
+  // Strategy 2: extract prose text by aggressively stripping all JSON scaffolding
   const cleanText = raw
     .replace(/```(?:json)?\s*/gi, "")
     .replace(/```/g, "")

@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import type { CalendarEvent } from "../route";
+import { generate } from "@/lib/ai/ollama";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "llama3.2";
+// The brief only ever cites a handful of events; cap the client-supplied list.
+const MAX_EVENTS = 200;
 
 function buildPrompt(events: CalendarEvent[], weekStart: string, weekEnd: string): string {
   const earnings = events.filter((e) => e.type === "earnings");
@@ -52,28 +53,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const events = body.events ?? [];
+  const events = (body.events ?? []).slice(0, MAX_EVENTS);
   const weekStart = body.weekStart ?? new Date().toISOString().slice(0, 10);
   const weekEnd = body.weekEnd ?? new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
 
   const prompt = buildPrompt(events, weekStart, weekEnd);
 
   try {
-    const res = await fetch(`${OLLAMA_HOST}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: OLLAMA_MODEL, prompt, stream: false }),
-      signal: AbortSignal.timeout(50_000),
-    });
-
-    if (!res.ok) {
-      return NextResponse.json({ error: "Ollama request failed" }, { status: 503 });
-    }
-
-    const json = (await res.json()) as { response?: string; error?: string };
-    if (json.error) return NextResponse.json({ error: json.error }, { status: 503 });
-
-    return NextResponse.json({ brief: json.response ?? "" });
+    const brief = await generate(prompt, { timeoutMs: 50_000 });
+    return NextResponse.json({ brief });
   } catch (err) {
     const message = err instanceof Error ? err.message : "AI brief generation failed";
     return NextResponse.json({ error: message }, { status: 503 });

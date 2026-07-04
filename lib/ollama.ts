@@ -1,8 +1,5 @@
-import type { AiAnalysis, Filing, Quote } from "./types";
+import type { Filing, Quote } from "./types";
 import { formatCurrency, formatMarketCap, formatPercent } from "./format";
-
-const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "llama3.2";
 
 export interface AnalysisInput {
   quote: Quote;
@@ -39,36 +36,5 @@ export function buildAnalysisPrompt({ quote, filings }: AnalysisInput): string {
   ].join("\n");
 }
 
-interface OllamaGenerateResponse {
-  response?: string;
-  error?: string;
-}
-
-/** Run an analysis through the local Ollama instance. */
-export async function analyzeWithOllama(
-  input: AnalysisInput,
-): Promise<AiAnalysis> {
-  const prompt = buildAnalysisPrompt(input);
-
-  let res: Response;
-  try {
-    res = await fetch(`${OLLAMA_HOST}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: OLLAMA_MODEL, prompt, stream: false }),
-    });
-  } catch {
-    throw new Error(
-      `Could not reach Ollama at ${OLLAMA_HOST}. Is it running? (\`ollama serve\`)`,
-    );
-  }
-
-  const data = (await res.json()) as OllamaGenerateResponse;
-  if (!res.ok || data.error) {
-    throw new Error(
-      data.error ?? `Ollama request failed (${res.status}). Is "${OLLAMA_MODEL}" pulled?`,
-    );
-  }
-
-  return { model: OLLAMA_MODEL, analysis: (data.response ?? "").trim() };
-}
+// HTTP inference lives in lib/ai/ollama.ts (`generate`); the analyzeAsset
+// entry point is lib/ai.ts. This module only builds the prompt.

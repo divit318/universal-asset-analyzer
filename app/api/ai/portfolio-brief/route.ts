@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { listPortfolio } from "@/lib/db";
 import { getQuotes } from "@/lib/yahoo";
 import { runPrompt } from "@/lib/ai";
+import { extractJson } from "@/lib/json-extract";
 import { formatCurrency } from "@/lib/format";
 import { gatherPortfolioManagerEvidence, buildBriefEvidenceSuffix } from "@/lib/ai-portfolio-manager";
 
@@ -107,8 +108,7 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
   let parsed: Omit<PortfolioBrief, "model" | "generatedAt">;
   try {
     const raw = await runPrompt(prompt, { json: true, maxTokens: 600 });
-    const cleaned = raw.replace(/^```(?:json)?\s*/m, "").replace(/\s*```$/m, "").trim();
-    parsed = JSON.parse(cleaned) as Omit<PortfolioBrief, "model" | "generatedAt">;
+    parsed = extractJson<Omit<PortfolioBrief, "model" | "generatedAt">>(raw);
   } catch {
     parsed = {
       headline: "Portfolio summary — start Ollama for AI intelligence",

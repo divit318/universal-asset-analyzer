@@ -554,11 +554,21 @@ These modules track user holdings and provide position-level analysis.
 
 ---
 
-### AI/Inference Pipeline (`lib/ollama.ts` + feature-specific modules)
-**Purpose**: Local LLM inference (Ollama + llama3.2).
+### AI/Inference Pipeline (`lib/ai/ollama.ts` + feature-specific modules)
+**Purpose**: Local LLM inference (Ollama). Local-only by policy — no code path
+to any hosted/paid provider.
 
-**Exports:**
-- `analyzeWithOllama(prompt)` → streaming response
+**Layering** (single HTTP client):
+- `lib/ai/ollama.ts` — the ONLY module that talks HTTP to Ollama: `generate()`
+  (single-shot), `streamChat()` (token streaming), `listInstalledModels()`,
+  `checkHealth()`, typed errors (`OllamaUnavailableError`, `ModelMissingError`),
+  retry/backoff, `DEFAULT_MODEL` (env `OLLAMA_MODEL`, default llama3.2),
+  reasoning-tag splitting for R1/Qwen3-style models.
+- `lib/ai.ts` — thin façade: `runPrompt()` / `analyzeAsset()` /
+  `getActiveModelName()`; 20+ engines call this, never fetch directly.
+- `lib/ollama.ts` — pure prompt builder for asset analysis (no HTTP).
+- `lib/json-extract.ts` — the single JSON-from-LLM-response parser. Never
+  hand-roll fence stripping in routes or engines.
 - Graceful degradation if Ollama offline (UI shows fallback message)
 
 **Feature-Specific Prompt Builders:**

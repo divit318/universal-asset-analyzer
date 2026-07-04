@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { buildCompanyContext } from "@/lib/ai/context";
 import { runPrompt } from "@/lib/ai";
+import { extractJson } from "@/lib/json-extract";
 import { formatCurrency, formatMarketCap } from "@/lib/format";
 
 export const runtime = "nodejs";
@@ -165,8 +166,7 @@ REQUIREMENTS:
 
   try {
     const raw = await runPrompt(prompt, { json: true, maxTokens: 800 });
-    const cleaned = raw.replace(/^```(?:json)?\s*/m, "").replace(/\s*```$/m, "").trim();
-    parsed = JSON.parse(cleaned) as Omit<InvestmentVerdict, "model" | "generatedAt">;
+    parsed = extractJson<Omit<InvestmentVerdict, "model" | "generatedAt">>(raw);
   } catch {
     const v = score
       ? score.composite > 65 ? "bullish" : score.composite < 40 ? "bearish" : "neutral"

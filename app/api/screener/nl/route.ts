@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import type { FundamentalScreenerCriteria } from "@/lib/types";
+import { DEFAULT_MODEL, generate, listInstalledModels } from "@/lib/ai/ollama";
+import { extractJson } from "@/lib/json-extract";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
 
 const SYSTEM_PROMPT = `You are a financial screener assistant. Given a plain-English description of an investment strategy or stock type, output a valid JSON object that encodes the screening criteria.
 
@@ -58,37 +58,9 @@ Rules:
 - Default sortDir to "desc". Default sortField to "overallScore" unless a more specific field fits the description.
 - Output ONLY the JSON object. No explanation, no markdown code fences.`;
 
-interface OllamaChatResponse {
-  message?: { content?: string };
-  error?: string;
-}
-
-function extractJson(text: string): string {
-  // Strip markdown code fences if model added them
-  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) return fenceMatch[1].trim();
-  // Find the first { ... } block
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start !== -1 && end !== -1 && end > start) return text.slice(start, end + 1);
-  return text.trim();
-}
-
 /** GET /api/screener/nl — list installed Ollama models for the model picker. */
 export async function GET() {
-  try {
-    const res = await fetch(`${OLLAMA_HOST}/api/tags`, {
-      signal: AbortSignal.timeout(4000),
-    });
-    if (!res.ok) return NextResponse.json({ models: [] });
-    const data = (await res.json()) as { models?: { model?: string; name?: string }[] };
-    const models = (data.models ?? [])
-      .map((m) => m.model ?? m.name)
-      .filter((id): id is string => Boolean(id));
-    return NextResponse.json({ models });
-  } catch {
-    return NextResponse.json({ models: [] });
-  }
+  return NextResponse.json({ models: await listInstalledModels() });
 }
 
 /** POST /api/screener/nl — body { prompt, model } → FundamentalScreenerCriteria */
@@ -103,45 +75,26 @@ export async function POST(request: Request) {
   const userPrompt = body.prompt?.trim();
   if (!userPrompt) return NextResponse.json({ error: "`prompt` is required" }, { status: 400 });
 
-  const model = body.model?.trim() || "mistral";
+  const model = body.model?.trim() || DEFAULT_MODEL;
 
-  let ollamaRes: Response;
+  let raw: string;
   try {
-    ollamaRes = await fetch(`${OLLAMA_HOST}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        stream: false,
-        options: { temperature: 0.1 },
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userPrompt },
-        ],
-      }),
-      signal: AbortSignal.timeout(30000),
+    raw = await generate(userPrompt, {
+      model,
+      system: SYSTEM_PROMPT,
+      temperature: 0.1,
+      timeoutMs: 30_000,
     });
-  } catch {
-    return NextResponse.json(
-      { error: `Could not reach Ollama at ${OLLAMA_HOST}. Is it running? (\`ollama serve\`)` },
-      { status: 502 },
-    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Ollama request failed";
+    return NextResponse.json({ error: message }, { status: 502 });
   }
 
-  const data = (await ollamaRes.json()) as OllamaChatResponse;
-  if (!ollamaRes.ok || data.error) {
-    return NextResponse.json(
-      { error: data.error ?? `Ollama request failed (${ollamaRes.status})` },
-      { status: 502 },
-    );
-  }
-
-  const raw = (data.message?.content ?? "").trim();
   if (!raw) return NextResponse.json({ error: "Ollama returned an empty response" }, { status: 502 });
 
   let criteria: FundamentalScreenerCriteria;
   try {
-    criteria = JSON.parse(extractJson(raw)) as FundamentalScreenerCriteria;
+    criteria = extractJson<FundamentalScreenerCriteria>(raw);
   } catch {
     return NextResponse.json(
       { error: "Ollama did not return valid JSON. Try rephrasing your description.", raw },

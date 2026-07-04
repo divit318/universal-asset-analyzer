@@ -590,14 +590,13 @@ Return JSON only — an array:
 
   try {
     const raw = await runPrompt(prompt, { maxTokens: 2000, json: true });
-    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    const mappings = JSON.parse(cleaned) as {
+    const mappings = extractJson<{
       symbol: string;
       tier: 1 | 2 | 3 | 4 | 5 | 6;
       strategicImportance: "critical" | "high" | "medium" | "low";
       moatType: TierCompany["moatType"];
       relevanceRationale: string;
-    }[];
+    }[]>(raw);
 
     const symMap = new Map(dbCompanies.map((c) => [c.symbol, c]));
     const tierLabels: Record<number, string> = {};

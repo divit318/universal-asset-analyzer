@@ -12,6 +12,9 @@
 
 export const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
 
+/** Default model when a caller doesn't pick one explicitly. */
+export const DEFAULT_MODEL = process.env.OLLAMA_MODEL ?? "llama3.2";
+
 /** Raised when Ollama can't be reached at all (daemon not running). */
 export class OllamaUnavailableError extends Error {
   code = "ollama_unavailable" as const;
@@ -173,6 +176,58 @@ export async function* streamChat(
       if (chunk.done) return;
     }
   }
+}
+
+export interface GenerateOptions {
+  model?: string;
+  system?: string;
+  temperature?: number;
+  /** Append a strict JSON-only instruction to the prompt. */
+  json?: boolean;
+  timeoutMs?: number;
+}
+
+/**
+ * Single-shot (non-streaming) completion via /api/chat. The blocking
+ * counterpart to {@link streamChat} for callers that want one string back —
+ * same retry, same typed errors.
+ */
+export async function generate(
+  prompt: string,
+  opts: GenerateOptions = {},
+): Promise<string> {
+  const model = opts.model ?? DEFAULT_MODEL;
+  const content = opts.json
+    ? `${prompt}\n\nRespond ONLY with valid JSON. No markdown, no explanation.`
+    : prompt;
+  const messages: ChatTurn[] = [
+    ...(opts.system ? [{ role: "system" as const, content: opts.system }] : []),
+    { role: "user" as const, content },
+  ];
+
+  const res = await withRetry(() =>
+    fetch(`${OLLAMA_HOST}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: false,
+        options: { temperature: opts.temperature ?? 0.4 },
+      }),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000),
+    }),
+  );
+
+  const data = (await res.json().catch(() => ({}))) as OllamaChatChunk;
+  if (!res.ok || data.error) {
+    const message = data.error ?? `Ollama request failed (${res.status}).`;
+    if (/not found|no such model|try pulling/i.test(message)) {
+      throw new ModelMissingError(model);
+    }
+    throw new Error(message);
+  }
+  return (data.message?.content ?? "").trim();
 }
 
 /**

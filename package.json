@@ -10,7 +10,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.104.1",
     "@types/d3-force": "^3.0.10",
     "d3-force": "^3.0.0",
     "exceljs": "^4.4.0",
