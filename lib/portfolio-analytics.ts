@@ -417,9 +417,35 @@ function portfolioReturns(
   return result;
 }
 
-function annualizedReturn(totalReturn: number, days: number): number {
-  if (days <= 0) return totalReturn;
-  return ((1 + totalReturn / 100) ** (252 / days) - 1) * 100;
+/**
+ * Annualized Sharpe/Sortino from a daily *decimal* return series (0.001 = 0.1%).
+ * The risk-free rate is annual decimal (default 4.25% T-bill) — converted to a
+ * daily decimal before comparing against daily returns; mixing percent and
+ * decimal units here previously produced Sharpe ratios ~100× too negative.
+ * Exported for tests.
+ */
+export function computeRiskAdjustedRatios(
+  portReturns: number[],
+  annualRiskFree = 0.0425,
+): { sharpe: number | null; sortino: number | null } {
+  const dailyVol = stddev(portReturns);
+  const avgDailyReturn = mean(portReturns);
+  const dailyRiskFree = annualRiskFree / 252;
+
+  const sharpe =
+    dailyVol > 0
+      ? ((avgDailyReturn - dailyRiskFree) / dailyVol) * Math.sqrt(252)
+      : null;
+
+  const downside = portReturns.filter((r) => r < dailyRiskFree);
+  const downsideVol =
+    stddev(downside.length >= 2 ? downside : portReturns) * Math.sqrt(252);
+  const sortino =
+    downsideVol > 0
+      ? (avgDailyReturn * 252 - annualRiskFree) / downsideVol
+      : null;
+
+  return { sharpe, sortino };
 }
 
 function maxDrawdown(returns: number[]): number {
@@ -1143,7 +1169,7 @@ function computeRiskAnalytics(
     : "low";
 
   // Build daily portfolio return series
-  const hasHistory = positions.some((p) => positionHistories.get(p.symbol)?.length ?? 0 >= 20);
+  const hasHistory = positions.some((p) => (positionHistories.get(p.symbol)?.length ?? 0) >= 20);
   if (!hasHistory) {
     return {
       annualizedVolatility: null,
@@ -1179,23 +1205,8 @@ function computeRiskAnalytics(
   const minLen = Math.min(...returnsPerPos.map((x) => x.returns.length));
   const portReturns = portfolioReturns(returnsPerPos, minLen);
 
-  const dailyVol = stddev(portReturns);
-  const annualizedVol = dailyVol * Math.sqrt(252) * 100;
-  const avgDailyReturn = mean(portReturns);
-  const annualReturn = annualizedReturn(avgDailyReturn * 252 * 100, 252);
-
-  const riskFree = 4.25 / 252; // daily T-bill equivalent
-  const sharpe =
-    dailyVol > 0
-      ? ((avgDailyReturn - riskFree) / dailyVol) * Math.sqrt(252)
-      : null;
-
-  const downside = portReturns.filter((r) => r < riskFree);
-  const downsideVol = stddev(downside.length >= 2 ? downside : portReturns) * Math.sqrt(252);
-  const sortino =
-    downsideVol > 0
-      ? ((avgDailyReturn * 252 - 4.25 / 100) / downsideVol)
-      : null;
+  const annualizedVol = stddev(portReturns) * Math.sqrt(252) * 100;
+  const { sharpe, sortino } = computeRiskAdjustedRatios(portReturns);
 
   const dd = maxDrawdown(portReturns);
   const var95 = Math.abs(quantile(portReturns, 0.05)) * 100;
