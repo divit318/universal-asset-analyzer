@@ -1,3 +1,4 @@
+import { isValidSymbol } from "@/lib/market";
 import { NextResponse } from "next/server";
 import { getHistory, getQuote, getQuoteSummary, getSectorEtf } from "@/lib/yahoo";
 import { getRecentFilings } from "@/lib/edgar";
@@ -12,11 +13,10 @@ export const dynamic = "force-dynamic";
  * Combines a Yahoo Finance quote + price history with recent SEC filings.
  * EDGAR failures are non-fatal: the quote still returns with `edgarError` set.
  */
-const SYMBOL_RE = /^[A-Z0-9.\-]{1,12}$/;
 
 export async function GET(request: Request) {
   const symbol = new URL(request.url).searchParams.get("symbol")?.trim().toUpperCase();
-  if (!symbol || !SYMBOL_RE.test(symbol)) {
+  if (!symbol || !isValidSymbol(symbol)) {
     return NextResponse.json(
       { error: "A valid `symbol` query parameter is required (e.g. AAPL)" },
       { status: 400 },

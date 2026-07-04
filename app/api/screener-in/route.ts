@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { normalizeSymbol } from "@/lib/market";
 import {
   getScreenerInCompany,
   getPeers,
@@ -19,9 +20,9 @@ export const dynamic = "force-dynamic";
  * Designed for the Indian stock research view.
  */
 export async function GET(request: Request) {
-  const symbol = new URL(request.url).searchParams.get("symbol")?.trim();
+  const symbol = normalizeSymbol(new URL(request.url).searchParams.get("symbol"));
   if (!symbol) {
-    return NextResponse.json({ error: "symbol parameter is required" }, { status: 400 });
+    return NextResponse.json({ error: "A valid `symbol` parameter is required" }, { status: 400 });
   }
 
   const [company, quoteResult] = await Promise.allSettled([

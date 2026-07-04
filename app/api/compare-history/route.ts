@@ -1,4 +1,5 @@
 import { getHistory, getQuote } from "@/lib/yahoo";
+import { normalizeSymbol } from "@/lib/market";
 
 export const dynamic = "force-dynamic";
 
@@ -22,8 +23,8 @@ export async function GET(request: Request) {
   const raw = searchParams.get("symbols") ?? "";
   const symbols = raw
     .split(",")
-    .map((s) => s.trim().toUpperCase())
-    .filter(Boolean)
+    .map((s) => normalizeSymbol(s))
+    .filter((s): s is string => s !== null)
     .slice(0, 5);
   const days = Math.min(parseInt(searchParams.get("days") ?? "365", 10), 5 * 365);
 

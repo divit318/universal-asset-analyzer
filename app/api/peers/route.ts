@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getPeerComparison } from "@/lib/peers";
+import { normalizeSymbol } from "@/lib/market";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,10 +11,10 @@ export const dynamic = "force-dynamic";
  * for the peer-comparison radar. Slower (fans out across the sector), cached.
  */
 export async function GET(request: Request) {
-  const symbol = new URL(request.url).searchParams.get("symbol")?.trim();
+  const symbol = normalizeSymbol(new URL(request.url).searchParams.get("symbol"));
   if (!symbol) {
     return NextResponse.json(
-      { error: "A `symbol` query parameter is required" },
+      { error: "A valid `symbol` query parameter is required" },
       { status: 400 },
     );
   }

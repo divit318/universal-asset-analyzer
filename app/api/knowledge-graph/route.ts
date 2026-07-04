@@ -1,3 +1,4 @@
+import { isValidSymbol } from "@/lib/market";
 import { NextResponse } from "next/server";
 import { getKnowledgeGraph } from "@/lib/knowledge-graph";
 import { SECTOR_ETF_MAP } from "@/lib/sector-rotation";
@@ -6,7 +7,6 @@ import type { GraphScope } from "@/lib/knowledge-graph";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SYMBOL_RE = /^[A-Z0-9.\-]{1,12}$/;
 const VALID_SCOPES: GraphScope[] = ["symbol", "portfolio", "watchlist", "sector"];
 
 /**
@@ -26,7 +26,7 @@ export async function GET(request: Request) {
   if (!id) {
     return NextResponse.json({ error: "An `id` query parameter is required" }, { status: 400 });
   }
-  if (scope === "symbol" && !SYMBOL_RE.test(id.toUpperCase())) {
+  if (scope === "symbol" && !isValidSymbol(id.toUpperCase())) {
     return NextResponse.json({ error: "Invalid symbol" }, { status: 400 });
   }
   if (scope === "sector" && !(id in SECTOR_ETF_MAP)) {

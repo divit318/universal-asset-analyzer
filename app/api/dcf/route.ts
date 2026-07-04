@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getQuoteSummary } from "@/lib/yahoo";
+import { normalizeSymbol } from "@/lib/market";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,9 +35,9 @@ export interface DcfPrefill {
  * Returns the pre-fill inputs for the DCF model from Yahoo Finance.
  */
 export async function GET(request: Request) {
-  const symbol = new URL(request.url).searchParams.get("symbol")?.trim().toUpperCase();
+  const symbol = normalizeSymbol(new URL(request.url).searchParams.get("symbol"));
   if (!symbol) {
-    return NextResponse.json({ error: "symbol required" }, { status: 400 });
+    return NextResponse.json({ error: "A valid `symbol` is required" }, { status: 400 });
   }
 
   let raw: Record<string, unknown>;

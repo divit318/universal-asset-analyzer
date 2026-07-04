@@ -4,6 +4,7 @@ import { getFinancialStatements, getFinancialStatementsYahoo } from "@/lib/state
 import { getHistory, getQuote } from "@/lib/yahoo";
 import { computeMomentum, computeScore, assessRisks } from "@/lib/scoring";
 import { compareStocks } from "@/lib/ai-compare";
+import { normalizeSymbol } from "@/lib/market";
 import { buildOpportunityProfile, type OpportunityProfile } from "@/lib/opportunity-engine";
 import type { FinancialStatements, FundamentalsSnapshot, AnalystConsensus, ScoreResult, MomentumSignal, Quote, RiskItem } from "@/lib/types";
 
@@ -54,7 +55,7 @@ function computeOneYearReturn(history: { date: string; close: number }[]): numbe
 /** GET /api/compare?symbols=AAPL,MSFT,GOOGL — up to 5 symbols. */
 export async function GET(request: Request) {
   const raw = new URL(request.url).searchParams.get("symbols") ?? "";
-  const symbols = [...new Set(raw.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean))].slice(0, 5);
+  const symbols = [...new Set(raw.split(",").map((s) => normalizeSymbol(s)).filter((s): s is string => s !== null))].slice(0, 5);
   if (symbols.length < 1) {
     return NextResponse.json({ error: "At least one symbol is required" }, { status: 400 });
   }

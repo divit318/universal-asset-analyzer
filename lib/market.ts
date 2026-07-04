@@ -2,6 +2,30 @@ import type { Quote } from "./types";
 
 export type MarketRegion = "IN" | "JP" | "HK" | "AU" | "EU" | "US" | "CRYPTO";
 
+/**
+ * Charset covers every symbol shape the app accepts: US tickers (BRK.B),
+ * suffixed listings (RELIANCE.NS), NSE names with ampersands (M&M), crypto
+ * pairs (BTC-USD), indices (^GSPC), futures (GC=F). Deliberately excludes
+ * "/", "?", "#", whitespace — symbols are interpolated into external URLs
+ * and cache keys, so this doubles as injection protection.
+ */
+const SYMBOL_RE = /^[A-Z0-9.\-&^=]{1,15}$/;
+
+/** True when `raw` (after trim/uppercase) is a plausible, URL-safe symbol. */
+export function isValidSymbol(raw: string | null | undefined): boolean {
+  return normalizeSymbol(raw) !== null;
+}
+
+/**
+ * Canonical symbol from user input: trimmed, uppercased, validated.
+ * Returns null for anything unsafe or empty — the single validation gate
+ * for every API route that accepts a symbol.
+ */
+export function normalizeSymbol(raw: string | null | undefined): string | null {
+  const sym = raw?.trim().toUpperCase();
+  return sym && SYMBOL_RE.test(sym) ? sym : null;
+}
+
 /** Derive the listing market from a Yahoo Finance quote object (or any subset with these 4 fields — e.g. when only a symbol is known server-side). */
 export function detectMarket(quote: Pick<Quote, "symbol" | "currency" | "exchange" | "assetType">): MarketRegion {
   const exch = (quote.exchange ?? "").toLowerCase();

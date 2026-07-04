@@ -1,3 +1,4 @@
+import { isValidSymbol } from "@/lib/market";
 import { NextResponse } from "next/server";
 import {
   syncTimelineEvents,
@@ -11,7 +12,6 @@ import type { TimelineScope, TimelineEventCategory, TimelineFilters } from "@/li
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SYMBOL_RE = /^[A-Z0-9.\-]{1,12}$/;
 const VALID_SCOPES: TimelineScope[] = ["symbol", "portfolio", "watchlist", "sector"];
 
 function parseFilters(params: URLSearchParams): TimelineFilters {
@@ -49,7 +49,7 @@ export async function GET(request: Request) {
   if (!id) {
     return NextResponse.json({ error: "An `id` query parameter is required" }, { status: 400 });
   }
-  if (scope === "symbol" && !SYMBOL_RE.test(id.toUpperCase())) {
+  if (scope === "symbol" && !isValidSymbol(id.toUpperCase())) {
     return NextResponse.json({ error: "Invalid symbol" }, { status: 400 });
   }
   if (scope === "sector" && !(id in SECTOR_ETF_MAP)) {

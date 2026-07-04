@@ -6,6 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { normalizeSymbol } from "@/lib/market";
 import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";
@@ -85,9 +86,11 @@ print(json.dumps(result, default=str))
 `.trim();
 
 export async function GET(req: NextRequest) {
-  const symbol = req.nextUrl.searchParams.get("symbol")?.toUpperCase().trim();
+  // Strict validation is load-bearing here: the symbol is interpolated into a
+  // generated Python script, so the charset gate is what prevents injection.
+  const symbol = normalizeSymbol(req.nextUrl.searchParams.get("symbol"));
   if (!symbol) {
-    return NextResponse.json({ error: "symbol param required" }, { status: 400 });
+    return NextResponse.json({ error: "A valid `symbol` param is required" }, { status: 400 });
   }
 
   // Prefer snapshot (no lock), fall back to live DuckDB query if snapshot missing

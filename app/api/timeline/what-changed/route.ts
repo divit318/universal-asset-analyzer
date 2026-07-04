@@ -1,10 +1,10 @@
+import { isValidSymbol } from "@/lib/market";
 import { NextResponse } from "next/server";
 import { computeWhatChanged } from "@/lib/timeline";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SYMBOL_RE = /^[A-Z0-9.\-]{1,12}$/;
 
 /**
  * GET /api/timeline/what-changed?symbol=AAPL&eventId=<id>
@@ -16,7 +16,7 @@ export async function GET(request: Request) {
   const symbol = params.get("symbol")?.trim().toUpperCase();
   const eventId = params.get("eventId")?.trim();
 
-  if (!symbol || !SYMBOL_RE.test(symbol)) {
+  if (!symbol || !isValidSymbol(symbol)) {
     return NextResponse.json({ error: "Invalid symbol" }, { status: 400 });
   }
   if (!eventId) {

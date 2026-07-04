@@ -1,3 +1,4 @@
+import { isValidSymbol } from "@/lib/market";
 import { buildCompanyContext } from "@/lib/ai/context";
 import {
   ModelMissingError,
@@ -69,9 +70,8 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const SYMBOL_RE = /^[A-Z0-9.\-]{1,12}$/;
   const symbol = body.symbol?.trim().toUpperCase();
-  if (!symbol || !SYMBOL_RE.test(symbol)) {
+  if (!symbol || !isValidSymbol(symbol)) {
     return Response.json({ error: "A valid `symbol` is required (e.g. AAPL)" }, { status: 400 });
   }
 

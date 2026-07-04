@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import { getFundamentals } from "@/lib/fundamentals";
+import { normalizeSymbol } from "@/lib/market";
 import { getFinancialStatements } from "@/lib/statements";
 import { getFundamentalsTimeSeries, getHistory, getQuote } from "@/lib/yahoo";
 import { assessRisks, computeMomentum, computeScore } from "@/lib/scoring";
@@ -174,8 +175,8 @@ export async function GET(request: Request) {
 }
 
 async function generateReport(request: Request): Promise<Response> {
-  const symbol = new URL(request.url).searchParams.get("symbol")?.trim().toUpperCase();
-  if (!symbol) return new Response("symbol required", { status: 400 });
+  const symbol = normalizeSymbol(new URL(request.url).searchParams.get("symbol"));
+  if (!symbol) return new Response("A valid `symbol` is required", { status: 400 });
 
   const [quoteR, histR, fundR, stmtsR, tsR, filingsR, peersR] = await Promise.allSettled([
     getQuote(symbol),

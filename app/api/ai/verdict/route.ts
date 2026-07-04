@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { buildCompanyContext } from "@/lib/ai/context";
 import { runPrompt } from "@/lib/ai";
 import { extractJson } from "@/lib/json-extract";
+import { normalizeSymbol } from "@/lib/market";
 import { formatCurrency, formatMarketCap } from "@/lib/format";
 
 export const runtime = "nodejs";
@@ -23,8 +24,8 @@ export interface InvestmentVerdict {
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const symbol = url.searchParams.get("symbol")?.trim().toUpperCase();
-  if (!symbol) return NextResponse.json({ error: "symbol required" }, { status: 400 });
+  const symbol = normalizeSymbol(url.searchParams.get("symbol"));
+  if (!symbol) return NextResponse.json({ error: "A valid `symbol` is required" }, { status: 400 });
 
   // Portfolio context passed from the client (IOS-computed, per user).
   const fitScore     = url.searchParams.get("fitScore");

@@ -1,3 +1,4 @@
+import { isValidSymbol } from "@/lib/market";
 import { NextResponse } from "next/server";
 import {
   addToWatchlist,
@@ -28,9 +29,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const SYMBOL_RE = /^[A-Z0-9.\-]{1,12}$/;
   const symbol = body.symbol?.trim().toUpperCase();
-  if (!symbol || !SYMBOL_RE.test(symbol)) {
+  if (!symbol || !isValidSymbol(symbol)) {
     return NextResponse.json({ error: "`symbol` must be a valid ticker (e.g. AAPL)" }, { status: 400 });
   }
 

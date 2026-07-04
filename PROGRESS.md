@@ -117,3 +117,22 @@ handling → tests → cross-feature integration), preserving local-first AI.
 - New `tests/json-extract.test.ts` (9 tests).
 - Verified: tsc clean, lint 0 errors, 311/311 tests, live POSTs to both
   refactored endpoints returned correct output (criteria JSON + weekly brief).
+
+### 2. Unified symbol validation across all API routes (security + dedup)
+- New `normalizeSymbol()`/`isValidSymbol()` in lib/market.ts (client-safe,
+  zero-dep). Charset `[A-Z0-9.\-&^=]{1,15}` covers BRK.B, RELIANCE.NS, M&M,
+  BTC-USD, ^GSPC, GC=F while excluding "/", whitespace, quotes — symbols are
+  interpolated into external URLs, cache keys, and (engine/detail) a generated
+  Python script, so the charset gate doubles as injection protection.
+- **Security fix**: /api/engine/detail interpolated an unvalidated symbol into
+  a Python script executed server-side — a crafted URL (reachable via CSRF
+  against localhost) was a script-injection vector. Now 400s (live-verified).
+- 12 previously-unvalidated routes now validate: fundamentals, quote,
+  screener-in, compare-history, notes (GET+POST), compare, dcf, report, peers,
+  engine/detail, research/context, ai/verdict.
+- 10 routes that each had their own copy of SYMBOL_RE now import the shared
+  validator (research, research/chat, knowledge-graph, movement, portfolio,
+  timeline ×3, watchlist ×2). Old strict regex also rejected legitimate
+  tickers like M&M / ^GSPC; unified charset fixes that.
+- Verified: tsc clean, lint 0 errors, 311/311 tests, live: valid AAPL quote
+  200, path-traversal symbols filtered, engine/detail injection attempt 400.

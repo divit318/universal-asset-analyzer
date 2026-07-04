@@ -1,3 +1,4 @@
+import { isValidSymbol } from "@/lib/market";
 import { NextResponse } from "next/server";
 import { explainMovement } from "@/lib/movement-explainer";
 import type { MovementSubjectKind } from "@/lib/types";
@@ -5,7 +6,6 @@ import type { MovementSubjectKind } from "@/lib/types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SYMBOL_RE = /^[A-Z0-9.\-]{1,12}$/;
 const VALID_KINDS: MovementSubjectKind[] = ["symbol", "sector", "portfolio"];
 
 /**
@@ -26,7 +26,7 @@ export async function GET(request: Request) {
   if (!subject) {
     return NextResponse.json({ error: "A `subject` query parameter is required" }, { status: 400 });
   }
-  if (kind === "symbol" && !SYMBOL_RE.test(subject.toUpperCase())) {
+  if (kind === "symbol" && !isValidSymbol(subject.toUpperCase())) {
     return NextResponse.json({ error: "Invalid symbol" }, { status: 400 });
   }
 

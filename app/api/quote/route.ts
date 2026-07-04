@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getQuotes } from "@/lib/yahoo";
+import { normalizeSymbol } from "@/lib/market";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,8 +17,8 @@ export async function GET(request: Request) {
 
   const symbols = raw
     .split(",")
-    .map((s) => s.trim().toUpperCase())
-    .filter(Boolean);
+    .map((s) => normalizeSymbol(s))
+    .filter((s): s is string => s !== null);
 
   try {
     const quotes = await getQuotes(symbols);

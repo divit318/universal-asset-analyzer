@@ -3,7 +3,7 @@ import { getFundamentals } from "@/lib/fundamentals";
 import { getFinancialStatements, getFinancialStatementsYahoo } from "@/lib/statements";
 import { getFundamentalsTimeSeries, getHistory } from "@/lib/yahoo";
 import { assessRisks, classifyInvestmentPersonality, computeMomentum, computeScore } from "@/lib/scoring";
-import { detectMarket } from "@/lib/market";
+import { detectMarket, normalizeSymbol } from "@/lib/market";
 import { getLatestSectorRotation, findSectorRotationEntry } from "@/lib/sector-rotation";
 import type { FinancialStatements, FundamentalsData, HistoryPoint, ValuationPoint } from "@/lib/types";
 
@@ -104,10 +104,10 @@ function buildValuation(
  * Now also includes earnings history, institutional ownership, and valuation history.
  */
 export async function GET(request: Request) {
-  const symbol = new URL(request.url).searchParams.get("symbol")?.trim();
+  const symbol = normalizeSymbol(new URL(request.url).searchParams.get("symbol"));
   if (!symbol) {
     return NextResponse.json(
-      { error: "A `symbol` query parameter is required" },
+      { error: "A valid `symbol` query parameter is required" },
       { status: 400 },
     );
   }

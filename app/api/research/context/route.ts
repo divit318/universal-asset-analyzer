@@ -1,4 +1,5 @@
 import { buildCompanyContext } from "@/lib/ai/context";
+import { normalizeSymbol } from "@/lib/market";
 import { checkHealth } from "@/lib/ai/ollama";
 import { buildModelOptions, pickDefaultModel } from "@/lib/ai/models";
 
@@ -14,9 +15,9 @@ export const dynamic = "force-dynamic";
  * the first question.
  */
 export async function GET(request: Request) {
-  const symbol = new URL(request.url).searchParams.get("symbol")?.trim().toUpperCase();
+  const symbol = normalizeSymbol(new URL(request.url).searchParams.get("symbol"));
   if (!symbol) {
-    return Response.json({ error: "A `symbol` query parameter is required" }, { status: 400 });
+    return Response.json({ error: "A valid `symbol` query parameter is required" }, { status: 400 });
   }
 
   const [health, ctxResult] = await Promise.all([

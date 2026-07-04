@@ -1,3 +1,4 @@
+import { isValidSymbol } from "@/lib/market";
 import { NextResponse } from "next/server";
 import { gatherWatchlistAlerts } from "@/lib/ai-watchlist";
 import type { WatchlistItem } from "@/lib/types";
@@ -5,7 +6,6 @@ import type { WatchlistItem } from "@/lib/types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SYMBOL_RE = /^[A-Z0-9.\-]{1,12}$/;
 
 /**
  * GET /api/watchlist/symbol-alerts?symbol=AAPL
@@ -21,7 +21,7 @@ const SYMBOL_RE = /^[A-Z0-9.\-]{1,12}$/;
  */
 export async function GET(request: Request) {
   const symbol = new URL(request.url).searchParams.get("symbol")?.trim().toUpperCase();
-  if (!symbol || !SYMBOL_RE.test(symbol)) {
+  if (!symbol || !isValidSymbol(symbol)) {
     return NextResponse.json({ error: "A valid `symbol` query parameter is required" }, { status: 400 });
   }
 

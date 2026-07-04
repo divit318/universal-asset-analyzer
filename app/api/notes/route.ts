@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { addNote, deleteNote, listNotes } from "@/lib/db";
+import { normalizeSymbol } from "@/lib/market";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /** GET /api/notes?symbol=AAPL — list saved notes for a symbol. */
 export async function GET(request: Request) {
-  const symbol = new URL(request.url).searchParams.get("symbol")?.trim();
-  if (!symbol) return NextResponse.json({ error: "`symbol` is required" }, { status: 400 });
+  const symbol = normalizeSymbol(new URL(request.url).searchParams.get("symbol"));
+  if (!symbol) return NextResponse.json({ error: "A valid `symbol` is required" }, { status: 400 });
   try {
     return NextResponse.json({ notes: listNotes(symbol) });
   } catch (err) {
@@ -21,10 +22,10 @@ export async function POST(request: Request) {
   try { body = await request.json(); } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
-  const symbol = body.symbol?.trim();
+  const symbol = normalizeSymbol(body.symbol);
   const content = body.content?.trim();
   if (!symbol || !content) {
-    return NextResponse.json({ error: "`symbol` and `content` are required" }, { status: 400 });
+    return NextResponse.json({ error: "A valid `symbol` and `content` are required" }, { status: 400 });
   }
   try {
     return NextResponse.json(addNote(symbol, content), { status: 201 });
