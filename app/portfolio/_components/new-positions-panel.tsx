@@ -13,7 +13,7 @@ import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
 /* ─────────────── Score bar ─────────────── */
 
 function ScoreBar({ label, value }: { label: string; value: number }) {
-  const color = value >= 70 ? "bg-positive" : value >= 50 ? "bg-amber-400" : "bg-negative";
+  const color = value >= 70 ? "bg-positive" : value >= 50 ? "bg-warning" : "bg-negative";
   return (
     <div>
       <div className="flex justify-between text-[10px] mb-0.5">
@@ -37,7 +37,7 @@ function ImpactBadge({ label, value }: { label: string; value: string }) {
     neutral:  "border-border text-muted",
     increases:"border-negative/30 bg-negative/8 text-negative",
     low:      "border-border text-muted",
-    medium:   "border-amber-400/40 bg-amber-400/8 text-amber-400",
+    medium:   "border-warning/40 bg-warning/8 text-warning",
   };
   const colorClass = colors[value] ?? "border-border text-muted";
   return (
@@ -68,8 +68,8 @@ function RecommendationCard({ rec, rank }: { rec: NewPositionRecommendation; ran
       })
     : null;
 
-  const confColor = rec.confidenceScore >= 70 ? "text-positive" : rec.confidenceScore >= 50 ? "text-amber-400" : "text-negative";
-  const confBg    = rec.confidenceScore >= 70 ? "border-positive/30 bg-positive/5" : rec.confidenceScore >= 50 ? "border-amber-400/30 bg-amber-400/5" : "border-negative/30 bg-negative/5";
+  const confColor = rec.confidenceScore >= 70 ? "text-positive" : rec.confidenceScore >= 50 ? "text-warning" : "text-negative";
+  const confBg    = rec.confidenceScore >= 70 ? "border-positive/30 bg-positive/5" : rec.confidenceScore >= 50 ? "border-warning/30 bg-warning/5" : "border-negative/30 bg-negative/5";
 
   return (
     <>

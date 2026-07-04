@@ -14,12 +14,12 @@ const TYPE_STYLES: Record<CalendarEvent["type"], {
   earnings:   { label: "Earnings",  color: "text-blue-400",    bg: "bg-blue-400/10",   border: "border-blue-400/25",   dot: "bg-blue-400" },
   exDividend: { label: "Ex-Div",    color: "text-accent",      bg: "bg-accent/10",     border: "border-accent/25",     dot: "bg-accent" },
   dividend:   { label: "Dividend",  color: "text-emerald-400", bg: "bg-emerald-400/10", border: "border-emerald-400/25", dot: "bg-emerald-400" },
-  macro:      { label: "Macro",     color: "text-amber-400",   bg: "bg-amber-400/10",  border: "border-amber-400/25",  dot: "bg-amber-400" },
+  macro:      { label: "Macro",     color: "text-warning",   bg: "bg-warning/10",  border: "border-warning/25",  dot: "bg-warning" },
 };
 
 const IMPACT_STYLES: Record<string, { color: string; bg: string; border: string }> = {
-  high:   { color: "text-red-400",   bg: "bg-red-400/10",   border: "border-red-400/25" },
-  medium: { color: "text-amber-400", bg: "bg-amber-400/10", border: "border-amber-400/25" },
+  high:   { color: "text-negative",   bg: "bg-negative/10",   border: "border-negative/25" },
+  medium: { color: "text-warning", bg: "bg-warning/10", border: "border-warning/25" },
   low:    { color: "text-muted",     bg: "bg-surface-3",    border: "border-border" },
 };
 
@@ -199,7 +199,7 @@ function EarningsRow({ ev, onClick, isPortfolio, isWatchlist }: {
         {/* Date column */}
         <div className="shrink-0 text-right">
           <div className="font-mono text-xs font-semibold text-foreground">{formatShortDate(ev.date)}</div>
-          <div className={`text-[10px] font-medium ${days <= 3 && days >= 0 ? "text-amber-400" : "text-muted"}`}>
+          <div className={`text-[10px] font-medium ${days <= 3 && days >= 0 ? "text-warning" : "text-muted"}`}>
             {daysLabel(days)}
           </div>
         </div>
@@ -261,7 +261,7 @@ function DividendRow({ ev, onClick, isPortfolio, isWatchlist }: {
         </div>
         <div className="shrink-0 text-right">
           <div className="font-mono text-xs font-semibold text-foreground">{formatShortDate(ev.date)}</div>
-          <div className={`text-[10px] font-medium ${days <= 3 && days >= 0 ? "text-amber-400" : "text-muted"}`}>{daysLabel(days)}</div>
+          <div className={`text-[10px] font-medium ${days <= 3 && days >= 0 ? "text-warning" : "text-muted"}`}>{daysLabel(days)}</div>
         </div>
       </div>
       {ev.symbol && (
@@ -282,7 +282,7 @@ function MacroRow({ ev, onClick }: { ev: CalendarEvent; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="group w-full rounded-xl border border-border bg-surface px-4 py-4 text-left transition-all hover:border-amber-400/30 hover:bg-surface-2"
+      className="group w-full rounded-xl border border-border bg-surface px-4 py-4 text-left transition-all hover:border-warning/30 hover:bg-surface-2"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1.5">
@@ -307,7 +307,7 @@ function MacroRow({ ev, onClick }: { ev: CalendarEvent; onClick: () => void }) {
         </div>
         <div className="shrink-0 text-right">
           <div className="font-mono text-xs font-semibold text-foreground">{formatShortDate(ev.date)}</div>
-          <div className={`text-[10px] font-medium ${days <= 3 && days >= 0 ? "text-amber-400" : "text-muted"}`}>{daysLabel(days)}</div>
+          <div className={`text-[10px] font-medium ${days <= 3 && days >= 0 ? "text-warning" : "text-muted"}`}>{daysLabel(days)}</div>
         </div>
       </div>
     </button>
@@ -415,7 +415,7 @@ function SummaryStrip({ events, portfolioSymbols, watchlistSymbols }: {
     const d = daysFromNow(nextMacro.date);
     stats.push({
       label: "Next Macro",
-      value: <span className="text-amber-400">{nextMacro.name.split(" ").slice(0, 3).join(" ")}</span>,
+      value: <span className="text-warning">{nextMacro.name.split(" ").slice(0, 3).join(" ")}</span>,
       sub: daysLabel(d),
     });
   }
@@ -473,25 +473,25 @@ function AiBriefSection({ events, autoGenerate }: { events: CalendarEvent[]; aut
   }, [autoGenerate, events.length]);
 
   return (
-    <div className="rounded-xl border border-amber-400/20 bg-amber-400/5">
+    <div className="rounded-xl border border-warning/20 bg-warning/5">
       <button
         onClick={() => {
           setExpanded((v) => !v);
           if (!expanded && !brief && !loading) void generate();
         }}
-        className="flex w-full items-center justify-between px-5 py-4 transition-colors hover:bg-amber-400/5"
+        className="flex w-full items-center justify-between px-5 py-4 transition-colors hover:bg-warning/5"
       >
         <div className="flex items-center gap-3">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-amber-400/20 bg-amber-400/10">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-amber-400">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-warning/20 bg-warning/10">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-warning">
               <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
             </svg>
           </div>
           <div className="text-left">
             <div className="flex items-center gap-2">
               <p className="text-sm font-semibold">AI Weekly Market Brief</p>
-              <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-amber-400">Local AI</span>
-              {loading && <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />}
+              <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-warning">Local AI</span>
+              {loading && <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />}
             </div>
             <p className="text-xs text-muted">Ollama-generated summary of this week&apos;s most important events</p>
           </div>
@@ -505,7 +505,7 @@ function AiBriefSection({ events, autoGenerate }: { events: CalendarEvent[]; aut
       </button>
 
       {expanded && (
-        <div className="border-t border-amber-400/20 px-5 py-4">
+        <div className="border-t border-warning/20 px-5 py-4">
           {loading && (
             <div className="flex items-center gap-3 py-4">
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-amber-400" />
@@ -873,11 +873,11 @@ export default function CalendarPage() {
               ))}
               <span className="h-3 w-px bg-border" />
               <div className="flex items-center gap-1.5">
-                <div className="h-1.5 w-1.5 rounded-full bg-red-400" />
+                <div className="h-1.5 w-1.5 rounded-full bg-negative" />
                 <span className="text-xs text-muted">High Impact</span>
               </div>
               <div className="flex items-center gap-1.5">
-                <div className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                <div className="h-1.5 w-1.5 rounded-full bg-warning" />
                 <span className="text-xs text-muted">Medium Impact</span>
               </div>
             </div>

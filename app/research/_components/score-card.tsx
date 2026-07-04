@@ -3,7 +3,7 @@ import type { MomentumSignal, Recommendation, ScoreResult } from "@/lib/types";
 const REC_STYLE: Record<Recommendation, string> = {
   STRONG_BUY:  "text-positive  border-positive/50  bg-positive/15",
   BUY:         "text-positive  border-positive/35  bg-positive/10",
-  HOLD:        "text-amber-400 border-amber-400/40 bg-amber-400/10",
+  HOLD:        "text-warning border-warning/40 bg-warning/10",
   SELL:        "text-negative  border-negative/35  bg-negative/10",
   STRONG_SELL: "text-negative  border-negative/50  bg-negative/15",
 };
@@ -20,7 +20,7 @@ const REC_LABEL: Record<Recommendation, string> = {
 const RING_COLOR: Record<Recommendation, string> = {
   STRONG_BUY:  "border-positive",
   BUY:         "border-positive/60",
-  HOLD:        "border-amber-400/70",
+  HOLD:        "border-warning/70",
   SELL:        "border-negative/60",
   STRONG_SELL: "border-negative",
 };
@@ -29,7 +29,7 @@ const RING_COLOR: Record<Recommendation, string> = {
 function barColor(v: number | null) {
   if (v == null) return "bg-border";
   if (v >= 60)   return "bg-positive";
-  if (v >= 42)   return "bg-amber-400";
+  if (v >= 42)   return "bg-warning";
   return "bg-negative";
 }
 
@@ -130,7 +130,7 @@ export function ScoreCard({
               </div>
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
                 <div
-                  className={`h-full rounded-full transition-all duration-500 ${pct >= 60 ? "bg-accent" : pct >= 42 ? "bg-amber-400" : "bg-negative"}`}
+                  className={`h-full rounded-full transition-all duration-500 ${pct >= 60 ? "bg-accent" : pct >= 42 ? "bg-warning" : "bg-negative"}`}
                   style={{ width: `${pct}%` }}
                 />
               </div>

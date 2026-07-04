@@ -67,7 +67,7 @@ function StandingBadge({ rank, total }: { rank: number | undefined; total: numbe
     </span>
   );
   if (pct <= 0.5) return (
-    <span className="inline-flex items-center rounded border border-amber-400/25 bg-amber-400/8 px-1.5 py-0.5 text-[10px] font-medium text-amber-400/80">
+    <span className="inline-flex items-center rounded border border-warning/25 bg-warning/8 px-1.5 py-0.5 text-[10px] font-medium text-warning/80">
       Above avg
     </span>
   );
@@ -105,7 +105,7 @@ function MetricBar({
     ? ((value - min) / range) * 100
     : ((max - value) / range) * 100;
 
-  const color = pct >= 66 ? "bg-positive" : pct >= 33 ? "bg-amber-400" : "bg-negative";
+  const color = pct >= 66 ? "bg-positive" : pct >= 33 ? "bg-warning" : "bg-negative";
 
   return (
     <div className="h-1 w-full overflow-hidden rounded-full bg-surface-3">

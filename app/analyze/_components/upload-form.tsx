@@ -60,7 +60,7 @@ export function UploadForm() {
       </label>
 
       {status === "error" && error ? (
-        <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+        <p className="text-sm text-red-600 dark:text-negative">{error}</p>
       ) : null}
 
       {result ? <ResultView result={result} /> : null}

@@ -106,6 +106,9 @@ export interface WatchlistItem {
   targetPrice: number | null;
   alertPctDrop: number | null;
   notes: string | null;
+  /** Joined from fundamentals_cache by /api/watchlist (null if never screened). */
+  sector?: string | null;
+  dividendYield?: number | null;
 }
 
 export interface ResearchNote {

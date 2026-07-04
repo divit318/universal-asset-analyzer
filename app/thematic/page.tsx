@@ -65,7 +65,7 @@ const STAGE_META: Record<string, { label: string; icon: string }> = {
 
 function Score({ value, max = 10, size = "md" }: { value: number; max?: number; size?: "sm" | "md" | "lg" }) {
   const pct = Math.round((value / max) * 100);
-  const color = pct >= 70 ? "text-positive" : pct >= 40 ? "text-amber-400" : "text-negative";
+  const color = pct >= 70 ? "text-positive" : pct >= 40 ? "text-warning" : "text-negative";
   const sizeClass = size === "lg" ? "text-4xl font-bold" : size === "md" ? "text-2xl font-semibold" : "text-base font-semibold";
   return <span className={`font-mono ${color} ${sizeClass}`}>{value}<span className="text-muted text-sm font-normal">/{max}</span></span>;
 }
@@ -122,7 +122,7 @@ function trendColor(trend: string) {
 const TIER_COLORS: Record<number, string> = {
   1: "bg-accent/15 text-accent border-accent/30",
   2: "bg-purple-500/15 text-purple-400 border-purple-500/30",
-  3: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+  3: "bg-amber-500/15 text-warning border-amber-500/30",
   4: "bg-orange-500/15 text-orange-400 border-orange-500/30",
   5: "bg-blue-500/15 text-blue-400 border-blue-500/30",
   6: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",

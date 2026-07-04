@@ -213,7 +213,7 @@ export function QuarterlyRevenueChart({ data }: { data: ScreenerInQuarterlyPL[] 
       </ResponsiveContainer>
       <div className="flex gap-4 text-[10px] text-muted">
         <span className="flex items-center gap-1"><span className="h-1.5 w-3 rounded-sm bg-positive" />YoY &gt;15%</span>
-        <span className="flex items-center gap-1"><span className="h-1.5 w-3 rounded-sm bg-amber-400" />Moderate</span>
+        <span className="flex items-center gap-1"><span className="h-1.5 w-3 rounded-sm bg-warning" />Moderate</span>
         <span className="flex items-center gap-1"><span className="h-1.5 w-3 rounded-sm bg-negative" />Declining</span>
       </div>
     </ChartFrame>
@@ -249,7 +249,7 @@ export function QuarterlyProfitChart({ data }: { data: ScreenerInQuarterlyPL[] }
       </ResponsiveContainer>
       <div className="flex gap-4 text-xs text-muted">
         <span className="flex items-center gap-1.5"><span className="h-2 w-3 rounded-sm bg-positive" />Net Profit</span>
-        <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 bg-amber-400" />OPM %</span>
+        <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 bg-warning" />OPM %</span>
       </div>
     </ChartFrame>
   );
@@ -302,18 +302,18 @@ export function QuarterlySummaryStats({ data }: { data: ScreenerInQuarterlyPL[] 
       label: "YoY Revenue Growth",
       value: yoySales != null ? `${yoySales >= 0 ? "+" : ""}${yoySales.toFixed(1)}%` : "—",
       sub: "Avg trailing 4Q vs prior 4Q",
-      color: yoySales != null ? (yoySales >= 10 ? "text-positive" : yoySales >= 0 ? "text-amber-400" : "text-negative") : undefined,
+      color: yoySales != null ? (yoySales >= 10 ? "text-positive" : yoySales >= 0 ? "text-warning" : "text-negative") : undefined,
     },
     {
       label: "YoY Profit Growth",
       value: yoyProfit != null ? `${yoyProfit >= 0 ? "+" : ""}${yoyProfit.toFixed(1)}%` : "—",
-      color: yoyProfit != null ? (yoyProfit >= 10 ? "text-positive" : yoyProfit >= 0 ? "text-amber-400" : "text-negative") : undefined,
+      color: yoyProfit != null ? (yoyProfit >= 10 ? "text-positive" : yoyProfit >= 0 ? "text-warning" : "text-negative") : undefined,
     },
     {
       label: "Avg OPM %",
       value: recentOPM != null ? `${recentOPM.toFixed(1)}%` : "—",
       sub: "Trailing 4 quarters",
-      color: recentOPM != null ? (recentOPM >= 20 ? "text-positive" : recentOPM >= 12 ? "text-amber-400" : "text-negative") : undefined,
+      color: recentOPM != null ? (recentOPM >= 20 ? "text-positive" : recentOPM >= 12 ? "text-warning" : "text-negative") : undefined,
     },
   ];
 

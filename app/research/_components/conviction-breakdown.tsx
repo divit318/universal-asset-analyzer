@@ -12,29 +12,29 @@ const REC_LABEL: Record<string, string> = {
 };
 
 const REC_COLOR: Record<string, string> = {
-  STRONG_BUY:  "text-green-400 border-green-400/40 bg-green-400/10",
-  BUY:         "text-green-400 border-green-400/30 bg-green-400/8",
-  HOLD:        "text-amber-400 border-amber-400/40 bg-amber-400/10",
-  SELL:        "text-red-400 border-red-400/30 bg-red-400/8",
-  STRONG_SELL: "text-red-400 border-red-400/40 bg-red-400/10",
+  STRONG_BUY:  "text-positive border-positive/40 bg-positive/10",
+  BUY:         "text-positive border-positive/30 bg-positive/8",
+  HOLD:        "text-warning border-warning/40 bg-warning/10",
+  SELL:        "text-negative border-negative/30 bg-negative/8",
+  STRONG_SELL: "text-negative border-negative/40 bg-negative/10",
 };
 
 function barColor(pct: number) {
   if (pct >= 65) return "bg-positive";
-  if (pct >= 42) return "bg-amber-400";
+  if (pct >= 42) return "bg-warning";
   return "bg-negative";
 }
 
 function confidenceLabel(pct: number) {
-  if (pct >= 70) return { text: "High confidence", cls: "text-green-400" };
-  if (pct >= 45) return { text: "Medium confidence", cls: "text-amber-400" };
-  return { text: "Low confidence", cls: "text-red-400" };
+  if (pct >= 70) return { text: "High confidence", cls: "text-positive" };
+  if (pct >= 45) return { text: "Medium confidence", cls: "text-warning" };
+  return { text: "Low confidence", cls: "text-negative" };
 }
 
 const RISK_CHIP: Record<RiskLevel, { label: string; cls: string }> = {
-  low:    { label: "Low risk",    cls: "text-green-400 border-green-400/30 bg-green-400/8" },
-  medium: { label: "Medium risk", cls: "text-amber-400 border-amber-400/30 bg-amber-400/8" },
-  high:   { label: "High risk",   cls: "text-red-400 border-red-400/30 bg-red-400/8" },
+  low:    { label: "Low risk",    cls: "text-positive border-positive/30 bg-positive/8" },
+  medium: { label: "Medium risk", cls: "text-warning border-warning/30 bg-warning/8" },
+  high:   { label: "High risk",   cls: "text-negative border-negative/30 bg-negative/8" },
 };
 
 function worstRisk(risks: RiskItem[]): RiskItem | null {

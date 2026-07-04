@@ -175,7 +175,7 @@ function scoreCapitalAllocation(c: ScreenerInCompany, debtToEquity: number | nul
 function toGrade(score: number): { label: string; color: string; bg: string } {
   if (score >= 80) return { label: "Excellent", color: "text-positive", bg: "bg-positive/10 border-positive/30" };
   if (score >= 65) return { label: "Good", color: "text-positive", bg: "bg-positive/8 border-positive/20" };
-  if (score >= 48) return { label: "Fair", color: "text-amber-400", bg: "bg-amber-400/10 border-amber-400/30" };
+  if (score >= 48) return { label: "Fair", color: "text-warning", bg: "bg-warning/10 border-warning/30" };
   if (score >= 32) return { label: "Weak", color: "text-negative", bg: "bg-negative/8 border-negative/20" };
   return { label: "Poor", color: "text-negative", bg: "bg-negative/10 border-negative/30" };
 }
@@ -231,7 +231,7 @@ function overallVerdict(q: number, v: number, g: number, ca: number): { label: s
   const avg = (q * 0.35 + v * 0.25 + g * 0.25 + ca * 0.15);
   if (avg >= 78) return { label: "Strong Buy", style: "text-positive border-positive/40 bg-positive/12" };
   if (avg >= 62) return { label: "Accumulate", style: "text-positive border-positive/30 bg-positive/8" };
-  if (avg >= 46) return { label: "Hold", style: "text-amber-400 border-amber-400/40 bg-amber-400/10" };
+  if (avg >= 46) return { label: "Hold", style: "text-warning border-warning/40 bg-warning/10" };
   if (avg >= 30) return { label: "Reduce", style: "text-negative border-negative/30 bg-negative/8" };
   return { label: "Avoid", style: "text-negative border-negative/40 bg-negative/12" };
 }
@@ -253,7 +253,7 @@ function ScorePill({ label, score }: { label: string; score: number }) {
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-3">
         <div
           className={`h-full rounded-full transition-all duration-500 ${
-            score >= 65 ? "bg-positive" : score >= 45 ? "bg-amber-400" : "bg-negative"
+            score >= 65 ? "bg-positive" : score >= 45 ? "bg-warning" : "bg-negative"
           }`}
           style={{ width: `${score}%` }}
         />
@@ -304,7 +304,7 @@ export function InvestmentSnapshot({ company, derived }: InvestmentSnapshotProps
           {/* Composite ring */}
           <div
             className={`relative flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-full border-2 ${
-              composite >= 65 ? "border-positive" : composite >= 45 ? "border-amber-400/70" : "border-negative"
+              composite >= 65 ? "border-positive" : composite >= 45 ? "border-warning/70" : "border-negative"
             }`}
           >
             <span className="text-xl font-bold leading-none tabular-nums">{composite}</span>

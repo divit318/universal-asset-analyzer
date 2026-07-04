@@ -5,9 +5,9 @@ import type { InvestmentPersonality, InvestmentPersonalityTag } from "@/lib/type
 
 const TAG_STYLE: Record<InvestmentPersonalityTag, string> = {
   Compounder:    "text-emerald-400 border-emerald-400/30 bg-emerald-400/8",
-  Cyclical:      "text-amber-400 border-amber-400/30 bg-amber-400/8",
+  Cyclical:      "text-warning border-warning/30 bg-warning/8",
   Turnaround:    "text-blue-400 border-blue-400/30 bg-blue-400/8",
-  "High Growth": "text-green-400 border-green-400/30 bg-green-400/8",
+  "High Growth": "text-positive border-positive/30 bg-positive/8",
   Income:        "text-purple-400 border-purple-400/30 bg-purple-400/8",
   "Deep Value":  "text-cyan-400 border-cyan-400/30 bg-cyan-400/8",
   Defensive:     "text-slate-400 border-slate-400/30 bg-slate-400/8",

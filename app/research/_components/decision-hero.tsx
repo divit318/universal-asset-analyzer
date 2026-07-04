@@ -9,37 +9,37 @@ import type { ScoreResult } from "@/lib/types";
 
 const COLORS = {
   bullish: {
-    label:  "text-green-400",
-    border: "border-green-400/20",
-    bg:     "bg-green-400/5",
-    badge:  "text-green-400 border-green-400/40 bg-green-400/10",
-    bar:    "bg-green-400",
-    dot:    "bg-green-400/70",
-    bullet: "bg-green-400/50",
+    label:  "text-positive",
+    border: "border-positive/20",
+    bg:     "bg-positive/5",
+    badge:  "text-positive border-positive/40 bg-positive/10",
+    bar:    "bg-positive",
+    dot:    "bg-positive/70",
+    bullet: "bg-positive/50",
   },
   bearish: {
-    label:  "text-red-400",
-    border: "border-red-400/20",
-    bg:     "bg-red-400/5",
-    badge:  "text-red-400 border-red-400/40 bg-red-400/10",
-    bar:    "bg-red-400",
-    dot:    "bg-red-400/70",
-    bullet: "bg-red-400/50",
+    label:  "text-negative",
+    border: "border-negative/20",
+    bg:     "bg-negative/5",
+    badge:  "text-negative border-negative/40 bg-negative/10",
+    bar:    "bg-negative",
+    dot:    "bg-negative/70",
+    bullet: "bg-negative/50",
   },
   neutral: {
-    label:  "text-amber-400",
-    border: "border-amber-400/20",
-    bg:     "bg-amber-400/5",
-    badge:  "text-amber-400 border-amber-400/40 bg-amber-400/10",
-    bar:    "bg-amber-400",
-    dot:    "bg-amber-400/70",
-    bullet: "bg-amber-400/50",
+    label:  "text-warning",
+    border: "border-warning/20",
+    bg:     "bg-warning/5",
+    badge:  "text-warning border-warning/40 bg-warning/10",
+    bar:    "bg-warning",
+    dot:    "bg-warning/70",
+    bullet: "bg-warning/50",
   },
 } as const;
 
 const SIGNAL_CLASS = {
-  positive: "text-green-400",
-  negative: "text-red-400",
+  positive: "text-positive",
+  negative: "text-negative",
   neutral:  "text-muted",
 } as const;
 
@@ -130,8 +130,8 @@ export function DecisionHero({ verdict, loading, score }: Props) {
           <div className="flex items-center gap-3 text-[11px]">
             <span className="uppercase tracking-widest text-muted">Confidence</span>
             <span className={`font-semibold uppercase ${
-              verdict.confidence === "high" ? "text-green-400" :
-              verdict.confidence === "medium" ? "text-amber-400" : "text-red-400"
+              verdict.confidence === "high" ? "text-positive" :
+              verdict.confidence === "medium" ? "text-warning" : "text-negative"
             }`}>
               {verdict.confidence}
             </span>
@@ -163,7 +163,7 @@ export function DecisionHero({ verdict, loading, score }: Props) {
       {/* ── Catalysts / Risks ── */}
       <div className="mb-5 grid gap-4 sm:grid-cols-2">
         <div>
-          <p className="mb-2.5 text-[10px] font-semibold uppercase tracking-widest text-green-400/70">
+          <p className="mb-2.5 text-[10px] font-semibold uppercase tracking-widest text-positive/70">
             Why Own
           </p>
           <ul className="space-y-1.5">
@@ -176,13 +176,13 @@ export function DecisionHero({ verdict, loading, score }: Props) {
           </ul>
         </div>
         <div>
-          <p className="mb-2.5 text-[10px] font-semibold uppercase tracking-widest text-red-400/70">
+          <p className="mb-2.5 text-[10px] font-semibold uppercase tracking-widest text-negative/70">
             Why Avoid
           </p>
           <ul className="space-y-1.5">
             {verdict.risks.map((risk, i) => (
               <li key={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
-                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-red-400/50" />
+                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-negative/50" />
                 {risk}
               </li>
             ))}

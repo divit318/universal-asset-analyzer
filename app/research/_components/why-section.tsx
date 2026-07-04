@@ -9,8 +9,8 @@ import { formatDate } from "@/lib/format";
 /* -------------------------------------------------------------------------- */
 
 const RISK_BADGE: Record<"high" | "medium" | "low", string> = {
-  high:   "text-red-400 bg-red-400/10 border-red-400/30",
-  medium: "text-amber-400 bg-amber-400/10 border-amber-400/30",
+  high:   "text-negative bg-negative/10 border-negative/30",
+  medium: "text-warning bg-warning/10 border-warning/30",
   low:    "text-muted bg-surface-2 border-border",
 };
 
@@ -68,14 +68,14 @@ export function WhySection({ verdict, verdictLoading, risks, news }: Props) {
       {verdict && (
         <div className="grid gap-5 sm:grid-cols-2">
           {/* Why Own */}
-          <div className="flex flex-col gap-3 rounded-xl border border-green-400/15 bg-green-400/5 p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-green-400/80">
+          <div className="flex flex-col gap-3 rounded-xl border border-positive/15 bg-positive/5 p-4">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-positive/80">
               Why Own
             </p>
             <ul className="space-y-2">
               {verdict.catalysts.map((c, i) => (
                 <li key={i} className="flex gap-2.5 text-sm leading-5 text-foreground/85">
-                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-green-400/60" />
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-positive/60" />
                   {c}
                 </li>
               ))}
@@ -83,14 +83,14 @@ export function WhySection({ verdict, verdictLoading, risks, news }: Props) {
           </div>
 
           {/* Why Avoid */}
-          <div className="flex flex-col gap-3 rounded-xl border border-red-400/15 bg-red-400/5 p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-red-400/80">
+          <div className="flex flex-col gap-3 rounded-xl border border-negative/15 bg-negative/5 p-4">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-negative/80">
               Why Avoid
             </p>
             <ul className="space-y-2">
               {verdict.risks.map((r, i) => (
                 <li key={i} className="flex gap-2.5 text-sm leading-5 text-foreground/85">
-                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-red-400/60" />
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-negative/60" />
                   {r}
                 </li>
               ))}

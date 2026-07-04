@@ -2,7 +2,7 @@ import type { RiskItem, RiskLevel } from "@/lib/types";
 
 const LEVEL_STYLE: Record<RiskLevel, string> = {
   low: "border-positive/40 bg-positive/10 text-positive",
-  medium: "border-amber-400/40 bg-amber-400/10 text-amber-400",
+  medium: "border-warning/40 bg-warning/10 text-warning",
   high: "border-negative/40 bg-negative/10 text-negative",
 };
 

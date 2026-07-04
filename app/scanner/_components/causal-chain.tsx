@@ -10,10 +10,10 @@ const DIR_COLOR = {
 
 const CAT_STYLE: Record<string, string> = {
   macro:       "text-blue-400 bg-blue-400/10 border-blue-400/20",
-  policy:      "text-amber-400 bg-amber-400/10 border-amber-400/20",
+  policy:      "text-warning bg-warning/10 border-warning/20",
   company:     "text-accent bg-accent/10 border-accent/20",
   commodity:   "text-orange-400 bg-orange-400/10 border-orange-400/20",
-  geopolitics: "text-red-400 bg-red-400/10 border-red-400/20",
+  geopolitics: "text-negative bg-negative/10 border-negative/20",
   market:      "text-purple-400 bg-purple-400/10 border-purple-400/20",
   sentiment:   "text-muted bg-muted/10 border-muted/20",
 };

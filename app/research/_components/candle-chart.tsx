@@ -422,7 +422,7 @@ export function CandleChart({ history, since }: CandleChartProps) {
       <div className="flex flex-wrap items-center gap-1.5 px-1">
         <span className="text-xs text-muted mr-1">Overlays</span>
         {([
-          { key: "sma50",  label: "SMA 50",   active: showSma50,  toggle: () => setShowSma50((v) => !v),  cls: "bg-amber-500/20 text-amber-400" },
+          { key: "sma50",  label: "SMA 50",   active: showSma50,  toggle: () => setShowSma50((v) => !v),  cls: "bg-amber-500/20 text-warning" },
           { key: "sma200", label: "SMA 200",  active: showSma200, toggle: () => setShowSma200((v) => !v), cls: "bg-purple-500/20 text-purple-400" },
           { key: "bb",     label: "BB(20,2)", active: showBB,     toggle: () => setShowBB((v) => !v),     cls: "bg-teal-500/20 text-teal-400" },
         ] as const).map(({ key, label, active, toggle, cls }) => (

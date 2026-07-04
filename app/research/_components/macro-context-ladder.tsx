@@ -18,24 +18,24 @@ import type { MarketRegime, Recommendation, SectorRotationEntry } from "@/lib/ty
  */
 
 const TREND_LABEL: Record<MarketRegime["trend"], { label: string; cls: string }> = {
-  "risk-on":  { label: "Risk-On",  cls: "text-green-400 border-green-400/30 bg-green-400/8" },
-  "risk-off": { label: "Risk-Off", cls: "text-red-400 border-red-400/30 bg-red-400/8" },
-  neutral:    { label: "Neutral",  cls: "text-amber-400 border-amber-400/30 bg-amber-400/8" },
+  "risk-on":  { label: "Risk-On",  cls: "text-positive border-positive/30 bg-positive/8" },
+  "risk-off": { label: "Risk-Off", cls: "text-negative border-negative/30 bg-negative/8" },
+  neutral:    { label: "Neutral",  cls: "text-warning border-warning/30 bg-warning/8" },
 };
 
 const SECTOR_CLASS_STYLE: Record<SectorRotationEntry["classification"], { label: string; cls: string }> = {
-  leading:       { label: "Leading",       cls: "text-green-400 border-green-400/30 bg-green-400/8" },
+  leading:       { label: "Leading",       cls: "text-positive border-positive/30 bg-positive/8" },
   strengthening: { label: "Strengthening", cls: "text-emerald-400 border-emerald-400/30 bg-emerald-400/8" },
-  weakening:     { label: "Weakening",     cls: "text-amber-400 border-amber-400/30 bg-amber-400/8" },
-  lagging:       { label: "Lagging",       cls: "text-red-400 border-red-400/30 bg-red-400/8" },
+  weakening:     { label: "Weakening",     cls: "text-warning border-warning/30 bg-warning/8" },
+  lagging:       { label: "Lagging",       cls: "text-negative border-negative/30 bg-negative/8" },
 };
 
 const REC_CLASS: Record<Recommendation, { label: string; cls: string }> = {
-  STRONG_BUY:  { label: "Expansion", cls: "text-green-400 border-green-400/30 bg-green-400/8" },
-  BUY:         { label: "Expansion", cls: "text-green-400 border-green-400/30 bg-green-400/8" },
-  HOLD:        { label: "Stable",    cls: "text-amber-400 border-amber-400/30 bg-amber-400/8" },
-  SELL:        { label: "Contracting", cls: "text-red-400 border-red-400/30 bg-red-400/8" },
-  STRONG_SELL: { label: "Contracting", cls: "text-red-400 border-red-400/30 bg-red-400/8" },
+  STRONG_BUY:  { label: "Expansion", cls: "text-positive border-positive/30 bg-positive/8" },
+  BUY:         { label: "Expansion", cls: "text-positive border-positive/30 bg-positive/8" },
+  HOLD:        { label: "Stable",    cls: "text-warning border-warning/30 bg-warning/8" },
+  SELL:        { label: "Contracting", cls: "text-negative border-negative/30 bg-negative/8" },
+  STRONG_SELL: { label: "Contracting", cls: "text-negative border-negative/30 bg-negative/8" },
 };
 
 function Rung({ tier, label, cls, detail }: { tier: string; label: string; cls: string; detail?: string }) {

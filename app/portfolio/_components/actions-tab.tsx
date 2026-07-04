@@ -37,7 +37,7 @@ function computeAfterState(
 function ConfidenceBar({ label, value, max = 100 }: { label: string; value: number | null; max?: number }) {
   if (value == null) return null;
   const pct   = (value / max) * 100;
-  const color = value >= 70 ? "bg-positive" : value >= 50 ? "bg-amber-400" : "bg-negative";
+  const color = value >= 70 ? "bg-positive" : value >= 50 ? "bg-warning" : "bg-negative";
 
   return (
     <div className="flex items-center gap-3">
@@ -134,7 +134,7 @@ function DecisionCard({
                 {ACTION_LABEL[rec.action]}
               </span>
               <span className={`text-[10px] font-bold uppercase tracking-widest ${
-                theme.priority === "HIGH" ? "text-negative" : theme.priority === "MEDIUM" ? "text-amber-400" : "text-muted"
+                theme.priority === "HIGH" ? "text-negative" : theme.priority === "MEDIUM" ? "text-warning" : "text-muted"
               }`}>{theme.priority} PRIORITY</span>
             </div>
           </div>

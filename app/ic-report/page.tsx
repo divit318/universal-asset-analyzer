@@ -39,13 +39,13 @@ const STAGE_ORDER: ICReportStage[] = [
 
 const SEV_STYLE = {
   high: "border-negative/40 bg-negative/10 text-negative",
-  medium: "border-amber-400/40 bg-amber-400/10 text-amber-400",
+  medium: "border-warning/40 bg-warning/10 text-warning",
   low: "border-positive/40 bg-positive/10 text-positive",
 };
 
 const CONF_STYLE = {
   high: "text-positive",
-  medium: "text-amber-400",
+  medium: "text-warning",
   low: "text-negative",
 };
 
@@ -130,7 +130,7 @@ function AgentGrid({ findings }: { findings: AgentFinding[] }) {
             <div className="mt-3 border-t border-border pt-3">
               <p className="text-xs leading-5 text-muted">{f.findings}</p>
               {f.dataLimitations && (
-                <p className="mt-2 rounded-md bg-surface-2 px-2 py-1.5 text-xs text-amber-400">
+                <p className="mt-2 rounded-md bg-surface-2 px-2 py-1.5 text-xs text-warning">
                   ⚠ {f.dataLimitations}
                 </p>
               )}
@@ -323,7 +323,7 @@ function ValuationSection({ valuation, runHotCold }: { valuation: ICReport["valu
       {/* Run Hot / Cold */}
       {runHotCold && (
         <Card className={`border ${
-          runHotCold.signal === "run_hot" ? "border-amber-400/40 bg-amber-400/5" :
+          runHotCold.signal === "run_hot" ? "border-warning/40 bg-warning/5" :
           runHotCold.signal === "run_cold" ? "border-accent/40 bg-accent/5" : ""
         }`}>
           <div className="flex flex-col gap-4">
@@ -346,7 +346,7 @@ function ValuationSection({ valuation, runHotCold }: { valuation: ICReport["valu
                 </p>
               </div>
               <span className={`shrink-0 rounded-full border px-3 py-1 text-xs font-semibold uppercase ${
-                runHotCold.signal === "run_hot" ? "border-amber-400/40 text-amber-400" :
+                runHotCold.signal === "run_hot" ? "border-warning/40 text-warning" :
                 runHotCold.signal === "run_cold" ? "border-accent/40 text-accent" : "border-border text-muted"
               }`}>
                 {runHotCold.signal.replace("_", " ")}
@@ -358,8 +358,8 @@ function ValuationSection({ valuation, runHotCold }: { valuation: ICReport["valu
                 <div className="mb-2 text-xs uppercase tracking-wider text-muted">Long-Run CAGR Windows — Percentile vs Own History</div>
                 <div className="flex flex-wrap gap-2">
                   {runHotCold.historicalWindows.filter((w) => w.available).map((w) => {
-                    const hotBorder = w.signal === "run_hot" ? "border-amber-400/50 bg-amber-400/5" : w.signal === "run_cold" ? "border-accent/50 bg-accent/5" : "border-border bg-surface-2";
-                    const pctColor = w.signal === "run_hot" ? "text-amber-400" : w.signal === "run_cold" ? "text-accent" : "text-muted";
+                    const hotBorder = w.signal === "run_hot" ? "border-warning/50 bg-warning/5" : w.signal === "run_cold" ? "border-accent/50 bg-accent/5" : "border-border bg-surface-2";
+                    const pctColor = w.signal === "run_hot" ? "text-warning" : w.signal === "run_cold" ? "text-accent" : "text-muted";
                     return (
                       <div key={w.years} className={`flex flex-col items-center rounded-lg border px-3 py-2 ${hotBorder}`}>
                         <span className="text-xs font-semibold text-muted">{w.years}Y</span>
@@ -838,7 +838,7 @@ export default function ICReportPage() {
                             <div key={q.id} className="flex gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-sm">
                               <span className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
                                 q.priority === "high" ? "bg-negative/10 text-negative" :
-                                q.priority === "medium" ? "bg-amber-400/10 text-amber-400" :
+                                q.priority === "medium" ? "bg-warning/10 text-warning" :
                                 "bg-surface-2 text-muted"
                               }`}>{q.priority}</span>
                               <span className="text-muted">{q.question}</span>
@@ -907,7 +907,7 @@ export default function ICReportPage() {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[
               { step: "1", title: "Signal Detection", color: "text-negative", desc: "13 signal types including ROCE drops, margin compression, FII selling, and working capital issues" },
-              { step: "2", title: "Question Generation", color: "text-amber-400", desc: "Converts each signal into deep analytical questions for the agent network to investigate" },
+              { step: "2", title: "Question Generation", color: "text-warning", desc: "Converts each signal into deep analytical questions for the agent network to investigate" },
               { step: "3", title: "9-Agent Network", color: "text-accent", desc: "Business, Industry, Competition, Management, Capital Allocation, Accounting, Valuation, Governance, Risk" },
               { step: "4", title: "Thesis + Valuation", color: "text-positive", desc: "Bull/Bear/Base thesis, DCF + SOTP, run hot/cold analysis, scenario analysis, exportable IC report" },
             ].map(({ step, title, color, desc }) => (

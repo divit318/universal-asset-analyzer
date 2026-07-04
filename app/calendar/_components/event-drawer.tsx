@@ -12,12 +12,12 @@ const TYPE_STYLES: Record<CalendarEvent["type"], { label: string; color: string;
   earnings:    { label: "EARNINGS",  color: "text-blue-400",   bg: "bg-blue-400/10",   border: "border-blue-400/25",   dot: "bg-blue-400" },
   exDividend:  { label: "EX-DIV",   color: "text-accent",     bg: "bg-accent/10",     border: "border-accent/25",     dot: "bg-accent" },
   dividend:    { label: "DIVIDEND",  color: "text-emerald-400", bg: "bg-emerald-400/10", border: "border-emerald-400/25", dot: "bg-emerald-400" },
-  macro:       { label: "MACRO",    color: "text-amber-400",  bg: "bg-amber-400/10",  border: "border-amber-400/25",  dot: "bg-amber-400" },
+  macro:       { label: "MACRO",    color: "text-warning",  bg: "bg-warning/10",  border: "border-warning/25",  dot: "bg-warning" },
 };
 
 const IMPACT_STYLES: Record<string, { label: string; color: string; bg: string; border: string }> = {
-  high:   { label: "HIGH",   color: "text-red-400",   bg: "bg-red-400/10",   border: "border-red-400/25" },
-  medium: { label: "MEDIUM", color: "text-amber-400", bg: "bg-amber-400/10", border: "border-amber-400/25" },
+  high:   { label: "HIGH",   color: "text-negative",   bg: "bg-negative/10",   border: "border-negative/25" },
+  medium: { label: "MEDIUM", color: "text-warning", bg: "bg-warning/10", border: "border-warning/25" },
   low:    { label: "LOW",    color: "text-muted",     bg: "bg-surface-3",    border: "border-border" },
 };
 
@@ -155,7 +155,7 @@ export function EventDrawer({ event, onClose }: EventDrawerProps) {
             <Row
               label="When"
               value={
-                <span className={days <= 0 ? "text-muted" : days <= 3 ? "text-amber-400 font-semibold" : "text-foreground"}>
+                <span className={days <= 0 ? "text-muted" : days <= 3 ? "text-warning font-semibold" : "text-foreground"}>
                   {daysLabel(days)}
                 </span>
               }

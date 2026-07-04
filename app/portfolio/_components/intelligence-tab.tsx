@@ -24,7 +24,7 @@ function IntelSection({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
-  const dotColor = importance === "high" ? "bg-negative" : importance === "medium" ? "bg-amber-400" : "bg-positive";
+  const dotColor = importance === "high" ? "bg-negative" : importance === "medium" ? "bg-warning" : "bg-positive";
 
   return (
     <div className="rounded-xl border border-border bg-surface overflow-hidden">
@@ -55,8 +55,8 @@ function RiskSummaryCard({ report }: { report: PortfolioReport }) {
   const beta = r.beta ?? 0;
   const vol  = r.annualizedVolatility ?? 0;
 
-  const betaColor = beta > 1.3 ? "text-negative" : beta > 1.0 ? "text-amber-400" : "text-positive";
-  const volColor  = vol > 30 ? "text-negative" : vol > 20 ? "text-amber-400" : "text-positive";
+  const betaColor = beta > 1.3 ? "text-negative" : beta > 1.0 ? "text-warning" : "text-positive";
+  const volColor  = vol > 30 ? "text-negative" : vol > 20 ? "text-warning" : "text-positive";
 
   return (
     <div className="grid gap-3 sm:grid-cols-3">
@@ -83,7 +83,7 @@ function RiskSummaryCard({ report }: { report: PortfolioReport }) {
       </div>
       <div className="rounded-lg border border-border bg-surface-2 p-3">
         <p className="text-[10px] font-semibold uppercase tracking-widest text-muted mb-1">Max Drawdown (90d)</p>
-        <p className={`font-mono text-2xl font-bold ${(r.maxDrawdown ?? 0) < -20 ? "text-negative" : "text-amber-400"}`}>
+        <p className={`font-mono text-2xl font-bold ${(r.maxDrawdown ?? 0) < -20 ? "text-negative" : "text-warning"}`}>
           {r.maxDrawdown?.toFixed(1) ?? "—"}%
         </p>
         <p className="text-[11px] text-muted mt-0.5">Peak-to-trough over 90 days</p>
@@ -100,7 +100,7 @@ function RiskSummaryCard({ report }: { report: PortfolioReport }) {
 function ConcentrationSummary({ report }: { report: PortfolioReport }) {
   const r = report.risk;
   const level = r.concentrationRisk;
-  const color = level === "high" ? "text-negative" : level === "medium" ? "text-amber-400" : "text-positive";
+  const color = level === "high" ? "text-negative" : level === "medium" ? "text-warning" : "text-positive";
   const topPositions = [...report.positions]
     .sort((a, b) => b.weight - a.weight)
     .slice(0, 3);
@@ -115,7 +115,7 @@ function ConcentrationSummary({ report }: { report: PortfolioReport }) {
         </div>
         <span className={`ml-auto rounded-full border px-3 py-1 text-xs font-bold capitalize ${
           level === "high" ? "border-negative/30 bg-negative/10 text-negative"
-          : level === "medium" ? "border-amber-400/30 bg-amber-400/10 text-amber-400"
+          : level === "medium" ? "border-warning/30 bg-warning/10 text-warning"
           : "border-positive/30 bg-positive/10 text-positive"
         }`}>{level}</span>
       </div>

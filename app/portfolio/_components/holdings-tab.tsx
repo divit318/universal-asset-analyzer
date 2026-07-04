@@ -76,7 +76,7 @@ function PositionDetailDrawer({ pos, rec }: { pos: EnrichedPosition; rec: Positi
                 { label: "Momentum",          value: rec.momentumScore },
               ].map(({ label, value }) => {
                 if (value == null) return null;
-                const color = value >= 70 ? "bg-positive" : value >= 50 ? "bg-amber-400" : "bg-negative";
+                const color = value >= 70 ? "bg-positive" : value >= 50 ? "bg-warning" : "bg-negative";
                 return (
                   <div key={label}>
                     <div className="flex justify-between text-[10px] mb-0.5">

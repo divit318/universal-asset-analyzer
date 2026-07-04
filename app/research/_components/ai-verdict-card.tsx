@@ -5,34 +5,34 @@ import type { InvestmentVerdict } from "@/app/api/ai/verdict/route";
 
 const VERDICT_COLORS = {
   bullish: {
-    badge: "text-green-400 bg-green-400/15 border-green-400/30",
-    border: "border-green-400/20",
-    bg: "bg-green-400/5",
-    dot: "bg-green-400",
+    badge: "text-positive bg-positive/15 border-positive/30",
+    border: "border-positive/20",
+    bg: "bg-positive/5",
+    dot: "bg-positive",
   },
   bearish: {
-    badge: "text-red-400 bg-red-400/15 border-red-400/30",
-    border: "border-red-400/20",
-    bg: "bg-red-400/5",
-    dot: "bg-red-400",
+    badge: "text-negative bg-negative/15 border-negative/30",
+    border: "border-negative/20",
+    bg: "bg-negative/5",
+    dot: "bg-negative",
   },
   neutral: {
-    badge: "text-amber-400 bg-amber-400/15 border-amber-400/30",
-    border: "border-amber-400/20",
-    bg: "bg-amber-400/5",
-    dot: "bg-amber-400",
+    badge: "text-warning bg-warning/15 border-warning/30",
+    border: "border-warning/20",
+    bg: "bg-warning/5",
+    dot: "bg-warning",
   },
 };
 
 const CONFIDENCE_COLOR = {
-  high: "text-green-400",
-  medium: "text-amber-400",
-  low: "text-red-400",
+  high: "text-positive",
+  medium: "text-warning",
+  low: "text-negative",
 };
 
 const SIGNAL_COLOR = {
-  positive: "text-green-400",
-  negative: "text-red-400",
+  positive: "text-positive",
+  negative: "text-negative",
   neutral: "text-muted",
 };
 
@@ -136,22 +136,22 @@ export function AIVerdictCard({ symbol }: { symbol: string }) {
       {/* Catalysts + Risks */}
       <div className="grid gap-4 sm:grid-cols-2 mb-4">
         <div>
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-green-400/80">Catalysts</p>
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-positive/80">Catalysts</p>
           <ul className="space-y-1.5">
             {verdict.catalysts.map((c, i) => (
               <li key={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
-                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-green-400/60" />
+                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-positive/60" />
                 {c}
               </li>
             ))}
           </ul>
         </div>
         <div>
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-red-400/80">Risks</p>
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-negative/80">Risks</p>
           <ul className="space-y-1.5">
             {verdict.risks.map((r, i) => (
               <li key={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
-                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-red-400/60" />
+                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-negative/60" />
                 {r}
               </li>
             ))}

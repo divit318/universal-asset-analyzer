@@ -2,6 +2,7 @@ import { isValidSymbol } from "@/lib/market";
 import { NextResponse } from "next/server";
 import {
   addToWatchlist,
+  getFreshFundamentals,
   listWatchlist,
   removeFromWatchlist,
   updateWatchlistItem,
@@ -10,10 +11,22 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** GET /api/watchlist — list saved symbols. */
+/** GET /api/watchlist — list saved symbols, enriched with cached sector data. */
 export async function GET() {
   try {
-    return NextResponse.json({ items: listWatchlist() });
+    // Sector/yield rarely change — tolerate week-old cache rows so the fit
+    // scorer gets real inputs instead of scoring every symbol identically.
+    const { rows } = getFreshFundamentals(7 * 24 * 60 * 60 * 1000);
+    const bySymbol = new Map(rows.map((r) => [r.symbol, r]));
+    const items = listWatchlist().map((item) => {
+      const f = bySymbol.get(item.symbol);
+      return {
+        ...item,
+        sector: f?.sector ?? null,
+        dividendYield: f?.dividendYield ?? null,
+      };
+    });
+    return NextResponse.json({ items });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to read watchlist";
     return NextResponse.json({ error: message }, { status: 500 });

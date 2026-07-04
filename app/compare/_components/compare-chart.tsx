@@ -669,7 +669,7 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
               <span className="h-2 w-3 rounded-sm" style={{ background: colors[i] }} />
               <span className="font-mono font-semibold" style={{ color: colors[i] }}>{sym}</span>
               {v != null && (
-                <span className={`font-mono tabular-nums ${cfg.isGrowth ? (isPos ? "text-green-400" : "text-rose-400") : "text-foreground"}`}>
+                <span className={`font-mono tabular-nums ${cfg.isGrowth ? (isPos ? "text-positive" : "text-rose-400") : "text-foreground"}`}>
                   {cfg.formatFn(v)}
                 </span>
               )}
@@ -677,7 +677,7 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
           );
         })}
         {isPrice && convertedSymbols.length > 0 && (
-          <span className="ml-2 rounded-md bg-amber-400/10 px-2 py-0.5 text-[10px] font-medium text-amber-400">
+          <span className="ml-2 rounded-md bg-warning/10 px-2 py-0.5 text-[10px] font-medium text-warning">
             non-USD prices converted to USD
           </span>
         )}

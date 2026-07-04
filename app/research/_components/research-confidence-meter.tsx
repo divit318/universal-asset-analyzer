@@ -20,7 +20,7 @@ const DATASETS: { key: keyof CopilotCoverage; label: string }[] = [
 
 function barColor(pct: number) {
   if (pct >= 80) return "bg-positive";
-  if (pct >= 50) return "bg-amber-400";
+  if (pct >= 50) return "bg-warning";
   return "bg-negative";
 }
 

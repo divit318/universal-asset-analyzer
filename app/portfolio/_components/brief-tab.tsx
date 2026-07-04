@@ -20,7 +20,7 @@ function deriveStatus(report: PortfolioReport): PortfolioStatus {
 
 const STATUS_CONFIG: Record<PortfolioStatus, { label: string; dot: string; bg: string; text: string; border: string }> = {
   healthy: { label: "Portfolio Healthy",  dot: "bg-positive",  bg: "bg-positive/8",  text: "text-positive",  border: "border-positive/20"  },
-  watch:   { label: "Portfolio Watch",    dot: "bg-amber-400", bg: "bg-amber-400/8", text: "text-amber-400", border: "border-amber-400/20" },
+  watch:   { label: "Portfolio Watch",    dot: "bg-warning", bg: "bg-warning/8", text: "text-warning", border: "border-warning/20" },
   action:  { label: "Action Required",   dot: "bg-negative",  bg: "bg-negative/8",  text: "text-negative",  border: "border-negative/20"  },
 };
 
@@ -55,14 +55,14 @@ function StatusBanner({ report }: { report: PortfolioReport }) {
 const ACTION_STYLE: Record<string, { badge: string; accent: string }> = {
   STRONG_BUY: { badge: "border-positive/50 bg-positive/12 text-positive",         accent: "border-positive/25 bg-positive/5"    },
   INCREASE:   { badge: "border-positive/40 bg-positive/8 text-positive",           accent: "border-positive/20 bg-positive/3"    },
-  HOLD:       { badge: "border-amber-400/40 bg-amber-400/8 text-amber-400",        accent: "border-border bg-surface"             },
+  HOLD:       { badge: "border-warning/40 bg-warning/8 text-warning",        accent: "border-border bg-surface"             },
   REDUCE:     { badge: "border-orange-400/40 bg-orange-400/10 text-orange-400",    accent: "border-orange-400/20 bg-orange-400/5" },
   SELL:       { badge: "border-negative/40 bg-negative/10 text-negative",          accent: "border-negative/20 bg-negative/5"     },
 };
 
 function ConfidenceMiniBar({ label, value }: { label: string; value: number | null }) {
   if (value == null) return null;
-  const color = value >= 70 ? "bg-positive" : value >= 50 ? "bg-amber-400" : "bg-muted";
+  const color = value >= 70 ? "bg-positive" : value >= 50 ? "bg-warning" : "bg-muted";
   return (
     <div className="flex items-center gap-2">
       <span className="text-[10px] text-muted w-20 shrink-0">{label}</span>
@@ -323,7 +323,7 @@ function ChangeFeed({ report }: { report: PortfolioReport }) {
 /* ─────────────── Alert Row ─────────────── */
 
 function AlertRow({ alert }: { alert: PortfolioAlert }) {
-  const dot = alert.severity === "high" ? "bg-negative" : alert.severity === "medium" ? "bg-amber-400" : "bg-muted";
+  const dot = alert.severity === "high" ? "bg-negative" : alert.severity === "medium" ? "bg-warning" : "bg-muted";
   return (
     <div className="flex items-start gap-3 rounded-lg border border-border bg-surface px-4 py-2.5">
       <span className={`mt-1.5 h-1.5 w-1.5 rounded-full shrink-0 ${dot}`} />

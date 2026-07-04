@@ -10,13 +10,13 @@ import { MovementExplainerCard } from "@/app/_components/movement-explainer-card
 const ACTION_STYLE: Record<PortfolioAction, string> = {
   STRONG_BUY: "border-positive/60 bg-positive/15 text-positive",
   INCREASE:   "border-positive/40 bg-positive/8 text-positive",
-  HOLD:       "border-amber-400/40 bg-amber-400/8 text-amber-400",
+  HOLD:       "border-warning/40 bg-warning/8 text-warning",
   REDUCE:     "border-orange-400/40 bg-orange-400/10 text-orange-400",
   SELL:       "border-negative/40 bg-negative/10 text-negative",
 };
 
 function ConfidenceBar({ confidence }: { confidence: number }) {
-  const color = confidence >= 70 ? "bg-positive" : confidence >= 50 ? "bg-amber-400" : "bg-muted";
+  const color = confidence >= 70 ? "bg-positive" : confidence >= 50 ? "bg-warning" : "bg-muted";
   return (
     <div className="flex items-center gap-1.5">
       <div className="h-1 w-16 bg-surface-2 rounded-full overflow-hidden">

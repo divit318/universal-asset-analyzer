@@ -20,7 +20,7 @@ const MAX = 5;
 const COLORS = ["#3b82f6", "#f59e0b", "#10b981", "#f43f5e", "#a855f7"];
 const COLOR_BG = [
   "bg-blue-500/10 border-blue-500/30",
-  "bg-amber-400/10 border-amber-400/30",
+  "bg-warning/10 border-warning/30",
   "bg-emerald-500/10 border-emerald-500/30",
   "bg-rose-500/10 border-rose-500/30",
   "bg-purple-500/10 border-purple-500/30",
@@ -168,9 +168,9 @@ function recLabel(key: string | null | undefined): string {
 function recColor(key: string | null | undefined): string {
   if (!key) return "text-muted bg-surface-2";
   const k = key.toLowerCase();
-  if (k === "strong_buy") return "text-green-400 bg-green-400/15";
-  if (k === "buy") return "text-green-400 bg-green-400/10";
-  if (k === "hold") return "text-amber-400 bg-amber-400/10";
+  if (k === "strong_buy") return "text-positive bg-positive/15";
+  if (k === "buy") return "text-positive bg-positive/10";
+  if (k === "hold") return "text-warning bg-warning/10";
   if (k === "sell") return "text-rose-400 bg-rose-400/10";
   if (k === "strong_sell") return "text-rose-400 bg-rose-400/15";
   return "text-muted bg-surface-2";
@@ -542,7 +542,7 @@ export default function ComparePage() {
                   { label: "Big Tech", syms: ["AAPL", "MSFT", "GOOGL", "META"] },
                   { label: "Semis", syms: ["NVDA", "AMD", "INTC", "TSM"] },
                   { label: "Banks", syms: ["JPM", "BAC", "GS"] },
-                  { label: "Mag 7", syms: ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN"] },
+                  { label: "Defensives", syms: ["JNJ", "PG", "KO", "WMT"] },
                 ].map(({ label, syms }) => (
                   <button
                     key={label}
@@ -801,7 +801,7 @@ function StockCard({ entry, color, colorBg }: { entry: CompareEntry; color: stri
           <div className="font-mono text-xl font-semibold">
             {formatCurrency(quote.price, quote.currency)}
           </div>
-          <div className={`text-xs font-mono ${pos ? "text-green-400" : "text-rose-400"}`}>
+          <div className={`text-xs font-mono ${pos ? "text-positive" : "text-rose-400"}`}>
             {formatCurrency(quote.change, quote.currency)} ({formatPercent(quote.changePercent)})
           </div>
           <div className="mt-1 text-xs text-muted">
@@ -914,7 +914,7 @@ function MetricRow({ metric, entries }: { metric: MetricDef; entries: CompareEnt
 
         let textColor = "";
         if (val != null && (metric.label.includes("Return") || metric.label.includes("Growth") || metric.label.includes("Upside") || metric.label.includes("vs SMA") || metric.label.includes("From 52"))) {
-          textColor = val >= 0 ? "text-green-400" : "text-rose-400";
+          textColor = val >= 0 ? "text-positive" : "text-rose-400";
         }
 
         return (
@@ -1075,7 +1075,7 @@ function PortfolioFitSection({
               </td>
               {fits.map((f, i) => (
                 <td key={i} className="px-4 py-2.5 text-right font-mono text-xs">
-                  <span className={f.dimensions.sector.score >= 65 ? "text-green-400" : f.dimensions.sector.score >= 45 ? "text-amber-400" : "text-red-400"}>
+                  <span className={f.dimensions.sector.score >= 65 ? "text-positive" : f.dimensions.sector.score >= 45 ? "text-warning" : "text-negative"}>
                     {f.dimensions.sector.score}
                   </span>
                   <span className="ml-1 text-[10px] text-muted">/100</span>
@@ -1089,7 +1089,7 @@ function PortfolioFitSection({
               </td>
               {fits.map((f, i) => (
                 <td key={i} className="px-4 py-2.5 text-right font-mono text-xs">
-                  <span className={f.dimensions.objective.score >= 65 ? "text-green-400" : f.dimensions.objective.score >= 45 ? "text-amber-400" : "text-red-400"}>
+                  <span className={f.dimensions.objective.score >= 65 ? "text-positive" : f.dimensions.objective.score >= 45 ? "text-warning" : "text-negative"}>
                     {f.dimensions.objective.score}
                   </span>
                   <span className="ml-1 text-[10px] text-muted">/100</span>
@@ -1108,9 +1108,9 @@ function PortfolioFitSection({
 /* -------------------------------------------------------------------------- */
 
 const RISK_LEVEL_STYLE: Record<string, string> = {
-  low: "text-green-400",
-  medium: "text-amber-400",
-  high: "text-red-400",
+  low: "text-positive",
+  medium: "text-warning",
+  high: "text-negative",
 };
 
 function RiskComparisonSection({ entries, colors }: { entries: CompareEntry[]; colors: string[] }) {

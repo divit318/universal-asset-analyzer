@@ -11,7 +11,7 @@ const TREND_STYLE: Record<string, { label: string; className: string }> = {
   neutral: { label: "Neutral / Mixed", className: "text-muted border-border bg-surface-2" },
 };
 
-const SEVERITY_DOT: Record<string, string> = { high: "bg-negative", medium: "bg-amber-400", low: "bg-muted" };
+const SEVERITY_DOT: Record<string, string> = { high: "bg-negative", medium: "bg-warning", low: "bg-muted" };
 
 /**
  * Market Dashboard — the daily command center. Pure composition: synthesizes

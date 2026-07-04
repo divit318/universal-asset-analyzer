@@ -44,11 +44,11 @@ function WatchlistDigestPanel({ digest, loading }: { digest: WatchlistDigest | n
         <div className="grid gap-3 sm:grid-cols-2 mb-4">
           {digest.topPicks.length > 0 && (
             <div>
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-green-400/80">Top picks</p>
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-positive/80">Top picks</p>
               <ul className="space-y-1">
                 {digest.topPicks.map((p, i) => (
                   <li key={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
-                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-green-400/60" />
+                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-positive/60" />
                     {p}
                   </li>
                 ))}
@@ -57,11 +57,11 @@ function WatchlistDigestPanel({ digest, loading }: { digest: WatchlistDigest | n
           )}
           {digest.topConcerns.length > 0 && (
             <div>
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-red-400/80">Concerns</p>
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-negative/80">Concerns</p>
               <ul className="space-y-1">
                 {digest.topConcerns.map((c, i) => (
                   <li key={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
-                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-red-400/60" />
+                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-negative/60" />
                     {c}
                   </li>
                 ))}
@@ -328,8 +328,9 @@ export default function WatchlistPage() {
       const q = quotes[item.symbol];
       const fit = ios.getPortfolioFit({
         symbol: item.symbol,
-        sector: null,
+        sector: item.sector ?? null,
         marketCap: q?.marketCap ?? null,
+        dividendYield: item.dividendYield ?? null,
         isOnWatchlist: true,
       });
       map.set(item.symbol, fit.fitScore);

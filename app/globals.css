@@ -12,7 +12,8 @@
   --accent-strong: #22c55e;
   --positive: #4ade80;
   --negative: #f87171;
-  --warning: #f59e0b;
+  /* amber-400 — matches the shade used across all warning/caution UI */
+  --warning: #fbbf24;
 
   /* Chart palette — shared across all Recharts components */
   --chart-1: #3b82f6;

@@ -5,7 +5,7 @@ import type { HealthScore, HealthDimension, HealthGrade } from "@/lib/portfolio-
 const GRADE_COLOR: Record<HealthGrade, string> = {
   A: "text-positive",
   B: "text-positive",
-  C: "text-amber-400",
+  C: "text-warning",
   D: "text-orange-400",
   F: "text-negative",
 };
@@ -13,7 +13,7 @@ const GRADE_COLOR: Record<HealthGrade, string> = {
 const GRADE_BG: Record<HealthGrade, string> = {
   A: "border-positive/30 bg-positive/8",
   B: "border-positive/25 bg-positive/5",
-  C: "border-amber-400/30 bg-amber-400/5",
+  C: "border-warning/30 bg-warning/5",
   D: "border-orange-400/30 bg-orange-400/5",
   F: "border-negative/30 bg-negative/5",
 };
@@ -21,7 +21,7 @@ const GRADE_BG: Record<HealthGrade, string> = {
 const TREND_BAR: Record<string, string> = {
   strong:  "bg-positive",
   good:    "bg-positive/70",
-  neutral: "bg-amber-400",
+  neutral: "bg-warning",
   weak:    "bg-orange-400",
   poor:    "bg-negative",
 };

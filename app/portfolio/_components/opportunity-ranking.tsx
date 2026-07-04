@@ -15,7 +15,7 @@ function MiniBar({ value, max, color }: { value: number; max: number; color: str
 
 function UpsideLabel({ pct }: { pct: number | null }) {
   if (pct == null) return <span className="text-muted text-xs">—</span>;
-  const color = pct >= 15 ? "text-positive" : pct >= 0 ? "text-amber-400" : "text-negative";
+  const color = pct >= 15 ? "text-positive" : pct >= 0 ? "text-warning" : "text-negative";
   return (
     <span className={`font-mono text-xs font-semibold ${color}`}>
       {pct > 0 ? "+" : ""}{pct.toFixed(1)}%
@@ -62,7 +62,7 @@ export function OpportunityRanking({ positions }: { positions: EnrichedPosition[
           const composite = pos.score?.composite ?? null;
           const scoreColor = composite == null ? "bg-muted/40"
             : composite >= 70 ? "bg-positive"
-            : composite >= 50 ? "bg-amber-400"
+            : composite >= 50 ? "bg-warning"
             : "bg-negative";
 
           const plColor = (pos.unrealizedPct ?? 0) >= 0 ? "text-positive" : "text-negative";

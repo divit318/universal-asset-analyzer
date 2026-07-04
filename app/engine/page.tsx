@@ -152,8 +152,8 @@ interface ICJob { symbol: string; status: ICJobStatus; stage: string; report: IC
 // ---------------------------------------------------------------------------
 
 function SignalBadge({ severity, label }: { severity: string; label: string }) {
-  const cls = severity === "high" ? "bg-red-500/10 border-red-500/30 text-red-400"
-    : severity === "medium" ? "bg-amber-400/10 border-amber-400/30 text-amber-400"
+  const cls = severity === "high" ? "bg-red-500/10 border-red-500/30 text-negative"
+    : severity === "medium" ? "bg-warning/10 border-warning/30 text-warning"
     : "bg-border/20 border-border text-muted";
   return <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${cls}`}>{label}</span>;
 }
@@ -227,7 +227,7 @@ function ICReportView({ report, currency }: { report: ICReport; currency: string
             <div key={a.method} className="flex flex-col gap-1 rounded-lg border border-border bg-surface-2 p-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-muted">{a.method}</span>
-                <span className={`text-[10px] font-semibold ${a.confidence === "high" ? "text-positive" : a.confidence === "low" ? "text-negative" : "text-amber-400"}`}>
+                <span className={`text-[10px] font-semibold ${a.confidence === "high" ? "text-positive" : a.confidence === "low" ? "text-negative" : "text-warning"}`}>
                   {a.confidence}
                 </span>
               </div>
@@ -275,12 +275,12 @@ function ICReportView({ report, currency }: { report: ICReport; currency: string
       {/* Run Hot / Cold */}
       {report.runHotCold && (
         <div className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 text-xs ${
-          report.runHotCold.signal === "run_hot" ? "border-amber-400/30 bg-amber-400/5" :
+          report.runHotCold.signal === "run_hot" ? "border-warning/30 bg-warning/5" :
           report.runHotCold.signal === "run_cold" ? "border-accent/30 bg-accent/5" :
           "border-border bg-surface-2"
         }`}>
           <span className={`font-semibold uppercase tracking-wide ${
-            report.runHotCold.signal === "run_hot" ? "text-amber-400" :
+            report.runHotCold.signal === "run_hot" ? "text-warning" :
             report.runHotCold.signal === "run_cold" ? "text-accent" : "text-muted"
           }`}>
             {report.runHotCold.signal.replace("_", " ")}
@@ -477,14 +477,14 @@ function SelectionTray({
 const SIGNAL_COLOR: Record<string, string> = {
   STRONG_BUY:  "text-emerald-400",
   BUY:         "text-positive",
-  HOLD:        "text-amber-400",
+  HOLD:        "text-warning",
   SELL:        "text-negative",
   STRONG_SELL: "text-red-500",
 };
 const SIGNAL_BG: Record<string, string> = {
   STRONG_BUY:  "bg-emerald-400/10 border-emerald-400/30",
   BUY:         "bg-positive/10 border-positive/30",
-  HOLD:        "bg-amber-400/10 border-amber-400/30",
+  HOLD:        "bg-warning/10 border-warning/30",
   SELL:        "bg-negative/10 border-negative/30",
   STRONG_SELL: "bg-red-500/10 border-red-500/30",
 };
@@ -545,7 +545,7 @@ const HORIZON_LABEL: Record<number, string> = {
 
 function ZBar({ value, max = 3 }: { value: number; max?: number }) {
   const pct = ((Math.max(-max, Math.min(max, value)) + max) / (2 * max)) * 100;
-  const color = value >= 0.5 ? "bg-positive" : value <= -0.5 ? "bg-negative" : "bg-amber-400";
+  const color = value >= 0.5 ? "bg-positive" : value <= -0.5 ? "bg-negative" : "bg-warning";
   return (
     <div className="flex items-center gap-2 min-w-0">
       <div className="relative h-1.5 w-20 shrink-0 rounded-full bg-surface-2">
@@ -606,7 +606,7 @@ function Sparkline({ data, color = "#6366f1" }: { data: number[]; color?: string
 function FanChart({ row }: { row: ForecastRow }) {
   const fmt = (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
   const probPct = Math.round(row.prob_up * 100);
-  const barColor = row.prob_up > 0.55 ? "bg-positive" : row.prob_up < 0.45 ? "bg-negative" : "bg-amber-400";
+  const barColor = row.prob_up > 0.55 ? "bg-positive" : row.prob_up < 0.45 ? "bg-negative" : "bg-warning";
   return (
     <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-2 p-3">
       <div className="flex items-center justify-between">
@@ -889,7 +889,7 @@ function DetailPanel({ symbol, onClose }: { symbol: string; onClose: () => void 
                     </div>
                     <div className="h-2 w-full rounded-full bg-surface-2">
                       <div
-                        className={`h-full rounded-full ${sc.kelly_fraction > 0.08 ? "bg-positive" : sc.kelly_fraction > 0.03 ? "bg-amber-400" : "bg-muted"}`}
+                        className={`h-full rounded-full ${sc.kelly_fraction > 0.08 ? "bg-positive" : sc.kelly_fraction > 0.03 ? "bg-warning" : "bg-muted"}`}
                         style={{ width: `${(sc.kelly_fraction / 0.15) * 100}%` }}
                       />
                     </div>
@@ -1281,7 +1281,7 @@ export default function EnginePage() {
             {/* IC Quality traffic light */}
             {(() => {
               const q = oosMetrics.ic_quality;
-              const dot = q === "HIGH" ? "bg-emerald-400" : q === "MEDIUM" ? "bg-amber-400" : q === "INSUFFICIENT" ? "bg-border" : "bg-red-500";
+              const dot = q === "HIGH" ? "bg-emerald-400" : q === "MEDIUM" ? "bg-warning" : q === "INSUFFICIENT" ? "bg-border" : "bg-red-500";
               const label = q === "HIGH" ? "Signal Reliable" : q === "MEDIUM" ? "Signal Caution" : q === "LOW" ? "Signal Weak" : q === "DEGRADED" ? "Signal Degraded" : "Insufficient Data";
               return (
                 <div className="flex items-center gap-1.5">
@@ -1291,7 +1291,7 @@ export default function EnginePage() {
               );
             })()}
             {oosMetrics.ic_quality === "DEGRADED" && (
-              <span className="rounded bg-red-500/10 border border-red-500/30 px-2 py-0.5 text-xs text-red-400 font-medium">
+              <span className="rounded bg-red-500/10 border border-red-500/30 px-2 py-0.5 text-xs text-negative font-medium">
                 ⚠ IC below floor — review model
               </span>
             )}
@@ -1299,10 +1299,10 @@ export default function EnginePage() {
           </div>
           <div className="grid grid-cols-2 gap-0 divide-x divide-border sm:grid-cols-4">
             {([
-              { label: "Live IC", value: oosMetrics.live_IC, fmt: (v: number) => v.toFixed(4), color: (v: number) => v >= 0.06 ? "text-positive" : v >= 0.02 ? "text-amber-400" : "text-negative" },
-              { label: "Hit Rate", value: oosMetrics.hit_rate, fmt: (v: number) => `${(v * 100).toFixed(1)}%`, color: (v: number) => v >= 0.55 ? "text-positive" : v >= 0.50 ? "text-amber-400" : "text-negative" },
+              { label: "Live IC", value: oosMetrics.live_IC, fmt: (v: number) => v.toFixed(4), color: (v: number) => v >= 0.06 ? "text-positive" : v >= 0.02 ? "text-warning" : "text-negative" },
+              { label: "Hit Rate", value: oosMetrics.hit_rate, fmt: (v: number) => `${(v * 100).toFixed(1)}%`, color: (v: number) => v >= 0.55 ? "text-positive" : v >= 0.50 ? "text-warning" : "text-negative" },
               { label: "SB Alpha", value: oosMetrics.strong_buy_alpha, fmt: (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`, color: (v: number) => v >= 0 ? "text-positive" : "text-negative" },
-              { label: "Sharpe Live", value: oosMetrics.sharpe_live, fmt: (v: number) => v.toFixed(3), color: (v: number) => v >= 0.5 ? "text-positive" : v >= 0.3 ? "text-amber-400" : "text-negative" },
+              { label: "Sharpe Live", value: oosMetrics.sharpe_live, fmt: (v: number) => v.toFixed(3), color: (v: number) => v >= 0.5 ? "text-positive" : v >= 0.3 ? "text-warning" : "text-negative" },
             ] as const).map(({ label, value, fmt, color }) => (
               <div key={label} className="flex flex-col gap-0.5 px-4 py-3">
                 <span className="text-xs text-muted">{label}</span>
@@ -1317,7 +1317,7 @@ export default function EnginePage() {
             <div className="border-t border-border px-4 py-2 text-xs text-muted">
               {oosMetrics.n_obs} observations (84d rolling)
               {oosMetrics.data_health?.stale_fundamentals && oosMetrics.data_health.stale_fundamentals.length > 0 && (
-                <span className="ml-3 text-amber-400">
+                <span className="ml-3 text-warning">
                   {oosMetrics.data_health.stale_fundamentals.length} stale fundamentals
                 </span>
               )}
@@ -1360,7 +1360,7 @@ export default function EnginePage() {
                 const isOk  = /done|success|complete|saved|✓/i.test(line);
                 const isWarn = /warn|skip|stale/i.test(line);
                 const icon  = isErr ? "✗" : isOk ? "✓" : isWarn ? "⚠" : "·";
-                const cls   = isErr ? "text-negative" : isOk ? "text-positive" : isWarn ? "text-amber-400" : "text-muted";
+                const cls   = isErr ? "text-negative" : isOk ? "text-positive" : isWarn ? "text-warning" : "text-muted";
                 return (
                   <div key={i} className={`flex gap-2 font-mono leading-5 ${cls}`}>
                     <span className="shrink-0 select-none">{icon}</span>
@@ -1388,7 +1388,7 @@ export default function EnginePage() {
             {scorecard[0]?.date && (() => {
               const ageMs = Date.now() - new Date(scorecard[0].date).getTime();
               const ageH = ageMs / 3_600_000;
-              if (ageH > 24) return <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2.5 py-0.5 text-xs text-amber-400">Stale — {Math.floor(ageH / 24)}d old</span>;
+              if (ageH > 24) return <span className="rounded-full border border-warning/30 bg-warning/10 px-2.5 py-0.5 text-xs text-warning">Stale — {Math.floor(ageH / 24)}d old</span>;
               return <span className="rounded-full border border-positive/30 bg-positive/10 px-2.5 py-0.5 text-xs text-positive">Fresh</span>;
             })()}
           </div>

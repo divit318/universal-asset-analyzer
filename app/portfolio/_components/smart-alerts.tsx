@@ -19,13 +19,13 @@ export interface AlertLike {
 
 const SEVERITY_STYLE: Record<AlertLike["severity"], string> = {
   high:   "border-negative/30 bg-negative/5",
-  medium: "border-amber-400/30 bg-amber-400/5",
+  medium: "border-warning/30 bg-warning/5",
   low:    "border-border bg-surface",
 };
 
 const SEVERITY_DOT: Record<AlertLike["severity"], string> = {
   high:   "bg-negative",
-  medium: "bg-amber-400",
+  medium: "bg-warning",
   low:    "bg-muted",
 };
 

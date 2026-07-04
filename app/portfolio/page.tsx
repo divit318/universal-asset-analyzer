@@ -164,7 +164,7 @@ function PortfolioInner({
             <div className={`rounded-xl border p-5 ${
               report.health.grade === "A" ? "border-positive/30 bg-positive/5"
               : report.health.grade === "B" ? "border-positive/20 bg-surface"
-              : report.health.grade === "C" ? "border-amber-400/30 bg-amber-400/5"
+              : report.health.grade === "C" ? "border-warning/30 bg-warning/5"
               : "border-negative/30 bg-negative/5"
             }`}>
               <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Health Score</span>
@@ -173,7 +173,7 @@ function PortfolioInner({
                 <span className={`text-2xl font-bold ${
                   report.health.grade === "A" ? "text-positive"
                   : report.health.grade === "B" ? "text-positive/70"
-                  : report.health.grade === "C" ? "text-amber-400"
+                  : report.health.grade === "C" ? "text-warning"
                   : "text-negative"
                 }`}>{report.health.grade}</span>
               </div>

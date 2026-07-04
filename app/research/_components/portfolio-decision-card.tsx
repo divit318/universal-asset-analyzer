@@ -14,7 +14,7 @@ import { ACTION_LABEL, type PositionRecommendation } from "@/lib/portfolio-analy
 const ACTION_STYLE: Record<PositionRecommendation["action"], string> = {
   STRONG_BUY: "border-positive/60 bg-positive/15 text-positive",
   INCREASE:   "border-positive/40 bg-positive/8 text-positive",
-  HOLD:       "border-amber-400/40 bg-amber-400/8 text-amber-400",
+  HOLD:       "border-warning/40 bg-warning/8 text-warning",
   REDUCE:     "border-orange-400/40 bg-orange-400/10 text-orange-400",
   SELL:       "border-negative/40 bg-negative/10 text-negative",
 };
@@ -42,11 +42,11 @@ export function PortfolioDecisionCard({ recommendation }: { recommendation: Posi
         <div className="grid gap-3 sm:grid-cols-2">
           {r.catalysts.length > 0 && (
             <div>
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-green-400/70">Catalysts</p>
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-positive/70">Catalysts</p>
               <ul className="space-y-1">
                 {r.catalysts.map((c, i) => (
                   <li key={i} className="flex gap-1.5 text-[11px] leading-5 text-muted">
-                    <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-green-400/50" />
+                    <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-positive/50" />
                     {c}
                   </li>
                 ))}
@@ -55,11 +55,11 @@ export function PortfolioDecisionCard({ recommendation }: { recommendation: Posi
           )}
           {r.risks.length > 0 && (
             <div>
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-red-400/70">Risks</p>
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-negative/70">Risks</p>
               <ul className="space-y-1">
                 {r.risks.map((rk, i) => (
                   <li key={i} className="flex gap-1.5 text-[11px] leading-5 text-muted">
-                    <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-red-400/50" />
+                    <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-negative/50" />
                     {rk}
                   </li>
                 ))}

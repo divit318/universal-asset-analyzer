@@ -580,7 +580,7 @@ function ValuationRangeBar({ bear, base, bull, price }: { bear: number; base: nu
   const max = Math.max(bull, price) * 1.1;
   const range = max - min;
   const pct = (v: number) => Math.max(0, Math.min(100, ((v - min) / range) * 100));
-  const priceColor = price >= base ? "bg-positive" : price <= bear ? "bg-negative" : "bg-amber-400";
+  const priceColor = price >= base ? "bg-positive" : price <= bear ? "bg-negative" : "bg-warning";
 
   return (
     <div className="rounded-xl border border-border bg-surface p-4">

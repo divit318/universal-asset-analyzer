@@ -11,10 +11,10 @@ import type { SectorRotationEntry } from "@/lib/types";
  */
 
 const CLASS_STYLE: Record<SectorRotationEntry["classification"], { label: string; cls: string }> = {
-  leading:       { label: "Leading",       cls: "text-green-400 border-green-400/30 bg-green-400/8" },
+  leading:       { label: "Leading",       cls: "text-positive border-positive/30 bg-positive/8" },
   strengthening: { label: "Strengthening", cls: "text-emerald-400 border-emerald-400/30 bg-emerald-400/8" },
-  weakening:     { label: "Weakening",     cls: "text-amber-400 border-amber-400/30 bg-amber-400/8" },
-  lagging:       { label: "Lagging",       cls: "text-red-400 border-red-400/30 bg-red-400/8" },
+  weakening:     { label: "Weakening",     cls: "text-warning border-warning/30 bg-warning/8" },
+  lagging:       { label: "Lagging",       cls: "text-negative border-negative/30 bg-negative/8" },
 };
 
 const WINDOWS: { key: "1w" | "1m" | "3m" | "6m"; label: string }[] = [

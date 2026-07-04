@@ -40,13 +40,13 @@ const TAG_STYLE: Record<string, string> = {
   "Quantitative":   "border-purple-500/30 bg-purple-500/10 text-purple-400",
   "India markets":  "border-orange-400/30 bg-orange-400/10 text-orange-400",
   "Multi-agent":    "border-accent/30 bg-accent/10 text-accent",
-  "Modeling":       "border-amber-400/30 bg-amber-400/10 text-amber-400",
+  "Modeling":       "border-warning/30 bg-warning/10 text-warning",
   "Systematic":     "border-purple-500/30 bg-purple-500/10 text-purple-400",
   "Monitoring":     "border-blue-500/30 bg-blue-500/10 text-blue-400",
   "Risk":           "border-negative/30 bg-negative/10 text-negative",
   "Calendar":       "border-muted/30 bg-muted/10 text-muted",
   "AI Portfolio":   "border-positive/30 bg-positive/10 text-positive",
-  "Patterns":       "border-amber-400/30 bg-amber-400/10 text-amber-400",
+  "Patterns":       "border-warning/30 bg-warning/10 text-warning",
 };
 
 function Tag({ label }: { label: string }) {

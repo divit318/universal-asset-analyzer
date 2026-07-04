@@ -110,10 +110,10 @@ function RatioCard({ ratio }: { ratio: ScreenerInRatio }) {
     if (!isFinite(latestNum)) return "text-foreground";
     const low = ratio.name.toLowerCase();
     if (low.includes("roce") || low.includes("roe")) {
-      return latestNum >= 15 ? "text-positive" : latestNum < 10 ? "text-negative" : "text-amber-400";
+      return latestNum >= 15 ? "text-positive" : latestNum < 10 ? "text-negative" : "text-warning";
     }
     if (low.includes("debt") || low.includes("d/e")) {
-      return latestNum <= 0.5 ? "text-positive" : latestNum > 1.5 ? "text-negative" : "text-amber-400";
+      return latestNum <= 0.5 ? "text-positive" : latestNum > 1.5 ? "text-negative" : "text-warning";
     }
     return "text-foreground";
   })();

@@ -27,10 +27,10 @@ function MetricCard({
 }
 
 export function RiskMetrics({ risk }: { risk: RiskAnalytics }) {
-  const betaColor = risk.beta == null ? "" : risk.beta > 1.3 ? "text-negative" : risk.beta > 1.0 ? "text-amber-400" : "text-positive";
+  const betaColor = risk.beta == null ? "" : risk.beta > 1.3 ? "text-negative" : risk.beta > 1.0 ? "text-warning" : "text-positive";
   const sharpeValid = risk.sharpeRatio != null && Math.abs(risk.sharpeRatio) <= 5;
-  const sharpeColor = !sharpeValid ? "text-muted" : risk.sharpeRatio! > 1 ? "text-positive" : risk.sharpeRatio! > 0.5 ? "text-amber-400" : "text-negative";
-  const ddColor = risk.maxDrawdown == null ? "" : risk.maxDrawdown < -30 ? "text-negative" : risk.maxDrawdown < -15 ? "text-amber-400" : "text-positive";
+  const sharpeColor = !sharpeValid ? "text-muted" : risk.sharpeRatio! > 1 ? "text-positive" : risk.sharpeRatio! > 0.5 ? "text-warning" : "text-negative";
+  const ddColor = risk.maxDrawdown == null ? "" : risk.maxDrawdown < -30 ? "text-negative" : risk.maxDrawdown < -15 ? "text-warning" : "text-positive";
 
   return (
     <div className="flex flex-col gap-4">
@@ -38,7 +38,7 @@ export function RiskMetrics({ risk }: { risk: RiskAnalytics }) {
         <h3 className="text-sm font-semibold">Risk Analytics</h3>
         <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
           risk.concentrationRisk === "high" ? "border-negative/30 bg-negative/10 text-negative"
-          : risk.concentrationRisk === "medium" ? "border-amber-400/30 bg-amber-400/10 text-amber-400"
+          : risk.concentrationRisk === "medium" ? "border-warning/30 bg-warning/10 text-warning"
           : "border-positive/30 bg-positive/10 text-positive"
         }`}>
           {risk.concentrationRisk.charAt(0).toUpperCase() + risk.concentrationRisk.slice(1)} Concentration
@@ -91,13 +91,13 @@ export function RiskMetrics({ risk }: { risk: RiskAnalytics }) {
           value={`${risk.hhi.toLocaleString()}`}
           sub={risk.hhi < 1500 ? "Well diversified" : risk.hhi < 2500 ? "Moderate" : "Concentrated"}
           hint="< 1500 = low concentration"
-          color={risk.hhi > 2500 ? "text-negative" : risk.hhi > 1500 ? "text-amber-400" : "text-positive"}
+          color={risk.hhi > 2500 ? "text-negative" : risk.hhi > 1500 ? "text-warning" : "text-positive"}
         />
         <MetricCard
           label="Top Position"
           value={`${risk.topPositionWeight.toFixed(1)}%`}
           sub={`Top sector: ${risk.topSectorWeight.toFixed(1)}%`}
-          color={risk.topPositionWeight > 20 ? "text-negative" : risk.topPositionWeight > 15 ? "text-amber-400" : "text-positive"}
+          color={risk.topPositionWeight > 20 ? "text-negative" : risk.topPositionWeight > 15 ? "text-warning" : "text-positive"}
         />
       </div>
     </div>
@@ -206,7 +206,7 @@ export function ScenarioAnalysis({ scenarios, totalValue }: { scenarios: Scenari
       <p className="text-xs text-muted">Historical sector-based shocks applied to current portfolio weights, adjusted for current Sector Rotation momentum.</p>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {scenarios.map((s) => (
-          <div key={s.name} className={`rounded-xl border p-4 ${s.portfolioImpact < -20 ? "border-negative/30 bg-negative/5" : s.portfolioImpact < -10 ? "border-amber-400/25 bg-amber-400/5" : "border-border bg-surface"}`}>
+          <div key={s.name} className={`rounded-xl border p-4 ${s.portfolioImpact < -20 ? "border-negative/30 bg-negative/5" : s.portfolioImpact < -10 ? "border-warning/25 bg-warning/5" : "border-border bg-surface"}`}>
             <p className="text-xs font-semibold mb-0.5">{s.name}</p>
             <p className="text-[10px] text-muted mb-2 leading-relaxed">{s.description}</p>
             <ScenarioBar impact={s.portfolioImpact} />
@@ -229,7 +229,7 @@ export function ScenarioAnalysis({ scenarios, totalValue }: { scenarios: Scenari
 function corrColor(r: number): string {
   if (r >= 0.8) return "bg-negative/70";
   if (r >= 0.6) return "bg-orange-400/60";
-  if (r >= 0.3) return "bg-amber-400/40";
+  if (r >= 0.3) return "bg-warning/40";
   if (r >= 0) return "bg-accent/20";
   return "bg-positive/30";
 }
@@ -288,7 +288,7 @@ export function CorrelationHeatmap({ matrix }: { matrix: CorrelationMatrix }) {
       <div className="flex items-center gap-3 text-[10px] text-muted flex-wrap">
         <span className="flex items-center gap-1"><span className="h-2 w-3 rounded bg-positive/30" /> Low (&lt; 0)</span>
         <span className="flex items-center gap-1"><span className="h-2 w-3 rounded bg-accent/20" /> Moderate (0–0.3)</span>
-        <span className="flex items-center gap-1"><span className="h-2 w-3 rounded bg-amber-400/40" /> Correlated (0.3–0.6)</span>
+        <span className="flex items-center gap-1"><span className="h-2 w-3 rounded bg-warning/40" /> Correlated (0.3–0.6)</span>
         <span className="flex items-center gap-1"><span className="h-2 w-3 rounded bg-negative/70" /> High (&gt; 0.8)</span>
       </div>
     </div>

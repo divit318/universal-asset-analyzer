@@ -4,7 +4,7 @@ import type { RiskAlert } from "@/lib/types";
 
 const SEVERITY_STYLE = {
   high:   { dot: "bg-negative", badge: "bg-negative/15 text-negative border-negative/30", label: "High" },
-  medium: { dot: "bg-amber-400", badge: "bg-amber-400/15 text-amber-400 border-amber-400/30", label: "Medium" },
+  medium: { dot: "bg-warning", badge: "bg-warning/15 text-warning border-warning/30", label: "Medium" },
   low:    { dot: "bg-muted", badge: "bg-muted/15 text-muted border-muted/30", label: "Low" },
 };
 

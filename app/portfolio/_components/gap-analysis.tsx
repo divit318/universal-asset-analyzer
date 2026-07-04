@@ -4,13 +4,13 @@ import type { GapAnalysis } from "@/lib/portfolio-analytics";
 
 const PRIORITY_STYLE: Record<string, string> = {
   high:   "border-negative/30 bg-negative/5",
-  medium: "border-amber-400/25 bg-amber-400/5",
+  medium: "border-warning/25 bg-warning/5",
   low:    "border-border bg-surface",
 };
 
 const PRIORITY_BADGE: Record<string, string> = {
   high:   "border-negative/40 bg-negative/10 text-negative",
-  medium: "border-amber-400/40 bg-amber-400/10 text-amber-400",
+  medium: "border-warning/40 bg-warning/10 text-warning",
   low:    "border-border text-muted",
 };
 
@@ -29,7 +29,7 @@ export function GapAnalysisPanel({ gaps }: { gaps: GapAnalysis }) {
         <div className="flex-1">
           <div className="h-2 w-full bg-surface-2 rounded-full overflow-hidden mb-1.5">
             <div
-              className={`h-full rounded-full ${gaps.concentrationScore >= 70 ? "bg-positive" : gaps.concentrationScore >= 50 ? "bg-amber-400" : "bg-negative"}`}
+              className={`h-full rounded-full ${gaps.concentrationScore >= 70 ? "bg-positive" : gaps.concentrationScore >= 50 ? "bg-warning" : "bg-negative"}`}
               style={{ width: `${gaps.concentrationScore}%` }}
             />
           </div>

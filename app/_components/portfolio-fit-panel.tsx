@@ -18,10 +18,10 @@ import type { PortfolioFitAnalysis, FitTier, FitDimension } from "@/lib/ios/type
 
 const TIER_COLORS: Record<FitTier, { ring: string; badge: string; label: string; bar: string }> = {
   excellent: {
-    ring:  "text-green-400",
-    badge: "border-green-400/40 bg-green-400/10 text-green-400",
+    ring:  "text-positive",
+    badge: "border-positive/40 bg-positive/10 text-positive",
     label: "Excellent Portfolio Fit",
-    bar:   "bg-green-400",
+    bar:   "bg-positive",
   },
   good: {
     ring:  "text-emerald-400",
@@ -36,16 +36,16 @@ const TIER_COLORS: Record<FitTier, { ring: string; badge: string; label: string;
     bar:   "bg-muted",
   },
   poor: {
-    ring:  "text-amber-400",
-    badge: "border-amber-400/30 bg-amber-400/8 text-amber-400",
+    ring:  "text-warning",
+    badge: "border-warning/30 bg-warning/8 text-warning",
     label: "Poor Portfolio Fit",
-    bar:   "bg-amber-400",
+    bar:   "bg-warning",
   },
   avoid: {
-    ring:  "text-red-400",
-    badge: "border-red-400/30 bg-red-400/8 text-red-400",
+    ring:  "text-negative",
+    badge: "border-negative/30 bg-negative/8 text-negative",
     label: "Avoid — Poor Fit",
-    bar:   "bg-red-400",
+    bar:   "bg-negative",
   },
 };
 
@@ -56,9 +56,9 @@ const IMPACT_ICON: Record<FitDimension["impact"], string> = {
 };
 
 const IMPACT_TEXT: Record<FitDimension["impact"], string> = {
-  positive: "text-green-400",
+  positive: "text-positive",
   neutral:  "text-muted",
-  negative: "text-red-400",
+  negative: "text-negative",
 };
 
 /* -------------------------------------------------------------------------- */
@@ -68,7 +68,7 @@ const IMPACT_TEXT: Record<FitDimension["impact"], string> = {
 function DimensionRow({ dim }: { dim: FitDimension }) {
   const barWidth = `${dim.score}%`;
   const barColor =
-    dim.score >= 65 ? "bg-positive" : dim.score >= 45 ? "bg-amber-400" : "bg-negative";
+    dim.score >= 65 ? "bg-positive" : dim.score >= 45 ? "bg-warning" : "bg-negative";
 
   return (
     <div>
@@ -201,7 +201,7 @@ export function PortfolioFitPanel({ fit, collapsible = false, headline, classNam
                   <ul className="space-y-1">
                     {fit.reasons.map((r) => (
                       <li key={r} className="flex gap-1.5 text-[11px] text-foreground">
-                        <span className="text-green-400 shrink-0 mt-0.5">✓</span>
+                        <span className="text-positive shrink-0 mt-0.5">✓</span>
                         <span>{r}</span>
                       </li>
                     ))}
@@ -214,7 +214,7 @@ export function PortfolioFitPanel({ fit, collapsible = false, headline, classNam
                   <ul className="space-y-1">
                     {fit.tradeoffs.map((t) => (
                       <li key={t} className="flex gap-1.5 text-[11px] text-muted">
-                        <span className="text-amber-400 shrink-0 mt-0.5">△</span>
+                        <span className="text-warning shrink-0 mt-0.5">△</span>
                         <span>{t}</span>
                       </li>
                     ))}
@@ -240,7 +240,7 @@ export function PortfolioFitPanel({ fit, collapsible = false, headline, classNam
                   </p>
                 </div>
                 {fit.concentrationWarning && (
-                  <span className="text-[10px] text-amber-400 border border-amber-400/30 bg-amber-400/8 rounded px-2 py-0.5">
+                  <span className="text-[10px] text-warning border border-warning/30 bg-warning/8 rounded px-2 py-0.5">
                     Concentration risk
                   </span>
                 )}

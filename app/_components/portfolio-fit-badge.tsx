@@ -9,11 +9,11 @@
 import type { FitTier } from "@/lib/ios/types";
 
 const TIER_STYLES: Record<FitTier, string> = {
-  excellent: "border-green-400/40 bg-green-400/10 text-green-400",
+  excellent: "border-positive/40 bg-positive/10 text-positive",
   good:      "border-emerald-500/30 bg-emerald-500/8 text-emerald-400",
   neutral:   "border-border bg-surface-2 text-muted",
-  poor:      "border-amber-400/30 bg-amber-400/8 text-amber-400",
-  avoid:     "border-red-400/30 bg-red-400/8 text-red-400",
+  poor:      "border-warning/30 bg-warning/8 text-warning",
+  avoid:     "border-negative/30 bg-negative/8 text-negative",
 };
 
 const TIER_LABELS: Record<FitTier, string> = {
@@ -55,11 +55,11 @@ export function PortfolioFitBadge({ score, tier, showScore = true, size = "sm" }
 /** Tiny dot-only variant for use inside dense tables. */
 export function FitDot({ tier }: { tier: FitTier }) {
   const colors: Record<FitTier, string> = {
-    excellent: "bg-green-400",
+    excellent: "bg-positive",
     good:      "bg-emerald-500",
     neutral:   "bg-muted",
-    poor:      "bg-amber-400",
-    avoid:     "bg-red-400",
+    poor:      "bg-warning",
+    avoid:     "bg-negative",
   };
   return (
     <span

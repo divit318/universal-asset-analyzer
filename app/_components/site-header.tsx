@@ -74,10 +74,12 @@ export function SiteHeader() {
               )}
               <div className="group/navgroup relative flex flex-col gap-0">
                 {/* Tiny group label — appears on hover or when a child is active */}
-                <div className={`absolute -top-[22px] left-0 flex items-center gap-1 transition-opacity duration-150 ${
+                {/* -top must keep the label inside the h-14 header: the group
+                    row starts ~14px down, so -12px lands the 9px label at y≈2. */}
+                <div className={`absolute -top-[12px] left-2.5 flex items-center gap-1 transition-opacity duration-150 ${
                   group.items.some((i) => isActive(i.href)) ? "opacity-100" : "opacity-0 group-hover/navgroup:opacity-100"
                 }`}>
-                  <span className="text-[9px] font-semibold uppercase tracking-widest text-muted/60 whitespace-nowrap">
+                  <span className="text-[9px] font-semibold uppercase leading-none tracking-widest text-muted/60 whitespace-nowrap">
                     {group.label}
                   </span>
                 </div>

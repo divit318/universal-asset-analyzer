@@ -328,7 +328,7 @@ export function InteractiveChart({ symbol, history, benchmarks }: Props) {
                 onClick={() => setShowSma50((v) => !v)}
                 className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
                   showSma50
-                    ? "bg-amber-500/20 text-amber-400"
+                    ? "bg-amber-500/20 text-warning"
                     : "text-muted hover:bg-surface-2 hover:text-foreground"
                 }`}
               >

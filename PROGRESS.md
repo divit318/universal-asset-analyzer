@@ -89,6 +89,25 @@ handling → tests → cross-feature integration), preserving local-first AI.
 6. app/api/calendar/ai-brief accepts unbounded `events` array from client —
    harmless locally (single-user), but cap for hygiene while refactoring.
 
+### 3. Sharpe/Sortino unit-mix bug (financial correctness)
+- `computeRiskAnalytics` compared decimal daily returns to `4.25/252` (percent
+  units) — daily risk-free 100× too large → Sharpe ~-47 for a healthy
+  portfolio, Sortino downside filter caught nearly all days. Extracted pure
+  `computeRiskAdjustedRatios()` (exported, 6 new tests in
+  tests/risk-ratios.test.ts), removed dead `annualReturn`/`annualizedReturn`,
+  fixed `hasHistory` precedence bug (`?? 0 >= 20` parsed as `?? (0>=20)`).
+- Verified: tsc clean, 317/317 tests. Commit 6a446a9.
+
+## Session pivot (2026-07-04)
+User launched a frontend/design-lead session (see DESIGN_PROGRESS.md).
+Remaining backend backlog, prioritized for a future session:
+1. scoring.ts vs composite.ts consolidation — NEEDS USER SIGN-OFF (two scoring
+   engines; ARCHITECTURE.md's "single source of truth" claim is stale).
+2. 50 lint warnings (unused vars/imports + stale eslint-disable directives;
+   11 auto-fixable via eslint --fix).
+3. `npm run build` bundle audit (no baseline numbers captured yet).
+4. E2E coverage remains zero (roadmap item).
+
 ## Decisions log
 - 2026-07-04: Committed prior-session uncommitted tree as checkpoint 0b6b443
   (all checks green) so session diffs are reviewable. Reversible via git.
