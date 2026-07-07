@@ -17,26 +17,16 @@ import {
 } from "recharts";
 import type { HistoryPoint } from "@/lib/types";
 import { CandleChart } from "./candle-chart";
+import { CHART_SERIES, useChartTheme } from "@/app/_components/chart-theme";
 
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                  */
 /* -------------------------------------------------------------------------- */
 
-const AXIS = "#9aa3af";
-const GRID = "#272b33";
-const POSITIVE = "#4ade80";
-const NEGATIVE = "#f87171";
-const BLUE = "#60a5fa";
-const AMBER = "#fbbf24";
-const PURPLE = "#a78bfa";
-
-const TOOLTIP_STYLE = {
-  background: "#14161a",
-  border: "1px solid #272b33",
-  borderRadius: 8,
-  fontSize: 12,
-  padding: "8px 12px",
-};
+/* Categorical overlay colors — theme-neutral (legible on light & dark). */
+const BLUE = CHART_SERIES[0];
+const AMBER = CHART_SERIES[1];
+const PURPLE = CHART_SERIES[4];
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -145,6 +135,7 @@ function PriceTooltip({
   symbol,
   showSma50,
   showSma200,
+  style,
 }: {
   active?: boolean;
   payload?: TooltipPayloadItem[];
@@ -152,11 +143,12 @@ function PriceTooltip({
   symbol: string;
   showSma50: boolean;
   showSma200: boolean;
+  style?: React.CSSProperties;
 }) {
   if (!active || !payload?.length) return null;
   const byKey = Object.fromEntries(payload.map((p) => [p.dataKey, p.value]));
   return (
-    <div style={TOOLTIP_STYLE}>
+    <div style={style}>
       <p className="mb-1.5 text-xs text-muted">{label ? fmtTooltipDate(label) : ""}</p>
       {byKey.price != null && (
         <p className="flex items-center gap-2 text-xs">
@@ -190,14 +182,16 @@ function RelativeTooltip({
   active,
   payload,
   label,
+  style,
 }: {
   active?: boolean;
   payload?: TooltipPayloadItem[];
   label?: string;
+  style?: React.CSSProperties;
 }) {
   if (!active || !payload?.length) return null;
   return (
-    <div style={TOOLTIP_STYLE}>
+    <div style={style}>
       <p className="mb-1.5 text-xs text-muted">{label ? fmtTooltipDate(label) : ""}</p>
       {payload.map((p) =>
         p.value != null ? (
@@ -220,6 +214,13 @@ function RelativeTooltip({
 /* -------------------------------------------------------------------------- */
 
 export function InteractiveChart({ symbol, history, benchmarks }: Props) {
+  const ct = useChartTheme();
+  const AXIS = ct.axis;
+  const GRID = ct.grid;
+  const POSITIVE = ct.positive;
+  const NEGATIVE = ct.negative;
+  const TOOLTIP_STYLE = ct.tooltip;
+
   const [period, setPeriod] = useState<PeriodKey>("6M");
   const [mode, setMode] = useState<ChartMode>("price");
   const [showSma50, setShowSma50] = useState(true);
@@ -311,7 +312,7 @@ export function InteractiveChart({ symbol, history, benchmarks }: Props) {
               onClick={() => setPeriod(p)}
               className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
                 period === p
-                  ? "bg-accent-strong text-background"
+                  ? "bg-brand-strong text-background"
                   : "text-muted hover:bg-surface-2 hover:text-foreground"
               }`}
             >
@@ -351,7 +352,7 @@ export function InteractiveChart({ symbol, history, benchmarks }: Props) {
             onClick={() => setMode("price")}
             className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
               mode === "price"
-                ? "bg-accent-strong text-background"
+                ? "bg-brand-strong text-background"
                 : "text-muted hover:bg-surface-2 hover:text-foreground"
             }`}
           >
@@ -361,7 +362,7 @@ export function InteractiveChart({ symbol, history, benchmarks }: Props) {
             onClick={() => setMode("candles")}
             className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
               mode === "candles"
-                ? "bg-accent-strong text-background"
+                ? "bg-brand-strong text-background"
                 : "text-muted hover:bg-surface-2 hover:text-foreground"
             }`}
           >
@@ -424,6 +425,7 @@ export function InteractiveChart({ symbol, history, benchmarks }: Props) {
                     symbol={symbol}
                     showSma50={showSma50}
                     showSma200={showSma200}
+                    style={TOOLTIP_STYLE}
                   />
                 }
               />
@@ -488,7 +490,7 @@ export function InteractiveChart({ symbol, history, benchmarks }: Props) {
                     synced hover cursor, so the tooltip box itself renders null. */}
                 <Tooltip
                   content={() => null}
-                  cursor={{ fill: "rgba(255,255,255,0.04)" }}
+                  cursor={{ fill: ct.cursorFill }}
                 />
                 <Bar
                   dataKey="volume"
@@ -535,7 +537,7 @@ export function InteractiveChart({ symbol, history, benchmarks }: Props) {
             />
             <ReferenceLine y={100} stroke={GRID} strokeDasharray="4 2" />
             <Tooltip
-              content={<RelativeTooltip />}
+              content={<RelativeTooltip style={TOOLTIP_STYLE} />}
             />
             <Legend
               wrapperStyle={{ fontSize: 12, paddingTop: 8 }}

@@ -322,8 +322,17 @@ export function HoldingsTable({ positions, report, totalValue, onEdit, onDelete 
                 <Fragment key={p.symbol}>
                   <tr
                     ref={isFocused ? focusedRowRef : null}
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={isExpanded}
                     className={`transition-colors cursor-pointer hover:bg-surface-2 ${rowGlow}`}
                     onClick={() => setExpanded((prev) => prev === p.symbol ? null : p.symbol)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setExpanded((prev) => prev === p.symbol ? null : p.symbol);
+                      }
+                    }}
                   >
                     <td className="px-4 py-3">
                       <div>

@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { spawn, execFileSync } from "child_process";
+import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";
 

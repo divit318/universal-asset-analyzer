@@ -23,6 +23,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -176,33 +177,52 @@ export function IOSProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // ── Fetch portfolio report once on mount ──────────────────────────────
+  // ── Fetch portfolio report once, deferred off the critical path ────────
+  // The IOS profile is an enhancement layer, not first-paint content. Waiting
+  // for the browser to go idle keeps this heavy multi-symbol fetch from
+  // contending with whatever page the user actually landed on.
   useEffect(() => {
     if (loadingRef.current) return;
     loadingRef.current = true;
     setLoading(true);
 
-    fetch("/api/portfolio/report")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data) setReport(data as PortfolioReport);
-      })
-      .catch(() => { /* portfolio is optional */ })
-      .finally(() => {
-        setLoading(false);
-        setReady(true);
-        loadingRef.current = false;
-      });
+    let cancelled = false;
+    const run = () => {
+      fetch("/api/portfolio/report")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data && !cancelled) setReport(data as PortfolioReport);
+        })
+        .catch(() => { /* portfolio is optional */ })
+        .finally(() => {
+          if (cancelled) return;
+          setLoading(false);
+          setReady(true);
+          loadingRef.current = false;
+        });
+    };
+
+    const ric = (window as unknown as {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+    }).requestIdleCallback;
+    const handle = ric ? ric(run, { timeout: 2000 }) : window.setTimeout(run, 200);
+
+    return () => {
+      cancelled = true;
+      const cic = (window as unknown as { cancelIdleCallback?: (h: number) => void })
+        .cancelIdleCallback;
+      if (ric && cic) cic(handle);
+      else clearTimeout(handle);
+    };
   }, []);
 
   // ── Derived InvestmentProfile ─────────────────────────────────────────
-  // Recomputed synchronously whenever any input changes. This is a pure
-  // function so there's no async overhead.
-  const profile: InvestmentProfile = buildInvestmentProfile(
-    report,
-    objective,
-    constraints,
-    behavioral,
+  // Pure, but memoized so the context value below keeps a stable identity —
+  // otherwise every provider render rebuilds the profile and re-renders every
+  // useIOS() consumer across the app.
+  const profile: InvestmentProfile = useMemo(
+    () => buildInvestmentProfile(report, objective, constraints, behavioral),
+    [report, objective, constraints, behavioral],
   );
 
   // ── Core IOS operations ───────────────────────────────────────────────
@@ -262,22 +282,32 @@ export function IOSProvider({ children }: { children: ReactNode }) {
     [behavioral.rejectedSymbols],
   );
 
-  return (
-    <IOSCtx.Provider
-      value={{
-        profile,
-        profileReady,
-        profileLoading,
-        report,
-        getPortfolioFit,
-        rankByPortfolioFit,
-        trackResearch,
-        rejectSymbol,
-        clearRejection,
-        isRejected,
-      }}
-    >
-      {children}
-    </IOSCtx.Provider>
+  const value = useMemo<IOSContextValue>(
+    () => ({
+      profile,
+      profileReady,
+      profileLoading,
+      report,
+      getPortfolioFit,
+      rankByPortfolioFit,
+      trackResearch,
+      rejectSymbol,
+      clearRejection,
+      isRejected,
+    }),
+    [
+      profile,
+      profileReady,
+      profileLoading,
+      report,
+      getPortfolioFit,
+      rankByPortfolioFit,
+      trackResearch,
+      rejectSymbol,
+      clearRejection,
+      isRejected,
+    ],
   );
+
+  return <IOSCtx.Provider value={value}>{children}</IOSCtx.Provider>;
 }

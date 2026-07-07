@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { InvestmentVerdict } from "@/app/api/ai/verdict/route";
+import { GroundingBadge } from "@/app/_components/grounding-badge";
 
 const VERDICT_COLORS = {
   bullish: {
@@ -168,6 +169,13 @@ export function AIVerdictCard({ symbol }: { symbol: string }) {
               <span className={`font-mono text-[11px] font-semibold ${SIGNAL_COLOR[m.signal]}`}>{m.value}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Verified grounding: how many of the verdict's figures trace to data */}
+      {verdict.grounding && (
+        <div className="mt-3 border-t border-border pt-3">
+          <GroundingBadge grounding={verdict.grounding} />
         </div>
       )}
     </div>

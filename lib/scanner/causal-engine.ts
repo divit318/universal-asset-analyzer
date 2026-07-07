@@ -107,10 +107,6 @@ export async function buildCausalChains(
   const macroEvents = events.filter(
     (e) => e.category === "macro" || e.category === "policy" || e.category === "geopolitics",
   );
-  const otherEvents = events.filter(
-    (e) => e.category !== "macro" && e.category !== "policy" && e.category !== "geopolitics",
-  );
-
   if (macroEvents.length === 0) return events;
 
   // Process in batches to limit concurrent Ollama calls
@@ -125,9 +121,7 @@ export async function buildCausalChains(
     );
     for (const r of results) {
       enriched.push(
-        r.status === "fulfilled"
-          ? r.value
-          : macroEvents[i + enriched.length - (enriched.length - enriched.length)],
+        r.status === "fulfilled" ? r.value : macroEvents[i + enriched.length],
       );
     }
   }

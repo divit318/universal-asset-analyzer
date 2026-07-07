@@ -1,29 +1,9 @@
-import type { MomentumSignal, Recommendation, ScoreResult } from "@/lib/types";
-
-const REC_STYLE: Record<Recommendation, string> = {
-  STRONG_BUY:  "text-positive  border-positive/50  bg-positive/15",
-  BUY:         "text-positive  border-positive/35  bg-positive/10",
-  HOLD:        "text-warning border-warning/40 bg-warning/10",
-  SELL:        "text-negative  border-negative/35  bg-negative/10",
-  STRONG_SELL: "text-negative  border-negative/50  bg-negative/15",
-};
-
-const REC_LABEL: Record<Recommendation, string> = {
-  STRONG_BUY:  "Strong Buy",
-  BUY:         "Buy",
-  HOLD:        "Hold",
-  SELL:        "Sell",
-  STRONG_SELL: "Strong Sell",
-};
-
-/** Border color for the composite score ring */
-const RING_COLOR: Record<Recommendation, string> = {
-  STRONG_BUY:  "border-positive",
-  BUY:         "border-positive/60",
-  HOLD:        "border-warning/70",
-  SELL:        "border-negative/60",
-  STRONG_SELL: "border-negative",
-};
+import type { MomentumSignal, ScoreResult } from "@/lib/types";
+import {
+  RECOMMENDATION_LABEL as REC_LABEL,
+  RECOMMENDATION_TONE as REC_STYLE,
+  RECOMMENDATION_RING as RING_COLOR,
+} from "@/lib/recommendation";
 
 /** Track bar color based on a 0-100 value */
 function barColor(v: number | null) {
@@ -66,7 +46,7 @@ export function ScoreCard({
           <span className="text-[1.6rem] font-bold leading-none tabular-nums">
             {score.composite}
           </span>
-          <span className="mt-0.5 text-[9px] font-medium uppercase tracking-wide text-muted">
+          <span className="mt-0.5 text-micro font-medium uppercase tracking-wide text-muted">
             / 100
           </span>
         </div>
@@ -81,7 +61,7 @@ export function ScoreCard({
           <div className="flex items-center gap-2">
             <div className="h-1 w-20 overflow-hidden rounded-full bg-surface-2">
               <div
-                className="h-full rounded-full bg-accent/60"
+                className="h-full rounded-full bg-brand/60"
                 style={{ width: `${score.confidence}%` }}
               />
             </div>
@@ -98,7 +78,7 @@ export function ScoreCard({
             className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2 p-3.5"
           >
             <div className="flex items-baseline justify-between gap-2">
-              <span className="text-[11px] font-medium uppercase tracking-wider text-muted">
+              <span className="text-caption font-medium uppercase tracking-wider text-muted">
                 {label}
               </span>
               <span className="font-mono text-sm font-medium tabular-nums">
@@ -111,7 +91,7 @@ export function ScoreCard({
                 style={{ width: `${value ?? 0}%` }}
               />
             </div>
-            <span className="text-[11px] leading-4 text-muted/80">{detail}</span>
+            <span className="text-caption leading-4 text-muted/80">{detail}</span>
           </div>
         ))}
       </div>
@@ -130,7 +110,7 @@ export function ScoreCard({
               </div>
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
                 <div
-                  className={`h-full rounded-full transition-all duration-500 ${pct >= 60 ? "bg-accent" : pct >= 42 ? "bg-warning" : "bg-negative"}`}
+                  className={`h-full rounded-full transition-all duration-500 ${pct >= 60 ? "bg-positive" : pct >= 42 ? "bg-warning" : "bg-negative"}`}
                   style={{ width: `${pct}%` }}
                 />
               </div>
@@ -138,7 +118,7 @@ export function ScoreCard({
                 <div className="flex flex-wrap gap-x-3 gap-y-0.5">
                   {b.factors.map((f) =>
                     f.detail !== "n/a" ? (
-                      <span key={f.label} className="text-[11px] text-muted">
+                      <span key={f.label} className="text-caption text-muted">
                         {f.detail}
                       </span>
                     ) : null,

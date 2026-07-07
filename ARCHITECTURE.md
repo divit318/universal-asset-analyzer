@@ -66,27 +66,40 @@ These are not modules but foundational services that other modules depend on.
 
 These compute analytical scores and filter stocks.
 
-### Composite Scorer (`lib/composite.ts`)
-**Purpose**: Single composite score (0–100) for any stock, combining value/quality/momentum.
+### Two purpose-built scorers (not one)
 
-**Core Logic:**
-- **Value**: P/E-based (lower = better)
-- **Quality**: ROE-based (higher = better)
-- **Momentum**: 52-week high relative performance
+UAA runs **two** scoring engines, deliberately, for two different contexts. They
+read different data and produce different numbers by design — do not try to merge
+them into one (doing so either cripples the Screener's batch performance or strips
+the decision engine's richness). What they DO share, as a single source of truth,
+is the decision/label layer and the normalization primitive.
 
-**Exports:**
-- `scoreAsset(fundamentals: StockFundamentals)` → number (0–100)
-- Pure function, no side effects, fully testable
+**`lib/composite.ts` — batch dimensional scorer (the Screener engine).**
+- Pure sector-aware sub-scores (value / growth / quality / financialHealth /
+  momentum) + weighted `overall`, all 0–100, via `computeScores(m)`.
+- Input: `ScorableMetrics` (precomputed `StockMetrics` from the 24h dataset cache).
+  Never fetches analyst consensus or statements — that is what makes it cheap
+  enough to score 1000+ names.
+- Used by: `lib/dataset.ts` (Screener), `lib/scanner/fundamental-gate.ts`.
+- Tests: `tests/composite.test.ts`.
 
-**Inputs**: StockFundamentals (P/E, P/B, ROE, asset turnover, earnings growth, etc.)
+**`lib/scoring.ts` — single-name decision engine (research/compare/portfolio).**
+- Multi-signal `ScoreResult`: fundamentals + analyst consensus + EPS revisions +
+  price momentum + capital allocation + sector rotation, market-aware weights,
+  a `composite`, a `recommendation`, `confidence`, and a `rationale`.
+- Input: live `FundamentalsSnapshot` + `AnalystConsensus` + `FinancialStatements`
+  + `MomentumSignal` via `computeScore(...)`.
+- Used by: research/fundamentals, compare, report, portfolio, watchlist, copilot.
+- Tests: `tests/scoring.test.ts`.
 
-**Outputs**: Single numeric score.
-
-**Test Coverage**: `tests/composite.test.ts` (must test every formula change).
-
-**Used By**: Screener, Thematic, Scanner, IC Report, Engine.
-
-**Key Constraint**: Single source of truth for scoring. Never duplicate this logic. If another module needs scoring, call this function.
+**Shared single-source-of-truth layer** (so a given score means the same thing
+everywhere it appears):
+- `lib/recommendation.ts` — canonical score→`Recommendation` bands (78/60/42/25),
+  labels, and badge tones. Both engines and all UI route through this; never
+  hardcode band cutoffs or a label/color map in a component.
+- `lib/score-math.ts` — the shared clamp-lerp (`lerp`/`norm`) both engines normalize with.
+- `lib/sector.ts` — the shared `sectorGroup()` both engines classify with.
+- Consistency contract: `tests/scoring-consistency.test.ts`.
 
 ---
 
@@ -633,7 +646,8 @@ to any hosted/paid provider.
 ## Design Principles
 
 1. **Single Source of Truth**: If logic can be computed, compute it once and reuse.
-   - Example: `lib/composite.ts` is the only place scoring happens. All modules call it.
+   - Example: the score→recommendation bands, labels, and tones live only in
+     `lib/recommendation.ts`; both scoring engines and all UI route through it.
 
 2. **Graceful Degradation**: Non-fatal failures return partial data, not errors.
    - Example: EDGAR failures don't crash research page; they show as "n/a".

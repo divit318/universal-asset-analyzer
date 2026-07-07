@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { RebalanceProposal, PortfolioReport } from "@/lib/portfolio-analytics";
+import type { RebalanceProposal } from "@/lib/portfolio-analytics";
 import { formatCurrency } from "@/lib/format";
 
 function TradeRow({ trade }: { trade: RebalanceProposal["trades"][number] }) {
@@ -66,7 +66,7 @@ function SectorChange({ change }: { change: RebalanceProposal["sectorChanges"][n
   );
 }
 
-function InvestCash({ totalValue, onResult }: { totalValue: number; onResult: (allocations: unknown[]) => void }) {
+function InvestCash({ onResult }: { onResult: (allocations: unknown[]) => void }) {
   const [cash, setCash] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -135,7 +135,7 @@ function InvestCash({ totalValue, onResult }: { totalValue: number; onResult: (a
   );
 }
 
-export function RebalancePanel({ rebalance, totalValue }: { rebalance: RebalanceProposal; totalValue: number }) {
+export function RebalancePanel({ rebalance }: { rebalance: RebalanceProposal }) {
   const hasTrades = rebalance.trades.length > 0;
 
   return (
@@ -196,7 +196,7 @@ export function RebalancePanel({ rebalance, totalValue }: { rebalance: Rebalance
             </div>
           )}
 
-          <InvestCash totalValue={totalValue} onResult={() => {}} />
+          <InvestCash onResult={() => {}} />
         </div>
       </div>
     </div>

@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { TrendingUp, TrendingDown, Clock3, Network, Link2, Bookmark } from "lucide-react";
 import type {
   FundamentalsData,
   MovementExplanation,
@@ -25,7 +27,6 @@ import {
 
 // Universal components
 import { DownloadIcon } from "./_components/download-icon";
-import { InteractiveChart } from "./_components/interactive-chart";
 import { SymbolSearch } from "@/app/_components/symbol-search";
 import { ResearchCopilot } from "./_components/copilot/research-copilot";
 import { ResearchNotes } from "./_components/research-notes";
@@ -57,6 +58,7 @@ import { ValuationHistoryChart } from "./_components/valuation-history-chart";
 import { MarginTrendChart, PeerRadarChart, RevenueFcfChart } from "./_components/charts";
 
 // India-specific components (conditionally rendered)
+import { computeIndiaSnapshot } from "@/lib/india-snapshot";
 import { InvestmentSnapshot } from "./india/_components/investment-snapshot";
 import { RatioSparklines } from "./india/_components/ratio-sparklines";
 import { OwnershipTimeline } from "./india/_components/ownership-timeline";
@@ -73,6 +75,22 @@ import {
 import { useToast } from "@/app/_components/toast";
 import { useIOSSafe } from "@/lib/ios-context";
 import { PortfolioFitPanel } from "@/app/_components/portfolio-fit-panel";
+import { PositionActionCard } from "./_components/position-action-card";
+import { CollapsibleSection } from "@/app/_components/collapsible-section";
+import { PageShell, PageHeader, Card, Button, Tabs, type TabItem } from "@/app/_components/ui";
+
+// The interactive price chart bundles the candlestick pattern engine — the
+// single heaviest component on this page. Load it lazily so the researched
+// symbol's text data paints without waiting on that chunk.
+const InteractiveChart = dynamic(
+  () => import("./_components/interactive-chart").then((m) => m.InteractiveChart),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-[420px] w-full animate-pulse rounded-card border border-border bg-surface-2" />
+    ),
+  },
+);
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                       */
@@ -124,7 +142,7 @@ const FEATURE_CARDS = [
 function SectionDivider({ title }: { title: string }) {
   return (
     <div className="flex items-center gap-3">
-      <h2 className="text-[10px] font-semibold uppercase tracking-widest text-muted">{title}</h2>
+      <h2 className="text-label font-semibold uppercase tracking-widest text-muted">{title}</h2>
       <div className="h-px flex-1 bg-border" />
     </div>
   );
@@ -134,7 +152,7 @@ function SectionDivider({ title }: { title: string }) {
 /* Tab navigation                                                              */
 /* -------------------------------------------------------------------------- */
 
-const TABS: { id: Tab; label: string }[] = [
+const TABS: TabItem<Tab>[] = [
   { id: "conviction", label: "Conviction"  },
   { id: "analysis",   label: "Analysis"    },
   { id: "financials", label: "Financials"  },
@@ -143,23 +161,7 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 function TabNav({ active, onChange }: { active: Tab; onChange: (t: Tab) => void }) {
-  return (
-    <div className="flex gap-0.5 border-b border-border">
-      {TABS.map((t) => (
-        <button
-          key={t.id}
-          onClick={() => onChange(t.id)}
-          className={`px-4 py-2.5 text-sm transition-colors ${
-            active === t.id
-              ? "border-b-2 border-accent font-medium text-foreground"
-              : "text-muted hover:text-foreground"
-          }`}
-        >
-          {t.label}
-        </button>
-      ))}
-    </div>
-  );
+  return <Tabs tabs={TABS} active={active} onChange={onChange} layoutId="research-tabs-underline" />;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -424,84 +426,95 @@ function ResearchWorkspace({
   const hasIndiaFinancials = (indiaCompany?.annualPL?.length ?? 0) > 0 || (indiaCompany?.quarterlyPL?.length ?? 0) > 0;
   const hasIndiaOwnership = (indiaCompany?.shareholding?.length ?? 0) > 0;
 
+  // The single conviction score for Indian stocks (screener.in). Yahoo's
+  // composite is deliberately not shown for NSE/BSE names — its fundamentals
+  // coverage is unreliable and produced a second, contradictory headline score.
+  const indiaSnapshot = useMemo(
+    () => (indiaCompany && indiaDerived ? computeIndiaSnapshot(indiaCompany, indiaDerived) : null),
+    [indiaCompany, indiaDerived],
+  );
+
   /* ========================================================== */
   return (
     <div className="flex flex-col gap-5">
 
-      {/* ── 1. Company header ───────────────────────────────────── */}
-      <div className="flex flex-wrap items-end justify-between gap-4 rounded-xl border border-border bg-surface p-5">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-lg font-semibold">{quote.symbol}</span>
-            <span className="text-muted">{quote.name}</span>
-            <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest ${MARKET_BADGE[market]}`}>
-              {MARKET_LABEL[market]}
-            </span>
+      {/* ── 1. Company masthead — identity, price, actions & key stats ── */}
+      <div className="overflow-hidden rounded-card border border-border bg-surface shadow-card">
+        <div className="flex flex-wrap items-start justify-between gap-4 p-5">
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="font-mono text-xl font-semibold tracking-tight">{quote.symbol}</span>
+              <span className="text-sm text-muted">{quote.name}</span>
+              <span className={`rounded-full border px-2 py-0.5 text-micro font-semibold uppercase tracking-widest ${MARKET_BADGE[market]}`}>
+                {MARKET_LABEL[market]}
+              </span>
+              {quote.assetType && (
+                <span className="text-micro font-medium uppercase tracking-widest text-faint">{quote.assetType.toLowerCase()}</span>
+              )}
+            </div>
+            <div className="flex items-baseline gap-3">
+              <span className="text-4xl font-semibold tabular-nums tracking-tight">
+                {formatCurrency(quote.price, quote.currency)}
+              </span>
+              <span className={`inline-flex items-center gap-1 text-sm font-medium tabular-nums ${positive ? "text-positive" : "text-negative"}`}>
+                {positive ? <TrendingUp className="h-4 w-4" strokeWidth={2} /> : <TrendingDown className="h-4 w-4" strokeWidth={2} />}
+                {formatCurrency(quote.change, quote.currency)} ({formatPercent(quote.changePercent)})
+              </span>
+            </div>
           </div>
-          {quote.assetType && (
-            <p className="mt-0.5 text-xs text-muted/60 capitalize">{quote.assetType.toLowerCase()}</p>
-          )}
-          <div className="mt-1.5 flex items-baseline gap-3">
-            <span className="text-3xl font-semibold tabular-nums">
-              {formatCurrency(quote.price, quote.currency)}
-            </span>
-            <span className={positive ? "text-positive" : "text-negative"}>
-              {formatCurrency(quote.change, quote.currency)} ({formatPercent(quote.changePercent)})
-            </span>
-          </div>
-        </div>
-        {/* Action buttons */}
-        <div className="flex flex-wrap gap-2">
-          <Link
-            href={`/intelligence?view=timeline&scope=symbol&id=${encodeURIComponent(quote.symbol)}`}
-            className="flex items-center rounded-lg border border-border px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
-          >
-            Timeline
-          </Link>
-          <Link
-            href={`/intelligence?view=graph&scope=symbol&id=${encodeURIComponent(quote.symbol)}`}
-            className="flex items-center rounded-lg border border-border px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
-          >
-            Graph
-          </Link>
-          <button
-            onClick={onCopyLink}
-            className="rounded-lg border border-border px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
-          >
-            Copy link ↗
-          </button>
-          <button
-            onClick={downloadReport}
-            disabled={downloading}
-            className="flex items-center gap-2 rounded-lg border border-accent/50 bg-accent/10 px-4 py-2 text-sm text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
-          >
-            <DownloadIcon />
-            {downloading ? "Generating…" : "Excel Report"}
-          </button>
-          <button
-            onClick={onSave}
-            disabled={saved}
-            className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm transition-colors disabled:opacity-60 ${
-              saved ? "border-accent/40 bg-accent/10 text-accent" : "border-border hover:bg-surface-2"
-            }`}
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill={saved ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M2 2a1 1 0 011-1h8a1 1 0 011 1v10l-5-3-5 3V2z" />
-            </svg>
-            {saved ? "Saved" : "Watchlist"}
-          </button>
-        </div>
-      </div>
 
-      {/* ── 2. Key stats bar ────────────────────────────────────── */}
-      <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-3">
-        {statsRow.map(([label, value]) => (
-          <div key={label} className="flex flex-col gap-1 bg-surface p-4">
-            <dt className="text-xs uppercase tracking-wide text-muted">{label}</dt>
-            <dd className="font-mono text-sm tabular-nums">{value}</dd>
+          {/* Action row */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Link
+              href={`/intelligence?view=timeline&scope=symbol&id=${encodeURIComponent(quote.symbol)}`}
+              className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-2 text-sm text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
+            >
+              <Clock3 className="h-4 w-4" strokeWidth={1.75} /> Timeline
+            </Link>
+            <Link
+              href={`/intelligence?view=graph&scope=symbol&id=${encodeURIComponent(quote.symbol)}`}
+              className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-2 text-sm text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
+            >
+              <Network className="h-4 w-4" strokeWidth={1.75} /> Graph
+            </Link>
+            <button
+              onClick={onCopyLink}
+              className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-2 text-sm text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
+            >
+              <Link2 className="h-4 w-4" strokeWidth={1.75} /> Copy link
+            </button>
+            <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
+            <button
+              onClick={downloadReport}
+              disabled={downloading}
+              className="inline-flex items-center gap-1.5 rounded-control border border-brand/40 bg-brand-muted px-3 py-2 text-sm font-medium text-brand outline-none transition-colors hover:bg-brand/20 focus-visible:ring-2 focus-visible:ring-brand/40 disabled:opacity-50"
+            >
+              <DownloadIcon />
+              {downloading ? "Generating…" : "Excel Report"}
+            </button>
+            <button
+              onClick={onSave}
+              disabled={saved}
+              className={`inline-flex items-center gap-1.5 rounded-control border px-3 py-2 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand/40 disabled:opacity-60 ${
+                saved ? "border-brand/40 bg-brand-muted text-brand" : "border-border hover:bg-surface-2"
+              }`}
+            >
+              <Bookmark className="h-4 w-4" strokeWidth={1.75} fill={saved ? "currentColor" : "none"} />
+              {saved ? "Saved" : "Watchlist"}
+            </button>
           </div>
-        ))}
-      </dl>
+        </div>
+
+        {/* Key stats strip — hairline-divided, tabular */}
+        <dl className={`grid grid-cols-2 gap-px border-t border-border bg-border sm:grid-cols-3 ${statsRow.length % 6 === 0 ? "lg:grid-cols-6" : "lg:grid-cols-3"}`}>
+          {statsRow.map(([label, value]) => (
+            <div key={label} className="flex flex-col gap-1 bg-surface px-4 py-3">
+              <dt className="text-micro font-semibold uppercase tracking-widest text-faint">{label}</dt>
+              <dd className="font-mono text-sm tabular-nums text-foreground">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
 
       {/* ── 2b. Identity strip: personality badge + research confidence ── */}
       {isEquity && (
@@ -514,10 +527,14 @@ function ResearchWorkspace({
       )}
 
       {/* ── 3. AI Decision Hero — the primary answer ────────────── */}
+      {/* For Indian stocks the numeric confidence comes from the screener.in
+          snapshot, never the Yahoo composite, so the hero and the Investment
+          Snapshot below always agree. */}
       <DecisionHero
         verdict={verdict}
         loading={verdictLoading}
-        score={fundamentals?.score ?? null}
+        score={isIndia ? null : fundamentals?.score ?? null}
+        confidenceOverride={isIndia ? indiaSnapshot?.composite ?? null : null}
       />
 
       {/* ── 3b. Why Now — biggest current catalysts, composed from data already on the page ── */}
@@ -528,13 +545,19 @@ function ResearchWorkspace({
         nearestTimelineHeadline={nearestTimelineEvent?.title ?? null}
       />
 
-      {/* ── 3c. Macro Context — Market / Sector / Company regime ladder ── */}
+      {/* ── 3c. Macro Context — secondary context, collapsed so the answer leads ── */}
       {isEquity && (
-        <MacroContextLadder
-          sectorEntry={sectorRotationEntry}
-          industry={fundamentals?.snapshot?.industry}
-          recommendation={fundamentals?.score?.recommendation ?? null}
-        />
+        <CollapsibleSection title="Macro context" subtitle="Market · sector · company regime">
+          <MacroContextLadder
+            sectorEntry={sectorRotationEntry}
+            industry={fundamentals?.snapshot?.industry}
+            recommendation={
+              isIndia
+                ? indiaSnapshot?.recommendation ?? null
+                : fundamentals?.score?.recommendation ?? null
+            }
+          />
+        </CollapsibleSection>
       )}
 
       {/* ── 4. Portfolio Fit + Portfolio Decision — personalised context for this user ── */}
@@ -548,6 +571,13 @@ function ResearchWorkspace({
                 ? undefined
                 : portfolioFit.reasons[0] ?? undefined
             }
+          />
+          <PositionActionCard
+            symbol={quote.symbol}
+            price={quote.price}
+            currency={quote.currency}
+            portfolioValue={ios.profile.totalValue}
+            fit={portfolioFit}
           />
           {portfolioRecommendation && <PortfolioDecisionCard recommendation={portfolioRecommendation} />}
         </div>
@@ -580,24 +610,10 @@ function ResearchWorkspace({
       {tab === "conviction" && (
         <div className="flex flex-col gap-6">
           {isIndia && hasIndia && indiaCompany && indiaDerived ? (
-            <>
-              <InvestmentSnapshot company={indiaCompany} derived={indiaDerived} />
-              {fundamentals && (
-                <>
-                  <SectionDivider title="Quantitative Conviction (Yahoo Finance)" />
-                  <ConvictionBreakdown
-                    score={fundamentals.score}
-                    loading={false}
-                    verdict={verdict}
-                    risks={fundamentals.risks}
-                    onViewRisks={() => setTab("details")}
-                  />
-                </>
-              )}
-              {!fundamentals && (
-                <ConvictionBreakdown score={null} loading={fundsLoading} verdict={verdict} />
-              )}
-            </>
+            // Indian stocks: screener.in is the single source of the conviction
+            // score. The Yahoo composite is intentionally omitted here — showing
+            // both produced two contradictory headline scores (e.g. 52 vs 67).
+            <InvestmentSnapshot company={indiaCompany} derived={indiaDerived} />
           ) : (
             <ConvictionBreakdown
               score={fundamentals?.score ?? null}
@@ -873,7 +889,7 @@ function ResearchWorkspace({
                       className="flex items-center justify-between gap-4 bg-surface px-4 py-3"
                     >
                       <div className="min-w-0">
-                        <span className="font-mono text-sm text-accent">{f.form}</span>
+                        <span className="font-mono text-sm text-brand">{f.form}</span>
                         <p className="truncate text-sm text-muted">{f.description}</p>
                       </div>
                       <div className="flex shrink-0 items-center gap-4">
@@ -882,7 +898,7 @@ function ResearchWorkspace({
                           href={f.documentUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-sm text-accent hover:underline"
+                          className="text-sm text-brand hover:underline"
                         >
                           View →
                         </a>
@@ -922,13 +938,13 @@ function EmptyState({
   return (
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-3">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Popular</p>
+        <p className="text-label font-semibold uppercase tracking-widest text-muted/60">Popular</p>
         <div className="flex flex-wrap gap-2">
           {QUICK_SYMBOLS.map((sym) => (
             <button
               key={sym}
               onClick={() => onSelect(sym)}
-              className="rounded-lg border border-border bg-surface px-4 py-2 font-mono text-sm transition-all hover:border-accent/40 hover:bg-surface-2 hover:text-accent"
+              className="rounded-lg border border-border bg-surface px-4 py-2 font-mono text-sm transition-all hover:border-brand/40 hover:bg-surface-2 hover:text-brand"
             >
               {sym}
             </button>
@@ -937,10 +953,10 @@ function EmptyState({
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {FEATURE_CARDS.map((f) => (
-          <div key={f.title} className="flex flex-col gap-1 rounded-xl border border-border bg-surface p-4">
+          <Card key={f.title} padding="md" className="flex flex-col gap-1">
             <p className="text-sm font-semibold text-foreground">{f.title}</p>
             <p className="text-xs leading-5 text-muted">{f.desc}</p>
-          </div>
+          </Card>
         ))}
       </div>
     </div>
@@ -998,10 +1014,10 @@ export default function ResearchPage() {
         const raw = sessionStorage.getItem("uaa_research_state");
         if (raw) {
           const st = JSON.parse(raw) as { symbol?: string; data?: ResearchData };
-          /* eslint-disable react-hooks/set-state-in-effect */
+           
           if (st.symbol) setSymbol(st.symbol);
           if (st.data) setData(st.data);
-          /* eslint-enable react-hooks/set-state-in-effect */
+           
         }
       } catch { /* ignore corrupt storage */ }
     }
@@ -1053,15 +1069,11 @@ export default function ResearchPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-10">
-
-      {/* Page header */}
-      <div className="flex flex-col gap-1.5">
-        <h1 className="text-2xl font-semibold tracking-tight">Research</h1>
-        <p className="text-sm text-muted">
-          Universal investment research — US, India, Japan, Europe, and more. Search any global ticker.
-        </p>
-      </div>
+    <PageShell gap="gap-6" py="py-10">
+      <PageHeader
+        title="Research"
+        description="Universal investment research — US, India, Japan, Europe, and more. Search any global ticker."
+      />
 
       {/* Search bar */}
       <form
@@ -1074,13 +1086,9 @@ export default function ResearchPage() {
           onSelect={(sym) => submit(sym)}
           loading={loading}
         />
-        <button
-          type="submit"
-          disabled={loading}
-          className="rounded-lg bg-accent-strong px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
+        <Button type="submit" variant="primary" disabled={loading}>
           {loading ? "Loading…" : "Research"}
-        </button>
+        </Button>
       </form>
 
       {/* Error banner */}
@@ -1114,6 +1122,6 @@ export default function ResearchPage() {
       {!data && !loading && !error && (
         <EmptyState onSelect={(sym) => { setSymbol(sym); submit(sym); }} />
       )}
-    </div>
+    </PageShell>
   );
 }

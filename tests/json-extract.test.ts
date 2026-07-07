@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractJson } from "@/lib/json-extract";
+import { extractJson, extractJsonObject } from "@/lib/json-extract";
 
 describe("extractJson", () => {
   it("parses clean JSON objects", () => {
@@ -46,5 +46,59 @@ describe("extractJson", () => {
 
   it("throws on truncated JSON", () => {
     expect(() => extractJson('{"a": 1, "b":')).toThrow();
+  });
+});
+
+describe("extractJsonObject", () => {
+  const defaults = { verdict: "hold", confidence: 0, actionItems: [] as string[] };
+
+  it("returns parsed values when the model provides them", () => {
+    const raw = '{"verdict":"buy","confidence":80,"actionItems":["trim NVDA"]}';
+    expect(extractJsonObject(raw, defaults)).toEqual({
+      verdict: "buy",
+      confidence: 80,
+      actionItems: ["trim NVDA"],
+    });
+  });
+
+  it("fills omitted fields from defaults (the real crash case)", () => {
+    // model dropped actionItems entirely
+    const raw = '{"verdict":"buy","confidence":80}';
+    const out = extractJsonObject(raw, defaults);
+    expect(out.actionItems).toEqual([]);
+    expect(Array.isArray(out.actionItems)).toBe(true);
+  });
+
+  it("keeps the default when a field is null", () => {
+    const raw = '{"verdict":"sell","confidence":null,"actionItems":null}';
+    const out = extractJsonObject(raw, defaults);
+    expect(out.confidence).toBe(0);
+    expect(out.actionItems).toEqual([]);
+  });
+
+  it("preserves array-ness when the model returns a non-array for an array field", () => {
+    const raw = '{"actionItems":"just one string"}';
+    expect(extractJsonObject(raw, defaults).actionItems).toEqual([]);
+  });
+
+  it("falls back to defaults on unparseable input instead of throwing", () => {
+    expect(extractJsonObject("the model refused to answer", defaults)).toEqual(defaults);
+  });
+
+  it("falls back to defaults when the parse yields an array, not an object", () => {
+    expect(extractJsonObject("[1,2,3]", defaults)).toEqual(defaults);
+  });
+
+  it("tolerates markdown-fenced partial objects", () => {
+    const raw = '```json\n{"verdict":"buy"}\n```';
+    const out = extractJsonObject(raw, defaults);
+    expect(out.verdict).toBe("buy");
+    expect(out.actionItems).toEqual([]);
+  });
+
+  it("does not mutate the caller's defaults object", () => {
+    const d = { items: [] as number[] };
+    extractJsonObject('{"items":[1,2]}', d);
+    expect(d.items).toEqual([]);
   });
 });

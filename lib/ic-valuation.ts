@@ -18,9 +18,6 @@ import type { ScreenerInCompany } from "./screener-in";
 
 /* ─── FX context helpers ─────────────────────────────────────────────── */
 
-// Sectors where ₹/$ movement materially impacts earnings
-const FX_EXPORT_SECTORS = ["Information Technology", "Technology", "Healthcare", "Pharmaceuticals", "Chemicals", "Textiles"];
-const FX_IMPORT_SECTORS = ["Energy", "Oil & Gas", "Airlines", "Automobile", "Metals", "Consumer Electronics"];
 const FX_CONGLOMERATE_NAMES = [
   "tata", "reliance", "adani", "mahindra", "bajaj", "birla", "godrej", "hinduja",
   "ltimindtree", "l&t", "larsen", "itc", "vedanta", "jsw", "suzlon",

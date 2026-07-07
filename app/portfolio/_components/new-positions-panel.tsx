@@ -3,7 +3,6 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePortfolio } from "@/lib/portfolio-context";
-import { OBJECTIVE_CONFIG } from "@/lib/portfolio-analytics";
 import type { NewPositionRecommendation } from "@/lib/portfolio-analytics";
 import { formatCurrency } from "@/lib/format";
 import { TradeImpactModal } from "./trade-impact-modal";

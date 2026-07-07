@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import { downloadBlob } from "@/lib/download";
+import { PageShell } from "@/app/_components/ui";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -155,10 +156,10 @@ function SignalBadge({ severity, label }: { severity: string; label: string }) {
   const cls = severity === "high" ? "bg-red-500/10 border-red-500/30 text-negative"
     : severity === "medium" ? "bg-warning/10 border-warning/30 text-warning"
     : "bg-border/20 border-border text-muted";
-  return <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${cls}`}>{label}</span>;
+  return <span className={`rounded border px-1.5 py-0.5 text-label font-semibold uppercase ${cls}`}>{label}</span>;
 }
 
-function ICReportView({ report, currency }: { report: ICReport; currency: string }) {
+function ICReportView({ report }: { report: ICReport }) {
   const [agentTab, setAgentTab] = useState(0);
   const v = report.valuation;
 
@@ -189,7 +190,7 @@ function ICReportView({ report, currency }: { report: ICReport; currency: string
       {/* Red flag signals */}
       {report.signals.filter(s => s.severity !== "info").length > 0 && (
         <div className="flex flex-col gap-2">
-          <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Red Flags</span>
+          <span className="text-label font-semibold uppercase tracking-widest text-muted">Red Flags</span>
           <div className="flex flex-col gap-1.5">
             {report.signals.filter(s => s.severity !== "info").map(s => (
               <div key={s.id} className="flex items-start gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2">
@@ -212,7 +213,7 @@ function ICReportView({ report, currency }: { report: ICReport; currency: string
           const label = k === "base" ? "Base case" : k === "bull" ? "Bull case" : "Bear case";
           return (
             <div key={k} className={`flex flex-col gap-1.5 rounded-lg border p-3 ${color}`}>
-              <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">{label}</span>
+              <span className="text-label font-semibold uppercase tracking-widest text-muted">{label}</span>
               <p className="text-xs leading-relaxed text-muted">{text}</p>
             </div>
           );
@@ -221,19 +222,19 @@ function ICReportView({ report, currency }: { report: ICReport; currency: string
 
       {/* Valuation approaches */}
       <div className="flex flex-col gap-2">
-        <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Valuation</span>
+        <span className="text-label font-semibold uppercase tracking-widest text-muted">Valuation</span>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {v.approaches.map((a) => (
             <div key={a.method} className="flex flex-col gap-1 rounded-lg border border-border bg-surface-2 p-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-muted">{a.method}</span>
-                <span className={`text-[10px] font-semibold ${a.confidence === "high" ? "text-positive" : a.confidence === "low" ? "text-negative" : "text-warning"}`}>
+                <span className={`text-label font-semibold ${a.confidence === "high" ? "text-positive" : a.confidence === "low" ? "text-negative" : "text-warning"}`}>
                   {a.confidence}
                 </span>
               </div>
               <span className="font-mono text-base font-semibold">{a.priceTarget}</span>
               <span className={`font-mono text-xs ${a.impliedUpside.startsWith("+") ? "text-positive" : "text-negative"}`}>{a.impliedUpside}</span>
-              <p className="mt-1 text-[11px] leading-relaxed text-muted line-clamp-3">{a.assumptions}</p>
+              <p className="mt-1 text-caption leading-relaxed text-muted line-clamp-3">{a.assumptions}</p>
             </div>
           ))}
         </div>
@@ -247,7 +248,7 @@ function ICReportView({ report, currency }: { report: ICReport; currency: string
 
       {/* Scenarios */}
       <div className="flex flex-col gap-2">
-        <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Scenarios</span>
+        <span className="text-label font-semibold uppercase tracking-widest text-muted">Scenarios</span>
         <div className="grid gap-2 sm:grid-cols-3">
           {v.scenarios.map((s) => {
             const bull = s.label.toLowerCase().includes("bull");
@@ -263,7 +264,7 @@ function ICReportView({ report, currency }: { report: ICReport; currency: string
                 </div>
                 <ul className="flex flex-col gap-0.5">
                   {s.keyAssumptions.map((a, i) => (
-                    <li key={i} className="text-[11px] text-muted before:mr-1.5 before:content-['·']">{a}</li>
+                    <li key={i} className="text-caption text-muted before:mr-1.5 before:content-['·']">{a}</li>
                   ))}
                 </ul>
               </div>
@@ -276,12 +277,12 @@ function ICReportView({ report, currency }: { report: ICReport; currency: string
       {report.runHotCold && (
         <div className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 text-xs ${
           report.runHotCold.signal === "run_hot" ? "border-warning/30 bg-warning/5" :
-          report.runHotCold.signal === "run_cold" ? "border-accent/30 bg-accent/5" :
+          report.runHotCold.signal === "run_cold" ? "border-brand/30 bg-brand/5" :
           "border-border bg-surface-2"
         }`}>
           <span className={`font-semibold uppercase tracking-wide ${
             report.runHotCold.signal === "run_hot" ? "text-warning" :
-            report.runHotCold.signal === "run_cold" ? "text-accent" : "text-muted"
+            report.runHotCold.signal === "run_cold" ? "text-brand" : "text-muted"
           }`}>
             {report.runHotCold.signal.replace("_", " ")}
           </span>
@@ -295,11 +296,11 @@ function ICReportView({ report, currency }: { report: ICReport; currency: string
       {/* Agent findings */}
       {report.agentFindings.length > 0 && (
         <div className="flex flex-col gap-2">
-          <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Agent Analysis</span>
+          <span className="text-label font-semibold uppercase tracking-widest text-muted">Agent Analysis</span>
           <div className="flex flex-wrap gap-1">
             {report.agentFindings.map((af, i) => (
               <button key={af.agent} onClick={() => setAgentTab(i)}
-                className={`rounded px-2.5 py-1 text-[11px] font-medium transition-colors ${agentTab === i ? "bg-accent/15 text-accent" : "text-muted hover:bg-surface-2"}`}>
+                className={`rounded px-2.5 py-1 text-caption font-medium transition-colors ${agentTab === i ? "bg-brand/15 text-brand" : "text-muted hover:bg-surface-2"}`}>
                 {af.agentLabel ?? af.agent}
               </button>
             ))}
@@ -317,11 +318,11 @@ function ICReportView({ report, currency }: { report: ICReport; currency: string
       {/* Monitorables */}
       {report.monitorables.length > 0 && (
         <div className="flex flex-col gap-2">
-          <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Watch List</span>
+          <span className="text-label font-semibold uppercase tracking-widest text-muted">Watch List</span>
           <ul className="grid gap-1 sm:grid-cols-2">
             {report.monitorables.map((m, i) => (
               <li key={i} className="flex items-start gap-2 rounded border border-border bg-surface-2 px-3 py-1.5 text-xs text-muted">
-                <span className="mt-0.5 shrink-0 text-accent">→</span>{m}
+                <span className="mt-0.5 shrink-0 text-brand">→</span>{m}
               </li>
             ))}
           </ul>
@@ -361,7 +362,7 @@ function BatchICPanel({
         {/* Progress bar */}
         <div className="flex-1 h-1 rounded-full bg-surface-2 mx-2">
           <div
-            className="h-full rounded-full bg-accent transition-all duration-500"
+            className="h-full rounded-full bg-brand transition-all duration-500"
             style={{ width: totalCount ? `${(doneCount / totalCount) * 100}%` : "0%" }}
           />
         </div>
@@ -378,20 +379,32 @@ function BatchICPanel({
             const isActive = i === activeIdx;
             const statusDot = job.status === "done" ? "bg-positive"
               : job.status === "error" ? "bg-negative"
-              : job.status === "running" ? "bg-accent animate-pulse"
+              : job.status === "running" ? "bg-brand animate-pulse"
               : "bg-border";
             return (
-              <button key={job.symbol} onClick={() => onSelectJob(i)}
-                className={`flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors ${
-                  isActive ? "bg-accent/10 text-accent" : "text-muted hover:bg-surface-2 hover:text-foreground"
+              <div key={job.symbol}
+                role="button"
+                tabIndex={0}
+                onClick={() => onSelectJob(i)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onSelectJob(i);
+                  }
+                }}
+                className={`group flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors cursor-pointer ${
+                  isActive ? "bg-brand/10 text-brand" : "text-muted hover:bg-surface-2 hover:text-foreground"
                 }`}>
                 <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDot}`} />
                 <span className="flex-1 font-mono font-medium truncate">{job.symbol}</span>
                 {job.status !== "running" && (
-                  <span onClick={(e) => { e.stopPropagation(); onRemoveSymbol(job.symbol); }}
-                    className="shrink-0 text-[10px] opacity-0 group-hover:opacity-100 hover:text-negative cursor-pointer">×</span>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onRemoveSymbol(job.symbol); }}
+                    aria-label={`Remove ${job.symbol}`}
+                    className="shrink-0 text-label opacity-0 group-hover:opacity-100 hover:text-negative cursor-pointer">×</button>
                 )}
-              </button>
+              </div>
             );
           })}
         </div>
@@ -410,8 +423,8 @@ function BatchICPanel({
           {activeJob?.status === "running" && (
             <div className="flex flex-1 items-center justify-center flex-col gap-3 text-muted">
               <span className="relative flex h-3 w-3">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
-                <span className="relative inline-flex h-3 w-3 rounded-full bg-accent" />
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-75" />
+                <span className="relative inline-flex h-3 w-3 rounded-full bg-brand" />
               </span>
               <span className="text-sm">{activeJob.symbol}</span>
               <span className="text-xs">{STAGE_LABEL[activeJob.stage] ?? activeJob.stage}</span>
@@ -423,9 +436,7 @@ function BatchICPanel({
             </div>
           )}
           {activeJob?.status === "done" && activeJob.report && (
-            <ICReportView report={activeJob.report} currency={
-              activeJob.symbol.endsWith(".NS") || activeJob.symbol.endsWith(".BO") ? "₹" : "$"
-            } />
+            <ICReportView report={activeJob.report} />
           )}
         </div>
       </div>
@@ -450,10 +461,10 @@ function SelectionTray({
         <div className="flex flex-1 flex-wrap gap-1.5 overflow-x-auto">
           {selected.map(sym => (
             <span key={sym}
-              className="flex items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-xs text-accent">
+              className="flex items-center gap-1 rounded-full border border-brand/30 bg-brand/10 px-2.5 py-0.5 font-mono text-xs text-brand">
               {sym}
               <button onClick={() => onRemove(sym)}
-                className="ml-0.5 rounded-full text-accent/60 hover:text-accent leading-none">×</button>
+                className="ml-0.5 rounded-full text-brand/60 hover:text-brand leading-none">×</button>
             </span>
           ))}
         </div>
@@ -462,7 +473,7 @@ function SelectionTray({
           Clear all
         </button>
         <button onClick={onRunBatch} disabled={running || selected.length === 0}
-          className="shrink-0 rounded-lg bg-accent-strong px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50">
+          className="shrink-0 rounded-lg bg-brand-strong px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50">
           {running ? "Running…" : `Run IC Reports →`}
         </button>
       </div>
@@ -567,11 +578,6 @@ function Pct({ v, digits = 1 }: { v: number | null; digits?: number }) {
   if (v == null || !isFinite(v)) return <span className="text-muted">—</span>;
   const color = v >= 0 ? "text-positive" : "text-negative";
   return <span className={`font-mono tabular-nums ${color}`}>{v >= 0 ? "+" : ""}{v.toFixed(digits)}%</span>;
-}
-
-function Num({ v, digits = 2, suffix = "" }: { v: number | null; digits?: number; suffix?: string }) {
-  if (v == null || !isFinite(v)) return <span className="text-muted">—</span>;
-  return <span className="font-mono tabular-nums">{v.toFixed(digits)}{suffix}</span>;
 }
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
@@ -695,7 +701,7 @@ function DetailPanel({ symbol, onClose }: { symbol: string; onClose: () => void 
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-5 py-3">
         <div className="flex items-center gap-3">
-          <Link href={`/stocks/${symbol}`} className="font-mono font-semibold text-accent hover:underline">
+          <Link href={`/stocks/${symbol}`} className="font-mono font-semibold text-brand hover:underline">
             {symbol}
           </Link>
           {fund?.name && <span className="text-sm text-muted">{fund.name}</span>}
@@ -944,7 +950,7 @@ function DetailPanel({ symbol, onClose }: { symbol: string; onClose: () => void 
                 <button
                   key={t}
                   onClick={() => setFeatTab(t)}
-                  className={`rounded px-3 py-1 text-xs font-medium transition-colors ${featTab === t ? "bg-accent/20 text-accent" : "text-muted hover:bg-surface-2"}`}
+                  className={`rounded px-3 py-1 text-xs font-medium transition-colors ${featTab === t ? "bg-brand/20 text-brand" : "text-muted hover:bg-surface-2"}`}
                 >
                   {t === "all" ? "All" : t === "momentum" ? "Momentum/Returns" : t === "vol" ? "Volatility" : "Statistical"}
                 </button>
@@ -1019,19 +1025,16 @@ export default function EnginePage() {
       const raw = sessionStorage.getItem("uaa_engine_state");
       if (raw) {
         const st = JSON.parse(raw) as { symbolFilter?: string; signalFilter?: string; sortCol?: keyof ScorecardRow; sortDir?: "asc" | "desc"; selectedUniverse?: string };
-        /* eslint-disable react-hooks/set-state-in-effect */
         if (st.symbolFilter !== undefined) setSymbolFilter(st.symbolFilter);
         if (st.signalFilter !== undefined) setSignalFilter(st.signalFilter);
         if (st.sortCol) setSortCol(st.sortCol);
         if (st.sortDir) setSortDir(st.sortDir);
         if (st.selectedUniverse) setSelectedUniverse(st.selectedUniverse);
-        /* eslint-enable react-hooks/set-state-in-effect */
       }
     } catch { /* ignore corrupt storage */ }
     return () => {
       try { sessionStorage.setItem("uaa_engine_state", JSON.stringify(_s.current)); } catch { /* ignore */ }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function loadScorecard() {
@@ -1200,14 +1203,14 @@ export default function EnginePage() {
   }, {});
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-10 pb-24">
+    <PageShell py="py-10 pb-24">
 
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-semibold tracking-tight">Quant Engine</h1>
-            <span className="rounded-full border border-purple-500/30 bg-purple-500/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-purple-400">
+            <span className="rounded-full border border-purple-500/30 bg-purple-500/10 px-2.5 py-0.5 text-label font-semibold uppercase tracking-widest text-purple-400">
               Systematic
             </span>
           </div>
@@ -1220,7 +1223,7 @@ export default function EnginePage() {
           <select
             value={selectedUniverse}
             onChange={(e) => setSelectedUniverse(e.target.value)}
-            className="rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+            className="rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand"
           >
             <optgroup label="India">
               <option value="nifty50">Nifty 50</option>
@@ -1254,7 +1257,7 @@ export default function EnginePage() {
             {running ? "Running…" : "Run Engine (fast)"}
           </button>
           <button onClick={() => void runEngine(false)} disabled={running}
-            className="rounded-lg bg-accent-strong px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50">
+            className="rounded-lg bg-brand-strong px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50">
             {running ? "Running…" : "Full Run + Forecasts"}
           </button>
           {scorecard.length > 0 && (
@@ -1337,8 +1340,8 @@ export default function EnginePage() {
           <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
             {running && (
               <span className="relative flex h-2 w-2 shrink-0">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
               </span>
             )}
             <span className="text-sm font-medium">
@@ -1394,7 +1397,7 @@ export default function EnginePage() {
           </div>
           {/* Signal distribution */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Signal distribution</span>
+            <span className="text-label font-semibold uppercase tracking-widest text-muted/60">Signal distribution</span>
             {(["STRONG_BUY","BUY","HOLD","SELL","STRONG_SELL"] as const).map((sig) => {
               const count = signalDist[sig] ?? 0;
               if (!count) return null;
@@ -1412,7 +1415,7 @@ export default function EnginePage() {
               );
             })}
             {signalFilter !== "ALL" && (
-              <button onClick={() => setSignalFilter("ALL")} className="text-xs text-accent hover:underline">
+              <button onClick={() => setSignalFilter("ALL")} className="text-xs text-brand hover:underline">
                 Show all
               </button>
             )}
@@ -1426,14 +1429,14 @@ export default function EnginePage() {
           <div className="flex flex-wrap items-center gap-3">
             <input type="text" placeholder="Filter symbol…" value={symbolFilter}
               onChange={(e) => setSymbolFilter(e.target.value.toUpperCase())}
-              className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+              className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-brand"
             />
             <div className="flex flex-wrap gap-1">
               {signals.map((s) => (
                 <button key={s} onClick={() => setSignalFilter(s)}
                   className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
                     signalFilter === s
-                      ? s === "ALL" ? "border-accent bg-accent/10 text-accent" : `${SIGNAL_BG[s] ?? ""} ${SIGNAL_COLOR[s] ?? ""}`
+                      ? s === "ALL" ? "border-brand bg-brand/10 text-brand" : `${SIGNAL_BG[s] ?? ""} ${SIGNAL_COLOR[s] ?? ""}`
                       : "border-border text-muted hover:bg-surface-2"
                   }`}>
                   {s.replace("_", " ")}
@@ -1449,7 +1452,7 @@ export default function EnginePage() {
               <thead className="bg-surface-2 text-left text-xs uppercase tracking-wide text-muted">
                 <tr>
                   <th className="px-3 py-3 w-8">
-                    <input type="checkbox" className="cursor-pointer accent-accent"
+                    <input type="checkbox" className="cursor-pointer accent-brand"
                       checked={filtered.length > 0 && filtered.every(r => selectedSymbols.includes(r.symbol))}
                       onChange={(e) => {
                         if (e.target.checked) setSelectedSymbols(prev => [...new Set([...prev, ...filtered.map(r => r.symbol)])]);
@@ -1473,18 +1476,27 @@ export default function EnginePage() {
               <tbody className="divide-y divide-border">
                 {filtered.map((row) => (
                   <tr key={row.symbol}
-                    className={`cursor-pointer bg-surface transition-colors hover:bg-surface-2 ${expanded === row.symbol ? "bg-surface-2" : ""} ${selectedSymbols.includes(row.symbol) ? "bg-accent/5" : ""}`}
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={expanded === row.symbol}
+                    className={`cursor-pointer bg-surface transition-colors hover:bg-surface-2 ${expanded === row.symbol ? "bg-surface-2" : ""} ${selectedSymbols.includes(row.symbol) ? "bg-brand/5" : ""}`}
                     onClick={() => setExpanded(expanded === row.symbol ? null : row.symbol)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setExpanded(expanded === row.symbol ? null : row.symbol);
+                      }
+                    }}
                   >
                       <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                        <input type="checkbox" className="cursor-pointer accent-accent"
+                        <input type="checkbox" className="cursor-pointer accent-brand"
                           checked={selectedSymbols.includes(row.symbol)}
                           onChange={() => toggleSymbol(row.symbol)}
                         />
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col gap-0.5">
-                          <Link href={`/stocks/${row.symbol}`} className="font-mono font-semibold text-accent hover:underline"
+                          <Link href={`/stocks/${row.symbol}`} className="font-mono font-semibold text-brand hover:underline"
                             onClick={(e) => e.stopPropagation()}>
                             {row.symbol}
                           </Link>
@@ -1553,7 +1565,7 @@ export default function EnginePage() {
                 Run Engine (fast)
               </button>
               <button onClick={() => void runEngine(false)} disabled={running}
-                className="rounded-lg bg-accent-strong px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50">
+                className="rounded-lg bg-brand-strong px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50">
                 Full Run + Forecasts
               </button>
             </div>
@@ -1570,7 +1582,7 @@ export default function EnginePage() {
             ].map((s) => (
               <div key={s.step} className="flex flex-col gap-2 rounded-xl border border-border bg-surface p-4">
                 <div className="flex items-center gap-2">
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface-2 font-mono text-[10px] font-semibold text-muted">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface-2 font-mono text-label font-semibold text-muted">
                     {s.step}
                   </span>
                   <span className="text-xs font-semibold text-foreground">{s.title}</span>
@@ -1607,6 +1619,6 @@ export default function EnginePage() {
           }}
         />
       )}
-    </div>
+    </PageShell>
   );
 }

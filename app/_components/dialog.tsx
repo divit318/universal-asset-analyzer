@@ -130,6 +130,86 @@ export function Dialog({
   );
 }
 
+interface DrawerProps {
+  open: boolean;
+  onClose: () => void;
+  label: string;
+  children: React.ReactNode;
+  className?: string;
+}
+
+/** Side-anchored panel sharing Dialog's focus trap, Escape-to-close, and scroll lock. */
+export function Drawer({ open, onClose, label, children, className = "" }: DrawerProps) {
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [open, onClose]);
+
+  useEffect(() => {
+    if (!open || !panelRef.current) return;
+    const panel = panelRef.current;
+    const focusable = panel.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+
+    const previously = document.activeElement as HTMLElement | null;
+    first?.focus();
+
+    const trap = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || focusable.length === 0) return;
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", trap);
+    return () => {
+      document.removeEventListener("keydown", trap);
+      previously?.focus();
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  if (!open) return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={label}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} aria-hidden="true" />
+      <div
+        ref={panelRef}
+        style={{ animation: "dialog-enter 200ms ease-out" }}
+        className={`relative flex h-full w-full flex-col overflow-y-auto border-l border-border bg-surface shadow-2xl ${className}`}
+      >
+        {children}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 interface ConfirmDialogProps {
   open: boolean;
   onClose: () => void;

@@ -1,6 +1,6 @@
 import type { CompositeScores, StockMetrics } from "./types";
 import { sectorGroup } from "./sector";
-import type { SectorGroup } from "./sector";
+import { norm } from "./score-math";
 
 /**
  * Proprietary composite scores (0-100). Each raw metric is normalized to a
@@ -14,13 +14,6 @@ import type { SectorGroup } from "./sector";
  *
  * Pure and deterministic — fully unit-testable without any network data.
  */
-
-/** Map `value` from `worst`→0 to `best`→100, clamped. `best` may be < `worst`. */
-function norm(value: number | null, worst: number, best: number): number | null {
-  if (value == null || Number.isNaN(value)) return null;
-  const t = (value - worst) / (best - worst);
-  return Math.max(0, Math.min(1, t)) * 100;
-}
 
 /** Average the present sub-scores; null if fewer than `min` are available. */
 function blend(parts: (number | null)[], min = 1): number | null {

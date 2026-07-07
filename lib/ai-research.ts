@@ -459,7 +459,7 @@ Is the stock cheap, fair, or expensive? What justifies or undermines the valuati
 export async function indianChatWithData(
   input: Omit<ChatInput, "fundamentals" | "peers"> & { company: ScreenerInCompany; derived: IndianDeepAnalysisInput["derived"] },
 ): Promise<{ answer: string; model: string }> {
-  const { company, derived, quote, screenerIn, history, question } = input;
+  const { company, derived, quote, history, question } = input;
 
   const system = `You are an expert analyst specialising in Indian listed stocks (NSE/BSE). Using ONLY the structured data below, answer the user's question. Be precise, cite specific numbers. If data is missing, say so.
 

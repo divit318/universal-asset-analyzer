@@ -224,7 +224,7 @@ export function IntelligenceTab() {
         importance="high"
         defaultOpen
       >
-        <ScenarioAnalysis scenarios={report.scenarios} totalValue={report.totalValue} />
+        <ScenarioAnalysis scenarios={report.scenarios} />
       </IntelSection>
 
       <IntelSection

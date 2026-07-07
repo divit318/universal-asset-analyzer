@@ -135,7 +135,6 @@ function CompetitivePositionSummary({
   const mcapRank = computeRanks(peers, "market_cap").get(target.url ?? target.name);
 
   const pePct = peRank ? Math.round((1 - peRank / total) * 100) : null;
-  const rocePct = roceRank ? Math.round(((total - roceRank + 1) / total) * 100) : null;
 
   const targetROCE = parseNum(target.roce);
   const peerROCEs = peers.map((p) => parseNum(p.roce)).filter((v): v is number => v != null);
@@ -207,7 +206,6 @@ export function RankedPeers({
 
   const peRanks    = computeRanks(peers, "pe");
   const roceRanks  = computeRanks(peers, "roce");
-  const mcapRanks  = computeRanks(peers, "market_cap");
   const divRanks   = computeRanks(peers, "dividend_yield");
 
   const allPEs    = peers.map((p) => parseNum(p.pe)).filter((v): v is number => v != null);

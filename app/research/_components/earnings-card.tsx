@@ -13,22 +13,10 @@ import {
   YAxis,
 } from "recharts";
 import type { EarningsData } from "@/lib/types";
+import { useChartTheme } from "@/app/_components/chart-theme";
 
-// Recharts SVG fill/stroke attrs cannot read CSS custom properties; keep hex literals
-// that mirror the design tokens (--muted, --border, --positive, --negative, --surface).
-const AXIS = "#9aa3af";   // --muted
-const GRID = "#272b33";   // --border
-const POSITIVE = "#4ade80"; // --positive
-const NEGATIVE = "#f87171"; // --negative
-const MUTED = "#9aa3af";  // --muted
-
-const TOOLTIP_STYLE = {
-  background: "#14161a",  // --surface
-  border: "1px solid #272b33", // --border
-  borderRadius: 8,
-  fontSize: 12,
-  padding: "8px 12px",
-};
+// Structural + semantic chart colors come from useChartTheme() inside the
+// component so they adapt to light/dark (Recharts can't read CSS vars directly).
 
 function daysUntil(isoDate: string): number {
   return Math.ceil(
@@ -60,14 +48,16 @@ interface TooltipPayloadItem {
 function EarningsTooltip({
   active,
   payload,
+  style,
 }: {
   active?: boolean;
   payload?: TooltipPayloadItem[];
+  style?: React.CSSProperties;
 }) {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
   return (
-    <div style={TOOLTIP_STYLE}>
+    <div style={style}>
       <p className="mb-1.5 font-medium">{d.quarter}</p>
       {d.epsActual != null && (
         <p className="flex gap-2 text-xs">
@@ -97,6 +87,8 @@ function EarningsTooltip({
 }
 
 export function EarningsCard({ earnings }: { earnings: EarningsData }) {
+  const ct = useChartTheme();
+  const AXIS = ct.axis, GRID = ct.grid, MUTED = ct.axis, POSITIVE = ct.positive, NEGATIVE = ct.negative;
   const { nextDate, nextDateEnd, trailingEps, forwardEps } = earnings;
   const history = earnings.history ?? [];
 
@@ -208,7 +200,7 @@ export function EarningsCard({ earnings }: { earnings: EarningsData }) {
               width={44}
             />
             <ReferenceLine y={0} stroke={GRID} />
-            <Tooltip content={<EarningsTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+            <Tooltip content={<EarningsTooltip style={ct.tooltip} />} cursor={{ fill: ct.cursorFill }} />
 
             {/* Estimate as a thin background bar */}
             <Bar dataKey="epsEstimate" fill={MUTED} fillOpacity={0.25} radius={[3, 3, 0, 0]} />

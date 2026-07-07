@@ -74,7 +74,7 @@ export function MarketDashboard() {
               {data.sectorRotation.leaders.join(", ")}
             </p>
           ) : <p className="text-xs text-muted">No snapshot yet</p>}
-          <Link href="/scanner" className="text-[11px] text-accent hover:underline mt-2 inline-block">Full rotation grid →</Link>
+          <Link href="/scanner" className="text-[11px] text-brand hover:underline mt-2 inline-block">Full rotation grid →</Link>
         </div>
 
         <div className="rounded-xl border border-border bg-surface p-4">
@@ -97,7 +97,7 @@ export function MarketDashboard() {
               <p className="text-[11px] text-muted mt-1">{data.upcomingEvents[0].date}</p>
             </>
           ) : <p className="text-xs text-muted">None scheduled</p>}
-          <Link href="/calendar" className="text-[11px] text-accent hover:underline mt-2 inline-block">Full calendar →</Link>
+          <Link href="/calendar" className="text-[11px] text-brand hover:underline mt-2 inline-block">Full calendar →</Link>
         </div>
       </div>
 
@@ -109,7 +109,7 @@ export function MarketDashboard() {
               <p className="text-[10px] font-semibold uppercase tracking-widest text-muted mb-3">Priority Alerts</p>
               <div className="flex flex-col gap-2">
                 {allAlerts.map((a, i) => (
-                  <Link key={i} href={a.href} className="flex items-start gap-2 text-xs hover:text-accent">
+                  <Link key={i} href={a.href} className="flex items-start gap-2 text-xs hover:text-brand">
                     <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${SEVERITY_DOT[a.severity]}`} />
                     <span className="text-foreground/85">{a.title}</span>
                   </Link>
@@ -122,7 +122,7 @@ export function MarketDashboard() {
               <p className="text-[10px] font-semibold uppercase tracking-widest text-muted mb-3">Top Opportunities</p>
               <div className="flex flex-col gap-2">
                 {data.topOpportunities.map((o) => (
-                  <Link key={o.symbol} href={`/research?symbol=${o.symbol}`} className="flex items-center justify-between text-xs hover:text-accent">
+                  <Link key={o.symbol} href={`/research?symbol=${o.symbol}`} className="flex items-center justify-between text-xs hover:text-brand">
                     <span className="font-mono font-semibold">{o.symbol}</span>
                     <span className="text-muted">{o.action} · {o.composite}/100</span>
                   </Link>

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { ChatMessage } from "@/lib/ai/types";
+import { GroundingBadge } from "@/app/_components/grounding-badge";
 import { Markdown } from "./markdown";
 import { SaveNoteButton } from "../research-notes";
 
@@ -58,6 +59,10 @@ export function Message({ message, streaming, symbol }: { message: ChatMessage; 
           <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-accent align-middle" />
         ) : null}
       </div>
+
+      {!streaming && message.grounding ? (
+        <GroundingBadge grounding={message.grounding} className="pt-1" />
+      ) : null}
 
       {message.citations && message.citations.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5 pt-1">

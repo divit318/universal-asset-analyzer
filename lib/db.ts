@@ -1,7 +1,9 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import type { PortfolioPosition, ResearchNote, StockFundamentals, WatchlistItem, SectorRotationEntry, TimelineEvent } from "./types";
+import type { PortfolioPosition, PortfolioLot, ResearchNote, StockFundamentals, WatchlistItem, SectorRotationEntry, TimelineEvent, Notification, Decision, DecisionAction, DecisionHorizon } from "./types";
+import { aggregateOpenPositions } from "./portfolio-lots";
+import type { AlertEvent } from "./alerts";
 
 let db: DatabaseSync | null = null;
 
@@ -35,6 +37,19 @@ function getDb(): DatabaseSync {
       avg_cost REAL NOT NULL,
       added_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS portfolio_lot (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      symbol     TEXT NOT NULL,
+      name       TEXT NOT NULL,
+      shares     REAL NOT NULL,
+      price      REAL NOT NULL,
+      kind       TEXT NOT NULL DEFAULT 'buy',
+      fees       REAL NOT NULL DEFAULT 0,
+      trade_date TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_portfolio_lot_symbol
+      ON portfolio_lot (symbol);
     CREATE TABLE IF NOT EXISTS research_session (
       id         TEXT PRIMARY KEY,
       symbol     TEXT NOT NULL,
@@ -78,10 +93,62 @@ function getDb(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS idx_timeline_event_symbol
       ON timeline_event (symbol, timestamp DESC);
+    CREATE TABLE IF NOT EXISTS notification (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      dedup_key  TEXT NOT NULL,
+      symbol     TEXT,
+      kind       TEXT NOT NULL,
+      severity   TEXT NOT NULL,
+      title      TEXT NOT NULL,
+      body       TEXT NOT NULL,
+      read       INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_notification_created
+      ON notification (created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_notification_dedup
+      ON notification (dedup_key, created_at);
+    CREATE TABLE IF NOT EXISTS decision (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      symbol       TEXT NOT NULL,
+      name         TEXT,
+      action       TEXT NOT NULL,
+      conviction   INTEGER NOT NULL,
+      thesis       TEXT,
+      price_at     REAL,
+      currency     TEXT,
+      target_price REAL,
+      horizon      TEXT,
+      fit_score    REAL,
+      fit_tier     TEXT,
+      status       TEXT NOT NULL DEFAULT 'open',
+      close_price  REAL,
+      closed_at    TEXT,
+      created_at   TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_decision_symbol ON decision (symbol);
+    CREATE INDEX IF NOT EXISTS idx_decision_created ON decision (created_at DESC);
   `);
   // Migrate existing watchlist rows: add new columns if the DB predates them
   for (const col of ["target_price REAL", "alert_pct_drop REAL", "notes TEXT"]) {
     try { db.exec(`ALTER TABLE watchlist ADD COLUMN ${col}`); } catch { /* already exists */ }
+  }
+  // One-time: seed the lot ledger from the legacy aggregate `portfolio` table so
+  // existing holdings survive the move to a lot-backed model. Each legacy row
+  // becomes one opening buy lot; aggregating it reproduces the same shares/avg
+  // cost exactly. Runs only when the ledger is empty but legacy rows exist.
+  const lotCount = (db.prepare("SELECT COUNT(*) AS n FROM portfolio_lot").get() as { n: number }).n;
+  if (lotCount === 0) {
+    const legacy = db
+      .prepare("SELECT symbol, name, shares, avg_cost, added_at FROM portfolio")
+      .all() as unknown as PortfolioRow[];
+    const insert = db.prepare(
+      `INSERT INTO portfolio_lot (symbol, name, shares, price, kind, fees, trade_date, created_at)
+       VALUES (?, ?, ?, ?, 'buy', 0, ?, ?)`,
+    );
+    for (const r of legacy) {
+      insert.run(r.symbol, r.name, r.shares, r.avg_cost, r.added_at, r.added_at);
+    }
   }
   return db;
 }
@@ -250,46 +317,294 @@ interface PortfolioRow {
   added_at: string;
 }
 
-export function listPortfolio(): PortfolioPosition[] {
-  const rows = getDb()
-    .prepare("SELECT symbol, name, shares, avg_cost, added_at FROM portfolio ORDER BY added_at DESC")
-    .all() as unknown as PortfolioRow[];
-  return rows.map((r) => ({
+interface PortfolioLotRow {
+  id: number;
+  symbol: string;
+  name: string;
+  shares: number;
+  price: number;
+  kind: string;
+  fees: number;
+  trade_date: string;
+  created_at: string;
+}
+
+function rowToLot(r: PortfolioLotRow): PortfolioLot {
+  return {
+    id: r.id,
     symbol: r.symbol,
     name: r.name,
     shares: r.shares,
-    avgCost: r.avg_cost,
-    addedAt: r.added_at,
+    price: r.price,
+    kind: r.kind === "sell" ? "sell" : "buy",
+    fees: r.fees,
+    tradeDate: r.trade_date,
+    createdAt: r.created_at,
+  };
+}
+
+/** All lots for a symbol (or the whole ledger when omitted), oldest first. */
+export function listLots(symbol?: string): PortfolioLot[] {
+  const db = getDb();
+  const rows = (
+    symbol
+      ? db.prepare("SELECT * FROM portfolio_lot WHERE symbol = ? ORDER BY trade_date, id").all(symbol.toUpperCase())
+      : db.prepare("SELECT * FROM portfolio_lot ORDER BY trade_date, id").all()
+  ) as unknown as PortfolioLotRow[];
+  return rows.map(rowToLot);
+}
+
+/**
+ * The holdings view: aggregate every symbol's lots into a position (average-cost
+ * method), newest-inception first, closed positions excluded. Shape-compatible
+ * with the previous single-row-per-symbol model, so all existing consumers are
+ * untouched.
+ */
+export function listPortfolio(): PortfolioPosition[] {
+  return aggregateOpenPositions(listLots()).map((p) => ({
+    symbol: p.symbol,
+    name: p.name,
+    shares: p.shares,
+    avgCost: p.avgCost,
+    addedAt: p.firstTradeDate,
   }));
 }
 
+/** Append one buy/sell transaction to a symbol's ledger. */
+export function addLot(
+  symbol: string,
+  name: string,
+  lot: { shares: number; price: number; kind?: "buy" | "sell"; fees?: number; tradeDate?: string },
+): void {
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO portfolio_lot (symbol, name, shares, price, kind, fees, trade_date, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      symbol.toUpperCase(),
+      name,
+      lot.shares,
+      lot.price,
+      lot.kind ?? "buy",
+      lot.fees ?? 0,
+      lot.tradeDate ?? now.slice(0, 10),
+      now,
+    );
+}
+
+/** Remove a single transaction by id (for editing a ledger). */
+export function removeLot(id: number): void {
+  getDb().prepare("DELETE FROM portfolio_lot WHERE id = ?").run(id);
+}
+
+/**
+ * Set a symbol's position to an absolute shares/avgCost — the "edit position"
+ * semantics the current UI relies on. Implemented by replacing the symbol's
+ * ledger with one opening lot, so lots stay the single source of truth. New
+ * transaction-based flows should call {@link addLot} instead.
+ */
 export function upsertPosition(
   symbol: string,
   name: string,
   shares: number,
   avgCost: number,
 ): PortfolioPosition {
-  const pos: PortfolioPosition = {
-    symbol: symbol.toUpperCase(),
-    name,
-    shares,
-    avgCost,
-    addedAt: new Date().toISOString(),
-  };
-  getDb()
-    .prepare(
-      `INSERT INTO portfolio (symbol, name, shares, avg_cost, added_at) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(symbol) DO UPDATE SET name = excluded.name, shares = excluded.shares,
-         avg_cost = excluded.avg_cost`,
-    )
-    .run(pos.symbol, pos.name, pos.shares, pos.avgCost, pos.addedAt);
-  return pos;
+  const sym = symbol.toUpperCase();
+  const addedAt = new Date().toISOString();
+  const db = getDb();
+  db.prepare("DELETE FROM portfolio_lot WHERE symbol = ?").run(sym);
+  db.prepare(
+    `INSERT INTO portfolio_lot (symbol, name, shares, price, kind, fees, trade_date, created_at)
+     VALUES (?, ?, ?, ?, 'buy', 0, ?, ?)`,
+  ).run(sym, name, shares, avgCost, addedAt.slice(0, 10), addedAt);
+  return { symbol: sym, name, shares, avgCost, addedAt };
 }
 
 export function removePosition(symbol: string): void {
+  getDb().prepare("DELETE FROM portfolio_lot WHERE symbol = ?").run(symbol.toUpperCase());
+}
+
+/* -------------------------------------------------------------------------- */
+/* Notifications (alert delivery)                                             */
+/* -------------------------------------------------------------------------- */
+
+interface NotificationRow {
+  id: number;
+  dedup_key: string;
+  symbol: string | null;
+  kind: string;
+  severity: string;
+  title: string;
+  body: string;
+  read: number;
+  created_at: string;
+}
+
+function rowToNotification(r: NotificationRow): Notification {
+  return {
+    id: r.id,
+    dedupKey: r.dedup_key,
+    symbol: r.symbol,
+    kind: r.kind,
+    severity: r.severity === "warning" ? "warning" : "info",
+    title: r.title,
+    body: r.body,
+    read: r.read === 1,
+    createdAt: r.created_at,
+  };
+}
+
+/**
+ * Persist newly-fired alerts, skipping any whose dedup key already fired within
+ * the last `dedupHours` (default 24h) — so an unchanged condition doesn't spam
+ * the same notification on every monitor run. Returns how many were inserted.
+ */
+export function createNotifications(events: AlertEvent[], dedupHours = 24): number {
+  if (events.length === 0) return 0;
+  const db = getDb();
+  const since = new Date(Date.now() - dedupHours * 3_600_000).toISOString();
+  const exists = db.prepare(
+    "SELECT 1 FROM notification WHERE dedup_key = ? AND created_at > ? LIMIT 1",
+  );
+  const insert = db.prepare(
+    `INSERT INTO notification (dedup_key, symbol, kind, severity, title, body, read, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
+  );
+  const now = new Date().toISOString();
+  let inserted = 0;
+  for (const e of events) {
+    if (exists.get(e.dedupKey, since)) continue;
+    insert.run(e.dedupKey, e.symbol, e.kind, e.severity, e.title, e.body, now);
+    inserted++;
+  }
+  return inserted;
+}
+
+export function listNotifications(limit = 50): Notification[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM notification ORDER BY created_at DESC, id DESC LIMIT ?")
+    .all(limit) as unknown as NotificationRow[];
+  return rows.map(rowToNotification);
+}
+
+export function unreadNotificationCount(): number {
+  const r = getDb().prepare("SELECT COUNT(*) AS n FROM notification WHERE read = 0").get() as { n: number };
+  return r.n;
+}
+
+export function markNotificationRead(id: number): void {
+  getDb().prepare("UPDATE notification SET read = 1 WHERE id = ?").run(id);
+}
+
+export function markAllNotificationsRead(): void {
+  getDb().prepare("UPDATE notification SET read = 1 WHERE read = 0").run();
+}
+
+/* -------------------------------------------------------------------------- */
+/* Decision journal (track record)                                            */
+/* -------------------------------------------------------------------------- */
+
+interface DecisionRow {
+  id: number;
+  symbol: string;
+  name: string | null;
+  action: string;
+  conviction: number;
+  thesis: string | null;
+  price_at: number | null;
+  currency: string | null;
+  target_price: number | null;
+  horizon: string | null;
+  fit_score: number | null;
+  fit_tier: string | null;
+  status: string;
+  close_price: number | null;
+  closed_at: string | null;
+  created_at: string;
+}
+
+function rowToDecision(r: DecisionRow): Decision {
+  return {
+    id: r.id,
+    symbol: r.symbol,
+    name: r.name,
+    action: r.action as DecisionAction,
+    conviction: r.conviction,
+    thesis: r.thesis,
+    priceAt: r.price_at,
+    currency: r.currency,
+    targetPrice: r.target_price,
+    horizon: (r.horizon as DecisionHorizon | null) ?? null,
+    fitScore: r.fit_score,
+    fitTier: r.fit_tier,
+    status: r.status === "closed" ? "closed" : "open",
+    closePrice: r.close_price,
+    closedAt: r.closed_at,
+    createdAt: r.created_at,
+  };
+}
+
+export interface CreateDecisionInput {
+  symbol: string;
+  name?: string | null;
+  action: DecisionAction;
+  conviction: number;
+  thesis?: string | null;
+  priceAt?: number | null;
+  currency?: string | null;
+  targetPrice?: number | null;
+  horizon?: DecisionHorizon | null;
+  fitScore?: number | null;
+  fitTier?: string | null;
+}
+
+export function createDecision(input: CreateDecisionInput): Decision {
+  const now = new Date().toISOString();
+  const info = getDb()
+    .prepare(
+      `INSERT INTO decision
+        (symbol, name, action, conviction, thesis, price_at, currency, target_price, horizon, fit_score, fit_tier, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)`,
+    )
+    .run(
+      input.symbol.toUpperCase(),
+      input.name ?? null,
+      input.action,
+      Math.max(1, Math.min(5, Math.round(input.conviction))),
+      input.thesis ?? null,
+      input.priceAt ?? null,
+      input.currency ?? null,
+      input.targetPrice ?? null,
+      input.horizon ?? null,
+      input.fitScore ?? null,
+      input.fitTier ?? null,
+      now,
+    );
+  return getDecision(Number(info.lastInsertRowid))!;
+}
+
+export function getDecision(id: number): Decision | null {
+  const r = getDb().prepare("SELECT * FROM decision WHERE id = ?").get(id) as unknown as DecisionRow | undefined;
+  return r ? rowToDecision(r) : null;
+}
+
+export function listDecisions(): Decision[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM decision ORDER BY created_at DESC, id DESC")
+    .all() as unknown as DecisionRow[];
+  return rows.map(rowToDecision);
+}
+
+export function closeDecision(id: number, closePrice: number | null): void {
   getDb()
-    .prepare("DELETE FROM portfolio WHERE symbol = ?")
-    .run(symbol.toUpperCase());
+    .prepare("UPDATE decision SET status = 'closed', close_price = ?, closed_at = ? WHERE id = ?")
+    .run(closePrice, new Date().toISOString(), id);
+}
+
+export function deleteDecision(id: number): void {
+  getDb().prepare("DELETE FROM decision WHERE id = ?").run(id);
 }
 
 /* -------------------------------------------------------------------------- */

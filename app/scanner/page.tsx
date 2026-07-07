@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import type { ScannerResult, ScannerProgressEvent, ScannerOpportunity } from "@/lib/types";
 import { CATEGORY_LABELS, type OpportunityCategory } from "@/lib/opportunity-engine";
 import { MarketRegimeBanner } from "./_components/market-regime-banner";
@@ -16,9 +16,8 @@ import { ProgressStream } from "./_components/progress-stream";
 import { recordScanDuration } from "@/lib/scanner-eta";
 import { SourceExplorer } from "./_components/source-explorer";
 import { WatchlistImpact, PortfolioImpact } from "./_components/watchlist-portfolio-impact";
-// v1 components — kept for legacy signal display in developing section
-import { SignalCard } from "./_components/signal-card";
 import { useIOSSafe } from "@/lib/ios-context";
+import { PageShell } from "@/app/_components/ui";
 
 const CACHE_KEY = "uaa_scanner_v3";
 
@@ -150,7 +149,7 @@ export default function ScannerPage() {
     if (cached) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setResult(cached);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       setFromCache(true);
     } else {
       void runScan();
@@ -203,28 +202,29 @@ export default function ScannerPage() {
 
         for (const line of lines) {
           if (!line.trim()) continue;
+          let msg:
+            | { type: "progress"; stage: string; message: string; pct: number }
+            | { type: "result"; data: ScannerResult }
+            | { type: "cached"; data: ScannerResult }
+            | { type: "error"; message: string };
           try {
-            const msg = JSON.parse(line) as
-              | { type: "progress"; stage: string; message: string; pct: number }
-              | { type: "result"; data: ScannerResult }
-              | { type: "cached"; data: ScannerResult }
-              | { type: "error"; message: string };
+            msg = JSON.parse(line);
+          } catch {
+            continue; // Skip malformed lines
+          }
 
-            if (msg.type === "progress") {
-              setProgress({ stage: msg.stage as ScannerProgressEvent["stage"], message: msg.message, pct: msg.pct });
-            } else if (msg.type === "result") {
-              setResult(msg.data);
-              saveCache(msg.data);
-              recordScanDuration(Date.now() - scanStart);
-            } else if (msg.type === "cached") {
-              setResult(msg.data);
-              saveCache(msg.data);
-              setFromCache(true);
-            } else if (msg.type === "error") {
-              throw new Error(msg.message);
-            }
-          } catch (parseErr) {
-            // Skip malformed lines
+          if (msg.type === "progress") {
+            setProgress({ stage: msg.stage as ScannerProgressEvent["stage"], message: msg.message, pct: msg.pct });
+          } else if (msg.type === "result") {
+            setResult(msg.data);
+            saveCache(msg.data);
+            recordScanDuration(Date.now() - scanStart);
+          } else if (msg.type === "cached") {
+            setResult(msg.data);
+            saveCache(msg.data);
+            setFromCache(true);
+          } else if (msg.type === "error") {
+            throw new Error(msg.message);
           }
         }
       }
@@ -273,7 +273,7 @@ export default function ScannerPage() {
       );
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-10">
+    <PageShell py="py-10">
 
       {/* ── Header ── */}
       <div className="flex flex-col gap-1.5">
@@ -281,7 +281,7 @@ export default function ScannerPage() {
           <div className="flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-semibold tracking-tight">Market Intelligence</h1>
-              <span className="rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-widest text-muted">
+              <span className="rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-label font-medium uppercase tracking-widest text-muted">
                 Live
               </span>
             </div>
@@ -289,7 +289,7 @@ export default function ScannerPage() {
               <span className="font-mono text-xs text-muted/60">
                 {new Date(result.scannedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
                 {fromCache && (
-                  <> · Cached · <button className="text-accent hover:underline" onClick={() => void runScan()}>refresh</button></>
+                  <> · Cached · <button className="text-brand hover:underline" onClick={() => void runScan()}>refresh</button></>
                 )}
               </span>
             )}
@@ -317,26 +317,26 @@ export default function ScannerPage() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Focus on a theme, sector, or event — or leave blank to auto-scan"
-              className="w-full rounded-lg border border-border bg-surface py-2.5 pl-9 pr-4 text-sm outline-none placeholder:text-muted focus:border-accent"
+              className="w-full rounded-lg border border-border bg-surface py-2.5 pl-9 pr-4 text-sm outline-none placeholder:text-muted focus:border-brand"
             />
           </div>
           <button
             type="submit"
             disabled={loading}
-            className="rounded-lg bg-accent-strong px-6 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="rounded-lg bg-brand-strong px-6 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {loading ? "Scanning…" : "Scan"}
           </button>
         </div>
 
         <div className="flex flex-wrap items-center gap-4 text-xs">
-          <span className="text-muted/60 uppercase tracking-widest font-medium text-[10px]">Markets</span>
+          <span className="text-muted/60 uppercase tracking-widest font-medium text-label">Markets</span>
           <label className="flex cursor-pointer items-center gap-1.5 text-muted hover:text-foreground transition-colors">
-            <input type="checkbox" checked={india} onChange={(e) => setIndia(e.target.checked)} className="accent-accent" />
+            <input type="checkbox" checked={india} onChange={(e) => setIndia(e.target.checked)} className="accent-brand" />
             India (NSE/BSE)
           </label>
           <label className="flex cursor-pointer items-center gap-1.5 text-muted hover:text-foreground transition-colors">
-            <input type="checkbox" checked={global} onChange={(e) => setGlobal(e.target.checked)} className="accent-accent" />
+            <input type="checkbox" checked={global} onChange={(e) => setGlobal(e.target.checked)} className="accent-brand" />
             Global
           </label>
         </div>
@@ -376,8 +376,8 @@ export default function ScannerPage() {
                 onClick={() => setActiveCategory("all")}
                 className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
                   activeCategory === "all"
-                    ? "border-accent/40 bg-accent/10 text-accent"
-                    : "border-border text-muted hover:border-accent/30 hover:text-accent"
+                    ? "border-brand/40 bg-brand/10 text-brand"
+                    : "border-border text-muted hover:border-brand/30 hover:text-brand"
                 }`}
               >
                 All ({opportunities.length})
@@ -388,8 +388,8 @@ export default function ScannerPage() {
                   onClick={() => setActiveCategory(c)}
                   className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
                     activeCategory === c
-                      ? "border-accent/40 bg-accent/10 text-accent"
-                      : "border-border text-muted hover:border-accent/30 hover:text-accent"
+                      ? "border-brand/40 bg-brand/10 text-brand"
+                      : "border-border text-muted hover:border-brand/30 hover:text-brand"
                   }`}
                 >
                   {CATEGORY_LABELS[c]} ({categoryGroups.get(c)!.length})
@@ -416,7 +416,7 @@ export default function ScannerPage() {
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-2">
                   <h2 className="text-sm font-semibold">Today&apos;s Opportunities</h2>
-                  <span className="rounded-full border border-positive/30 bg-positive/10 px-2 py-0.5 text-[10px] font-medium text-positive">
+                  <span className="rounded-full border border-positive/30 bg-positive/10 px-2 py-0.5 text-label font-medium text-positive">
                     {highConviction.length} High Conviction
                   </span>
                 </div>
@@ -425,8 +425,8 @@ export default function ScannerPage() {
                     onClick={() => setFitRanking((v) => !v)}
                     className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[11px] font-medium transition-colors ${
                       fitRanking
-                        ? "border-accent/40 bg-accent/10 text-accent"
-                        : "border-border text-muted hover:border-accent/30 hover:text-accent"
+                        ? "border-brand/40 bg-brand/10 text-brand"
+                        : "border-border text-muted hover:border-brand/30 hover:text-brand"
                     }`}
                   >
                     <span>✦</span>
@@ -548,7 +548,7 @@ export default function ScannerPage() {
             </div>
             <button
               onClick={() => void runScan()}
-              className="rounded-lg bg-accent-strong px-6 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+              className="rounded-lg bg-brand-strong px-6 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
             >
               Launch Scanner
             </button>
@@ -571,16 +571,16 @@ export default function ScannerPage() {
                 <button
                   key={t.label}
                   onClick={() => { setQuery(t.label); void runScan(undefined, t.label); }}
-                  className="group flex items-center justify-between rounded-lg border border-border bg-surface px-4 py-3 text-left transition-all hover:border-accent/30 hover:bg-surface-2"
+                  className="group flex items-center justify-between rounded-lg border border-border bg-surface px-4 py-3 text-left transition-all hover:border-brand/30 hover:bg-surface-2"
                 >
-                  <span className="text-sm text-foreground group-hover:text-accent transition-colors">{t.label}</span>
-                  <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted">{t.cat}</span>
+                  <span className="text-sm text-foreground group-hover:text-brand transition-colors">{t.label}</span>
+                  <span className="rounded-full border border-border px-2 py-0.5 text-label text-muted">{t.cat}</span>
                 </button>
               ))}
             </div>
           </div>
         </div>
       )}
-    </div>
+    </PageShell>
   );
 }

@@ -7,6 +7,7 @@ import { downloadBlob } from "@/lib/download";
 import { formatCurrency, formatCompact } from "@/lib/format";
 import { SymbolSearch } from "@/app/_components/symbol-search";
 import { useIOSSafe } from "@/lib/ios-context";
+import { PageShell } from "@/app/_components/ui";
 
 /* -------------------------------------------------------------------------- */
 /* Number shorthand parser — accepts "93.7B", "15.2M", "500K", raw integers  */
@@ -245,7 +246,7 @@ export default function DcfPage() {
     : null;
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-10">
+    <PageShell py="py-10">
       <div className="flex items-end justify-between gap-4 flex-wrap">
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-semibold tracking-tight">DCF Valuation</h1>
@@ -266,7 +267,7 @@ export default function DcfPage() {
         <button
           onClick={() => void lookup(input)}
           disabled={loading}
-          className="shrink-0 rounded-lg bg-accent-strong px-5 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+          className="shrink-0 rounded-lg bg-brand-strong px-5 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
         >
           {loading ? "Loading…" : "Analyse"}
         </button>
@@ -312,7 +313,7 @@ export default function DcfPage() {
               <button
                 key={sym}
                 onClick={() => { setInput(sym); void lookup(sym); }}
-                className="rounded-lg border border-border px-3 py-1.5 font-mono text-xs transition-colors hover:border-accent hover:text-accent"
+                className="rounded-lg border border-border px-3 py-1.5 font-mono text-xs transition-colors hover:border-brand hover:text-brand"
               >
                 {sym}
               </button>
@@ -334,7 +335,7 @@ export default function DcfPage() {
                 {prefill && (
                   <button
                     onClick={() => applyPrefill(prefill)}
-                    className="rounded-md border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/20"
+                    className="rounded-md border border-brand/40 bg-brand/10 px-2.5 py-1 text-xs font-medium text-brand transition-colors hover:bg-brand/20"
                     title="Overwrite all inputs with Yahoo Finance data"
                   >
                     ↑ Use Yahoo data
@@ -375,7 +376,7 @@ export default function DcfPage() {
               <div>
                 <button
                   onClick={() => setShowProjection((v) => !v)}
-                  className="text-xs text-accent hover:underline"
+                  className="text-xs text-brand hover:underline"
                 >
                   {showProjection ? "▾ Hide" : "▸ Show"} year-by-year FCF projection
                 </button>
@@ -496,7 +497,7 @@ export default function DcfPage() {
                     <span className="text-positive font-medium">Green</span> = &gt;30% above current price ·{" "}
                     <span className="text-yellow-500">Yellow</span> = above price ·{" "}
                     <span className="text-negative">Red</span> = below price ·{" "}
-                    <span className="rounded bg-accent/15 px-1 text-accent">Highlighted</span> = your base case
+                    <span className="rounded bg-brand/15 px-1 text-brand">Highlighted</span> = your base case
                   </p>
                 )}
                 <table className="w-full text-xs">
@@ -511,7 +512,7 @@ export default function DcfPage() {
                   <tbody>
                     {waccRange.map((wacc, ri) => (
                       <tr key={wacc} className="border-t border-border">
-                        <td className={`px-2 py-1 font-mono ${Math.round(waccNum) === wacc ? "text-accent font-semibold" : "text-muted"}`}>{wacc}%</td>
+                        <td className={`px-2 py-1 font-mono ${Math.round(waccNum) === wacc ? "text-brand font-semibold" : "text-muted"}`}>{wacc}%</td>
                         {TG_RANGE.map((tg, ci) => {
                           const val = sensitivity[ri][ci];
                           const colorClass = price
@@ -521,7 +522,7 @@ export default function DcfPage() {
                             : "";
                           const isBase = Math.round(waccNum) === wacc && Math.abs(tg - tgNum) < 0.01;
                           return (
-                            <td key={ci} className={`px-2 py-1 text-right font-mono ${colorClass} ${isBase ? "rounded bg-accent/15" : ""}`}>
+                            <td key={ci} className={`px-2 py-1 text-right font-mono ${colorClass} ${isBase ? "rounded bg-brand/15" : ""}`}>
                               {formatCurrency(val)}
                             </td>
                           );
@@ -534,14 +535,14 @@ export default function DcfPage() {
             ) : null}
 
             {symbol ? (
-              <Link href={`/research?symbol=${symbol}`} className="text-center text-sm text-accent hover:underline">
+              <Link href={`/research?symbol=${symbol}`} className="text-center text-sm text-brand hover:underline">
                 Full research report for {symbol} →
               </Link>
             ) : null}
           </div>
         </div>
       )}
-    </div>
+    </PageShell>
   );
 }
 
@@ -564,12 +565,12 @@ function DcfField({ label, value, onChange, hint, placeholder, isPercent }: {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className={`rounded-lg border px-3 py-1.5 font-mono text-sm outline-none placeholder:text-muted focus:border-accent ${invalid ? "border-negative/60 bg-negative/5" : "border-border bg-surface-2"}`}
+        className={`rounded-lg border px-3 py-1.5 font-mono text-sm outline-none placeholder:text-muted focus:border-brand ${invalid ? "border-negative/60 bg-negative/5" : "border-border bg-surface-2"}`}
       />
       {hint   ? <span className="text-xs text-muted">{hint}</span>                    : null}
       {invalid ? <span className="text-xs text-negative">Enter a number (e.g. 93.7B, 15M)</span> : null}
       {!isPercent && !invalid && value && Number.isFinite(parsed) && Math.abs(parsed) >= 1e6
-        ? <span className="text-xs text-accent/80">{formatCompact(parsed)}</span>
+        ? <span className="text-xs text-brand/80">{formatCompact(parsed)}</span>
         : null}
     </label>
   );
@@ -584,11 +585,11 @@ function ValuationRangeBar({ bear, base, bull, price }: { bear: number; base: nu
 
   return (
     <div className="rounded-xl border border-border bg-surface p-4">
-      <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-muted/60">Fair Value Range</p>
+      <p className="mb-3 text-label font-semibold uppercase tracking-widest text-muted/60">Fair Value Range</p>
       <div className="relative h-8">
         {/* Range band */}
         <div
-          className="absolute top-2 h-4 rounded-full bg-accent/15 border border-accent/25"
+          className="absolute top-2 h-4 rounded-full bg-brand/15 border border-brand/25"
           style={{ left: `${pct(bear)}%`, width: `${pct(bull) - pct(bear)}%` }}
         />
         {/* Bear marker */}
@@ -598,7 +599,7 @@ function ValuationRangeBar({ bear, base, bull, price }: { bear: number; base: nu
         </div>
         {/* Base marker */}
         <div className="absolute top-1 flex flex-col items-center -translate-x-1/2" style={{ left: `${pct(base)}%` }}>
-          <div className="h-6 w-0.5 rounded-full bg-accent" />
+          <div className="h-6 w-0.5 rounded-full bg-brand" />
         </div>
         {/* Bull marker */}
         <div className="absolute top-0 flex flex-col items-center -translate-x-1/2" style={{ left: `${pct(bull)}%` }}>
@@ -610,12 +611,12 @@ function ValuationRangeBar({ bear, base, bull, price }: { bear: number; base: nu
           <div className={`h-6 w-1 rounded-full ${priceColor}`} />
         </div>
       </div>
-      <div className="mt-2 flex items-center justify-between text-[10px] text-muted">
+      <div className="mt-2 flex items-center justify-between text-label text-muted">
         <span className="text-negative font-mono">{formatCurrency(bear)} bear</span>
-        <span className="text-accent font-mono font-semibold">{formatCurrency(base)} base</span>
+        <span className="text-brand font-mono font-semibold">{formatCurrency(base)} base</span>
         <span className="text-positive font-mono">{formatCurrency(bull)} bull</span>
       </div>
-      <div className="mt-1 text-center text-[10px] text-muted">
+      <div className="mt-1 text-center text-label text-muted">
         Current price: <span className={`font-mono font-semibold ${priceColor.replace("bg-", "text-")}`}>{formatCurrency(price)}</span>
       </div>
     </div>
@@ -628,17 +629,17 @@ function ScenarioCard({ label, value, price, bg, highlight, assumption }: {
 }) {
   const upside = price && value > 0 ? ((value - price) / price) * 100 : null;
   const color  = upside == null ? "" : upside >= 0 ? "text-positive" : "text-negative";
-  const borderAccent = highlight ? "ring-inset ring-1 ring-accent/30" : "";
+  const borderAccent = highlight ? "ring-inset ring-1 ring-brand/30" : "";
   return (
     <div className={`${bg} flex flex-col gap-1.5 p-4 ${borderAccent}`}>
-      <dt className={`text-[10px] font-semibold uppercase tracking-widest ${
-        label === "Bull" ? "text-positive" : label === "Bear" ? "text-negative" : "text-accent"
+      <dt className={`text-label font-semibold uppercase tracking-widest ${
+        label === "Bull" ? "text-positive" : label === "Bear" ? "text-negative" : "text-brand"
       }`}>{label}</dt>
       <dd className="font-mono text-xl font-bold text-foreground">{formatCurrency(value)}</dd>
       {upside != null ? (
         <dd className={`font-mono text-xs font-medium ${color}`}>{upside >= 0 ? "+" : ""}{upside.toFixed(1)}%</dd>
       ) : null}
-      <dd className="mt-1 text-[11px] leading-snug text-muted">{assumption}</dd>
+      <dd className="mt-1 text-caption leading-snug text-muted">{assumption}</dd>
     </div>
   );
 }

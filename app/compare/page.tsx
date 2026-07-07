@@ -1,15 +1,32 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import type { CompareEntry } from "@/app/api/compare/route";
+import type { GroundingReport } from "@/lib/ai/types";
 import { downloadBlob } from "@/lib/download";
 import { SymbolSearch } from "@/app/_components/symbol-search";
-import { CompareRadar } from "./_components/radar-chart";
-import { CompareChart } from "./_components/compare-chart";
+import { GroundingBadge } from "@/app/_components/grounding-badge";
+
+// Recharts is heavy; load the chart chunks only once the user has ≥2 stocks to
+// compare rather than shipping them in the initial /compare bundle.
+const chartFallback = (
+  <div className="h-64 w-full animate-pulse rounded-card border border-border bg-surface-2" />
+);
+const CompareChart = dynamic(
+  () => import("./_components/compare-chart").then((m) => m.CompareChart),
+  { ssr: false, loading: () => chartFallback },
+);
+const CompareRadar = dynamic(
+  () => import("./_components/radar-chart").then((m) => m.CompareRadar),
+  { ssr: false, loading: () => chartFallback },
+);
 import { formatCurrency, formatMarketCap, formatPercent } from "@/lib/format";
 import { useIOSSafe } from "@/lib/ios-context";
 import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
+import { PageShell } from "@/app/_components/ui";
+import { CHART_SERIES } from "@/app/_components/chart-theme";
 import type { PortfolioFitAnalysis } from "@/lib/ios/types";
 
 /* -------------------------------------------------------------------------- */
@@ -17,13 +34,18 @@ import type { PortfolioFitAnalysis } from "@/lib/ios/types";
 /* -------------------------------------------------------------------------- */
 
 const MAX = 5;
-const COLORS = ["#3b82f6", "#f59e0b", "#10b981", "#f43f5e", "#a855f7"];
+/* Single source of truth (CHART_SERIES) so the cards, radar chart, and line
+   chart never drift out of sync. Deliberately avoids green/red — those
+   already mean positive/negative (price change, score deltas) elsewhere on
+   this page — so categorical stock identity can't be misread as a gain/loss
+   signal. Order: purple, orange, teal, brown, slate. */
+const COLORS: string[] = [...CHART_SERIES];
 const COLOR_BG = [
-  "bg-blue-500/10 border-blue-500/30",
-  "bg-warning/10 border-warning/30",
-  "bg-emerald-500/10 border-emerald-500/30",
-  "bg-rose-500/10 border-rose-500/30",
   "bg-purple-500/10 border-purple-500/30",
+  "bg-orange-500/10 border-orange-500/30",
+  "bg-teal-500/10 border-teal-500/30",
+  "bg-[#b5651d]/10 border-[#b5651d]/30",
+  "bg-slate-500/10 border-slate-500/30",
 ];
 
 /* -------------------------------------------------------------------------- */
@@ -171,9 +193,18 @@ function recColor(key: string | null | undefined): string {
   if (k === "strong_buy") return "text-positive bg-positive/15";
   if (k === "buy") return "text-positive bg-positive/10";
   if (k === "hold") return "text-warning bg-warning/10";
-  if (k === "sell") return "text-rose-400 bg-rose-400/10";
-  if (k === "strong_sell") return "text-rose-400 bg-rose-400/15";
+  if (k === "sell") return "text-negative bg-negative/10";
+  if (k === "strong_sell") return "text-negative bg-negative/15";
   return "text-muted bg-surface-2";
+}
+
+/** Score/conviction tier → green (high), amber (medium), red (low). */
+function convictionColor(conviction: string | null | undefined): string {
+  const c = (conviction ?? "").toLowerCase();
+  if (c === "high") return "border-positive/30 bg-positive/10 text-positive";
+  if (c === "medium") return "border-warning/30 bg-warning/10 text-warning";
+  if (c === "low") return "border-negative/30 bg-negative/10 text-negative";
+  return "border-border bg-surface-2 text-muted";
 }
 
 interface WinnerInfo {
@@ -204,6 +235,7 @@ interface AiComparison {
   capitalAllocation?: string;
   competitivePositioning?: string;
   riskComparison?: string;
+  grounding?: GroundingReport;
 }
 
 interface CategoryWinner {
@@ -351,6 +383,7 @@ export default function ComparePage() {
       const json = await res.json() as AiComparison & {
         verdict?: string; analysis?: string; winnerRationale?: string;
         sections?: { verdict?: string; capitalAllocation?: string; competitivePositioning?: string; riskComparison?: string };
+        grounding?: GroundingReport;
       };
       // API returns various shapes — normalise
       setAiResult({
@@ -364,6 +397,7 @@ export default function ComparePage() {
         capitalAllocation: json.capitalAllocation ?? json.sections?.capitalAllocation ?? undefined,
         competitivePositioning: json.competitivePositioning ?? json.sections?.competitivePositioning ?? undefined,
         riskComparison: json.riskComparison ?? json.sections?.riskComparison ?? undefined,
+        grounding: json.grounding ?? undefined,
       });
     } catch (err) {
       setAiResult({ error: err instanceof Error ? err.message : "AI analysis failed" });
@@ -420,13 +454,13 @@ export default function ComparePage() {
   }, [ios?.profile.builtAt, ios?.profileReady, validEntries.length]);
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-10">
+    <PageShell py="py-10">
       {/* Page header */}
       <div className="flex items-end justify-between gap-4">
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-semibold tracking-tight">Stock Comparison</h1>
-            <span className="rounded-full border border-border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-muted">
+            <span className="rounded-full border border-border px-2.5 py-0.5 text-label font-semibold uppercase tracking-widest text-muted">
               Up to {MAX} stocks
             </span>
           </div>
@@ -465,17 +499,17 @@ export default function ComparePage() {
           {/* US / India market toggle */}
           <div className="flex overflow-hidden rounded-lg border border-border text-xs font-medium">
             <button onClick={() => setMarket("US")}
-              className={`px-3 py-2 transition-colors ${market === "US" ? "bg-accent-strong text-background" : "hover:bg-surface-2"}`}>
+              className={`px-3 py-2 transition-colors ${market === "US" ? "bg-brand-strong text-background" : "hover:bg-surface-2"}`}>
               🇺🇸 US
             </button>
             <button onClick={() => setMarket("IN")}
-              className={`px-3 py-2 transition-colors ${market === "IN" ? "bg-accent-strong text-background" : "hover:bg-surface-2"}`}>
+              className={`px-3 py-2 transition-colors ${market === "IN" ? "bg-brand-strong text-background" : "hover:bg-surface-2"}`}>
               🇮🇳 India
             </button>
           </div>
           <SymbolSearch value={input} onChange={setInput} onSelect={addSymbol} loading={loading} />
           <button onClick={() => addSymbol(input)} disabled={!input.trim() || symbols.length >= MAX}
-            className="shrink-0 rounded-lg bg-accent-strong px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50">
+            className="shrink-0 rounded-lg bg-brand-strong px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50">
             Add
           </button>
         </div>
@@ -536,7 +570,7 @@ export default function ComparePage() {
               <p className="mt-1 text-xs text-muted">Fundamentals, momentum, analyst data, and AI verdict across all stocks</p>
             </div>
             <div className="flex flex-col items-center gap-2">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Quick start</p>
+              <p className="text-label font-semibold uppercase tracking-widest text-muted/60">Quick start</p>
               <div className="flex flex-wrap justify-center gap-2">
                 {[
                   { label: "Big Tech", syms: ["AAPL", "MSFT", "GOOGL", "META"] },
@@ -547,7 +581,7 @@ export default function ComparePage() {
                   <button
                     key={label}
                     onClick={() => syms.forEach((s) => addSymbol(s))}
-                    className="rounded-lg border border-border bg-surface-2 px-4 py-2 text-sm transition-colors hover:border-accent/30 hover:text-accent"
+                    className="rounded-lg border border-border bg-surface-2 px-4 py-2 text-sm transition-colors hover:border-brand/30 hover:text-brand"
                   >
                     {label} <span className="ml-1 font-mono text-xs text-muted">{syms.join(" · ")}</span>
                   </button>
@@ -596,12 +630,12 @@ export default function ComparePage() {
 
           {/* Executive Summary — auto-triggered on data load, the decision at a glance */}
           {validEntries.length >= 2 && (
-            <div className="rounded-xl border border-accent/20 bg-accent/5 p-5">
+            <div className="rounded-xl border border-brand/20 bg-brand/5 p-5">
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div className="flex flex-col gap-0.5">
                   <div className="flex items-center gap-2">
                     <h2 className="font-semibold">Executive Summary</h2>
-                    <span className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-accent">Local AI</span>
+                    <span className="rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-label font-semibold uppercase tracking-widest text-brand">Local AI</span>
                   </div>
                   <p className="text-xs text-muted">
                     {validEntries[0].symbol} vs {validEntries[1].symbol} — which is the better investment, and why
@@ -610,7 +644,7 @@ export default function ComparePage() {
                 <button
                   onClick={() => void fetchAiVerdict(validEntries[0].symbol, validEntries[1].symbol)}
                   disabled={aiLoading}
-                  className="rounded-lg bg-accent-strong px-4 py-2 text-xs font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+                  className="rounded-lg bg-brand-strong px-4 py-2 text-xs font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
                 >
                   {aiLoading ? "Analyzing…" : aiResult ? "Re-analyze" : "Run analysis"}
                 </button>
@@ -633,11 +667,19 @@ export default function ComparePage() {
                         {aiResult.winner && (
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-muted">Winner:</span>
-                            <span className="font-mono text-sm font-semibold text-accent">{aiResult.winner}</span>
+                            <span
+                              className="font-mono text-sm font-semibold text-foreground"
+                              style={(() => {
+                                const idx = entries.findIndex((e) => e.symbol === aiResult.winner);
+                                return idx >= 0 ? { color: COLORS[idx % COLORS.length] } : undefined;
+                              })()}
+                            >
+                              {aiResult.winner}
+                            </span>
                           </div>
                         )}
                         {aiResult.confidenceScore != null && (
-                          <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted">
+                          <span className="rounded-full border border-border px-2 py-0.5 text-label text-muted">
                             {aiResult.confidenceScore}% confidence
                           </span>
                         )}
@@ -652,17 +694,18 @@ export default function ComparePage() {
                           {aiResult.conditionsForChange}
                         </p>
                       )}
+                      {aiResult.grounding && <GroundingBadge grounding={aiResult.grounding} />}
                       {(aiResult.capitalAllocation || aiResult.competitivePositioning) && (
                         <div className="grid gap-3 border-t border-border/60 pt-3 sm:grid-cols-2">
                           {aiResult.capitalAllocation && (
                             <div>
-                              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Capital Allocation</p>
+                              <p className="text-label font-semibold uppercase tracking-widest text-muted/60">Capital Allocation</p>
                               <p className="mt-1 text-xs leading-5 text-muted">{aiResult.capitalAllocation}</p>
                             </div>
                           )}
                           {aiResult.competitivePositioning && (
                             <div>
-                              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Competitive Positioning</p>
+                              <p className="text-label font-semibold uppercase tracking-widest text-muted/60">Competitive Positioning</p>
                               <p className="mt-1 text-xs leading-5 text-muted">{aiResult.competitivePositioning}</p>
                             </div>
                           )}
@@ -681,13 +724,13 @@ export default function ComparePage() {
           {/* Winner by category — deterministic, derived from the metric table below (no AI) */}
           {validEntries.length >= 2 && (
             <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface px-4 py-3">
-              <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60 shrink-0">Winner by category</span>
+              <span className="text-label font-semibold uppercase tracking-widest text-muted/60 shrink-0">Winner by category</span>
               {computeCategoryWinners(
                 SECTIONS.filter((s) => ["Valuation", "Growth", "Quality", "Financial Health", "Momentum"].includes(s.title)),
                 validEntries,
                 COLORS,
               ).map((w) => (
-                <span key={w.category} className="rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px]">
+                <span key={w.category} className="rounded-full border border-border bg-surface-2 px-2.5 py-1 text-caption">
                   <span className="text-muted">{w.category}: </span>
                   <span className="font-mono font-semibold" style={{ color: w.color }}>{w.symbol}</span>
                 </span>
@@ -740,7 +783,7 @@ export default function ComparePage() {
           </div>
         </>
       )}
-    </div>
+    </PageShell>
   );
 }
 
@@ -762,9 +805,9 @@ function StockCard({ entry, color, colorBg }: { entry: CompareEntry; color: stri
   const pos = (quote?.changePercent ?? 0) >= 0;
 
   return (
-    <div className={`rounded-xl border p-4 ${colorBg}`}>
+    <div className={`overflow-hidden rounded-xl border p-4 ${colorBg}`}>
       <div className="flex items-start justify-between gap-2">
-        <div>
+        <div className="min-w-0 flex-1">
           <Link
             href={`/research?symbol=${entry.symbol}`}
             className="font-mono text-lg font-bold hover:underline"
@@ -772,10 +815,10 @@ function StockCard({ entry, color, colorBg }: { entry: CompareEntry; color: stri
           >
             {entry.symbol}
           </Link>
-          <p className="mt-0.5 truncate text-xs text-muted">{entry.name}</p>
+          <p className="mt-0.5 truncate text-xs text-muted" title={entry.name}>{entry.name}</p>
           <Link
             href={`/intelligence?view=timeline&scope=symbol&id=${encodeURIComponent(entry.symbol)}`}
-            className="mt-1 inline-block text-[10px] text-muted underline-offset-2 hover:text-accent hover:underline"
+            className="mt-1 inline-block text-label text-muted underline-offset-2 hover:text-brand hover:underline"
           >
             View timeline →
           </Link>
@@ -789,10 +832,10 @@ function StockCard({ entry, color, colorBg }: { entry: CompareEntry; color: stri
 
       {opportunity && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          <span className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold text-accent">
+          <span className={`rounded-full border px-2 py-0.5 text-label font-semibold ${convictionColor(opportunity.conviction)}`}>
             {opportunity.opportunityScore}/100 · {opportunity.conviction}
           </span>
-          <span className="text-[10px] text-muted">{opportunity.categoryLabel}</span>
+          <span className="text-label text-muted">{opportunity.categoryLabel}</span>
         </div>
       )}
 
@@ -801,7 +844,7 @@ function StockCard({ entry, color, colorBg }: { entry: CompareEntry; color: stri
           <div className="font-mono text-xl font-semibold">
             {formatCurrency(quote.price, quote.currency)}
           </div>
-          <div className={`text-xs font-mono ${pos ? "text-positive" : "text-rose-400"}`}>
+          <div className={`text-xs font-mono ${pos ? "text-positive" : "text-negative"}`}>
             {formatCurrency(quote.change, quote.currency)} ({formatPercent(quote.changePercent)})
           </div>
           <div className="mt-1 text-xs text-muted">
@@ -901,21 +944,22 @@ function MetricRow({ metric, entries }: { metric: MetricDef; entries: CompareEnt
     <tr className="bg-surface">
       <td className="px-4 py-2.5">
         <span className="text-xs text-foreground">{metric.label}</span>
-        {metric.sub && <p className="text-[10px] text-muted">{metric.sub}</p>}
+        {metric.sub && <p className="text-label text-muted">{metric.sub}</p>}
       </td>
       {values.map((val, i) => {
         const isBest = winners?.bestIdx === i;
         const isWorst = winners?.worstIdx === i;
 
-
-        let cellBg = "";
-        if (isBest) cellBg = "bg-green-500/8";
-        else if (isWorst) cellBg = "bg-rose-500/8";
-
-        let textColor = "";
-        if (val != null && (metric.label.includes("Return") || metric.label.includes("Growth") || metric.label.includes("Upside") || metric.label.includes("vs SMA") || metric.label.includes("From 52"))) {
-          textColor = val >= 0 ? "text-positive" : "text-rose-400";
-        }
+        /* Rank-only color coding — matches the page's own legend ("Green =
+           best on metric, red = worst") exactly, with nothing else tinted.
+           Mixing this with an absolute positive/negative sign color used to
+           let a cell end up with a green background and red text at once
+           (e.g. the "best" value in an all-negative row) and colored
+           non-best/worst values that weren't actually flagged as anything —
+           both unreadable. Background, triangle, and text now always move
+           together as a single "best" or "worst" signal, or not at all. */
+        const cellBg = isBest ? "bg-positive/8" : isWorst ? "bg-negative/8" : "";
+        const textColor = isBest ? "text-positive" : isWorst ? "text-negative" : "text-foreground";
 
         return (
           <td key={i} className={`px-4 py-2.5 text-right font-mono text-sm ${cellBg}`}>
@@ -923,11 +967,11 @@ function MetricRow({ metric, entries }: { metric: MetricDef; entries: CompareEnt
               <span className="text-muted">—</span>
             ) : (
               <span className={textColor}>
-                {isBest && <span className="mr-1 text-[10px]">▲</span>}
-                {isWorst && <span className="mr-1 text-[10px]">▼</span>}
+                {isBest && <span className="mr-1 text-label">▲</span>}
+                {isWorst && <span className="mr-1 text-label">▼</span>}
                 {metric.format(val)}
                 {section_is_scores(metric) && (
-                  <span className="ml-1 text-[10px] text-muted">/100</span>
+                  <span className="ml-1 text-label text-muted">/100</span>
                 )}
               </span>
             )}
@@ -990,17 +1034,17 @@ function PortfolioFitSection({
   const winnerNarrative = buildWinnerNarrative();
 
   return (
-    <div className="overflow-hidden rounded-xl border border-accent/20 bg-accent/3">
+    <div className="overflow-hidden rounded-xl border border-brand/20 bg-brand/3">
       <button
         onClick={onToggle}
-        className="flex w-full items-center justify-between bg-accent/5 px-4 py-3 text-left"
+        className="flex w-full items-center justify-between bg-brand/5 px-4 py-3 text-left"
       >
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold">Portfolio Fit</span>
-          <span className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-accent">
+          <span className="rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-label font-semibold uppercase tracking-widest text-brand">
             IOS
           </span>
-          <span className="text-[11px] text-muted">
+          <span className="text-caption text-muted">
             {objective ? `${objective.replace(/_/g, " ")} objective · ` : ""}personalised to your portfolio
           </span>
         </div>
@@ -1009,8 +1053,8 @@ function PortfolioFitSection({
 
       {/* Winner narrative — always visible when section is rendered */}
       {winnerNarrative && (
-        <div className="border-t border-border/50 bg-accent/5 px-4 py-2.5">
-          <p className="text-[11px] text-foreground/80 leading-4">{winnerNarrative}</p>
+        <div className="border-t border-border/50 bg-brand/5 px-4 py-2.5">
+          <p className="text-caption text-foreground/80 leading-4">{winnerNarrative}</p>
         </div>
       )}
 
@@ -1027,7 +1071,7 @@ function PortfolioFitSection({
                 >
                   {e.symbol}
                   {i === bestIdx && (
-                    <span className="ml-1 text-[9px] text-accent">★ Best fit</span>
+                    <span className="ml-1 text-micro text-brand">★ Best fit</span>
                   )}
                 </th>
               ))}
@@ -1038,10 +1082,10 @@ function PortfolioFitSection({
             <tr className="bg-surface">
               <td className="px-4 py-2.5">
                 <span className="text-xs text-foreground">Portfolio Fit Score</span>
-                <p className="text-[10px] text-muted">0-100 · higher = better fit</p>
+                <p className="text-label text-muted">0-100 · higher = better fit</p>
               </td>
               {fits.map((f, i) => (
-                <td key={i} className={`px-4 py-2.5 text-right ${i === bestIdx ? "bg-green-500/5" : ""}`}>
+                <td key={i} className={`px-4 py-2.5 text-right ${i === bestIdx ? "bg-positive/5" : ""}`}>
                   <PortfolioFitBadge score={f.fitScore} tier={f.fitTier} size="sm" />
                 </td>
               ))}
@@ -1052,7 +1096,7 @@ function PortfolioFitSection({
                 <span className="text-xs text-foreground">Key Reason</span>
               </td>
               {fits.map((f, i) => (
-                <td key={i} className="px-4 py-2.5 text-right text-[10px] text-muted max-w-[160px]">
+                <td key={i} className="px-4 py-2.5 text-right text-label text-muted max-w-[160px]">
                   {f.reasons[0] ?? "—"}
                 </td>
               ))}
@@ -1078,7 +1122,7 @@ function PortfolioFitSection({
                   <span className={f.dimensions.sector.score >= 65 ? "text-positive" : f.dimensions.sector.score >= 45 ? "text-warning" : "text-negative"}>
                     {f.dimensions.sector.score}
                   </span>
-                  <span className="ml-1 text-[10px] text-muted">/100</span>
+                  <span className="ml-1 text-label text-muted">/100</span>
                 </td>
               ))}
             </tr>
@@ -1092,7 +1136,7 @@ function PortfolioFitSection({
                   <span className={f.dimensions.objective.score >= 65 ? "text-positive" : f.dimensions.objective.score >= 45 ? "text-warning" : "text-negative"}>
                     {f.dimensions.objective.score}
                   </span>
-                  <span className="ml-1 text-[10px] text-muted">/100</span>
+                  <span className="ml-1 text-label text-muted">/100</span>
                 </td>
               ))}
             </tr>
@@ -1141,7 +1185,7 @@ function RiskComparisonSection({ entries, colors }: { entries: CompareEntry[]; c
                 return (
                   <td key={e.symbol} className="px-4 py-2.5 text-right">
                     {r ? (
-                      <span className={`text-[11px] ${RISK_LEVEL_STYLE[r.level] ?? "text-muted"}`} title={r.reason}>
+                      <span className={`text-caption ${RISK_LEVEL_STYLE[r.level] ?? "text-muted"}`} title={r.reason}>
                         {r.level} — {r.reason}
                       </span>
                     ) : (

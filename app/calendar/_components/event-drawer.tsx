@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { createPortal } from "react-dom";
 import Link from "next/link";
 import type { CalendarEvent } from "@/app/api/calendar/route";
 import { formatCompact } from "@/lib/format";
+import { Drawer } from "@/app/_components/dialog";
 
 // ─── Style maps ────────────────────────────────────────────────────────────
 
@@ -74,42 +73,13 @@ interface EventDrawerProps {
 }
 
 export function EventDrawer({ event, onClose }: EventDrawerProps) {
-  const panelRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!event) return;
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [event, onClose]);
-
-  useEffect(() => {
-    if (!event) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = prev; };
-  }, [event]);
-
   if (!event) return null;
 
   const ts = TYPE_STYLES[event.type];
   const days = daysFromNow(event.date);
 
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex justify-end" aria-modal="true" role="dialog" aria-label={`Event details: ${event.name}`}>
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={onClose}
-        aria-hidden="true"
-      />
-
-      {/* Panel */}
-      <div
-        ref={panelRef}
-        className="relative flex h-full w-full max-w-md flex-col overflow-y-auto border-l border-border bg-surface shadow-2xl"
-        style={{ animation: "dialog-enter 200ms ease-out" }}
-      >
+  return (
+    <Drawer open={!!event} onClose={onClose} label={`Event details: ${event.name}`} className="max-w-md">
         {/* Header */}
         <div className="sticky top-0 z-10 flex items-start justify-between border-b border-border bg-surface px-6 py-4">
           <div className="flex flex-col gap-2">
@@ -284,9 +254,7 @@ export function EventDrawer({ event, onClose }: EventDrawerProps) {
             </div>
           </div>
         </div>
-      </div>
-    </div>,
-    document.body,
+    </Drawer>
   );
 }
 

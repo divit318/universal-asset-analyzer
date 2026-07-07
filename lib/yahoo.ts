@@ -195,10 +195,26 @@ export async function getQuote(symbol: string): Promise<Quote> {
   }
 }
 
+/**
+ * In-memory TTL cache for daily price history. Daily bars only change once per
+ * day after the close (the live day's last bar is negligible against a
+ * multi-month/year series), yet benchmark series like SPY and the sector ETFs
+ * are re-requested on nearly every research/portfolio/compare call. Caching for
+ * a few minutes turns those repeated multi-year Yahoo fetches into map lookups.
+ * Live quotes are deliberately NOT cached (see getQuote/getQuotes).
+ */
+const HISTORY_TTL_MS = 15 * 60 * 1000;
+const HISTORY_CACHE_MAX = 300;
+const historyCache = new Map<string, { at: number; data: HistoryPoint[] }>();
+
 export async function getHistory(
   symbol: string,
   rangeDays = 180,
 ): Promise<HistoryPoint[]> {
+  const key = `${symbol.toUpperCase()}:${rangeDays}`;
+  const hit = historyCache.get(key);
+  if (hit && Date.now() - hit.at < HISTORY_TTL_MS) return hit.data;
+
   try {
     const period1 = new Date();
     period1.setDate(period1.getDate() - rangeDays);
@@ -206,7 +222,16 @@ export async function getHistory(
       period1,
       interval: "1d",
     })) as { quotes?: RawChartQuote[] };
-    return mapHistory(result?.quotes ?? []);
+    const data = mapHistory(result?.quotes ?? []);
+    // Only cache non-empty series so a transient failure isn't pinned for 15m.
+    if (data.length > 0) {
+      if (historyCache.size >= HISTORY_CACHE_MAX) {
+        const oldest = historyCache.keys().next().value;
+        if (oldest !== undefined) historyCache.delete(oldest);
+      }
+      historyCache.set(key, { at: Date.now(), data });
+    }
+    return data;
   } catch {
     // History is best-effort; an empty series still lets the page render.
     return [];

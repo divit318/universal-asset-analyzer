@@ -8,7 +8,9 @@ import { formatCurrency, formatPercent } from "@/lib/format";
 import { Dialog, ConfirmDialog } from "@/app/_components/dialog";
 import { useToast } from "@/app/_components/toast";
 import { PortfolioProvider, usePortfolio, type PortfolioTab } from "@/lib/portfolio-context";
+import { PageShell, PageHeader, StatTile, Button, Tabs, type TabItem, Input, Field } from "@/app/_components/ui";
 
+import { PerformancePanel }  from "./_components/performance-panel";
 import { BriefTab }          from "./_components/brief-tab";
 import { HoldingsTable, type PositionWithQuote } from "./_components/holdings-tab";
 import { IntelligenceTab }   from "./_components/intelligence-tab";
@@ -23,7 +25,6 @@ import { ConstraintsPanel }  from "./_components/constraints-panel";
 function costBasis(p: PortfolioPosition)         { return p.shares * p.avgCost; }
 function currentValue(p: PositionWithQuote)      { return p.quote ? p.shares * p.quote.price : null; }
 function unrealizedPL(p: PositionWithQuote)      { const cv = currentValue(p); return cv != null ? cv - costBasis(p) : null; }
-function unrealizedPct(p: PositionWithQuote)     { const pl = unrealizedPL(p); const cb = costBasis(p); return pl != null && cb !== 0 ? (pl / cb) * 100 : null; }
 function todayChangeDollar(p: PositionWithQuote) { return p.quote ? p.shares * p.quote.price * (p.quote.changePercent / 100) : null; }
 
 function SectionSkeleton({ rows = 3 }: { rows?: number }) {
@@ -38,7 +39,7 @@ function SectionSkeleton({ rows = 3 }: { rows?: number }) {
 
 /* ─────────────── Tab nav config ─────────────── */
 
-const TABS: { id: PortfolioTab; label: string }[] = [
+const TABS: TabItem<PortfolioTab>[] = [
   { id: "brief",        label: "Brief"        },
   { id: "actions",      label: "Actions"      },
   { id: "intelligence", label: "Intelligence" },
@@ -84,53 +85,42 @@ function PortfolioInner({
   const actionCount    = report?.recommendations.filter((r) => r.action !== "HOLD").length ?? 0;
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-5 px-6 py-8">
-
-      {/* Page header */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Portfolio</h1>
-          <p className="text-sm text-muted mt-0.5">AI Portfolio Management System — analytics, decisions, and institutional-grade insights.</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Link
-            href="/intelligence?view=timeline&scope=portfolio&id=portfolio"
-            className="flex items-center rounded-lg border border-border px-4 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
-          >
-            Timeline
-          </Link>
-          <Link
-            href="/intelligence?view=graph&scope=portfolio&id=portfolio"
-            className="flex items-center rounded-lg border border-border px-4 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
-          >
-            Graph
-          </Link>
-          <Link
-            href="/intelligence?view=opportunity-map"
-            className="flex items-center rounded-lg border border-border px-4 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
-          >
-            Opportunities
-          </Link>
-          <button
-            onClick={() => { onRefresh(); void refreshReport(true); }}
-            className="rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-surface-2"
-          >
-            ↻ Refresh
-          </button>
-          <button
-            onClick={onExport}
-            className="rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-surface-2"
-          >
-            ↓ Export Excel
-          </button>
-          <button
-            onClick={onAddPosition}
-            className="rounded-lg bg-accent-strong px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
-          >
-            + Add position
-          </button>
-        </div>
-      </div>
+    <PageShell gap="gap-5">
+      <PageHeader
+        title="Portfolio"
+        description="AI Portfolio Management System — analytics, decisions, and institutional-grade insights."
+        actions={
+          <>
+            <Link
+              href="/intelligence?view=timeline&scope=portfolio&id=portfolio"
+              className="flex items-center rounded-control border border-border px-4 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+            >
+              Timeline
+            </Link>
+            <Link
+              href="/intelligence?view=graph&scope=portfolio&id=portfolio"
+              className="flex items-center rounded-control border border-border px-4 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+            >
+              Graph
+            </Link>
+            <Link
+              href="/intelligence?view=opportunity-map"
+              className="flex items-center rounded-control border border-border px-4 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+            >
+              Opportunities
+            </Link>
+            <Button variant="secondary" onClick={() => { onRefresh(); void refreshReport(true); }}>
+              ↻ Refresh
+            </Button>
+            <Button variant="secondary" onClick={onExport}>
+              ↓ Export Excel
+            </Button>
+            <Button variant="primary" onClick={onAddPosition}>
+              + Add position
+            </Button>
+          </>
+        }
+      />
       {exportErr && <p className="text-xs text-negative">{exportErr}</p>}
       {error && (
         <div className="rounded-lg border border-negative/40 bg-negative/10 px-4 py-3 text-sm text-negative">{error}</div>
@@ -139,54 +129,55 @@ function PortfolioInner({
       {/* Hero P&L bar — always visible when there are positions */}
       {!loading && hasPositions && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="col-span-2 sm:col-span-1 rounded-xl border border-border bg-surface p-5">
-            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Portfolio Value</span>
-            <p className="font-mono text-2xl font-bold mt-1">{formatCurrency(totalValue)}</p>
-            <p className="text-xs text-muted">Cost basis {formatCurrency(totalCost)}</p>
-          </div>
-          <div className={`rounded-xl border p-5 ${totalPL >= 0 ? "border-positive/30 bg-positive/5" : "border-negative/30 bg-negative/5"}`}>
-            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Unrealized P&amp;L</span>
-            <p className={`font-mono text-xl font-bold mt-1 ${totalPL >= 0 ? "text-positive" : "text-negative"}`}>
-              {totalPL >= 0 ? "+" : ""}{formatCurrency(totalPL)}
-            </p>
-            <p className={`font-mono text-xs font-medium ${totalPct >= 0 ? "text-positive" : "text-negative"}`}>
-              {totalPct >= 0 ? "+" : ""}{formatPercent(totalPct)}
-            </p>
-          </div>
-          <div className="rounded-xl border border-border bg-surface p-5">
-            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Today&apos;s Change</span>
-            <p className={`font-mono text-xl font-bold mt-1 ${todayPL >= 0 ? "text-positive" : "text-negative"}`}>
-              {todayPL >= 0 ? "+" : ""}{formatCurrency(todayPL)}
-            </p>
-            <p className="text-xs text-muted">{positions.filter((p) => p.quote).length} positions tracked</p>
-          </div>
+          <StatTile
+            className="col-span-2 sm:col-span-1"
+            label="Portfolio Value"
+            value={formatCurrency(totalValue)}
+            sublabel={`Cost basis ${formatCurrency(totalCost)}`}
+          />
+          <StatTile
+            label="Unrealized P&L"
+            tone={totalPL >= 0 ? "positive" : "negative"}
+            value={`${totalPL >= 0 ? "+" : ""}${formatCurrency(totalPL)}`}
+            sublabel={
+              <span className={`font-mono text-xs font-medium ${totalPct >= 0 ? "text-positive" : "text-negative"}`}>
+                {totalPct >= 0 ? "+" : ""}{formatPercent(totalPct)}
+              </span>
+            }
+          />
+          <StatTile
+            label="Today's Change"
+            tone={todayPL >= 0 ? "positive" : "negative"}
+            value={`${todayPL >= 0 ? "+" : ""}${formatCurrency(todayPL)}`}
+            sublabel={`${positions.filter((p) => p.quote).length} positions tracked`}
+          />
           {report ? (
-            <div className={`rounded-xl border p-5 ${
-              report.health.grade === "A" ? "border-positive/30 bg-positive/5"
-              : report.health.grade === "B" ? "border-positive/20 bg-surface"
-              : report.health.grade === "C" ? "border-warning/30 bg-warning/5"
-              : "border-negative/30 bg-negative/5"
-            }`}>
-              <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Health Score</span>
-              <div className="flex items-baseline gap-2 mt-1">
-                <span className="font-mono text-xl font-bold">{report.health.total}</span>
-                <span className={`text-2xl font-bold ${
-                  report.health.grade === "A" ? "text-positive"
-                  : report.health.grade === "B" ? "text-positive/70"
-                  : report.health.grade === "C" ? "text-warning"
-                  : "text-negative"
-                }`}>{report.health.grade}</span>
-              </div>
-              <p className="text-xs text-muted truncate">{report.health.summary}</p>
-            </div>
+            <StatTile
+              label="Health Score"
+              tone={
+                report.health.grade === "A" || report.health.grade === "B" ? "positive"
+                : report.health.grade === "C" ? "warning"
+                : "negative"
+              }
+              value={
+                <span className="flex items-baseline gap-2">
+                  <span className="text-foreground">{report.health.total}</span>
+                  <span className="text-2xl">{report.health.grade}</span>
+                </span>
+              }
+              sublabel={report.health.summary}
+            />
           ) : (
-            <div className="rounded-xl border border-border bg-surface p-5 animate-pulse">
-              <div className="h-3 w-20 bg-surface-2 rounded mb-2" />
-              <div className="h-6 w-16 bg-surface-2 rounded" />
+            <div className="animate-pulse rounded-card border border-border bg-surface p-5">
+              <div className="mb-2 h-3 w-20 rounded bg-surface-2" />
+              <div className="h-6 w-16 rounded bg-surface-2" />
             </div>
           )}
         </div>
       )}
+
+      {/* Money-weighted performance + benchmark-relative return */}
+      {!loading && hasPositions && <PerformancePanel />}
 
       {/* Empty state */}
       {!loading && !hasPositions && (
@@ -202,12 +193,9 @@ function PortfolioInner({
               Add your holdings to track live P&amp;L, cost basis, allocation, and get AI-powered portfolio intelligence.
             </p>
           </div>
-          <button
-            onClick={onAddPosition}
-            className="rounded-lg bg-accent-strong px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90"
-          >
+          <Button variant="primary" size="md" onClick={onAddPosition}>
             Add first position →
-          </button>
+          </Button>
         </div>
       )}
 
@@ -221,43 +209,31 @@ function PortfolioInner({
           <ObjectiveSelector />
 
           {/* Tab nav */}
-          <div className="flex items-center gap-1 border-b border-border overflow-x-auto">
-            {TABS.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => navigateTo(t.id)}
-                className={`relative shrink-0 px-4 py-2.5 text-sm font-medium transition-colors ${
-                  activeTab === t.id
-                    ? "text-foreground border-b-2 border-accent -mb-px"
-                    : "text-muted hover:text-foreground"
-                }`}
-              >
-                {t.label}
-                {t.id === "brief" && highAlertCount > 0 && (
-                  <span className="ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full bg-negative text-[9px] font-bold text-background">
-                    {highAlertCount}
-                  </span>
-                )}
-                {t.id === "actions" && actionCount > 0 && (
-                  <span className="ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full bg-accent-strong/80 text-[9px] font-bold text-background">
-                    {actionCount}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
+          <Tabs
+            tabs={TABS.map((t) => ({
+              ...t,
+              badge:
+                t.id === "brief" ? highAlertCount
+                : t.id === "actions" ? actionCount
+                : undefined,
+              badgeVariant: t.id === "brief" ? ("negative" as const) : ("brand" as const),
+            }))}
+            active={activeTab}
+            onChange={navigateTo}
+            layoutId="portfolio-tabs-underline"
+          />
 
           {/* Analytics loading / error banner */}
           {reportLoading && !report && (
             <div className="flex items-center gap-2 rounded-lg border border-border bg-surface/50 px-4 py-2.5 text-xs text-muted">
-              <span className="h-2 w-2 rounded-full bg-accent/60 animate-pulse" />
+              <span className="h-2 w-2 rounded-full bg-brand/60 animate-pulse" />
               Loading deep analytics…
             </div>
           )}
           {reportError && (
             <div className="flex items-center justify-between rounded-lg border border-negative/25 bg-negative/5 px-4 py-2.5">
               <p className="text-xs text-negative">{reportError}</p>
-              <button onClick={() => void refreshReport(true)} className="text-xs text-accent hover:underline ml-4">Retry</button>
+              <button onClick={() => void refreshReport(true)} className="text-xs text-brand hover:underline ml-4">Retry</button>
             </div>
           )}
 
@@ -292,7 +268,7 @@ function PortfolioInner({
             <div className="flex flex-col gap-8">
               {report ? (
                 <>
-                  <RebalancePanel rebalance={report.rebalance} totalValue={report.totalValue} />
+                  <RebalancePanel rebalance={report.rebalance} />
                   <CIOPanel report={report} />
                 </>
               ) : reportLoading ? (
@@ -301,7 +277,7 @@ function PortfolioInner({
                 <div className="rounded-xl border border-border bg-surface px-5 py-8 text-center">
                   <p className="text-sm text-muted">
                     Analytics unavailable.{" "}
-                    <button onClick={() => void refreshReport(true)} className="text-accent hover:underline">Retry</button>
+                    <button onClick={() => void refreshReport(true)} className="text-brand hover:underline">Retry</button>
                   </p>
                 </div>
               )}
@@ -310,7 +286,7 @@ function PortfolioInner({
           )}
         </div>
       )}
-    </div>
+    </PageShell>
   );
 }
 
@@ -493,69 +469,55 @@ function PositionModal({ initial, onSaved, onCancel }: {
   return (
     <Dialog open onClose={onCancel} title={isEditing ? "Edit position" : "Add position"} className="max-w-md">
       <form onSubmit={(e) => void save(e)} className="flex flex-col gap-4">
-        <label className="flex flex-col gap-1">
-          <span className="text-xs font-medium text-muted">Ticker symbol</span>
+        <Field label="Ticker symbol" hint={!isEditing ? "Indian stocks: use .NS (NSE) or .BO (BSE) suffix" : undefined}>
           <div className="relative">
-            <input
+            <Input
               value={symbol}
               onChange={(e) => onSymbolChange(e.target.value)}
               disabled={isEditing}
               placeholder="AAPL or RELIANCE.NS"
-              className={`w-full rounded-lg border px-3 py-2 font-mono text-sm outline-none placeholder:text-muted focus:border-accent disabled:opacity-60 ${
+              className={`font-mono ${
                 symbolValid === true  ? "border-positive/60 bg-surface-2"
                 : symbolValid === false ? "border-negative/60 bg-negative/5"
-                : "border-border bg-surface-2"
+                : ""
               }`}
             />
             {validating                           && <span className="absolute right-3 top-2.5 text-xs text-muted">checking…</span>}
             {symbolValid === true  && !validating && <span className="absolute right-3 top-2.5 text-xs text-positive">✓ valid</span>}
             {symbolValid === false && !validating && <span className="absolute right-3 top-2.5 text-xs text-negative">✗ not found</span>}
           </div>
-          {!isEditing && <span className="text-xs text-muted">Indian stocks: use .NS (NSE) or .BO (BSE) suffix</span>}
-        </label>
+        </Field>
 
-        <label className="flex flex-col gap-1">
-          <span className="text-xs font-medium text-muted">Company name</span>
-          <input
-            value={name} onChange={(e) => setName(e.target.value)} placeholder="Auto-filled from ticker"
-            className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none placeholder:text-muted focus:border-accent"
-          />
-        </label>
+        <Field label="Company name">
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Auto-filled from ticker" />
+        </Field>
 
         <div className="grid grid-cols-2 gap-3">
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-muted">Shares</span>
-            <input
+          <Field label="Shares">
+            <Input
               type="number" step="any" min="0" value={shares}
               onChange={(e) => setShares(e.target.value)} placeholder="10"
-              className="rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-sm outline-none placeholder:text-muted focus:border-accent"
+              className="font-mono"
             />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-muted">Avg cost / share</span>
-            <input
+          </Field>
+          <Field label="Avg cost / share">
+            <Input
               type="number" step="any" min="0" value={avgCost}
               onChange={(e) => setAvgCost(e.target.value)} placeholder="150.00"
-              className="rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-sm outline-none placeholder:text-muted focus:border-accent"
+              className="font-mono"
             />
-          </label>
+          </Field>
         </div>
 
         {err && <p className="text-xs text-negative">{err}</p>}
 
         <div className="flex gap-2 pt-1">
-          <button
-            type="submit" disabled={saving || validating}
-            className="flex-1 rounded-lg bg-accent-strong py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
-          >
+          <Button type="submit" variant="primary" className="flex-1" disabled={saving || validating}>
             {saving ? "Saving…" : "Save"}
-          </button>
-          <button
-            type="button" onClick={onCancel}
-            className="flex-1 rounded-lg border border-border py-2.5 text-sm transition-colors hover:bg-surface-2"
-          >
+          </Button>
+          <Button type="button" variant="secondary" className="flex-1" onClick={onCancel}>
             Cancel
-          </button>
+          </Button>
         </div>
       </form>
     </Dialog>

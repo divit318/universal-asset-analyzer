@@ -130,6 +130,9 @@ export interface Citation {
   url: string | null;
 }
 
+export type { GroundingReport } from "./grounding";
+import type { GroundingReport } from "./grounding";
+
 /* -------------------------------------------------------------------------- */
 /* Chat / conversation (Memory Layer + Chat API)                              */
 /* -------------------------------------------------------------------------- */
@@ -143,6 +146,8 @@ export interface ChatMessage {
   citations?: Citation[];
   /** Reasoning trace from thinking models, kept separate from the answer. */
   reasoning?: string;
+  /** Post-hoc verification of how well this answer traces to the dossier. */
+  grounding?: GroundingReport;
   createdAt?: string;
 }
 
@@ -190,5 +195,5 @@ export interface ChatRequest {
 export type ChatStreamEvent =
   | { type: "delta"; text: string }
   | { type: "reasoning"; text: string }
-  | { type: "meta"; citations: Citation[]; suggestions: string[]; model: string }
+  | { type: "meta"; citations: Citation[]; suggestions: string[]; model: string; grounding: GroundingReport }
   | { type: "error"; message: string; code: "ollama_unavailable" | "model_missing" | "internal" };

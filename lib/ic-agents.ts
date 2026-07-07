@@ -8,6 +8,7 @@
 
 import { runPrompt } from "./ai";
 import { extractJson } from "./json-extract";
+import { verifyGrounding, collectClaimText, type GroundingReport } from "./ai/grounding";
 import type { InvestigativeQuestion, AgentDomain } from "./ic-questions";
 import type { FundamentalsSnapshot, FinancialStatements, InsiderActivity, AnalystConsensus } from "./types";
 import type { ScreenerInCompany } from "./screener-in";
@@ -21,6 +22,8 @@ export interface AgentFinding {
   keyInsights: string[];
   confidence: "high" | "medium" | "low";
   dataLimitations: string | null;
+  /** Verification that the agent's figures trace back to its data slice. */
+  grounding?: GroundingReport;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -226,6 +229,13 @@ IMPORTANT: Reply with ONLY a raw JSON object. No markdown, no code fences, no ex
   // Extract JSON: find the first { ... last } block, tolerating preamble/fences
   const parsed = extractAgentJson(raw);
 
+  // Verify the agent's prose against the exact data slice it was handed: every
+  // figure in its findings/insights must trace to a number in `dataContext`.
+  const grounding = verifyGrounding(
+    collectClaimText([parsed.findings, parsed.keyInsights]),
+    dataContext,
+  );
+
   return {
     agent: domain,
     agentLabel: config.label,
@@ -234,6 +244,7 @@ IMPORTANT: Reply with ONLY a raw JSON object. No markdown, no code fences, no ex
     keyInsights: parsed.keyInsights,
     confidence: parsed.confidence,
     dataLimitations: parsed.dataLimitations,
+    grounding,
   };
 }
 

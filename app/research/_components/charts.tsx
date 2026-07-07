@@ -18,19 +18,13 @@ import {
   YAxis,
 } from "recharts";
 import type { FinancialStatements, PeerComparison } from "@/lib/types";
+import { useChartTheme } from "@/app/_components/chart-theme";
 
-const AXIS = "#9aa3af";
-const GRID = "#272b33";
+/* Categorical/semantic series colors — theme-neutral. Structural axis/grid/
+   tooltip come from useChartTheme() inside each component (light-mode aware). */
 const POSITIVE = "#4ade80";
 const BLUE = "#60a5fa";
 const AMBER = "#fbbf24";
-
-const tooltipStyle = {
-  background: "#14161a",
-  border: "1px solid #272b33",
-  borderRadius: 8,
-  fontSize: 12,
-};
 
 function map(points: { fy: number; value: number }[]): Map<number, number> {
   return new Map(points.map((p) => [p.fy, p.value]));
@@ -41,6 +35,8 @@ function map(points: { fy: number; value: number }[]): Map<number, number> {
 /* -------------------------------------------------------------------------- */
 
 export function MarginTrendChart({ statements }: { statements: FinancialStatements }) {
+  const ct = useChartTheme();
+  const AXIS = ct.axis, GRID = ct.grid, tooltipStyle = ct.tooltip;
   const gm = map(statements.grossMargin);
   const om = map(statements.operatingMargin);
   const nm = map(statements.netMargin);
@@ -77,6 +73,8 @@ export function MarginTrendChart({ statements }: { statements: FinancialStatemen
 /* -------------------------------------------------------------------------- */
 
 export function RevenueFcfChart({ statements }: { statements: FinancialStatements }) {
+  const ct = useChartTheme();
+  const AXIS = ct.axis, GRID = ct.grid, tooltipStyle = ct.tooltip;
   const rev = map(statements.revenue);
   const fcf = map(statements.freeCashFlow);
   const bn = (m: Map<number, number>, fy: number) =>
@@ -95,7 +93,7 @@ export function RevenueFcfChart({ statements }: { statements: FinancialStatement
           <CartesianGrid stroke={GRID} vertical={false} />
           <XAxis dataKey="year" stroke={AXIS} tick={{ fontSize: 12 }} />
           <YAxis stroke={AXIS} tick={{ fontSize: 12 }} unit="B" />
-          <Tooltip contentStyle={tooltipStyle} formatter={(v) => `$${v}B`} cursor={{ fill: "#ffffff08" }} />
+          <Tooltip contentStyle={tooltipStyle} formatter={(v) => `$${v}B`} cursor={{ fill: ct.cursorFill }} />
           <Legend wrapperStyle={{ fontSize: 12 }} />
           <Bar dataKey="Revenue" fill={BLUE} radius={[3, 3, 0, 0]} />
           <Bar dataKey="Free cash flow" fill={POSITIVE} radius={[3, 3, 0, 0]} />
@@ -119,6 +117,8 @@ const norm = {
 };
 
 export function PeerRadarChart({ peers, symbol }: { peers: PeerComparison; symbol: string }) {
+  const ct = useChartTheme();
+  const AXIS = ct.axis, GRID = ct.grid, tooltipStyle = ct.tooltip;
   const data = [
     { metric: "P/E", This: norm.pe(peers.target.pe), Peers: norm.pe(peers.median.pe) },
     { metric: "ROE", This: norm.roe(peers.target.roe), Peers: norm.roe(peers.median.roe) },

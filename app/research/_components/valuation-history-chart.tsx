@@ -12,19 +12,12 @@ import {
   YAxis,
 } from "recharts";
 import type { FundamentalsSnapshot, ValuationPoint } from "@/lib/types";
+import { useChartTheme } from "@/app/_components/chart-theme";
 
-const AXIS = "#9aa3af";
-const GRID = "#272b33";
+/* Categorical series colors — theme-neutral. Structural axis/grid/tooltip come
+   from useChartTheme() inside the component (light-mode aware). */
 const BLUE = "#60a5fa";
 const AMBER = "#fbbf24";
-
-const TOOLTIP_STYLE = {
-  background: "#14161a",
-  border: "1px solid #272b33",
-  borderRadius: 8,
-  fontSize: 12,
-  padding: "8px 12px",
-};
 
 type Metric = "pe" | "ps";
 
@@ -39,16 +32,18 @@ function ValTooltip({
   payload,
   label,
   metric,
+  style,
 }: {
   active?: boolean;
   payload?: TooltipPayloadItem[];
   label?: string | number;
   metric: Metric;
+  style?: React.CSSProperties;
 }) {
   if (!active || !payload?.length) return null;
   const v = payload[0]?.value;
   return (
-    <div style={TOOLTIP_STYLE}>
+    <div style={style}>
       <p className="mb-1 text-xs text-muted">{label}</p>
       {v != null && (
         <p className="font-mono text-sm font-medium">
@@ -85,6 +80,8 @@ export function ValuationHistoryChart({
   valuation: ValuationPoint[];
   snapshot: FundamentalsSnapshot;
 }) {
+  const ct = useChartTheme();
+  const AXIS = ct.axis, GRID = ct.grid;
   const [metric, setMetric] = useState<Metric>("pe");
 
   const filtered = useMemo(
@@ -169,7 +166,7 @@ export function ValuationHistoryChart({
                   (dataMax: number) => dataMax * 1.1,
                 ]}
               />
-              <Tooltip content={<ValTooltip metric={metric} />} />
+              <Tooltip content={<ValTooltip metric={metric} style={ct.tooltip} />} />
 
               {/* Historical average band */}
               {avg != null && (

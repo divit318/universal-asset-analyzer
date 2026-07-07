@@ -5,7 +5,7 @@ import Link from "next/link";
 import type { CalendarResponse } from "@/app/api/calendar/route";
 import type { PortfolioAnalytics } from "@/app/api/portfolio/analytics/route";
 import type { WatchlistItem } from "@/lib/types";
-import { formatCurrency, formatPercent } from "@/lib/format";
+import { formatCurrency } from "@/lib/format";
 
 interface PulseData {
   portfolio: PortfolioAnalytics | null;
@@ -36,7 +36,7 @@ function PulseCard({
     return (
       <Link
         href={emptyHref ?? href}
-        className="flex flex-col gap-1 rounded-xl border border-dashed border-border bg-surface px-4 py-3 transition-colors hover:border-accent/30 hover:bg-surface-2"
+        className="flex flex-col gap-1 rounded-xl border border-dashed border-border bg-surface px-4 py-3 transition-colors hover:border-brand/30 hover:bg-surface-2"
       >
         <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">{label}</span>
         <span className="text-xs text-muted">{emptyLabel ?? "Set up →"}</span>
@@ -47,7 +47,7 @@ function PulseCard({
   return (
     <Link
       href={href}
-      className="flex flex-col gap-1 rounded-xl border border-border bg-surface px-4 py-3 transition-colors hover:border-accent/20 hover:bg-surface-2"
+      className="flex flex-col gap-1 rounded-xl border border-border bg-surface px-4 py-3 transition-colors hover:border-brand/20 hover:bg-surface-2"
     >
       <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">{label}</span>
       <span
@@ -170,10 +170,10 @@ export function DailyPulse() {
       {/* Quick link to scanner */}
       <Link
         href="/scanner"
-        className="flex flex-col gap-1 rounded-xl border border-border bg-surface px-4 py-3 transition-colors hover:border-accent/20 hover:bg-surface-2 group"
+        className="flex flex-col gap-1 rounded-xl border border-border bg-surface px-4 py-3 transition-colors hover:border-brand/20 hover:bg-surface-2 group"
       >
         <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Market scanner</span>
-        <span className="text-sm font-medium text-foreground group-hover:text-accent transition-colors">
+        <span className="text-sm font-medium text-foreground group-hover:text-brand transition-colors">
           Scan for signals →
         </span>
         <span className="text-[11px] text-muted">AI-powered market intelligence</span>

@@ -1,89 +1,250 @@
 @import "tailwindcss";
 
-:root {
-  --background: #0a0b0d;
-  --surface: #14161a;
-  --surface-2: #1b1e24;
-  --surface-3: #21252e;
-  --border: #272b33;
-  --foreground: #e8eaed;
-  --muted: #9aa3af;
-  --accent: #4ade80;
-  --accent-strong: #22c55e;
-  --positive: #4ade80;
-  --negative: #f87171;
-  /* amber-400 — matches the shade used across all warning/caution UI */
-  --warning: #fbbf24;
+/* ============================================================================
+   Universal Asset Analyzer — Design System
+   "The Bloomberg Terminal, redesigned in 2026."
 
-  /* Chart palette — shared across all Recharts components */
-  --chart-1: #3b82f6;
-  --chart-2: #f59e0b;
-  --chart-3: #10b981;
-  --chart-4: #f43f5e;
-  --chart-5: #a855f7;
-}
+   Two themes (dark default, light opt-in) expressed as semantic tokens.
+   - Tokens are defined per-theme under [data-theme="…"] (dark also on :root
+     so SSR before the no-flash script still paints correctly).
+   - The @theme inline block maps every token to a Tailwind v4 utility, so
+     `bg-surface`, `text-muted`, `border-border`, etc. resolve in both themes.
+   - Recharts reads literal hex at runtime via app/_components/chart-theme.ts
+     (CSS var() is unreliable as an SVG presentation attribute) — keep the
+     chart palette there in sync with the CHART_* tokens below.
+   ========================================================================== */
 
 @theme inline {
+  /* Surfaces & structure */
   --color-background: var(--background);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
   --color-surface-3: var(--surface-3);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
+  --color-faint: var(--faint);
+
+  /* Brand (UI chrome / primary actions) — kept distinct from trading semantics */
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-muted: var(--brand-muted);
+
+  /* Legacy green accent — still referenced by unmigrated call sites */
   --color-accent: var(--accent);
   --color-accent-strong: var(--accent-strong);
+
+  /* Financial semantics — never repurposed for chrome/branding */
   --color-positive: var(--positive);
   --color-negative: var(--negative);
   --color-warning: var(--warning);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* Radius scale — named by role, not size */
+  --radius-control: 0.5rem;   /* buttons, inputs, small chips */
+  --radius-card: 0.875rem;    /* cards, panels */
+  --radius-panel: 1rem;       /* dialogs, drawers, elevated surfaces */
+
+  /* Elevation — theme-specific shadow values injected below */
+  --shadow-card: var(--shadow-card);
+  --shadow-popover: var(--shadow-popover);
+  --shadow-glow-brand: var(--shadow-glow-brand);
+
+  /* Named typography tiers — the intentional 9/10/11px micro-hierarchy */
+  --text-micro: 0.5625rem;       /* 9px  — uppercase pill/badge labels */
+  --text-micro--line-height: 0.75rem;
+  --text-label: 0.625rem;        /* 10px — uppercase micro-headers, tabular numerics */
+  --text-label--line-height: 0.875rem;
+  --text-caption: 0.6875rem;     /* 11px — secondary captions */
+  --text-caption--line-height: 1rem;
+
+  /* Motion — mirrored as JS constants in app/_components/motion.ts */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ── DARK (default) ────────────────────────────────────────────────────── */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --background: #0a0b0e;
+  --surface: #131519;
+  --surface-2: #1a1d23;
+  --surface-3: #23272f;
+  --border: #282d37;
+  --border-strong: #384049;
+  --foreground: #edeff2;
+  --muted: #99a3b2;
+  --faint: #626c7a;
+
+  --brand: #38bdf8;
+  --brand-strong: #0ea5e9;
+  --brand-muted: color-mix(in srgb, var(--brand) 14%, transparent);
+
+  /* Legacy chrome accent — now an alias of brand so the ~70 files still using
+     `accent` classes render the same blue as the migrated nav/home/masthead.
+     (Gain/positive semantics use the separate --positive token, unaffected.) */
+  --accent: var(--brand);
+  --accent-strong: var(--brand-strong);
+
+  --positive: #4ade80;
+  --negative: #f87171;
+  --warning: #fbbf24;
+
+  /* Categorical chart palette — deliberately avoids green/red */
+  --chart-1: #a855f7; /* purple */
+  --chart-2: #f97316; /* orange */
+  --chart-3: #2dd4bf; /* teal */
+  --chart-4: #f472b6; /* pink */
+  --chart-5: #64748b; /* slate */
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
+  --shadow-popover: 0 12px 32px -8px rgba(0, 0, 0, 0.6), 0 4px 12px -4px rgba(0, 0, 0, 0.5);
+  --shadow-glow-brand: 0 0 0 1px rgba(56, 189, 248, 0.16), 0 8px 24px -8px rgba(56, 189, 248, 0.25);
+
+  --grid-line: rgba(255, 255, 255, 0.04);
+}
+
+/* ── LIGHT ─────────────────────────────────────────────────────────────── */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --background: #f7f8fa;
+  --surface: #ffffff;
+  --surface-2: #f4f6f9;
+  --surface-3: #e9edf2;
+  --border: #e2e6ec;
+  --border-strong: #cdd4dd;
+  --foreground: #101722;
+  --muted: #56606f;
+  --faint: #8a94a2;
+
+  /* Darker brand/semantic shades for AA contrast on light surfaces */
+  --brand: #0284c7;
+  --brand-strong: #0369a1;
+  --brand-muted: color-mix(in srgb, var(--brand) 10%, transparent);
+
+  /* Legacy chrome accent — aliases brand (see dark block note). */
+  --accent: var(--brand);
+  --accent-strong: var(--brand-strong);
+
+  --positive: #16a34a;
+  --negative: #dc2626;
+  --warning: #d97706;
+
+  --chart-1: #9333ea; /* purple */
+  --chart-2: #ea580c; /* orange */
+  --chart-3: #0d9488; /* teal */
+  --chart-4: #db2777; /* pink */
+  --chart-5: #64748b; /* slate */
+
+  --shadow-card: 0 1px 2px rgba(16, 23, 34, 0.05), 0 4px 16px -8px rgba(16, 23, 34, 0.12);
+  --shadow-popover: 0 12px 32px -8px rgba(16, 23, 34, 0.18), 0 4px 12px -4px rgba(16, 23, 34, 0.12);
+  --shadow-glow-brand: 0 0 0 1px rgba(2, 132, 199, 0.18), 0 8px 24px -8px rgba(2, 132, 199, 0.22);
+
+  --grid-line: rgba(16, 23, 34, 0.04);
 }
 
 html {
-  color-scheme: dark;
   scroll-behavior: smooth;
+  /* Prevent the color flash before the no-flash script runs by defaulting
+     the canvas to the dark base; the script sets data-theme synchronously. */
+  background: var(--background);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  /* Smooth the theme switch without animating layout-affecting properties */
+  transition: background-color 200ms var(--ease-out), color 200ms var(--ease-out);
 }
 
-/* Accent text selection */
+/* Brand text selection */
 ::selection {
-  background-color: rgba(74, 222, 128, 0.18);
+  background-color: color-mix(in srgb, var(--brand) 22%, transparent);
 }
 
 /* Slim scrollbars */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: var(--border-strong);
   border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--muted) 50%, transparent);
+  background: color-mix(in srgb, var(--muted) 55%, transparent);
 }
 
-/* Dialog entry animation */
+/* Dialog / popover entry animation */
 @keyframes dialog-enter {
-  from { opacity: 0; transform: scale(0.95) translateY(4px); }
+  from { opacity: 0; transform: scale(0.96) translateY(6px); }
   to   { opacity: 1; transform: scale(1) translateY(0); }
 }
 
-/* Suppress focus ring on mouse, keep it for keyboard */
+/* Subtle shimmer for loading skeletons */
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to   { background-position: 200% 0; }
+}
+
+/* ── CSS-driven micro-animations (replace framer-motion in global UI) ──────
+   Keeping these in CSS keeps framer-motion out of the shared/first-load
+   bundle; only pages with genuinely complex motion import it. */
+@keyframes fade-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes popover-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes icon-swap {
+  from { opacity: 0; transform: rotate(-30deg) scale(0.7); }
+  to   { opacity: 1; transform: rotate(0) scale(1); }
+}
+@keyframes menu-drop {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-rise { animation: fade-rise var(--duration-base, 200ms) var(--ease-out) both; }
+.animate-popover-in { animation: popover-in var(--duration-fast, 120ms) var(--ease-out) both; }
+.animate-icon-swap { animation: icon-swap var(--duration-base, 200ms) var(--ease-spring) both; }
+.animate-menu-drop { animation: menu-drop var(--duration-fast, 120ms) var(--ease-out) both; }
+
+/* Focus: suppress on mouse, keep a crisp keyboard ring */
 :focus:not(:focus-visible) {
   outline: none;
 }
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--brand);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* Tabular numerics for financial data — apply with .tabular-nums (utility)
+   or opt a container in with this helper. */
+.nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

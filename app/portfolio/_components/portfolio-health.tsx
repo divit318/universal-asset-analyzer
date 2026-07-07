@@ -58,15 +58,15 @@ function DimensionRow({ dim }: { dim: HealthDimension }) {
         <span className="text-sm text-foreground/80 truncate">{dim.name}</span>
         <span className="font-mono text-xs font-semibold shrink-0 w-8 text-right">{dim.score}</span>
       </div>
-      <div className="flex items-center gap-2">
-        <div className="flex-1 h-1.5 bg-surface-2 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all duration-700 ${TREND_BAR[dim.trend]}`}
-            style={{ width: `${dim.score}%` }}
-          />
-        </div>
-        <span className="text-[10px] text-muted w-14 shrink-0 truncate">{dim.explanation.split(".")[0]}</span>
+      <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-700 ${TREND_BAR[dim.trend]}`}
+          style={{ width: `${dim.score}%` }}
+        />
       </div>
+      <p className="text-[11px] text-muted truncate" title={dim.explanation}>
+        {dim.explanation.split(".")[0]}
+      </p>
     </div>
   );
 }

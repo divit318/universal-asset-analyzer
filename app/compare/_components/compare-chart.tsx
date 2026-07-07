@@ -12,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import type { CompareEntry } from "@/app/api/compare/route";
+import { useChartTheme, type ChartTheme } from "@/app/_components/chart-theme";
 
 /* ─── types ────────────────────────────────────────────────────────────────── */
 type Period = "1M" | "3M" | "6M" | "YTD" | "1Y" | "3Y" | "5Y";
@@ -224,7 +225,7 @@ function getSnapshotValue(entry: CompareEntry, metric: SnapshotMetric): number |
 
 /* ─── tooltips ───────────────────────────────────────────────────────────── */
 function PriceTooltip({
-  active, payload, label, metric, symbols, colors,
+  active, payload, label, metric, symbols, colors, ct,
 }: {
   active?: boolean;
   payload?: { dataKey: string; value: number | null }[];
@@ -232,6 +233,7 @@ function PriceTooltip({
   metric: Metric;
   symbols: string[];
   colors: string[];
+  ct: ChartTheme;
 }) {
   if (!active || !payload?.length || !label) return null;
   const cfg = getMetricConfig(metric);
@@ -239,8 +241,8 @@ function PriceTooltip({
     year: "numeric", month: "long", day: "numeric",
   });
   return (
-    <div style={{ background: "#14161a", border: "1px solid #272b33", borderRadius: 8, fontSize: 12, padding: "8px 14px", minWidth: 160 }}>
-      <p style={{ color: "#9aa3af", marginBottom: 6, fontSize: 11 }}>{date}</p>
+    <div style={{ ...ct.tooltip, minWidth: 160 }}>
+      <p style={{ color: ct.axis, marginBottom: 6, fontSize: 11 }}>{date}</p>
       {symbols.map((sym, i) => {
         const entry = payload.find((p) => p.dataKey === sym);
         const v = entry?.value;
@@ -248,7 +250,7 @@ function PriceTooltip({
         return (
           <div key={sym} style={{ display: "flex", justifyContent: "space-between", gap: 16, padding: "1px 0" }}>
             <span style={{ fontFamily: "monospace", fontWeight: 600, color: colors[i] }}>{sym}</span>
-            <span style={{ fontFamily: "monospace", color: cfg.isGrowth ? (v >= 0 ? "#4ade80" : "#f87171") : "#e2e8f0" }}>
+            <span style={{ fontFamily: "monospace", color: cfg.isGrowth ? (v >= 0 ? ct.positive : ct.negative) : ct.tooltip.color }}>
               {cfg.formatFn(v)}
             </span>
           </div>
@@ -259,7 +261,7 @@ function PriceTooltip({
 }
 
 function AnnualTooltip({
-  active, payload, label, metric, symbols, colors,
+  active, payload, label, metric, symbols, colors, ct,
 }: {
   active?: boolean;
   payload?: { dataKey: string; value: number | null }[];
@@ -267,12 +269,13 @@ function AnnualTooltip({
   metric: Metric;
   symbols: string[];
   colors: string[];
+  ct: ChartTheme;
 }) {
   if (!active || !payload?.length || !label) return null;
   const cfg = getMetricConfig(metric);
   return (
-    <div style={{ background: "#14161a", border: "1px solid #272b33", borderRadius: 8, fontSize: 12, padding: "8px 14px", minWidth: 160 }}>
-      <p style={{ color: "#9aa3af", marginBottom: 6, fontSize: 11 }}>{label}</p>
+    <div style={{ ...ct.tooltip, minWidth: 160 }}>
+      <p style={{ color: ct.axis, marginBottom: 6, fontSize: 11 }}>{label}</p>
       {symbols.map((sym, i) => {
         const entry = payload.find((p) => p.dataKey === sym);
         const v = entry?.value;
@@ -280,7 +283,7 @@ function AnnualTooltip({
         return (
           <div key={sym} style={{ display: "flex", justifyContent: "space-between", gap: 16, padding: "1px 0" }}>
             <span style={{ fontFamily: "monospace", fontWeight: 600, color: colors[i] }}>{sym}</span>
-            <span style={{ fontFamily: "monospace", color: cfg.isGrowth ? (v >= 0 ? "#4ade80" : "#f87171") : "#e2e8f0" }}>
+            <span style={{ fontFamily: "monospace", color: cfg.isGrowth ? (v >= 0 ? ct.positive : ct.negative) : ct.tooltip.color }}>
               {cfg.formatFn(v)}
             </span>
           </div>
@@ -297,8 +300,9 @@ function AnnualDot(props: {
   value?: number | null;
   color: string;
   metric: Metric;
+  surface: string;
 }) {
-  const { cx, cy, value, color, metric } = props;
+  const { cx, cy, value, color, metric, surface } = props;
   if (cx == null || cy == null || value == null) return null;
   const cfg = getMetricConfig(metric);
   const label = cfg.formatFn(value);
@@ -307,7 +311,7 @@ function AnnualDot(props: {
 
   return (
     <g>
-      <circle cx={cx} cy={cy} r={4} fill={color} stroke="#14161a" strokeWidth={1.5} />
+      <circle cx={cx} cy={cy} r={4} fill={color} stroke={surface} strokeWidth={1.5} />
       <text
         x={cx}
         y={labelY}
@@ -333,19 +337,21 @@ function EndDot(props: {
   color: string;
   value?: number | null;
   metric: Metric;
+  surface: string;
+  negative: string;
 }) {
-  const { cx, cy, index, dataLength, color, value, metric } = props;
+  const { cx, cy, index, dataLength, color, value, metric, surface, negative } = props;
   if (index == null || index !== dataLength - 1 || cx == null || cy == null || value == null) return null;
   const cfg = getMetricConfig(metric);
   const label = cfg.formatFn(value);
   const isPos = !cfg.isGrowth || value >= 0;
-  const bg = isPos ? color : "#ef4444";
+  const bg = isPos ? color : negative;
   const bw = label.length * 6.8 + 10;
   const bh = 18;
 
   return (
     <g>
-      <circle cx={cx} cy={cy} r={3.5} fill={bg} stroke="#14161a" strokeWidth={1} />
+      <circle cx={cx} cy={cy} r={3.5} fill={bg} stroke={surface} strokeWidth={1} />
       <rect x={cx + 6} y={cy - bh / 2} width={bw} height={bh} rx={4} fill={bg} />
       <text
         x={cx + 6 + bw / 2}
@@ -413,6 +419,7 @@ interface Props {
 }
 
 export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Props) {
+  const ct = useChartTheme();
   const [period, setPeriod] = useState<Period>("1Y");
   const [annualPeriod, setAnnualPeriod] = useState<AnnualPeriod>("5Y");
   const [metric, setMetric] = useState<Metric>("return");
@@ -452,8 +459,8 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
           const meta = raw["_meta"] as { convertedToUsd?: string[] } | undefined;
           setConvertedSymbols(meta?.convertedToUsd ?? []);
           // Strip _meta before storing history map
-          const { _meta: _ignored, ...historyOnly } = raw;
-          setHistoryMap(historyOnly as HistoryMap);
+          delete raw["_meta"];
+          setHistoryMap(raw as HistoryMap);
         })
         .catch(() => {})
         .finally(() => { if (!cancelled) setLoading(false); });
@@ -598,7 +605,7 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
               onClick={() => setPeriod(label)}
               className={`rounded-md px-3 py-1 text-xs font-medium transition-colors
                 ${period === label
-                  ? "bg-accent text-white shadow-sm"
+                  ? "bg-brand-strong text-background shadow-sm"
                   : "text-muted hover:bg-surface-2 hover:text-foreground"}`}
             >
               {label}
@@ -610,7 +617,7 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
               onClick={() => setAnnualPeriod(ap)}
               className={`rounded-md px-3 py-1 text-xs font-medium transition-colors
                 ${annualPeriod === ap
-                  ? "bg-accent text-white shadow-sm"
+                  ? "bg-brand-strong text-background shadow-sm"
                   : "text-muted hover:bg-surface-2 hover:text-foreground"}`}
             >
               {ap}
@@ -644,10 +651,10 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
                     <button
                       key={m.value}
                       onClick={() => { setMetric(m.value); setMetricOpen(false); }}
-                      className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors hover:bg-surface-2 ${metric === m.value ? "text-accent" : "text-foreground"}`}
+                      className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors hover:bg-surface-2 ${metric === m.value ? "text-brand" : "text-foreground"}`}
                     >
                       <span
-                        className={`inline-block h-1.5 w-1.5 rounded-full shrink-0 ${metric === m.value ? "bg-accent" : "bg-transparent border border-border"}`}
+                        className={`inline-block h-1.5 w-1.5 rounded-full shrink-0 ${metric === m.value ? "bg-brand" : "bg-transparent border border-border"}`}
                       />
                       {m.label}
                     </button>
@@ -669,7 +676,7 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
               <span className="h-2 w-3 rounded-sm" style={{ background: colors[i] }} />
               <span className="font-mono font-semibold" style={{ color: colors[i] }}>{sym}</span>
               {v != null && (
-                <span className={`font-mono tabular-nums ${cfg.isGrowth ? (isPos ? "text-positive" : "text-rose-400") : "text-foreground"}`}>
+                <span className={`font-mono tabular-nums ${cfg.isGrowth ? (isPos ? "text-positive" : "text-negative") : "text-foreground"}`}>
                   {cfg.formatFn(v)}
                 </span>
               )}
@@ -700,17 +707,17 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
           {chartData.length > 0 && (
             <ResponsiveContainer width="100%" height={320}>
               <LineChart data={chartData} margin={{ top: 10, right: 90, left: 4, bottom: 4 }}>
-                <CartesianGrid stroke="#272b33" strokeDasharray="3 3" vertical={false} />
+                <CartesianGrid stroke={ct.grid} strokeDasharray="3 3" vertical={false} />
                 <XAxis
                   dataKey="date"
-                  tick={{ fill: "#9aa3af", fontSize: 10 }}
+                  tick={{ fill: ct.axis, fontSize: 10 }}
                   tickLine={false}
-                  axisLine={{ stroke: "#272b33" }}
+                  axisLine={{ stroke: ct.grid }}
                   interval={tickInterval}
                   tickFormatter={(v: string) => formatAxisDate(v, period)}
                 />
                 <YAxis
-                  tick={{ fill: "#9aa3af", fontSize: 10 }}
+                  tick={{ fill: ct.axis, fontSize: 10 }}
                   tickLine={false}
                   axisLine={false}
                   tickFormatter={yFormatter}
@@ -718,8 +725,8 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
                   width={(metric === "return" || metric === "totalReturn") ? 64 : 76}
                 />
                 <Tooltip
-                  content={<PriceTooltip metric={metric} symbols={symbols} colors={colors} />}
-                  cursor={{ stroke: "#9aa3af", strokeWidth: 1, strokeDasharray: "4 4" }}
+                  content={<PriceTooltip metric={metric} symbols={symbols} colors={colors} ct={ct} />}
+                  cursor={{ stroke: ct.axis, strokeWidth: 1, strokeDasharray: "4 4" }}
                 />
                 {(metric === "return" || metric === "totalReturn") && (
                   <ReferenceLine y={0} stroke="#4b5563" strokeWidth={1} strokeDasharray="4 4" />
@@ -742,9 +749,11 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
                         color={colors[i]}
                         value={dotProps.value}
                         metric={metric}
+                        surface={ct.surface}
+                        negative={ct.negative}
                       />
                     )}
-                    activeDot={{ r: 4, fill: colors[i], stroke: "#14161a", strokeWidth: 1.5 }}
+                    activeDot={{ r: 4, fill: colors[i], stroke: ct.surface, strokeWidth: 1.5 }}
                   />
                 ))}
               </LineChart>
@@ -764,15 +773,15 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
           {annualData.length > 0 && (
             <ResponsiveContainer width="100%" height={340}>
               <LineChart data={annualData} margin={{ top: 28, right: 24, left: 4, bottom: 4 }}>
-                <CartesianGrid stroke="#272b33" strokeDasharray="3 3" vertical={false} />
+                <CartesianGrid stroke={ct.grid} strokeDasharray="3 3" vertical={false} />
                 <XAxis
                   dataKey="fy"
-                  tick={{ fill: "#9aa3af", fontSize: 11 }}
+                  tick={{ fill: ct.axis, fontSize: 11 }}
                   tickLine={false}
-                  axisLine={{ stroke: "#272b33" }}
+                  axisLine={{ stroke: ct.grid }}
                 />
                 <YAxis
-                  tick={{ fill: "#9aa3af", fontSize: 10 }}
+                  tick={{ fill: ct.axis, fontSize: 10 }}
                   tickLine={false}
                   axisLine={false}
                   tickFormatter={yFormatter}
@@ -780,8 +789,8 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
                   width={64}
                 />
                 <Tooltip
-                  content={<AnnualTooltip metric={metric} symbols={symbols} colors={colors} />}
-                  cursor={{ stroke: "#9aa3af", strokeWidth: 1, strokeDasharray: "4 4" }}
+                  content={<AnnualTooltip metric={metric} symbols={symbols} colors={colors} ct={ct} />}
+                  cursor={{ stroke: ct.axis, strokeWidth: 1, strokeDasharray: "4 4" }}
                 />
                 {cfg.isGrowth && (
                   <ReferenceLine y={0} stroke="#4b5563" strokeWidth={1} strokeDasharray="4 4" />
@@ -802,9 +811,10 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
                         value={dotProps.value}
                         color={colors[i]}
                         metric={metric}
+                        surface={ct.surface}
                       />
                     )}
-                    activeDot={{ r: 5, fill: colors[i], stroke: "#14161a", strokeWidth: 2 }}
+                    activeDot={{ r: 5, fill: colors[i], stroke: ct.surface, strokeWidth: 2 }}
                   />
                 ))}
               </LineChart>

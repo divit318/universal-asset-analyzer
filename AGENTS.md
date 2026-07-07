@@ -59,7 +59,9 @@ Read this before reading CLAUDE.md, ARCHITECTURE.md, or PROJECT_ROADMAP.md.
 - **State** (`lib/db.ts`) — SQLite persistence, CRUD operations
 
 **Key Files**:
-- `lib/composite.ts` — Scoring (value/quality/momentum). Single source of truth.
+- `lib/composite.ts` — batch dimensional scorer (Screener). `lib/scoring.ts` —
+  single-name decision engine. Two engines by design; the shared score→recommendation
+  bands/labels/tones live in `lib/recommendation.ts` (single source of truth).
 - `lib/fundamental-screener.ts` — Filtering + caching. Use for screening workflows.
 - `lib/event-screener.ts` — Signals. Use for event-driven workflows.
 - `lib/thematic-engine.ts` — 10-stage thematic analysis framework.

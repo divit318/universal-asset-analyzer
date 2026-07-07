@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { buildCompanyContext } from "@/lib/ai/context";
 import { runPrompt } from "@/lib/ai";
-import { extractJson } from "@/lib/json-extract";
+import { extractJsonObject } from "@/lib/json-extract";
 import { normalizeSymbol } from "@/lib/market";
 import { formatCurrency, formatMarketCap } from "@/lib/format";
+import { verifyGrounding, collectClaimText, type GroundingReport } from "@/lib/ai/grounding";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,6 +19,9 @@ export interface InvestmentVerdict {
   confidence: "high" | "medium" | "low";
   timeHorizon: "short-term" | "medium-term" | "long-term";
   keyMetrics: Array<{ label: string; value: string; signal: "positive" | "negative" | "neutral" }>;
+  /** Verification that the verdict's figures trace back to the source data.
+   *  Absent when Ollama was offline (nothing was generated to verify). */
+  grounding?: GroundingReport;
   model: string;
   generatedAt: string;
 }
@@ -163,17 +167,43 @@ REQUIREMENTS:
 - keyMetrics: exactly 5, covering valuation + quality + growth + momentum + analyst
 - confidence: high = comprehensive data + clear signal; medium = some gaps or mixed signals; low = limited data${portfolioInstructions}`;
 
-  let parsed: Omit<InvestmentVerdict, "model" | "generatedAt">;
+  const fallbackVerdict: InvestmentVerdict["verdict"] = score
+    ? score.composite > 65 ? "bullish" : score.composite < 40 ? "bearish" : "neutral"
+    : "neutral";
+
+  let parsed: Omit<InvestmentVerdict, "model" | "generatedAt" | "grounding">;
+  let grounding: GroundingReport | undefined;
 
   try {
     const raw = await runPrompt(prompt, { json: true, maxTokens: 800 });
-    parsed = extractJson<Omit<InvestmentVerdict, "model" | "generatedAt">>(raw);
+    // Coerce against a complete default shape: the model can return valid JSON
+    // that omits array fields (catalysts/risks/keyMetrics) which the research
+    // page then .map()s over — a bare cast would crash the page on those.
+    parsed = extractJsonObject(raw, {
+      verdict: fallbackVerdict,
+      headline: `${ctx.name}: AI verdict`,
+      thesis: "",
+      catalysts: [] as string[],
+      risks: [] as string[],
+      confidence: "low",
+      timeHorizon: "medium-term",
+      keyMetrics: [] as InvestmentVerdict["keyMetrics"],
+    } satisfies Omit<InvestmentVerdict, "model" | "generatedAt" | "grounding">);
+
+    // Verify the generated prose against the exact facts the model was handed:
+    // every figure in the thesis/catalysts/risks must trace to a data point.
+    const evidence = [facts.join("\n"), portfolioFacts.join("\n")].join("\n");
+    const claims = collectClaimText([
+      parsed.headline,
+      parsed.thesis,
+      parsed.catalysts,
+      parsed.risks,
+      parsed.keyMetrics.map((m) => `${m.label} ${m.value}`),
+    ]);
+    grounding = verifyGrounding(claims, evidence);
   } catch {
-    const v = score
-      ? score.composite > 65 ? "bullish" : score.composite < 40 ? "bearish" : "neutral"
-      : "neutral";
     parsed = {
-      verdict: v,
+      verdict: fallbackVerdict,
       headline: `${ctx.name}: Start Ollama to generate the AI investment verdict`,
       thesis: "Run `ollama serve` in your terminal, then refresh to generate the AI analysis for this stock.",
       catalysts: ["Ollama offline — start with `ollama serve`", "Refresh page after Ollama starts", "AI verdict generates automatically"],
@@ -186,6 +216,7 @@ REQUIREMENTS:
 
   return NextResponse.json({
     ...parsed,
+    grounding,
     model: "ollama",
     generatedAt: new Date().toISOString(),
   } satisfies InvestmentVerdict);

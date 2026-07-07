@@ -6,6 +6,8 @@ import type { ICReport, ICProgressEvent, ICReportStage } from "@/lib/ic-report";
 import type { AgentFinding } from "@/lib/ic-agents";
 import type { DetectedSignal } from "@/lib/ic-signals";
 import { SymbolSearch } from "@/app/_components/symbol-search";
+import { PageShell } from "@/app/_components/ui";
+import { GroundingBadge } from "@/app/_components/grounding-badge";
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -77,7 +79,7 @@ function SignalsGrid({ signals }: { signals: DetectedSignal[] }) {
         <div key={s.id} className={`rounded-lg border p-3 text-sm ${SEV_STYLE[s.severity]}`}>
           <div className="mb-1 flex items-center justify-between gap-2">
             <span className="font-medium text-foreground">{s.category.replace(/_/g, " ")}</span>
-            <span className="rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase">{s.severity}</span>
+            <span className="rounded-full border px-1.5 py-0.5 text-label font-semibold uppercase">{s.severity}</span>
           </div>
           <p className="leading-5">{s.description}</p>
         </div>
@@ -115,13 +117,13 @@ function AgentGrid({ findings }: { findings: AgentFinding[] }) {
             <ul className="space-y-1">
               {f.keyInsights.slice(0, expanded === f.agent ? undefined : 2).map((ins, i) => (
                 <li key={i} className="flex gap-2 text-xs text-muted">
-                  <span className="mt-0.5 shrink-0 text-accent">→</span>
+                  <span className="mt-0.5 shrink-0 text-brand">→</span>
                   <span>{ins}</span>
                 </li>
               ))}
             </ul>
             {f.keyInsights.length > 2 && (
-              <span className="mt-2 block text-xs text-accent">
+              <span className="mt-2 block text-xs text-brand">
                 {expanded === f.agent ? "Show less" : `+${f.keyInsights.length - 2} more`}
               </span>
             )}
@@ -134,6 +136,7 @@ function AgentGrid({ findings }: { findings: AgentFinding[] }) {
                   ⚠ {f.dataLimitations}
                 </p>
               )}
+              {f.grounding && <GroundingBadge grounding={f.grounding} className="mt-2" />}
             </div>
           )}
         </Card>
@@ -145,7 +148,7 @@ function AgentGrid({ findings }: { findings: AgentFinding[] }) {
 function ThesisSection({ thesis }: { thesis: ICReport["thesis"] }) {
   const [tab, setTab] = useState<"bull" | "bear" | "base">("base");
   const tabs = [
-    { key: "base" as const, label: "Base Case", color: "text-accent" },
+    { key: "base" as const, label: "Base Case", color: "text-brand" },
     { key: "bull" as const, label: "Bull Case", color: "text-positive" },
     { key: "bear" as const, label: "Bear Case", color: "text-negative" },
   ];
@@ -184,7 +187,7 @@ function ThesisSection({ thesis }: { thesis: ICReport["thesis"] }) {
       <div className="grid gap-4 md:grid-cols-3">
         {[
           { title: "Key Catalysts", items: thesis.keyCatalysts, color: "text-positive" },
-          { title: "Key Drivers", items: thesis.keyDrivers, color: "text-accent" },
+          { title: "Key Drivers", items: thesis.keyDrivers, color: "text-brand" },
           { title: "Key Risks", items: thesis.keyRisks, color: "text-negative" },
         ].map(({ title, items, color }) => (
           <Card key={title}>
@@ -324,7 +327,7 @@ function ValuationSection({ valuation, runHotCold }: { valuation: ICReport["valu
       {runHotCold && (
         <Card className={`border ${
           runHotCold.signal === "run_hot" ? "border-warning/40 bg-warning/5" :
-          runHotCold.signal === "run_cold" ? "border-accent/40 bg-accent/5" : ""
+          runHotCold.signal === "run_cold" ? "border-brand/40 bg-brand/5" : ""
         }`}>
           <div className="flex flex-col gap-4">
             <div className="flex items-start justify-between gap-4">
@@ -347,7 +350,7 @@ function ValuationSection({ valuation, runHotCold }: { valuation: ICReport["valu
               </div>
               <span className={`shrink-0 rounded-full border px-3 py-1 text-xs font-semibold uppercase ${
                 runHotCold.signal === "run_hot" ? "border-warning/40 text-warning" :
-                runHotCold.signal === "run_cold" ? "border-accent/40 text-accent" : "border-border text-muted"
+                runHotCold.signal === "run_cold" ? "border-brand/40 text-brand" : "border-border text-muted"
               }`}>
                 {runHotCold.signal.replace("_", " ")}
               </span>
@@ -358,17 +361,17 @@ function ValuationSection({ valuation, runHotCold }: { valuation: ICReport["valu
                 <div className="mb-2 text-xs uppercase tracking-wider text-muted">Long-Run CAGR Windows — Percentile vs Own History</div>
                 <div className="flex flex-wrap gap-2">
                   {runHotCold.historicalWindows.filter((w) => w.available).map((w) => {
-                    const hotBorder = w.signal === "run_hot" ? "border-warning/50 bg-warning/5" : w.signal === "run_cold" ? "border-accent/50 bg-accent/5" : "border-border bg-surface-2";
-                    const pctColor = w.signal === "run_hot" ? "text-warning" : w.signal === "run_cold" ? "text-accent" : "text-muted";
+                    const hotBorder = w.signal === "run_hot" ? "border-warning/50 bg-warning/5" : w.signal === "run_cold" ? "border-brand/50 bg-brand/5" : "border-border bg-surface-2";
+                    const pctColor = w.signal === "run_hot" ? "text-warning" : w.signal === "run_cold" ? "text-brand" : "text-muted";
                     return (
                       <div key={w.years} className={`flex flex-col items-center rounded-lg border px-3 py-2 ${hotBorder}`}>
                         <span className="text-xs font-semibold text-muted">{w.years}Y</span>
                         <span className={`font-mono text-sm font-semibold ${w.return > 0 ? "text-positive" : "text-negative"}`}>
                           {w.return > 0 ? "+" : ""}{w.return.toFixed(1)}%
                         </span>
-                        <span className="text-[10px] text-muted">CAGR</span>
+                        <span className="text-label text-muted">CAGR</span>
                         {w.percentile != null && (
-                          <span className={`mt-0.5 text-[10px] font-semibold ${pctColor}`}>
+                          <span className={`mt-0.5 text-label font-semibold ${pctColor}`}>
                             {w.percentile}th pct
                           </span>
                         )}
@@ -389,12 +392,10 @@ function ValuationSection({ valuation, runHotCold }: { valuation: ICReport["valu
 }
 
 function ProgressTracker({
-  events,
   completedAgents,
   totalAgents,
   currentStage,
 }: {
-  events: StreamEvent[];
   completedAgents: number;
   totalAgents: number;
   currentStage: ICReportStage | null;
@@ -413,7 +414,7 @@ function ProgressTracker({
             <div key={stage} className="flex items-center gap-3">
               <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${
                 isDone ? "border-positive bg-positive/20 text-positive" :
-                isActive ? "border-accent bg-accent/20 text-accent animate-pulse" :
+                isActive ? "border-brand bg-brand/20 text-brand animate-pulse" :
                 "border-border text-muted"
               }`}>
                 {isDone ? "✓" : i + 1}
@@ -430,7 +431,7 @@ function ProgressTracker({
                 {isAgents && totalAgents > 0 && (
                   <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-surface-2">
                     <div
-                      className="h-full rounded-full bg-accent transition-all"
+                      className="h-full rounded-full bg-brand transition-all"
                       style={{ width: `${(completedAgents / totalAgents) * 100}%` }}
                     />
                   </div>
@@ -475,7 +476,7 @@ export default function ICReportPage() {
       setSymbol(urlSymbol.toUpperCase());
       // Detect Indian exchange by suffix
       if (urlSymbol.toUpperCase().endsWith(".NS") || urlSymbol.toUpperCase().endsWith(".BO")) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
+         
         setExchange("IN");
       }
       return; // don't restore stale cached report when deep-linking
@@ -491,7 +492,7 @@ export default function ICReportPage() {
         }
       }
     } catch { /* ignore */ }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, []);
 
   // Dynamic page title
@@ -626,12 +627,12 @@ export default function ICReportPage() {
   const [activeTab, setActiveTab] = useState<"signals" | "agents" | "thesis" | "valuation" | "monitorables">("thesis");
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-10">
+    <PageShell py="py-10">
       {/* Header */}
       <header className="flex flex-col gap-1.5">
         <div className="flex items-center gap-2">
           <h1 className="text-2xl font-semibold tracking-tight">IC Deep Research</h1>
-          <span className="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-accent">
+          <span className="rounded-full border border-brand/30 bg-brand/10 px-2.5 py-0.5 text-label font-semibold uppercase tracking-widest text-brand">
             Multi-agent
           </span>
         </div>
@@ -653,20 +654,20 @@ export default function ICReportPage() {
         <select
           value={exchange}
           onChange={(e) => setExchange(e.target.value as "US" | "IN")}
-          className="rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-accent"
+          className="rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand"
         >
           <option value="US">US Markets</option>
           <option value="IN">Indian Markets (NSE/BSE)</option>
         </select>
         {ollamaModels.length > 0 && (
           <div className="flex items-center gap-2">
-            <span className="rounded-full bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
+            <span className="rounded-full bg-brand/10 px-2 py-0.5 text-xs font-medium text-brand">
               Local AI
             </span>
             <select
               value={selectedModel}
               onChange={(e) => setSelectedModel(e.target.value)}
-              className="rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-accent"
+              className="rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand"
             >
               {ollamaModels.map((m) => (
                 <option key={m} value={m}>{m}</option>
@@ -694,7 +695,7 @@ export default function ICReportPage() {
             <button
               onClick={run}
               disabled={!symbol.trim()}
-              className="rounded-lg bg-accent-strong px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="rounded-lg bg-brand-strong px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               Generate Report
             </button>
@@ -702,7 +703,7 @@ export default function ICReportPage() {
               <span className="text-xs text-muted">
                 Last report restored from cache ·{" "}
                 <button
-                  className="text-accent hover:underline"
+                  className="text-brand hover:underline"
                   onClick={() => { setReport(null); setEvents([]); }}
                 >
                   Clear
@@ -725,7 +726,6 @@ export default function ICReportPage() {
           {/* Progress sidebar */}
           <div className="flex flex-col gap-4">
             <ProgressTracker
-              events={events}
               completedAgents={completedAgents}
               totalAgents={totalAgents}
               currentStage={currentStage}
@@ -736,7 +736,7 @@ export default function ICReportPage() {
                 <div className="max-h-48 overflow-y-auto space-y-1">
                   {events.slice(-12).map((e, i) => (
                     <div key={i} className="leading-4">
-                      <span className="text-accent">{STAGE_LABELS[e.stage]}: </span>
+                      <span className="text-brand">{STAGE_LABELS[e.stage]}: </span>
                       {e.message}
                     </div>
                   ))}
@@ -836,7 +836,7 @@ export default function ICReportPage() {
                         <div className="space-y-2">
                           {report.questions.map((q) => (
                             <div key={q.id} className="flex gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-sm">
-                              <span className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                              <span className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-label font-semibold uppercase ${
                                 q.priority === "high" ? "bg-negative/10 text-negative" :
                                 q.priority === "medium" ? "bg-warning/10 text-warning" :
                                 "bg-surface-2 text-muted"
@@ -860,7 +860,7 @@ export default function ICReportPage() {
                       <ul className="space-y-3">
                         {report.monitorables.map((item, i) => (
                           <li key={i} className="flex gap-3 text-sm">
-                            <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent/20 text-xs font-semibold text-accent">
+                            <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand/20 text-xs font-semibold text-brand">
                               {i + 1}
                             </span>
                             <span>{item}</span>
@@ -874,7 +874,7 @@ export default function ICReportPage() {
             ) : running ? (
               <Card className="flex items-center justify-center py-20">
                 <div className="flex flex-col items-center gap-3 text-muted">
-                  <div className="h-8 w-8 animate-spin rounded-full border-2 border-border border-t-accent" />
+                  <div className="h-8 w-8 animate-spin rounded-full border-2 border-border border-t-brand" />
                   <span className="text-sm">
                     {currentStage ? `${STAGE_LABELS[currentStage]}…` : "Initialising…"}
                   </span>
@@ -908,12 +908,12 @@ export default function ICReportPage() {
             {[
               { step: "1", title: "Signal Detection", color: "text-negative", desc: "13 signal types including ROCE drops, margin compression, FII selling, and working capital issues" },
               { step: "2", title: "Question Generation", color: "text-warning", desc: "Converts each signal into deep analytical questions for the agent network to investigate" },
-              { step: "3", title: "9-Agent Network", color: "text-accent", desc: "Business, Industry, Competition, Management, Capital Allocation, Accounting, Valuation, Governance, Risk" },
+              { step: "3", title: "9-Agent Network", color: "text-brand", desc: "Business, Industry, Competition, Management, Capital Allocation, Accounting, Valuation, Governance, Risk" },
               { step: "4", title: "Thesis + Valuation", color: "text-positive", desc: "Bull/Bear/Base thesis, DCF + SOTP, run hot/cold analysis, scenario analysis, exportable IC report" },
             ].map(({ step, title, color, desc }) => (
               <Card key={step}>
                 <div className="mb-2 flex items-center gap-2">
-                  <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface-2 font-mono text-[10px] font-semibold ${color}`}>
+                  <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface-2 font-mono text-label font-semibold ${color}`}>
                     {step}
                   </span>
                   <h3 className="text-sm font-semibold">{title}</h3>
@@ -924,6 +924,6 @@ export default function ICReportPage() {
           </div>
         </div>
       )}
-    </div>
+    </PageShell>
   );
 }

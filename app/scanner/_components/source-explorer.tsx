@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import type { MarketEvent } from "@/lib/types";
-import { formatDate } from "@/lib/format";
 
 export function SourceExplorer({ events }: { events: MarketEvent[] }) {
   const [open, setOpen] = useState(false);

@@ -23,10 +23,10 @@ import type {
   ThematicReport,
   ThematicProgressEvent,
   TierCompany,
-  CommodityProxy,
   PolicyItem,
   AnalystChecklistItem,
 } from "@/lib/thematic-engine";
+import { PageShell } from "@/app/_components/ui";
 
 /* ─────────────────── Preset themes ──────────────────────────────────── */
 
@@ -70,12 +70,12 @@ function Score({ value, max = 10, size = "md" }: { value: number; max?: number; 
   return <span className={`font-mono ${color} ${sizeClass}`}>{value}<span className="text-muted text-sm font-normal">/{max}</span></span>;
 }
 
-function Badge({ label, variant }: { label: string; variant: "positive" | "negative" | "neutral" | "accent" }) {
+function Badge({ label, variant }: { label: string; variant: "positive" | "negative" | "neutral" | "brand" }) {
   const cls = {
     positive: "bg-positive/15 text-positive border-positive/30",
     negative: "bg-negative/15 text-negative border-negative/30",
     neutral:  "bg-surface-2 text-muted border-border",
-    accent:   "bg-accent/15 text-accent border-accent/30",
+    brand:    "bg-brand/15 text-brand border-brand/30",
   }[variant];
   return (
     <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${cls}`}>
@@ -120,7 +120,7 @@ function trendColor(trend: string) {
 }
 
 const TIER_COLORS: Record<number, string> = {
-  1: "bg-accent/15 text-accent border-accent/30",
+  1: "bg-brand/15 text-brand border-brand/30",
   2: "bg-purple-500/15 text-purple-400 border-purple-500/30",
   3: "bg-amber-500/15 text-warning border-amber-500/30",
   4: "bg-orange-500/15 text-orange-400 border-orange-500/30",
@@ -187,12 +187,12 @@ function ThematicReportView({ report }: { report: ThematicReport }) {
             ] as [string, number, number][]
           ).map(([label, score, weight]) => (
             <div key={label} className="flex flex-col items-center gap-1 rounded-lg border border-border bg-surface-2 px-2 py-2.5">
-              <span className="text-center text-[10px] leading-tight text-muted">{label}</span>
+              <span className="text-center text-label leading-tight text-muted">{label}</span>
               <span className="font-mono text-sm font-semibold">{score}</span>
-              <span className="text-[10px] text-muted/60">wt {weight}%</span>
+              <span className="text-label text-muted/60">wt {weight}%</span>
               <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-border">
                 <div
-                  className="h-full rounded-full bg-accent"
+                  className="h-full rounded-full bg-brand"
                   style={{ width: `${score}%` }}
                 />
               </div>
@@ -209,7 +209,7 @@ function ThematicReportView({ report }: { report: ThematicReport }) {
             onClick={() => setActiveTab(t.id)}
             className={`px-4 py-2 text-sm transition-colors ${
               activeTab === t.id
-                ? "border-b-2 border-accent font-medium text-foreground"
+                ? "border-b-2 border-brand font-medium text-foreground"
                 : "text-muted hover:text-foreground"
             }`}
           >
@@ -244,7 +244,7 @@ function OverviewTab({ report }: { report: ThematicReport }) {
             <ul className="flex flex-col gap-1">
               {report.futureState.drivingForces.map((f, i) => (
                 <li key={i} className="flex items-start gap-2 text-sm">
-                  <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent" />
+                  <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-brand" />
                   {f}
                 </li>
               ))}
@@ -289,7 +289,7 @@ function OverviewTab({ report }: { report: ThematicReport }) {
               ] as [string, string][]
             ).map(([label, val]) => (
               <div key={label} className="flex flex-col gap-0.5 rounded-lg border border-border bg-surface-2 px-3 py-2.5">
-                <span className="text-[10px] uppercase tracking-wider text-muted">{label}</span>
+                <span className="text-label uppercase tracking-wider text-muted">{label}</span>
                 <span className="text-sm font-semibold capitalize">{val}</span>
               </div>
             ))}
@@ -304,7 +304,7 @@ function OverviewTab({ report }: { report: ThematicReport }) {
                   <div key={p.ticker} className="flex items-center justify-between gap-4 bg-surface px-3 py-2">
                     <div className="flex flex-col">
                       <span className="text-xs font-semibold font-mono">{p.ticker}</span>
-                      <span className="text-[10px] text-muted">{p.name}</span>
+                      <span className="text-label text-muted">{p.name}</span>
                     </div>
                     <div className="flex items-center gap-3 text-xs font-mono">
                       {p.price != null && <span>${p.price.toFixed(2)}</span>}
@@ -348,7 +348,7 @@ function OverviewTab({ report }: { report: ThematicReport }) {
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap gap-1.5">
             {report.commodityFramework.primaryCommodities.map((c, i) => (
-              <Badge key={i} label={c} variant="accent" />
+              <Badge key={i} label={c} variant="brand" />
             ))}
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -409,7 +409,7 @@ function OverviewTab({ report }: { report: ThematicReport }) {
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <Badge label={`Leader: ${report.structuralAdvantage.currentLeader}`} variant="positive" />
-            <Badge label={`Fastest Improving: ${report.structuralAdvantage.fastestImproving}`} variant="accent" />
+            <Badge label={`Fastest Improving: ${report.structuralAdvantage.fastestImproving}`} variant="brand" />
           </div>
           <p className="text-sm leading-relaxed">{report.structuralAdvantage.longTermImplications}</p>
           {report.structuralAdvantage.regions.length > 0 && (
@@ -464,7 +464,7 @@ function OverviewTab({ report }: { report: ThematicReport }) {
                   {report.opportunity.topCompanies.map((c) => (
                     <tr key={c.symbol} className="hover:bg-surface-2">
                       <td className="py-2 pr-4">
-                        <Link href={`/stocks/${encodeURIComponent(c.symbol)}`} className="font-mono font-semibold text-accent hover:underline">
+                        <Link href={`/stocks/${encodeURIComponent(c.symbol)}`} className="font-mono font-semibold text-brand hover:underline">
                           {c.symbol}
                         </Link>
                       </td>
@@ -473,7 +473,7 @@ function OverviewTab({ report }: { report: ThematicReport }) {
                       <td className="py-2 pr-4">
                         <Badge
                           label={c.strategicImportance}
-                          variant={c.strategicImportance === "critical" ? "negative" : c.strategicImportance === "high" ? "accent" : "neutral"}
+                          variant={c.strategicImportance === "critical" ? "negative" : c.strategicImportance === "high" ? "brand" : "neutral"}
                         />
                       </td>
                       <td className="py-2 pr-4 text-xs text-muted capitalize">{c.moatType}</td>
@@ -551,7 +551,7 @@ function CompaniesTab({ companies }: { companies: TierCompany[] }) {
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => setFilterTier(null)}
-          className={`rounded-full border px-3 py-1 text-xs transition-colors ${filterTier == null ? "border-accent bg-accent/10 text-accent" : "border-border text-muted hover:border-accent"}`}
+          className={`rounded-full border px-3 py-1 text-xs transition-colors ${filterTier == null ? "border-brand bg-brand/10 text-brand" : "border-border text-muted hover:border-brand"}`}
         >
           All tiers
         </button>
@@ -559,13 +559,13 @@ function CompaniesTab({ companies }: { companies: TierCompany[] }) {
           <button
             key={t}
             onClick={() => setFilterTier(filterTier === t ? null : t)}
-            className={`rounded-full border px-3 py-1 text-xs transition-colors ${filterTier === t ? "border-accent bg-accent/10 text-accent" : "border-border text-muted hover:border-accent"}`}
+            className={`rounded-full border px-3 py-1 text-xs transition-colors ${filterTier === t ? "border-brand bg-brand/10 text-brand" : "border-border text-muted hover:border-brand"}`}
           >
             Tier {t}
           </button>
         ))}
         <label className="ml-2 flex cursor-pointer items-center gap-1.5 text-xs text-muted">
-          <input type="checkbox" checked={filterIndia} onChange={(e) => setFilterIndia(e.target.checked)} className="accent-accent" />
+          <input type="checkbox" checked={filterIndia} onChange={(e) => setFilterIndia(e.target.checked)} className="accent-brand" />
           India only
         </label>
         <span className="ml-auto text-xs text-muted">{filtered.length} companies</span>
@@ -602,7 +602,7 @@ function CompaniesTab({ companies }: { companies: TierCompany[] }) {
                   {rows.map((c) => (
                     <tr key={c.symbol} className="hover:bg-surface-2">
                       <td className="px-4 py-2.5">
-                        <Link href={`/stocks/${encodeURIComponent(c.symbol)}`} className="font-mono font-semibold text-accent hover:underline">
+                        <Link href={`/stocks/${encodeURIComponent(c.symbol)}`} className="font-mono font-semibold text-brand hover:underline">
                           {c.symbol}
                         </Link>
                       </td>
@@ -611,7 +611,7 @@ function CompaniesTab({ companies }: { companies: TierCompany[] }) {
                       <td className="px-4 py-2.5">
                         <Badge
                           label={c.strategicImportance}
-                          variant={c.strategicImportance === "critical" ? "negative" : c.strategicImportance === "high" ? "accent" : "neutral"}
+                          variant={c.strategicImportance === "critical" ? "negative" : c.strategicImportance === "high" ? "brand" : "neutral"}
                         />
                       </td>
                       <td className="px-4 py-2.5 text-xs text-muted capitalize">{c.moatType}</td>
@@ -722,8 +722,8 @@ function ProgressView({ events }: { events: ThematicProgressEvent[] }) {
     <div className="rounded-xl border border-border bg-surface p-6">
       <div className="mb-4 flex items-center gap-3">
         <span className="relative flex h-2.5 w-2.5">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
-          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-accent" />
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-75" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-brand" />
         </span>
         <span className="text-sm font-semibold">Running thematic analysis…</span>
       </div>
@@ -734,8 +734,8 @@ function ProgressView({ events }: { events: ThematicProgressEvent[] }) {
           const done = completedStages.has(stage as ThematicProgressEvent["stage"]);
           const isRunning = lastEvent?.stage === stage;
           return (
-            <div key={stage} className={`flex items-center gap-3 rounded-lg px-3 py-2 transition-colors ${done ? "bg-positive/5" : isRunning ? "bg-accent/5" : ""}`}>
-              <span className={`flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-xs font-mono font-semibold ${done ? "bg-positive/20 text-positive" : isRunning ? "bg-accent/20 text-accent" : "bg-surface-2 text-muted"}`}>
+            <div key={stage} className={`flex items-center gap-3 rounded-lg px-3 py-2 transition-colors ${done ? "bg-positive/5" : isRunning ? "bg-brand/5" : ""}`}>
+              <span className={`flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-xs font-mono font-semibold ${done ? "bg-positive/20 text-positive" : isRunning ? "bg-brand/20 text-brand" : "bg-surface-2 text-muted"}`}>
                 {done ? "✓" : meta.icon}
               </span>
               <span className={`text-sm ${done ? "text-foreground" : isRunning ? "text-foreground" : "text-muted"}`}>
@@ -884,12 +884,12 @@ function ThematicPageInner() {
   }, []);
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-10">
+    <PageShell py="py-10">
       {/* Header */}
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center gap-2">
           <h1 className="text-2xl font-semibold tracking-tight">Thematic Research</h1>
-          <span className="rounded-full border border-purple-400/30 bg-purple-400/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-purple-400">
+          <span className="rounded-full border border-purple-400/30 bg-purple-400/10 px-2.5 py-0.5 text-label font-semibold uppercase tracking-widest text-purple-400">
             10-stage
           </span>
         </div>
@@ -906,7 +906,7 @@ function ThematicPageInner() {
             onChange={(e) => setTheme(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && !running && void run()}
             placeholder="Enter a theme — e.g. AI Compute, Battery Storage, Nuclear Energy, India Semiconductor Fab…"
-            className="flex-1 rounded-lg border border-border bg-surface px-4 py-2.5 text-sm outline-none placeholder:text-muted focus:border-accent"
+            className="flex-1 rounded-lg border border-border bg-surface px-4 py-2.5 text-sm outline-none placeholder:text-muted focus:border-brand"
             disabled={running}
           />
           {running ? (
@@ -920,7 +920,7 @@ function ThematicPageInner() {
             <button
               onClick={() => void run()}
               disabled={!theme.trim()}
-              className="rounded-lg bg-accent-strong px-6 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="rounded-lg bg-brand-strong px-6 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               Analyse
             </button>
@@ -940,7 +940,7 @@ function ThematicPageInner() {
       {!running && !report && (
         <div className="flex flex-col gap-4">
           <div className="flex items-center gap-3">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Suggested themes</p>
+            <p className="text-label font-semibold uppercase tracking-widest text-muted/60">Suggested themes</p>
             <div className="h-px flex-1 bg-border" />
           </div>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
@@ -948,7 +948,7 @@ function ThematicPageInner() {
               <button
                 key={p.label}
                 onClick={() => handlePreset(p.label)}
-                className="flex flex-col gap-0.5 rounded-xl border border-border bg-surface px-3 py-3 text-left transition-colors hover:border-accent/40 hover:bg-surface-2"
+                className="flex flex-col gap-0.5 rounded-xl border border-border bg-surface px-3 py-3 text-left transition-colors hover:border-brand/40 hover:bg-surface-2"
               >
                 <span className="text-sm font-medium">{p.label}</span>
                 <span className="text-xs text-muted">{p.desc}</span>
@@ -962,7 +962,7 @@ function ThematicPageInner() {
               { step: "8–10", title: "Company mapping", desc: "Tier allocation, screener quality screening, opportunity score + analyst checklist" },
             ].map(({ step, title, desc }) => (
               <div key={step} className="flex gap-3 rounded-xl border border-border bg-surface p-4">
-                <span className="mt-0.5 shrink-0 font-mono text-[10px] font-semibold text-muted/60">{step}</span>
+                <span className="mt-0.5 shrink-0 font-mono text-label font-semibold text-muted/60">{step}</span>
                 <div>
                   <p className="text-sm font-semibold">{title}</p>
                   <p className="mt-0.5 text-xs leading-5 text-muted">{desc}</p>
@@ -986,7 +986,7 @@ function ThematicPageInner() {
       {/* Report */}
       {report && <ThematicReportView report={report} />}
 
-    </div>
+    </PageShell>
   );
 }
 

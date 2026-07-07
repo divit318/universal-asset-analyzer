@@ -19,28 +19,21 @@ import {
   calcSma,
   type CandlePattern,
 } from "@/lib/indicators";
+import { useChartTheme, type ChartTheme } from "@/app/_components/chart-theme";
 
 /* -------------------------------------------------------------------------- */
-/* Color constants (matches interactive-chart.tsx palette)                    */
+/* Categorical overlay colors — theme-neutral (legible on light & dark).      */
+/* Structural (axis/grid/tooltip) and semantic (positive/negative) colors are */
+/* taken from useChartTheme() inside the component and threaded into helpers.  */
 /* -------------------------------------------------------------------------- */
 
-const AXIS = "#9aa3af";
-const GRID = "#272b33";
-const POSITIVE = "#4ade80";
-const NEGATIVE = "#f87171";
 const BLUE = "#60a5fa";
 const AMBER = "#fbbf24";
 const PURPLE = "#a78bfa";
 const TEAL = "#2dd4bf";
 const ORANGE = "#fb923c";
 
-const TOOLTIP_STYLE = {
-  background: "#14161a",
-  border: "1px solid #272b33",
-  borderRadius: 8,
-  fontSize: 12,
-  padding: "8px 12px",
-};
+type CandleColors = { positive: string; negative: string; axis: string };
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                       */
@@ -123,7 +116,9 @@ function makeCandleShape(
   yMin: number,
   yMax: number,
   patternMap: Map<number, CandlePattern[]>,
+  colors: CandleColors,
 ) {
+  const { positive: POSITIVE, negative: NEGATIVE, axis: AXIS } = colors;
   return function CandleBarShape(props: BarShapeProps) {
     const { x, y, width, height, index, payload } = props;
     if (x == null || y == null || width == null || height == null || !payload) return null;
@@ -201,7 +196,7 @@ function makeCandleShape(
 
 function CandleTooltip({
   active, payload, label,
-  showSma50, showSma200, showBB,
+  showSma50, showSma200, showBB, ct,
 }: {
   active?: boolean;
   payload?: { payload: CandleData }[];
@@ -209,23 +204,25 @@ function CandleTooltip({
   showSma50: boolean;
   showSma200: boolean;
   showBB: boolean;
+  ct: ChartTheme;
 }) {
   if (!active || !payload?.length) return null;
   const row = payload[0]?.payload;
   if (!row) return null;
   const bullish = row.close >= row.open;
+  const ohlc = bullish ? ct.positive : ct.negative;
   return (
-    <div style={TOOLTIP_STYLE}>
+    <div style={ct.tooltip}>
       <p className="mb-1.5 text-xs text-muted">{label ? fmtDate(label) : ""}</p>
       <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
         <span className="text-muted">O</span>
-        <span className="font-mono" style={{ color: bullish ? POSITIVE : NEGATIVE }}>{fmtPrice(row.open)}</span>
+        <span className="font-mono" style={{ color: ohlc }}>{fmtPrice(row.open)}</span>
         <span className="text-muted">H</span>
-        <span className="font-mono" style={{ color: bullish ? POSITIVE : NEGATIVE }}>{fmtPrice(row.high)}</span>
+        <span className="font-mono" style={{ color: ohlc }}>{fmtPrice(row.high)}</span>
         <span className="text-muted">L</span>
-        <span className="font-mono" style={{ color: bullish ? POSITIVE : NEGATIVE }}>{fmtPrice(row.low)}</span>
+        <span className="font-mono" style={{ color: ohlc }}>{fmtPrice(row.low)}</span>
         <span className="text-muted">C</span>
-        <span className="font-mono" style={{ color: bullish ? POSITIVE : NEGATIVE }}>{fmtPrice(row.close)}</span>
+        <span className="font-mono" style={{ color: ohlc }}>{fmtPrice(row.close)}</span>
         {row.volume > 0 && <>
           <span className="text-muted">Vol</span>
           <span className="font-mono text-muted">{fmtVol(row.volume)}</span>
@@ -249,35 +246,35 @@ function CandleTooltip({
   );
 }
 
-function RsiTooltip({ active, payload, label }: {
-  active?: boolean; payload?: { payload: CandleData }[]; label?: string;
+function RsiTooltip({ active, payload, label, ct }: {
+  active?: boolean; payload?: { payload: CandleData }[]; label?: string; ct: ChartTheme;
 }) {
   if (!active || !payload?.length) return null;
   const row = payload[0]?.payload;
   if (!row || row.rsi == null) return null;
   const rsi = row.rsi;
-  const color = rsi > 70 ? NEGATIVE : rsi < 30 ? POSITIVE : AXIS;
+  const color = rsi > 70 ? ct.negative : rsi < 30 ? ct.positive : ct.axis;
   return (
-    <div style={TOOLTIP_STYLE}>
+    <div style={ct.tooltip}>
       <p className="mb-1 text-xs text-muted">{label ? fmtDate(label) : ""}</p>
       <p className="text-xs">
         <span className="text-muted mr-2">RSI(14)</span>
         <span className="font-mono" style={{ color }}>{rsi.toFixed(1)}</span>
-        {rsi > 70 && <span className="ml-2 text-xs" style={{ color: NEGATIVE }}>overbought</span>}
-        {rsi < 30 && <span className="ml-2 text-xs" style={{ color: POSITIVE }}>oversold</span>}
+        {rsi > 70 && <span className="ml-2 text-xs" style={{ color: ct.negative }}>overbought</span>}
+        {rsi < 30 && <span className="ml-2 text-xs" style={{ color: ct.positive }}>oversold</span>}
       </p>
     </div>
   );
 }
 
-function MacdTooltip({ active, payload, label }: {
-  active?: boolean; payload?: { payload: CandleData }[]; label?: string;
+function MacdTooltip({ active, payload, label, ct }: {
+  active?: boolean; payload?: { payload: CandleData }[]; label?: string; ct: ChartTheme;
 }) {
   if (!active || !payload?.length) return null;
   const row = payload[0]?.payload;
   if (!row || row.macd == null) return null;
   return (
-    <div style={TOOLTIP_STYLE}>
+    <div style={ct.tooltip}>
       <p className="mb-1 text-xs text-muted">{label ? fmtDate(label) : ""}</p>
       <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs">
         {row.macd != null && <>
@@ -290,7 +287,7 @@ function MacdTooltip({ active, payload, label }: {
         </>}
         {row.macdHistogram != null && <>
           <span className="text-muted">Histogram</span>
-          <span className="font-mono" style={{ color: row.macdHistogram >= 0 ? POSITIVE : NEGATIVE }}>
+          <span className="font-mono" style={{ color: row.macdHistogram >= 0 ? ct.positive : ct.negative }}>
             {row.macdHistogram.toFixed(3)}
           </span>
         </>}
@@ -304,6 +301,12 @@ function MacdTooltip({ active, payload, label }: {
 /* -------------------------------------------------------------------------- */
 
 export function CandleChart({ history, since }: CandleChartProps) {
+  const ct = useChartTheme();
+  const AXIS = ct.axis;
+  const GRID = ct.grid;
+  const POSITIVE = ct.positive;
+  const NEGATIVE = ct.negative;
+
   const [showSma50, setShowSma50] = useState(true);
   const [showSma200, setShowSma200] = useState(true);
   const [showBB, setShowBB] = useState(false);
@@ -390,8 +393,8 @@ export function CandleChart({ history, since }: CandleChartProps) {
 
   // Memoize the shape renderer so it only regenerates when domain or patterns change
   const candleShape = useMemo(
-    () => makeCandleShape(yMin, yMax, patternMap),
-    [yMin, yMax, patternMap],
+    () => makeCandleShape(yMin, yMax, patternMap, { positive: POSITIVE, negative: NEGATIVE, axis: AXIS }),
+    [yMin, yMax, patternMap, POSITIVE, NEGATIVE, AXIS],
   );
 
   // Recent unique patterns (last 20 candles, deduplicated by name)
@@ -494,6 +497,7 @@ export function CandleChart({ history, since }: CandleChartProps) {
                 showSma50={showSma50}
                 showSma200={showSma200}
                 showBB={showBB}
+                ct={ct}
               />
             }
           />
@@ -556,7 +560,7 @@ export function CandleChart({ history, since }: CandleChartProps) {
               width={56}
               tickFormatter={fmtVol}
             />
-            <Tooltip content={() => null} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+            <Tooltip content={() => null} cursor={{ fill: ct.cursorFill }} />
             <Bar
               dataKey="volume"
               fill={BLUE}
@@ -607,7 +611,7 @@ export function CandleChart({ history, since }: CandleChartProps) {
               />
               <ReferenceLine y={70} stroke={NEGATIVE} strokeDasharray="3 2" strokeOpacity={0.5} />
               <ReferenceLine y={30} stroke={POSITIVE} strokeDasharray="3 2" strokeOpacity={0.5} />
-              <Tooltip content={<RsiTooltip />} />
+              <Tooltip content={<RsiTooltip ct={ct} />} />
               <Line type="monotone" dataKey="rsi" stroke={BLUE} strokeWidth={1.5}
                 dot={false} activeDot={{ r: 3, strokeWidth: 0 }} connectNulls isAnimationActive={false} />
             </ComposedChart>
@@ -670,7 +674,7 @@ export function CandleChart({ history, since }: CandleChartProps) {
                 tickFormatter={(v: number) => v.toFixed(2)}
               />
               <ReferenceLine y={0} stroke={GRID} strokeDasharray="4 2" />
-              <Tooltip content={<MacdTooltip />} />
+              <Tooltip content={<MacdTooltip ct={ct} />} />
               <Bar dataKey="macdHistogram" fill={BLUE} fillOpacity={0.5}
                 maxBarSize={6} isAnimationActive={false} />
               <Line type="monotone" dataKey="macd" stroke={BLUE} strokeWidth={1.5}

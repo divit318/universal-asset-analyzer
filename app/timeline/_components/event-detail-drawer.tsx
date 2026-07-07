@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { TimelineEvent, TimelineEventDetail, WhatChangedResult } from "@/lib/types";
 import { formatDate, formatPercent } from "@/lib/format";
 import { categoryLabel } from "./category-label";
+import { Drawer } from "@/app/_components/dialog";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -71,11 +72,7 @@ export function EventDetailDrawer({ event, onClose }: { event: TimelineEvent; on
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/60" onClick={onClose}>
-      <div
-        className="flex h-full w-full max-w-xl flex-col overflow-y-auto border-l border-border bg-background"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Drawer open onClose={onClose} label={`Event details: ${event.title}`} className="max-w-xl bg-background">
         <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-border bg-background/95 p-4 backdrop-blur-sm">
           <div className="flex flex-col gap-1">
             <span className="text-[10px] font-medium uppercase tracking-widest text-muted/60">
@@ -190,7 +187,6 @@ export function EventDetailDrawer({ event, onClose }: { event: TimelineEvent; on
             )}
           </div>
         </div>
-      </div>
-    </div>
+    </Drawer>
   );
 }

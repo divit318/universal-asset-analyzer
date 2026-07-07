@@ -19,10 +19,6 @@ function makeRequest(body?: unknown): Request {
   });
 }
 
-function makeGetRequest(url = "http://localhost/"): Request {
-  return new Request(url);
-}
-
 function isPdfMagic(buf: Uint8Array): boolean {
   return (
     buf[0] === 0x25 && // %

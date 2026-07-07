@@ -11,11 +11,12 @@ import { useToast } from "@/app/_components/toast";
 import { useIOSSafe } from "@/lib/ios-context";
 import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
 import { WatchlistAlerts } from "./_components/watchlist-alerts";
+import { PageShell } from "@/app/_components/ui";
 
 function WatchlistDigestPanel({ digest, loading }: { digest: WatchlistDigest | null; loading: boolean }) {
   if (loading) {
     return (
-      <div className="rounded-xl border border-accent/20 bg-accent/5 p-5">
+      <div className="rounded-xl border border-brand/20 bg-brand/5 p-5">
         <div className="flex items-center gap-3 mb-3">
           <div className="h-5 w-40 animate-pulse rounded bg-surface-2" />
           <div className="ml-auto h-4 w-16 animate-pulse rounded-full bg-surface-2" />
@@ -32,10 +33,10 @@ function WatchlistDigestPanel({ digest, loading }: { digest: WatchlistDigest | n
   if (!digest) return null;
 
   return (
-    <div className="rounded-xl border border-accent/20 bg-accent/5 p-5">
+    <div className="rounded-xl border border-brand/20 bg-brand/5 p-5">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-accent/70">AI Watchlist Intelligence</p>
-        <span className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-accent">
+        <p className="text-label font-semibold uppercase tracking-widest text-brand/70">AI Watchlist Intelligence</p>
+        <span className="rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-label font-semibold uppercase tracking-widest text-brand">
           Local AI
         </span>
       </div>
@@ -44,7 +45,7 @@ function WatchlistDigestPanel({ digest, loading }: { digest: WatchlistDigest | n
         <div className="grid gap-3 sm:grid-cols-2 mb-4">
           {digest.topPicks.length > 0 && (
             <div>
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-positive/80">Top picks</p>
+              <p className="mb-2 text-label font-semibold uppercase tracking-widest text-positive/80">Top picks</p>
               <ul className="space-y-1">
                 {digest.topPicks.map((p, i) => (
                   <li key={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
@@ -57,7 +58,7 @@ function WatchlistDigestPanel({ digest, loading }: { digest: WatchlistDigest | n
           )}
           {digest.topConcerns.length > 0 && (
             <div>
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-negative/80">Concerns</p>
+              <p className="mb-2 text-label font-semibold uppercase tracking-widest text-negative/80">Concerns</p>
               <ul className="space-y-1">
                 {digest.topConcerns.map((c, i) => (
                   <li key={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
@@ -72,11 +73,11 @@ function WatchlistDigestPanel({ digest, loading }: { digest: WatchlistDigest | n
       )}
       {digest.actionItems.length > 0 && (
         <div className="border-t border-border pt-3">
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted">Action items</p>
+          <p className="mb-2 text-label font-semibold uppercase tracking-widest text-muted">Action items</p>
           <ul className="space-y-1">
             {digest.actionItems.map((a, i) => (
               <li key={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
-                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent/60" />
+                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand/60" />
                 {a}
               </li>
             ))}
@@ -141,7 +142,7 @@ function AlertModal({ item, onSave, onCancel }: {
             type="number" step="any" min="0" value={targetPrice}
             onChange={(e) => setTargetPrice(e.target.value)}
             placeholder="e.g. 200.00"
-            className="rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-sm outline-none placeholder:text-muted focus:border-accent"
+            className="rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-sm outline-none placeholder:text-muted focus:border-brand"
           />
         </label>
         <label className="flex flex-col gap-1">
@@ -154,7 +155,7 @@ function AlertModal({ item, onSave, onCancel }: {
               type="number" step="0.5" min="0" max="50" value={alertPctDrop}
               onChange={(e) => setAlertPctDrop(e.target.value)}
               placeholder="e.g. 5"
-              className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-sm outline-none placeholder:text-muted focus:border-accent"
+              className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-sm outline-none placeholder:text-muted focus:border-brand"
             />
             <span className="pointer-events-none absolute right-3 top-2 text-sm text-muted">%</span>
           </div>
@@ -162,7 +163,7 @@ function AlertModal({ item, onSave, onCancel }: {
         <div className="flex gap-2 pt-1">
           <button
             type="submit" disabled={saving}
-            className="flex-1 rounded-lg bg-accent-strong py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="flex-1 rounded-lg bg-brand-strong py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {saving ? "Saving…" : "Save alerts"}
           </button>
@@ -200,12 +201,12 @@ function NotesModal({ item, onSave, onCancel }: {
         <textarea
           value={notes} onChange={(e) => setNotes(e.target.value)} rows={5}
           placeholder="Why you're watching this, key levels, upcoming catalysts…"
-          className="resize-none rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none placeholder:text-muted focus:border-accent"
+          className="resize-none rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none placeholder:text-muted focus:border-brand"
         />
         <div className="flex gap-2 pt-1">
           <button
             type="submit" disabled={saving}
-            className="flex-1 rounded-lg bg-accent-strong py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="flex-1 rounded-lg bg-brand-strong py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {saving ? "Saving…" : "Save notes"}
           </button>
@@ -365,7 +366,7 @@ export default function WatchlistPage() {
   const hasQuotes = Object.keys(quotes).length > 0;
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-10">
+    <PageShell py="py-10">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-3">
@@ -416,12 +417,12 @@ export default function WatchlistPage() {
       {!loading && items.length > 0 && hasQuotes && (
         <div className="flex flex-wrap items-center gap-4 rounded-xl border border-border bg-surface px-5 py-3">
           <div className="flex flex-col gap-0.5">
-            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Watching</span>
+            <span className="text-label font-semibold uppercase tracking-widest text-muted/60">Watching</span>
             <span className="font-mono text-sm font-semibold">{items.length}</span>
           </div>
           <span className="h-8 w-px bg-border" />
           <div className="flex flex-col gap-0.5">
-            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Today</span>
+            <span className="text-label font-semibold uppercase tracking-widest text-muted/60">Today</span>
             <div className="flex items-center gap-2">
               <span className="text-xs text-positive">↑ {gainers}</span>
               <span className="text-xs text-negative">↓ {losers}</span>
@@ -431,7 +432,7 @@ export default function WatchlistPage() {
             <>
               <span className="h-8 w-px bg-border" />
               <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">Alerts</span>
+                <span className="text-label font-semibold uppercase tracking-widest text-muted/60">Alerts</span>
                 <span className="text-xs font-semibold text-negative">{alertCount} firing</span>
               </div>
             </>
@@ -464,15 +465,15 @@ export default function WatchlistPage() {
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder="Filter by ticker or name…"
-            className="flex-1 rounded-lg border border-border bg-surface px-4 py-2.5 text-sm outline-none placeholder:text-muted focus:border-accent"
+            className="flex-1 rounded-lg border border-border bg-surface px-4 py-2.5 text-sm outline-none placeholder:text-muted focus:border-brand"
           />
           {ios?.profileReady && ios.profile.hasPortfolio && (
             <button
               onClick={() => setFitSort((v) => !v)}
               className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
                 fitSort
-                  ? "border-accent/40 bg-accent/10 text-accent"
-                  : "border-border text-muted hover:border-accent/30 hover:text-accent"
+                  ? "border-brand/40 bg-brand/10 text-brand"
+                  : "border-border text-muted hover:border-brand/30 hover:text-brand"
               }`}
             >
               ✦ {fitSort ? "Sorted by Fit" : "Sort by Portfolio Fit"}
@@ -501,7 +502,7 @@ export default function WatchlistPage() {
             </p>
           </div>
           <div className="flex gap-3">
-            <Link href="/research" className="rounded-lg bg-accent-strong px-5 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90">
+            <Link href="/research" className="rounded-lg bg-brand-strong px-5 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90">
               Research a stock →
             </Link>
             <Link href="/screener" className="rounded-lg border border-border px-5 py-2 text-sm transition-colors hover:bg-surface-2">
@@ -541,7 +542,7 @@ export default function WatchlistPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <Link
                         href={`/research?symbol=${item.symbol}`}
-                        className="font-mono text-sm font-semibold text-accent hover:underline"
+                        className="font-mono text-sm font-semibold text-brand hover:underline"
                       >
                         {item.symbol}
                       </Link>
@@ -559,9 +560,9 @@ export default function WatchlistPage() {
                     <p className="text-sm text-muted">{item.name}</p>
 
                     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted">
-                      <span>Added {formatDaysAgo(item.addedAt)}</span>
+                      <span title={formatDate(item.addedAt)}>Added {formatDaysAgo(item.addedAt)}</span>
                       {item.targetPrice != null ? (
-                        <span className="rounded-full border border-accent/30 bg-accent/5 px-1.5 py-0.5 text-accent">
+                        <span className="rounded-full border border-brand/30 bg-brand/5 px-1.5 py-0.5 text-brand">
                           Target {formatCurrency(item.targetPrice)}
                         </span>
                       ) : null}
@@ -585,25 +586,25 @@ export default function WatchlistPage() {
                     <div className="mt-2.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
                       <Link
                         href={`/dcf?symbol=${item.symbol}`}
-                        className="text-muted underline-offset-2 hover:text-accent hover:underline"
+                        className="text-muted underline-offset-2 hover:text-brand hover:underline"
                       >
                         DCF ↗
                       </Link>
                       <Link
                         href={`/ic-report?symbol=${item.symbol}`}
-                        className="text-muted underline-offset-2 hover:text-accent hover:underline"
+                        className="text-muted underline-offset-2 hover:text-brand hover:underline"
                       >
                         IC Report ↗
                       </Link>
                       <Link
                         href={`/compare?symbols=${item.symbol}`}
-                        className="text-muted underline-offset-2 hover:text-accent hover:underline"
+                        className="text-muted underline-offset-2 hover:text-brand hover:underline"
                       >
                         Compare ↗
                       </Link>
                       <Link
                         href={`/stocks/${item.symbol}`}
-                        className="text-muted underline-offset-2 hover:text-accent hover:underline"
+                        className="text-muted underline-offset-2 hover:text-brand hover:underline"
                       >
                         Deep view ↗
                       </Link>
@@ -628,13 +629,13 @@ export default function WatchlistPage() {
                   <div className="flex shrink-0 flex-col items-end gap-1.5">
                     <button
                       onClick={() => setEditingAlerts(item)}
-                      className="rounded-md border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-accent hover:text-accent"
+                      className="rounded-md border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-brand hover:text-brand"
                     >
                       Set alerts
                     </button>
                     <button
                       onClick={() => setEditingNotes(item)}
-                      className="rounded-md border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-accent hover:text-accent"
+                      className="rounded-md border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-brand hover:text-brand"
                     >
                       Notes
                     </button>
@@ -646,10 +647,6 @@ export default function WatchlistPage() {
                       Remove
                     </button>
                   </div>
-                </div>
-
-                <div className="border-t border-border/40 px-4 py-1.5 text-xs text-muted/60">
-                  Added {formatDate(item.addedAt)}
                 </div>
               </li>
             );
@@ -690,6 +687,6 @@ export default function WatchlistPage() {
         confirmLabel="Remove"
         danger
       />
-    </div>
+    </PageShell>
   );
 }

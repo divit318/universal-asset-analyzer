@@ -16,21 +16,16 @@ import type {
   SectorRotationEntry,
 } from "./types";
 import { sectorGroup } from "./sector";
-import type { SectorGroup } from "./sector";
 // Type-only import — lib/market.ts has zero runtime deps beyond ./types, so
 // this is safe in client bundles, unlike importing lib/sector-rotation.ts
 // (which pulls in node:sqlite via lib/db.ts).
 import type { MarketRegion } from "./market";
+import { lerp } from "./score-math";
+import { scoreToRecommendation, RECOMMENDATION_LABEL, TIER_EDGES } from "./recommendation";
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
 /* -------------------------------------------------------------------------- */
-
-/** Linear score: maps `value` from `worst`→0 to `best`→max, clamped. */
-function lerp(value: number, worst: number, best: number, max: number): number {
-  const t = (value - worst) / (best - worst);
-  return Math.max(0, Math.min(1, t)) * max;
-}
 
 const pct = (v: number) => `${(v * 100).toFixed(0)}%`;
 const ratio = (v: number) => v.toFixed(2);
@@ -383,25 +378,6 @@ export function analystSignal(a: AnalystConsensus): number | null {
 /* Composite decision                                                         */
 /* -------------------------------------------------------------------------- */
 
-/** Map the blended 0-100 composite to a 5-tier recommendation. */
-function recommend(composite: number): Recommendation {
-  if (composite >= 78) return "STRONG_BUY";
-  if (composite >= 60) return "BUY";
-  if (composite >= 42) return "HOLD";
-  if (composite >= 25) return "SELL";
-  return "STRONG_SELL";
-}
-
-const REC_LABEL: Record<Recommendation, string> = {
-  STRONG_BUY: "Strong Buy",
-  BUY: "Buy",
-  HOLD: "Hold",
-  SELL: "Sell",
-  STRONG_SELL: "Strong Sell",
-};
-
-const TIER_EDGES = [25, 42, 60, 78];
-
 /**
  * Composite signal weights, keyed by market. India research should lean on
  * fundamentals and sector leadership rather than analyst consensus (coverage
@@ -429,7 +405,7 @@ function buildRationale(
   if (signals.momentum != null) sig.push(`momentum ${signals.momentum}`);
   if (signals.sectorRotation != null) sig.push(`sector rotation ${signals.sectorRotation}`);
 
-  const parts: string[] = [`${REC_LABEL[rec]} — ${sig.join(", ")} (all /100).`];
+  const parts: string[] = [`${RECOMMENDATION_LABEL[rec]} — ${sig.join(", ")} (all /100).`];
   if (strengths.length) parts.push(`Strengths: ${strengths.map((f) => f.detail).join(", ")}.`);
   if (concerns.length) parts.push(`Watch: ${concerns.map((f) => f.detail).join(", ")}.`);
   return parts.join(" ");
@@ -494,7 +470,7 @@ export function computeScore(
   const wSum = weighted.reduce((s, [, w]) => s + w, 0);
   const composite = Math.round(weighted.reduce((s, [v, w]) => s + v * w, 0) / wSum);
 
-  const rec = recommend(composite);
+  const rec = scoreToRecommendation(composite);
 
   // Confidence blends three things: how complete the fundamental data is, how
   // far the composite sits from a tier boundary, and how much the independent

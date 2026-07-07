@@ -12,6 +12,7 @@ import { buildBlocks, classifyIntent, selectBlocks } from "@/lib/ai/retrieval";
 import { buildMessages } from "@/lib/ai/prompt";
 import { getAction, suggestFollowUps } from "@/lib/ai/actions";
 import { extractCitations, loadHistory, persistTurn } from "@/lib/ai/memory";
+import { verifyGrounding } from "@/lib/ai/grounding";
 import type { ChatRequest, ChatStreamEvent, ResearchIntent, PortfolioContextForAI, ContextBlock } from "@/lib/ai/types";
 
 export const runtime = "nodejs";
@@ -166,7 +167,15 @@ export async function POST(request: Request) {
         splitter.end();
 
         const citations = extractCitations(answer, ctx);
-        controller.enqueue(line({ type: "meta", citations, suggestions, model }));
+        // Verify the answer against the exact evidence it was handed: trace
+        // every figure back to a dossier number and confirm cited sources are
+        // real. Replaces cosmetic "confidence" with a signal from the output.
+        const grounding = verifyGrounding(
+          answer,
+          blocks.map((b) => b.body).join("\n\n"),
+          { allowedTags: blocks.map((b) => b.source) },
+        );
+        controller.enqueue(line({ type: "meta", citations, suggestions, model, grounding }));
 
         if (body.sessionId && answer.trim()) {
           try {
@@ -174,6 +183,7 @@ export async function POST(request: Request) {
               content: answer.trim(),
               citations,
               reasoning: reasoning.trim(),
+              grounding,
             });
           } catch {
             /* persistence is non-critical */

@@ -27,11 +27,12 @@ import type { GraphScope } from "@/lib/knowledge-graph";
 import { GraphView } from "./_views/graph-view";
 import { TimelineView } from "./_views/timeline-view";
 import { OpportunityMapView } from "./_views/opportunity-map-view";
+import { PageShell, PageHeader, Tabs, type TabItem } from "@/app/_components/ui";
 
-const TABS: { value: IntelligenceView; label: string; desc: string }[] = [
-  { value: "graph", label: "Graph", desc: "Understand relationships" },
-  { value: "opportunity-map", label: "Opportunity Map", desc: "Find where the best opportunities exist" },
-  { value: "timeline", label: "Timeline", desc: "See how the thesis evolved over time" },
+const TABS: TabItem<IntelligenceView>[] = [
+  { id: "graph", label: "Graph" },
+  { id: "opportunity-map", label: "Opportunity Map" },
+  { id: "timeline", label: "Timeline" },
 ];
 
 const VALID_SCOPES: GraphScope[] = ["symbol", "sector", "portfolio", "watchlist"];
@@ -73,30 +74,13 @@ function IntelligenceShell() {
   const { view, setView } = useIntelligence();
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-8 sm:px-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold text-foreground">Intelligence</h1>
-        <p className="text-sm text-muted">
-          One investment intelligence model, three synchronized views — select a company, sector, portfolio, or
-          watchlist and it follows you across relationships, opportunities, and history.
-        </p>
-      </div>
+    <PageShell>
+      <PageHeader
+        title="Intelligence"
+        description="One investment intelligence model, three synchronized views — select a company, sector, portfolio, or watchlist and it follows you across relationships, opportunities, and history."
+      />
 
-      <div className="flex flex-wrap gap-1 self-start rounded-lg border border-border bg-surface p-1">
-        {TABS.map((tab) => (
-          <button
-            key={tab.value}
-            type="button"
-            onClick={() => setView(tab.value)}
-            title={tab.desc}
-            className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
-              view === tab.value ? "bg-accent/10 text-accent" : "text-muted hover:text-foreground"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <Tabs tabs={TABS} active={view} onChange={setView} layoutId="intelligence-tabs-underline" />
 
       <div className={view === "graph" ? "contents" : "hidden"}>
         <GraphView />
@@ -107,7 +91,7 @@ function IntelligenceShell() {
       <div className={view === "timeline" ? "contents" : "hidden"}>
         <TimelineView />
       </div>
-    </div>
+    </PageShell>
   );
 }
 

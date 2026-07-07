@@ -35,13 +35,6 @@ function ratio(v: number | null | undefined, suffix = "x"): string {
   return `${v.toFixed(1)}${suffix}`;
 }
 
-function inr(v: number | null | undefined): string {
-  if (v == null) return "—";
-  if (v >= 1e7) return `₹${(v / 1e7).toFixed(0)}Cr`;
-  if (v >= 1e5) return `₹${(v / 1e5).toFixed(0)}L`;
-  return `₹${v.toLocaleString("en-IN")}`;
-}
-
 interface Derived {
   promoterHolding: number | null;
   fiiHolding: number | null;

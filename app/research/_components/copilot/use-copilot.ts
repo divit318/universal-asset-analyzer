@@ -169,7 +169,7 @@ export function useCopilot(symbol: string) {
               patchAssistant((a) => ({ ...a, reasoning: (a.reasoning ?? "") + ev.text }));
             } else if (ev.type === "meta") {
               const citations: Citation[] = ev.citations;
-              patchAssistant((a) => ({ ...a, citations }));
+              patchAssistant((a) => ({ ...a, citations, grounding: ev.grounding }));
               setSuggestions(ev.suggestions);
             } else if (ev.type === "error") {
               streamErr = ev.message;

@@ -6,7 +6,6 @@ import {
   useState,
   useCallback,
   useRef,
-  useEffect,
   type ReactNode,
 } from "react";
 import type { PortfolioReport, NewPositionRecommendation, PortfolioObjective, PortfolioConstraints } from "@/lib/portfolio-analytics";

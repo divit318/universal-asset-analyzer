@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { CalendarEvent, CalendarResponse } from "@/app/api/calendar/route";
 import { formatCompact } from "@/lib/format";
 import { EventDrawer } from "./_components/event-drawer";
+import { PageShell } from "@/app/_components/ui";
 
 // ─── Style constants ────────────────────────────────────────────────────────
 
@@ -12,7 +13,7 @@ const TYPE_STYLES: Record<CalendarEvent["type"], {
   label: string; color: string; bg: string; border: string; dot: string;
 }> = {
   earnings:   { label: "Earnings",  color: "text-blue-400",    bg: "bg-blue-400/10",   border: "border-blue-400/25",   dot: "bg-blue-400" },
-  exDividend: { label: "Ex-Div",    color: "text-accent",      bg: "bg-accent/10",     border: "border-accent/25",     dot: "bg-accent" },
+  exDividend: { label: "Ex-Div",    color: "text-brand",      bg: "bg-brand/10",     border: "border-brand/25",     dot: "bg-brand" },
   dividend:   { label: "Dividend",  color: "text-emerald-400", bg: "bg-emerald-400/10", border: "border-emerald-400/25", dot: "bg-emerald-400" },
   macro:      { label: "Macro",     color: "text-warning",   bg: "bg-warning/10",  border: "border-warning/25",  dot: "bg-warning" },
 };
@@ -115,7 +116,7 @@ function SectionLabel({ children, count }: { children: React.ReactNode; count?: 
     <div className="flex items-center gap-2">
       <span className="text-xs font-semibold uppercase tracking-widest text-muted/70">{children}</span>
       {count != null && (
-        <span className="rounded-full bg-surface-3 px-1.5 py-0.5 text-[10px] font-semibold text-muted">
+        <span className="rounded-full bg-surface-3 px-1.5 py-0.5 text-label font-semibold text-muted">
           {count}
         </span>
       )}
@@ -127,7 +128,7 @@ function SectionLabel({ children, count }: { children: React.ReactNode; count?: 
 function TypeBadge({ type }: { type: CalendarEvent["type"] }) {
   const ts = TYPE_STYLES[type];
   return (
-    <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest ${ts.color} ${ts.bg} ${ts.border}`}>
+    <span className={`shrink-0 rounded border px-1.5 py-0.5 text-micro font-bold uppercase tracking-widest ${ts.color} ${ts.bg} ${ts.border}`}>
       {ts.label}
     </span>
   );
@@ -138,7 +139,7 @@ function ImpactBadge({ impact }: { impact?: string }) {
   const is = IMPACT_STYLES[impact];
   const dots = impact === "high" ? "●●●" : impact === "medium" ? "●●○" : "●○○";
   return (
-    <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest ${is.color} ${is.bg} ${is.border}`}>
+    <span className={`shrink-0 rounded border px-1.5 py-0.5 text-micro font-bold uppercase tracking-widest ${is.color} ${is.bg} ${is.border}`}>
       {dots}
     </span>
   );
@@ -162,17 +163,17 @@ function EarningsRow({ ev, onClick, isPortfolio, isWatchlist }: {
           <div className="flex flex-wrap items-center gap-1.5">
             <TypeBadge type="earnings" />
             {isPortfolio && (
-              <span className="rounded border border-accent/20 bg-accent/8 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest text-accent">
+              <span className="rounded border border-brand/20 bg-brand/8 px-1.5 py-0.5 text-micro font-bold uppercase tracking-widest text-brand">
                 Portfolio
               </span>
             )}
             {!isPortfolio && isWatchlist && (
-              <span className="rounded border border-blue-400/20 bg-blue-400/8 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest text-blue-400">
+              <span className="rounded border border-blue-400/20 bg-blue-400/8 px-1.5 py-0.5 text-micro font-bold uppercase tracking-widest text-blue-400">
                 Watchlist
               </span>
             )}
             {ev.isEstimate && (
-              <span className="text-[9px] text-muted/50">Est.</span>
+              <span className="text-micro text-muted/50">Est.</span>
             )}
           </div>
 
@@ -199,20 +200,20 @@ function EarningsRow({ ev, onClick, isPortfolio, isWatchlist }: {
         {/* Date column */}
         <div className="shrink-0 text-right">
           <div className="font-mono text-xs font-semibold text-foreground">{formatShortDate(ev.date)}</div>
-          <div className={`text-[10px] font-medium ${days <= 3 && days >= 0 ? "text-warning" : "text-muted"}`}>
+          <div className={`text-label font-medium ${days <= 3 && days >= 0 ? "text-warning" : "text-muted"}`}>
             {daysLabel(days)}
           </div>
         </div>
       </div>
 
       {/* Quick links — revealed on hover */}
-      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-0.5 border-t border-border/40 pt-2.5 text-[11px]">
+      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-0.5 border-t border-border/40 pt-2.5 text-caption">
         {ev.symbol && (
           <>
-            <Link href={`/research?symbol=${ev.symbol}`} className="text-muted transition-colors hover:text-accent" onClick={(e) => e.stopPropagation()}>Research ↗</Link>
-            <Link href={`/dcf?symbol=${ev.symbol}`} className="text-muted transition-colors hover:text-accent" onClick={(e) => e.stopPropagation()}>DCF ↗</Link>
-            <Link href={`/ic-report?symbol=${ev.symbol}`} className="text-muted transition-colors hover:text-accent" onClick={(e) => e.stopPropagation()}>IC Report ↗</Link>
-            <Link href={`/compare?symbols=${ev.symbol}`} className="text-muted transition-colors hover:text-accent" onClick={(e) => e.stopPropagation()}>Compare ↗</Link>
+            <Link href={`/research?symbol=${ev.symbol}`} className="text-muted transition-colors hover:text-brand" onClick={(e) => e.stopPropagation()}>Research ↗</Link>
+            <Link href={`/dcf?symbol=${ev.symbol}`} className="text-muted transition-colors hover:text-brand" onClick={(e) => e.stopPropagation()}>DCF ↗</Link>
+            <Link href={`/ic-report?symbol=${ev.symbol}`} className="text-muted transition-colors hover:text-brand" onClick={(e) => e.stopPropagation()}>IC Report ↗</Link>
+            <Link href={`/compare?symbols=${ev.symbol}`} className="text-muted transition-colors hover:text-brand" onClick={(e) => e.stopPropagation()}>Compare ↗</Link>
           </>
         )}
       </div>
@@ -230,21 +231,21 @@ function DividendRow({ ev, onClick, isPortfolio, isWatchlist }: {
   return (
     <button
       onClick={onClick}
-      className="group w-full rounded-xl border border-border bg-surface px-4 py-4 text-left transition-all hover:border-accent/30 hover:bg-surface-2"
+      className="group w-full rounded-xl border border-border bg-surface px-4 py-4 text-left transition-all hover:border-brand/30 hover:bg-surface-2"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1.5">
           <div className="flex flex-wrap items-center gap-1.5">
             <TypeBadge type={ev.type} />
             {isPortfolio && (
-              <span className="rounded border border-accent/20 bg-accent/8 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest text-accent">Portfolio</span>
+              <span className="rounded border border-brand/20 bg-brand/8 px-1.5 py-0.5 text-micro font-bold uppercase tracking-widest text-brand">Portfolio</span>
             )}
             {!isPortfolio && isWatchlist && (
-              <span className="rounded border border-blue-400/20 bg-blue-400/8 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest text-blue-400">Watchlist</span>
+              <span className="rounded border border-blue-400/20 bg-blue-400/8 px-1.5 py-0.5 text-micro font-bold uppercase tracking-widest text-blue-400">Watchlist</span>
             )}
           </div>
           <div className="flex items-center gap-2">
-            {ev.symbol && <span className="font-mono text-sm font-bold text-accent">{ev.symbol}</span>}
+            {ev.symbol && <span className="font-mono text-sm font-bold text-brand">{ev.symbol}</span>}
             <span className="truncate text-sm text-foreground">{ev.name}</span>
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted">
@@ -261,13 +262,13 @@ function DividendRow({ ev, onClick, isPortfolio, isWatchlist }: {
         </div>
         <div className="shrink-0 text-right">
           <div className="font-mono text-xs font-semibold text-foreground">{formatShortDate(ev.date)}</div>
-          <div className={`text-[10px] font-medium ${days <= 3 && days >= 0 ? "text-warning" : "text-muted"}`}>{daysLabel(days)}</div>
+          <div className={`text-label font-medium ${days <= 3 && days >= 0 ? "text-warning" : "text-muted"}`}>{daysLabel(days)}</div>
         </div>
       </div>
       {ev.symbol && (
-        <div className="mt-3 flex flex-wrap gap-x-3 gap-y-0.5 border-t border-border/40 pt-2.5 text-[11px]">
-          <Link href={`/research?symbol=${ev.symbol}`} className="text-muted transition-colors hover:text-accent" onClick={(e) => e.stopPropagation()}>Research ↗</Link>
-          <Link href={`/compare?symbols=${ev.symbol}`} className="text-muted transition-colors hover:text-accent" onClick={(e) => e.stopPropagation()}>Compare ↗</Link>
+        <div className="mt-3 flex flex-wrap gap-x-3 gap-y-0.5 border-t border-border/40 pt-2.5 text-caption">
+          <Link href={`/research?symbol=${ev.symbol}`} className="text-muted transition-colors hover:text-brand" onClick={(e) => e.stopPropagation()}>Research ↗</Link>
+          <Link href={`/compare?symbols=${ev.symbol}`} className="text-muted transition-colors hover:text-brand" onClick={(e) => e.stopPropagation()}>Compare ↗</Link>
         </div>
       )}
     </button>
@@ -290,7 +291,7 @@ function MacroRow({ ev, onClick }: { ev: CalendarEvent; onClick: () => void }) {
             <TypeBadge type="macro" />
             {ev.impact && <ImpactBadge impact={ev.impact} />}
             {ev.category && (
-              <span className="rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[9px] text-muted uppercase tracking-widest">
+              <span className="rounded border border-border bg-surface-2 px-1.5 py-0.5 text-micro text-muted uppercase tracking-widest">
                 {ev.category}
               </span>
             )}
@@ -302,12 +303,12 @@ function MacroRow({ ev, onClick }: { ev: CalendarEvent; onClick: () => void }) {
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted">
             {ev.previous && <span>Prev <span className="text-foreground">{ev.previous}</span></span>}
             {ev.forecast && <span>Fcst <span className={`font-medium ${is?.color ?? "text-foreground"}`}>{ev.forecast}</span></span>}
-            {ev.actual && <span>Actual <span className="font-semibold text-accent">{ev.actual}</span></span>}
+            {ev.actual && <span>Actual <span className="font-semibold text-brand">{ev.actual}</span></span>}
           </div>
         </div>
         <div className="shrink-0 text-right">
           <div className="font-mono text-xs font-semibold text-foreground">{formatShortDate(ev.date)}</div>
-          <div className={`text-[10px] font-medium ${days <= 3 && days >= 0 ? "text-warning" : "text-muted"}`}>{daysLabel(days)}</div>
+          <div className={`text-label font-medium ${days <= 3 && days >= 0 ? "text-warning" : "text-muted"}`}>{daysLabel(days)}</div>
         </div>
       </div>
     </button>
@@ -337,10 +338,10 @@ function WeekGrid({ events, onSelect }: {
             className={`flex flex-col gap-1 bg-surface p-2 ${i >= 7 ? "opacity-70" : ""}`}
           >
             <div className={`mb-1 text-center ${isToday ? "" : ""}`}>
-              <div className={`text-[9px] font-semibold uppercase tracking-widest ${isToday ? "text-accent" : "text-muted/60"}`}>
+              <div className={`text-micro font-semibold uppercase tracking-widest ${isToday ? "text-brand" : "text-muted/60"}`}>
                 {formatWeekday(day)}
               </div>
-              <div className={`font-mono text-sm font-bold ${isToday ? "text-accent" : "text-muted"}`}>
+              <div className={`font-mono text-sm font-bold ${isToday ? "text-brand" : "text-muted"}`}>
                 {new Date(day + "T00:00:00Z").getDate()}
               </div>
             </div>
@@ -351,7 +352,7 @@ function WeekGrid({ events, onSelect }: {
                   <button
                     key={ev.id}
                     onClick={() => onSelect(ev)}
-                    className={`w-full truncate rounded px-1 py-0.5 text-left text-[9px] font-semibold transition-opacity hover:opacity-80 ${ts.color} ${ts.bg}`}
+                    className={`w-full truncate rounded px-1 py-0.5 text-left text-micro font-semibold transition-opacity hover:opacity-80 ${ts.color} ${ts.bg}`}
                     title={ev.symbol ? `${ev.symbol} — ${ev.name}` : ev.name}
                   >
                     {ev.symbol ?? ev.name.slice(0, 10)}
@@ -359,7 +360,7 @@ function WeekGrid({ events, onSelect }: {
                 );
               })}
               {dayEvents.length > 4 && (
-                <span className="px-1 text-[9px] text-muted">+{dayEvents.length - 4} more</span>
+                <span className="px-1 text-micro text-muted">+{dayEvents.length - 4} more</span>
               )}
             </div>
           </div>
@@ -407,7 +408,7 @@ function SummaryStrip({ events, portfolioSymbols, watchlistSymbols }: {
     const d = daysFromNow(nextExDiv.date);
     stats.push({
       label: "Next Ex-Div",
-      value: <span className="text-accent">{nextExDiv.symbol ?? nextExDiv.name.slice(0, 8)}</span>,
+      value: <span className="text-brand">{nextExDiv.symbol ?? nextExDiv.name.slice(0, 8)}</span>,
       sub: daysLabel(d),
     });
   }
@@ -424,9 +425,9 @@ function SummaryStrip({ events, portfolioSymbols, watchlistSymbols }: {
     <div className="flex flex-wrap gap-px rounded-xl border border-border bg-border overflow-hidden">
       {stats.map((s, i) => (
         <div key={i} className="flex flex-col gap-0.5 bg-surface px-5 py-3 min-w-[110px]">
-          <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">{s.label}</span>
+          <span className="text-label font-semibold uppercase tracking-widest text-muted/60">{s.label}</span>
           <span className="font-mono text-lg font-bold">{s.value}</span>
-          {s.sub && <span className="text-[10px] text-muted">{s.sub}</span>}
+          {s.sub && <span className="text-label text-muted">{s.sub}</span>}
         </div>
       ))}
     </div>
@@ -490,7 +491,7 @@ function AiBriefSection({ events, autoGenerate }: { events: CalendarEvent[]; aut
           <div className="text-left">
             <div className="flex items-center gap-2">
               <p className="text-sm font-semibold">AI Weekly Market Brief</p>
-              <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-warning">Local AI</span>
+              <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-label font-semibold uppercase tracking-widest text-warning">Local AI</span>
               {loading && <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />}
             </div>
             <p className="text-xs text-muted">Ollama-generated summary of this week&apos;s most important events</p>
@@ -526,7 +527,7 @@ function AiBriefSection({ events, autoGenerate }: { events: CalendarEvent[]; aut
             <div className="mt-3 flex items-center gap-2">
               <button
                 onClick={() => void generate()}
-                className="text-xs text-muted transition-colors hover:text-accent"
+                className="text-xs text-muted transition-colors hover:text-brand"
               >
                 ↻ Regenerate
               </button>
@@ -618,7 +619,7 @@ export default function CalendarPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-10">
+    <PageShell py="py-10">
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -691,7 +692,7 @@ export default function CalendarPage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search events…"
-              className="h-9 w-full rounded-lg border border-border bg-surface pl-8 pr-3 text-sm outline-none placeholder:text-muted focus:border-accent"
+              className="h-9 w-full rounded-lg border border-border bg-surface pl-8 pr-3 text-sm outline-none placeholder:text-muted focus:border-brand"
             />
           </div>
 
@@ -712,7 +713,7 @@ export default function CalendarPage() {
           <select
             value={impactFilter}
             onChange={(e) => setImpactFilter(e.target.value)}
-            className="h-9 rounded-lg border border-border bg-surface px-2 text-xs text-foreground outline-none focus:border-accent"
+            className="h-9 rounded-lg border border-border bg-surface px-2 text-xs text-foreground outline-none focus:border-brand"
           >
             {IMPACT_OPTS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
           </select>
@@ -721,7 +722,7 @@ export default function CalendarPage() {
           <select
             value={regionFilter}
             onChange={(e) => setRegionFilter(e.target.value)}
-            className="h-9 rounded-lg border border-border bg-surface px-2 text-xs text-foreground outline-none focus:border-accent"
+            className="h-9 rounded-lg border border-border bg-surface px-2 text-xs text-foreground outline-none focus:border-brand"
           >
             {REGION_OPTS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
           </select>
@@ -813,7 +814,7 @@ export default function CalendarPage() {
                     >
                       Clear filters
                     </button>
-                    <Link href="/watchlist" className="rounded-lg bg-accent-strong px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90">
+                    <Link href="/watchlist" className="rounded-lg bg-brand-strong px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90">
                       Manage Watchlist →
                     </Link>
                   </div>
@@ -833,8 +834,8 @@ export default function CalendarPage() {
                       const portItems = items.filter((e) => e.symbol && portfolioSymbols.includes(e.symbol));
                       if (portItems.length === 0) return null;
                       return (
-                        <div className="mb-1 rounded-xl border border-accent/20 bg-accent/5 px-4 py-3">
-                          <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-accent/70">
+                        <div className="mb-1 rounded-xl border border-brand/20 bg-brand/5 px-4 py-3">
+                          <p className="mb-2 text-label font-semibold uppercase tracking-widest text-brand/70">
                             Portfolio Impact
                           </p>
                           <div className="flex flex-wrap gap-2">
@@ -842,9 +843,9 @@ export default function CalendarPage() {
                               <button
                                 key={e.id}
                                 onClick={() => setSelectedEvent(e)}
-                                className="flex items-center gap-1.5 rounded-lg border border-accent/20 bg-accent/8 px-2.5 py-1.5 text-xs transition-colors hover:bg-accent/15"
+                                className="flex items-center gap-1.5 rounded-lg border border-brand/20 bg-brand/8 px-2.5 py-1.5 text-xs transition-colors hover:bg-brand/15"
                               >
-                                <span className="font-mono font-bold text-accent">{e.symbol}</span>
+                                <span className="font-mono font-bold text-brand">{e.symbol}</span>
                                 <span className="text-muted">{TYPE_STYLES[e.type].label}</span>
                               </button>
                             ))}
@@ -894,9 +895,9 @@ export default function CalendarPage() {
                 <Link
                   key={link.href}
                   href={link.href}
-                  className="group flex flex-col gap-1.5 rounded-xl border border-border bg-surface p-4 transition-all hover:border-accent/30 hover:bg-surface-2"
+                  className="group flex flex-col gap-1.5 rounded-xl border border-border bg-surface p-4 transition-all hover:border-brand/30 hover:bg-surface-2"
                 >
-                  <span className="text-sm font-semibold transition-colors group-hover:text-accent">{link.label} ↗</span>
+                  <span className="text-sm font-semibold transition-colors group-hover:text-brand">{link.label} ↗</span>
                   <span className="text-xs leading-5 text-muted">{link.desc}</span>
                 </Link>
               ))}
@@ -911,7 +912,7 @@ export default function CalendarPage() {
                 Add stocks to your Watchlist or Portfolio to see their upcoming earnings reports and ex-dividend dates alongside these macro events.
               </p>
               <div className="flex flex-wrap gap-3">
-                <Link href="/research" className="rounded-lg bg-accent-strong px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90">
+                <Link href="/research" className="rounded-lg bg-brand-strong px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90">
                   Research a stock →
                 </Link>
                 <Link href="/watchlist" className="rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-surface-2">
@@ -925,6 +926,6 @@ export default function CalendarPage() {
 
       {/* ── Event Drawer ─────────────────────────────────────────────────────── */}
       <EventDrawer event={selectedEvent} onClose={() => setSelectedEvent(null)} />
-    </div>
+    </PageShell>
   );
 }

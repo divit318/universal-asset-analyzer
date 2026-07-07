@@ -10,9 +10,7 @@ import {
   YAxis,
 } from "recharts";
 import type { ScreenerInShareholding } from "@/lib/screener-in";
-
-const AXIS = "#9aa3af";
-const GRID = "#272b33";
+import { useChartTheme } from "@/app/_components/chart-theme";
 
 const HOLDER_COLORS: Record<string, string> = {
   promoter: "#4ade80",
@@ -32,13 +30,6 @@ const HOLDER_LABELS: Record<string, string> = {
   other:    "Others",
 };
 
-const TOOLTIP_STYLE = {
-  background: "#14161a",
-  border: "1px solid #272b33",
-  borderRadius: 8,
-  fontSize: 12,
-  padding: "8px 12px",
-};
 
 /* -------------------------------------------------------------------------- */
 /* Parse shareholding rows into chart data                                     */
@@ -85,14 +76,16 @@ function OwnershipTooltip({
   active,
   payload,
   label,
+  style,
 }: {
   active?: boolean;
   payload?: TooltipPayload[];
   label?: string;
+  style?: React.CSSProperties;
 }) {
   if (!active || !payload?.length) return null;
   return (
-    <div style={TOOLTIP_STYLE}>
+    <div style={style}>
       <p className="mb-2 text-xs font-medium text-muted">{label}</p>
       {[...payload].reverse().map((p) =>
         p.value != null ? (
@@ -240,6 +233,8 @@ export function OwnershipTimeline({
   rows: ScreenerInShareholding[];
   periods: string[];
 }) {
+  const ct = useChartTheme();
+  const AXIS = ct.axis, GRID = ct.grid;
   // Only include main categories with sufficient data
   const mainRows = rows.filter(
     (r) => ["promoter", "fii", "dii", "retail", "govt"].includes(r.holding) && r.values.length >= 2,
@@ -280,7 +275,7 @@ export function OwnershipTimeline({
               <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="3 3" />
               <XAxis dataKey="period" tick={{ fill: AXIS, fontSize: 10 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
               <YAxis tick={{ fill: AXIS, fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}%`} />
-              <Tooltip content={<OwnershipTooltip />} />
+              <Tooltip content={<OwnershipTooltip style={ct.tooltip} />} />
               {holders.map((h) => (
                 <Area
                   key={h}

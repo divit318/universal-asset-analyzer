@@ -163,8 +163,21 @@ export function PortfolioFitPanel({ fit, collapsible = false, headline, classNam
     <div className={`rounded-xl border border-border bg-surface overflow-hidden ${className}`}>
       {/* Header */}
       <div
+        role={collapsible ? "button" : undefined}
+        tabIndex={collapsible ? 0 : undefined}
+        aria-expanded={collapsible ? expanded : undefined}
         className={`flex items-center justify-between gap-3 p-4 ${collapsible ? "cursor-pointer hover:bg-surface-2/40" : ""}`}
         onClick={collapsible ? () => setExpanded((e) => !e) : undefined}
+        onKeyDown={
+          collapsible
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setExpanded((ex) => !ex);
+                }
+              }
+            : undefined
+        }
       >
         <div className="flex items-center gap-3 min-w-0">
           <FitScoreRing score={fit.fitScore} tier={fit.fitTier} />

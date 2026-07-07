@@ -13,21 +13,14 @@ import {
   YAxis,
 } from "recharts";
 import type { ScreenerInAnnualPL, ScreenerInQuarterlyPL } from "@/lib/screener-in";
+import { useChartTheme } from "@/app/_components/chart-theme";
 
-const AXIS = "#9aa3af";
-const GRID = "#272b33";
+/* Series colors — legible on both themes. Structural axis/grid/tooltip come from
+   useChartTheme() inside each component so they adapt to light mode. */
 const POSITIVE = "#4ade80";
 const AMBER = "#fbbf24";
 const BLUE = "#60a5fa";
 const NEGATIVE = "#f87171";
-
-const TOOLTIP_STYLE = {
-  background: "#14161a",
-  border: "1px solid #272b33",
-  borderRadius: 8,
-  fontSize: 12,
-  padding: "8px 12px",
-};
 
 /* -------------------------------------------------------------------------- */
 /* Compact "cr" formatter                                                      */
@@ -53,10 +46,10 @@ interface TooltipProps {
   label?: string;
 }
 
-function PLTooltip({ active, payload, label }: TooltipProps) {
+function PLTooltip({ active, payload, label, style }: TooltipProps & { style?: React.CSSProperties }) {
   if (!active || !payload?.length) return null;
   return (
-    <div style={TOOLTIP_STYLE}>
+    <div style={style}>
       <p className="mb-1.5 text-xs font-medium text-muted">{label}</p>
       {payload.map((p) => p.value != null && (
         <p key={p.name} style={{ color: p.color }} className="text-xs">
@@ -67,10 +60,10 @@ function PLTooltip({ active, payload, label }: TooltipProps) {
   );
 }
 
-function MarginTooltip({ active, payload, label }: TooltipProps & { payload?: { value: number | null; name: string; color: string }[] }) {
+function MarginTooltip({ active, payload, label, style }: TooltipProps & { payload?: { value: number | null; name: string; color: string }[]; style?: React.CSSProperties }) {
   if (!active || !payload?.length) return null;
   return (
-    <div style={TOOLTIP_STYLE}>
+    <div style={style}>
       <p className="mb-1 text-xs text-muted">{label}</p>
       {payload.map((p) => p.value != null && (
         <p key={p.name} style={{ color: p.color }} className="text-xs">
@@ -102,6 +95,8 @@ function ChartFrame({ title, subtitle, children }: { title: string; subtitle?: s
 /* -------------------------------------------------------------------------- */
 
 export function AnnualRevenueChart({ data }: { data: ScreenerInAnnualPL[] }) {
+  const ct = useChartTheme();
+  const AXIS = ct.axis, GRID = ct.grid;
   if (!data.length) return null;
 
   const chartData = data.map((d) => ({
@@ -117,7 +112,7 @@ export function AnnualRevenueChart({ data }: { data: ScreenerInAnnualPL[] }) {
           <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="3 3" />
           <XAxis dataKey="period" tick={{ fill: AXIS, fontSize: 10 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
           <YAxis tick={{ fill: AXIS, fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(v) => fmtCr(v as number)} />
-          <Tooltip content={<PLTooltip />} />
+          <Tooltip content={<PLTooltip style={ct.tooltip} />} />
           <Bar dataKey="Revenue" fill={BLUE} radius={[2, 2, 0, 0]} maxBarSize={28} />
           <Bar dataKey="Net Profit" radius={[2, 2, 0, 0]} maxBarSize={28}>
             {chartData.map((d, i) => (
@@ -145,6 +140,8 @@ export function AnnualRevenueChart({ data }: { data: ScreenerInAnnualPL[] }) {
 /* -------------------------------------------------------------------------- */
 
 export function AnnualMarginChart({ data }: { data: ScreenerInAnnualPL[] }) {
+  const ct = useChartTheme();
+  const AXIS = ct.axis, GRID = ct.grid;
   const withMargin = data.filter((d) => d.opmPercent != null);
   if (withMargin.length < 2) return null;
 
@@ -162,7 +159,7 @@ export function AnnualMarginChart({ data }: { data: ScreenerInAnnualPL[] }) {
           <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="3 3" />
           <XAxis dataKey="period" tick={{ fill: AXIS, fontSize: 10 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
           <YAxis tick={{ fill: AXIS, fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}%`} />
-          <Tooltip content={<MarginTooltip />} />
+          <Tooltip content={<MarginTooltip style={ct.tooltip} />} />
           <Line dataKey="OPM %" stroke={AMBER} strokeWidth={2} dot={false} type="monotone" />
         </ComposedChart>
       </ResponsiveContainer>
@@ -183,6 +180,8 @@ function getGrowthColor(curr: number | null, prev: number | null): string {
 }
 
 export function QuarterlyRevenueChart({ data }: { data: ScreenerInQuarterlyPL[] }) {
+  const ct = useChartTheme();
+  const AXIS = ct.axis, GRID = ct.grid;
   // Show last 8 quarters
   const recent = data.slice(-8);
   if (recent.length < 2) return null;
@@ -203,7 +202,7 @@ export function QuarterlyRevenueChart({ data }: { data: ScreenerInQuarterlyPL[] 
           <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="3 3" />
           <XAxis dataKey="period" tick={{ fill: AXIS, fontSize: 10 }} tickLine={false} axisLine={false} />
           <YAxis tick={{ fill: AXIS, fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(v) => fmtCr(v as number)} />
-          <Tooltip content={<PLTooltip />} />
+          <Tooltip content={<PLTooltip style={ct.tooltip} />} />
           <Bar dataKey="Sales" radius={[2, 2, 0, 0]} maxBarSize={32}>
             {chartData.map((d, i) => (
               <Cell key={i} fill={d.yoyColor} />
@@ -221,6 +220,8 @@ export function QuarterlyRevenueChart({ data }: { data: ScreenerInQuarterlyPL[] 
 }
 
 export function QuarterlyProfitChart({ data }: { data: ScreenerInQuarterlyPL[] }) {
+  const ct = useChartTheme();
+  const AXIS = ct.axis, GRID = ct.grid;
   const recent = data.slice(-8);
   if (recent.length < 2) return null;
 
@@ -238,7 +239,7 @@ export function QuarterlyProfitChart({ data }: { data: ScreenerInQuarterlyPL[] }
           <XAxis dataKey="period" tick={{ fill: AXIS, fontSize: 10 }} tickLine={false} axisLine={false} />
           <YAxis yAxisId="left" tick={{ fill: AXIS, fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(v) => fmtCr(v as number)} />
           <YAxis yAxisId="right" orientation="right" tick={{ fill: AXIS, fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}%`} />
-          <Tooltip content={<PLTooltip />} />
+          <Tooltip content={<PLTooltip style={ct.tooltip} />} />
           <Bar yAxisId="left" dataKey="Net Profit" radius={[2, 2, 0, 0]} maxBarSize={32}>
             {chartData.map((d, i) => (
               <Cell key={i} fill={(d["Net Profit"] ?? 0) >= 0 ? POSITIVE : NEGATIVE} />

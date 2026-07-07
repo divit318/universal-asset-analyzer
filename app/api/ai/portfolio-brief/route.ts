@@ -108,7 +108,17 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
   let parsed: Omit<PortfolioBrief, "model" | "generatedAt">;
   try {
     const raw = await runPrompt(prompt, { json: true, maxTokens: 600 });
-    parsed = extractJson<Omit<PortfolioBrief, "model" | "generatedAt">>(raw);
+    const extracted = extractJson<Partial<Omit<PortfolioBrief, "model" | "generatedAt">>>(raw);
+    // Local models occasionally omit a field despite the prompt — extractJson only
+    // guarantees parseable JSON, not schema completeness. Default missing fields
+    // rather than letting the client crash on e.g. actionItems.length.
+    parsed = {
+      headline: extracted.headline ?? "Portfolio summary",
+      narrative: extracted.narrative ?? "",
+      topOpportunity: extracted.topOpportunity ?? "",
+      biggestRisk: extracted.biggestRisk ?? "",
+      actionItems: Array.isArray(extracted.actionItems) ? extracted.actionItems : [],
+    };
   } catch {
     parsed = {
       headline: "Portfolio summary — start Ollama for AI intelligence",

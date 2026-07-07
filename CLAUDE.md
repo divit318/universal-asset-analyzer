@@ -313,7 +313,7 @@ scanner_cache
 **Avoid Duplication**:
 - Extract utility functions to `lib/` (e.g., `formatCurrency()`)
 - Extract common components to `app/_components/` (e.g., `SymbolSearch`)
-- Single source of truth for formulas (e.g., all scoring in `lib/composite.ts`)
+- Single source of truth for shared formulas (e.g. score→recommendation bands in `lib/recommendation.ts`; two purpose-built scorers `lib/composite.ts` (batch) + `lib/scoring.ts` (single-name decision) share it)
 
 ---
 

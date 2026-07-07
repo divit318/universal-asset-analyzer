@@ -126,6 +126,64 @@ export interface PortfolioPosition {
   addedAt: string; // ISO timestamp
 }
 
+/**
+ * One transaction in a position's ledger. A position's aggregate shares/avgCost
+ * are DERIVED from its lots (average-cost method) — see lib/portfolio-lots.ts.
+ * This is the foundation for real performance analytics (realized P&L, XIRR,
+ * benchmark-relative return) in Phase 1.
+ */
+export interface PortfolioLot {
+  id: number;
+  symbol: string;
+  name: string;
+  shares: number; // positive quantity transacted
+  price: number; // per-share transaction price
+  kind: "buy" | "sell";
+  fees: number; // transaction costs (capitalized into basis on buy; net against realized on sell)
+  tradeDate: string; // ISO date the trade occurred (drives time-weighted return later)
+  createdAt: string; // ISO timestamp the row was recorded
+}
+
+/** A logged investment decision — the unit of the decision journal / track
+ *  record (see lib/decision-journal.ts). Captures the thesis, conviction, and
+ *  the IOS portfolio-fit at decision time so outcomes can be measured against
+ *  them later. */
+export type DecisionAction = "buy" | "sell" | "hold" | "avoid" | "watch";
+export type DecisionHorizon = "short" | "medium" | "long";
+
+export interface Decision {
+  id: number;
+  symbol: string;
+  name: string | null;
+  action: DecisionAction;
+  conviction: number; // 1 (low) .. 5 (high)
+  thesis: string | null;
+  priceAt: number | null; // price when the decision was logged
+  currency: string | null;
+  targetPrice: number | null;
+  horizon: DecisionHorizon | null;
+  /** IOS portfolio-fit score/tier at decision time (nullable — the loop with the fit spine). */
+  fitScore: number | null;
+  fitTier: string | null;
+  status: "open" | "closed";
+  closePrice: number | null;
+  closedAt: string | null;
+  createdAt: string;
+}
+
+/** A delivered alert in the notification center (see lib/alerts.ts + lib/db.ts). */
+export interface Notification {
+  id: number;
+  dedupKey: string;
+  symbol: string | null;
+  kind: string;
+  severity: "info" | "warning";
+  title: string;
+  body: string;
+  read: boolean;
+  createdAt: string;
+}
+
 export type ScreenerSortField =
   | "marketCap"
   | "changePercent"

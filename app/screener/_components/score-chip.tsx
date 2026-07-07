@@ -1,16 +1,13 @@
-/** Color-coded 0-100 composite-score badge. `lg` for the headline Overall. */
+import { scoreTone } from "@/lib/recommendation";
+
+/** Color-coded 0-100 composite-score badge. `lg` for the headline Overall.
+ *  Colored via the canonical recommendation bands so a given score reads the
+ *  same on the Screener as it does on the research Score Card. */
 export function ScoreChip({ value, lg }: { value: number | null; lg?: boolean }) {
   if (value == null) {
     return <span className="text-muted">—</span>;
   }
-  const tone =
-    value >= 75
-      ? "bg-positive/15 text-positive border-positive/30"
-      : value >= 55
-        ? "bg-accent/15 text-accent border-accent/30"
-        : value >= 40
-          ? "bg-warning/10 text-warning border-warning/30"
-          : "bg-negative/10 text-negative border-negative/30";
+  const tone = scoreTone(value);
   return (
     <span
       className={`inline-flex items-center justify-center rounded-md border font-mono font-semibold ${tone} ${

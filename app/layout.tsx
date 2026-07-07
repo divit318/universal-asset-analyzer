@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { SiteHeader } from "./_components/site-header";
+import { CommandPalette } from "./_components/command-palette";
 import { ToastProvider } from "./_components/toast";
+import { THEME_INIT_SCRIPT } from "./_components/theme";
 import { IOSProvider } from "@/lib/ios-context";
 import "./globals.css";
 
@@ -32,8 +34,13 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      data-theme="dark"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body className="flex min-h-full flex-col">
         <a
           href="#main-content"
@@ -44,6 +51,7 @@ export default function RootLayout({
         <IOSProvider>
           <ToastProvider>
             <SiteHeader />
+            <CommandPalette />
             <main id="main-content" className="flex flex-1 flex-col">
               {children}
             </main>

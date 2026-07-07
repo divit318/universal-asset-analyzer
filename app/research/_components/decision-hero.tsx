@@ -77,7 +77,7 @@ function Skeleton() {
           ))}
         </div>
       </div>
-      <p className="mt-4 text-[11px] text-muted/60 animate-pulse">
+      <p className="mt-4 text-caption text-muted/60 animate-pulse">
         AI is building the investment verdict — typically 20–40 s on a local model…
       </p>
     </div>
@@ -91,16 +91,19 @@ function Skeleton() {
 interface Props {
   verdict: InvestmentVerdict | null;
   loading: boolean;
-  /** Optional: score.composite used to show numeric confidence when available */
+  /** Optional: score.confidence used to show numeric confidence when available */
   score?: ScoreResult | null;
+  /** Overrides the numeric confidence (India uses the screener.in composite so
+   *  the hero never shows the Yahoo score alongside the India snapshot). */
+  confidenceOverride?: number | null;
 }
 
-export function DecisionHero({ verdict, loading, score }: Props) {
+export function DecisionHero({ verdict, loading, score, confidenceOverride }: Props) {
   if (loading) return <Skeleton />;
   if (!verdict) return null;
 
   const c = COLORS[verdict.verdict];
-  const confidenceNum = score?.confidence ?? null;
+  const confidenceNum = confidenceOverride ?? score?.confidence ?? null;
 
   return (
     <div className={`rounded-xl border ${c.border} ${c.bg} p-6`}>
@@ -127,7 +130,7 @@ export function DecisionHero({ verdict, loading, score }: Props) {
 
         {/* Metadata: confidence level + time horizon */}
         <div className="flex shrink-0 flex-col items-end gap-2">
-          <div className="flex items-center gap-3 text-[11px]">
+          <div className="flex items-center gap-3 text-caption">
             <span className="uppercase tracking-widest text-muted">Confidence</span>
             <span className={`font-semibold uppercase ${
               verdict.confidence === "high" ? "text-positive" :
@@ -136,7 +139,7 @@ export function DecisionHero({ verdict, loading, score }: Props) {
               {verdict.confidence}
             </span>
           </div>
-          <div className="flex items-center gap-3 text-[11px]">
+          <div className="flex items-center gap-3 text-caption">
             <span className="uppercase tracking-widest text-muted">Horizon</span>
             <span className="text-foreground">{verdict.timeHorizon}</span>
           </div>
@@ -146,10 +149,10 @@ export function DecisionHero({ verdict, loading, score }: Props) {
               <div className="h-1 w-28 overflow-hidden rounded-full bg-surface-2">
                 <div className={`h-full rounded-full ${c.bar}`} style={{ width: `${confidenceNum}%` }} />
               </div>
-              <span className="text-[10px] text-muted tabular-nums">{confidenceNum}/100</span>
+              <span className="text-label text-muted tabular-nums">{confidenceNum}/100</span>
             </div>
           )}
-          <span className="rounded-full border border-accent/25 bg-accent/8 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-widest text-accent">
+          <span className="rounded-full border border-brand/25 bg-brand/8 px-2 py-0.5 text-micro font-semibold uppercase tracking-widest text-brand">
             Local AI
           </span>
         </div>
@@ -163,7 +166,7 @@ export function DecisionHero({ verdict, loading, score }: Props) {
       {/* ── Catalysts / Risks ── */}
       <div className="mb-5 grid gap-4 sm:grid-cols-2">
         <div>
-          <p className="mb-2.5 text-[10px] font-semibold uppercase tracking-widest text-positive/70">
+          <p className="mb-2.5 text-label font-semibold uppercase tracking-widest text-positive/70">
             Why Own
           </p>
           <ul className="space-y-1.5">
@@ -176,7 +179,7 @@ export function DecisionHero({ verdict, loading, score }: Props) {
           </ul>
         </div>
         <div>
-          <p className="mb-2.5 text-[10px] font-semibold uppercase tracking-widest text-negative/70">
+          <p className="mb-2.5 text-label font-semibold uppercase tracking-widest text-negative/70">
             Why Avoid
           </p>
           <ul className="space-y-1.5">
@@ -198,8 +201,8 @@ export function DecisionHero({ verdict, loading, score }: Props) {
               key={i}
               className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5"
             >
-              <span className="text-[11px] text-muted">{m.label}</span>
-              <span className={`font-mono text-[11px] font-semibold ${SIGNAL_CLASS[m.signal]}`}>
+              <span className="text-caption text-muted">{m.label}</span>
+              <span className={`font-mono text-caption font-semibold ${SIGNAL_CLASS[m.signal]}`}>
                 {m.value}
               </span>
             </div>

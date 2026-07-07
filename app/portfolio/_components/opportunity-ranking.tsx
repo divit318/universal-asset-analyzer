@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { EnrichedPosition } from "@/lib/portfolio-analytics";
-import { formatCurrency, formatPercent } from "@/lib/format";
+import { formatCurrency } from "@/lib/format";
 
 function MiniBar({ value, max, color }: { value: number; max: number; color: string }) {
   const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;

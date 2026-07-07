@@ -11,8 +11,9 @@ import {
   Tooltip,
 } from "recharts";
 import type { CompareEntry } from "@/app/api/compare/route";
+import { CHART_SERIES, useChartTheme } from "@/app/_components/chart-theme";
 
-const COLORS = ["#3b82f6", "#f59e0b", "#10b981", "#f43f5e", "#a855f7"];
+const COLORS = CHART_SERIES;
 
 function bucketPct(score: NonNullable<CompareEntry["score"]>, name: string): number {
   const b = score.buckets.find((bk) => bk.name === name);
@@ -33,6 +34,7 @@ interface Props {
 }
 
 export function CompareRadar({ entries }: Props) {
+  const ct = useChartTheme();
   const valid = entries.filter((e) => !e.error && e.score);
 
   const data = AXES.map(({ key, label }) => {
@@ -56,10 +58,10 @@ export function CompareRadar({ entries }: Props) {
       <h2 className="mb-4 text-sm font-semibold text-muted uppercase tracking-wide">Score Radar</h2>
       <ResponsiveContainer width="100%" height={300}>
         <RadarChart data={data} margin={{ top: 10, right: 30, bottom: 10, left: 30 }}>
-          <PolarGrid stroke="hsl(var(--border, 220 13% 20%))" strokeOpacity={0.5} />
+          <PolarGrid stroke={ct.grid} strokeOpacity={0.5} />
           <PolarAngleAxis
             dataKey="subject"
-            tick={{ fill: "hsl(var(--foreground-muted, 220 9% 55%))", fontSize: 11 }}
+            tick={{ fill: ct.axis, fontSize: 11 }}
           />
           <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
           {valid.map((e, i) => (
@@ -81,7 +83,7 @@ export function CompareRadar({ entries }: Props) {
             )}
           />
           <Tooltip
-            contentStyle={{ background: "#1a1a1a", border: "1px solid #333", borderRadius: 8, fontSize: 12 }}
+            contentStyle={ct.tooltip}
             formatter={(value) => [`${Number(value).toFixed(0)}/100`]}
           />
         </RadarChart>

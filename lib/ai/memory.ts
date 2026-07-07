@@ -12,17 +12,20 @@ import {
   ensureSession,
   getSessionMessages,
 } from "../db";
-import type { Citation, ChatMessage, CompanyContext } from "./types";
+import type { Citation, ChatMessage, CompanyContext, GroundingReport } from "./types";
 
 /** Load prior conversation for a session as ChatMessages. */
 export function loadHistory(sessionId: string): ChatMessage[] {
   return getSessionMessages(sessionId).map((m) => {
-    const meta = m.meta ? (JSON.parse(m.meta) as { citations?: Citation[]; reasoning?: string }) : null;
+    const meta = m.meta
+      ? (JSON.parse(m.meta) as { citations?: Citation[]; reasoning?: string; grounding?: GroundingReport })
+      : null;
     return {
       role: m.role,
       content: m.content,
       citations: meta?.citations,
       reasoning: meta?.reasoning,
+      grounding: meta?.grounding,
       createdAt: m.createdAt,
     };
   });
@@ -33,7 +36,7 @@ export function persistTurn(
   sessionId: string,
   symbol: string,
   userText: string,
-  assistant: { content: string; citations: Citation[]; reasoning: string },
+  assistant: { content: string; citations: Citation[]; reasoning: string; grounding?: GroundingReport },
 ): void {
   ensureSession(sessionId, symbol);
   appendMessage(sessionId, "user", userText);
@@ -41,7 +44,11 @@ export function persistTurn(
     sessionId,
     "assistant",
     assistant.content,
-    JSON.stringify({ citations: assistant.citations, reasoning: assistant.reasoning }),
+    JSON.stringify({
+      citations: assistant.citations,
+      reasoning: assistant.reasoning,
+      grounding: assistant.grounding,
+    }),
   );
 }
 

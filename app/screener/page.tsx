@@ -17,6 +17,8 @@ import {
 } from "./_config";
 import { useIOSSafe } from "@/lib/ios-context";
 import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
+import { DataProvenance } from "@/app/_components/data-provenance";
+import { PageShell, PageHeader } from "@/app/_components/ui";
 
 type Bounds = { min: string; max: string };
 const ALL_RANGE_KEYS = [
@@ -44,6 +46,8 @@ export default function ScreenerPage() {
   const [error, setError] = useState<string | null>(null);
   const [exportErr, setExportErr] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const [tableOverflowsRight, setTableOverflowsRight] = useState(false);
 
   // IOS — portfolio fit scores for visible rows
   const [fitSort, setFitSort] = useState(false);
@@ -139,11 +143,11 @@ export default function ScreenerPage() {
   );
 
   // Always-current references used in session save/restore
-  // eslint-disable-next-line react-hooks/refs
+   
   const runRef = useRef(run);
   // eslint-disable-next-line react-hooks/refs
   runRef.current = run;
-  // eslint-disable-next-line react-hooks/refs
+   
   const _s = useRef({ ranges, sector, industry, sortField, sortDir, nlPrompt, activePreset, open });
   // eslint-disable-next-line react-hooks/refs
   _s.current = { ranges, sector, industry, sortField, sortDir, nlPrompt, activePreset, open };
@@ -164,6 +168,20 @@ export default function ScreenerPage() {
     document.title = "Screener · UAA";
     return () => { document.title = "Universal Asset Analyzer"; };
   }, []);
+
+  // Track whether the results table overflows horizontally, to show a scroll affordance.
+  useEffect(() => {
+    const el = tableScrollRef.current;
+    if (!el) return;
+    const check = () => setTableOverflowsRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    check();
+    el.addEventListener("scroll", check);
+    window.addEventListener("resize", check);
+    return () => {
+      el.removeEventListener("scroll", check);
+      window.removeEventListener("resize", check);
+    };
+  }, [rows]);
 
   // Fetch installed Ollama models for the NL screener model picker.
   useEffect(() => {
@@ -203,7 +221,7 @@ export default function ScreenerPage() {
         sessionStorage.setItem("uaa_screener_state", JSON.stringify({ ranges: r, sector: s, industry: i, sortField: sf, sortDir: sd, nlPrompt: nl, activePreset: ap, open: Array.from(o) }));
       } catch { /* ignore */ }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, []);
 
   // First load: trigger the build + show whatever's ready.
@@ -211,7 +229,7 @@ export default function ScreenerPage() {
   useEffect(() => {
     const t = setTimeout(() => void runRef.current(0), 0);
     return () => clearTimeout(t);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, []);
 
   function setRange(key: string, bound: keyof Bounds, value: string) {
@@ -352,16 +370,14 @@ export default function ScreenerPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-10">
-      <header className="flex flex-col gap-2">
-        <h1 className="text-2xl font-semibold tracking-tight">Fundamental Screener</h1>
-        <p className="max-w-3xl text-muted">
-          Find US-listed stocks for long-term investing. Start with a one-click strategy, or
-          build a custom screen across valuation, growth, quality, financial strength, cash
-          flow, shareholder returns, and momentum.
-        </p>
+    <PageShell py="py-10">
+      <div className="flex flex-col gap-2">
+        <PageHeader
+          title="Fundamental Screener"
+          description="Find US-listed stocks for long-term investing. Start with a one-click strategy, or build a custom screen across valuation, growth, quality, financial strength, cash flow, shareholder returns, and momentum."
+        />
         <DatasetBar status={status} loading={loading} onRefresh={refreshData} />
-      </header>
+      </div>
 
       {/* AI Natural Language Screener */}
       {ollamaOnline === false ? (
@@ -373,7 +389,7 @@ export default function ScreenerPage() {
         <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold">AI Screen</span>
-            <span className="rounded-full bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
+            <span className="rounded-full bg-brand/10 px-2 py-0.5 text-xs font-medium text-brand">
               Local · {nlModel.split(":")[0]}
             </span>
           </div>
@@ -388,14 +404,14 @@ export default function ScreenerPage() {
             }}
             placeholder='e.g. "Large-cap tech companies with strong growth and clean balance sheets"'
             rows={3}
-            className="w-full resize-none rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none placeholder:text-muted focus:border-accent"
+            className="w-full resize-none rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none placeholder:text-muted focus:border-brand"
           />
           <div className="flex items-center gap-2">
             {nlModels.length > 1 ? (
               <select
                 value={nlModel}
                 onChange={(e) => setNlModel(e.target.value)}
-                className="rounded-lg border border-border bg-surface-2 px-2 py-1.5 text-xs outline-none focus:border-accent"
+                className="rounded-lg border border-border bg-surface-2 px-2 py-1.5 text-xs outline-none focus:border-brand"
               >
                 {nlModels.map((m) => (
                   <option key={m} value={m}>{m}</option>
@@ -405,7 +421,7 @@ export default function ScreenerPage() {
             <button
               onClick={() => void runNlScreen()}
               disabled={nlLoading || !nlPrompt.trim()}
-              className="rounded-lg bg-accent-strong px-4 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="rounded-lg bg-brand-strong px-4 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {nlLoading ? "Analyzing…" : "Apply (Ctrl+Enter)"}
             </button>
@@ -418,7 +434,7 @@ export default function ScreenerPage() {
               {nlCriteria && Object.keys(nlCriteria).length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">
                   {Object.entries(nlCriteria).map(([key, val]) => (
-                    <span key={key} className="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 text-xs text-accent">
+                    <span key={key} className="rounded-full border border-brand/30 bg-brand/10 px-2.5 py-0.5 text-xs text-brand">
                       {nlChipLabel(key, val)}
                     </span>
                   ))}
@@ -445,18 +461,18 @@ export default function ScreenerPage() {
             <button
               key={p.name}
               onClick={() => applyPreset(p)}
-              className={`group flex flex-col gap-1.5 rounded-xl border px-4 py-3.5 text-left transition-all hover:border-accent/40 hover:bg-surface-2 ${
+              className={`group flex flex-col gap-1.5 rounded-xl border px-4 py-3.5 text-left transition-all hover:border-brand/40 hover:bg-surface-2 ${
                 activePreset === p.name
-                  ? "border-accent/50 bg-accent/5 shadow-[0_0_0_1px_rgba(74,222,128,0.08)]"
+                  ? "border-brand/50 bg-brand/5 shadow-[0_0_0_1px_rgba(56,189,248,0.1)]"
                   : "border-border bg-surface"
               }`}
             >
-              <span className={`text-sm font-semibold transition-colors ${activePreset === p.name ? "text-accent" : "text-foreground group-hover:text-accent"}`}>
+              <span className={`text-sm font-semibold transition-colors ${activePreset === p.name ? "text-brand" : "text-foreground group-hover:text-brand"}`}>
                 {p.name}
               </span>
               <span className="text-xs leading-4 text-muted">{p.tagline}</span>
               {activePreset === p.name && (
-                <span className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-accent">Active</span>
+                <span className="mt-0.5 text-label font-medium uppercase tracking-wide text-brand">Active</span>
               )}
             </button>
           ))}
@@ -474,7 +490,7 @@ export default function ScreenerPage() {
                 <select
                   value={sector}
                   onChange={(e) => setSector(e.target.value)}
-                  className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent"
+                  className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-brand"
                 >
                   <option value="">All sectors</option>
                   {SCREENER_SECTORS.map((s) => (
@@ -490,7 +506,7 @@ export default function ScreenerPage() {
                   value={industry}
                   onChange={(e) => setIndustry(e.target.value)}
                   placeholder="e.g. Semiconductors"
-                  className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none placeholder:text-muted focus:border-accent"
+                  className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none placeholder:text-muted focus:border-brand"
                 />
               </label>
               <RangeRow
@@ -529,7 +545,7 @@ export default function ScreenerPage() {
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-semibold">{sec.title}</span>
                     {!open.has(sec.title) && activeCount > 0 && (
-                      <span className="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-semibold leading-none text-background">
+                      <span className="rounded-full bg-brand px-1.5 py-0.5 text-label font-semibold leading-none text-background">
                         {activeCount}
                       </span>
                     )}
@@ -559,7 +575,7 @@ export default function ScreenerPage() {
             <button
               onClick={() => void run(0)}
               disabled={loading}
-              className="flex-1 rounded-lg bg-accent-strong px-4 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="flex-1 rounded-lg bg-brand-strong px-4 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {loading ? "Running…" : "Run screen"}
             </button>
@@ -591,8 +607,8 @@ export default function ScreenerPage() {
                   onClick={() => setFitSort((v) => !v)}
                   className={`flex items-center gap-1.5 rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
                     fitSort
-                      ? "border-accent/40 bg-accent/10 text-accent"
-                      : "border-border text-muted hover:border-accent/30 hover:text-accent"
+                      ? "border-brand/40 bg-brand/10 text-brand"
+                      : "border-border text-muted hover:border-brand/30 hover:text-brand"
                   }`}
                 >
                   ✦ {fitSort ? "Sorted by Fit" : "Sort by Portfolio Fit"}
@@ -616,19 +632,20 @@ export default function ScreenerPage() {
             </div>
           </div>
 
-          <div className="overflow-x-auto rounded-xl border border-border">
+          <div className="relative">
+            <div ref={tableScrollRef} className="max-h-[calc(100vh-15rem)] overflow-auto rounded-card border border-border">
             <table className="w-full text-sm">
-              <thead className="bg-surface-2 text-left text-xs uppercase tracking-wide text-muted">
+              <thead className="sticky top-0 z-10 bg-surface-2 text-left text-xs font-semibold uppercase tracking-wide text-muted [&_th]:border-b [&_th]:border-border">
                 <tr>
-                  <th className="px-3 py-3 font-medium">#</th>
-                  <th className="px-3 py-3 font-medium">Symbol</th>
-                  <th className="px-3 py-3 font-medium">Name</th>
-                  <th className="px-3 py-3 font-medium">Sector</th>
+                  <th className="px-3 py-2.5 font-semibold">#</th>
+                  <th className="px-3 py-2.5 font-semibold">Symbol</th>
+                  <th className="px-3 py-2.5 font-semibold">Name</th>
+                  <th className="px-3 py-2.5 font-semibold">Sector</th>
                   {COLUMNS.map((c) => (
                     <th
                       key={c.key}
                       onClick={() => toggleSort(c.key)}
-                      className="cursor-pointer select-none px-3 py-3 text-right font-medium hover:text-foreground"
+                      className={`cursor-pointer select-none px-3 py-2.5 text-right font-semibold transition-colors hover:text-foreground ${sortField === c.key ? "text-brand" : ""}`}
                     >
                       {c.label}
                       {c.kind === "score" && (
@@ -640,7 +657,7 @@ export default function ScreenerPage() {
                   {ios?.profileReady && ios.profile.hasPortfolio && (
                     <th
                       onClick={() => setFitSort((v) => !v)}
-                      className="cursor-pointer select-none px-3 py-3 text-right font-medium text-accent hover:text-accent/80"
+                      className="cursor-pointer select-none px-3 py-3 text-right font-medium text-brand hover:text-brand/80"
                     >
                       Portfolio Fit {fitSort ? "▾" : ""}
                     </th>
@@ -655,12 +672,12 @@ export default function ScreenerPage() {
                       ? ios.getPortfolioFit({ symbol: m.symbol, sector: m.sector ?? null, marketCap: m.marketCap, compositeScores: m.scores, dividendYield: m.dividendYield })
                       : null;
                     return (
-                    <tr key={m.symbol} className="bg-surface hover:bg-surface-2">
-                      <td className="px-3 py-2.5 text-muted">{i + 1}</td>
+                    <tr key={m.symbol} className="bg-surface transition-colors hover:bg-surface-2">
+                      <td className="px-3 py-2.5 tabular-nums text-faint">{i + 1}</td>
                       <td className="px-3 py-2.5">
                         <Link
                           href={`/research?symbol=${encodeURIComponent(m.symbol)}`}
-                          className="font-mono font-semibold text-accent hover:underline"
+                          className="font-mono font-semibold text-brand hover:underline"
                         >
                           {m.symbol}
                         </Link>
@@ -668,7 +685,7 @@ export default function ScreenerPage() {
                       <td className="max-w-[12rem] truncate px-3 py-2.5 text-muted">{m.name}</td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-xs text-muted">{m.sector ?? "—"}</td>
                       {COLUMNS.map((c) => (
-                        <td key={c.key} className="px-3 py-2.5 text-right">
+                        <td key={c.key} className="px-3 py-2.5 text-right tabular-nums">
                           <Cell col={c} value={c.get(m)} />
                         </td>
                       ))}
@@ -685,7 +702,7 @@ export default function ScreenerPage() {
                             onClick={() => void addToWatchlist(m.symbol, m.name ?? m.symbol)}
                             disabled={watchAdding.has(m.symbol)}
                             title={`Add ${m.symbol} to watchlist`}
-                            className="rounded-md border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                            className="rounded-md border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-brand hover:text-brand disabled:opacity-50"
                           >
                             {watchAdding.has(m.symbol) ? "…" : "+ Watch"}
                           </button>
@@ -707,6 +724,13 @@ export default function ScreenerPage() {
                 )}
               </tbody>
             </table>
+            </div>
+            {tableOverflowsRight && (
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-y-0 right-0 w-6 rounded-r-xl shadow-[inset_-16px_0_12px_-12px_rgba(0,0,0,0.55)]"
+              />
+            )}
           </div>
 
           {rows && rows.length < total ? (
@@ -720,7 +744,7 @@ export default function ScreenerPage() {
           ) : null}
         </section>
       </div>
-    </div>
+    </PageShell>
   );
 }
 
@@ -756,22 +780,23 @@ function DatasetBar({
       {building ? (
         <>
           <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-75" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
           </span>
           <span className="text-muted">
             Building dataset… {status!.ready} / {status!.total} companies
           </span>
           <div className="h-1.5 w-40 overflow-hidden rounded-full bg-surface-2">
-            <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${pctReady}%` }} />
+            <div className="h-full rounded-full bg-brand transition-all" style={{ width: `${pctReady}%` }} />
           </div>
         </>
       ) : status?.stage === "error" ? (
         <span className="text-negative">Dataset error: {status.error}</span>
       ) : status?.stage === "ready" ? (
-        <span className="text-muted">
-          <span className="font-medium text-foreground">{status.ready.toLocaleString("en-US")}</span> stocks ·
-          updated {relativeTime(status.builtAt)}
+        <span className="inline-flex items-center gap-1.5 text-muted">
+          <span className="font-medium text-foreground">{status.ready.toLocaleString("en-US")}</span> stocks
+          <span className="text-faint">·</span>
+          <DataProvenance source="yahoo" asOf={status.builtAt} ttlHours={24} />
         </span>
       ) : (
         <span className="text-muted">Loading dataset…</span>
@@ -785,17 +810,6 @@ function DatasetBar({
       </button>
     </div>
   );
-}
-
-function relativeTime(iso: string | null): string {
-  if (!iso) return "just now";
-  const diff = Date.now() - Date.parse(iso);
-  const mins = Math.round(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.round(hrs / 24)}d ago`;
 }
 
 function nlChipLabel(key: string, val: { min?: number | null; max?: number | null }): string {
@@ -834,7 +848,7 @@ function RangeRow({
         value={bounds.min}
         onChange={(e) => onChange("min", e.target.value)}
         placeholder="min"
-        className="w-16 rounded-md border border-border bg-surface-2 px-2 py-1 text-right text-xs outline-none placeholder:text-muted/60 focus:border-accent"
+        className="w-16 rounded-md border border-border bg-surface-2 px-2 py-1 text-right text-xs outline-none placeholder:text-muted/60 focus:border-brand"
       />
       <input
         type="number"
@@ -842,7 +856,7 @@ function RangeRow({
         value={bounds.max}
         onChange={(e) => onChange("max", e.target.value)}
         placeholder="max"
-        className="w-16 rounded-md border border-border bg-surface-2 px-2 py-1 text-right text-xs outline-none placeholder:text-muted/60 focus:border-accent"
+        className="w-16 rounded-md border border-border bg-surface-2 px-2 py-1 text-right text-xs outline-none placeholder:text-muted/60 focus:border-brand"
       />
     </div>
   );

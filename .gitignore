@@ -42,3 +42,7 @@ next-env.d.ts
 
 # local sqlite db
 /data
+
+# Dev/build logs
+/build*.log
+/dev.log

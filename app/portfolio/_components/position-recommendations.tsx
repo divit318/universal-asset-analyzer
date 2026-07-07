@@ -4,7 +4,7 @@ import { useState, Fragment } from "react";
 import Link from "next/link";
 import type { PositionRecommendation, PortfolioAction } from "@/lib/portfolio-analytics";
 import { ACTION_LABEL } from "@/lib/portfolio-analytics";
-import { formatCurrency, formatPercent } from "@/lib/format";
+import { formatCurrency } from "@/lib/format";
 import { MovementExplainerCard } from "@/app/_components/movement-explainer-card";
 
 const ACTION_STYLE: Record<PortfolioAction, string> = {

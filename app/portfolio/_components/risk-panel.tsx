@@ -199,7 +199,7 @@ function CustomScenarioBuilder() {
   );
 }
 
-export function ScenarioAnalysis({ scenarios, totalValue }: { scenarios: ScenarioImpact[]; totalValue: number }) {
+export function ScenarioAnalysis({ scenarios }: { scenarios: ScenarioImpact[] }) {
   return (
     <div className="flex flex-col gap-3">
       <h3 className="text-sm font-semibold">Stress Test Scenarios</h3>

@@ -13,6 +13,7 @@ import { getHistory, getQuote } from "./yahoo";
 import { computeScore, computeMomentum, assessRisks, classifyInvestmentPersonality } from "./scoring";
 import { formatCurrency, formatPercent, formatMarketCap } from "./format";
 import { extractJson } from "./json-extract";
+import { verifyGrounding, collectClaimText, type GroundingReport } from "./ai/grounding";
 import type { FundamentalsData, Quote } from "./types";
 
 export interface CompareStock {
@@ -46,6 +47,9 @@ export interface ComparisonResult {
   /** 0-100 confidence in the winner call. */
   confidenceScore: number;
   metricTable: CompareMetricRow[];
+  /** Verification that the written comparison's figures trace to the metric
+   *  table it was given. Absent when the AI was unavailable. */
+  grounding?: GroundingReport;
 }
 
 export interface CompareMetricRow {
@@ -100,7 +104,7 @@ const fmt = {
   score: (v: number | null) => (v == null ? "n/a" : `${v}/100`),
 };
 
-function buildComparePrompt(a: CompareStock, b: CompareStock): string {
+function buildComparePrompt(a: CompareStock, b: CompareStock): { prompt: string; evidence: string } {
   const row = (label: string, va: string, vb: string) => `  ${label.padEnd(24)} ${va.padEnd(14)} ${vb}`;
 
   const header = `${"Metric".padEnd(24)} ${a.symbol.padEnd(14)} ${b.symbol}`;
@@ -147,7 +151,9 @@ function buildComparePrompt(a: CompareStock, b: CompareStock): string {
   const risksA = a.fundamentals.risks.map((r) => `${r.category}[${r.level}]`).join(", ");
   const risksB = b.fundamentals.risks.map((r) => `${r.category}[${r.level}]`).join(", ");
 
-  return `You are a senior equity research analyst. Compare ${a.symbol} vs ${b.symbol} using ONLY the data below.
+  const evidence = `${table}\n\n${a.symbol} risks: ${risksA}\n${b.symbol} risks: ${risksB}`;
+
+  const prompt = `You are a senior equity research analyst. Compare ${a.symbol} vs ${b.symbol} using ONLY the data below.
 
 ${table}
 
@@ -172,6 +178,8 @@ Write a structured comparison. Be specific — cite numbers. Return as JSON:
   "conditionsForChange": "One sentence: what would have to change (a metric, an event, a re-rating) for this recommendation to flip to the other stock",
   "confidenceScore": "<0-100 integer — how confident are you in the winner call given the data available>"
 }`;
+
+  return { prompt, evidence };
 }
 
 function buildMetricTable(a: CompareStock, b: CompareStock): CompareMetricRow[] {
@@ -227,7 +235,7 @@ export async function compareStocks(
   const a = resultA.value;
   const b = resultB.value;
 
-  const prompt = buildComparePrompt(a, b);
+  const { prompt, evidence } = buildComparePrompt(a, b);
   const model = getActiveModelName();
 
   type FlatAI = {
@@ -251,7 +259,7 @@ export async function compareStocks(
 
   // The prompt returns a flat object; normalise into sections shape.
   const sections: ComparisonResult["sections"] = flat.sections ?? {
-    overview: flat.overview ?? (aiUnavailable ? "AI analysis unavailable. Set OLLAMA_API_KEY or ANTHROPIC_API_KEY to enable." : ""),
+    overview: flat.overview ?? (aiUnavailable ? "AI analysis unavailable — run `ollama serve` to enable the written comparison. The metric table below is always computed." : ""),
     valuation: flat.valuation ?? "",
     quality: flat.quality ?? "",
     growth: flat.growth ?? "",
@@ -262,6 +270,20 @@ export async function compareStocks(
     competitivePositioning: flat.competitivePositioning ?? "",
     riskComparison: flat.riskComparison ?? "",
   };
+
+  // Verify the written comparison against the metric table it was handed: every
+  // P/E, margin, and growth figure the prose cites must trace to the data.
+  const grounding = aiUnavailable
+    ? undefined
+    : verifyGrounding(
+        collectClaimText([
+          sections.overview, sections.valuation, sections.quality, sections.growth,
+          sections.financialHealth, sections.momentum, sections.verdict,
+          sections.capitalAllocation, sections.competitivePositioning, sections.riskComparison,
+          flat.executiveSummary, flat.winnerRationale, flat.conditionsForChange,
+        ]),
+        evidence,
+      );
 
   return {
     model,
@@ -274,5 +296,6 @@ export async function compareStocks(
     conditionsForChange: flat.conditionsForChange ?? "",
     confidenceScore: typeof flat.confidenceScore === "number" ? Math.max(0, Math.min(100, Math.round(flat.confidenceScore))) : Math.min(a.fundamentals.score.confidence, b.fundamentals.score.confidence),
     metricTable: buildMetricTable(a, b),
+    grounding,
   };
 }

@@ -7,7 +7,7 @@
  * scoring / risk / optimization pipeline below.
  */
 
-import { computeScore, computeMomentum, assessRisks } from "./scoring";
+import { computeScore, computeMomentum } from "./scoring";
 // NOTE: deliberately not importing from ./sector-rotation — that module
 // statically imports ./db (node:sqlite), which is server-only and must never
 // enter the client bundle. This file is imported by client components for
@@ -357,12 +357,6 @@ export interface PortfolioReport {
 
 function clamp(v: number, lo = 0, hi = 100): number {
   return Math.max(lo, Math.min(hi, v));
-}
-
-function lerp(value: number, worst: number, best: number, max = 100): number {
-  if (best === worst) return max / 2;
-  const t = (value - worst) / (best - worst);
-  return clamp(t, 0, 1) * max;
 }
 
 function mean(xs: number[]): number {
@@ -775,7 +769,6 @@ function buildReasoningText(
   const score = p.score;
   if (!score) return `Composite score unavailable. ${ACTION_LABEL[action]} at ${currentWeight.toFixed(1)}% allocation.`;
 
-  const rec = score.recommendation;
   const conf = score.confidence;
   const delta = targetWeight - currentWeight;
 
@@ -893,13 +886,11 @@ function computeRebalance(
   positions: EnrichedPosition[],
   recommendations: PositionRecommendation[],
   sectorAlloc: SectorAllocation[],
-  totalValue: number,
 ): RebalanceProposal {
   const trades: Trade[] = recommendations
     .filter((r) => Math.abs(r.delta) > 1.5)   // > 1.5% delta = worth a trade
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
     .map((r) => {
-      const pos = positions.find((p) => p.symbol === r.symbol);
       return {
         symbol: r.symbol,
         name: r.name,
@@ -1724,7 +1715,7 @@ export function computePortfolioReport(
   const risk = computeRiskAnalytics(positions, positionHistories, spyHistory, totalValue);
   const health = computeHealthScore(positions, sectorAllocation, { hhi, topPosPct, topSecPct });
   const recommendations = computeRecommendations(positions, snapshots, analysts, totalValue, rotationSnapshot);
-  const rebalance = computeRebalance(positions, recommendations, sectorAllocation, totalValue);
+  const rebalance = computeRebalance(positions, recommendations, sectorAllocation);
   const gaps = computeGapAnalysis(sectorAllocation, positions);
   const factors = computeFactorExposure(positions);
   const scenarios = computeScenarios(positions, totalValue, rotationSnapshot);
