@@ -109,7 +109,7 @@ Return ONLY valid JSON:
 }`;
 
   try {
-    const raw = await runPrompt(prompt, { maxTokens: 1200, json: true });
+    const raw = await runPrompt("opportunity-engine", prompt, { maxTokens: 1200, json: true });
     const parsed = extractJson<{ themes: RawEmergingTheme[] }>(raw);
     return (parsed.themes ?? []).map((t) => ({
       name: t.name,
@@ -162,7 +162,7 @@ Return ONLY valid JSON:
 }`;
 
   try {
-    const raw = await runPrompt(prompt, { maxTokens: 800, json: true });
+    const raw = await runPrompt("opportunity-engine", prompt, { maxTokens: 800, json: true });
     const parsed = extractJson<{ alerts: Omit<RiskAlert, "id">[] }>(raw);
     return (parsed.alerts ?? []).slice(0, 3).map((a) => ({
       ...a,

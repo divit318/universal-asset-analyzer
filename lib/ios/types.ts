@@ -150,9 +150,15 @@ export type FitTier = "excellent" | "good" | "neutral" | "poor" | "avoid";
 export interface FitDimension {
   label: string;
   score: number;          // 0-100
-  weight: number;         // 0-1 contribution to overall fitScore
+  weight: number;         // 0-1 nominal contribution to overall fitScore
   message: string;        // short human-readable explanation
   impact: "positive" | "neutral" | "negative";
+  /**
+   * 0-1 data confidence for this dimension. 1 = fully-evidenced, 0 = no data
+   * (dimension drops out of the composite via renormalization instead of
+   * injecting a misleading constant). Absent = treat as 1 for back-compat.
+   */
+  confidence?: number;
 }
 
 export interface PortfolioFitAnalysis {
@@ -161,6 +167,15 @@ export interface PortfolioFitAnalysis {
   /** Weighted composite of all dimensions. 0-100. */
   fitScore: number;
   fitTier: FitTier;
+
+  /**
+   * 0-100 overall data confidence — the share of scoring weight backed by real
+   * evidence. A fitScore of 73 at 30% confidence is a very different claim than
+   * 73 at 90%; the UI should surface this so users don't over-trust data-poor
+   * scores. `capReason` names the hard gate that clamped the score, if any.
+   */
+  confidence: number;
+  capReason: string | null;
 
   /** The five scoring dimensions with explanations. */
   dimensions: {

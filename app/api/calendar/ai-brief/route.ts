@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { CalendarEvent } from "../route";
-import { generate } from "@/lib/ai/ollama";
+import { runPrompt } from "@/lib/ai";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,7 +60,7 @@ export async function POST(request: Request) {
   const prompt = buildPrompt(events, weekStart, weekEnd);
 
   try {
-    const brief = await generate(prompt, { timeoutMs: 50_000 });
+    const brief = await runPrompt("calendar-brief", prompt, { timeoutMs: 50_000 });
     return NextResponse.json({ brief });
   } catch (err) {
     const message = err instanceof Error ? err.message : "AI brief generation failed";

@@ -19,16 +19,21 @@ import { EMPTY_PROFILE, DEFAULT_BEHAVIORAL } from "./types";
 /* Known S&P 500 sectors (for gap detection)                                  */
 /* -------------------------------------------------------------------------- */
 
+// Yahoo Finance's sector taxonomy — must match the names on both the portfolio's
+// sectorAllocation and each asset's `sector`, since every sector string in the
+// app originates from Yahoo. Using GICS names here (e.g. "Financials",
+// "Materials") silently broke missing/underweight/overweight detection because
+// they never matched Yahoo's "Financial Services" / "Basic Materials".
 const ALL_SECTORS = [
   "Technology",
   "Healthcare",
-  "Financials",
-  "Consumer Discretionary",
-  "Consumer Staples",
+  "Financial Services",
+  "Consumer Cyclical",
+  "Consumer Defensive",
   "Industrials",
   "Communication Services",
   "Energy",
-  "Materials",
+  "Basic Materials",
   "Real Estate",
   "Utilities",
 ];

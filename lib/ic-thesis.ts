@@ -67,7 +67,7 @@ Synthesise all findings into a structured thesis. Return as JSON:
 }`;
 
   try {
-    const raw = await runPrompt(prompt, { maxTokens: 1500, json: true });
+    const raw = await runPrompt("investment-thesis", prompt, { maxTokens: 1500, json: true });
     return extractJson<Thesis>(raw);
   } catch {
     return {

@@ -14,7 +14,8 @@ interface AiRequest {
  * POST /api/ai
  * Body: { quote, filings }
  *
- * Routes to the active AI provider (Claude or Ollama) based on AI_PROVIDER env.
+ * Routes through the AI Orchestrator (lib/ai/orchestrator.ts), which picks
+ * the best local Ollama model for the task and falls back automatically.
  */
 export async function POST(request: Request) {
   let body: AiRequest;

@@ -585,7 +585,7 @@ export async function explainTimelineEvent(event: TimelineEvent, allEvents: Time
 
   let parsed: RawDetailResponse | null = null;
   try {
-    const raw = await runPrompt(buildDetailPrompt(event, related), { maxTokens: 1800, json: true });
+    const raw = await runPrompt("timeline-analysis", buildDetailPrompt(event, related), { maxTokens: 1800, json: true });
     parsed = extractJson<RawDetailResponse>(raw);
   } catch {
     parsed = null;
@@ -674,7 +674,7 @@ export async function computeWhatChanged(symbol: string, eventId: string): Promi
 
   let parsed: RawWhatChangedResponse | null = null;
   try {
-    const raw = await runPrompt(buildWhatChangedPrompt(fromEvent, subsequentEvents, stockResponsePercent), {
+    const raw = await runPrompt("timeline-analysis", buildWhatChangedPrompt(fromEvent, subsequentEvents, stockResponsePercent), {
       maxTokens: 1000,
       json: true,
     });

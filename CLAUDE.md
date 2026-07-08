@@ -56,7 +56,7 @@ The design philosophy is **transparency over convenience**: users see the resear
 | **Styling** | Tailwind CSS v4 | Utility classes only; no component library |
 | **Data** | SQLite (node:sqlite) + DuckDB | Single app database at `data/app.db`; quant engine uses separate `data/engine.duckdb` |
 | **Market data** | yahoo-finance2 (US), screener.in API (India) | Live quotes, fundamentals, history, filings |
-| **AI/Inference** | Ollama (local) | HTTP `localhost:11434`, default model `llama3.2` |
+| **AI/Inference** | Ollama (local), via `lib/ai/` orchestration layer | Task-routed to the best local model per task; see `lib/ai/ARCHITECTURE.md` |
 | **Exports** | ExcelJS (server-side) + PDFKit | Never import in client components |
 | **Charting** | Recharts | Real-time interactive charts with multi-line, candlestick, heatmap patterns |
 
@@ -80,7 +80,7 @@ The design philosophy is **transparency over convenience**: users see the resear
 │                    Shared Domain Engines                      │
 │  lib/yahoo.ts           (quote, history, fundamentals)       │
 │  lib/edgar.ts           (SEC filings)                         │
-│  lib/ollama.ts          (local LLM inference)                 │
+│  lib/ai/ (orchestrator, router, task/model registries)        │
 │  lib/composite.ts       (scoring formulas)                    │
 │  lib/dataset.ts         (screener data assembly)              │
 └─────────────────────────────────────────────────────────────┘
@@ -152,9 +152,9 @@ The design philosophy is **transparency over convenience**: users see the resear
 - `lib/thematic-engine.ts` — 10-stage thematic analysis framework
 
 **AI/Inference**
-- `lib/ollama.ts` — Base integration (local, graceful offline degradation)
-- `lib/ai.ts`, `lib/ai-research.ts`, `lib/ai-compare.ts` — Feature-specific prompt builders
-- `lib/ic-agents.ts` — 9 agent domains (business, industry, competition, management, capitalAllocation, accounting, valuation, governance, risk) run in parallel. Results streamed via `ReadableStream`.
+- `lib/ai/` — the orchestration layer: task registry, model registry, router (auto-selects + falls back per task), provider interface, response normalizer. See `lib/ai/ARCHITECTURE.md`. Every AI call goes through `runPrompt(taskType, prompt, opts)` in `lib/ai.ts` — never call Ollama directly.
+- `lib/ai-research.ts`, `lib/ai-compare.ts`, `lib/ai-watchlist.ts` — feature-specific prompt builders, all calling `runPrompt()` with the task type that matches what they do
+- `lib/ic-agents.ts` — 9 agent domains (business, industry, competition, management, capitalAllocation, accounting, valuation, governance, risk) run in parallel, each routed to its own task (accounting/valuation/risk get the reasoning-heavy route). Results streamed via `ReadableStream`.
 
 **State & Utilities**
 - `lib/db.ts` — SQLite CRUD for watchlist, portfolio, research sessions, notes
@@ -389,6 +389,7 @@ npx vitest run tests/composite.test.ts  # single file
 | **Direct DB calls** | Page imports DatabaseSync | Use `lib/db.ts` CRUD functions | Single schema source of truth |
 | **Server-only imports in client** | Client imports ExcelJS/PDFKit | Use `app/api/` routes only | Listed in `next.config.ts` as serverExternalPackages |
 | **Hardcoded endpoints** | `fetch("http://localhost:11434/...")` | Use `process.env.OLLAMA_HOST` | Enables configuration via env vars |
+| **Direct Ollama calls** | Feature imports `lib/ai/ollama.ts` and calls `generate()`/`streamChat()` itself | Call `runPrompt(taskType, prompt, opts)` from `lib/ai.ts` | Task routing, retry/fallback, and model selection all live in the orchestrator — see `lib/ai/ARCHITECTURE.md` |
 | **Missing data handling** | `quote.peRatio / quote.roe` without null check | `if (x == null) return 0` before division | Financial data is frequently incomplete |
 | **Mixing logic & UI** | Page component contains scoring logic | Move to `lib/`, expose via `app/api/` | Decouples testing, reuse, server/client |
 | **Serial requests** | `await req1; await req2; await req3;` | `await Promise.all([req1, req2, req3])` | Parallel fetching is 2-3x faster |

@@ -91,7 +91,7 @@ export async function classifyEvents(
 
   let parsed: BatchClassificationResponse | null = null;
   try {
-    const raw = await runPrompt(buildClassificationPrompt(events), {
+    const raw = await runPrompt("opportunity-engine", buildClassificationPrompt(events), {
       maxTokens: 3000,
       json: true,
     });

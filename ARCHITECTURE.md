@@ -567,39 +567,74 @@ These modules track user holdings and provide position-level analysis.
 
 ---
 
-### AI/Inference Pipeline (`lib/ai/ollama.ts` + feature-specific modules)
-**Purpose**: Local LLM inference (Ollama). Local-only by policy — no code path
-to any hosted/paid provider.
+### AI Orchestration Layer (`lib/ai/*`)
+**Purpose**: single entry point for every AI request in the app, routing each
+task to the local model best suited to it and falling back automatically if
+that model isn't available. Local-only by policy — no code path to any
+hosted/paid provider. Full design doc: `lib/ai/ARCHITECTURE.md`.
 
-**Layering** (single HTTP client):
-- `lib/ai/ollama.ts` — the ONLY module that talks HTTP to Ollama: `generate()`
-  (single-shot), `streamChat()` (token streaming), `listInstalledModels()`,
-  `checkHealth()`, typed errors (`OllamaUnavailableError`, `ModelMissingError`),
-  retry/backoff, `DEFAULT_MODEL` (env `OLLAMA_MODEL`, default llama3.2),
-  reasoning-tag splitting for R1/Qwen3-style models.
-- `lib/ai.ts` — thin façade: `runPrompt()` / `analyzeAsset()` /
-  `getActiveModelName()`; 20+ engines call this, never fetch directly.
-- `lib/ollama.ts` — pure prompt builder for asset analysis (no HTTP).
+**Request flow**: feature code → `runPrompt(taskType, prompt, opts)` (or
+`runTask`/`runTaskText` for the raw normalized response) → Orchestrator
+(`lib/ai/orchestrator.ts`) → Router (`lib/ai/router.ts`) → `AIProvider`
+(`lib/ai/providers/ollama-provider.ts`) → Ollama. Nothing above the Router
+names a model or talks HTTP.
+
+**Layering**:
+- `lib/ai/task-registry.ts` — the **Task Registry**: every `TaskType` in the
+  app (company research, SEC filing analysis, portfolio intelligence, IC
+  agent domains, etc.) mapped to its preferred model order, temperature,
+  token cap, timeout, and required capabilities. This is the one place task
+  → model routing policy lives.
+- `lib/ai/models.ts` — the **Model Registry**: `MODEL_REGISTRY`, one
+  `ModelSpec` per model (id, provider, context window, temperature, token
+  cap, timeout, capabilities, priority, enabled). Prefix-matched against
+  whatever's actually installed, so a registry entry like `"qwen3"` resolves
+  a pulled `qwen3:30b-a3b` without pinning the exact tag.
+- `lib/ai/router.ts` — turns a `TaskType` into an ordered, installed,
+  capability-matching, currently-healthy candidate list and runs the
+  provider against it, retrying the next candidate silently on failure.
+  Throws `AllModelsFailedError` only when every candidate failed.
+- `lib/ai/health.ts` — lightweight in-memory per-model failure tracking that
+  deprioritizes (not excludes) a model after repeated failures.
+- `lib/ai/provider.ts` + `lib/ai/providers/ollama-provider.ts` — the
+  `AIProvider` interface and its only implementation today, wrapping
+  `lib/ai/ollama.ts`'s HTTP/retry/typed-errors/`<think>`-tag splitting.
+  Adding a future provider means one new class here — no other layer changes.
+- `lib/ai/response.ts` — `AIResponse` normalizer: every provider's output
+  becomes `{ content, confidence, reasoningSummary, executionTimeMs, model,
+  provider, tokenUsage, errors, metadata }`. Nothing downstream branches on
+  provider/model shape.
+- `lib/ai/orchestrator.ts` — `runTask`/`runTaskText`, the single entry point.
+- `lib/ai.ts` — thin façade over the orchestrator: `runPrompt(taskType,
+  prompt, opts)` / `runPromptWithMeta()` / `analyzeAsset()`; 20+ engines call
+  this, never fetch directly.
+- `lib/ai/prompt-builder.ts` — reusable, versioned system/developer/user
+  prompt templates (additive; the Research Copilot's own `lib/ai/prompt.ts`
+  predates it and stays as-is).
+- `lib/ollama.ts` — pure prompt builder for the legacy `/analyze` feature (no
+  HTTP, despite the name).
 - `lib/json-extract.ts` — the single JSON-from-LLM-response parser. Never
   hand-roll fence stripping in routes or engines.
-- Graceful degradation if Ollama offline (UI shows fallback message)
+- Graceful degradation if Ollama offline (UI shows fallback message).
 
-**Feature-Specific Prompt Builders:**
-- `lib/ai.ts` — General Q&A
-- `lib/ai-research.ts` — Research copilot (multi-turn)
-- `lib/ai-compare.ts` — Multi-stock analysis
-- `lib/ai-watchlist.ts` — Watchlist monitoring suggestions
+**Research Copilot** (`lib/ai/context.ts`, `retrieval.ts`, `prompt.ts`,
+`memory.ts`, `actions.ts`, `grounding.ts`) is a richer pipeline layered on
+top for multi-turn, evidence-grounded chat — context assembly, intent-based
+retrieval, dossier prompting, session memory, and post-hoc grounding
+verification. It asks the Router for its model (`pickModel("company-research",
+...)`) but keeps its own context/retrieval/memory machinery, which is
+specific to that one feature.
 
-**Streaming Pattern:**
-- Used by IC Report (agents stream findings)
-- Used by Research Copilot (stream agent thoughts)
-- Long-running operations use `ReadableStream` to prevent timeout
+**Adding a task**: add a `TaskType` + `TaskConfig` in `task-registry.ts`,
+call `runPrompt("your-task", prompt, opts)` from feature code. No other file
+changes.
 
 **Configuration:**
 - `OLLAMA_HOST` env var (default: `http://localhost:11434`)
-- `OLLAMA_MODEL` env var (default: `llama3.2`)
 
-**Used By**: Research, IC Report, Compare, Watchlist, Copilot.
+**Used By**: Research, IC Report, Compare, Watchlist, Portfolio, Thematic,
+Scanner, Timeline, Knowledge Graph, Calendar, Screener NL query, Copilot —
+every AI-powered feature in the app.
 
 ---
 

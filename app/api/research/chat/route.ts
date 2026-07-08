@@ -7,7 +7,8 @@ import {
   createThinkingSplitter,
   streamChat,
 } from "@/lib/ai/ollama";
-import { specForInstalled, pickDefaultModel } from "@/lib/ai/models";
+import { specForInstalled } from "@/lib/ai/models";
+import { pickModel } from "@/lib/ai/router";
 import { buildBlocks, classifyIntent, selectBlocks } from "@/lib/ai/retrieval";
 import { buildMessages } from "@/lib/ai/prompt";
 import { getAction, suggestFollowUps } from "@/lib/ai/actions";
@@ -93,7 +94,7 @@ export async function POST(request: Request) {
   }
   const model = body.model && models.includes(body.model)
     ? body.model
-    : pickDefaultModel(models);
+    : await pickModel("company-research", { installed: models });
   if (!model) {
     return Response.json(
       { error: "No Ollama models are installed. Run `ollama pull qwen3` (or mistral).", code: "model_missing" },

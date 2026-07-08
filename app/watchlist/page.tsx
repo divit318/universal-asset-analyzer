@@ -5,6 +5,8 @@ import Link from "next/link";
 import { downloadBlob } from "@/lib/download";
 import type { Quote, WatchlistItem } from "@/lib/types";
 import type { WatchlistDigest } from "@/lib/ai-watchlist";
+import type { PortfolioFitAnalysis } from "@/lib/ios/types";
+import type { FitEnrichment } from "@/lib/watchlist-fit";
 import { formatCurrency, formatDate, formatPercent } from "@/lib/format";
 import { Dialog, ConfirmDialog } from "@/app/_components/dialog";
 import { useToast } from "@/app/_components/toast";
@@ -235,6 +237,11 @@ export default function WatchlistPage() {
   const [digest, setDigest] = useState<WatchlistDigest | null>(null);
   const [digestLoading, setDigestLoading] = useState(false);
   const digestFetched = useRef(false);
+  // Full research inputs (composite scores, sector, beta, geography) per symbol,
+  // fetched on demand so every watchlist stock — including newly-added ones —
+  // gets an accurate, differentiated fit score instead of a data-poor neutral.
+  const [fitData, setFitData] = useState<Map<string, FitEnrichment>>(new Map());
+  const [fitEnriching, setFitEnriching] = useState(false);
   const toast = useToast();
   // IOS — declared early so the digest effect can access portfolio context
   const ios = useIOSSafe();
@@ -321,24 +328,53 @@ export default function WatchlistPage() {
   // IOS — portfolio fit per watchlist item
   const [fitSort, setFitSort] = useState(false);
 
+  // Fetch full research inputs for every symbol. Keyed on the symbol set so
+  // adding/removing a stock re-enriches (server-side cache makes repeats cheap).
+  const symbolsKey = items.map((i) => i.symbol).join(",");
+  useEffect(() => {
+    if (items.length === 0) { setFitData(new Map()); return; }
+    let cancelled = false;
+    setFitEnriching(true);
+    fetch("/api/watchlist/fit")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json: { items?: FitEnrichment[] } | null) => {
+        if (cancelled || !json?.items) return;
+        const map = new Map<string, FitEnrichment>();
+        for (const e of json.items) map.set(e.symbol.toUpperCase(), e);
+        setFitData(map);
+      })
+      .catch(() => { /* fit inputs are an enhancement — degrade gracefully */ })
+      .finally(() => { if (!cancelled) setFitEnriching(false); });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbolsKey]);
+
   const quoteKeys = Object.keys(quotes).join(",");
+  const fitDataKey = [...fitData.keys()].join(",");
   const fitScores = useMemo(() => {
-    if (!ios?.profileReady) return new Map<string, number>();
-    const map = new Map<string, number>();
+    if (!ios?.profileReady) return new Map<string, PortfolioFitAnalysis>();
+    const map = new Map<string, PortfolioFitAnalysis>();
     for (const item of items) {
       const q = quotes[item.symbol];
+      const enr = fitData.get(item.symbol.toUpperCase());
+      // Compute ONCE and reuse for both score and tier — computing the tier
+      // from a second call with different inputs was producing score/tier
+      // mismatches at band boundaries.
       const fit = ios.getPortfolioFit({
         symbol: item.symbol,
-        sector: item.sector ?? null,
-        marketCap: q?.marketCap ?? null,
-        dividendYield: item.dividendYield ?? null,
+        sector: enr?.sector ?? item.sector ?? null,
+        marketCap: enr?.marketCap ?? q?.marketCap ?? null,
+        compositeScores: enr?.compositeScores ?? null,
+        dividendYield: enr?.dividendYield ?? item.dividendYield ?? null,
+        beta: enr?.beta ?? null,
+        geography: enr?.geography ?? null,
         isOnWatchlist: true,
       });
-      map.set(item.symbol, fit.fitScore);
+      map.set(item.symbol, fit);
     }
     return map;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ios?.profile.builtAt, ios?.profileReady, items.length, quoteKeys]);
+  }, [ios?.profile.builtAt, ios?.profileReady, items.length, quoteKeys, fitDataKey]);
 
   const filteredItems = [...items]
     .filter((i) =>
@@ -349,8 +385,8 @@ export default function WatchlistPage() {
     .sort((a, b) => {
       // When fit sort is active, rank by fit score first
       if (fitSort && fitScores.size > 0) {
-        const af = fitScores.get(a.symbol) ?? 0;
-        const bf = fitScores.get(b.symbol) ?? 0;
+        const af = fitScores.get(a.symbol)?.fitScore ?? 0;
+        const bf = fitScores.get(b.symbol)?.fitScore ?? 0;
         if (bf !== af) return bf - af;
       }
       const aAlerts = checkAlerts(a, quotes[a.symbol]).length;
@@ -468,16 +504,35 @@ export default function WatchlistPage() {
             className="flex-1 rounded-lg border border-border bg-surface px-4 py-2.5 text-sm outline-none placeholder:text-muted focus:border-brand"
           />
           {ios?.profileReady && ios.profile.hasPortfolio && (
-            <button
-              onClick={() => setFitSort((v) => !v)}
-              className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
-                fitSort
-                  ? "border-brand/40 bg-brand/10 text-brand"
-                  : "border-border text-muted hover:border-brand/30 hover:text-brand"
-              }`}
+            <div
+              role="group"
+              aria-label="Sort watchlist"
+              className="flex items-center gap-1 rounded-lg border border-border bg-surface p-0.5 text-xs font-medium"
             >
-              ✦ {fitSort ? "Sorted by Fit" : "Sort by Portfolio Fit"}
-            </button>
+              <span className="pl-2 pr-1 text-muted select-none">Sort</span>
+              <button
+                type="button"
+                onClick={() => setFitSort(false)}
+                aria-pressed={!fitSort}
+                title="Order by active alerts first, then most recently added"
+                className={`rounded-md px-3 py-1.5 transition-colors ${
+                  !fitSort ? "bg-brand/10 text-brand" : "text-muted hover:text-brand"
+                }`}
+              >
+                Recent
+              </button>
+              <button
+                type="button"
+                onClick={() => setFitSort(true)}
+                aria-pressed={fitSort}
+                title="Order by Portfolio Fit score, best fit first"
+                className={`flex items-center gap-1 rounded-md px-3 py-1.5 transition-colors ${
+                  fitSort ? "bg-brand/10 text-brand" : "text-muted hover:text-brand"
+                }`}
+              >
+                ✦ Portfolio Fit
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -547,9 +602,8 @@ export default function WatchlistPage() {
                         {item.symbol}
                       </Link>
                       {ios?.profileReady && ios.profile.hasPortfolio && fitScores.has(item.symbol) && (() => {
-                        const score = fitScores.get(item.symbol)!;
-                        const fit = ios.getPortfolioFit({ symbol: item.symbol, sector: null, marketCap: quotes[item.symbol]?.marketCap ?? null, isOnWatchlist: true });
-                        return <PortfolioFitBadge score={score} tier={fit.fitTier} showScore={true} />;
+                        const fit = fitScores.get(item.symbol)!;
+                        return <PortfolioFitBadge score={fit.fitScore} tier={fit.fitTier} showScore={true} />;
                       })()}
                       {hasAlert && (
                         <span className="rounded-full bg-negative/15 px-1.5 py-0.5 text-[0.6rem] font-bold uppercase tracking-wide text-negative">

@@ -308,7 +308,7 @@ export type StockFundamentals = Omit<
   | "oneYearReturn"
   | "distanceFrom52WkHigh"
   | "scores"
-> & { ebitda: number | null; freeCashflow: number | null; exchange: string | null };
+> & { ebitda: number | null; freeCashflow: number | null; exchange: string | null; beta: number | null };
 
 /** A live price snapshot merged onto the cached fundamentals at screen time. */
 export interface PriceSnapshot {

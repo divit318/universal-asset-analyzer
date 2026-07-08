@@ -11,8 +11,9 @@
 
 import { NextResponse } from "next/server";
 import { listWatchlist } from "@/lib/db";
-import { pickDefaultModel } from "@/lib/ai/models";
-import { checkHealth, OLLAMA_HOST } from "@/lib/ai/ollama";
+import { runPrompt } from "@/lib/ai";
+import { AllModelsFailedError } from "@/lib/ai/router";
+import { extractJson } from "@/lib/json-extract";
 import { gatherWatchlistAlerts, type WatchlistPortfolioContext } from "@/lib/ai-watchlist";
 import type { PortfolioObjective, PortfolioConstraints, NewPositionRecommendation, PortfolioReport } from "@/lib/portfolio-analytics";
 
@@ -135,11 +136,8 @@ Respond with ONLY a JSON array (no markdown, no explanation outside JSON):
 }
 
 function parseRecommendations(raw: string): NewPositionRecommendation[] | null {
-  // Extract JSON array from response (may have surrounding text)
-  const match = raw.match(/\[\s*\{[\s\S]*\}\s*\]/);
-  if (!match) return null;
   try {
-    const parsed = JSON.parse(match[0]) as Partial<NewPositionRecommendation & { fromWatchlist?: boolean }>[];
+    const parsed = extractJson<Partial<NewPositionRecommendation & { fromWatchlist?: boolean }>[]>(raw);
     if (!Array.isArray(parsed) || parsed.length === 0) return null;
 
     return parsed
@@ -211,40 +209,24 @@ export async function POST(request: Request) {
     .filter((a) => a.type === "new_opportunity")
     .map((a) => a.symbol);
 
-  // Check Ollama
-  const { reachable, models } = await checkHealth();
-  if (!reachable || models.length === 0) {
-    return NextResponse.json(
-      { error: "Ollama unavailable — start Ollama to enable AI recommendations", code: "ollama_unavailable" },
-      { status: 503 },
-    );
-  }
-
-  const model = pickDefaultModel(models);
-  if (!model) {
-    return NextResponse.json({ error: "No Ollama models installed", code: "model_missing" }, { status: 503 });
-  }
-
   const prompt = buildRecommendationPrompt(report, objective, constraints, watchlistSymbols, autoQualifiedSymbols);
 
   let responseText = "";
   try {
-    const res = await fetch(`${OLLAMA_HOST}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, prompt, stream: false, options: { temperature: 0.3 } }),
-      // Generating 5 structured recommendations is a heavy prompt for a local
-      // 7B model — 90s was too tight (observed 92-94s for comparable calls
-      // elsewhere in this route family) and caused spurious 502s.
-      signal: AbortSignal.timeout(180_000),
+    // Generating 5 structured recommendations is a heavy prompt for a local
+    // model — 90s was too tight (observed 92-94s for comparable calls
+    // elsewhere in this route family) and caused spurious 502s.
+    responseText = await runPrompt("portfolio-intelligence", prompt, {
+      json: true,
+      timeoutMs: 180_000,
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({})) as { error?: string };
-      return NextResponse.json({ error: err.error ?? `Ollama request failed (${res.status})` }, { status: 502 });
-    }
-    const data = await res.json() as { response?: string };
-    responseText = data.response ?? "";
   } catch (e) {
+    if (e instanceof AllModelsFailedError) {
+      return NextResponse.json(
+        { error: "Ollama unavailable — start Ollama to enable AI recommendations", code: "ollama_unavailable" },
+        { status: 503 },
+      );
+    }
     return NextResponse.json({ error: e instanceof Error ? e.message : "Ollama request failed" }, { status: 502 });
   }
 

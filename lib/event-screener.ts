@@ -148,7 +148,7 @@ export async function runEventScan(
   const prompt = buildScanPrompt(newsItems, userQuery);
   let parsed: RawScanResponse | null = null;
   try {
-    const raw = await runPrompt(prompt, { maxTokens: 2000, json: true });
+    const raw = await runPrompt("opportunity-engine", prompt, { maxTokens: 2000, json: true });
     parsed = await parseAiResponse(raw);
   } catch {
     // Return empty scan with error note rather than throwing.
@@ -157,7 +157,7 @@ export async function runEventScan(
       themes: [],
       signals: [],
       newsItems,
-      aiSummary: "AI analysis unavailable. Check AI_PROVIDER configuration.",
+      aiSummary: "AI analysis unavailable. Run `ollama serve` and pull a model.",
     };
   }
 

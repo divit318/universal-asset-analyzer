@@ -117,6 +117,7 @@ export async function buildTheses(
         let thesis: InvestmentThesis | null = null;
         try {
           const raw = await runPrompt(
+            "investment-thesis",
             buildThesisPrompt(opp, drivingEvents, sectorImpact),
             { maxTokens: 1500, json: true },
           );

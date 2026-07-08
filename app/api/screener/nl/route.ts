@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { FundamentalScreenerCriteria } from "@/lib/types";
-import { DEFAULT_MODEL, generate, listInstalledModels } from "@/lib/ai/ollama";
+import { listInstalledModels } from "@/lib/ai/ollama";
+import { runPromptWithMeta } from "@/lib/ai";
 import { extractJson } from "@/lib/json-extract";
 
 export const runtime = "nodejs";
@@ -75,16 +76,17 @@ export async function POST(request: Request) {
   const userPrompt = body.prompt?.trim();
   if (!userPrompt) return NextResponse.json({ error: "`prompt` is required" }, { status: 400 });
 
-  const model = body.model?.trim() || DEFAULT_MODEL;
-
   let raw: string;
+  let model: string;
   try {
-    raw = await generate(userPrompt, {
-      model,
+    const result = await runPromptWithMeta("nl-screener", userPrompt, {
+      model: body.model?.trim() || undefined,
       system: SYSTEM_PROMPT,
       temperature: 0.1,
       timeoutMs: 30_000,
     });
+    raw = result.text;
+    model = result.model;
   } catch (err) {
     const message = err instanceof Error ? err.message : "Ollama request failed";
     return NextResponse.json({ error: message }, { status: 502 });

@@ -175,7 +175,7 @@ REQUIREMENTS:
   let grounding: GroundingReport | undefined;
 
   try {
-    const raw = await runPrompt(prompt, { json: true, maxTokens: 800 });
+    const raw = await runPrompt("investment-thesis", prompt, { json: true, maxTokens: 800 });
     // Coerce against a complete default shape: the model can return valid JSON
     // that omits array fields (catalysts/risks/keyMetrics) which the research
     // page then .map()s over — a bare cast would crash the page on those.

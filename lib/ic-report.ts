@@ -13,7 +13,7 @@ import { formThesis, type Thesis } from "./ic-thesis";
 import { runValuationEngine, computeRunHotCold, type ValuationResult } from "./ic-valuation";
 import type { FundamentalsSnapshot, FinancialStatements, InsiderActivity, AnalystConsensus } from "./types";
 import type { ScreenerInCompany } from "./screener-in";
-import { getActiveModelName } from "./ai";
+import { pickModel } from "./ai/router";
 import { getHistory } from "./yahoo";
 
 export type ICReportStage =
@@ -146,7 +146,7 @@ export async function generateICReport(
     symbol,
     companyName,
     generatedAt: new Date().toISOString(),
-    model: input.model ?? getActiveModelName(),
+    model: input.model ?? (await pickModel("ic-agent-analysis")) ?? "unavailable",
     signals,
     questions,
     agentFindings,

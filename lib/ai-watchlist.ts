@@ -6,7 +6,7 @@
  * concentration risks, and a portfolio-level summary.
  */
 
-import { runPrompt, getActiveModelName } from "./ai";
+import { runPromptWithMeta } from "./ai";
 import { getQuote } from "./yahoo";
 import { getFundamentals } from "./fundamentals";
 import { computeScore, computeMomentum, assessRisks } from "./scoring";
@@ -15,6 +15,7 @@ import { listWatchlist } from "./db";
 import type { Quote, WatchlistItem, WatchlistAlert } from "./types";
 import { formatCurrency, formatPercent, formatMarketCap } from "./format";
 import { getLatestSectorRotation, findSectorRotationEntry } from "./sector-rotation";
+import { extractJsonObject } from "./json-extract";
 
 export interface WatchlistPortfolioContext {
   objective: string;
@@ -164,28 +165,28 @@ export async function generateWatchlistDigest(
   const summaries = await Promise.all(capped.map(summariseOne));
 
   const prompt = buildDigestPrompt(summaries, portfolio);
-  const model = getActiveModelName();
 
-  let parsed: {
-    summary: string;
-    actionItems: string[];
-    concentrationRisks: string[];
-    topPicks: string[];
-    topConcerns: string[];
+  const defaults = {
+    summary: "AI digest unavailable. Run `ollama serve` and pull a model.",
+    actionItems: [] as string[],
+    concentrationRisks: [] as string[],
+    topPicks: [] as string[],
+    topConcerns: [] as string[],
   };
 
+  let model = "unavailable";
+  let parsed = defaults;
+
   try {
-    const raw = await runPrompt(prompt, { maxTokens: 1000, json: true });
-    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    parsed = JSON.parse(cleaned);
+    const { text: raw, model: usedModel } = await runPromptWithMeta(
+      "watchlist-intelligence",
+      prompt,
+      { maxTokens: 1000, json: true },
+    );
+    model = usedModel;
+    parsed = extractJsonObject(raw, defaults);
   } catch {
-    parsed = {
-      summary: "AI digest unavailable. Check AI_PROVIDER configuration.",
-      actionItems: [],
-      concentrationRisks: [],
-      topPicks: [],
-      topConcerns: [],
-    };
+    // parsed stays at defaults
   }
 
   return {

@@ -7,6 +7,7 @@
  */
 
 import { runPrompt } from "./ai";
+import { taskForAgentDomain } from "./ai/task-registry";
 import { extractJson } from "./json-extract";
 import { verifyGrounding, collectClaimText, type GroundingReport } from "./ai/grounding";
 import type { InvestigativeQuestion, AgentDomain } from "./ic-questions";
@@ -224,7 +225,7 @@ IMPORTANT: Reply with ONLY a raw JSON object. No markdown, no code fences, no ex
   "dataLimitations": "null or a sentence describing missing data"
 }`;
 
-  const raw = await runPrompt(prompt, { maxTokens: 1200, json: true, model });
+  const raw = await runPrompt(taskForAgentDomain(domain), prompt, { maxTokens: 1200, json: true, model });
 
   // Extract JSON: find the first { ... last } block, tolerating preamble/fences
   const parsed = extractAgentJson(raw);

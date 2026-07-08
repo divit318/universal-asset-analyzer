@@ -130,28 +130,37 @@ export async function GET(request: Request) {
 
 /**
  * POST /api/compare
- * Body: { symbolA: string, symbolB: string }
- * Returns ComparisonResult — full structured AI comparison with metric table.
+ * Body: { symbols: string[] } (2-5 symbols) — also accepts the legacy
+ * { symbolA, symbolB } shape for backward compatibility.
+ * Returns ComparisonResult — full structured AI comparison with metric table
+ * covering every symbol requested, not just a pair.
  */
 export async function POST(request: Request) {
-  let body: { symbolA?: string; symbolB?: string };
+  let body: { symbols?: string[]; symbolA?: string; symbolB?: string };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const a = body.symbolA?.trim().toUpperCase();
-  const b = body.symbolB?.trim().toUpperCase();
-  if (!a || !b) {
-    return NextResponse.json({ error: "symbolA and symbolB are required" }, { status: 400 });
+  const symbols = (
+    Array.isArray(body.symbols) && body.symbols.length > 0
+      ? body.symbols
+      : [body.symbolA, body.symbolB].filter((s): s is string => Boolean(s))
+  )
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+  const unique = [...new Set(symbols)];
+
+  if (unique.length < 2) {
+    return NextResponse.json({ error: "At least two distinct symbols are required" }, { status: 400 });
   }
-  if (a === b) {
-    return NextResponse.json({ error: "Symbols must be different" }, { status: 400 });
+  if (unique.length > 5) {
+    return NextResponse.json({ error: "At most 5 symbols can be compared at once" }, { status: 400 });
   }
 
   try {
-    const result = await compareStocks(a, b);
+    const result = await compareStocks(unique);
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Comparison failed";

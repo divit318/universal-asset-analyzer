@@ -79,7 +79,7 @@ async function buildCausalChainForEvent(
   event: MarketEvent,
 ): Promise<CausalEffect[]> {
   try {
-    const raw = await runPrompt(buildCausalPrompt(event), {
+    const raw = await runPrompt("opportunity-engine", buildCausalPrompt(event), {
       maxTokens: 1200,
       json: true,
     });

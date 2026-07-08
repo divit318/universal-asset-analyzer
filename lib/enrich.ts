@@ -59,13 +59,14 @@ interface RawFinancialData {
 interface RawSummary {
   assetProfile?: RawProfile;
   price?: { exchangeName?: string; fullExchangeName?: string };
-  summaryDetail?: { dividendYield?: number; forwardPE?: number };
+  summaryDetail?: { dividendYield?: number; forwardPE?: number; beta?: number };
   financialData?: RawFinancialData;
   defaultKeyStatistics?: {
     enterpriseToEbitda?: number;
     forwardPE?: number;
     sharesOutstanding?: number;
     bookValue?: number;
+    beta?: number;
   };
   majorHoldersBreakdown?: { institutionsPercentHeld?: number };
   earningsHistory?: { history?: { surprisePercent?: number | null }[] };
@@ -196,6 +197,9 @@ export function mapFundamentals(
     ebitda: num(fd.ebitda),
     freeCashflow: num(fd.freeCashflow),
     exchange: raw.price?.exchangeName ?? raw.price?.fullExchangeName ?? null,
+    // Market beta (best-effort). Bounded to a sane band; ADR/thin names can
+    // report garbage. Feeds risk-oriented objectives in the fit scorer.
+    beta: sane(num(sd.beta) ?? num(raw.defaultKeyStatistics?.beta), -1, 5),
   };
 }
 

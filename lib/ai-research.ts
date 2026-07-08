@@ -8,7 +8,7 @@
  *   chatWithData()  — freeform Q&A grounded in structured data
  */
 
-import { runPrompt, getActiveModelName } from "./ai";
+import { runPromptWithMeta } from "./ai";
 import type {
   FundamentalsData,
   PeerComparison,
@@ -210,9 +210,10 @@ Format your response as JSON:
   "verdict": "..."
 }`;
 
-  const model = getActiveModelName();
-
-  const raw = await runPrompt(prompt, { maxTokens: 1500, json: true });
+  const { text: raw, model } = await runPromptWithMeta("company-research", prompt, {
+    maxTokens: 1500,
+    json: true,
+  });
 
   let sections: DeepAnalysisResult["sections"];
   try {
@@ -274,9 +275,9 @@ ${blocks}`;
     ? `${system}\n\nConversation so far:\n${conversationHistory}\n\nUser: ${question}`
     : `${system}\n\nUser: ${question}`;
 
-  const model = getActiveModelName();
-
-  const answer = await runPrompt(fullPrompt, { maxTokens: 800 });
+  const { text: answer, model } = await runPromptWithMeta("company-research", fullPrompt, {
+    maxTokens: 800,
+  });
   return { answer: answer.trim(), model };
 }
 
@@ -357,9 +358,10 @@ Write a structured research note with exactly these sections. Keep each 3-5 sent
   "verdict": "One clear sentence: Buy/Hold/Sell with valuation context"
 }`;
 
-  const model = getActiveModelName();
-
-  const raw = await runPrompt(prompt, { maxTokens: 1500, json: true });
+  const { text: raw, model } = await runPromptWithMeta("company-research", prompt, {
+    maxTokens: 1500,
+    json: true,
+  });
 
   let sections: DeepAnalysisResult["sections"];
   try {
@@ -395,7 +397,6 @@ export async function indianSectionInsight(
   input: IndianSectionInsightInput,
 ): Promise<{ insight: string; model: string }> {
   const { section, company, derived, quote } = input;
-  const model = getActiveModelName();
 
   let prompt = "";
 
@@ -452,7 +453,7 @@ Dividend yield: ${company.dividendYield ?? "n/a"}%
 Is the stock cheap, fair, or expensive? What justifies or undermines the valuation?`;
   }
 
-  const raw = await runPrompt(prompt, { maxTokens: 250 });
+  const { text: raw, model } = await runPromptWithMeta("quick-summary", prompt, { maxTokens: 250 });
   return { insight: raw.trim(), model };
 }
 
@@ -477,8 +478,8 @@ Market cap: ₹${company.marketCap ?? "n/a"} Cr
     ? `${system}\n\nConversation:\n${conversationHistory}\n\nUser: ${question}`
     : `${system}\n\nUser: ${question}`;
 
-  const model = getActiveModelName();
-
-  const answer = await runPrompt(fullPrompt, { maxTokens: 800 });
+  const { text: answer, model } = await runPromptWithMeta("company-research", fullPrompt, {
+    maxTokens: 800,
+  });
   return { answer: answer.trim(), model };
 }

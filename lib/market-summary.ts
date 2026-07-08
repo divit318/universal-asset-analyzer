@@ -61,7 +61,7 @@ export async function generateMarketSummary(
 
   let summary: string;
   try {
-    const raw = await runPrompt(buildMarketSummaryPrompt(regime, macroSignals, sectorRotation), {
+    const raw = await runPrompt("market-summary", buildMarketSummaryPrompt(regime, macroSignals, sectorRotation), {
       maxTokens: 300,
     });
     summary = raw.trim();

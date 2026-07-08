@@ -10,7 +10,7 @@
  * cached via scanner_cache to avoid re-generating on every tab open.
  */
 
-import { runPrompt, getActiveModelName } from "./ai";
+import { runPromptWithMeta } from "./ai";
 import { getScannerCache, putScannerCache } from "./db";
 import type { FinancialStatements, FundamentalsSnapshot, ScoreResult } from "./types";
 
@@ -86,13 +86,18 @@ export async function generateFinancialInsight(input: FinancialInsightInput): Pr
     }
   }
 
-  const model = getActiveModelName();
+  let model = "unavailable";
   let insight: string;
   try {
-    const raw = await runPrompt(buildFinancialInsightPrompt(input), { maxTokens: 300 });
+    const { text: raw, model: usedModel } = await runPromptWithMeta(
+      "quick-summary",
+      buildFinancialInsightPrompt(input),
+      { maxTokens: 300 },
+    );
+    model = usedModel;
     insight = raw.trim();
   } catch {
-    insight = "AI insight unavailable. Check AI_PROVIDER configuration.";
+    insight = "AI insight unavailable. Run `ollama serve` and pull a model.";
   }
 
   const result: FinancialInsightResult = { insight, model };

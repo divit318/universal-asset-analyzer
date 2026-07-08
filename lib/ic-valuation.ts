@@ -348,7 +348,7 @@ Explain in 2–3 sentences: why these estimates diverge and which is likely more
 Be concrete — reference the actual numbers. Do not speculate beyond the data.`;
 
   try {
-    const explanation = await runPrompt(divergencePrompt, { maxTokens: 300, json: false });
+    const explanation = await runPrompt("scenario-analysis", divergencePrompt, { maxTokens: 300, json: false });
     return { spread_pct, divergence: true, llm_target_mid, mc_p50, explanation: explanation.trim() };
   } catch {
     return {
@@ -474,7 +474,7 @@ Return as JSON:
 }`;
 
   try {
-    const raw = await runPrompt(prompt, { maxTokens: 2000, json: true });
+    const raw = await runPrompt("scenario-analysis", prompt, { maxTokens: 2000, json: true });
     return extractJson<ValuationResult>(raw);
   } catch {
     const px = currentPrice ?? snapshot.price;

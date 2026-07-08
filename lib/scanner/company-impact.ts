@@ -144,6 +144,7 @@ export async function buildCompanyOpportunities(
       let parsed: CompanyMatchResponse | null = null;
       try {
         const raw = await runPrompt(
+          "opportunity-engine",
           buildCompanyMatchPrompt(sector, drivingEvents, sectorCompanies),
           { maxTokens: 1500, json: true },
         );

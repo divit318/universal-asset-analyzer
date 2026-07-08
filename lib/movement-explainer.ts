@@ -191,7 +191,7 @@ export async function explainMovement(
 
   let parsed: RawMovementResponse | null = null;
   try {
-    const raw = await runPrompt(buildMovementPrompt(input, evidence), {
+    const raw = await runPrompt("explain-movement", buildMovementPrompt(input, evidence), {
       maxTokens: 1200,
       json: true,
     });

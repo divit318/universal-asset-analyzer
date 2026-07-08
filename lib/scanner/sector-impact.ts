@@ -111,6 +111,7 @@ export async function analyzeSectorImpacts(
   let parsed: SectorImpactResponse | null = null;
   try {
     const raw = await runPrompt(
+      "opportunity-engine",
       buildSectorImpactPrompt(events, sectorPerf),
       { maxTokens: 2500, json: true },
     );

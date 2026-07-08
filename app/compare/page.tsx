@@ -361,24 +361,25 @@ export default function ComparePage() {
     setAiResult(null);
   }, [symbols]);
 
-  // Auto-trigger AI head-to-head when at least 2 valid entries load for the first time
+  // Auto-trigger the AI comparison — across every valid entry, not just the
+  // first two — when at least 2 valid entries load for the first time.
   useEffect(() => {
     const valid = entries.filter((e) => !e.error);
     if (valid.length < 2 || aiLoading || loading) return;
-    const key = [valid[0].symbol, valid[1].symbol].sort().join("-");
+    const key = valid.map((e) => e.symbol).sort().join("-");
     if (aiAutoTriggered.current === key) return;
     aiAutoTriggered.current = key;
-    void fetchAiVerdict(valid[0].symbol, valid[1].symbol);
+    void fetchAiVerdict(valid.map((e) => e.symbol));
   }, [entries, aiLoading, loading]);
 
-  async function fetchAiVerdict(symA: string, symB: string) {
+  async function fetchAiVerdict(syms: string[]) {
     setAiLoading(true);
     setAiResult(null);
     try {
       const res  = await fetch("/api/compare", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbolA: symA, symbolB: symB }),
+        body: JSON.stringify({ symbols: syms }),
       });
       const json = await res.json() as AiComparison & {
         verdict?: string; analysis?: string; winnerRationale?: string;
@@ -638,11 +639,11 @@ export default function ComparePage() {
                     <span className="rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-label font-semibold uppercase tracking-widest text-brand">Local AI</span>
                   </div>
                   <p className="text-xs text-muted">
-                    {validEntries[0].symbol} vs {validEntries[1].symbol} — which is the better investment, and why
+                    {validEntries.map((e) => e.symbol).join(" vs ")} — which is the better investment, and why
                   </p>
                 </div>
                 <button
-                  onClick={() => void fetchAiVerdict(validEntries[0].symbol, validEntries[1].symbol)}
+                  onClick={() => void fetchAiVerdict(validEntries.map((e) => e.symbol))}
                   disabled={aiLoading}
                   className="rounded-lg bg-brand-strong px-4 py-2 text-xs font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
                 >
@@ -716,7 +717,7 @@ export default function ComparePage() {
                 </div>
               )}
               {!aiLoading && !aiResult && (
-                <p className="mt-3 text-xs text-muted">Analyzing {validEntries[0].symbol} vs {validEntries[1].symbol} — generating win conditions, risks, and a recommended lean…</p>
+                <p className="mt-3 text-xs text-muted">Analyzing {validEntries.map((e) => e.symbol).join(" vs ")} — generating win conditions, risks, and a recommended lean…</p>
               )}
             </div>
           )}

@@ -98,7 +98,7 @@ export async function deduplicateIntoEvents(
   let parsed: ClusterResponse | null = null;
   try {
     const raw = await Promise.race<string>([
-      runPrompt(buildDedupePrompt(capped), { maxTokens: 1500, json: true }),
+      runPrompt("opportunity-engine", buildDedupePrompt(capped), { maxTokens: 1500, json: true }),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("dedup-timeout")), 25_000),
       ),

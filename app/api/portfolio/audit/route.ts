@@ -1,5 +1,6 @@
 import { checkHealth, streamChat } from "@/lib/ai/ollama";
-import { specForInstalled, pickDefaultModel } from "@/lib/ai/models";
+import { specForInstalled } from "@/lib/ai/models";
+import { pickModel } from "@/lib/ai/router";
 import { gatherPortfolioManagerEvidence, buildAuditEvidenceBlock } from "@/lib/ai-portfolio-manager";
 
 export const runtime = "nodejs";
@@ -26,7 +27,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const model = pickDefaultModel(models);
+  const model = await pickModel("portfolio-intelligence", { installed: models });
   if (!model) {
     return Response.json({ error: "No models installed", code: "model_missing" }, { status: 503 });
   }

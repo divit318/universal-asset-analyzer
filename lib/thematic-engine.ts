@@ -14,6 +14,7 @@
  */
 
 import { runPrompt } from "./ai";
+import { pickModel } from "./ai/router";
 import { getFreshFundamentals } from "./db";
 import { fetchMarketNews } from "./news";
 import { extractJson } from "./json-extract";
@@ -319,7 +320,7 @@ Return JSON only:
 }`;
 
   try {
-    const raw = await runPrompt(prompt, { maxTokens: 600, json: true });
+    const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 600, json: true });
     return extractJson<FutureStateScore>(raw);
   } catch {
     return { inevitabilityScore: 5, timeHorizon: "unknown", drivingForces: [], rationale: "AI analysis unavailable." };
@@ -355,7 +356,7 @@ Return JSON only — an array of exactly 6 objects:
 ]`;
 
   try {
-    const raw = await runPrompt(prompt, { maxTokens: 1200, json: true });
+    const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 1200, json: true });
     return (extractJson<DependencyNode[]>(raw)).slice(0, 6);
   } catch {
     return [];
@@ -390,7 +391,7 @@ Return JSON only:
 }`;
 
   try {
-    const raw = await runPrompt(prompt, { maxTokens: 800, json: true });
+    const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 800, json: true });
     return extractJson<BottleneckScore>(raw);
   } catch {
     return { score: 5, bottleneckTier: 4, bottleneckDescription: "Analysis unavailable.", scarceFactors: [], substituteRisk: "medium", substituteRationale: "", expansionDifficulty: "" };
@@ -432,7 +433,7 @@ Return JSON only:
 }`;
 
   try {
-    const raw = await runPrompt(prompt, { maxTokens: 700, json: true });
+    const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 700, json: true });
     return extractJson<Omit<SupplyDemandScore, "commodityProxies">>(raw);
   } catch {
     return { score: 5, demandTrajectory: "growing", supplyTrajectory: "balanced", capitalCyclePhase: "mid", demandDrivers: [], supplyConstraints: [], investmentSignal: "moderate" };
@@ -463,7 +464,7 @@ Return JSON only:
 }`;
 
   try {
-    const raw = await runPrompt(prompt, { maxTokens: 800, json: true });
+    const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 800, json: true });
     return extractJson<CommodityFrameworkScore>(raw);
   } catch {
     return { score: 5, primaryCommodities: [], demandCatalysts: [], supplyRisks: [], substitutionRisk: "medium", recyclingEconomics: "Analysis unavailable.", reserveConcentration: "Analysis unavailable." };
@@ -500,7 +501,7 @@ Return JSON only:
 }`;
 
   try {
-    const raw = await runPrompt(prompt, { maxTokens: 1000, json: true });
+    const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 1000, json: true });
     return extractJson<PolicyScore>(raw);
   } catch {
     return { score: 5, relevantPolicies: [], capitalFlowDirection: "Analysis unavailable.", geopoliticalFactors: [], indiaSpecificPolicies: [] };
@@ -534,7 +535,7 @@ Return JSON only:
 Include 3-6 regions, ranked by relevance to this theme.`;
 
   try {
-    const raw = await runPrompt(prompt, { maxTokens: 1200, json: true });
+    const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 1200, json: true });
     return extractJson<GlobalStructuralAdvantageScore>(raw);
   } catch {
     return {
@@ -589,7 +590,7 @@ Return JSON only — an array:
 ]`;
 
   try {
-    const raw = await runPrompt(prompt, { maxTokens: 2000, json: true });
+    const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 2000, json: true });
     const mappings = extractJson<{
       symbol: string;
       tier: 1 | 2 | 3 | 4 | 5 | 6;
@@ -819,7 +820,7 @@ export async function runThematicEngine(
   const report: ThematicReport = {
     theme,
     generatedAt: new Date().toISOString(),
-    model: (await import("./ai")).getActiveModelName(),
+    model: (await pickModel("thematic-analysis")) ?? "unavailable",
     futureState,
     dependencyChain: chain,
     bottleneck,

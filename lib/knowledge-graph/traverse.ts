@@ -117,6 +117,7 @@ export async function explainConnection(
   let parsed: RawExplanationResponse | null = null;
   try {
     const raw = await runPrompt(
+      "knowledge-graph-explain",
       buildExplainPrompt(nodeById.get(fromId)?.label ?? fromId, nodeById.get(toId)?.label ?? toId, deterministicSummary),
       { maxTokens: 700, json: true },
     );

@@ -182,9 +182,19 @@ export function PortfolioFitPanel({ fit, collapsible = false, headline, classNam
         <div className="flex items-center gap-3 min-w-0">
           <FitScoreRing score={fit.fitScore} tier={fit.fitTier} />
           <div className="min-w-0">
-            <span className={`inline-flex items-center rounded border px-2 py-0.5 text-[10px] font-semibold mb-1 ${colors.badge}`}>
-              {colors.label}
-            </span>
+            <div className="flex items-center gap-1.5 mb-1">
+              <span className={`inline-flex items-center rounded border px-2 py-0.5 text-[10px] font-semibold ${colors.badge}`}>
+                {colors.label}
+              </span>
+              {fit.confidence < 60 && (
+                <span
+                  className="inline-flex items-center rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[9px] font-medium text-muted"
+                  title={`Only ${fit.confidence}% of the fit score is backed by available data. Add fundamentals (open Research) for a fuller assessment.`}
+                >
+                  {fit.confidence}% data
+                </span>
+              )}
+            </div>
             <p className="text-xs text-muted truncate">
               {headline ?? (fit.reasons[0] ?? "Evaluate portfolio impact before investing")}
             </p>
