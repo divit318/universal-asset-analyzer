@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { PageShell, PageHeader, StatTile, Button, Field, Input, Card, SectionHeader } from "@/app/_components/ui";
@@ -69,6 +69,14 @@ function CalibrationTable({ title, rows, labelFor }: { title: string; rows: Grou
 }
 
 export default function JournalPage() {
+  return (
+    <Suspense fallback={null}>
+      <JournalPageInner />
+    </Suspense>
+  );
+}
+
+function JournalPageInner() {
   const params = useSearchParams();
   const toast = useToast();
   const [data, setData] = useState<JournalData | null>(null);

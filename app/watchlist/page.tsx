@@ -241,7 +241,6 @@ export default function WatchlistPage() {
   // fetched on demand so every watchlist stock — including newly-added ones —
   // gets an accurate, differentiated fit score instead of a data-poor neutral.
   const [fitData, setFitData] = useState<Map<string, FitEnrichment>>(new Map());
-  const [fitEnriching, setFitEnriching] = useState(false);
   const toast = useToast();
   // IOS — declared early so the digest effect can access portfolio context
   const ios = useIOSSafe();
@@ -332,9 +331,9 @@ export default function WatchlistPage() {
   // adding/removing a stock re-enriches (server-side cache makes repeats cheap).
   const symbolsKey = items.map((i) => i.symbol).join(",");
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing cached fit data when the list empties, not derivable at render time since fitData persists across item removal
     if (items.length === 0) { setFitData(new Map()); return; }
     let cancelled = false;
-    setFitEnriching(true);
     fetch("/api/watchlist/fit")
       .then((r) => (r.ok ? r.json() : null))
       .then((json: { items?: FitEnrichment[] } | null) => {
@@ -343,8 +342,7 @@ export default function WatchlistPage() {
         for (const e of json.items) map.set(e.symbol.toUpperCase(), e);
         setFitData(map);
       })
-      .catch(() => { /* fit inputs are an enhancement — degrade gracefully */ })
-      .finally(() => { if (!cancelled) setFitEnriching(false); });
+      .catch(() => { /* fit inputs are an enhancement — degrade gracefully */ });
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbolsKey]);
