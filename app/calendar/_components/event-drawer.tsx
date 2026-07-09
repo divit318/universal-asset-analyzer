@@ -215,6 +215,12 @@ export function EventDrawer({ event, onClose }: EventDrawerProps) {
                   <p className="text-sm leading-6 text-muted">{event.description}</p>
                 </Section>
               )}
+
+              {event.type === "macro" && (
+                <p className="text-micro text-faint">
+                  Date is publicly scheduled by the releasing institution. Consensus forecast and actual figures aren&apos;t tracked here — check a live economic calendar for those.
+                </p>
+              )}
             </>
           )}
 

@@ -679,6 +679,12 @@ export default function CalendarPage() {
         </div>
       )}
 
+      {(data?.unavailableSymbols?.length ?? 0) > 0 && (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning">
+          Couldn&apos;t load earnings/dividend data for {data!.unavailableSymbols.join(", ")} — try refreshing.
+        </div>
+      )}
+
       {/* ── Filters ─────────────────────────────────────────────────────────── */}
       {!loading && events.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
