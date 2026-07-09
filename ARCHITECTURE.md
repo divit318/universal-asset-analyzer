@@ -399,6 +399,8 @@ These modules track user holdings and provide position-level analysis.
 
 **Architecture constraint learned the hard way**: `lib/portfolio-analytics.ts` is imported by both server routes and client components (for its types/constants). It must never import anything that transitively reaches `lib/db.ts` (node:sqlite, server-only) — e.g. `lib/sector-rotation.ts` does reach `db.ts`, so `portfolio-analytics.ts` takes rotation data as a plain parameter instead of importing the module. Check the *whole* import chain, not just the direct import, before adding a dependency to a dual-use file.
 
+**Background alert monitor** (`lib/monitor.ts`, `instrumentation.ts`): watchlist/portfolio alerts no longer depend on a browser tab being open or an external cron. `instrumentation.ts`'s `register()` (Next's server-start hook, node runtime only) calls `startMonitorScheduler()`, which runs `runMonitor()` — the same logic behind `POST /api/monitor/run` and `scripts/monitor.mjs` — on a timer (`UAA_MONITOR_INTERVAL_MS`, default 5 min, floored at 60s, `0` disables). A `Symbol.for` global guard keeps it idempotent across dev hot-reloads. The header bell's 90s poll and this timer both evaluate the same alerts safely because `createNotifications` dedupes per condition per 24h.
+
 ---
 
 ### Research Notes (`lib/db.ts` + components)
