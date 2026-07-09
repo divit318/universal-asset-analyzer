@@ -16,6 +16,7 @@
 import { NextResponse } from "next/server";
 import { runScannerPipeline } from "@/lib/scanner/index";
 import { getScannerCache, putScannerCache } from "@/lib/db";
+import { persistScannerSnapshot } from "@/lib/scanner/cache";
 import type { ScannerProgressEvent } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -89,6 +90,10 @@ export async function POST(request: Request) {
         // Persist to server-side cache
         try {
           putScannerCache(cacheKey, JSON.stringify(result));
+          // Only the default (no custom query) auto-scan updates the
+          // long-lived snapshot other features (Mission Control, Knowledge
+          // Graph) read as "the last general market scan."
+          if (!query) persistScannerSnapshot(result);
         } catch {
           // Cache failure is non-fatal
         }
@@ -124,6 +129,7 @@ export async function GET() {
   try {
     const result = await runScannerPipeline({ india: true, global: true });
     putScannerCache(cacheKey, JSON.stringify(result));
+    persistScannerSnapshot(result); // GET always runs the default-parameter auto-scan
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Scan failed";

@@ -7,9 +7,10 @@
  * cached Scanner output into map nodes + theme clusters for the UI.
  */
 
-import { getScannerCache, listPortfolio, listWatchlist } from "./db";
+import { listPortfolio, listWatchlist } from "./db";
+import { getLatestScannerSnapshot } from "./scanner/cache";
 import type { OpportunityCategory, Conviction, VolatilityTier } from "./opportunity-engine";
-import type { ScannerResult, ScannerOpportunity, SignalDirection } from "./types";
+import type { ScannerOpportunity, SignalDirection } from "./types";
 
 export interface OpportunityMapNode {
   id: string;
@@ -51,16 +52,6 @@ export interface OpportunityMapData {
   watchlistSymbols: string[];
   scannedAt: string | null;
   generatedAt: string;
-}
-
-function getCachedScannerResult(): ScannerResult | null {
-  const cached = getScannerCache("v2::true:true");
-  if (!cached) return null;
-  try {
-    return JSON.parse(cached) as ScannerResult;
-  } catch {
-    return null;
-  }
 }
 
 function toNode(
@@ -117,7 +108,7 @@ export function buildClusters(nodes: OpportunityMapNode[]): OpportunityCluster[]
 
 /** Reads the last cached Scanner auto-scan and reshapes it for the map. Returns an empty map if no scan has run yet. */
 export function getOpportunityMapData(): OpportunityMapData {
-  const result = getCachedScannerResult();
+  const result = getLatestScannerSnapshot()?.result ?? null;
   const portfolioSymbols = new Set(listPortfolio().map((p) => p.symbol));
   const watchlistSymbols = new Set(listWatchlist().map((w) => w.symbol));
 

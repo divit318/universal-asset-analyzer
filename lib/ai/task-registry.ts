@@ -28,6 +28,7 @@ export type TaskType =
   | "ic-agent-analysis" // IC agent domains without a more specific task (business/industry/competition/management/capitalAllocation/governance)
   | "thematic-analysis" // thematic engine's 10-stage framework
   | "market-summary" // regime/macro narrative
+  | "daily-briefing" // Mission Control's daily digest narration
   | "timeline-analysis" // timeline event detail / what-changed
   | "knowledge-graph-explain" // KG node explanation
   | "calendar-brief" // earnings calendar AI brief
@@ -135,6 +136,10 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     jsonMode: true,
   },
   "market-summary": {
+    preferredModels: ["qwen3", "llama3.1", "mistral"],
+    maxTokens: 800,
+  },
+  "daily-briefing": {
     preferredModels: ["qwen3", "llama3.1", "mistral"],
     maxTokens: 800,
   },

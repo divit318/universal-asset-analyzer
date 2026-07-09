@@ -13,8 +13,8 @@ import {
   listTimelineEvents,
   listTimelineEventsForSymbols,
   getLatestSectorRotationSnapshots,
-  getScannerCache,
 } from "../db";
+import { getLatestScannerSnapshot } from "../scanner/cache";
 import { getFundamentals } from "../fundamentals";
 import { resolveScopeSymbols } from "../timeline";
 import type {
@@ -175,13 +175,7 @@ function addSectorRotationEdges(builder: GraphBuilder, focusSector: string, allS
 
 /** Pull the most recent cached Scanner auto-scan (best-effort, never triggers a live pipeline run). */
 function getCachedScannerResult(): ScannerResult | null {
-  const cached = getScannerCache("v2::true:true");
-  if (!cached) return null;
-  try {
-    return JSON.parse(cached) as ScannerResult;
-  } catch {
-    return null;
-  }
+  return getLatestScannerSnapshot()?.result ?? null;
 }
 
 function addScannerEvidence(builder: GraphBuilder, symbol: string, sector: string | null): void {

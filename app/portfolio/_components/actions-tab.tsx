@@ -393,7 +393,7 @@ export function ActionsTab() {
           <span className="text-xs text-muted/60">— actions ranked by relevance to your selected goal</span>
         </div>
         <button
-          onClick={() => navigateTo("intelligence")}
+          onClick={() => navigateTo("risk-lab")}
           className="text-[11px] text-accent hover:underline shrink-0"
         >
           New position ideas →

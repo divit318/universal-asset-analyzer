@@ -79,6 +79,11 @@ function getDb(): DatabaseSync {
       result     TEXT NOT NULL,
       created_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS scanner_snapshot (
+      id           INTEGER PRIMARY KEY CHECK (id = 1),
+      result       TEXT NOT NULL,
+      generated_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS sector_rotation_snapshot (
       as_of      TEXT PRIMARY KEY,
       data       TEXT NOT NULL,
@@ -696,6 +701,40 @@ export function putScannerCache(cacheKey: string, result: string): void {
   // Prune entries older than TTL
   const cutoff = Date.now() - SCANNER_CACHE_TTL;
   getDb().prepare("DELETE FROM scanner_cache WHERE created_at < ?").run(cutoff);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Scanner snapshot — the last default-parameter auto-scan, kept indefinitely */
+/* -------------------------------------------------------------------------- */
+//
+// Deliberately NOT stored in scanner_cache above: that table's TTL is global
+// and pruned on every write from *any* feature (market-summary,
+// movement-explainer, per-scope KG cache, timeline sync markers all share
+// it) — a real ScannerResult stored there cannot outlive 15 minutes no
+// matter what read-side TTL logic is added, since the next unrelated write
+// deletes it. This is a separate, singleton-row table with no global prune,
+// so callers (Mission Control, Knowledge Graph) can read "the last scan"
+// hours or days later rather than only within the last 15 minutes.
+
+interface ScannerSnapshotRow {
+  result: string;
+  generated_at: string;
+}
+
+export function getScannerSnapshot(): { result: string; generatedAt: string } | null {
+  const row = getDb()
+    .prepare("SELECT result, generated_at FROM scanner_snapshot WHERE id = 1")
+    .get() as unknown as ScannerSnapshotRow | undefined;
+  return row ? { result: row.result, generatedAt: row.generated_at } : null;
+}
+
+export function putScannerSnapshot(result: string, generatedAt: string): void {
+  getDb()
+    .prepare(
+      `INSERT INTO scanner_snapshot (id, result, generated_at) VALUES (1, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET result = excluded.result, generated_at = excluded.generated_at`,
+    )
+    .run(result, generatedAt);
 }
 
 /* -------------------------------------------------------------------------- */

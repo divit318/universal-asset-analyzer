@@ -13,7 +13,7 @@ import { PageShell, PageHeader, StatTile, Button, Tabs, type TabItem, Input, Fie
 import { PerformancePanel }  from "./_components/performance-panel";
 import { BriefTab }          from "./_components/brief-tab";
 import { HoldingsTable, type PositionWithQuote } from "./_components/holdings-tab";
-import { IntelligenceTab }   from "./_components/intelligence-tab";
+import { RiskLabTab }        from "./_components/risk-lab-tab";
 import { ActionsTab }        from "./_components/actions-tab";
 import { RebalancePanel }    from "./_components/rebalance-panel";
 import { CIOPanel }          from "./_components/cio-panel";
@@ -42,7 +42,7 @@ function SectionSkeleton({ rows = 3 }: { rows?: number }) {
 const TABS: TabItem<PortfolioTab>[] = [
   { id: "brief",        label: "Brief"        },
   { id: "actions",      label: "Actions"      },
-  { id: "intelligence", label: "Intelligence" },
+  { id: "risk-lab",     label: "Risk Lab"     },
   { id: "holdings",     label: "Holdings"     },
   { id: "review",       label: "Review"       },
 ];
@@ -104,7 +104,7 @@ function PortfolioInner({
               Graph
             </Link>
             <Link
-              href="/intelligence?view=opportunity-map"
+              href="/intelligence#opportunities"
               className="flex items-center rounded-control border border-border px-4 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
             >
               Opportunities
@@ -253,9 +253,9 @@ function PortfolioInner({
             />
           )}
 
-          {/* === INTELLIGENCE TAB === */}
-          {activeTab === "intelligence" && (
-            <IntelligenceTab />
+          {/* === RISK LAB TAB === */}
+          {activeTab === "risk-lab" && (
+            <RiskLabTab />
           )}
 
           {/* === ACTIONS TAB === */}

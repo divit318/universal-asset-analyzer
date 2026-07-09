@@ -193,7 +193,7 @@ function BenchmarkCard({ benchmark }: { benchmark: PortfolioReport["benchmark"] 
 
 /* ─────────────── Main Intelligence Tab ─────────────── */
 
-export function IntelligenceTab() {
+export function RiskLabTab() {
   const { report, reportLoading } = usePortfolio();
 
   if (reportLoading && !report) {

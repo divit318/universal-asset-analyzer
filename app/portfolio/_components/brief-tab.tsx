@@ -413,10 +413,10 @@ export function BriefTab() {
           ))}
           {report.alerts.length > 4 && (
             <button
-              onClick={() => navigateTo("intelligence")}
+              onClick={() => navigateTo("risk-lab")}
               className="text-xs text-accent text-left hover:underline"
             >
-              +{report.alerts.length - 4} more alerts — view in Intelligence →
+              +{report.alerts.length - 4} more alerts — view in Risk Lab →
             </button>
           )}
         </div>

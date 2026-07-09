@@ -295,10 +295,10 @@ export default function ScannerPage() {
             )}
           </div>
           <Link
-            href="/intelligence?view=opportunity-map"
+            href="/intelligence#opportunities"
             className="rounded-lg border border-border px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
           >
-            Opportunity Map →
+            Mission Control →
           </Link>
         </div>
         <p className="text-sm text-muted">

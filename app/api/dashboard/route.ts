@@ -1,26 +1,25 @@
 /**
  * GET /api/dashboard
  *
- * Market Dashboard aggregation endpoint — the "daily command center" view.
- * Synthesizes existing engines into one payload; introduces no new business
- * logic of its own (pure composition, per MASTER_ARCHITECTURE_BLUEPRINT.md §6.6):
- *   - Market regime (deterministic, from live macro/sector data — no AI, no
- *     dependency on the full multi-minute Scanner AI pipeline)
- *   - Sector Rotation snapshot (cached, instant)
- *   - Portfolio alerts + top opportunities (from the already-cached portfolio report)
- *   - Watchlist alerts (deterministic, lib/ai-watchlist.ts gatherWatchlistAlerts — no AI call)
- *   - Upcoming earnings/macro calendar (top 5 by date)
+ * Market Dashboard aggregation endpoint — the home page's compact teaser.
+ * Pure composition, now sharing lib/mission-control.ts's gatherContext()
+ * with the full /intelligence Mission Control digest instead of
+ * independently re-fetching the same data. This used to self-fetch
+ * /api/portfolio/report and /api/calendar over HTTP from within the same
+ * process and separately recompute market regime — gatherContext() already
+ * does all of that (plus a Scanner-snapshot-first regime that's richer than
+ * the live-only computation this route used alone).
  *
- * Each source is best-effort: a failure in one does not fail the others.
+ * Each source is still best-effort: a failure in one does not fail the
+ * others (gatherContext()'s own per-source degradation already guarantees
+ * this).
  */
 import { NextResponse } from "next/server";
-import { fetchMacroSignals, fetchSectorPerformance } from "@/lib/scanner/signals";
-import { assessMarketRegime } from "@/lib/scanner";
-import { getLatestSectorRotation } from "@/lib/sector-rotation";
-import { gatherWatchlistAlerts } from "@/lib/ai-watchlist";
-import type { PortfolioReport, PortfolioAlert, OpportunityRank as PortfolioOpportunity } from "@/lib/portfolio-analytics";
+import { gatherContext } from "@/lib/mission-control";
+import { getCalendarEvents } from "@/lib/calendar";
+import type { PortfolioAlert, OpportunityRank as PortfolioOpportunity } from "@/lib/portfolio-analytics";
 import type { MarketRegime, SectorRotationSnapshot, WatchlistAlert } from "@/lib/types";
-import type { CalendarResponse, CalendarEvent } from "@/app/api/calendar/route";
+import type { CalendarEvent } from "@/lib/calendar";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,23 +36,11 @@ export interface DashboardResponse {
   generatedAt: string;
 }
 
-async function getPortfolioReport(host: string): Promise<PortfolioReport | null> {
+async function getUpcomingEvents(): Promise<CalendarEvent[]> {
   try {
-    const res = await fetch(`${host}/api/portfolio/report`, { signal: AbortSignal.timeout(20_000) });
-    if (!res.ok) return null;
-    return (await res.json()) as PortfolioReport;
-  } catch {
-    return null;
-  }
-}
-
-async function getCalendar(host: string): Promise<CalendarEvent[]> {
-  try {
-    const res = await fetch(`${host}/api/calendar`, { signal: AbortSignal.timeout(15_000) });
-    if (!res.ok) return [];
-    const data = (await res.json()) as CalendarResponse;
+    const { events } = await getCalendarEvents();
     const today = new Date().toISOString().slice(0, 10);
-    return data.events
+    return events
       .filter((e) => e.date >= today)
       .sort((a, b) => a.date.localeCompare(b.date))
       .slice(0, 5);
@@ -62,42 +49,21 @@ async function getCalendar(host: string): Promise<CalendarEvent[]> {
   }
 }
 
-async function getRegime(): Promise<MarketRegime | null> {
-  try {
-    const [macroSignals, sectorPerf] = await Promise.all([
-      fetchMacroSignals(),
-      fetchSectorPerformance(),
-    ]);
-    // No AI-detected events at dashboard-load speed — regime reflects live
-    // macro/sector price action only (trend, breadth, dominant sectors).
-    // dominantThemes requires Scanner's event pipeline and is intentionally
-    // empty here; run a full scan on /scanner for theme-level detail.
-    return assessMarketRegime(macroSignals, sectorPerf, []);
-  } catch {
-    return null;
-  }
-}
-
-export async function GET(request: Request) {
-  const host = new URL(request.url).origin;
-
-  const [regime, sectorRotation, report, watchlistAlerts, upcomingEvents] = await Promise.all([
-    getRegime(),
-    Promise.resolve(getLatestSectorRotation()),
-    getPortfolioReport(host),
-    gatherWatchlistAlerts(),
-    getCalendar(host),
+export async function GET() {
+  const [ctx, upcomingEvents] = await Promise.all([
+    gatherContext(),
+    getUpcomingEvents(),
   ]);
 
   const response: DashboardResponse = {
-    regime,
-    sectorRotation,
-    portfolioAlerts: report?.alerts ?? [],
-    topOpportunities: (report?.opportunities ?? []).slice(0, 5),
-    watchlistAlerts,
+    regime: ctx.regime,
+    sectorRotation: ctx.rotation,
+    portfolioAlerts: ctx.report?.alerts ?? [],
+    topOpportunities: (ctx.report?.opportunities ?? []).slice(0, 5),
+    watchlistAlerts: ctx.watchlistAlerts,
     upcomingEvents,
-    portfolioHealthScore: report?.health.total ?? null,
-    portfolioValue: report?.totalValue ?? null,
+    portfolioHealthScore: ctx.report?.health.total ?? null,
+    portfolioValue: ctx.report?.totalValue ?? null,
     generatedAt: new Date().toISOString(),
   };
 

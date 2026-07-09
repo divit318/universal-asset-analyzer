@@ -1,51 +1,51 @@
 "use client";
 
 /**
- * /intelligence — unified Graph + Opportunity Map + Timeline.
+ * /intelligence — Mission Control, the personalized daily digest, with
+ * Graph and Timeline kept as secondary "explore" destinations reached via
+ * `?view=graph` / `?view=timeline` (preserving every existing deep-link from
+ * Scanner, Portfolio, Research, Watchlist, and Compare).
  *
- * These were three standalone pages (`/knowledge-graph`, `/opportunity-map`,
- * `/timeline`) that each computed the same idea of "what am I looking at"
- * independently. They're one investment intelligence model with three
- * views over it: Graph (relationships) → Opportunity Map (where the best
- * opportunities are) → Timeline (how the thesis got here). Selecting a
- * company/sector in any view carries into the other two via the shared
- * `IntelligenceProvider` (lib/intelligence/context.tsx) — no per-view
- * duplication of scope/focus state, no new scoring or data-fetching logic.
+ * This used to be a three-tab merge of Graph + Opportunity Map + Timeline
+ * sharing only a focus-state context, not a data model — each tab was a
+ * separate re-visualization of data already shown elsewhere (Opportunity Map
+ * duplicated Scanner's own opportunity list with zero new analytical
+ * content). Mission Control replaces that with a single composed digest
+ * (lib/mission-control.ts) built from engines that already exist across the
+ * app — portfolio health/alerts, Scanner opportunities, sector rotation,
+ * decision-journal calibration, upcoming events — so this page finally
+ * answers "what should I know/do today" instead of re-drawing data you can
+ * already see on Scanner or Portfolio.
  *
- * All three views stay mounted (toggled with `hidden`, not conditional
- * rendering) so switching tabs is instant and each view's own UI state
- * (Graph's pan/zoom/selection, Timeline's filters, Opportunity Map's
- * bubble/quadrant toggle) survives the switch, per the "seamless workflow"
- * requirement — the tradeoff is each view fetches once up front rather
- * than on first visit.
+ * Graph remains genuinely differentiated (no other page visualizes entity
+ * relationships) but is exploratory rather than a daily-habit surface, so it
+ * — along with Timeline — is demoted to a secondary view instead of a
+ * co-equal tab.
  */
 
 import { Suspense, useCallback } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { IntelligenceProvider, useIntelligence, type IntelligenceView, type IntelligenceFocus } from "@/lib/intelligence/context";
+import { IntelligenceProvider, type IntelligenceView, type IntelligenceFocus } from "@/lib/intelligence/context";
 import type { GraphScope } from "@/lib/knowledge-graph";
 import { GraphView } from "./_views/graph-view";
 import { TimelineView } from "./_views/timeline-view";
-import { OpportunityMapView } from "./_views/opportunity-map-view";
-import { PageShell, PageHeader, Tabs, type TabItem } from "@/app/_components/ui";
-
-const TABS: TabItem<IntelligenceView>[] = [
-  { id: "graph", label: "Graph" },
-  { id: "opportunity-map", label: "Opportunity Map" },
-  { id: "timeline", label: "Timeline" },
-];
+import { MissionControlView } from "./_views/mission-control-view";
+import { PageShell, PageHeader } from "@/app/_components/ui";
 
 const VALID_SCOPES: GraphScope[] = ["symbol", "sector", "portfolio", "watchlist"];
-const VALID_VIEWS: IntelligenceView[] = ["graph", "opportunity-map", "timeline"];
+const VALID_VIEWS: IntelligenceView[] = ["graph", "timeline"];
+
+const VIEW_LABEL: Record<IntelligenceView, string> = { graph: "Graph", timeline: "Timeline" };
 
 function IntelligencePageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
   const viewParam = searchParams.get("view");
-  const initialView: IntelligenceView = VALID_VIEWS.includes(viewParam as IntelligenceView)
+  const secondaryView: IntelligenceView | null = VALID_VIEWS.includes(viewParam as IntelligenceView)
     ? (viewParam as IntelligenceView)
-    : "graph";
+    : null;
 
   const scopeParam = searchParams.get("scope");
   const initialFocus: IntelligenceFocus = {
@@ -63,34 +63,29 @@ function IntelligencePageInner() {
     [router],
   );
 
-  return (
-    <IntelligenceProvider initialView={initialView} initialFocus={initialFocus} onStateChange={handleStateChange}>
-      <IntelligenceShell />
-    </IntelligenceProvider>
-  );
-}
-
-function IntelligenceShell() {
-  const { view, setView } = useIntelligence();
+  if (!secondaryView) {
+    return (
+      <PageShell>
+        <PageHeader
+          title="Intelligence"
+          description="Your daily briefing — what changed, what needs attention, and what to do about it."
+        />
+        <MissionControlView />
+      </PageShell>
+    );
+  }
 
   return (
     <PageShell>
-      <PageHeader
-        title="Intelligence"
-        description="One investment intelligence model, three synchronized views — select a company, sector, portfolio, or watchlist and it follows you across relationships, opportunities, and history."
-      />
-
-      <Tabs tabs={TABS} active={view} onChange={setView} layoutId="intelligence-tabs-underline" />
-
-      <div className={view === "graph" ? "contents" : "hidden"}>
-        <GraphView />
+      <div className="flex items-center gap-3">
+        <Link href="/intelligence" className="text-sm text-muted transition-colors hover:text-brand">
+          ← Back to Mission Control
+        </Link>
       </div>
-      <div className={view === "opportunity-map" ? "contents" : "hidden"}>
-        <OpportunityMapView />
-      </div>
-      <div className={view === "timeline" ? "contents" : "hidden"}>
-        <TimelineView />
-      </div>
+      <PageHeader title={VIEW_LABEL[secondaryView]} />
+      <IntelligenceProvider initialView={secondaryView} initialFocus={initialFocus} onStateChange={handleStateChange}>
+        {secondaryView === "graph" ? <GraphView /> : <TimelineView />}
+      </IntelligenceProvider>
     </PageShell>
   );
 }

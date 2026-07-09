@@ -1,26 +1,29 @@
 "use client";
 
 /**
- * Intelligence layer — the single source of truth shared by the Graph,
- * Opportunity Map, and Timeline views under /intelligence.
+ * Intelligence layer — the single source of truth shared by the Graph and
+ * Timeline views under /intelligence, which now sit behind the primary
+ * Mission Control dashboard as secondary "explore" destinations.
  *
- * These three views used to be standalone pages (`/knowledge-graph`,
- * `/opportunity-map`, `/timeline`) that each tracked their own "focus"
- * (scope + id) independently. Graph and Timeline already used an identical
- * `{ scope, id }` shape (`GraphScope`/`TimelineScope` are the same union),
- * so this context lifts that shared concept up one level instead of
- * duplicating it — no scoring/business logic lives here, only UI focus
- * state that the existing view components already knew how to consume.
+ * Graph and Timeline used an identical `{ scope, id }` shape (`GraphScope`/
+ * `TimelineScope` are the same union), so this context lifts that shared
+ * concept up one level instead of duplicating it — no scoring/business
+ * logic lives here, only UI focus state that the existing view components
+ * already knew how to consume.
  *
- * Opportunity Map has no native "scope" concept (its nodes are a flat,
- * already-filtered list keyed by `symbol`/`theme`), so it derives its own
- * selection from `focus`/`selectedTheme` rather than owning either.
+ * A third view, Opportunity Map, used to share this context too; it was
+ * retired (zero analytical content beyond Scanner's own opportunity list —
+ * see lib/mission-control.ts, which absorbs its value via rankByFit()
+ * instead of a bubble/quadrant re-visualization). Its underlying data
+ * function (lib/opportunity-map.ts) is kept — it still feeds Research's
+ * "Related Opportunities" card and the AI copilot's context — only the
+ * dedicated view is gone.
  */
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import type { GraphScope } from "@/lib/knowledge-graph";
 
-export type IntelligenceView = "graph" | "opportunity-map" | "timeline";
+export type IntelligenceView = "graph" | "timeline";
 
 export interface IntelligenceFocus {
   scope: GraphScope;

@@ -11,7 +11,7 @@ import {
 import type { PortfolioReport, NewPositionRecommendation, PortfolioObjective, PortfolioConstraints } from "@/lib/portfolio-analytics";
 import { DEFAULT_CONSTRAINTS } from "@/lib/portfolio-analytics";
 
-export type PortfolioTab = "brief" | "holdings" | "intelligence" | "actions" | "review";
+export type PortfolioTab = "brief" | "holdings" | "risk-lab" | "actions" | "review";
 
 const OBJECTIVE_KEY   = "uaa_portfolio_objective";
 const CONSTRAINTS_KEY = "uaa_portfolio_constraints";
