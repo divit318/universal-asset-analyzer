@@ -43,6 +43,12 @@ export interface ThematicProgressEvent {
   data?: unknown;
 }
 
+/** An AI stage that fell back to a neutral default — the score/report is missing its input. */
+export interface StageFailure {
+  stage: string;
+  error: string;
+}
+
 export interface FutureStateScore {
   inevitabilityScore: number;        // 0–10
   timeHorizon: string;               // e.g. "3–7 years"
@@ -183,6 +189,8 @@ export interface ThematicReport {
   tierCompanies: TierCompany[];
   opportunity: OpportunityScore;
   newsItems: NewsItem[];
+  /** AI stages that failed and fell back to a neutral default — the report above is missing their input. */
+  stageFailures: StageFailure[];
 }
 
 export interface ThematicReportInput {
@@ -218,7 +226,7 @@ const THEME_COMMODITY_MAP: Record<string, { ticker: string; name: string }[]> = 
   "fertilizer":  [{ ticker: "MOO", name: "Agri ETF" }, { ticker: "MOS", name: "Mosaic" }],
 };
 
-function pickCommodityProxies(theme: string): { ticker: string; name: string }[] {
+export function pickCommodityProxies(theme: string): { ticker: string; name: string }[] {
   const t = theme.toLowerCase();
   const results: { ticker: string; name: string }[] = [];
   const seen = new Set<string>();
@@ -272,7 +280,7 @@ async function fetchYahooPrice(ticker: string): Promise<PriceData | null> {
   }
 }
 
-function pctChange(history: number[], daysBack: number): number | null {
+export function pctChange(history: number[], daysBack: number): number | null {
   if (history.length < daysBack + 1) return null;
   const recent = history[history.length - 1];
   const past = history[history.length - 1 - Math.min(daysBack, history.length - 1)];
@@ -293,10 +301,29 @@ async function fetchCommodityProxies(proxies: { ticker: string; name: string }[]
       return { ticker: p.ticker, name: p.name, price: data.price, priceChange1M: c1m, priceChange3M: c3m, priceChange1Y: c1y, trend };
     }),
   );
-  return results.map((r) => (r.status === "fulfilled" ? r.value : { ticker: "", name: "", price: null, priceChange1M: null, priceChange3M: null, priceChange1Y: null, trend: "flat" as const }));
+  return results.map((r, i) =>
+    r.status === "fulfilled"
+      ? r.value
+      : { ticker: proxies[i].ticker, name: proxies[i].name, price: null, priceChange1M: null, priceChange3M: null, priceChange1Y: null, trend: "flat" as const },
+  );
 }
 
 /* ───────────────────── AI scoring stages ───────────────────────────── */
+
+/**
+ * Neutral fallback values for each stage, used only when its AI call fails.
+ * Kept separate from the scoring functions themselves so failures are
+ * tracked centrally (see {@link runThematicEngine}'s `withFallback`) instead
+ * of being swallowed silently inside each function — a hardcoded "5/10" that
+ * looks identical to a real score was indistinguishable from genuine AI
+ * output before this change.
+ */
+const DEFAULT_FUTURE_STATE: FutureStateScore = { inevitabilityScore: 5, timeHorizon: "unknown", drivingForces: [], rationale: "AI analysis unavailable — neutral default used." };
+const DEFAULT_BOTTLENECK: BottleneckScore = { score: 5, bottleneckTier: 4, bottleneckDescription: "AI analysis unavailable — neutral default used.", scarceFactors: [], substituteRisk: "medium", substituteRationale: "", expansionDifficulty: "" };
+const DEFAULT_SUPPLY_DEMAND: Omit<SupplyDemandScore, "commodityProxies"> = { score: 5, demandTrajectory: "growing", supplyTrajectory: "balanced", capitalCyclePhase: "mid", demandDrivers: [], supplyConstraints: [], investmentSignal: "moderate" };
+const DEFAULT_COMMODITY: CommodityFrameworkScore = { score: 5, primaryCommodities: [], demandCatalysts: [], supplyRisks: [], substitutionRisk: "medium", recyclingEconomics: "AI analysis unavailable — neutral default used.", reserveConcentration: "AI analysis unavailable — neutral default used." };
+const DEFAULT_POLICY: PolicyScore = { score: 5, relevantPolicies: [], capitalFlowDirection: "AI analysis unavailable — neutral default used.", geopoliticalFactors: [], indiaSpecificPolicies: [] };
+const DEFAULT_STRUCTURAL_ADVANTAGE: GlobalStructuralAdvantageScore = { score: 5, currentLeader: "Unknown", fastestImproving: "Unknown", regions: [], longTermImplications: "AI analysis unavailable — neutral default used." };
 
 async function scoreFutureState(theme: string): Promise<FutureStateScore> {
   const prompt = `You are an elite thematic research analyst. Evaluate the following investment theme for future state inevitability.
@@ -319,12 +346,8 @@ Return JSON only:
   "rationale": "<2-3 sentences on why this score>"
 }`;
 
-  try {
-    const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 600, json: true });
-    return extractJson<FutureStateScore>(raw);
-  } catch {
-    return { inevitabilityScore: 5, timeHorizon: "unknown", drivingForces: [], rationale: "AI analysis unavailable." };
-  }
+  const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 600, json: true });
+  return extractJson<FutureStateScore>(raw);
 }
 
 async function buildDependencyChain(theme: string): Promise<DependencyNode[]> {
@@ -355,12 +378,8 @@ Return JSON only — an array of exactly 6 objects:
   ...
 ]`;
 
-  try {
-    const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 1200, json: true });
-    return (extractJson<DependencyNode[]>(raw)).slice(0, 6);
-  } catch {
-    return [];
-  }
+  const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 1200, json: true });
+  return (extractJson<DependencyNode[]>(raw)).slice(0, 6);
 }
 
 async function scoreBottleneck(theme: string, chain: DependencyNode[]): Promise<BottleneckScore> {
@@ -390,12 +409,8 @@ Return JSON only:
   "expansionDifficulty": "<e.g. 'Uranium enrichment requires 7-10 years and $10B+ capex with geopolitical constraints'>"
 }`;
 
-  try {
-    const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 800, json: true });
-    return extractJson<BottleneckScore>(raw);
-  } catch {
-    return { score: 5, bottleneckTier: 4, bottleneckDescription: "Analysis unavailable.", scarceFactors: [], substituteRisk: "medium", substituteRationale: "", expansionDifficulty: "" };
-  }
+  const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 800, json: true });
+  return extractJson<BottleneckScore>(raw);
 }
 
 async function scoreSupplyDemand(
@@ -432,12 +447,8 @@ Return JSON only:
   "investmentSignal": "strong" | "moderate" | "weak" | "avoid"
 }`;
 
-  try {
-    const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 700, json: true });
-    return extractJson<Omit<SupplyDemandScore, "commodityProxies">>(raw);
-  } catch {
-    return { score: 5, demandTrajectory: "growing", supplyTrajectory: "balanced", capitalCyclePhase: "mid", demandDrivers: [], supplyConstraints: [], investmentSignal: "moderate" };
-  }
+  const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 700, json: true });
+  return extractJson<Omit<SupplyDemandScore, "commodityProxies">>(raw);
 }
 
 async function scoreCommodityFramework(theme: string): Promise<CommodityFrameworkScore> {
@@ -463,12 +474,8 @@ Return JSON only:
   "reserveConcentration": "<1-2 sentences on where reserves are concentrated and geopolitical implications>"
 }`;
 
-  try {
-    const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 800, json: true });
-    return extractJson<CommodityFrameworkScore>(raw);
-  } catch {
-    return { score: 5, primaryCommodities: [], demandCatalysts: [], supplyRisks: [], substitutionRisk: "medium", recyclingEconomics: "Analysis unavailable.", reserveConcentration: "Analysis unavailable." };
-  }
+  const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 800, json: true });
+  return extractJson<CommodityFrameworkScore>(raw);
 }
 
 async function scorePolicy(theme: string, liveNewsContext = ""): Promise<PolicyScore> {
@@ -500,12 +507,8 @@ Return JSON only:
   "indiaSpecificPolicies": ["<policy1>", "<policy2>"]
 }`;
 
-  try {
-    const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 1000, json: true });
-    return extractJson<PolicyScore>(raw);
-  } catch {
-    return { score: 5, relevantPolicies: [], capitalFlowDirection: "Analysis unavailable.", geopoliticalFactors: [], indiaSpecificPolicies: [] };
-  }
+  const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 1000, json: true });
+  return extractJson<PolicyScore>(raw);
 }
 
 async function scoreGlobalStructuralAdvantage(theme: string): Promise<GlobalStructuralAdvantageScore> {
@@ -534,18 +537,8 @@ Return JSON only:
 
 Include 3-6 regions, ranked by relevance to this theme.`;
 
-  try {
-    const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 1200, json: true });
-    return extractJson<GlobalStructuralAdvantageScore>(raw);
-  } catch {
-    return {
-      score: 5,
-      currentLeader: "Unknown",
-      fastestImproving: "Unknown",
-      regions: [],
-      longTermImplications: "Analysis unavailable.",
-    };
-  }
+  const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 1200, json: true });
+  return extractJson<GlobalStructuralAdvantageScore>(raw);
 }
 
 /* ──────────────────── Company mapping from screener DB ─────────────── */
@@ -589,51 +582,47 @@ Return JSON only — an array:
   }
 ]`;
 
-  try {
-    const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 2000, json: true });
-    const mappings = extractJson<{
-      symbol: string;
-      tier: 1 | 2 | 3 | 4 | 5 | 6;
-      strategicImportance: "critical" | "high" | "medium" | "low";
-      moatType: TierCompany["moatType"];
-      relevanceRationale: string;
-    }[]>(raw);
+  const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 2000, json: true });
+  const mappings = extractJson<{
+    symbol: string;
+    tier: 1 | 2 | 3 | 4 | 5 | 6;
+    strategicImportance: "critical" | "high" | "medium" | "low";
+    moatType: TierCompany["moatType"];
+    relevanceRationale: string;
+  }[]>(raw);
 
-    const symMap = new Map(dbCompanies.map((c) => [c.symbol, c]));
-    const tierLabels: Record<number, string> = {};
-    for (const n of chain) tierLabels[n.tier] = n.tierLabel;
+  const symMap = new Map(dbCompanies.map((c) => [c.symbol, c]));
+  const tierLabels: Record<number, string> = {};
+  for (const n of chain) tierLabels[n.tier] = n.tierLabel;
 
-    const result: TierCompany[] = [];
-    for (const m of mappings) {
-      const fund = symMap.get(m.symbol);
-      if (!fund) continue;
-      result.push({
-        tier: m.tier,
-        tierLabel: tierLabels[m.tier] ?? `Tier ${m.tier}`,
-        symbol: fund.symbol,
-        name: fund.name,
-        sector: fund.sector ?? null,
-        industry: fund.industry ?? null,
-        roic: fund.roic ?? null,
-        grossMargin: fund.grossMargin ?? null,
-        revenueGrowthYoY: fund.revenueGrowthYoY ?? null,
-        debtToEquity: fund.debtToEquity ?? null,
-        isIndia: fund.symbol.endsWith(".NS") || fund.symbol.endsWith(".BO"),
-        relevanceRationale: m.relevanceRationale,
-        qualityScore: null,
-        strategicImportance: m.strategicImportance,
-        moatType: m.moatType,
-      });
-    }
-    return result;
-  } catch {
-    return [];
+  const result: TierCompany[] = [];
+  for (const m of mappings) {
+    const fund = symMap.get(m.symbol);
+    if (!fund) continue;
+    result.push({
+      tier: m.tier,
+      tierLabel: tierLabels[m.tier] ?? `Tier ${m.tier}`,
+      symbol: fund.symbol,
+      name: fund.name,
+      sector: fund.sector ?? null,
+      industry: fund.industry ?? null,
+      roic: fund.roic ?? null,
+      grossMargin: fund.grossMargin ?? null,
+      revenueGrowthYoY: fund.revenueGrowthYoY ?? null,
+      debtToEquity: fund.debtToEquity ?? null,
+      isIndia: fund.symbol.endsWith(".NS") || fund.symbol.endsWith(".BO"),
+      relevanceRationale: m.relevanceRationale,
+      qualityScore: null,
+      strategicImportance: m.strategicImportance,
+      moatType: m.moatType,
+    });
   }
+  return result;
 }
 
 /* ───────────────────── Opportunity score assembly ──────────────────── */
 
-function computeOpportunityScore(
+export function computeOpportunityScore(
   futureState: FutureStateScore,
   bottleneck: BottleneckScore,
   supplyDemand: SupplyDemandScore,
@@ -763,55 +752,62 @@ export async function runThematicEngine(
     onProgress?.({ stage, message, data });
   };
 
+  const failures: StageFailure[] = [];
+
+  /** Run a stage's AI call; on failure, record it and use the neutral default instead of throwing. */
+  async function withFallback<T>(stage: string, fn: () => Promise<T>, fallback: T): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      failures.push({ stage, error: err instanceof Error ? err.message : String(err) });
+      return fallback;
+    }
+  }
+
   const { theme } = input;
 
   emit("future_state", `Scoring inevitability of "${theme}"…`);
-  const futureState = await scoreFutureState(theme);
-  emit("future_state", `Inevitability: ${futureState.inevitabilityScore}/10`, futureState);
+  const futureState = await withFallback("Future State", () => scoreFutureState(theme), DEFAULT_FUTURE_STATE);
+  emit("future_state", `Inevitability: ${futureState.inevitabilityScore}/10${failures.some((f) => f.stage === "Future State") ? " — AI unavailable, neutral default used" : ""}`, futureState);
 
   emit("dependency_chain", "Mapping dependency chain across 6 tiers…");
-  const chain = await buildDependencyChain(theme);
-  emit("dependency_chain", `${chain.length} tiers mapped`, chain);
+  const chain = await withFallback("Dependency Chain", () => buildDependencyChain(theme), [] as DependencyNode[]);
+  emit("dependency_chain", `${chain.length} tiers mapped${chain.length === 0 ? " — AI unavailable" : ""}`, chain);
 
   emit("bottleneck", "Identifying and scoring the bottleneck…");
-  const bottleneck = await scoreBottleneck(theme, chain);
-  emit("bottleneck", `Bottleneck score: ${bottleneck.score}/10 (Tier ${bottleneck.bottleneckTier})`, bottleneck);
+  const bottleneck = await withFallback("Bottleneck", () => scoreBottleneck(theme, chain), DEFAULT_BOTTLENECK);
+  emit("bottleneck", `Bottleneck score: ${bottleneck.score}/10 (Tier ${bottleneck.bottleneckTier})${failures.some((f) => f.stage === "Bottleneck") ? " — AI unavailable, neutral default used" : ""}`, bottleneck);
 
   emit("supply_demand", "Fetching commodity proxies and scoring supply/demand cycle…");
   const proxyDefs = pickCommodityProxies(theme);
-  const [proxies, sdScoreRaw] = await Promise.all([
-    fetchCommodityProxies(proxyDefs),
-    scoreSupplyDemand(theme, [] as CommodityProxy[]),
-  ]);
-  // Re-run supply/demand with live proxy data
-  const sdScoreWithData = await scoreSupplyDemand(theme, proxies);
+  const proxies = await fetchCommodityProxies(proxyDefs);
+  const sdScoreWithData = await withFallback("Supply/Demand", () => scoreSupplyDemand(theme, proxies), DEFAULT_SUPPLY_DEMAND);
   const supplyDemand: SupplyDemandScore = { ...sdScoreWithData, commodityProxies: proxies };
-  void sdScoreRaw; // discard the first run
-  emit("supply_demand", `Demand: ${supplyDemand.demandTrajectory}, Supply: ${supplyDemand.supplyTrajectory}, Cycle: ${supplyDemand.capitalCyclePhase}`, supplyDemand);
+  emit("supply_demand", `Demand: ${supplyDemand.demandTrajectory}, Supply: ${supplyDemand.supplyTrajectory}, Cycle: ${supplyDemand.capitalCyclePhase}${failures.some((f) => f.stage === "Supply/Demand") ? " — AI unavailable, neutral default used" : ""}`, supplyDemand);
 
   emit("commodity", "Running commodity framework analysis…");
-  const commodityFramework = await scoreCommodityFramework(theme);
-  emit("commodity", `Commodity score: ${commodityFramework.score}/10`, commodityFramework);
+  const commodityFramework = await withFallback("Commodity Framework", () => scoreCommodityFramework(theme), DEFAULT_COMMODITY);
+  emit("commodity", `Commodity score: ${commodityFramework.score}/10${failures.some((f) => f.stage === "Commodity Framework") ? " — AI unavailable, neutral default used" : ""}`, commodityFramework);
 
   emit("policy", "Scanning news sources and evaluating policy/geopolitical overlay…");
   // Fetch live news for this theme from all sources: Yahoo Finance, Google News, ET, NSE, Moneycontrol, NewsAPI
   const newsItems = await fetchMarketNews({ query: theme, india: true, global: true, limit: 40 }).catch(() => [] as NewsItem[]);
   const newsSummary = newsItems.slice(0, 20).map((n) => `• [${n.source}] ${n.headline}`).join("\n");
-  const policy = await scorePolicy(theme, newsSummary);
-  emit("policy", `Policy score: ${policy.score}/10 (${newsItems.length} news articles scanned)`, policy);
+  const policy = await withFallback("Policy", () => scorePolicy(theme, newsSummary), DEFAULT_POLICY);
+  emit("policy", `Policy score: ${policy.score}/10 (${newsItems.length} news articles scanned)${failures.some((f) => f.stage === "Policy") ? " — AI unavailable, neutral default used" : ""}`, policy);
 
   emit("global_structural_advantage", "Comparing structural advantages across regions…");
-  const structuralAdvantage = await scoreGlobalStructuralAdvantage(theme);
+  const structuralAdvantage = await withFallback("Global Structural Advantage", () => scoreGlobalStructuralAdvantage(theme), DEFAULT_STRUCTURAL_ADVANTAGE);
   emit(
     "global_structural_advantage",
-    `Structural advantage score: ${structuralAdvantage.score}/10 (leader: ${structuralAdvantage.currentLeader})`,
+    `Structural advantage score: ${structuralAdvantage.score}/10 (leader: ${structuralAdvantage.currentLeader})${failures.some((f) => f.stage === "Global Structural Advantage") ? " — AI unavailable, neutral default used" : ""}`,
     structuralAdvantage,
   );
 
   emit("company_mapping", "Loading screener universe and mapping companies to tiers…");
   const { rows: dbRows } = getFreshFundamentals(7 * 24 * 60 * 60 * 1000); // 7-day cache
-  const tierCompanies = await mapCompaniesToTiers(theme, chain, dbRows);
-  emit("company_mapping", `${tierCompanies.length} companies mapped across ${new Set(tierCompanies.map((c) => c.tier)).size} tiers`, tierCompanies);
+  const tierCompanies = await withFallback("Company Mapping", () => mapCompaniesToTiers(theme, chain, dbRows), [] as TierCompany[]);
+  emit("company_mapping", `${tierCompanies.length} companies mapped across ${new Set(tierCompanies.map((c) => c.tier)).size} tiers${failures.some((f) => f.stage === "Company Mapping") ? " — AI unavailable" : ""}`, tierCompanies);
 
   emit("opportunity_score", "Computing final opportunity score…");
   const opportunity = computeOpportunityScore(futureState, bottleneck, supplyDemand, commodityFramework, policy, structuralAdvantage, tierCompanies);
@@ -831,8 +827,15 @@ export async function runThematicEngine(
     tierCompanies,
     opportunity,
     newsItems,
+    stageFailures: failures,
   };
 
-  emit("done", "Thematic report complete", report);
+  emit(
+    "done",
+    failures.length === 0
+      ? "Thematic report complete"
+      : `Thematic report complete — ${failures.length} stage${failures.length === 1 ? "" : "s"} used a neutral default (${failures.map((f) => f.stage).join(", ")})`,
+    report,
+  );
   return report;
 }

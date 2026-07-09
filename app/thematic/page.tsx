@@ -201,6 +201,21 @@ function ThematicReportView({ report }: { report: ThematicReport }) {
         </div>
       </div>
 
+      {(report.stageFailures?.length ?? 0) > 0 && (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning">
+          <p className="font-medium">
+            {report.stageFailures.length} of 8 stages fell back to a neutral default — those scores don&apos;t reflect real AI analysis.
+          </p>
+          <ul className="mt-1.5 space-y-0.5 text-xs">
+            {report.stageFailures.map((f) => (
+              <li key={f.stage}>
+                <span className="font-medium">{f.stage}:</span> {f.error}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Tab nav */}
       <div className="flex gap-1 border-b border-border">
         {tabs.map((t) => (

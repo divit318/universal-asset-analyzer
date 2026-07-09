@@ -13,7 +13,10 @@ import { runThematicEngine, type ThematicProgressEvent } from "@/lib/thematic-en
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+// Only enforced on Vercel (build-time metadata, a no-op for `next dev`/self-hosted).
+// 8 sequential local-model calls can each take minutes on modest hardware —
+// 120s was far short of that and would have silently truncated the response.
+export const maxDuration = 300;
 
 export async function POST(req: Request) {
   let body: { theme?: string };
