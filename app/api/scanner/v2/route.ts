@@ -20,7 +20,11 @@ import type { ScannerProgressEvent } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+// Only enforced on Vercel (build-time metadata, a no-op for `next dev`/self-hosted).
+// This pipeline makes many sequential local-model calls (dedup, classify,
+// causal chains per event, sector/company impact, thesis per opportunity) —
+// 120s was far short of realistic end-to-end time on modest hardware.
+export const maxDuration = 300;
 
 interface ScanRequest {
   query?: string;

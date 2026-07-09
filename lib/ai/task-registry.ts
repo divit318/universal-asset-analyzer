@@ -114,6 +114,7 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
   "opportunity-engine": {
     preferredModels: ["qwen3", "llama3.1"],
     maxTokens: 2048,
+    timeoutMs: 300_000,
     jsonMode: true,
   },
   comparison: {

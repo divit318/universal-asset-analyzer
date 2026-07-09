@@ -7,7 +7,12 @@
  *   → 1st order: lower financing costs, NIM compression for banks
  *   → 2nd order: homebuilders benefit, REITs re-rate upward, utilities become less attractive
  *
- * Runs one Ollama call per macro/policy event (parallel, up to 4 concurrent).
+ * Runs one Ollama call per macro/policy event, sequentially — Ollama's
+ * default local setup serves one request at a time regardless of how many
+ * are fired, so dispatching them concurrently doesn't parallelize anything;
+ * it only queues them behind each other while each one's own timeout keeps
+ * counting down. Sequential dispatch makes each call's timeout budget
+ * meaningful and gives steady progress instead of a burst of failures.
  */
 
 import { runPrompt } from "../ai";
@@ -73,8 +78,6 @@ Return ONLY valid JSON:
 Include 2-4 first-order effects and 2-3 second-order effects. Be specific — generic statements are not useful.`;
 }
 
-const MAX_CONCURRENT = 4;
-
 async function buildCausalChainForEvent(
   event: MarketEvent,
 ): Promise<CausalEffect[]> {
@@ -109,24 +112,12 @@ export async function buildCausalChains(
   );
   if (macroEvents.length === 0) return events;
 
-  // Process in batches to limit concurrent Ollama calls
-  const enriched: MarketEvent[] = [];
-  for (let i = 0; i < macroEvents.length; i += MAX_CONCURRENT) {
-    const batch = macroEvents.slice(i, i + MAX_CONCURRENT);
-    const results = await Promise.allSettled(
-      batch.map(async (event) => {
-        const chain = await buildCausalChainForEvent(event);
-        return { ...event, causalChain: chain };
-      }),
-    );
-    for (const r of results) {
-      enriched.push(
-        r.status === "fulfilled" ? r.value : macroEvents[i + enriched.length],
-      );
-    }
+  const enrichedMap = new Map<string, MarketEvent>();
+  for (const event of macroEvents) {
+    const chain = await buildCausalChainForEvent(event);
+    enrichedMap.set(event.id, { ...event, causalChain: chain });
   }
 
   // Rebuild in original order
-  const enrichedMap = new Map(enriched.map((e) => [e.id, e]));
   return events.map((e) => enrichedMap.get(e.id) ?? e);
 }

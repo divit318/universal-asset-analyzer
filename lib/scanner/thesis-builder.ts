@@ -5,7 +5,10 @@
  * structured InvestmentThesis using the full context: events, causal chains,
  * sector analysis, and company fundamentals.
  *
- * Runs 4 parallel Ollama calls at most to keep latency reasonable.
+ * Runs sequentially — Ollama's default local setup serves one request at a
+ * time, so firing several concurrently doesn't parallelize anything; it only
+ * queues them while each one's own timeout keeps counting down regardless of
+ * whether it has actually started generating yet.
  */
 
 import { runPrompt } from "../ai";
@@ -88,8 +91,6 @@ Return ONLY valid JSON:
 }`;
 }
 
-const MAX_CONCURRENT = 4;
-
 /** Generate InvestmentThesis for each high-conviction opportunity. */
 export async function buildTheses(
   opportunities: ScannerOpportunity[],
@@ -103,48 +104,38 @@ export async function buildTheses(
 
   const withTheses: ScannerOpportunity[] = [];
 
-  // Process in batches of MAX_CONCURRENT
-  for (let i = 0; i < opportunities.length; i += MAX_CONCURRENT) {
-    const batch = opportunities.slice(i, i + MAX_CONCURRENT);
-    const results = await Promise.allSettled(
-      batch.map(async (opp) => {
-        const drivingEvents = opp.sourceEventIds
-          .map((id) => eventMap.get(id))
-          .filter((e): e is MarketEvent => e != null);
+  for (const opp of opportunities) {
+    const drivingEvents = opp.sourceEventIds
+      .map((id) => eventMap.get(id))
+      .filter((e): e is MarketEvent => e != null);
 
-        const sectorImpact = sectorMap.get(opp.theme);
+    const sectorImpact = sectorMap.get(opp.theme);
 
-        let thesis: InvestmentThesis | null = null;
-        try {
-          const raw = await runPrompt(
-            "investment-thesis",
-            buildThesisPrompt(opp, drivingEvents, sectorImpact),
-            { maxTokens: 1500, json: true },
-          );
-          const parsed = extractJson<ThesisResponse>(raw);
-          thesis = {
-            headline: parsed.headline ?? "",
-            summary: parsed.summary ?? "",
-            bullCase: parsed.bullCase ?? [],
-            bearCase: parsed.bearCase ?? [],
-            keyCatalysts: parsed.keyCatalysts ?? [],
-            keyRisks: parsed.keyRisks ?? [],
-            timeHorizon: parsed.timeHorizon ?? "months",
-            confidence: Math.max(0, Math.min(100, parsed.confidence ?? 60)),
-            potentialWinners: parsed.potentialWinners ?? [],
-            potentialLosers: parsed.potentialLosers ?? [],
-          };
-        } catch {
-          // Thesis is best-effort — opportunity still surfaces without it
-        }
-
-        return { ...opp, thesis };
-      }),
-    );
-
-    for (const r of results) {
-      withTheses.push(r.status === "fulfilled" ? r.value : batch[withTheses.length - i]);
+    let thesis: InvestmentThesis | null = null;
+    try {
+      const raw = await runPrompt(
+        "investment-thesis",
+        buildThesisPrompt(opp, drivingEvents, sectorImpact),
+        { maxTokens: 1500, json: true },
+      );
+      const parsed = extractJson<ThesisResponse>(raw);
+      thesis = {
+        headline: parsed.headline ?? "",
+        summary: parsed.summary ?? "",
+        bullCase: parsed.bullCase ?? [],
+        bearCase: parsed.bearCase ?? [],
+        keyCatalysts: parsed.keyCatalysts ?? [],
+        keyRisks: parsed.keyRisks ?? [],
+        timeHorizon: parsed.timeHorizon ?? "months",
+        confidence: Math.max(0, Math.min(100, parsed.confidence ?? 60)),
+        potentialWinners: parsed.potentialWinners ?? [],
+        potentialLosers: parsed.potentialLosers ?? [],
+      };
+    } catch {
+      // Thesis is best-effort — opportunity still surfaces without it
     }
+
+    withTheses.push({ ...opp, thesis });
   }
 
   return withTheses;

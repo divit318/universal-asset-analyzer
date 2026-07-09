@@ -267,14 +267,22 @@ export async function runScannerPipeline(
 
   emit(onProgress, "causal_reasoning", "Building cause-and-effect chains…", 35);
 
-  // Stages 4 + 5 + 6: Causal reasoning, theme detection, sector impact — parallel
-  const [enrichedEvents, emergingThemes, sectorImpacts] = await Promise.all([
-    buildCausalChains(classifiedEvents),
-    detectEmergingThemes(classifiedEvents),
-    analyzeSectorImpacts(classifiedEvents, sectorPerf),
-  ]);
+  // Stages 4 + 5 + 6: causal reasoning, theme detection, sector impact.
+  // Sequential — Ollama serves one request at a time locally, so running
+  // these "in parallel" wouldn't actually parallelize anything, only queue
+  // them. It also fixes a real bug: sector impact's prompt is written to
+  // reference each event's causal chain ("Causal effects: ... none analyzed"
+  // otherwise), but it was being handed classifiedEvents — the pre-causal-
+  // chain version — because enrichedEvents wasn't resolved yet inside the
+  // same Promise.all. It now runs after causal reasoning and sees the real
+  // chains.
+  const enrichedEvents = await buildCausalChains(classifiedEvents);
+  emit(onProgress, "causal_reasoning", "Cause-and-effect chains built", 40);
 
+  const emergingThemes = await detectEmergingThemes(classifiedEvents);
   emit(onProgress, "theme_detection", "Emerging themes identified", 45);
+
+  const sectorImpacts = await analyzeSectorImpacts(enrichedEvents, sectorPerf);
   emit(onProgress, "sector_impact", "Sector impact analysis complete", 50);
 
   emit(onProgress, "company_impact", "Identifying company-level opportunities…", 55);

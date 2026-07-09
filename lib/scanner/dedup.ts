@@ -95,14 +95,13 @@ export async function deduplicateIntoEvents(
   // Cap at 20 items — local models time out on larger prompts
   const capped = items.slice(0, 20);
 
+  // Timeout is handled centrally by the "opportunity-engine" task's
+  // configured timeoutMs (lib/ai/task-registry.ts) — a local model
+  // realistically needs minutes, not the 25s this used to race against,
+  // which meant this stage fell back on nearly every run.
   let parsed: ClusterResponse | null = null;
   try {
-    const raw = await Promise.race<string>([
-      runPrompt("opportunity-engine", buildDedupePrompt(capped), { maxTokens: 1500, json: true }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("dedup-timeout")), 25_000),
-      ),
-    ]);
+    const raw = await runPrompt("opportunity-engine", buildDedupePrompt(capped), { maxTokens: 1500, json: true });
     parsed = extractJson<ClusterResponse>(raw);
   } catch {
     return fallbackDedup(capped);

@@ -120,93 +120,86 @@ export async function buildCompanyOpportunities(
   const allOpportunities: ScannerOpportunity[] = [];
   const seen = new Set<string>(); // deduplicate by ticker
 
-  // Process sectors with meaningful signals (up to 6 to control Ollama calls)
+  // Process sectors with meaningful signals (up to 6 to control Ollama calls).
+  // Sequential — Ollama's default local setup serves one request at a time,
+  // so firing these concurrently would only queue them behind each other
+  // while each one's own timeout keeps counting down.
   const toProcess = significantSectors.slice(0, 6);
 
-  const results = await Promise.allSettled(
-    toProcess.map(async (sector) => {
-      // Find companies in this sector (and related sector names)
-      const sectorVariants = getSectorVariants(sector.sector);
-      const sectorCompanies: { symbol: string; name: string; sector: string | null; industry: string | null }[] = [];
-      for (const variant of sectorVariants) {
-        const companies = sectorCompanyMap.get(variant) ?? [];
-        sectorCompanies.push(...companies);
-      }
+  for (const sector of toProcess) {
+    // Find companies in this sector (and related sector names)
+    const sectorVariants = getSectorVariants(sector.sector);
+    const sectorCompanies: { symbol: string; name: string; sector: string | null; industry: string | null }[] = [];
+    for (const variant of sectorVariants) {
+      const companies = sectorCompanyMap.get(variant) ?? [];
+      sectorCompanies.push(...companies);
+    }
 
-      if (sectorCompanies.length === 0) return [];
+    if (sectorCompanies.length === 0) continue;
 
-      // Get driving events for this sector
-      const drivingEvents = events.filter((e) =>
-        sector.drivingEvents.includes(e.id),
+    // Get driving events for this sector
+    const drivingEvents = events.filter((e) =>
+      sector.drivingEvents.includes(e.id),
+    );
+    if (drivingEvents.length === 0) continue;
+
+    let parsed: CompanyMatchResponse | null = null;
+    try {
+      const raw = await runPrompt(
+        "opportunity-engine",
+        buildCompanyMatchPrompt(sector, drivingEvents, sectorCompanies),
+        { maxTokens: 1500, json: true },
       );
-      if (drivingEvents.length === 0) return [];
+      parsed = extractJson<CompanyMatchResponse>(raw);
+    } catch {
+      continue;
+    }
 
-      let parsed: CompanyMatchResponse | null = null;
-      try {
-        const raw = await runPrompt(
-          "opportunity-engine",
-          buildCompanyMatchPrompt(sector, drivingEvents, sectorCompanies),
-          { maxTokens: 1500, json: true },
-        );
-        parsed = extractJson<CompanyMatchResponse>(raw);
-      } catch {
-        return [];
-      }
+    if (!parsed?.matches?.length) continue;
 
-      if (!parsed?.matches?.length) return [];
+    for (const match of parsed.matches) {
+      if (seen.has(match.symbol)) continue;
+      seen.add(match.symbol);
 
-      const opportunities: ScannerOpportunity[] = [];
-      for (const match of parsed.matches) {
-        if (seen.has(match.symbol)) continue;
-        seen.add(match.symbol);
+      const fund = fundamentalsMap.get(match.symbol);
+      const isIndian =
+        match.symbol.endsWith(".NS") ||
+        match.symbol.endsWith(".BO") ||
+        (fund?.exchange === "NSE" || fund?.exchange === "BSE");
 
-        const fund = fundamentalsMap.get(match.symbol);
-        const isIndian =
-          match.symbol.endsWith(".NS") ||
-          match.symbol.endsWith(".BO") ||
-          (fund?.exchange === "NSE" || fund?.exchange === "BSE");
+      // Determine category from driving events
+      const primaryCategory: SignalCategory =
+        drivingEvents[0]?.category ?? "company";
 
-        // Determine category from driving events
-        const primaryCategory: SignalCategory =
-          drivingEvents[0]?.category ?? "company";
+      // Find main theme from driving events
+      const themes = drivingEvents.flatMap((e) => e.affectedThemes);
+      const theme = themes[0] ?? sector.sector;
 
-        // Find main theme from driving events
-        const themes = drivingEvents.flatMap((e) => e.affectedThemes);
-        const theme = themes[0] ?? sector.sector;
-
-        opportunities.push({
-          id: uid(),
-          ticker: match.symbol,
-          name: fund?.name ?? match.symbol,
-          isIndian,
-          direction: match.direction,
-          theme,
-          category: primaryCategory,
-          rationale: match.rationale,
-          timeframe: match.timeframe,
-          quote: null, // enriched later by fundamental-gate
-          compositeScores: null, // enriched by fundamental-gate
-          opportunityScore: {
-            catalystStrength: sector.strength,
-            fundamentalQuality: 0,  // set by fundamental-gate
-            valuation: 0,           // set by fundamental-gate
-            momentum: 0,            // set by fundamental-gate
-            composite: 0,           // computed by opportunity-scorer
-            verdict: "weak",        // finalized by opportunity-scorer
-          },
-          thesis: null, // generated by thesis-builder for high-conviction
-          sourceEventIds: sector.drivingEvents,
-          dividendYieldPct: null, // set by fundamental-gate
-          profile: null,          // set by opportunity-scorer
-        });
-      }
-      return opportunities;
-    }),
-  );
-
-  for (const r of results) {
-    if (r.status === "fulfilled") {
-      allOpportunities.push(...r.value);
+      allOpportunities.push({
+        id: uid(),
+        ticker: match.symbol,
+        name: fund?.name ?? match.symbol,
+        isIndian,
+        direction: match.direction,
+        theme,
+        category: primaryCategory,
+        rationale: match.rationale,
+        timeframe: match.timeframe,
+        quote: null, // enriched later by fundamental-gate
+        compositeScores: null, // enriched by fundamental-gate
+        opportunityScore: {
+          catalystStrength: sector.strength,
+          fundamentalQuality: 0,  // set by fundamental-gate
+          valuation: 0,           // set by fundamental-gate
+          momentum: 0,            // set by fundamental-gate
+          composite: 0,           // computed by opportunity-scorer
+          verdict: "weak",        // finalized by opportunity-scorer
+        },
+        thesis: null, // generated by thesis-builder for high-conviction
+        sourceEventIds: sector.drivingEvents,
+        dividendYieldPct: null, // set by fundamental-gate
+        profile: null,          // set by opportunity-scorer
+      });
     }
   }
 
