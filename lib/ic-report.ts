@@ -8,7 +8,7 @@
 
 import { detectAllSignals, type DetectedSignal, type SignalDetectionInput } from "./ic-signals";
 import { generateQuestions, groupByAgent, type InvestigativeQuestion } from "./ic-questions";
-import { runAgentNetwork, type AgentFinding } from "./ic-agents";
+import { runAgentNetwork, type AgentFinding, type AgentFailure } from "./ic-agents";
 import { formThesis, type Thesis } from "./ic-thesis";
 import { runValuationEngine, computeRunHotCold, type ValuationResult } from "./ic-valuation";
 import type { FundamentalsSnapshot, FinancialStatements, InsiderActivity, AnalystConsensus } from "./types";
@@ -40,6 +40,8 @@ export interface ICReport {
   signals: DetectedSignal[];
   questions: InvestigativeQuestion[];
   agentFindings: AgentFinding[];
+  /** Agents that failed to produce a finding — the thesis below was formed without their input. */
+  agentFailures: AgentFailure[];
   thesis: Thesis;
   valuation: ValuationResult;
   monitorables: string[];
@@ -88,9 +90,9 @@ export async function generateICReport(
   const questionsByAgent = groupByAgent(questions);
   emit("questions", `Generated ${questions.length} questions across ${questionsByAgent.size} agents`, questions);
 
-  // Stage 3: Agent network
-  emit("agents", `Dispatching ${questionsByAgent.size} agents in parallel…`);
-  const agentFindings = await runAgentNetwork(
+  // Stage 3: Agent network — dispatched one at a time; see runAgentNetwork's docstring.
+  emit("agents", `Investigating with ${questionsByAgent.size} agents…`);
+  const { findings: agentFindings, failures: agentFailures } = await runAgentNetwork(
     {
       companyName,
       symbol,
@@ -107,11 +109,28 @@ export async function generateICReport(
     },
     input.model,
   );
-  emit("agents", `All ${agentFindings.length} agents complete`);
+
+  if (agentFindings.length === 0) {
+    const modelLabel = input.model ?? (await pickModel("ic-agent-analysis")) ?? "the selected model";
+    throw new Error(
+      `All ${questionsByAgent.size} investigation agents failed to produce findings using ${modelLabel}. ` +
+      `This usually means the model is too large/slow for this machine or Ollama became unresponsive. ` +
+      `Try a smaller/faster model, or check \`ollama ps\` for load issues. ` +
+      `First failure: ${agentFailures[0]?.agentLabel} — ${agentFailures[0]?.error}`,
+    );
+  }
+
+  emit(
+    "agents",
+    agentFailures.length === 0
+      ? `All ${agentFindings.length} agents complete`
+      : `${agentFindings.length}/${questionsByAgent.size} agents complete — ${agentFailures.length} failed (${agentFailures.map((f) => f.agentLabel).join(", ")}); thesis below is missing their input`,
+    { failures: agentFailures },
+  );
 
   // Stage 4: Thesis formation
   emit("thesis", "Forming investment thesis…");
-  const thesis = await formThesis(companyName, symbol, agentFindings, signals);
+  const thesis = await formThesis(companyName, symbol, agentFindings, signals, input.model);
   emit("thesis", "Thesis formed", thesis);
 
   // Stage 5: Valuation engine — fetch 5Y price history for run hot/cold
@@ -131,6 +150,7 @@ export async function generateICReport(
     input.currency ?? "$",
     priceHistory,
     companyName,
+    input.model,
   );
   emit("valuation", `Valuation: ${valuation.intrinsicValueRange} (${valuation.impliedUpside})`, valuation);
 
@@ -150,6 +170,7 @@ export async function generateICReport(
     signals,
     questions,
     agentFindings,
+    agentFailures,
     thesis,
     valuation,
     monitorables,

@@ -372,6 +372,7 @@ export async function runValuationEngine(
   currency = "$",
   priceHistory?: { date: string; close: number }[],
   companyName?: string,
+  model?: string,
 ): Promise<ValuationResult> {
   // Compute run hot/cold percentile from 5Y history
   const runHotCold = priceHistory && priceHistory.length >= 252
@@ -474,7 +475,7 @@ Return as JSON:
 }`;
 
   try {
-    const raw = await runPrompt("scenario-analysis", prompt, { maxTokens: 2000, json: true });
+    const raw = await runPrompt("scenario-analysis", prompt, { maxTokens: 2000, json: true, model });
     return extractJson<ValuationResult>(raw);
   } catch {
     const px = currentPrice ?? snapshot.price;

@@ -42,6 +42,7 @@ export async function formThesis(
   symbol: string,
   agentFindings: AgentFinding[],
   signals: DetectedSignal[],
+  model?: string,
 ): Promise<Thesis> {
   const agentSummary = buildAgentSummary(agentFindings);
   const signalSummary = buildSignalSummary(signals);
@@ -67,7 +68,7 @@ Synthesise all findings into a structured thesis. Return as JSON:
 }`;
 
   try {
-    const raw = await runPrompt("investment-thesis", prompt, { maxTokens: 1500, json: true });
+    const raw = await runPrompt("investment-thesis", prompt, { maxTokens: 1500, json: true, model });
     return extractJson<Thesis>(raw);
   } catch {
     return {

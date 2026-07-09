@@ -61,6 +61,7 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     preferredModels: ["qwen3", "deepseek-r1"],
     requiredCapabilities: ["chain-of-thought"],
     maxTokens: 2048,
+    timeoutMs: 300_000,
     jsonMode: true,
   },
   "sec-filing-analysis": {
@@ -73,18 +74,21 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     preferredModels: ["deepseek-r1", "qwen3"],
     requiredCapabilities: ["chain-of-thought"],
     maxTokens: 1536,
+    timeoutMs: 300_000,
     jsonMode: true,
   },
   "accounting-red-flags": {
     preferredModels: ["deepseek-r1", "qwen3"],
     requiredCapabilities: ["chain-of-thought"],
     maxTokens: 1536,
+    timeoutMs: 300_000,
     jsonMode: true,
   },
   "scenario-analysis": {
     preferredModels: ["deepseek-r1", "qwen3"],
     requiredCapabilities: ["chain-of-thought"],
     maxTokens: 2048,
+    timeoutMs: 300_000,
     jsonMode: true,
   },
   "stress-testing": {
@@ -120,6 +124,7 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
   "ic-agent-analysis": {
     preferredModels: ["qwen3", "deepseek-r1", "llama3.1"],
     maxTokens: 1200,
+    timeoutMs: 300_000,
     jsonMode: true,
   },
   "thematic-analysis": {

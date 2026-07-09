@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 
 interface ICSignal { id: string; category: string; severity: "high" | "medium" | "low"; description: string }
 interface AgentFinding { agent: string; agentLabel: string; questionsAnswered: number; findings: string; keyInsights?: string[]; confidence: "high" | "medium" | "low"; dataLimitations?: string | null }
+interface AgentFailure { agent: string; agentLabel: string; error: string }
 interface ValuationApproach { method: string; priceTarget: string; impliedUpside: string; assumptions: string; confidence: string }
 interface ValuationScenario { label: string; priceTarget: string; impliedUpside: string; keyAssumptions: string[] }
 interface ICValuation { currentPrice: string; intrinsicValueRange: string; impliedUpside: string; approaches: ValuationApproach[]; scenarios: ValuationScenario[]; dcfSensitivity?: string; valuationVerdict: string }
@@ -18,6 +19,7 @@ interface ICReport {
   model: string;
   signals: ICSignal[];
   agentFindings: AgentFinding[];
+  agentFailures?: AgentFailure[];
   thesis: Thesis;
   valuation: ICValuation;
   monitorables: string[];
@@ -249,8 +251,20 @@ export async function POST(req: Request): Promise<Response> {
     sectionHeader(doc, "02   Investigation Agent Network", L, W, report.symbol, report.companyName);
 
     doc.fill("#6b7280").font("Helvetica").fontSize(8)
-      .text(`${report.agentFindings.length} specialized AI agents investigated this company in parallel.`, L + 2, doc.y);
+      .text(`${report.agentFindings.length} specialized AI agents investigated this company.`, L + 2, doc.y);
     doc.y += 12;
+
+    if (report.agentFailures && report.agentFailures.length > 0) {
+      doc.fill("#d97706").font("Helvetica-Bold").fontSize(8)
+        .text(
+          `${report.agentFailures.length} agent(s) failed and are missing from this report: ` +
+          report.agentFailures.map((f) => f.agentLabel).join(", "),
+          L + 2,
+          doc.y,
+          { width: W - 4 },
+        );
+      doc.y += 14;
+    }
 
     report.agentFindings.forEach((finding) => {
       const confColor = CONF_COLOR[finding.confidence] ?? "#6b7280";

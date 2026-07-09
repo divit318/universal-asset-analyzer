@@ -323,11 +323,33 @@ export interface AgentNetworkInput {
   signals: DetectedSignal[];
 }
 
+export interface AgentFailure {
+  agent: AgentDomain;
+  agentLabel: string;
+  error: string;
+}
+
+export interface AgentNetworkResult {
+  findings: AgentFinding[];
+  failures: AgentFailure[];
+}
+
+/**
+ * Run every investigation agent, one at a time. Ollama's default local setup
+ * serves one request at a time regardless of how many we fire (n_slots = 1) —
+ * dispatching all of them concurrently doesn't parallelize anything, it just
+ * queues them, and a fixed per-request timeout then races against however
+ * many agents happen to be ahead of it in that queue rather than against its
+ * own generation time. Later agents lost that race and silently timed out
+ * every run. Sequential dispatch makes each agent's timeout budget meaningful
+ * (it only has to cover its own generation) and gives steady, honest progress
+ * instead of a burst of near-simultaneous failures.
+ */
 export async function runAgentNetwork(
   input: AgentNetworkInput,
   onAgentComplete?: (finding: AgentFinding) => void,
   model?: string,
-): Promise<AgentFinding[]> {
+): Promise<AgentNetworkResult> {
   const ctx: AgentContext = {
     companyName: input.companyName,
     symbol: input.symbol,
@@ -340,17 +362,22 @@ export async function runAgentNetwork(
   };
 
   const entries = [...input.questionsByAgent.entries()];
+  const findings: AgentFinding[] = [];
+  const failures: AgentFailure[] = [];
 
-  // Run all agents in parallel
-  const results = await Promise.allSettled(
-    entries.map(async ([domain, questions]) => {
+  for (const [domain, questions] of entries) {
+    try {
       const finding = await runAgent(domain, questions, ctx, model);
+      findings.push(finding);
       onAgentComplete?.(finding);
-      return finding;
-    }),
-  );
+    } catch (err) {
+      failures.push({
+        agent: domain,
+        agentLabel: AGENT_CONFIG[domain].label,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 
-  return results
-    .filter((r): r is PromiseFulfilledResult<AgentFinding> => r.status === "fulfilled")
-    .map((r) => r.value);
+  return { findings, failures };
 }

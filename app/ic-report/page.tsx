@@ -409,15 +409,21 @@ function ProgressTracker({
           const isDone = activeIdx > i || currentStage === "done";
           const isActive = activeIdx === i;
           const isAgents = stage === "agents";
+          // Once past the agents stage, a completed count short of the total
+          // means some (or all) agents failed — don't show a false green check.
+          const agentsShort = isAgents && isDone && totalAgents > 0 && completedAgents < totalAgents;
+          const agentsFailed = agentsShort && completedAgents === 0;
 
           return (
             <div key={stage} className="flex items-center gap-3">
               <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${
+                agentsFailed ? "border-negative bg-negative/20 text-negative" :
+                agentsShort ? "border-warning bg-warning/20 text-warning" :
                 isDone ? "border-positive bg-positive/20 text-positive" :
                 isActive ? "border-brand bg-brand/20 text-brand animate-pulse" :
                 "border-border text-muted"
               }`}>
-                {isDone ? "✓" : i + 1}
+                {agentsShort ? "!" : isDone ? "✓" : i + 1}
               </div>
               <div className="flex-1">
                 <div className="flex items-center justify-between">
@@ -560,6 +566,7 @@ export default function ICReportPage() {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let dispatchSeen = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -579,9 +586,12 @@ export default function ICReportPage() {
               setCurrentStage(event.stage);
             }
 
-            if (event.stage === "agents" && event.message.includes("Dispatching")) {
+            if (event.stage === "agents" && !dispatchSeen) {
               const match = event.message.match(/(\d+) agents/);
-              if (match) setTotalAgents(parseInt(match[1]));
+              if (match) {
+                dispatchSeen = true;
+                setTotalAgents(parseInt(match[1]));
+              }
             }
 
             if (event.stage === "agent_complete") {
@@ -766,6 +776,11 @@ export default function ICReportPage() {
                     <span className="rounded-full border border-border px-3 py-1 text-xs text-muted">
                       {report.agentFindings.length} agents · {report.questions.length} questions
                     </span>
+                    {(report.agentFailures?.length ?? 0) > 0 && (
+                      <span className="rounded-full border border-warning/40 bg-warning/10 px-3 py-1 text-xs font-medium text-warning">
+                        {report.agentFailures.length} agent{report.agentFailures.length === 1 ? "" : "s"} failed
+                      </span>
+                    )}
                     <button
                       onClick={() => {
                         setExportErr(null);
@@ -779,6 +794,21 @@ export default function ICReportPage() {
                     {exportErr && <span className="text-xs text-negative">{exportErr}</span>}
                   </div>
                 </div>
+
+                {(report.agentFailures?.length ?? 0) > 0 && (
+                  <div className="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning">
+                    <p className="font-medium">
+                      {report.agentFailures.length} of {report.agentFindings.length + report.agentFailures.length} agents failed — the thesis below was formed without their input.
+                    </p>
+                    <ul className="mt-1.5 space-y-0.5 text-xs">
+                      {report.agentFailures.map((f) => (
+                        <li key={f.agent}>
+                          <span className="font-medium">{f.agentLabel}:</span> {f.error}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
                 {/* Tab nav */}
                 <div className="flex gap-1 overflow-x-auto rounded-lg border border-border bg-surface p-1">
@@ -897,7 +927,7 @@ export default function ICReportPage() {
             <div className="flex flex-col gap-2">
               <p className="text-sm font-semibold">Enter a ticker to generate a full IC report</p>
               <p className="max-w-sm text-xs leading-5 text-muted">
-                9 AI agents investigate in parallel: growth, valuation, competition, management, capital allocation,
+                9 AI agents investigate your company: growth, valuation, competition, management, capital allocation,
                 accounting, governance, risks, and optionality.
               </p>
             </div>

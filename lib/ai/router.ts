@@ -147,7 +147,7 @@ export async function route(
         messages: request.messages,
         temperature: request.temperature ?? taskConfig.temperature,
         maxTokens: request.maxTokens ?? taskConfig.maxTokens,
-        timeoutMs: request.timeoutMs ?? taskConfig.timeoutMs,
+        timeoutMs: request.timeoutMs ?? taskConfig.timeoutMs ?? specForInstalled(model).timeoutMs,
         json: request.json ?? taskConfig.jsonMode,
         signal: request.signal,
       });
