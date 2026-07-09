@@ -43,6 +43,11 @@ next-env.d.ts
 # local sqlite db
 /data
 
+# playwright e2e
+/playwright-report/
+/test-results/
+/e2e/.tmp/
+
 # Dev/build logs
 /build*.log
 /dev.log

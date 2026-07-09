@@ -723,6 +723,30 @@ Unit tests in `tests/[module].test.ts` for:
 - Data parsing (EDGAR, screener.in)
 - Formatting utilities
 
-Component rendering and UI interaction tested manually in browser (no automated tests).
-
 External API calls mocked or skipped in tests (don't hit live APIs).
+
+### E2E tests (Playwright)
+
+`e2e/` holds a **smoke** suite, not a full behavioral one: every page renders,
+with no unfiltered console/page errors, plus a few deeper journeys. Run with
+`npm run test:e2e` (`npm run test:e2e:ui` for the interactive runner).
+
+- `e2e/pages.spec.ts` — one test per route (≥17 routes) asserting the header
+  and page `<h1>` render and console is clean. Long-running pipelines
+  (`/scanner`, `/ic-report`, `/thematic`) only assert their idle "start"
+  affordance, never the pipeline result.
+- `e2e/journeys.spec.ts` — three deeper flows: command-palette search →
+  research (with `/api/search` mocked via `page.route`), a watchlist
+  add/remove round-trip against the real (isolated) DB, and theme-toggle
+  persistence.
+- `e2e/helpers.ts` — the console-error tripwire (the highest-value assertion
+  in the suite — catches hydration mismatches and client crashes that `tsc`
+  + eslint + unit tests miss) and its allowlist of expected offline noise
+  (no Ollama, sometimes no network).
+- Runs against a **production** build (`next build && next start -p 3111`)
+  against an **isolated** SQLite DB at `e2e/.tmp/e2e.db` — never the real
+  `data/app.db`. Fully offline-tolerant: no Ollama required, AI panels must
+  show their fallback state, and pages that hard-depend on live Yahoo quotes
+  accept either data or their designed empty/error state.
+- Kept fully separate from `npm run test` (Vitest): e2e specs live under
+  `e2e/*.spec.ts`, outside Vitest's `tests/**/*.test.ts` include glob.
