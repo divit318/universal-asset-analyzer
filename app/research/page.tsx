@@ -52,25 +52,14 @@ import { ScoreCard } from "./_components/score-card";
 import { RiskHeatmap } from "./_components/risk-heatmap";
 import { AnalystCard } from "./_components/analyst-card";
 import { InsiderTable } from "./_components/insider-table";
-import { EarningsCard } from "./_components/earnings-card";
 import { OwnershipCard } from "./_components/ownership-card";
-import { ValuationHistoryChart } from "./_components/valuation-history-chart";
-import { MarginTrendChart, PeerRadarChart, RevenueFcfChart } from "./_components/charts";
 
 // India-specific components (conditionally rendered)
 import { computeIndiaSnapshot } from "@/lib/india-snapshot";
 import { InvestmentSnapshot } from "./india/_components/investment-snapshot";
 import { RatioSparklines } from "./india/_components/ratio-sparklines";
-import { OwnershipTimeline } from "./india/_components/ownership-timeline";
 import { RankedPeers } from "./india/_components/ranked-peers";
 import { AiSectionInsight } from "./india/_components/ai-section-insight";
-import {
-  AnnualRevenueChart,
-  AnnualMarginChart,
-  QuarterlyRevenueChart,
-  QuarterlyProfitChart,
-  QuarterlySummaryStats,
-} from "./india/_components/financial-charts";
 
 import { useToast } from "@/app/_components/toast";
 import { useIOSSafe } from "@/lib/ios-context";
@@ -90,6 +79,60 @@ const InteractiveChart = dynamic(
       <div className="h-[420px] w-full animate-pulse rounded-card border border-border bg-surface-2" />
     ),
   },
+);
+
+// Fixed-height placeholder for lazily-loaded recharts sections below —
+// matches each real component's rendered height so mounting in doesn't
+// shift layout or measure a 0x0 ResponsiveContainer.
+function ChartSkeleton({ h }: { h: string }) {
+  return <div className={`${h} w-full animate-pulse rounded-card border border-border bg-surface-2`} />;
+}
+
+// Five more recharts-bearing chains, deferred so recharts (and the
+// India-only chart bundle) never load on the common US-stock path.
+const EarningsCard = dynamic(
+  () => import("./_components/earnings-card").then((m) => m.EarningsCard),
+  { ssr: false, loading: () => <ChartSkeleton h="h-[380px]" /> },
+);
+const ValuationHistoryChart = dynamic(
+  () => import("./_components/valuation-history-chart").then((m) => m.ValuationHistoryChart),
+  { ssr: false, loading: () => <ChartSkeleton h="h-[320px]" /> },
+);
+const MarginTrendChart = dynamic(
+  () => import("./_components/charts").then((m) => m.MarginTrendChart),
+  { ssr: false, loading: () => <ChartSkeleton h="h-[296px]" /> },
+);
+const RevenueFcfChart = dynamic(
+  () => import("./_components/charts").then((m) => m.RevenueFcfChart),
+  { ssr: false, loading: () => <ChartSkeleton h="h-[296px]" /> },
+);
+const PeerRadarChart = dynamic(
+  () => import("./_components/charts").then((m) => m.PeerRadarChart),
+  { ssr: false, loading: () => <ChartSkeleton h="h-[296px]" /> },
+);
+const OwnershipTimeline = dynamic(
+  () => import("./india/_components/ownership-timeline").then((m) => m.OwnershipTimeline),
+  { ssr: false, loading: () => <ChartSkeleton h="h-[560px]" /> },
+);
+const AnnualRevenueChart = dynamic(
+  () => import("./india/_components/financial-charts").then((m) => m.AnnualRevenueChart),
+  { ssr: false, loading: () => <ChartSkeleton h="h-[320px]" /> },
+);
+const AnnualMarginChart = dynamic(
+  () => import("./india/_components/financial-charts").then((m) => m.AnnualMarginChart),
+  { ssr: false, loading: () => <ChartSkeleton h="h-[240px]" /> },
+);
+const QuarterlyRevenueChart = dynamic(
+  () => import("./india/_components/financial-charts").then((m) => m.QuarterlyRevenueChart),
+  { ssr: false, loading: () => <ChartSkeleton h="h-[280px]" /> },
+);
+const QuarterlyProfitChart = dynamic(
+  () => import("./india/_components/financial-charts").then((m) => m.QuarterlyProfitChart),
+  { ssr: false, loading: () => <ChartSkeleton h="h-[300px]" /> },
+);
+const QuarterlySummaryStats = dynamic(
+  () => import("./india/_components/financial-charts").then((m) => m.QuarterlySummaryStats),
+  { ssr: false, loading: () => <ChartSkeleton h="h-[100px]" /> },
 );
 
 /* -------------------------------------------------------------------------- */
