@@ -613,8 +613,8 @@ names a model or talks HTTP.
 - `lib/ai/prompt-builder.ts` — reusable, versioned system/developer/user
   prompt templates (additive; the Research Copilot's own `lib/ai/prompt.ts`
   predates it and stays as-is).
-- `lib/ollama.ts` — pure prompt builder for the legacy `/analyze` feature (no
-  HTTP, despite the name).
+- `lib/ollama.ts` — pure prompt builder for `analyzeAsset()`'s quote+filings
+  analysis (`/api/ai`; no HTTP, despite the name).
 - `lib/json-extract.ts` — the single JSON-from-LLM-response parser. Never
   hand-roll fence stripping in routes or engines.
 - Graceful degradation if Ollama offline (UI shows fallback message).

@@ -131,7 +131,6 @@ The design philosophy is **transparency over convenience**: users see the resear
 | **IC Report** (`/ic-report`) | Institutional research via multi-agent pipeline (9 agent domains: business, industry, competition, management, capitalAllocation, accounting, valuation, governance, risk). | `lib/ic-agents.ts`, `lib/ic-questions.ts`, `lib/ic-signals.ts` |
 | **Engine** (`/engine`) | Quant scorecard powered by Python DuckDB pipeline. Runs separately, outputs Parquet, read-only from Next.js. | `engine/daily_run.py` |
 | **Thematic** (`/thematic`) | 10-stage thematic analysis framework with supply chains, commodities, geopolitics, company tiers, opportunity scoring. | `lib/thematic-engine.ts` |
-| **Analyze** (`/analyze`) | Asset upload → structured breakdown (legacy, minimal active development). | `app/analyze/page.tsx` |
 
 ---
 

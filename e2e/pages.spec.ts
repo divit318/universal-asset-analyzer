@@ -10,7 +10,7 @@ import { collectPageErrors, filterAllowedErrors, expectShellRendered } from "./h
  *    project memory: both were merged into `/intelligence` behind
  *    `?view=timeline` / `?view=graph`). Testing those query variants below
  *    covers the same UI (GraphView / TimelineView) the plan intended.
- *  - `/analyze` still exists (PLAN-legacy-cleanup has not run), so it stays.
+ *  - `/analyze` was removed by PLAN-legacy-cleanup, so it's gone from this list.
  *
  * Long-running pages (`/scanner`, `/ic-report`, `/thematic`) are asserted in
  * their initial/idle state only — see the "idle affordance" tests below.
@@ -34,7 +34,6 @@ const ROUTES: string[] = [
   "/intelligence?view=timeline&scope=symbol&id=AAPL",
   "/journal",
   "/backtest",
-  "/analyze",
 ];
 
 test.describe.configure({ mode: "serial" });

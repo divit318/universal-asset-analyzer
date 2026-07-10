@@ -197,9 +197,9 @@ body {
   to   { background-position: 200% 0; }
 }
 
-/* ── CSS-driven micro-animations (replace framer-motion in global UI) ──────
-   Keeping these in CSS keeps framer-motion out of the shared/first-load
-   bundle; only pages with genuinely complex motion import it. */
+/* ── CSS-driven micro-animations for global UI ──────────────────────────
+   Keeping these in CSS avoids pulling an animation library into the
+   shared/first-load bundle. */
 @keyframes fade-rise {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }

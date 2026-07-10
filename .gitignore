@@ -51,3 +51,4 @@ next-env.d.ts
 # Dev/build logs
 /build*.log
 /dev.log
+*.log
