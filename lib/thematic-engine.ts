@@ -17,7 +17,7 @@ import { runPrompt } from "./ai";
 import { pickModel } from "./ai/router";
 import { getFreshFundamentals } from "./db";
 import { fetchMarketNews } from "./news";
-import { extractJson } from "./json-extract";
+import { extractJson, extractJsonObject, extractJsonArray } from "./json-extract";
 import type { StockFundamentals, NewsItem } from "./types";
 
 /* ─────────────────────────── Public types ──────────────────────────── */
@@ -325,6 +325,30 @@ const DEFAULT_COMMODITY: CommodityFrameworkScore = { score: 5, primaryCommoditie
 const DEFAULT_POLICY: PolicyScore = { score: 5, relevantPolicies: [], capitalFlowDirection: "AI analysis unavailable — neutral default used.", geopoliticalFactors: [], indiaSpecificPolicies: [] };
 const DEFAULT_STRUCTURAL_ADVANTAGE: GlobalStructuralAdvantageScore = { score: 5, currentLeader: "Unknown", fastestImproving: "Unknown", regions: [], longTermImplications: "AI analysis unavailable — neutral default used." };
 
+/**
+ * Throws if `raw` has no parseable JSON at all — lets `withFallback`'s catch
+ * (above) distinguish "AI is down / responded with garbage" (a tracked stage
+ * failure) from "valid JSON missing some fields", which extractJsonObject /
+ * extractJsonArray already coerce against each stage's defaults below.
+ */
+function assertParseable(raw: string): void {
+  extractJson(raw);
+}
+
+function coerceNumber(v: unknown, fallback: number): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function coerceEnum<T extends string>(v: unknown, allowed: readonly T[], fallback: T): T {
+  const s = typeof v === "string" ? (v.toLowerCase() as T) : fallback;
+  return (allowed as readonly string[]).includes(s) ? s : fallback;
+}
+
+function coerceStringArray(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
 async function scoreFutureState(theme: string): Promise<FutureStateScore> {
   const prompt = `You are an elite thematic research analyst. Evaluate the following investment theme for future state inevitability.
 
@@ -347,7 +371,17 @@ Return JSON only:
 }`;
 
   const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 600, json: true });
-  return extractJson<FutureStateScore>(raw);
+  assertParseable(raw);
+  const parsed = extractJsonObject(raw, {
+    inevitabilityScore: DEFAULT_FUTURE_STATE.inevitabilityScore,
+    timeHorizon: DEFAULT_FUTURE_STATE.timeHorizon,
+    drivingForces: [] as string[],
+    rationale: "",
+  });
+  return {
+    ...parsed,
+    inevitabilityScore: coerceNumber(parsed.inevitabilityScore, DEFAULT_FUTURE_STATE.inevitabilityScore),
+  };
 }
 
 async function buildDependencyChain(theme: string): Promise<DependencyNode[]> {
@@ -379,7 +413,22 @@ Return JSON only — an array of exactly 6 objects:
 ]`;
 
   const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 1200, json: true });
-  return (extractJson<DependencyNode[]>(raw)).slice(0, 6);
+  assertParseable(raw);
+  return extractJsonArray(raw, sanitizeDependencyNode).slice(0, 6);
+}
+
+function sanitizeDependencyNode(item: unknown): DependencyNode | null {
+  if (item === null || typeof item !== "object") return null;
+  const n = item as Record<string, unknown>;
+  if (typeof n.tierLabel !== "string" || typeof n.description !== "string") return null;
+  const tier = coerceNumber(n.tier, 1);
+  return {
+    tier: (tier >= 1 && tier <= 6 ? tier : 1) as DependencyNode["tier"],
+    tierLabel: n.tierLabel,
+    description: n.description,
+    exampleCompanies: coerceStringArray(n.exampleCompanies),
+    isBottleneck: n.isBottleneck === true,
+  };
 }
 
 async function scoreBottleneck(theme: string, chain: DependencyNode[]): Promise<BottleneckScore> {
@@ -410,7 +459,22 @@ Return JSON only:
 }`;
 
   const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 800, json: true });
-  return extractJson<BottleneckScore>(raw);
+  assertParseable(raw);
+  const parsed = extractJsonObject(raw, {
+    score: DEFAULT_BOTTLENECK.score,
+    bottleneckTier: DEFAULT_BOTTLENECK.bottleneckTier,
+    bottleneckDescription: "",
+    scarceFactors: [] as string[],
+    substituteRisk: DEFAULT_BOTTLENECK.substituteRisk,
+    substituteRationale: "",
+    expansionDifficulty: "",
+  });
+  return {
+    ...parsed,
+    score: coerceNumber(parsed.score, DEFAULT_BOTTLENECK.score),
+    bottleneckTier: coerceNumber(parsed.bottleneckTier, DEFAULT_BOTTLENECK.bottleneckTier),
+    substituteRisk: coerceEnum(parsed.substituteRisk, ["low", "medium", "high"] as const, DEFAULT_BOTTLENECK.substituteRisk),
+  };
 }
 
 async function scoreSupplyDemand(
@@ -448,7 +512,26 @@ Return JSON only:
 }`;
 
   const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 700, json: true });
-  return extractJson<Omit<SupplyDemandScore, "commodityProxies">>(raw);
+  assertParseable(raw);
+  // Omit<SupplyDemandScore, "commodityProxies"> — commodityProxies is attached
+  // by the caller from live market data, never parsed from the model.
+  const parsed = extractJsonObject(raw, {
+    score: DEFAULT_SUPPLY_DEMAND.score,
+    demandTrajectory: DEFAULT_SUPPLY_DEMAND.demandTrajectory,
+    supplyTrajectory: DEFAULT_SUPPLY_DEMAND.supplyTrajectory,
+    capitalCyclePhase: DEFAULT_SUPPLY_DEMAND.capitalCyclePhase,
+    demandDrivers: [] as string[],
+    supplyConstraints: [] as string[],
+    investmentSignal: DEFAULT_SUPPLY_DEMAND.investmentSignal,
+  });
+  return {
+    ...parsed,
+    score: coerceNumber(parsed.score, DEFAULT_SUPPLY_DEMAND.score),
+    demandTrajectory: coerceEnum(parsed.demandTrajectory, ["accelerating", "growing", "stable", "declining"] as const, DEFAULT_SUPPLY_DEMAND.demandTrajectory),
+    supplyTrajectory: coerceEnum(parsed.supplyTrajectory, ["constrained", "tight", "balanced", "oversupplied"] as const, DEFAULT_SUPPLY_DEMAND.supplyTrajectory),
+    capitalCyclePhase: coerceEnum(parsed.capitalCyclePhase, ["early", "mid", "late", "downturn"] as const, DEFAULT_SUPPLY_DEMAND.capitalCyclePhase),
+    investmentSignal: coerceEnum(parsed.investmentSignal, ["strong", "moderate", "weak", "avoid"] as const, DEFAULT_SUPPLY_DEMAND.investmentSignal),
+  };
 }
 
 async function scoreCommodityFramework(theme: string): Promise<CommodityFrameworkScore> {
@@ -475,7 +558,21 @@ Return JSON only:
 }`;
 
   const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 800, json: true });
-  return extractJson<CommodityFrameworkScore>(raw);
+  assertParseable(raw);
+  const parsed = extractJsonObject(raw, {
+    score: DEFAULT_COMMODITY.score,
+    primaryCommodities: [] as string[],
+    demandCatalysts: [] as string[],
+    supplyRisks: [] as string[],
+    substitutionRisk: DEFAULT_COMMODITY.substitutionRisk,
+    recyclingEconomics: "",
+    reserveConcentration: "",
+  });
+  return {
+    ...parsed,
+    score: coerceNumber(parsed.score, DEFAULT_COMMODITY.score),
+    substitutionRisk: coerceEnum(parsed.substitutionRisk, ["low", "medium", "high"] as const, DEFAULT_COMMODITY.substitutionRisk),
+  };
 }
 
 async function scorePolicy(theme: string, liveNewsContext = ""): Promise<PolicyScore> {
@@ -508,7 +605,31 @@ Return JSON only:
 }`;
 
   const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 1000, json: true });
-  return extractJson<PolicyScore>(raw);
+  assertParseable(raw);
+  const parsed = extractJsonObject(raw, {
+    score: DEFAULT_POLICY.score,
+    relevantPolicies: [] as unknown[],
+    capitalFlowDirection: "",
+    geopoliticalFactors: [] as string[],
+    indiaSpecificPolicies: [] as string[],
+  });
+  return {
+    ...parsed,
+    score: coerceNumber(parsed.score, DEFAULT_POLICY.score),
+    relevantPolicies: parsed.relevantPolicies.map(sanitizePolicyItem).filter((p): p is PolicyItem => p !== null),
+  };
+}
+
+function sanitizePolicyItem(item: unknown): PolicyItem | null {
+  if (item === null || typeof item !== "object") return null;
+  const p = item as Record<string, unknown>;
+  if (typeof p.country !== "string" || typeof p.policy !== "string") return null;
+  return {
+    country: p.country,
+    policy: p.policy,
+    impact: coerceEnum(p.impact, ["highly positive", "positive", "neutral", "negative"] as const, "neutral"),
+    estimatedCapitalUSD: typeof p.estimatedCapitalUSD === "string" ? p.estimatedCapitalUSD : null,
+  };
 }
 
 async function scoreGlobalStructuralAdvantage(theme: string): Promise<GlobalStructuralAdvantageScore> {
@@ -538,10 +659,55 @@ Return JSON only:
 Include 3-6 regions, ranked by relevance to this theme.`;
 
   const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 1200, json: true });
-  return extractJson<GlobalStructuralAdvantageScore>(raw);
+  assertParseable(raw);
+  const parsed = extractJsonObject(raw, {
+    score: DEFAULT_STRUCTURAL_ADVANTAGE.score,
+    currentLeader: DEFAULT_STRUCTURAL_ADVANTAGE.currentLeader,
+    fastestImproving: DEFAULT_STRUCTURAL_ADVANTAGE.fastestImproving,
+    regions: [] as unknown[],
+    longTermImplications: "",
+  });
+  return {
+    ...parsed,
+    score: coerceNumber(parsed.score, DEFAULT_STRUCTURAL_ADVANTAGE.score),
+    regions: parsed.regions.map(sanitizeRegion).filter((r): r is RegionStructuralAdvantage => r !== null),
+  };
+}
+
+function sanitizeRegion(item: unknown): RegionStructuralAdvantage | null {
+  if (item === null || typeof item !== "object") return null;
+  const r = item as Record<string, unknown>;
+  if (typeof r.region !== "string") return null;
+  return {
+    region: r.region,
+    advantages: coerceStringArray(r.advantages),
+    disadvantages: coerceStringArray(r.disadvantages),
+  };
 }
 
 /* ──────────────────── Company mapping from screener DB ─────────────── */
+
+interface TierMapping {
+  symbol: string;
+  tier: 1 | 2 | 3 | 4 | 5 | 6;
+  strategicImportance: "critical" | "high" | "medium" | "low";
+  moatType: TierCompany["moatType"];
+  relevanceRationale: string;
+}
+
+function sanitizeTierMapping(item: unknown): TierMapping | null {
+  if (item === null || typeof item !== "object") return null;
+  const m = item as Record<string, unknown>;
+  if (typeof m.symbol !== "string") return null;
+  const tier = coerceNumber(m.tier, 1);
+  return {
+    symbol: m.symbol,
+    tier: (tier >= 1 && tier <= 6 ? tier : 1) as TierMapping["tier"],
+    strategicImportance: coerceEnum(m.strategicImportance, ["critical", "high", "medium", "low"] as const, "medium"),
+    moatType: coerceEnum(m.moatType, ["cost", "scale", "technology", "distribution", "regulation", "none"] as const, "none"),
+    relevanceRationale: typeof m.relevanceRationale === "string" ? m.relevanceRationale : "",
+  };
+}
 
 async function mapCompaniesToTiers(
   theme: string,
@@ -583,13 +749,8 @@ Return JSON only — an array:
 ]`;
 
   const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 2000, json: true });
-  const mappings = extractJson<{
-    symbol: string;
-    tier: 1 | 2 | 3 | 4 | 5 | 6;
-    strategicImportance: "critical" | "high" | "medium" | "low";
-    moatType: TierCompany["moatType"];
-    relevanceRationale: string;
-  }[]>(raw);
+  assertParseable(raw);
+  const mappings = extractJsonArray(raw, sanitizeTierMapping);
 
   const symMap = new Map(dbCompanies.map((c) => [c.symbol, c]));
   const tierLabels: Record<number, string> = {};

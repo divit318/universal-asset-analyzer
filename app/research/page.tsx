@@ -2,20 +2,30 @@
 
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { TrendingUp, TrendingDown, Clock3, Network, Link2, Bookmark } from "lucide-react";
 import type {
+  Filing,
   FundamentalsData,
+  FundProfileData,
+  HistoryPoint,
+  ManualAsset,
   MovementExplanation,
+  NewsItem,
   PeerComparison,
   Quote,
   ResearchData,
+  ScoreResult,
   SectorRotationEntry,
   TimelineEvent,
 } from "@/lib/types";
 import type { InvestmentVerdict } from "@/app/api/ai/verdict/route";
 import type { ScreenerInCompany, ScreenerInPeer } from "@/lib/screener-in";
 import { detectMarket, MARKET_BADGE, MARKET_LABEL, type MarketRegion } from "@/lib/market";
+import { detectAssetClass } from "@/lib/asset-class";
+import { useResearchBundle } from "@/lib/platform/client/use-research-bundle";
+import { useDataset, useDatasetValue } from "@/lib/platform/client/use-dataset";
 import {
   formatCompact,
   formatCurrency,
@@ -43,6 +53,7 @@ import { PortfolioDecisionCard } from "./_components/portfolio-decision-card";
 import { WatchlistIntelligenceCard } from "./_components/watchlist-intelligence-card";
 import { FinancialInsightCard } from "./_components/financial-insight-card";
 import { PeerCompetitivePosition } from "./_components/peer-competitive-position";
+import { ArrivalHighlight, useArrivalTarget } from "@/app/_components/arrival-highlight";
 import { TimelinePreviewCard } from "./_components/timeline-preview-card";
 import { GraphPreviewCard } from "./_components/graph-preview-card";
 import { RelatedOpportunitiesCard } from "./_components/related-opportunities-card";
@@ -61,12 +72,43 @@ import { RatioSparklines } from "./india/_components/ratio-sparklines";
 import { RankedPeers } from "./india/_components/ranked-peers";
 import { AiSectionInsight } from "./india/_components/ai-section-insight";
 
+// Fund-specific components (conditionally rendered) — Research Hub Phase 1
+import { FundScoreCard } from "./fund/_components/fund-score-card";
+import { HoldingsTable } from "@/app/_components/holdings-table";
+import { FundProfileCard } from "./fund/_components/fund-profile-card";
+import { AiFundInsight } from "./fund/_components/ai-fund-insight";
+
+// Crypto-specific components (conditionally rendered) — Research Hub Phase 2
+import { CryptoScoreCard } from "./crypto/_components/crypto-score-card";
+import { RiskProfileCard } from "@/app/_components/risk-profile-card";
+import { AiCryptoInsight } from "./crypto/_components/ai-crypto-insight";
+
+// Commodity-specific components (conditionally rendered) — Research Hub Phase 3
+import { CommodityScoreCard } from "./commodity/_components/commodity-score-card";
+import { AiCommodityInsight } from "./commodity/_components/ai-commodity-insight";
+
+// Forex-specific components (conditionally rendered) — Research Hub Phase 4
+import { ForexScoreCard } from "./forex/_components/forex-score-card";
+import { AiForexInsight } from "./forex/_components/ai-forex-insight";
+
+// Derivatives module (Research Hub Phase 5) — additive on equity/fund
+// underlyings, not a distinct detected asset class (see lib/derivatives-analysis.ts).
+import { DerivativesSummaryCard } from "./derivatives/_components/derivatives-summary-card";
+import { AiDerivativesInsight } from "./derivatives/_components/ai-derivatives-insight";
+import type { DerivativesSummary } from "@/lib/derivatives-analysis";
+
+// Macro-specific components (conditionally rendered) — Research Hub Phase 6.
+// No score card: a yield curve has no BUY/SELL call (see lib/macro-analysis.ts).
+import { YieldCurveCard } from "./macro/_components/yield-curve-card";
+import { AiMacroInsight } from "./macro/_components/ai-macro-insight";
+import type { MacroSummary } from "@/lib/macro-analysis";
+
 import { useToast } from "@/app/_components/toast";
 import { useIOSSafe } from "@/lib/ios-context";
 import { PortfolioFitPanel } from "@/app/_components/portfolio-fit-panel";
 import { PositionActionCard } from "./_components/position-action-card";
 import { CollapsibleSection } from "@/app/_components/collapsible-section";
-import { PageShell, PageHeader, Card, Button, Tabs, type TabItem } from "@/app/_components/ui";
+import { PageShell, PageHeader, Card, Button, Input, Tabs, type TabItem } from "@/app/_components/ui";
 
 // The interactive price chart bundles the candlestick pattern engine — the
 // single heaviest component on this page. Load it lazily so the researched
@@ -134,6 +176,18 @@ const QuarterlySummaryStats = dynamic(
   () => import("./india/_components/financial-charts").then((m) => m.QuarterlySummaryStats),
   { ssr: false, loading: () => <ChartSkeleton h="h-[100px]" /> },
 );
+const SectorAllocationChart = dynamic(
+  () => import("./fund/_components/sector-allocation-chart").then((m) => m.SectorAllocationChart),
+  { ssr: false, loading: () => <ChartSkeleton h="h-[240px]" /> },
+);
+const FundPerformanceCard = dynamic(
+  () => import("./fund/_components/fund-performance-card").then((m) => m.FundPerformanceCard),
+  { ssr: false, loading: () => <ChartSkeleton h="h-[200px]" /> },
+);
+const RelativeStrengthChart = dynamic(
+  () => import("@/app/_components/relative-strength-chart").then((m) => m.RelativeStrengthChart),
+  { ssr: false, loading: () => <ChartSkeleton h="h-[240px]" /> },
+);
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                       */
@@ -163,19 +217,36 @@ interface IndiaData {
 /* Shared constants                                                            */
 /* -------------------------------------------------------------------------- */
 
+// Two representative tickers per searchable asset class (Derivatives and
+// Manual Assets aren't searched directly, so they're not represented here —
+// see the asset-class cards below instead). Equities stays at one pick each
+// from US, India, and Japan to show off global market coverage, rather than
+// doubling up within a single geography.
 const QUICK_SYMBOLS = [
-  "AAPL", "NVDA", "MSFT", "GOOGL", "META", "TSLA",
-  "RELIANCE.NS", "HDFCBANK.NS", "TCS.NS",
-  "ASML", "7203.T",
+  "AAPL",        // Equities — US
+  "RELIANCE.NS", // Equities — India
+  "7203.T",      // Equities — Japan
+  "SPY",         // Funds
+  "QQQ",         // Funds
+  "BTC-USD",     // Crypto
+  "ETH-USD",     // Crypto
+  "GC=F",        // Commodities — Gold
+  "CL=F",        // Commodities — Crude Oil
+  "EURUSD=X",    // Forex
+  "USDJPY=X",    // Forex
+  "^TNX",        // Fixed Income & Macro — 10-Year
+  "^TYX",        // Fixed Income & Macro — 30-Year
 ];
 
 const FEATURE_CARDS = [
-  { title: "AI Investment Verdict",  desc: "Local AI generates a BUY / HOLD / SELL verdict with conviction breakdown — runs on Ollama, no cloud." },
-  { title: "Investment Case",        desc: "Why own / why avoid + catalysts, risks, and what changed since the last analysis." },
-  { title: "Price & Technical Chart",desc: "5-year interactive chart with candles, SMA overlays, RSI/MACD panels, and benchmark comparison." },
-  { title: "Conviction Breakdown",   desc: "Transparent AI scoring across valuation, quality, growth, momentum, and analyst consensus." },
-  { title: "India Research",         desc: "For NSE / BSE stocks: promoter holdings, FII/DII ownership, shareholding timeline, peer rankings." },
-  { title: "SEC Filings & Insider",  desc: "EDGAR filings, insider transactions, and institutional ownership for US-listed equities." },
+  { title: "Equities",              desc: "Global stocks across US, India, Japan, Europe & more. AI verdict, conviction breakdown, 5-year technical chart, SEC filings & insider activity, plus India-specific promoter/FII-DII ownership." },
+  { title: "Funds",                 desc: "ETFs, mutual funds & closed-end funds: holdings, sector allocation, expense ratio, and performance vs. category." },
+  { title: "Crypto",                desc: "Digital assets: momentum, relative strength vs. Bitcoin, risk-adjusted return, and drawdown." },
+  { title: "Commodities",           desc: "Futures & commodity ETFs: momentum vs. a commodity index, and news-grounded supply/demand context." },
+  { title: "Forex",                 desc: "Currency pairs: momentum vs. the Dollar Index, risk-adjusted return, and macro context." },
+  { title: "Fixed Income & Macro",  desc: "US Treasury yield curve — shape, trend, and inversion risk — with news-grounded inflation/GDP/employment context." },
+  { title: "Derivatives",           desc: "Options chain analysis on any equity or fund — implied volatility, term structure, open interest, and Greeks. Found under a stock's Details tab, not searched directly." },
+  { title: "Manual Assets",         desc: "Real estate, private markets, alternatives & structured products — no ticker required. Computed metrics (cap rate, MOIC, payoff scenarios) plus AI insight. See below." },
 ];
 
 /* -------------------------------------------------------------------------- */
@@ -240,6 +311,11 @@ function ResearchWorkspace({
   const market: MarketRegion = detectMarket(quote);
   const isEquity = !quote.assetType || quote.assetType === "EQUITY";
   const isIndia = market === "IN";
+  const isFund = detectAssetClass(quote) === "fund";
+  const isCrypto = detectAssetClass(quote) === "crypto";
+  const isCommodity = detectAssetClass(quote) === "commodity";
+  const isForex = detectAssetClass(quote) === "forex";
+  const isMacro = detectAssetClass(quote) === "macro";
   const positive = quote.changePercent >= 0;
 
   // Tab state
@@ -249,15 +325,24 @@ function ResearchWorkspace({
   const [verdict, setVerdict] = useState<InvestmentVerdict | null>(null);
   const [verdictLoading, setVerdictLoading] = useState(true);
 
-  // Fundamentals (score, earnings, ownership, risks, etc.)
-  const [fundamentals, setFundamentals] = useState<FundamentalsData | null>(null);
-  const [peers, setPeers] = useState<PeerComparison | null>(null);
-  const [fundsLoading, setFundsLoading] = useState(true);
-  const [fundsError, setFundsError] = useState<string | null>(null);
+  // Fundamentals, peers, and sector rotation are delivered by the orchestrated
+  // research bundle and read straight from the platform store. They used to be
+  // three more client fetches that could not even *start* until /api/research
+  // had fully resolved — and /api/peers and /api/sector-rotation then re-fetched
+  // the quote, history, and statements that /api/research had just fetched.
+  //
+  // Each subscribes to its own store key, so when peers finally lands (it fans
+  // out across the whole sector and is always last) only the peer card
+  // re-renders — not the chart, not the financials, not the AI panel.
+  const fundamentalsEntry = useDatasetValue<FundamentalsData>("fundamentals", quote.symbol);
+  const peersEntry = useDatasetValue<PeerComparison>("peers", quote.symbol);
+  const sectorRotationStoreEntry = useDatasetValue<SectorRotationEntry | null>("sectorRotation", quote.symbol);
 
-  // Sector Rotation — fetched once per sector, shared by SectorContextCard,
-  // MacroContextLadder, and WhyNowCard so they don't each fetch independently.
-  const [sectorRotationEntry, setSectorRotationEntry] = useState<SectorRotationEntry | null>(null);
+  const fundamentals = fundamentalsEntry.data;
+  const peers = peersEntry.data;
+  const sectorRotationEntry = sectorRotationStoreEntry.data ?? null;
+  const fundsLoading = fundamentalsEntry.status === "loading";
+  const fundsError = fundamentalsEntry.error;
 
   // Movement Explainer result, lifted up so WhyNowCard can reuse the top
   // driver without a second fetch.
@@ -267,11 +352,9 @@ function ResearchWorkspace({
   // tab) has loaded — lets WhyNowCard cite it without a second fetch.
   const [nearestTimelineEvent, setNearestTimelineEvent] = useState<TimelineEvent | null>(null);
 
-  // India-specific data (lazy, only when market === "IN")
-  const [india, setIndia] = useState<IndiaData | null>(null);
-  const [indiaLoading, setIndiaLoading] = useState(false);
+  // India / fund / crypto / commodity / forex / derivatives / macro data is
+  // fetched below via `useDataset` — see the block after the verdict effect.
 
-  // Excel download
   const [downloading, setDownloading] = useState(false);
 
   // IOS — portfolio fit
@@ -294,6 +377,14 @@ function ResearchWorkspace({
   // (already computed by lib/portfolio-analytics.ts's computeRecommendations()),
   // scoped to this symbol when it's an actual holding.
   const portfolioRecommendation = ios?.report?.recommendations.find((r) => r.symbol === quote.symbol) ?? null;
+
+  // Current share count for PositionActionCard — read from the already-loaded
+  // IOS report rather than a separate fetch. A component-local fetch here
+  // used to compete for one of the browser's ~6 per-origin connection slots
+  // against this page's much slower requests (AI verdict, movement
+  // explanation), so under load it could stall indefinitely and the card
+  // would silently never appear.
+  const currentShares = ios?.report?.holdings.find((h) => h.symbol?.toUpperCase() === quote.symbol.toUpperCase())?.quantity ?? 0;
 
   // Portfolio context for AI — serialized for the copilot and verdict endpoint.
   // Only populated when the user has an actual portfolio (not generic/empty).
@@ -354,70 +445,96 @@ function ResearchWorkspace({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quote.symbol, verdictPortfolioKey]);
 
-  // Fetch fundamentals + peers (for equities)
-  useEffect(() => {
-    /* eslint-disable react-hooks/set-state-in-effect */
-    if (!isEquity) { setFundsLoading(false); return; }
-    setFundsLoading(true);
-    setFundamentals(null);
-    setFundsError(null);
-    setPeers(null);
-    /* eslint-enable react-hooks/set-state-in-effect */
-    void Promise.allSettled([
-      fetch(`/api/fundamentals?symbol=${encodeURIComponent(quote.symbol)}`).then((r) =>
-        r.json() as Promise<FundamentalsData & { error?: string }>
+  // The asset-class-specific sections below all go through `useDataset`, which
+  // gives each of them three things the hand-rolled `useEffect` + `fetch` +
+  // three-`useState` pattern did not:
+  //
+  //   1. Cancellation. Every one of these previously had NO abort handling, so
+  //      switching from one fund to another mid-flight let the first symbol's
+  //      response land after the second's and silently overwrite it. That race
+  //      was real and is now closed — the request is aborted on symbol change.
+  //   2. Deduplication, shared with every other module asking for the same key.
+  //   3. Its own store subscription, so when (say) the options chain finally
+  //      resolves, only the derivatives card re-renders.
+  //
+  // `enabled` keeps the asset-class gating exactly as it was: a crypto symbol
+  // still never fetches fund holdings.
+
+  const indiaEntry = useDataset<IndiaData>(
+    "india",
+    quote.symbol,
+    (signal) =>
+      fetchJson<IndiaData>(
+        `/api/screener-in?symbol=${encodeURIComponent(quote.symbol.replace(/\.(NS|BO)$/i, ""))}`,
+        signal,
       ),
-      fetch(`/api/peers?symbol=${encodeURIComponent(quote.symbol)}`).then((r) =>
-        r.ok ? (r.json() as Promise<PeerComparison>) : null
-      ).catch(() => null),
-    ]).then(([fundsResult, peersResult]) => {
-      if (fundsResult.status === "fulfilled") {
-        const f = fundsResult.value;
-        if (f.error) setFundsError(f.error);
-        else setFundamentals(f);
-      } else {
-        setFundsError("Fundamentals unavailable");
-      }
-      if (peersResult.status === "fulfilled") setPeers(peersResult.value);
-    }).finally(() => setFundsLoading(false));
-  }, [quote.symbol, isEquity]);
+    { enabled: isIndia },
+  );
+  const india = indiaEntry.data;
+  const indiaLoading = indiaEntry.status === "loading";
 
-  // Sector Rotation — find the entry matching this company's sector from the
-  // latest persisted snapshot. Filtered client-side (no server util import,
-  // to avoid pulling lib/db.ts's node:sqlite dependency into the client bundle).
-  useEffect(() => {
-    const sector = fundamentals?.snapshot?.sector;
-    if (!sector) {
-      /* eslint-disable-next-line react-hooks/set-state-in-effect */
-      setSectorRotationEntry(null);
-      return;
-    }
-    let cancelled = false;
-    void fetch("/api/sector-rotation")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (cancelled) return;
-        const entry = data?.snapshot?.sectors?.find((s: SectorRotationEntry) => s.sector === sector) ?? null;
-        setSectorRotationEntry(entry);
-      })
-      .catch(() => { if (!cancelled) setSectorRotationEntry(null); });
-    return () => { cancelled = true; };
-  }, [fundamentals?.snapshot?.sector]);
+  const fundEntry = useDataset<{ fund: FundProfileData; score: ScoreResult }>(
+    "fundProfile",
+    quote.symbol,
+    (signal) => fetchJson(`/api/fund?symbol=${encodeURIComponent(quote.symbol)}`, signal),
+    { enabled: isFund },
+  );
+  const fund = fundEntry.data?.fund ?? null;
+  const fundScore = fundEntry.data?.score ?? null;
+  const fundLoading = fundEntry.status === "loading";
 
-  // Fetch India data when market is detected as IN
-  useEffect(() => {
-    if (!isIndia) return;
-    const baseSymbol = quote.symbol.replace(/\.(NS|BO)$/i, "");
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setIndiaLoading(true);
-    setIndia(null);
-    /* eslint-enable react-hooks/set-state-in-effect */
-    void fetch(`/api/screener-in?symbol=${encodeURIComponent(baseSymbol)}`)
-      .then((r) => r.ok ? (r.json() as Promise<IndiaData>) : null)
-      .then((d) => setIndia(d))
-      .catch(() => { /* India data is best-effort */ })
-      .finally(() => setIndiaLoading(false));
-  }, [quote.symbol, isIndia]);
+  const cryptoEntry = useDataset<{ score: ScoreResult; btcHistory: HistoryPoint[] }>(
+    "crypto",
+    quote.symbol,
+    (signal) => fetchJson(`/api/crypto?symbol=${encodeURIComponent(quote.symbol)}`, signal),
+    { enabled: isCrypto },
+  );
+  const cryptoScore = cryptoEntry.data?.score ?? null;
+  const btcHistory = cryptoEntry.data?.btcHistory ?? [];
+  const cryptoLoading = cryptoEntry.status === "loading";
+
+  const commodityEntry = useDataset<{ score: ScoreResult; benchmarkHistory: HistoryPoint[] }>(
+    "commodity",
+    quote.symbol,
+    (signal) => fetchJson(`/api/commodity?symbol=${encodeURIComponent(quote.symbol)}`, signal),
+    { enabled: isCommodity },
+  );
+  const commodityScore = commodityEntry.data?.score ?? null;
+  const commodityBenchmarkHistory = commodityEntry.data?.benchmarkHistory ?? [];
+  const commodityLoading = commodityEntry.status === "loading";
+
+  const forexEntry = useDataset<{ score: ScoreResult; benchmarkHistory: HistoryPoint[] }>(
+    "forex",
+    quote.symbol,
+    (signal) => fetchJson(`/api/forex?symbol=${encodeURIComponent(quote.symbol)}`, signal),
+    { enabled: isForex },
+  );
+  const forexScore = forexEntry.data?.score ?? null;
+  const forexBenchmarkHistory = forexEntry.data?.benchmarkHistory ?? [];
+  const forexLoading = forexEntry.status === "loading";
+
+  // Additive module, not gated by a detected asset class. A symbol with no
+  // listed options resolves to `summary: null`, which is a normal outcome.
+  const derivativesEntry = useDataset<{ summary: DerivativesSummary | null }>(
+    "options",
+    quote.symbol,
+    (signal) => fetchJson(`/api/derivatives?symbol=${encodeURIComponent(quote.symbol)}`, signal),
+    { enabled: isEquity || isFund },
+  );
+  const derivativesSummary = derivativesEntry.data?.summary ?? null;
+  const derivativesLoading = derivativesEntry.status === "loading";
+
+  // Always the full 4-tenor curve, not just the searched tenor. Not symbol-
+  // scoped: the yield curve is the same regardless of which tenor was searched,
+  // so every macro symbol shares one cache entry and one request.
+  const macroEntry = useDataset<{ summary: MacroSummary }>(
+    "macro",
+    null,
+    (signal) => fetchJson("/api/macro", signal),
+    { enabled: isMacro },
+  );
+  const macroSummary = macroEntry.data?.summary ?? null;
+  const macroLoading = macroEntry.status === "loading";
 
   async function downloadReport() {
     setDownloading(true);
@@ -482,7 +599,7 @@ function ResearchWorkspace({
     <div className="flex flex-col gap-5">
 
       {/* ── 1. Company masthead — identity, price, actions & key stats ── */}
-      <div className="overflow-hidden rounded-card border border-border bg-surface shadow-card">
+      <div data-arrival-target="price" className="overflow-hidden rounded-card border border-border bg-surface shadow-card">
         <div className="flex flex-wrap items-start justify-between gap-4 p-5">
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2.5">
@@ -572,11 +689,12 @@ function ResearchWorkspace({
       {/* ── 3. AI Decision Hero — the primary answer ────────────── */}
       {/* For Indian stocks the numeric confidence comes from the screener.in
           snapshot, never the Yahoo composite, so the hero and the Investment
-          Snapshot below always agree. */}
+          Snapshot below always agree. Funds use their own fund score instead
+          of the (equity-only, always-null-for-funds) fundamentals score. */}
       <DecisionHero
         verdict={verdict}
         loading={verdictLoading}
-        score={isIndia ? null : fundamentals?.score ?? null}
+        score={isIndia || isMacro ? null : isFund ? fundScore : isCrypto ? cryptoScore : isCommodity ? commodityScore : isForex ? forexScore : fundamentals?.score ?? null}
         confidenceOverride={isIndia ? indiaSnapshot?.composite ?? null : null}
       />
 
@@ -620,6 +738,7 @@ function ResearchWorkspace({
             price={quote.price}
             currency={quote.currency}
             portfolioValue={ios.profile.totalValue}
+            currentShares={currentShares}
             fit={portfolioFit}
           />
           {portfolioRecommendation && <PortfolioDecisionCard recommendation={portfolioRecommendation} />}
@@ -657,6 +776,56 @@ function ResearchWorkspace({
             // score. The Yahoo composite is intentionally omitted here — showing
             // both produced two contradictory headline scores (e.g. 52 vs 67).
             <InvestmentSnapshot company={indiaCompany} derived={indiaDerived} />
+          ) : isFund ? (
+            fundLoading ? (
+              <LoadingSkeleton />
+            ) : fundScore ? (
+              <FundScoreCard score={fundScore} />
+            ) : (
+              <div className="rounded-xl border border-border bg-surface p-6 text-center text-sm text-muted">
+                Fund data unavailable for this symbol.
+              </div>
+            )
+          ) : isCrypto ? (
+            cryptoLoading ? (
+              <LoadingSkeleton />
+            ) : cryptoScore ? (
+              <CryptoScoreCard score={cryptoScore} />
+            ) : (
+              <div className="rounded-xl border border-border bg-surface p-6 text-center text-sm text-muted">
+                Crypto data unavailable for this symbol.
+              </div>
+            )
+          ) : isCommodity ? (
+            commodityLoading ? (
+              <LoadingSkeleton />
+            ) : commodityScore ? (
+              <CommodityScoreCard score={commodityScore} />
+            ) : (
+              <div className="rounded-xl border border-border bg-surface p-6 text-center text-sm text-muted">
+                Commodity data unavailable for this symbol.
+              </div>
+            )
+          ) : isForex ? (
+            forexLoading ? (
+              <LoadingSkeleton />
+            ) : forexScore ? (
+              <ForexScoreCard score={forexScore} />
+            ) : (
+              <div className="rounded-xl border border-border bg-surface p-6 text-center text-sm text-muted">
+                Forex data unavailable for this symbol.
+              </div>
+            )
+          ) : isMacro ? (
+            macroLoading ? (
+              <LoadingSkeleton />
+            ) : macroSummary ? (
+              <YieldCurveCard summary={macroSummary} />
+            ) : (
+              <div className="rounded-xl border border-border bg-surface p-6 text-center text-sm text-muted">
+                Yield curve data unavailable.
+              </div>
+            )
           ) : (
             <ConvictionBreakdown
               score={fundamentals?.score ?? null}
@@ -695,18 +864,158 @@ function ResearchWorkspace({
               derived={indiaDerived!}
             />
           )}
+          {isFund && fund && fundScore && (
+            <AiFundInsight section="allocation" symbol={quote.symbol} name={quote.name} fund={fund} score={fundScore} />
+          )}
+          {isCrypto && cryptoScore && (
+            <AiCryptoInsight
+              section="momentum"
+              symbol={quote.symbol}
+              name={quote.name}
+              price={quote.price}
+              currency={quote.currency}
+              changePercent={quote.changePercent}
+              marketCap={quote.marketCap}
+              score={cryptoScore}
+            />
+          )}
+          {isCommodity && commodityScore && (
+            <AiCommodityInsight
+              section="supply-demand"
+              symbol={quote.symbol}
+              name={quote.name}
+              price={quote.price}
+              currency={quote.currency}
+              changePercent={quote.changePercent}
+              score={commodityScore}
+              news={news}
+            />
+          )}
+          {isForex && forexScore && (
+            <AiForexInsight
+              section="macro-context"
+              symbol={quote.symbol}
+              name={quote.name}
+              price={quote.price}
+              currency={quote.currency}
+              changePercent={quote.changePercent}
+              score={forexScore}
+              news={news}
+            />
+          )}
+          {isMacro && macroSummary && (
+            <AiMacroInsight section="macro-context" resetKey={quote.symbol} summary={macroSummary} news={news} />
+          )}
         </div>
       )}
 
       {/* FINANCIALS — earnings, score, charts */}
       {tab === "financials" && (
         <div className="flex flex-col gap-6">
-          {!isEquity ? (
+          {isFund ? (
+            fundLoading ? (
+              <LoadingSkeleton />
+            ) : fund && fundScore ? (
+              <>
+                <FundScoreCard score={fundScore} />
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <HoldingsTable holdings={fund.holdings} />
+                  <SectorAllocationChart sectorWeights={fund.sectorWeights} />
+                </div>
+                <FundPerformanceCard fund={fund} />
+                <AiFundInsight section="cost" symbol={quote.symbol} name={quote.name} fund={fund} score={fundScore} />
+              </>
+            ) : (
+              <div className="rounded-xl border border-border bg-surface p-6 text-center text-sm text-muted">
+                Fund data unavailable for this symbol.
+              </div>
+            )
+          ) : isCrypto ? (
+            cryptoLoading ? (
+              <LoadingSkeleton />
+            ) : cryptoScore ? (
+              <>
+                <CryptoScoreCard score={cryptoScore} />
+                <RelativeStrengthChart symbol={quote.symbol} history={history} benchmarkHistory={btcHistory} benchmarkLabel="BTC" />
+                <RiskProfileCard score={cryptoScore} />
+                <AiCryptoInsight
+                  section="risk"
+                  symbol={quote.symbol}
+                  name={quote.name}
+                  price={quote.price}
+                  currency={quote.currency}
+                  changePercent={quote.changePercent}
+                  marketCap={quote.marketCap}
+                  score={cryptoScore}
+                />
+              </>
+            ) : (
+              <div className="rounded-xl border border-border bg-surface p-6 text-center text-sm text-muted">
+                Crypto data unavailable for this symbol.
+              </div>
+            )
+          ) : isCommodity ? (
+            commodityLoading ? (
+              <LoadingSkeleton />
+            ) : commodityScore ? (
+              <>
+                <CommodityScoreCard score={commodityScore} />
+                <RelativeStrengthChart symbol={quote.symbol} history={history} benchmarkHistory={commodityBenchmarkHistory} benchmarkLabel="DBC" />
+                <RiskProfileCard score={commodityScore} />
+                <AiCommodityInsight
+                  section="risk"
+                  symbol={quote.symbol}
+                  name={quote.name}
+                  price={quote.price}
+                  currency={quote.currency}
+                  changePercent={quote.changePercent}
+                  score={commodityScore}
+                />
+              </>
+            ) : (
+              <div className="rounded-xl border border-border bg-surface p-6 text-center text-sm text-muted">
+                Commodity data unavailable for this symbol.
+              </div>
+            )
+          ) : isForex ? (
+            forexLoading ? (
+              <LoadingSkeleton />
+            ) : forexScore ? (
+              <>
+                <ForexScoreCard score={forexScore} />
+                <RelativeStrengthChart symbol={quote.symbol} history={history} benchmarkHistory={forexBenchmarkHistory} benchmarkLabel="DXY" />
+                <RiskProfileCard score={forexScore} />
+                <AiForexInsight
+                  section="risk"
+                  symbol={quote.symbol}
+                  name={quote.name}
+                  price={quote.price}
+                  currency={quote.currency}
+                  changePercent={quote.changePercent}
+                  score={forexScore}
+                />
+              </>
+            ) : (
+              <div className="rounded-xl border border-border bg-surface p-6 text-center text-sm text-muted">
+                Forex data unavailable for this symbol.
+              </div>
+            )
+          ) : isMacro ? (
+            macroLoading ? (
+              <LoadingSkeleton />
+            ) : macroSummary ? (
+              <>
+                <YieldCurveCard summary={macroSummary} />
+                <AiMacroInsight section="curve" resetKey={quote.symbol} summary={macroSummary} />
+              </>
+            ) : (
+              <div className="rounded-xl border border-border bg-surface p-6 text-center text-sm text-muted">
+                Yield curve data unavailable.
+              </div>
+            )
+          ) : !isEquity ? (
             <div className="rounded-xl border border-border bg-surface p-6 text-center text-sm text-muted">
               Detailed financial analysis is available for equities.
-              {quote.assetType === "CRYPTOCURRENCY"
-                ? " Use the AI Copilot in the Details tab for crypto analysis."
-                : ""}
             </div>
           ) : fundsLoading ? (
             <LoadingSkeleton />
@@ -910,6 +1219,22 @@ function ResearchWorkspace({
           <GraphPreviewCard symbol={quote.symbol} />
           <RelatedOpportunitiesCard symbol={quote.symbol} />
 
+          {/* Fund profile (family, category, expense ratio, asset allocation) */}
+          {isFund && fund && <FundProfileCard fund={fund} />}
+
+          {/* Options chain (equity/fund underlyings with listed options — additive, not every symbol has one) */}
+          {derivativesLoading ? (
+            <div className="h-40 w-full animate-pulse rounded-card border border-border bg-surface-2" />
+          ) : derivativesSummary ? (
+            <div className="flex flex-col gap-4">
+              <DerivativesSummaryCard summary={derivativesSummary} />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <AiDerivativesInsight section="volatility" symbol={quote.symbol} underlyingName={quote.name} summary={derivativesSummary} />
+                <AiDerivativesInsight section="positioning" symbol={quote.symbol} underlyingName={quote.name} summary={derivativesSummary} />
+              </div>
+            </div>
+          ) : null}
+
           {/* Analyst consensus */}
           {fundamentals?.analyst && <AnalystCard analyst={fundamentals.analyst} />}
 
@@ -959,7 +1284,7 @@ function ResearchWorkspace({
           )}
 
           {/* AI Copilot */}
-          <ResearchCopilot symbol={quote.symbol} name={quote.name} isEquity={isEquity} portfolioContext={portfolioContextForAI} />
+          <ResearchCopilot symbol={quote.symbol} name={quote.name} isEquity={isEquity} isFund={isFund} isCrypto={isCrypto} isCommodity={isCommodity} isForex={isForex} isMacro={isMacro} portfolioContext={portfolioContextForAI} />
 
           {/* User notes */}
           <ResearchNotes symbol={quote.symbol} />
@@ -972,6 +1297,56 @@ function ResearchWorkspace({
 /* -------------------------------------------------------------------------- */
 /* Empty state                                                                 */
 /* -------------------------------------------------------------------------- */
+
+function ManualAssetsPreview() {
+  const [assets, setAssets] = useState<ManualAsset[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/manual-assets");
+        const json = await res.json();
+        setAssets(res.ok ? json.assets.slice(0, 4) : []);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  if (loading) return null;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-end gap-4">
+        <p className="text-label font-semibold uppercase tracking-widest text-muted/60">Manual Assets</p>
+        <div className="mb-0.5 h-px flex-1 bg-border" />
+        <Link href="/research/manual" className="text-xs text-brand hover:underline">
+          {assets.length > 0 ? "View all" : "+ Add one"}
+        </Link>
+      </div>
+      {assets.length === 0 ? (
+        <Card padding="md" className="flex items-center justify-between gap-3">
+          <p className="text-xs text-muted">Real estate, private markets, alternatives, structured products — no ticker required.</p>
+          <Link href="/research/manual">
+            <Button size="sm" variant="secondary">+ Add Manual Asset</Button>
+          </Link>
+        </Card>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {assets.map((a) => (
+            <Link key={a.id} href={`/research/manual/${a.id}`}>
+              <Card padding="sm" interactive className="flex flex-col gap-1">
+                <p className="truncate text-xs font-semibold">{a.name}</p>
+                <p className="font-mono text-sm">{a.currentValue != null ? formatCurrency(a.currentValue) : "—"}</p>
+              </Card>
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function EmptyState({
   onSelect,
@@ -1002,6 +1377,7 @@ function EmptyState({
           </Card>
         ))}
       </div>
+      <ManualAssetsPreview />
     </div>
   );
 }
@@ -1010,75 +1386,149 @@ function EmptyState({
 /* Page root                                                                   */
 /* -------------------------------------------------------------------------- */
 
-export default function ResearchPage() {
-  const [symbol, setSymbol] = useState("");
-  const [data, setData] = useState<ResearchData | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
-  const toast = useToast();
+type SearchMode = "ticker" | "real_estate" | "private_market";
 
-  const runResearch = useCallback(async (raw: string) => {
+const SEARCH_MODE_LABEL: Record<SearchMode, string> = {
+  ticker: "Ticker",
+  real_estate: "Real Estate",
+  private_market: "Private Markets",
+};
+
+/**
+ * The fetcher every `useDataset` on this page uses. Forwards the hook's
+ * AbortSignal so a superseded request is actually torn down, and turns a non-OK
+ * response into a rejection so it surfaces as that section's error rather than
+ * as a silently-null card.
+ */
+async function fetchJson<T>(url: string, signal: AbortSignal): Promise<T> {
+  const res = await fetch(url, { signal });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `Request failed (${res.status})`);
+  }
+  return res.json() as Promise<T>;
+}
+
+const SEARCH_MODE_PLACEHOLDER: Record<SearchMode, string> = {
+  ticker: "Search ticker or name — e.g. AAPL, Apple, Nvidia",
+  real_estate: "Search an address — e.g. 123 Main St, Austin, TX 78701",
+  private_market: "Search a company name — e.g. Databricks",
+};
+
+export default function ResearchPage() {
+  return (
+    <Suspense fallback={null}>
+      <ResearchPageInner />
+    </Suspense>
+  );
+}
+
+function ResearchPageInner() {
+  const router = useRouter();
+  const [symbol, setSymbol] = useState("");
+  /** The symbol currently being researched. Changing it cancels the previous plan. */
+  const [activeSymbol, setActiveSymbol] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [searchMode, setSearchMode] = useState<SearchMode>("ticker");
+  const [manualQuery, setManualQuery] = useState("");
+  const toast = useToast();
+  const highlightTarget = useArrivalTarget();
+
+  // One orchestrated, streamed call replaces the old four-stage waterfall
+  // (/api/research → then fundamentals + peers → then sector-rotation). Each
+  // section lands in the platform store the instant the server resolves it, and
+  // switching symbols aborts everything still in flight — so a slow response for
+  // the previous ticker can no longer overwrite the new one.
+  const bundle = useResearchBundle(activeSymbol);
+
+  const quoteEntry = useDatasetValue<Quote>("quote", activeSymbol);
+  const historyEntry = useDatasetValue<HistoryPoint[]>("history", activeSymbol);
+  const spyEntry = useDatasetValue<HistoryPoint[]>("spyHistory", activeSymbol);
+  const sectorEntry = useDatasetValue<{ etf: string | null; history: HistoryPoint[] }>("sectorHistory", activeSymbol);
+  const filingsEntry = useDatasetValue<Filing[]>("filings", activeSymbol);
+  const newsEntry = useDatasetValue<NewsItem[]>("news", activeSymbol);
+
+  // ResearchData is assembled from whatever has arrived so far. Sections that
+  // are still in flight are simply absent, and fill in as they land.
+  const data: ResearchData | null = useMemo(() => {
+    if (!quoteEntry.data) return null;
+    return {
+      quote: quoteEntry.data,
+      history: historyEntry.data ?? [],
+      filings: filingsEntry.data ?? [],
+      edgarError: filingsEntry.error,
+      benchmarks: {
+        spy: spyEntry.data ?? [],
+        sectorEtf: sectorEntry.data?.etf ?? null,
+        sector: sectorEntry.data?.history ?? [],
+      },
+      news: newsEntry.data ?? [],
+    };
+  }, [quoteEntry.data, historyEntry.data, filingsEntry.data, filingsEntry.error, spyEntry.data, sectorEntry.data, newsEntry.data]);
+
+  // The page shell renders as soon as the quote and the price series exist
+  // (~500ms) rather than waiting for the slowest section (~2.3s). Everything
+  // else — filings, news, fundamentals, peers, sector rotation — streams into
+  // the already-painted page. A failed history is `error`, not `loading`, so a
+  // provider outage degrades to a chartless page instead of an infinite spinner.
+  const shellReady = quoteEntry.data != null && historyEntry.status !== "loading";
+  const loading = activeSymbol != null && !shellReady && bundle.error == null;
+  const error = bundle.error;
+
+  const submit = useCallback((raw: string) => {
     const sym = raw.trim().toUpperCase();
     if (!sym) return;
-    try {
-      const res = await fetch(`/api/research?symbol=${encodeURIComponent(sym)}`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? `Lookup failed (${res.status})`);
-      setData(json as ResearchData);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
-      setData(null);
-    } finally {
-      setLoading(false);
-    }
+    setSaved(false);
+    setActiveSymbol(sym);
   }, []);
 
-  function submit(raw: string) {
-    if (!raw.trim()) return;
-    setLoading(true);
-    setError(null);
-    setData(null);
-    setSaved(false);
-    void runResearch(raw);
+  /**
+   * Real Estate / Private Markets aren't ticker-searchable, so there's
+   * nothing to fetch here on this page — this hands off to the Manual
+   * Assets add flow with the query pre-filled and already searching (see
+   * research/manual/page.tsx's `add`/`q` param handling), rather than
+   * silently doing nothing or, worse, misfiring a ticker search against
+   * text that was never meant to be one.
+   */
+  function submitManualSearch(mode: Exclude<SearchMode, "ticker">) {
+    if (!manualQuery.trim()) return;
+    router.push(`/research/manual?add=${mode}&q=${encodeURIComponent(manualQuery.trim())}`);
   }
 
-  // Deep-link support and session restore
+  // Deep-link support and session restore.
+  //
+  // Only the *symbol* is persisted now, not a serialized copy of the data. The
+  // page used to stash the whole ResearchData blob in sessionStorage — a third
+  // private cache, with its own staleness, alongside the server cache and the
+  // client store. Re-requesting instead is both simpler and more correct: the
+  // platform's cache serves a revisited symbol in ~36ms, and the user can never
+  // be shown a price that has been sitting in sessionStorage since yesterday.
   useEffect(() => {
     const param = new URLSearchParams(window.location.search).get("symbol");
-    if (param) {
-      /* eslint-disable react-hooks/set-state-in-effect */
-      setSymbol(param.toUpperCase());
-      submit(param);
-      /* eslint-enable react-hooks/set-state-in-effect */
-    } else {
-      try {
-        const raw = sessionStorage.getItem("uaa_research_state");
-        if (raw) {
-          const st = JSON.parse(raw) as { symbol?: string; data?: ResearchData };
-           
-          if (st.symbol) setSymbol(st.symbol);
-          if (st.data) setData(st.data);
-           
-        }
-      } catch { /* ignore corrupt storage */ }
-    }
+    const restored = param ?? sessionStorage.getItem("uaa_research_symbol");
+    if (!restored) return;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setSymbol(restored.toUpperCase());
+    submit(restored);
+    /* eslint-enable react-hooks/set-state-in-effect */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Persist session state
   useEffect(() => {
-    if (!symbol || !data) return;
-    try { sessionStorage.setItem("uaa_research_state", JSON.stringify({ symbol, data })); } catch { /* ignore */ }
-  }, [symbol, data]);
+    if (!activeSymbol) return;
+    try {
+      sessionStorage.setItem("uaa_research_symbol", activeSymbol);
+    } catch {
+      /* private browsing / quota — non-fatal */
+    }
+  }, [activeSymbol]);
 
   // Update tab title
   useEffect(() => {
     if (data?.quote.symbol) {
-      document.title = `${data.quote.symbol} · Research · UAA`;
+      document.title = `${data.quote.symbol} · Research Hub · UAA`;
     } else {
-      document.title = "Research · UAA";
+      document.title = "Research Hub · UAA";
     }
     return () => { document.title = "Universal Asset Analyzer"; };
   }, [data?.quote.symbol]);
@@ -1113,26 +1563,60 @@ export default function ResearchPage() {
 
   return (
     <PageShell gap="gap-6" py="py-10">
+      <ArrivalHighlight targetId={highlightTarget} />
       <PageHeader
-        title="Research"
-        description="Universal investment research — US, India, Japan, Europe, and more. Search any global ticker."
+        title="Research Hub"
+        description="Universal investment research — equities, funds, crypto, commodities, forex, and macro across US, India, Japan, Europe & more via ticker search, plus derivatives, real estate, private markets, alternatives, and structured products."
       />
 
       {/* Search bar */}
-      <form
-        onSubmit={(e) => { e.preventDefault(); submit(symbol); }}
-        className="flex gap-2"
-      >
-        <SymbolSearch
-          value={symbol}
-          onChange={setSymbol}
-          onSelect={(sym) => submit(sym)}
-          loading={loading}
-        />
-        <Button type="submit" variant="primary" disabled={loading}>
-          {loading ? "Loading…" : "Research"}
-        </Button>
-      </form>
+      <div className="flex flex-col gap-2">
+        <div className="flex gap-2">
+          {(Object.keys(SEARCH_MODE_LABEL) as SearchMode[]).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setSearchMode(mode)}
+              className={`rounded-control border px-3 py-1.5 text-xs font-medium transition-colors ${
+                searchMode === mode
+                  ? "border-brand bg-brand/10 text-brand"
+                  : "border-border bg-surface text-muted hover:border-border-strong hover:text-foreground"
+              }`}
+            >
+              {SEARCH_MODE_LABEL[mode]}
+            </button>
+          ))}
+        </div>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (searchMode === "ticker") submit(symbol);
+            else submitManualSearch(searchMode);
+          }}
+          className="flex gap-2"
+        >
+          {searchMode === "ticker" ? (
+            <SymbolSearch
+              value={symbol}
+              onChange={setSymbol}
+              onSelect={(sym) => submit(sym)}
+              loading={loading}
+            />
+          ) : (
+            <Input value={manualQuery} onChange={(e) => setManualQuery(e.target.value)} placeholder={SEARCH_MODE_PLACEHOLDER[searchMode]} />
+          )}
+          <Button type="submit" variant="primary" disabled={searchMode === "ticker" && loading}>
+            {searchMode === "ticker" ? (loading ? "Loading…" : "Research") : "Search"}
+          </Button>
+        </form>
+        {searchMode !== "ticker" && (
+          <p className="text-xs text-muted">
+            {searchMode === "real_estate"
+              ? "Opens Manual Assets with this address already searched via RentCast."
+              : "Opens Manual Assets with this company already searched via SEC EDGAR."}
+          </p>
+        )}
+      </div>
 
       {/* Error banner */}
       {error && (

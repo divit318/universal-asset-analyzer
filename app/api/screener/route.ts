@@ -1,56 +1,120 @@
 import { NextResponse } from "next/server";
-import {
-  getDatasetStatus,
-  getScreenerData,
-  refreshScreenerData,
-} from "@/lib/dataset";
-import { applyScreen, parseFundamentalCriteria } from "@/lib/fundamental-screener";
+import { getAssetClass, isAssetClassId } from "@/lib/assets/registry";
+import type { AssetClassId } from "@/lib/assets/types";
+import { parseFilters } from "@/lib/screener/filter-engine";
+import { refreshUniverse, runScreen } from "@/lib/screener/pipeline";
+import { getUniverseProvider } from "@/lib/screener/universes";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** GET /api/screener — dataset build status (for polling while it warms). */
-export async function GET() {
-  return NextResponse.json({ status: getDatasetStatus() });
+/**
+ * The universal screener endpoint. One route, seven asset classes: everything
+ * that differs between them is looked up in the Asset Registry, so this handler
+ * has no per-class branching at all.
+ */
+
+/** Default asset class when a caller doesn't name one — preserves the old equity-only contract. */
+const DEFAULT_CLASS: AssetClassId = "equity";
+
+function resolveClass(value: unknown): AssetClassId | null {
+  if (value == null || value === "") return DEFAULT_CLASS;
+  return isAssetClassId(value) ? value : null;
+}
+
+/** GET /api/screener?class=<id> — universe build status, for polling while it warms. */
+export async function GET(request: Request) {
+  const raw = new URL(request.url).searchParams.get("class");
+  const assetClass = resolveClass(raw);
+  if (!assetClass) {
+    return NextResponse.json({ error: `Unknown asset class: ${raw}` }, { status: 400 });
+  }
+
+  const { status } = await getUniverseProvider(assetClass).load();
+  return NextResponse.json({ assetClass, status });
 }
 
 /**
  * POST /api/screener
- * Body: { filters, sector, industry, sortField, sortDir, size, offset, refresh }
- * Filters the cached, scored fundamental dataset for the ~1000-name US universe.
- * While the dataset is still warming, returns whatever is ready plus a status
- * the client polls on.
+ * Body: { assetClass, templateId, filters, sortKey, sortDir, size, offset, refresh }
  */
 export async function POST(request: Request) {
   let body: Record<string, unknown>;
   try {
-    body = await request.json();
+    body = (await request.json()) as Record<string, unknown>;
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  if (body.refresh === true) {
-    return NextResponse.json({ status: refreshScreenerData(), rows: [], total: 0 });
+  const assetClass = resolveClass(body.assetClass);
+  if (!assetClass) {
+    return NextResponse.json(
+      { error: `Unknown asset class: ${String(body.assetClass)}` },
+      { status: 400 },
+    );
   }
 
-  const criteria = parseFundamentalCriteria(body);
+  if (body.refresh === true) {
+    return NextResponse.json({
+      assetClass,
+      status: refreshUniverse({ assetClass }),
+      total: 0,
+      universeReady: 0,
+      offset: 0,
+      rows: [],
+    });
+  }
+
+  const def = getAssetClass(assetClass);
+  const template =
+    typeof body.templateId === "string"
+      ? (def.templates.find((t) => t.id === body.templateId) ?? null)
+      : null;
+  const templateId = template?.id ?? null;
+
+  /**
+   * Template filters vs request filters.
+   *
+   * `templateId` selects the *ranking*, and — when the caller sends no `filters`
+   * key at all — also seeds the filters from the template. That makes
+   * `{ assetClass, templateId }` a complete, self-sufficient request: ask for
+   * the "Layer 1" crypto template and you get Layer 1 tokens, not the whole
+   * universe ranked by Layer-1 weights. (Before this, a template-only request
+   * returned every token, stablecoins included, which is how live verification
+   * caught it.)
+   *
+   * But when `filters` IS present it is authoritative and the template's
+   * filters are not merged underneath. That distinction matters: the UI seeds
+   * its filter draft from the template and then lets you loosen it, so if the
+   * server re-merged the template's filters as a base layer, a filter you
+   * deleted would silently come back and you could never widen a template.
+   */
+  // A template's filters are already typed FilterValues, validated against the
+  // registry (tests/asset-registry.test.ts enforces that they only reference
+  // real, available metrics), so they don't need to go back through the parser.
+  const filters =
+    body.filters === undefined && template
+      ? template.filters
+      : parseFilters(assetClass, body.filters);
+
+  const sortKey = typeof body.sortKey === "string" ? body.sortKey : def.defaultSort.key;
+  const sortDir = body.sortDir === "asc" ? "asc" : "desc";
   const size = Math.min(Math.max(Number(body.size) || 50, 1), 200);
   const offset = Math.max(Number(body.offset) || 0, 0);
 
-  let status, metrics;
   try {
-    ({ status, metrics } = await getScreenerData());
+    const result = await runScreen({
+      assetClass,
+      templateId,
+      filters,
+      sortKey,
+      sortDir,
+      size,
+      offset,
+    });
+    return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Screener data unavailable";
     return NextResponse.json({ error: message }, { status: 502 });
   }
-
-  const matches = applyScreen(metrics, criteria);
-  return NextResponse.json({
-    status,
-    total: matches.length,
-    universeReady: metrics.length,
-    offset,
-    rows: matches.slice(offset, offset + size),
-  });
 }

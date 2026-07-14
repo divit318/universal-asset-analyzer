@@ -11,8 +11,13 @@
  */
 
 import { runPrompt } from "../ai";
-import { extractJson } from "../json-extract";
+import { extractJsonObject } from "../json-extract";
 import type { MarketEvent, SignalCategory } from "../types";
+
+import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
+const SIGNAL_CATEGORIES: SignalCategory[] = [
+  "macro", "company", "market", "commodity", "geopolitics", "policy", "sentiment",
+];
 
 const KNOWN_SECTORS = [
   "Technology",
@@ -46,8 +51,26 @@ interface ClassificationResult {
   affectedTickers: string[];
 }
 
-interface BatchClassificationResponse {
-  classifications: ClassificationResult[];
+function sanitizeClassification(item: unknown): ClassificationResult | null {
+  if (item === null || typeof item !== "object") return null;
+  const c = item as Record<string, unknown>;
+  if (typeof c.id !== "string") return null;
+  const category = typeof c.category === "string" ? c.category.toLowerCase() : "";
+  return {
+    id: c.id,
+    category: (SIGNAL_CATEGORIES as string[]).includes(category)
+      ? (category as SignalCategory)
+      : "company",
+    affectedSectors: Array.isArray(c.affectedSectors)
+      ? c.affectedSectors.filter((x): x is string => typeof x === "string")
+      : [],
+    affectedThemes: Array.isArray(c.affectedThemes)
+      ? c.affectedThemes.filter((x): x is string => typeof x === "string")
+      : [],
+    affectedTickers: Array.isArray(c.affectedTickers)
+      ? c.affectedTickers.filter((x): x is string => typeof x === "string")
+      : [],
+  };
 }
 
 function buildClassificationPrompt(events: MarketEvent[]): string {
@@ -69,7 +92,7 @@ For each event, provide:
 3. affectedThemes: short investment themes active here (e.g. "AI Infrastructure", "Rate Cycle", "China Reopening") — max 3
 4. affectedTickers: specific stock tickers mentioned or strongly implied — NSE format for Indian stocks (e.g. HDFCBANK not HDFCBANK.NS), NYSE/NASDAQ for US — max 5
 
-Return ONLY valid JSON:
+${JSON_SCHEMA_LEAD_IN}
 {
   "classifications": [
     {
@@ -89,22 +112,27 @@ export async function classifyEvents(
 ): Promise<MarketEvent[]> {
   if (events.length === 0) return events;
 
-  let parsed: BatchClassificationResponse | null = null;
+  let parsed: { classifications: unknown[] };
   try {
     const raw = await runPrompt("opportunity-engine", buildClassificationPrompt(events), {
       maxTokens: 3000,
       json: true,
     });
-    parsed = extractJson<BatchClassificationResponse>(raw);
+    parsed = extractJsonObject(raw, { classifications: [] as unknown[] });
   } catch {
     // Return events unmodified if classification fails
     return events;
   }
 
-  if (!parsed?.classifications?.length) return events;
+  if (!parsed.classifications.length) return events;
+
+  const classifications = parsed.classifications
+    .map(sanitizeClassification)
+    .filter((c): c is ClassificationResult => c !== null);
+  if (classifications.length === 0) return events;
 
   const classMap = new Map<string, ClassificationResult>(
-    parsed.classifications.map((c) => [c.id, c]),
+    classifications.map((c) => [c.id, c]),
   );
 
   return events.map((event) => {

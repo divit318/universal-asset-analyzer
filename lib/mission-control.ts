@@ -16,7 +16,7 @@
  */
 
 import { getPortfolioForIOS } from "./ios/server";
-import { buildInvestmentProfile } from "./ios/profile";
+import { buildInvestmentProfile, fromLegacyReport } from "./ios/profile";
 import { rankByFit } from "./ios/fit-scorer";
 import type { FitAssetData } from "./ios/types";
 import { getLatestSectorRotation } from "./sector-rotation";
@@ -213,7 +213,7 @@ export function buildOpportunitySnapshot(
   }
 
   const portfolioSymbols = new Set(ctx.report?.positions.map((p) => p.symbol) ?? []);
-  const profile = buildInvestmentProfile(ctx.report, "ai_optimized", DEFAULT_CONSTRAINTS);
+  const profile = buildInvestmentProfile(ctx.report ? fromLegacyReport(ctx.report) : null, "ai_optimized", DEFAULT_CONSTRAINTS);
 
   const candidates: Array<FitAssetData & { absoluteScore: number }> = [
     ...snapshot.result.highConviction,

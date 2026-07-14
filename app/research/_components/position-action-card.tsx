@@ -1,6 +1,3 @@
-"use client";
-
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { computePositionAction, type PositionAction } from "@/lib/position-action";
 import type { PortfolioFitAnalysis } from "@/lib/ios/types";
@@ -26,37 +23,20 @@ export function PositionActionCard({
   price,
   currency,
   portfolioValue,
+  currentShares,
   fit,
 }: {
   symbol: string;
   price: number;
   currency: string | null;
   portfolioValue: number;
+  /** Read from the already-loaded IOS report by the caller — see the comment
+   *  at its call site in research/page.tsx for why this isn't fetched here. */
+  currentShares: number;
   fit: PortfolioFitAnalysis;
 }) {
-  const [currentShares, setCurrentShares] = useState<number | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    async function loadShares() {
-      try {
-        const r = await fetch("/api/portfolio");
-        const json = (await r.json()) as { positions?: { symbol: string; shares: number }[] };
-        if (!alive) return;
-        const pos = json.positions?.find((p) => p.symbol.toUpperCase() === symbol.toUpperCase());
-        setCurrentShares(pos?.shares ?? 0);
-      } catch {
-        if (alive) setCurrentShares(0);
-      }
-    }
-    void loadShares();
-    return () => {
-      alive = false;
-    };
-  }, [symbol]);
-
   // Needs a real portfolio to size against; the fit panel covers the generic case.
-  if (portfolioValue <= 0 || currentShares == null || price <= 0) return null;
+  if (portfolioValue <= 0 || price <= 0) return null;
 
   const action = computePositionAction({
     symbol,
@@ -97,6 +77,9 @@ export function PositionActionCard({
             <div className="absolute inset-y-0 left-0 rounded-full bg-muted/50" style={{ width: `${(action.currentPct / barMax) * 100}%` }} />
             <div className="absolute inset-y-0 w-0.5 bg-brand" style={{ left: `${(action.targetPct / barMax) * 100}%` }} />
           </div>
+          <p className="text-[10px] text-faint">
+            Conviction-sized target from your investment policy (fit score, sector caps, diversification) — if a Portfolio Decision target appears below, that one only rebalances among your current holdings, so the two can differ.
+          </p>
         </div>
       )}
 

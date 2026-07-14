@@ -121,10 +121,10 @@ export function InvestmentThesisPanel({
             IC Report
           </Link>
           <Link
-            href={`/stocks/${encodeURIComponent(ticker)}`}
+            href={`/research?symbol=${encodeURIComponent(ticker)}`}
             className="rounded-md bg-accent-strong px-2.5 py-1 text-xs font-medium text-background hover:opacity-90 transition-opacity"
           >
-            Deep Research →
+            Research Hub →
           </Link>
         </div>
       </div>

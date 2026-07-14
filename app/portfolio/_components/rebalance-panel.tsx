@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
 import type { RebalanceProposal } from "@/lib/portfolio-analytics";
 import { formatCurrency } from "@/lib/format";
+import { InvestCashPanel } from "./invest-cash-panel";
 
 function TradeRow({ trade }: { trade: RebalanceProposal["trades"][number] }) {
   const isBuy = trade.action === "BUY";
@@ -62,75 +62,6 @@ function SectorChange({ change }: { change: RebalanceProposal["sectorChanges"][n
         </div>
         <span className="text-[10px] text-muted w-8 text-right font-mono">{change.to.toFixed(0)}%</span>
       </div>
-    </div>
-  );
-}
-
-function InvestCash({ onResult }: { onResult: (allocations: unknown[]) => void }) {
-  const [cash, setCash] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ symbol: string; name: string; dollarAmount: number; shareCount: number | null; reason: string }[] | null>(null);
-
-  async function compute() {
-    const amount = parseFloat(cash.replace(/,/g, "").replace("$", ""));
-    if (!Number.isFinite(amount) || amount <= 0) {
-      setError("Enter a valid dollar amount");
-      return;
-    }
-    setLoading(true); setError(null);
-    try {
-      const res = await fetch("/api/portfolio/invest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cashAmount: amount }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Failed");
-      setResult(json.allocations);
-      onResult(json.allocations);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed");
-    } finally {
-      setLoading(false); }
-  }
-
-  return (
-    <div className="rounded-xl border border-border bg-surface p-4">
-      <p className="text-sm font-semibold mb-3">Invest New Cash</p>
-      <div className="flex gap-2 mb-3">
-        <div className="relative flex-1">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">$</span>
-          <input
-            value={cash}
-            onChange={(e) => setCash(e.target.value)}
-            placeholder="10,000"
-            className="w-full rounded-lg border border-border bg-surface-2 pl-7 pr-3 py-2 font-mono text-sm outline-none focus:border-accent placeholder:text-muted"
-          />
-        </div>
-        <button
-          onClick={() => void compute()}
-          disabled={loading}
-          className="rounded-lg bg-accent-strong px-4 py-2 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50 transition-opacity"
-        >
-          {loading ? "…" : "Allocate"}
-        </button>
-      </div>
-      {error && <p className="text-xs text-negative mb-2">{error}</p>}
-      {result && (
-        <div className="space-y-2">
-          {result.map((a, i) => (
-            <div key={i} className="flex items-center justify-between text-sm border-b border-border/50 pb-2 last:border-0 last:pb-0">
-              <div>
-                <span className="font-mono font-semibold text-accent">{a.symbol}</span>
-                {a.shareCount != null && <span className="text-muted text-xs ml-2">~{a.shareCount} shares</span>}
-                <p className="text-xs text-muted">{a.reason}</p>
-              </div>
-              <span className="font-mono font-semibold text-positive">{formatCurrency(a.dollarAmount)}</span>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -196,7 +127,7 @@ export function RebalancePanel({ rebalance }: { rebalance: RebalanceProposal }) 
             </div>
           )}
 
-          <InvestCash onResult={() => {}} />
+          <InvestCashPanel />
         </div>
       </div>
     </div>

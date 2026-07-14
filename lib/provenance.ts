@@ -11,7 +11,7 @@
  * Pure, zero-dependency, client-safe.
  */
 
-export type DataSourceId = "yahoo" | "screener_in" | "sec_edgar" | "quant_engine" | "platform";
+export type DataSourceId = "yahoo" | "screener_in" | "sec_edgar" | "quant_engine" | "platform" | "rentcast";
 
 export interface DataSourceMeta {
   id: DataSourceId;
@@ -27,6 +27,7 @@ export const DATA_SOURCES: Record<DataSourceId, DataSourceMeta> = {
   sec_edgar: { id: "sec_edgar", name: "SEC EDGAR", short: "SEC" },
   quant_engine: { id: "quant_engine", name: "UAA Quant Engine", short: "Engine" },
   platform: { id: "platform", name: "Universal Asset Analyzer", short: "UAA" },
+  rentcast: { id: "rentcast", name: "RentCast (estimate)", short: "RentCast" },
 };
 
 export type FreshnessLevel = "fresh" | "aging" | "stale";

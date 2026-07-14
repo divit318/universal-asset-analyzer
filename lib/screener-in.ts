@@ -11,6 +11,8 @@
  *   3. GET /api/company/{warehouseId}/peers/ → HTML peers table
  */
 
+import { getDataset } from "./platform/data-layer";
+
 export interface ScreenerInRatio {
   name: string;
   values: { period?: string; value: string }[];
@@ -369,92 +371,112 @@ function parsePeersHtml(html: string): ScreenerInPeer[] {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Cache + public fetch function                                              */
+/* Public fetch function                                                      */
 /* -------------------------------------------------------------------------- */
 
-const cache = new Map<string, { data: ScreenerInCompany; ts: number }>();
-const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
-
+/**
+ * Fetch a screener.in company through the platform data layer.
+ *
+ * Freshness lives in lib/platform/registry.ts (`screenerIn`), not here. Failures
+ * — including "no such company" — deliberately return null WITHOUT caching, so a
+ * transient screener.in outage never pins an empty result for six hours.
+ */
 export async function getScreenerInCompany(symbol: string): Promise<ScreenerInCompany | null> {
   const sym = normalise(symbol);
-  const cached = cache.get(sym);
-  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data;
 
   try {
-    const resolved = await resolveCompany(sym);
-    if (!resolved) return null;
-
-    const { name, companyId, warehouseId, slug } = resolved;
-    void companyId; // used only to confirm resolution
-
-    // Fetch company page HTML + peers HTML in parallel
-    const [pageRes, peersRes] = await Promise.allSettled([
-      fetch(`https://www.screener.in/company/${slug}/consolidated/`, {
-        headers: HEADERS,
-        signal: AbortSignal.timeout(10_000),
-      }),
-      fetch(`https://www.screener.in/api/company/${warehouseId}/peers/`, {
-        headers: { ...HEADERS, "X-Requested-With": "XMLHttpRequest", "Referer": `https://www.screener.in/company/${slug}/consolidated/` },
-        signal: AbortSignal.timeout(8_000),
-      }),
-    ]);
-
-    const html = pageRes.status === "fulfilled" && pageRes.value.ok
-      ? await pageRes.value.text()
-      : "";
-    const peersHtml = peersRes.status === "fulfilled" && peersRes.value.ok
-      ? await peersRes.value.text()
-      : "";
-
-    const topRatios = scrapeTopRatios(html);
-    const ratios = scrapeRatiosTable(html);
-    const peers = parsePeersHtml(peersHtml);
-    const promoterHolding = scrapePromoterFromMeta(html);
-    const annualPL = scrapeAnnualPL(html);
-    const quarterlyPL = scrapeQuarterlyPL(html);
-    const { sector, industry } = scrapeSector(html);
-
-    // Scrape full shareholding pattern
-    const shareholdingResult = scrapeShareholdingFull(html);
-    let shareholding = shareholdingResult.data;
-    const shareholdingPeriods = shareholdingResult.periods;
-
-    // Fall back to single-period promoter if full scrape yielded nothing
-    if (shareholding.length === 0 && promoterHolding != null) {
-      shareholding = [{ holding: "promoter", name: "Promoters", values: [String(promoterHolding)] }];
-    }
-
-    const data: ScreenerInCompany = {
-      name,
-      symbol: sym,
-      bseCode: null,
-      sector,
-      industry,
-      marketCap: topRatios["Market Cap"] ?? null,
-      currentPrice: topRatios["Current Price"] ?? null,
-      high52w: topRatios["52W High"] ?? null,
-      low52w: topRatios["52W Low"] ?? null,
-      pe: topRatios["Stock P/E"] ?? null,
-      bookValue: topRatios["Book Value"] ?? null,
-      dividendYield: topRatios["Dividend Yield"] ?? null,
-      roce: topRatios["ROCE"] ?? null,
-      roe: topRatios["ROE"] ?? null,
-      debt: null,
-      changePercent: null,
-      promoterHolding,
-      ratios,
-      peers,
-      shareholding,
-      shareholdingPeriods,
-      annualPL,
-      quarterlyPL,
-    };
-
-    cache.set(sym, { data, ts: Date.now() });
+    const { data } = await getDataset<ScreenerInCompany>(
+      "screenerIn",
+      { symbol: sym },
+      (signal) => fetchScreenerInCompany(sym, signal),
+      { symbol: sym },
+    );
     return data;
   } catch {
     return null;
   }
+}
+
+/** Throws on any failure — the platform layer only caches resolved values. */
+async function fetchScreenerInCompany(
+  sym: string,
+  signal: AbortSignal,
+): Promise<ScreenerInCompany> {
+  const resolved = await resolveCompany(sym);
+  if (!resolved) throw new Error(`screener.in: no company for ${sym}`);
+
+  const { name, companyId, warehouseId, slug } = resolved;
+  void companyId; // used only to confirm resolution
+
+  // Fetch company page HTML + peers HTML in parallel. Each keeps its own
+  // deadline, but both also abort if the platform cancels the caller.
+  const [pageRes, peersRes] = await Promise.allSettled([
+    fetch(`https://www.screener.in/company/${slug}/consolidated/`, {
+      headers: HEADERS,
+      signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+    }),
+    fetch(`https://www.screener.in/api/company/${warehouseId}/peers/`, {
+      headers: { ...HEADERS, "X-Requested-With": "XMLHttpRequest", "Referer": `https://www.screener.in/company/${slug}/consolidated/` },
+      signal: AbortSignal.any([signal, AbortSignal.timeout(8_000)]),
+    }),
+  ]);
+
+  // The company page is the record; the peers call is a bonus. If the page did
+  // not come back we throw rather than returning a hollow all-null company —
+  // otherwise a screener.in blip would be persisted as "Reliance, every metric
+  // null" and served confidently for the next six hours.
+  const html = pageRes.status === "fulfilled" && pageRes.value.ok
+    ? await pageRes.value.text()
+    : "";
+  if (!html) throw new Error(`screener.in: company page unavailable for ${sym}`);
+
+  const peersHtml = peersRes.status === "fulfilled" && peersRes.value.ok
+    ? await peersRes.value.text()
+    : "";
+
+  const topRatios = scrapeTopRatios(html);
+  const ratios = scrapeRatiosTable(html);
+  const peers = parsePeersHtml(peersHtml);
+  const promoterHolding = scrapePromoterFromMeta(html);
+  const annualPL = scrapeAnnualPL(html);
+  const quarterlyPL = scrapeQuarterlyPL(html);
+  const { sector, industry } = scrapeSector(html);
+
+  // Scrape full shareholding pattern
+  const shareholdingResult = scrapeShareholdingFull(html);
+  let shareholding = shareholdingResult.data;
+  const shareholdingPeriods = shareholdingResult.periods;
+
+  // Fall back to single-period promoter if full scrape yielded nothing
+  if (shareholding.length === 0 && promoterHolding != null) {
+    shareholding = [{ holding: "promoter", name: "Promoters", values: [String(promoterHolding)] }];
+  }
+
+  return {
+    name,
+    symbol: sym,
+    bseCode: null,
+    sector,
+    industry,
+    marketCap: topRatios["Market Cap"] ?? null,
+    currentPrice: topRatios["Current Price"] ?? null,
+    high52w: topRatios["52W High"] ?? null,
+    low52w: topRatios["52W Low"] ?? null,
+    pe: topRatios["Stock P/E"] ?? null,
+    bookValue: topRatios["Book Value"] ?? null,
+    dividendYield: topRatios["Dividend Yield"] ?? null,
+    roce: topRatios["ROCE"] ?? null,
+    roe: topRatios["ROE"] ?? null,
+    debt: null,
+    changePercent: null,
+    promoterHolding,
+    ratios,
+    peers,
+    shareholding,
+    shareholdingPeriods,
+    annualPL,
+    quarterlyPL,
+  };
 }
 
 /* -------------------------------------------------------------------------- */

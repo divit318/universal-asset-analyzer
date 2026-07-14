@@ -1,10 +1,20 @@
 import { NextResponse } from "next/server";
 import { buildCompanyContext } from "@/lib/ai/context";
+import { readPortfolioFacts } from "@/lib/ai/facts";
+import { buildVerdictPrompt } from "@/lib/ai/report-sections";
 import { runPrompt } from "@/lib/ai";
 import { extractJsonObject } from "@/lib/json-extract";
 import { normalizeSymbol } from "@/lib/market";
+import { detectAssetClass } from "@/lib/asset-class";
 import { formatCurrency, formatMarketCap } from "@/lib/format";
 import { verifyGrounding, collectClaimText, type GroundingReport } from "@/lib/ai/grounding";
+import { getFundProfile, getHistory, getMacroSummary } from "@/lib/yahoo";
+import { computeFundScore } from "@/lib/fund-scoring";
+import { computeCryptoScore } from "@/lib/crypto-scoring";
+import { computeCommodityScore } from "@/lib/commodity-scoring";
+import { COMMODITY_BENCHMARK_SYMBOL } from "@/lib/research-engines/commodity";
+import { computeForexScore, DOLLAR_INDEX_SYMBOL } from "@/lib/forex-scoring";
+import type { NewsItem } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,20 +36,528 @@ export interface InvestmentVerdict {
   generatedAt: string;
 }
 
+/**
+ * Fund-grounded verdict: same JSON schema and grounding-verification
+ * mechanism as the equity path, but facts/prompt built from FundProfileData +
+ * computeFundScore() instead of equity snapshot/analyst/score.
+ */
+async function respondWithFundVerdict(
+  symbol: string,
+  name: string,
+  quote: { price: number; currency: string; changePercent: number },
+): Promise<NextResponse> {
+  const [fund, history] = await Promise.all([getFundProfile(symbol), getHistory(symbol, 730)]);
+  const score = computeFundScore(fund, history);
+
+  const facts: string[] = [
+    `Fund: ${name} (${symbol})`,
+    `Price: ${formatCurrency(quote.price, quote.currency)} (${quote.changePercent >= 0 ? "+" : ""}${quote.changePercent.toFixed(2)}% today)`,
+    `Total net assets: ${fund.totalNetAssets != null ? `$${(fund.totalNetAssets / 1e9).toFixed(1)}B` : "n/a"}`,
+    `Category: ${fund.category ?? "n/a"}`,
+    `Expense ratio: ${fund.expenseRatio != null ? `${(fund.expenseRatio * 100).toFixed(2)}%` : "n/a"}`,
+    `Fund score: ${score.composite}/100 (${score.recommendation.replace(/_/g, " ")})`,
+    `Score breakdown: ${score.buckets.map((b) => `${b.name}=${Math.round((b.points / b.max) * 100)}%`).join(", ")}`,
+    `Top holdings: ${fund.holdings.slice(0, 5).map((h) => `${h.symbol} ${h.weightPercent.toFixed(1)}%`).join(", ") || "n/a"}`,
+    `Top-10 concentration: ${fund.holdings.slice(0, 10).reduce((s, h) => s + h.weightPercent, 0).toFixed(0)}%`,
+    `Top sector: ${fund.sectorWeights[0] ? `${fund.sectorWeights[0].sector} ${fund.sectorWeights[0].weightPercent.toFixed(0)}%` : "n/a"}`,
+    `1-year return: ${fund.trailingReturns.oneYear != null ? `${fund.trailingReturns.oneYear >= 0 ? "+" : ""}${fund.trailingReturns.oneYear.toFixed(1)}%` : "n/a"}`,
+    `1-year return vs category: ${fund.categoryRelativeReturns.oneYear != null ? `${fund.categoryRelativeReturns.oneYear >= 0 ? "+" : ""}${fund.categoryRelativeReturns.oneYear.toFixed(1)}pp` : "n/a"}`,
+    `Risk: beta ${fund.risk?.beta?.toFixed(2) ?? "n/a"}, Sharpe ${fund.risk?.sharpeRatio?.toFixed(2) ?? "n/a"}`,
+  ];
+
+  const prompt = `You are a fund analyst. Based ONLY on the data below, generate a structured investment verdict for this fund.
+
+DATA:
+${facts.join("\n")}
+
+Respond with ONLY a raw JSON object — no markdown, no code fences, no explanation outside the JSON:
+{
+  "verdict": "bullish" or "bearish" or "neutral",
+  "headline": "Decisive 10-14 word investment thesis naming the fund and the core reason",
+  "thesis": "2-3 sentences: the investment case with specific metrics cited from the data",
+  "catalysts": ["specific reason to hold citing a number or fact", "reason 2", "reason 3"],
+  "risks": ["specific risk citing a number or fact", "risk 2", "risk 3"],
+  "confidence": "high" or "medium" or "low",
+  "timeHorizon": "short-term" or "medium-term" or "long-term",
+  "keyMetrics": [
+    {"label": "metric name", "value": "formatted value", "signal": "positive" or "negative" or "neutral"}
+  ]
+}
+
+REQUIREMENTS:
+- verdict: bullish if fund score>65; bearish if fund score<40; neutral otherwise
+- headline: NO generic phrases like "shows potential" — make a real call
+- catalysts + risks: MUST cite specific numbers from the data (cost, concentration, performance vs category). Generic bullets will be rejected.
+- keyMetrics: exactly 5, covering cost + diversification + performance vs category + risk-adjusted quality + momentum
+- confidence: high = comprehensive data + clear signal; medium = some gaps or mixed signals; low = limited data`;
+
+  const fallbackVerdict: InvestmentVerdict["verdict"] =
+    score.composite > 65 ? "bullish" : score.composite < 40 ? "bearish" : "neutral";
+
+  let parsed: Omit<InvestmentVerdict, "model" | "generatedAt" | "grounding">;
+  let grounding: GroundingReport | undefined;
+
+  try {
+    const raw = await runPrompt("fund-research", prompt, { json: true, maxTokens: 800 });
+    parsed = extractJsonObject(raw, {
+      verdict: fallbackVerdict,
+      headline: `${name}: AI verdict`,
+      thesis: "",
+      catalysts: [] as string[],
+      risks: [] as string[],
+      confidence: "low",
+      timeHorizon: "medium-term",
+      keyMetrics: [] as InvestmentVerdict["keyMetrics"],
+    } satisfies Omit<InvestmentVerdict, "model" | "generatedAt" | "grounding">);
+
+    const claims = collectClaimText([
+      parsed.headline,
+      parsed.thesis,
+      parsed.catalysts,
+      parsed.risks,
+      parsed.keyMetrics.map((m) => `${m.label} ${m.value}`),
+    ]);
+    grounding = verifyGrounding(claims, facts.join("\n"));
+  } catch {
+    parsed = {
+      verdict: fallbackVerdict,
+      headline: `${name}: Start Ollama to generate the AI investment verdict`,
+      thesis: "Run `ollama serve` in your terminal, then refresh to generate the AI analysis for this fund.",
+      catalysts: ["Ollama offline — start with `ollama serve`", "Refresh page after Ollama starts", "AI verdict generates automatically"],
+      risks: ["AI analysis unavailable", "Review the fund score below", "Check Ollama status badge in the header"],
+      confidence: "low",
+      timeHorizon: "medium-term",
+      keyMetrics: [],
+    };
+  }
+
+  return NextResponse.json({
+    ...parsed,
+    grounding,
+    model: "ollama",
+    generatedAt: new Date().toISOString(),
+  } satisfies InvestmentVerdict);
+}
+
+/**
+ * Crypto-grounded verdict: same JSON schema and grounding-verification
+ * mechanism, but facts/prompt built from computeCryptoScore() (market-data
+ * only) instead of equity snapshot/analyst/score — same fix as the fund
+ * verdict above, for the same "two contradictory headline scores" reason.
+ */
+async function respondWithCryptoVerdict(
+  symbol: string,
+  name: string,
+  quote: { price: number; currency: string; changePercent: number; marketCap: number | null },
+): Promise<NextResponse> {
+  const isBtc = symbol.toUpperCase().startsWith("BTC-USD");
+  const [history, btcHistory] = await Promise.all([
+    getHistory(symbol, 730),
+    isBtc ? Promise.resolve([]) : getHistory("BTC-USD", 730),
+  ]);
+  const score = computeCryptoScore(symbol, history, btcHistory.length > 0 ? btcHistory : null);
+
+  const facts: string[] = [
+    `Crypto asset: ${name} (${symbol})`,
+    `Price: ${formatCurrency(quote.price, quote.currency)} (${quote.changePercent >= 0 ? "+" : ""}${quote.changePercent.toFixed(2)}% today)`,
+    `Market cap: ${formatMarketCap(quote.marketCap)}`,
+    `Crypto score: ${score.composite}/100 (${score.recommendation.replace(/_/g, " ")})`,
+    `Score breakdown: ${score.buckets.map((b) => `${b.name}=${Math.round((b.points / b.max) * 100)}%`).join(", ")}`,
+    ...score.buckets.flatMap((b) => b.factors.filter((f) => f.detail && f.detail !== "n/a").map((f) => `${f.label}: ${f.detail}`)),
+    "This analysis is market-data only — no tokenomics, on-chain, or developer-activity data is available.",
+  ];
+
+  const prompt = `You are a crypto markets analyst. Based ONLY on the data below, generate a structured investment verdict for this crypto asset.
+
+DATA:
+${facts.join("\n")}
+
+Respond with ONLY a raw JSON object — no markdown, no code fences, no explanation outside the JSON:
+{
+  "verdict": "bullish" or "bearish" or "neutral",
+  "headline": "Decisive 10-14 word investment thesis naming the asset and the core reason",
+  "thesis": "2-3 sentences: the investment case with specific metrics cited from the data",
+  "catalysts": ["specific reason to hold citing a number or fact", "reason 2", "reason 3"],
+  "risks": ["specific risk citing a number or fact", "risk 2", "risk 3"],
+  "confidence": "high" or "medium" or "low",
+  "timeHorizon": "short-term" or "medium-term" or "long-term",
+  "keyMetrics": [
+    {"label": "metric name", "value": "formatted value", "signal": "positive" or "negative" or "neutral"}
+  ]
+}
+
+REQUIREMENTS:
+- verdict: bullish if crypto score>65; bearish if crypto score<40; neutral otherwise
+- headline: NO generic phrases like "shows potential" — make a real call
+- catalysts + risks: MUST cite specific numbers from the data (momentum, relative strength vs BTC, volatility, drawdown). Generic bullets will be rejected.
+- keyMetrics: exactly 5, covering momentum + relative strength vs BTC + risk-adjusted return + drawdown risk + volatility
+- confidence: high = comprehensive data + clear signal; medium = some gaps or mixed signals; low = limited data
+- Do NOT invent tokenomics, on-chain, or developer-activity figures — that data isn't available`;
+
+  const fallbackVerdict: InvestmentVerdict["verdict"] =
+    score.composite > 65 ? "bullish" : score.composite < 40 ? "bearish" : "neutral";
+
+  let parsed: Omit<InvestmentVerdict, "model" | "generatedAt" | "grounding">;
+  let grounding: GroundingReport | undefined;
+
+  try {
+    const raw = await runPrompt("crypto-research", prompt, { json: true, maxTokens: 800 });
+    parsed = extractJsonObject(raw, {
+      verdict: fallbackVerdict,
+      headline: `${name}: AI verdict`,
+      thesis: "",
+      catalysts: [] as string[],
+      risks: [] as string[],
+      confidence: "low",
+      timeHorizon: "medium-term",
+      keyMetrics: [] as InvestmentVerdict["keyMetrics"],
+    } satisfies Omit<InvestmentVerdict, "model" | "generatedAt" | "grounding">);
+
+    const claims = collectClaimText([
+      parsed.headline,
+      parsed.thesis,
+      parsed.catalysts,
+      parsed.risks,
+      parsed.keyMetrics.map((m) => `${m.label} ${m.value}`),
+    ]);
+    grounding = verifyGrounding(claims, facts.join("\n"));
+  } catch {
+    parsed = {
+      verdict: fallbackVerdict,
+      headline: `${name}: Start Ollama to generate the AI investment verdict`,
+      thesis: "Run `ollama serve` in your terminal, then refresh to generate the AI analysis for this asset.",
+      catalysts: ["Ollama offline — start with `ollama serve`", "Refresh page after Ollama starts", "AI verdict generates automatically"],
+      risks: ["AI analysis unavailable", "Review the crypto score below", "Check Ollama status badge in the header"],
+      confidence: "low",
+      timeHorizon: "medium-term",
+      keyMetrics: [],
+    };
+  }
+
+  return NextResponse.json({
+    ...parsed,
+    grounding,
+    model: "ollama",
+    generatedAt: new Date().toISOString(),
+  } satisfies InvestmentVerdict);
+}
+
+/**
+ * Commodity-grounded verdict: same schema/grounding as crypto's, but facts
+ * built from computeCommodityScore() plus recent news (for the honest
+ * supply/demand caveat) instead of equity snapshot/analyst/score.
+ */
+async function respondWithCommodityVerdict(
+  symbol: string,
+  name: string,
+  quote: { price: number; currency: string; changePercent: number },
+  news: NewsItem[],
+): Promise<NextResponse> {
+  const [history, benchmarkHistory] = await Promise.all([
+    getHistory(symbol, 730),
+    getHistory(COMMODITY_BENCHMARK_SYMBOL, 730),
+  ]);
+  const score = computeCommodityScore(history, benchmarkHistory.length > 0 ? benchmarkHistory : null);
+
+  const facts: string[] = [
+    `Commodity: ${name} (${symbol})`,
+    `Price: ${formatCurrency(quote.price, quote.currency)} (${quote.changePercent >= 0 ? "+" : ""}${quote.changePercent.toFixed(2)}% today)`,
+    `Commodity score: ${score.composite}/100 (${score.recommendation.replace(/_/g, " ")})`,
+    `Score breakdown: ${score.buckets.map((b) => `${b.name}=${Math.round((b.points / b.max) * 100)}%`).join(", ")}`,
+    ...score.buckets.flatMap((b) => b.factors.filter((f) => f.detail && f.detail !== "n/a").map((f) => `${f.label}: ${f.detail}`)),
+    news.length > 0
+      ? `Recent news: ${news.slice(0, 5).map((n) => n.headline).join(" | ")}`
+      : "Recent news: none available",
+    "The score is market-data only — no inventory, production, or futures-curve data is available; use the news headlines above (if any) for supply/demand context, do not invent figures.",
+  ];
+
+  const prompt = `You are a commodities markets analyst. Based ONLY on the data below, generate a structured investment verdict for this commodity.
+
+DATA:
+${facts.join("\n")}
+
+Respond with ONLY a raw JSON object — no markdown, no code fences, no explanation outside the JSON:
+{
+  "verdict": "bullish" or "bearish" or "neutral",
+  "headline": "Decisive 10-14 word investment thesis naming the commodity and the core reason",
+  "thesis": "2-3 sentences: the investment case with specific metrics cited from the data",
+  "catalysts": ["specific reason to hold citing a number or fact or headline", "reason 2", "reason 3"],
+  "risks": ["specific risk citing a number or fact or headline", "risk 2", "risk 3"],
+  "confidence": "high" or "medium" or "low",
+  "timeHorizon": "short-term" or "medium-term" or "long-term",
+  "keyMetrics": [
+    {"label": "metric name", "value": "formatted value", "signal": "positive" or "negative" or "neutral"}
+  ]
+}
+
+REQUIREMENTS:
+- verdict: bullish if commodity score>65; bearish if commodity score<40; neutral otherwise
+- headline: NO generic phrases like "shows potential" — make a real call
+- catalysts + risks: MUST cite specific numbers or headlines from the data (momentum, relative strength vs commodity index, volatility, drawdown, or recent news). Generic bullets will be rejected.
+- keyMetrics: exactly 5, covering momentum + relative strength vs commodity index + risk-adjusted return + drawdown risk + volatility
+- confidence: high = comprehensive data + clear signal; medium = some gaps or mixed signals; low = limited data
+- Do NOT invent inventory, production, or futures-curve figures — that data isn't available`;
+
+  const fallbackVerdict: InvestmentVerdict["verdict"] =
+    score.composite > 65 ? "bullish" : score.composite < 40 ? "bearish" : "neutral";
+
+  let parsed: Omit<InvestmentVerdict, "model" | "generatedAt" | "grounding">;
+  let grounding: GroundingReport | undefined;
+
+  try {
+    const raw = await runPrompt("commodity-research", prompt, { json: true, maxTokens: 800 });
+    parsed = extractJsonObject(raw, {
+      verdict: fallbackVerdict,
+      headline: `${name}: AI verdict`,
+      thesis: "",
+      catalysts: [] as string[],
+      risks: [] as string[],
+      confidence: "low",
+      timeHorizon: "medium-term",
+      keyMetrics: [] as InvestmentVerdict["keyMetrics"],
+    } satisfies Omit<InvestmentVerdict, "model" | "generatedAt" | "grounding">);
+
+    const claims = collectClaimText([
+      parsed.headline,
+      parsed.thesis,
+      parsed.catalysts,
+      parsed.risks,
+      parsed.keyMetrics.map((m) => `${m.label} ${m.value}`),
+    ]);
+    grounding = verifyGrounding(claims, facts.join("\n"));
+  } catch {
+    parsed = {
+      verdict: fallbackVerdict,
+      headline: `${name}: Start Ollama to generate the AI investment verdict`,
+      thesis: "Run `ollama serve` in your terminal, then refresh to generate the AI analysis for this commodity.",
+      catalysts: ["Ollama offline — start with `ollama serve`", "Refresh page after Ollama starts", "AI verdict generates automatically"],
+      risks: ["AI analysis unavailable", "Review the commodity score below", "Check Ollama status badge in the header"],
+      confidence: "low",
+      timeHorizon: "medium-term",
+      keyMetrics: [],
+    };
+  }
+
+  return NextResponse.json({
+    ...parsed,
+    grounding,
+    model: "ollama",
+    generatedAt: new Date().toISOString(),
+  } satisfies InvestmentVerdict);
+}
+
+/**
+ * Forex-grounded verdict: same schema/grounding as commodity's, but facts
+ * built from computeForexScore() plus recent news (for the honest central-
+ * bank/rates caveat) instead of equity snapshot/analyst/score.
+ */
+async function respondWithForexVerdict(
+  symbol: string,
+  name: string,
+  quote: { price: number; currency: string; changePercent: number },
+  news: NewsItem[],
+): Promise<NextResponse> {
+  const isDxy = symbol.toUpperCase() === DOLLAR_INDEX_SYMBOL.toUpperCase();
+  const [history, benchmarkHistory] = await Promise.all([
+    getHistory(symbol, 730),
+    isDxy ? Promise.resolve([]) : getHistory(DOLLAR_INDEX_SYMBOL, 730),
+  ]);
+  const score = computeForexScore(symbol, history, benchmarkHistory.length > 0 ? benchmarkHistory : null);
+
+  const facts: string[] = [
+    `Currency pair: ${name} (${symbol})`,
+    `Rate: ${quote.price} ${quote.currency} (${quote.changePercent >= 0 ? "+" : ""}${quote.changePercent.toFixed(2)}% today)`,
+    `Forex score: ${score.composite}/100 (${score.recommendation.replace(/_/g, " ")})`,
+    `Score breakdown: ${score.buckets.map((b) => `${b.name}=${Math.round((b.points / b.max) * 100)}%`).join(", ")}`,
+    ...score.buckets.flatMap((b) => b.factors.filter((f) => f.detail && f.detail !== "n/a").map((f) => `${f.label}: ${f.detail}`)),
+    news.length > 0
+      ? `Recent news: ${news.slice(0, 5).map((n) => n.headline).join(" | ")}`
+      : "Recent news: none available",
+    "The score is market-data only — no central bank policy, inflation, GDP, or interest-rate data is available; use the news headlines above (if any) for macro context, do not invent figures.",
+  ];
+
+  const prompt = `You are a currency markets analyst. Based ONLY on the data below, generate a structured investment verdict for this currency pair.
+
+DATA:
+${facts.join("\n")}
+
+Respond with ONLY a raw JSON object — no markdown, no code fences, no explanation outside the JSON:
+{
+  "verdict": "bullish" or "bearish" or "neutral",
+  "headline": "Decisive 10-14 word investment thesis naming the currency pair and the core reason",
+  "thesis": "2-3 sentences: the investment case with specific metrics cited from the data",
+  "catalysts": ["specific reason to hold citing a number or fact or headline", "reason 2", "reason 3"],
+  "risks": ["specific risk citing a number or fact or headline", "risk 2", "risk 3"],
+  "confidence": "high" or "medium" or "low",
+  "timeHorizon": "short-term" or "medium-term" or "long-term",
+  "keyMetrics": [
+    {"label": "metric name", "value": "formatted value", "signal": "positive" or "negative" or "neutral"}
+  ]
+}
+
+REQUIREMENTS:
+- verdict: bullish if forex score>65; bearish if forex score<40; neutral otherwise
+- headline: NO generic phrases like "shows potential" — make a real call
+- catalysts + risks: MUST cite specific numbers or headlines from the data (momentum, relative strength vs Dollar Index, volatility, drawdown, or recent news). Generic bullets will be rejected.
+- keyMetrics: exactly 5, covering momentum + relative strength vs Dollar Index + risk-adjusted return + drawdown risk + volatility
+- confidence: high = comprehensive data + clear signal; medium = some gaps or mixed signals; low = limited data
+- Do NOT invent central bank policy, inflation, GDP, or interest-rate figures — that data isn't available`;
+
+  const fallbackVerdict: InvestmentVerdict["verdict"] =
+    score.composite > 65 ? "bullish" : score.composite < 40 ? "bearish" : "neutral";
+
+  let parsed: Omit<InvestmentVerdict, "model" | "generatedAt" | "grounding">;
+  let grounding: GroundingReport | undefined;
+
+  try {
+    const raw = await runPrompt("forex-research", prompt, { json: true, maxTokens: 800 });
+    parsed = extractJsonObject(raw, {
+      verdict: fallbackVerdict,
+      headline: `${name}: AI verdict`,
+      thesis: "",
+      catalysts: [] as string[],
+      risks: [] as string[],
+      confidence: "low",
+      timeHorizon: "medium-term",
+      keyMetrics: [] as InvestmentVerdict["keyMetrics"],
+    } satisfies Omit<InvestmentVerdict, "model" | "generatedAt" | "grounding">);
+
+    const claims = collectClaimText([
+      parsed.headline,
+      parsed.thesis,
+      parsed.catalysts,
+      parsed.risks,
+      parsed.keyMetrics.map((m) => `${m.label} ${m.value}`),
+    ]);
+    grounding = verifyGrounding(claims, facts.join("\n"));
+  } catch {
+    parsed = {
+      verdict: fallbackVerdict,
+      headline: `${name}: Start Ollama to generate the AI investment verdict`,
+      thesis: "Run `ollama serve` in your terminal, then refresh to generate the AI analysis for this currency pair.",
+      catalysts: ["Ollama offline — start with `ollama serve`", "Refresh page after Ollama starts", "AI verdict generates automatically"],
+      risks: ["AI analysis unavailable", "Review the forex score below", "Check Ollama status badge in the header"],
+      confidence: "low",
+      timeHorizon: "medium-term",
+      keyMetrics: [],
+    };
+  }
+
+  return NextResponse.json({
+    ...parsed,
+    grounding,
+    model: "ollama",
+    generatedAt: new Date().toISOString(),
+  } satisfies InvestmentVerdict);
+}
+
+/**
+ * Macro-grounded verdict: same schema/grounding as the others, but there's
+ * no 0-100 score to threshold — a yield curve has no BUY/SELL call. The
+ * fallback verdict (used only if Ollama is offline/parsing fails) is based
+ * on curve shape instead: inverted curves have historically preceded US
+ * recessions, so that maps to "bearish" (on growth outlook, not a security).
+ */
+async function respondWithMacroVerdict(name: string, news: NewsItem[]): Promise<NextResponse> {
+  const summary = await getMacroSummary();
+
+  const curveLines = summary.curve
+    .map((p) => `${p.label} (${p.symbol}): ${p.yieldPercent != null ? `${p.yieldPercent.toFixed(2)}%` : "n/a"}`)
+    .join(", ");
+
+  const facts: string[] = [
+    `US Treasury yield curve: ${curveLines}`,
+    `10-Year minus 3-Month spread: ${summary.tenYearMinusThreeMonth != null ? `${summary.tenYearMinusThreeMonth >= 0 ? "+" : ""}${summary.tenYearMinusThreeMonth.toFixed(2)}pp` : "n/a"}`,
+    `Curve shape: ${summary.shape ?? "n/a"}`,
+    `Curve trend (vs ~20 trading days ago): ${summary.curveTrend ?? "n/a"}`,
+    news.length > 0
+      ? `Recent news: ${news.slice(0, 5).map((n) => n.headline).join(" | ")}`
+      : "Recent news: none available",
+    "No CPI, GDP, payrolls, or Fed policy-decision data is available; use the news headlines above (if any) for that context, do not invent figures.",
+  ];
+
+  const prompt = `You are a macroeconomics analyst. Based ONLY on the data below, generate a structured verdict on what the current yield curve and macro news suggest about the growth/recession outlook. This is NOT a directional call on a security — "bullish"/"bearish" here means bullish/bearish on the growth outlook, not a buy/sell recommendation.
+
+DATA:
+${facts.join("\n")}
+
+Respond with ONLY a raw JSON object — no markdown, no code fences, no explanation outside the JSON:
+{
+  "verdict": "bullish" or "bearish" or "neutral",
+  "headline": "Decisive 10-14 word summary of what the curve/macro picture signals",
+  "thesis": "2-3 sentences: the macro case with specific numbers cited from the data",
+  "catalysts": ["specific supportive fact citing a number or headline", "fact 2", "fact 3"],
+  "risks": ["specific risk/concern citing a number or headline", "risk 2", "risk 3"],
+  "confidence": "high" or "medium" or "low",
+  "timeHorizon": "short-term" or "medium-term" or "long-term",
+  "keyMetrics": [
+    {"label": "metric name", "value": "formatted value", "signal": "positive" or "negative" or "neutral"}
+  ]
+}
+
+REQUIREMENTS:
+- verdict: bearish (on growth outlook) if the curve is inverted; bullish if normal and steepening; neutral otherwise
+- headline: NO generic phrases like "shows potential" — make a real call about the growth outlook
+- catalysts + risks: MUST cite specific numbers or headlines from the data (yield levels, spread, curve shape/trend, or recent news). Generic bullets will be rejected.
+- keyMetrics: exactly 5, covering the 4 tenor yields plus the 10y-3m spread
+- confidence: high = comprehensive data + clear signal; medium = some gaps or mixed signals; low = limited data
+- Do NOT invent CPI, GDP, payrolls, or Fed policy-decision figures — that data isn't available`;
+
+  const fallbackVerdict: InvestmentVerdict["verdict"] =
+    summary.shape === "inverted" ? "bearish" : summary.shape === "normal" && summary.curveTrend === "steepening" ? "bullish" : "neutral";
+
+  let parsed: Omit<InvestmentVerdict, "model" | "generatedAt" | "grounding">;
+  let grounding: GroundingReport | undefined;
+
+  try {
+    const raw = await runPrompt("macro-research", prompt, { json: true, maxTokens: 800 });
+    parsed = extractJsonObject(raw, {
+      verdict: fallbackVerdict,
+      headline: `${name}: AI verdict`,
+      thesis: "",
+      catalysts: [] as string[],
+      risks: [] as string[],
+      confidence: "low",
+      timeHorizon: "medium-term",
+      keyMetrics: [] as InvestmentVerdict["keyMetrics"],
+    } satisfies Omit<InvestmentVerdict, "model" | "generatedAt" | "grounding">);
+
+    const claims = collectClaimText([
+      parsed.headline,
+      parsed.thesis,
+      parsed.catalysts,
+      parsed.risks,
+      parsed.keyMetrics.map((m) => `${m.label} ${m.value}`),
+    ]);
+    grounding = verifyGrounding(claims, facts.join("\n"));
+  } catch {
+    parsed = {
+      verdict: fallbackVerdict,
+      headline: `${name}: Start Ollama to generate the AI investment verdict`,
+      thesis: "Run `ollama serve` in your terminal, then refresh to generate the AI analysis for the yield curve.",
+      catalysts: ["Ollama offline — start with `ollama serve`", "Refresh page after Ollama starts", "AI verdict generates automatically"],
+      risks: ["AI analysis unavailable", "Review the yield curve below", "Check Ollama status badge in the header"],
+      confidence: "low",
+      timeHorizon: "medium-term",
+      keyMetrics: [],
+    };
+  }
+
+  return NextResponse.json({
+    ...parsed,
+    grounding,
+    model: "ollama",
+    generatedAt: new Date().toISOString(),
+  } satisfies InvestmentVerdict);
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const symbol = normalizeSymbol(url.searchParams.get("symbol"));
   if (!symbol) return NextResponse.json({ error: "A valid `symbol` is required" }, { status: 400 });
 
   // Portfolio context passed from the client (IOS-computed, per user).
-  const fitScore     = url.searchParams.get("fitScore");
-  const fitTier      = url.searchParams.get("fitTier");
-  const fitReasons   = url.searchParams.get("reasons");
-  const isInPortfolio = url.searchParams.get("isInPortfolio") === "true";
-  const suggestedPct = url.searchParams.get("suggestedPct");
-  const missingSectors = url.searchParams.get("missingSectors");
-  const objective    = url.searchParams.get("objective");
-  const hasPortfolioCtx = !!(fitScore && fitTier);
+  const portfolio = readPortfolioFacts(url);
 
   let ctx;
   try {
@@ -51,121 +569,33 @@ export async function GET(request: Request) {
     );
   }
 
-  const q = ctx.quote;
-  const s = ctx.snapshot;
+  // Funds/crypto: the equity ctx.score computed above is meaningless (built
+  // from mostly-null equity fundamentals) and must never be shown alongside
+  // an asset-class-native score — that's precisely the "two contradictory
+  // headline scores" bug the India research path was built to avoid.
+  const verdictAssetClass = detectAssetClass(ctx.quote);
+  if (verdictAssetClass === "fund") {
+    return respondWithFundVerdict(ctx.symbol, ctx.name, ctx.quote);
+  }
+  if (verdictAssetClass === "crypto") {
+    return respondWithCryptoVerdict(ctx.symbol, ctx.name, ctx.quote);
+  }
+  if (verdictAssetClass === "commodity") {
+    return respondWithCommodityVerdict(ctx.symbol, ctx.name, ctx.quote, ctx.news);
+  }
+  if (verdictAssetClass === "forex") {
+    return respondWithForexVerdict(ctx.symbol, ctx.name, ctx.quote, ctx.news);
+  }
+  if (verdictAssetClass === "macro") {
+    return respondWithMacroVerdict(ctx.name, ctx.news);
+  }
+
+  // Prompt + evidence come from the SHARED builder (lib/ai/report-sections.ts),
+  // which the streamed /api/ai/report route also uses. One prompt, one schema,
+  // one evidence block — so "the streamed report is identical to the
+  // non-streamed one" is structurally true rather than merely intended.
   const score = ctx.score;
-  const momentum = ctx.momentum;
-  const analyst = ctx.analyst;
-
-  const facts: string[] = [
-    `Company: ${ctx.name} (${ctx.symbol})`,
-    `Price: ${formatCurrency(q.price, q.currency)} (${q.changePercent >= 0 ? "+" : ""}${q.changePercent.toFixed(2)}% today)`,
-    `Market cap: ${formatMarketCap(q.marketCap)}`,
-  ];
-
-  if (s) {
-    if (s.forwardPE != null) facts.push(`Forward P/E: ${s.forwardPE.toFixed(1)}x`);
-    if (s.trailingPE != null) facts.push(`Trailing P/E: ${s.trailingPE.toFixed(1)}x`);
-    if (s.priceToBook != null) facts.push(`P/B ratio: ${s.priceToBook.toFixed(2)}x`);
-    if (s.profitMargins != null) facts.push(`Net margin: ${(s.profitMargins * 100).toFixed(1)}%`);
-    if (s.operatingMargins != null) facts.push(`Operating margin: ${(s.operatingMargins * 100).toFixed(1)}%`);
-    if (s.grossMargins != null) facts.push(`Gross margin: ${(s.grossMargins * 100).toFixed(1)}%`);
-    if (s.returnOnEquity != null) facts.push(`ROE: ${(s.returnOnEquity * 100).toFixed(1)}%`);
-    if (s.returnOnAssets != null) facts.push(`ROA: ${(s.returnOnAssets * 100).toFixed(1)}%`);
-    if (s.revenueGrowth != null) facts.push(`Revenue growth YoY: ${(s.revenueGrowth * 100).toFixed(1)}%`);
-    if (s.earningsGrowth != null) facts.push(`EPS growth YoY: ${(s.earningsGrowth * 100).toFixed(1)}%`);
-    if (s.debtToEquity != null) facts.push(`D/E ratio: ${s.debtToEquity.toFixed(2)}x`);
-    if (s.currentRatio != null) facts.push(`Current ratio: ${s.currentRatio.toFixed(2)}x`);
-    if (s.dividendYield != null && s.dividendYield > 0) facts.push(`Dividend yield: ${(s.dividendYield * 100).toFixed(2)}%`);
-    if (s.enterpriseToEbitda != null) facts.push(`EV/EBITDA: ${s.enterpriseToEbitda.toFixed(1)}x`);
-  }
-
-  if (score) {
-    facts.push(`Composite score: ${score.composite}/100 (${score.recommendation.replace(/_/g, " ")})`);
-    const bs = score.buckets.map((b) => `${b.name}=${Math.round((b.points / b.max) * 100)}%`).join(", ");
-    facts.push(`Score breakdown: ${bs}`);
-    if (score.rationale) facts.push(`Score rationale: ${score.rationale}`);
-  }
-
-  if (momentum) {
-    if (momentum.return3m != null) facts.push(`3-month return: ${momentum.return3m >= 0 ? "+" : ""}${momentum.return3m.toFixed(1)}%`);
-    if (momentum.vsSma200 != null) facts.push(`vs SMA200: ${momentum.vsSma200 >= 0 ? "+" : ""}${momentum.vsSma200.toFixed(1)}%`);
-    if (momentum.vsSma50 != null) facts.push(`vs SMA50: ${momentum.vsSma50 >= 0 ? "+" : ""}${momentum.vsSma50.toFixed(1)}%`);
-    if (momentum.pctFrom52WkHigh != null) facts.push(`From 52-week high: ${momentum.pctFrom52WkHigh.toFixed(1)}%`);
-    facts.push(`Price trend: ${momentum.trend}`);
-  }
-
-  if (analyst) {
-    if (analyst.recommendationKey) {
-      facts.push(`Analyst consensus: ${analyst.recommendationKey.replace(/_/g, " ")} (${analyst.numberOfOpinions ?? "?"} analysts)`);
-    }
-    if (analyst.targetMean != null) facts.push(`Price target: ${formatCurrency(analyst.targetMean, q.currency)}`);
-    if (analyst.upsidePercent != null) facts.push(`Analyst upside: ${analyst.upsidePercent >= 0 ? "+" : ""}${analyst.upsidePercent.toFixed(0)}%`);
-    const bullish = analyst.strongBuy + analyst.buy;
-    const bearish = analyst.sell + analyst.strongSell;
-    facts.push(`Ratings breakdown: ${bullish} buy, ${analyst.hold} hold, ${bearish} sell`);
-  }
-
-  const highRisks = ctx.risks.filter((r) => r.level === "high");
-  const medRisks = ctx.risks.filter((r) => r.level === "medium");
-  if (highRisks.length > 0) {
-    facts.push(`High-severity risks: ${highRisks.map((r) => `${r.category} — ${r.reason}`).join("; ")}`);
-  }
-  if (medRisks.length > 0) {
-    facts.push(`Medium risks: ${medRisks.map((r) => r.category).join(", ")}`);
-  }
-
-  const topNews = ctx.news.slice(0, 3).map((n) => n.headline);
-  if (topNews.length > 0) facts.push(`Recent news: ${topNews.join(" | ")}`);
-
-  // Portfolio context — personalizes the verdict to this specific user's portfolio.
-  const portfolioFacts: string[] = [];
-  if (hasPortfolioCtx) {
-    portfolioFacts.push(`--- PORTFOLIO CONTEXT (this user's specific situation) ---`);
-    if (objective) portfolioFacts.push(`User's investment objective: ${objective.replace(/_/g, " ")}`);
-    portfolioFacts.push(`Portfolio fit score for ${ctx.symbol}: ${fitScore}/100 (${fitTier})`);
-    portfolioFacts.push(`Already held in portfolio: ${isInPortfolio ? "Yes" : "No"}`);
-    if (fitReasons) portfolioFacts.push(`Why it fits: ${fitReasons}`);
-    if (suggestedPct) portfolioFacts.push(`IOS-suggested allocation: ${suggestedPct}% of portfolio`);
-    if (missingSectors) portfolioFacts.push(`Sectors the user is missing entirely: ${missingSectors}`);
-  }
-
-  const portfolioInstructions = hasPortfolioCtx
-    ? `
-PORTFOLIO PERSONALIZATION (mandatory):
-- The headline MUST be personalized: reference this user's portfolio context (e.g., "fills your missing [sector] gap", "adds to existing position", "low correlation with your tech-heavy portfolio")
-- The thesis MUST include 1 sentence about how this fits or doesn't fit this user's specific portfolio
-- If it fills a missing sector, call that out explicitly
-- Recommend position sizing consistent with the IOS-suggested allocation of ${suggestedPct ?? "N/A"}%
-- If already held: frame as "add to position" vs "initiate new position"`
-    : "";
-
-  const prompt = `You are an institutional buy-side equity analyst. Based ONLY on the data below, generate a structured investment verdict.
-
-DATA:
-${facts.join("\n")}
-${portfolioFacts.length > 0 ? "\n" + portfolioFacts.join("\n") : ""}
-
-Respond with ONLY a raw JSON object — no markdown, no code fences, no explanation outside the JSON:
-{
-  "verdict": "bullish" or "bearish" or "neutral",
-  "headline": "Decisive 10-14 word investment thesis naming the company and the core reason",
-  "thesis": "2-3 sentences: the investment case with specific metrics cited from the data",
-  "catalysts": ["specific catalyst citing a number or fact", "catalyst 2", "catalyst 3"],
-  "risks": ["specific risk citing a number or fact", "risk 2", "risk 3"],
-  "confidence": "high" or "medium" or "low",
-  "timeHorizon": "short-term" or "medium-term" or "long-term",
-  "keyMetrics": [
-    {"label": "metric name", "value": "formatted value", "signal": "positive" or "negative" or "neutral"}
-  ]
-}
-
-REQUIREMENTS:
-- verdict: bullish if score>65 AND no high risks overwhelming thesis; bearish if score<40 OR multiple compounding high risks; neutral otherwise
-- headline: NO generic phrases like "shows potential" — make a real investment call${hasPortfolioCtx ? " — MUST reference portfolio fit" : ""}
-- catalysts + risks: MUST cite specific numbers from the data. Generic bullets will be rejected.
-- keyMetrics: exactly 5, covering valuation + quality + growth + momentum + analyst
-- confidence: high = comprehensive data + clear signal; medium = some gaps or mixed signals; low = limited data${portfolioInstructions}`;
+  const { prompt, evidence } = buildVerdictPrompt(ctx, portfolio);
 
   const fallbackVerdict: InvestmentVerdict["verdict"] = score
     ? score.composite > 65 ? "bullish" : score.composite < 40 ? "bearish" : "neutral"
@@ -192,7 +622,6 @@ REQUIREMENTS:
 
     // Verify the generated prose against the exact facts the model was handed:
     // every figure in the thesis/catalysts/risks must trace to a data point.
-    const evidence = [facts.join("\n"), portfolioFacts.join("\n")].join("\n");
     const claims = collectClaimText([
       parsed.headline,
       parsed.thesis,

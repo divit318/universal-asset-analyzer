@@ -3,12 +3,12 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { CalendarResponse } from "@/app/api/calendar/route";
-import type { PortfolioAnalytics } from "@/app/api/portfolio/analytics/route";
+import type { UniversalPortfolioReport } from "@/lib/portfolio/report";
 import type { WatchlistItem } from "@/lib/types";
 import { formatCurrency } from "@/lib/format";
 
 interface PulseData {
-  portfolio: PortfolioAnalytics | null;
+  portfolio: UniversalPortfolioReport | null;
   watchlist: WatchlistItem[];
   nextEvent: { name: string; date: string; type: string; symbol?: string } | null;
 }
@@ -67,7 +67,7 @@ export function DailyPulse() {
 
   useEffect(() => {
     void Promise.all([
-      fetch("/api/portfolio/analytics")
+      fetch("/api/portfolio/report")
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null),
       fetch("/api/watchlist")
@@ -77,7 +77,7 @@ export function DailyPulse() {
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null),
     ]).then(([analytics, watchlistJson, calJson]) => {
-      const portfolio = analytics as PortfolioAnalytics | null;
+      const portfolio = analytics as UniversalPortfolioReport | null;
       const watchlist = ((watchlistJson as { items?: WatchlistItem[] } | null)?.items ?? []) as WatchlistItem[];
 
       const cal = calJson as CalendarResponse | null;
@@ -105,7 +105,7 @@ export function DailyPulse() {
   }
 
   const { portfolio, watchlist, nextEvent } = data;
-  const hasPortfolio = portfolio && portfolio.positionCount > 0;
+  const hasPortfolio = portfolio && portfolio.holdingCount > 0;
   const totalReturn = hasPortfolio ? portfolio.totalReturn : null;
 
   const alertCount = watchlist.filter(
@@ -124,7 +124,7 @@ export function DailyPulse() {
           href="/portfolio"
           label="Portfolio"
           value={formatCurrency(portfolio!.totalValue)}
-          sub={`${totalReturn! >= 0 ? "+" : ""}${totalReturn!.toFixed(1)}% total return · ${portfolio!.positionCount} positions`}
+          sub={`${totalReturn! >= 0 ? "+" : ""}${totalReturn!.toFixed(1)}% total return · ${portfolio!.holdingCount} holdings`}
           positive={totalReturn! >= 0}
         />
       ) : (

@@ -221,6 +221,15 @@ body {
 .animate-icon-swap { animation: icon-swap var(--duration-base, 200ms) var(--ease-spring) both; }
 .animate-menu-drop { animation: menu-drop var(--duration-fast, 120ms) var(--ease-out) both; }
 
+/* Arrival highlight — the pulse a notification's destination gets when the
+   user lands on it, so it's obvious what the click was about. */
+@keyframes arrival-flash {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 55%, transparent); background-color: color-mix(in srgb, var(--brand) 12%, transparent); }
+  70%  { box-shadow: 0 0 0 10px color-mix(in srgb, var(--brand) 0%, transparent); background-color: color-mix(in srgb, var(--brand) 12%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 0%, transparent); background-color: transparent; }
+}
+.arrival-flash { animation: arrival-flash 1600ms var(--ease-out, ease-out) 2; border-radius: var(--radius-card, 12px); }
+
 /* Focus: suppress on mouse, keep a crisp keyboard ring */
 :focus:not(:focus-visible) {
   outline: none;

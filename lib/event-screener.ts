@@ -9,7 +9,7 @@
 
 import { runPrompt } from "./ai";
 import { getQuote } from "./yahoo";
-import { extractJson } from "./json-extract";
+import { extractJsonObject } from "./json-extract";
 import type { NewsItem, EventSignal, ScanResult, Quote } from "./types";
 
 /* -------------------------------------------------------------------------- */
@@ -86,13 +86,37 @@ interface RawScanResponse {
   summary: string;
 }
 
-async function parseAiResponse(raw: string): Promise<RawScanResponse | null> {
-  try {
-    // Strip markdown code fences if the model returns them despite instructions.
-    return extractJson<RawScanResponse>(raw);
-  } catch {
-    return null;
-  }
+function sanitizeSignal(item: unknown): RawSignal | null {
+  if (item === null || typeof item !== "object") return null;
+  const s = item as Record<string, unknown>;
+  if (typeof s.ticker !== "string" || typeof s.name !== "string") return null;
+  const direction = typeof s.direction === "string" ? s.direction.toLowerCase() : "";
+  const timeframe = typeof s.timeframe === "string" ? s.timeframe.toLowerCase() : "";
+  const confidence = Number(s.confidence);
+  return {
+    ticker: s.ticker,
+    name: s.name,
+    direction: (["bullish", "bearish", "neutral"] as string[]).includes(direction)
+      ? (direction as RawSignal["direction"])
+      : "neutral",
+    confidence: Number.isFinite(confidence) ? confidence : 0,
+    theme: typeof s.theme === "string" ? s.theme : "",
+    rationale: typeof s.rationale === "string" ? s.rationale : "",
+    timeframe: (["short", "medium", "long"] as string[]).includes(timeframe)
+      ? (timeframe as RawSignal["timeframe"])
+      : "medium",
+    isIndian: s.isIndian === true,
+  };
+}
+
+/** Exported for unit testing — pure, no I/O. */
+export function parseAiResponse(raw: string): RawScanResponse {
+  const parsed = extractJsonObject(raw, { themes: [] as string[], signals: [] as unknown[], summary: "" });
+  return {
+    themes: parsed.themes.filter((x): x is string => typeof x === "string"),
+    signals: parsed.signals.map(sanitizeSignal).filter((s): s is RawSignal => s !== null),
+    summary: parsed.summary,
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -146,10 +170,10 @@ export async function runEventScan(
 
   // Run AI analysis.
   const prompt = buildScanPrompt(newsItems, userQuery);
-  let parsed: RawScanResponse | null = null;
+  let parsed: RawScanResponse;
   try {
     const raw = await runPrompt("opportunity-engine", prompt, { maxTokens: 2000, json: true });
-    parsed = await parseAiResponse(raw);
+    parsed = parseAiResponse(raw);
   } catch {
     // Return empty scan with error note rather than throwing.
     return {
@@ -158,16 +182,6 @@ export async function runEventScan(
       signals: [],
       newsItems,
       aiSummary: "AI analysis unavailable. Run `ollama serve` and pull a model.",
-    };
-  }
-
-  if (!parsed) {
-    return {
-      scannedAt: new Date().toISOString(),
-      themes: [],
-      signals: [],
-      newsItems,
-      aiSummary: "Could not parse AI response.",
     };
   }
 

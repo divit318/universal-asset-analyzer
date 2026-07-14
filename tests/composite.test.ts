@@ -28,6 +28,7 @@ const m = (o: Partial<ScorableMetrics> = {}): ScorableMetrics => ({
   operatingMargin: null,
   debtToEquity: null,
   netDebtToEbitda: null,
+  netDebt: null,
   currentRatio: null,
   fcfMargin: null,
   fcfGrowthYoY: null,

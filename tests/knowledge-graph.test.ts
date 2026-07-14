@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findPath, describePath } from "@/lib/knowledge-graph/traverse";
+import { findPath, describePath, parseExplanationResponse } from "@/lib/knowledge-graph/traverse";
 import { computeGraphInsights } from "@/lib/knowledge-graph/recommend";
 import type { GraphNode, GraphEdge } from "@/lib/knowledge-graph/types";
 
@@ -169,5 +169,29 @@ describe("computeGraphInsights", () => {
     const insights = computeGraphInsights(nodes, []);
     expect(insights.concentrationRisks).toHaveLength(0);
     expect(insights.emergingRisks).toHaveLength(0);
+  });
+});
+
+describe("parseExplanationResponse", () => {
+  it("defaults confidence to 50 when a valid parse omits it", () => {
+    const parsed = parseExplanationResponse('{"explanation":"They share a supply chain."}');
+    expect(parsed.explanation).toBe("They share a supply chain.");
+    expect(parsed.confidence).toBe(50);
+  });
+
+  it("coerces a numeric-string confidence instead of propagating NaN", () => {
+    const parsed = parseExplanationResponse('{"explanation":"ok","confidence":"80"}');
+    expect(parsed.confidence).toBe(80);
+  });
+
+  it("falls back to 50 when confidence is a non-numeric string", () => {
+    const parsed = parseExplanationResponse('{"explanation":"ok","confidence":"high"}');
+    expect(parsed.confidence).toBe(50);
+  });
+
+  it("returns blank explanation defaults on total garbage instead of throwing", () => {
+    const parsed = parseExplanationResponse("the model refused to answer");
+    expect(parsed.explanation).toBe("");
+    expect(parsed.confidence).toBe(50);
   });
 });

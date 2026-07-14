@@ -24,15 +24,16 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
 
-import type { PortfolioReport, PortfolioObjective, PortfolioConstraints } from "@/lib/portfolio-analytics";
+import type { PortfolioObjective, PortfolioConstraints } from "@/lib/portfolio-analytics";
 import { DEFAULT_CONSTRAINTS } from "@/lib/portfolio-analytics";
+import type { UniversalPortfolioReport } from "@/lib/portfolio/report";
+import { useDataset } from "@/lib/platform/client/use-dataset";
 
-import { buildInvestmentProfile } from "@/lib/ios/profile";
+import { buildInvestmentProfile, fromUniversalReport } from "@/lib/ios/profile";
 import { computePortfolioFit, rankByFit } from "@/lib/ios/fit-scorer";
 import type {
   InvestmentProfile,
@@ -96,7 +97,7 @@ export interface IOSContextValue {
   /** The raw portfolio report (null when the user has no portfolio). Exposes
    * PositionRecommendation[] for the Portfolio Decision Engine, already
    * computed here — no new engine code needed to surface it elsewhere. */
-  report: PortfolioReport | null;
+  report: UniversalPortfolioReport | null;
 
   /** Synchronous fit computation — usable directly in render. */
   getPortfolioFit: (asset: FitAssetData) => PortfolioFitAnalysis;
@@ -141,16 +142,62 @@ export function useIOSSafe(): IOSContextValue | null {
 /* IOSProvider                                                                 */
 /* -------------------------------------------------------------------------- */
 
-export function IOSProvider({ children }: { children: ReactNode }) {
-  const [report, setReport]         = useState<PortfolioReport | null>(null);
-  const [profileLoading, setLoading] = useState(false);
-  const [profileReady, setReady]    = useState(false);
+/**
+ * The report fetcher, keyed identically to how the Portfolio page's own
+ * useDataset call keys its default load ("portfolioReport", "maximize_sharpe" —
+ * page.tsx's initial `useState<Objective>` default). Sharing that exact key is
+ * what lets the two consumers share ONE in-flight request and ONE cached result
+ * instead of each independently computing the full report.
+ *
+ * This used to be a raw, independent `fetch()` here — invisible to the
+ * platform's client store, so IOSProvider (mounted once for the whole app) and
+ * the Portfolio page each triggered their own full report computation on every
+ * portfolio page load, with no sharing between them. That was the single
+ * biggest cause of a slow portfolio load: not one expensive computation, but
+ * two of them racing each other for the same data.
+ */
+async function fetchDefaultReport(signal: AbortSignal): Promise<UniversalPortfolioReport> {
+  const res = await fetch("/api/portfolio/report?objective=maximize_sharpe", { signal });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error ?? "Failed to load portfolio");
+  return json as UniversalPortfolioReport;
+}
 
+export function IOSProvider({ children }: { children: ReactNode }) {
   const [objective, setObjective]     = useState<PortfolioObjective>("ai_optimized");
   const [constraints, setConstraints] = useState<PortfolioConstraints>(DEFAULT_CONSTRAINTS);
   const [behavioral, setBehavioral]   = useState<BehavioralSignals>(DEFAULT_BEHAVIORAL);
 
-  const loadingRef = useRef(false);
+  // ── Fetch portfolio report, deferred off the critical path ─────────────
+  // The IOS profile is an enhancement layer, not first-paint content. Waiting
+  // for the browser to go idle keeps this heavy multi-symbol fetch from
+  // contending with whatever page the user actually landed on — and if that
+  // page IS the Portfolio page (which fetches the same key immediately),
+  // useDataset's dedup means this deferred call joins that in-flight request
+  // rather than starting a second one.
+  const [deferred, setDeferred] = useState(false);
+  useEffect(() => {
+    const ric = (window as unknown as {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+    }).requestIdleCallback;
+    const run = () => setDeferred(true);
+    const handle = ric ? ric(run, { timeout: 2000 }) : window.setTimeout(run, 200);
+    return () => {
+      const cic = (window as unknown as { cancelIdleCallback?: (h: number) => void })
+        .cancelIdleCallback;
+      if (ric && cic) cic(handle);
+      else clearTimeout(handle);
+    };
+  }, []);
+
+  const { data: report, isInitialLoading } = useDataset<UniversalPortfolioReport>(
+    "portfolioReport",
+    "maximize_sharpe",
+    fetchDefaultReport,
+    { enabled: deferred },
+  );
+  const profileLoading = deferred && isInitialLoading;
+  const profileReady = !isInitialLoading;
 
   // ── Hydrate from localStorage on mount ─────────────────────────────────
   useEffect(() => {
@@ -177,51 +224,12 @@ export function IOSProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // ── Fetch portfolio report once, deferred off the critical path ────────
-  // The IOS profile is an enhancement layer, not first-paint content. Waiting
-  // for the browser to go idle keeps this heavy multi-symbol fetch from
-  // contending with whatever page the user actually landed on.
-  useEffect(() => {
-    if (loadingRef.current) return;
-    loadingRef.current = true;
-    setLoading(true);
-
-    let cancelled = false;
-    const run = () => {
-      fetch("/api/portfolio/report")
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
-          if (data && !cancelled) setReport(data as PortfolioReport);
-        })
-        .catch(() => { /* portfolio is optional */ })
-        .finally(() => {
-          if (cancelled) return;
-          setLoading(false);
-          setReady(true);
-          loadingRef.current = false;
-        });
-    };
-
-    const ric = (window as unknown as {
-      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-    }).requestIdleCallback;
-    const handle = ric ? ric(run, { timeout: 2000 }) : window.setTimeout(run, 200);
-
-    return () => {
-      cancelled = true;
-      const cic = (window as unknown as { cancelIdleCallback?: (h: number) => void })
-        .cancelIdleCallback;
-      if (ric && cic) cic(handle);
-      else clearTimeout(handle);
-    };
-  }, []);
-
   // ── Derived InvestmentProfile ─────────────────────────────────────────
   // Pure, but memoized so the context value below keeps a stable identity —
   // otherwise every provider render rebuilds the profile and re-renders every
   // useIOS() consumer across the app.
   const profile: InvestmentProfile = useMemo(
-    () => buildInvestmentProfile(report, objective, constraints, behavioral),
+    () => buildInvestmentProfile(report ? fromUniversalReport(report) : null, objective, constraints, behavioral),
     [report, objective, constraints, behavioral],
   );
 

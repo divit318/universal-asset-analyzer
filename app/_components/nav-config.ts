@@ -75,7 +75,7 @@ export const NAV: NavObjective[] = [
     tagline: "Analyze any company, end to end",
     icon: Microscope,
     tools: [
-      { href: "/research", label: "Deep Research", desc: "Quote, charts, filings & AI copilot", icon: Search, symbolParam: "symbol", keywords: ["quote", "chart", "filings", "copilot", "stock"] },
+      { href: "/research", label: "Research Hub", desc: "Quote, charts, filings & AI copilot", icon: Search, symbolParam: "symbol", keywords: ["quote", "chart", "filings", "copilot", "stock", "fund", "etf"] },
       { href: "/compare", label: "Compare", desc: "Up to 5 names side by side", icon: GitCompare, symbolParam: "symbols", keywords: ["versus", "vs", "side by side"] },
       { href: "/dcf", label: "DCF Valuation", desc: "Intrinsic value & sensitivity", icon: Calculator, symbolParam: "symbol", keywords: ["valuation", "intrinsic", "cash flow", "wacc"] },
       { href: "/ic-report", label: "IC Report", desc: "9-agent institutional deep dive", icon: FileText, symbolParam: "symbol", keywords: ["committee", "thesis", "bull", "bear", "deep dive"] },

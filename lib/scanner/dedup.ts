@@ -12,9 +12,10 @@
  */
 
 import { runPrompt } from "../ai";
-import { extractJson } from "../json-extract";
+import { extractJsonObject } from "../json-extract";
 import type { NewsItem, MarketEvent, SignalCategory } from "../types";
 
+import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
 function uid(): string {
   return crypto.randomUUID();
 }
@@ -27,8 +28,25 @@ interface ClusterAssignment {
   summary: string;
 }
 
-interface ClusterResponse {
-  clusters: ClusterAssignment[];
+const SIGNAL_CATEGORIES: SignalCategory[] = [
+  "macro", "company", "market", "commodity", "geopolitics", "policy", "sentiment",
+];
+
+function sanitizeAssignment(item: unknown): ClusterAssignment | null {
+  if (item === null || typeof item !== "object") return null;
+  const a = item as Record<string, unknown>;
+  if (typeof a.clusterId !== "string" || typeof a.masterHeadline !== "string") return null;
+  const index = Number(a.index);
+  const category = typeof a.category === "string" ? a.category.toLowerCase() : "";
+  return {
+    index: Number.isFinite(index) ? index : -1,
+    clusterId: a.clusterId,
+    category: (SIGNAL_CATEGORIES as string[]).includes(category)
+      ? (category as SignalCategory)
+      : "company",
+    masterHeadline: a.masterHeadline,
+    summary: typeof a.summary === "string" ? a.summary : "",
+  };
 }
 
 function buildDedupePrompt(items: NewsItem[]): string {
@@ -49,7 +67,7 @@ Rules:
 - masterHeadline: the clearest, most informative version of the story in one sentence
 - summary: 1-2 sentence synthesis of what happened and why it matters to investors
 
-Return ONLY valid JSON:
+${JSON_SCHEMA_LEAD_IN}
 {
   "clusters": [
     {
@@ -99,15 +117,16 @@ export async function deduplicateIntoEvents(
   // configured timeoutMs (lib/ai/task-registry.ts) — a local model
   // realistically needs minutes, not the 25s this used to race against,
   // which meant this stage fell back on nearly every run.
-  let parsed: ClusterResponse | null = null;
+  let clusters: ClusterAssignment[];
   try {
     const raw = await runPrompt("opportunity-engine", buildDedupePrompt(capped), { maxTokens: 1500, json: true });
-    parsed = extractJson<ClusterResponse>(raw);
+    const parsed = extractJsonObject(raw, { clusters: [] as unknown[] });
+    clusters = parsed.clusters.map(sanitizeAssignment).filter((c): c is ClusterAssignment => c !== null);
   } catch {
     return fallbackDedup(capped);
   }
 
-  if (!parsed?.clusters?.length) return fallbackDedup(capped);
+  if (clusters.length === 0) return fallbackDedup(capped);
 
   // Group assignments by clusterId
   const clusterMap = new Map<
@@ -120,7 +139,7 @@ export async function deduplicateIntoEvents(
     }
   >();
 
-  for (const assignment of parsed.clusters) {
+  for (const assignment of clusters) {
     const existing = clusterMap.get(assignment.clusterId);
     if (existing) {
       existing.indices.push(assignment.index);

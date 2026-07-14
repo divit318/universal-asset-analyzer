@@ -1,114 +1,118 @@
-# AI Orchestration Layer
+# AI Platform
 
 Single entry point for every AI request in UAA. Feature code never talks to
-Ollama, and never names a model — it names a *task*, and the Router picks the
-best available model for it, retrying automatically if that model fails.
+Ollama and never names a model — it names a *task*, and the Router picks the best
+model that can actually run it here, falling back automatically if that model
+fails.
 
 Local-only by policy (see `/AGENTS.md`): there is no code path to a hosted
-provider today. The layering below exists so adding one later — a different
-local runtime, or a future opt-in hosted API — is a new `AIProvider`
-implementation, not an architecture change.
+provider. The layering exists so adding one later — a different local runtime, or
+an opt-in hosted API — is a new `AIProvider`, not an architecture change.
 
 ## Request flow
 
 ```
 Feature code
-  │  runPrompt(taskType, prompt, opts)         (lib/ai.ts — thin façade)
+  │  runPrompt(taskType, prompt)          lib/ai.ts — thin façade
+  │  runTask / runTaskText / runTaskStream / runTaskChat
   ▼
-Orchestrator                                    lib/ai/orchestrator.ts
-  │  builds ProviderChatTurn[] from prompt/system
+Orchestrator                              lib/ai/orchestrator.ts
   ▼
-Router                                          lib/ai/router.ts
-  │  TaskType → TaskConfig (lib/ai/task-registry.ts)
-  │  TaskConfig.preferredModels → candidate model ids
-  │    (lib/ai/models.ts: prefix-match against installed, capability-filter)
-  │  try each candidate in order, skip recently-unhealthy ones first
-  │  (lib/ai/health.ts tracks per-model failures)
+Router                                    lib/ai/router.ts
+  │  1. ELIGIBILITY  installed ∧ enabled ∧ fits-in-memory ∧ has required caps
+  │  2. SCORE        quality vs speed, weighted by the task's own requirements
+  │  3. TIEBREAK     registry priority, then id  (fully deterministic)
+  │  ← config pins   lib/ai/config.ts  (env / static overrides beat the scorer)
+  │  ← task needs    lib/ai/task-registry.ts
+  │  ← model facts   lib/ai/models.ts
   ▼
-AIProvider                                      lib/ai/provider.ts
-  │  OllamaProvider (lib/ai/providers/ollama-provider.ts)
-  │    wraps lib/ai/ollama.ts's HTTP/retry/typed-errors/<think>-splitting
+AIProvider                                lib/ai/provider.ts
+  │  OllamaProvider                       lib/ai/providers/ollama-provider.ts
   ▼
-Ollama (localhost:11434)
+Ollama (localhost:11434)                  lib/ai/ollama.ts — the only HTTP layer
 ```
 
-The response is normalized (`lib/ai/response.ts`) before it comes back up:
-`{ content, confidence, reasoningSummary, executionTimeMs, model, provider,
-tokenUsage, errors, metadata }`. No feature code branches on which provider
-or model actually answered.
+Responses are normalized (`response.ts`) into `{ content, confidence,
+reasoningSummary, executionTimeMs, model, provider, tokenUsage, errors,
+metadata }`. No feature code branches on which model answered.
 
-## The five things you can extend, and where
+## Two rules that are not style preferences
 
-| To do this... | Edit this file | Not this |
+**1. Memory is a hard gate, not a ranking penalty.**
+A model whose weights exceed the memory budget does not return a worse answer —
+it thrashes. Measured on a 17GB M4: `qwen3:30b-a3b` (18.6GB) ran at **0.9 tok/s,
+302s for a single completion**, while 4.4GB mistral answered the same prompt at
+10.5 tok/s. An MoE with 3.3B active params "should" have been the fast one;
+fitting in RAM matters more than parameter count does. The budget is derived from
+`os.totalmem()`, so the same registry is correct on a laptop and on a workstation.
+
+**2. JSON mode and thinking are mutually exclusive.**
+Qwen3 under `format: "json"` with thinking on returns the literal string `{}` —
+two tokens, 0/3 valid across trials, versus 3/3 with thinking off. `{}` *parses*,
+so this failed completely silently: ~14 tasks were receiving an empty object and
+quietly rendering their fallback state. `router.ts:resolveThinking()` forces
+`think: false` whenever `json` is set, and a test asserts that no task config can
+combine the two.
+
+Thinking is off everywhere by default: it measured **143s vs 28s (5x)** on
+qwen3:14b for a comparable answer. It is a per-task knob (`thinking: true`), not
+a default.
+
+## Where to change what
+
+| To do this... | Edit this | Not this |
 |---|---|---|
-| Change which model a task prefers | `task-registry.ts` (`TASK_REGISTRY[taskType].preferredModels`) | any feature module |
-| Add a new task | `task-registry.ts` (add a `TaskType` + `TaskConfig`), then call `runPrompt("new-task", ...)` | — |
-| Add/tune a model | `models.ts` (`MODEL_REGISTRY`) | any feature module |
-| Add a provider (future) | new class implementing `AIProvider` in `providers/`, registered in `router.ts`'s `DEFAULT_PROVIDERS` | `orchestrator.ts`, feature code |
-| Change retry/fallback behavior | `router.ts` | — |
+| Change which model a task uses | `config.ts` (`TASK_MODEL_PINS`, or `AI_TASK_<NAME>` env) | any feature module |
+| Add a task | `task-registry.ts` — declare complexity/latency/context/output | — |
+| Add or re-tune a model | `models.ts` (`MODEL_REGISTRY`) | any feature module |
+| Bench a model | `AI_DISABLED_MODELS`, or `enabled: false` | deleting its entry |
+| Change the memory ceiling | `AI_MAX_MODEL_GB` | `router.ts` |
+| Add a provider | new `AIProvider` in `providers/`, registered in `router.ts` | orchestrator, feature code |
 
-"Nothing should be duplicated" is the design constraint: a model's
-temperature/token-cap/timeout live once, in its `ModelSpec`; a task's model
-preference lives once, in its `TaskConfig`. Feature code supplies only the
-prompt and (optionally) an explicit model override.
+A task declares what it *needs*; it never names a model. That indirection is the
+whole point: the previous registry hand-maintained a `preferredModels` list per
+task — 30 copies of one policy — and drifted so far that the top preference of
+every reasoning-heavy task (`deepseek-r1`) was **not even installed**.
 
-## Two call shapes
+## Call shapes
 
 ```ts
-// Most feature code: just want the answer text.
-import { runPrompt } from "@/lib/ai";
-const raw = await runPrompt("watchlist-intelligence", prompt, { json: true, maxTokens: 1000 });
-
-// Want to know which model actually answered (for a "generated by X" label).
-import { runPromptWithMeta } from "@/lib/ai";
+import { runPrompt, runPromptWithMeta } from "@/lib/ai";
+const raw             = await runPrompt("watchlist-intelligence", prompt, { json: true });
 const { text, model } = await runPromptWithMeta("company-research", prompt);
 
-// Want the full normalized response (confidence, timing, errors, ...).
-import { runTask } from "@/lib/ai/orchestrator";
-const response = await runTask("scenario-analysis", prompt);
+import { runTask, runTaskStream, runTaskChat } from "@/lib/ai/orchestrator";
+const res = await runTask("scenario-analysis", prompt);   // full normalized response
+for await (const d of runTaskStream("market-summary", prompt)) { /* ... */ }
+
+// Multi-turn + streamed reasoning (the Research Copilot, the CIO audit memo).
+for await (const delta of runTaskChat("company-research", messages, {
+  onReasoning: (t) => sendReasoningDelta(t),
+})) { /* ... */ }
 ```
 
-An explicit `opts.model` (e.g. a user-picked model in a UI) is honored
-strictly — the Router does not silently substitute another model if it
-fails. Omit it and the Router auto-selects and falls back through the task's
-preferred list.
-
-## Fallback semantics
-
-`route()` tries each candidate model in order and only throws
-`AllModelsFailedError` when *every* candidate failed — a single bad or
-unpulled model is invisible to the caller, matching how every existing
-feature already degrades gracefully (`try { ... } catch { return fallback }`).
-A model that fails twice in a row is deprioritized (not excluded) for 60s by
-`health.ts`, so a transient timeout doesn't get retried first on every
-subsequent request in that window.
-
-If nothing in a task's preferred list is installed, the Router still offers
-any other installed, enabled model as a last resort — "an imperfect answer
-beats a hard failure because the ideal model hasn't been pulled" is the same
-philosophy the pre-existing `pickDefaultModel()` (model picker) already used.
+An explicit `opts.model` (a user-picked model in the UI) is honored strictly —
+the Router will not silently substitute another one if it fails.
 
 ## The Research Copilot is a special case, not an exception
 
-`lib/ai/context.ts`, `retrieval.ts`, `prompt.ts`, `memory.ts`, `actions.ts`,
-`grounding.ts` predate this orchestration layer and implement a richer
-pipeline specific to multi-turn, evidence-grounded chat: context assembly,
-intent classification, token-budgeted evidence retrieval, dossier prompting,
-session persistence, and post-hoc numeric-claim grounding verification. None
-of that is task-routing logic, so it stays as its own layer. It asks the
-Router for a model (`pickModel("company-research", { installed })`) instead
-of hardcoding `pickDefaultModel()`, and keeps everything else.
+`context.ts`, `retrieval.ts`, `prompt.ts`, `memory.ts`, `actions.ts` and
+`grounding.ts` implement a richer pipeline specific to multi-turn,
+evidence-grounded chat: context assembly, intent classification, token-budgeted
+retrieval, dossier prompting, session persistence, and post-hoc grounding
+verification. None of that is task routing, so it stays its own layer — but it
+gets its model from the Router and streams through `runTaskChat`, like everything
+else. It no longer calls Ollama directly.
 
-## What this layer deliberately does not do (yet)
+## What this layer deliberately does not do
 
-- **No real second provider.** The interface supports one; implementing an
-  actual hosted provider is a policy decision outside this layer's scope
-  (`AGENTS.md` currently mandates 100% local).
-- **No mass prompt-template migration.** `prompt-builder.ts` gives new/
-  refactored feature prompts a reusable system/developer/user template
-  primitive, but the ~20 existing feature modules' hand-tuned inline prompt
-  strings were left as-is — rewriting prompt wording is a quality-sensitive
-  change that needs real-model evaluation, not a mechanical refactor.
-- **No persisted health/circuit-breaker state.** `health.ts` is in-memory,
-  per-process. Fine for a local single-user app; would need to change for a
-  multi-process deployment.
+- **No real second provider.** The interface supports one; shipping a hosted
+  provider is a policy decision (`AGENTS.md` mandates 100% local).
+- **No mass prompt migration.** `prompts/` centralizes the shared JSON
+  directives. The ~20 hand-tuned feature prompts stay next to their features:
+  they are schema-specific, not duplicated templates, and rewording them is a
+  quality-sensitive change that needs per-model evaluation.
+- **No two-phase reason-then-format.** Deep JSON tasks therefore cannot use
+  thinking at all. Doing it properly means reasoning in prose then formatting in
+  a second pass — roughly double the latency, and it needs its own evaluation.
+- **No persisted health state.** `health.ts` is in-memory, per-process.

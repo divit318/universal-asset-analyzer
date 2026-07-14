@@ -1,4 +1,5 @@
 import type { Filing } from "./types";
+import { getDataset } from "./platform/data-layer";
 
 const SEC_UA =
   process.env.SEC_USER_AGENT ?? "universal-asset-analyzer divit318@gmail.com";
@@ -31,19 +32,37 @@ export function parseTickerMap(
   return map;
 }
 
-let tickerCache: Map<string, CikEntry> | null = null;
+/**
+ * The parsed lookup, memoized against the cache entry's version.
+ *
+ * The platform persists values as JSON, so the *cached* form of the index is
+ * the raw SEC record; a Map would serialize to `{}`. Rebuilding the Map on
+ * every lookup would mean re-parsing ~10k entries per symbol, so we keep the
+ * derived Map here and rebuild it only when the underlying entry actually
+ * changes — which is what `meta.version` exists to tell us.
+ */
+let derived: { version: number; map: Map<string, CikEntry> } | null = null;
 
 async function loadTickerMap(): Promise<Map<string, CikEntry>> {
-  if (tickerCache) return tickerCache;
-  const res = await fetch(TICKERS_URL, {
-    headers: { "User-Agent": SEC_UA },
-  });
-  if (!res.ok) {
-    throw new Error(`SEC ticker list unavailable (${res.status})`);
+  const { data, meta } = await getDataset<Record<string, RawTicker>>(
+    "cikMap",
+    {},
+    async (signal) => {
+      const res = await fetch(TICKERS_URL, {
+        headers: { "User-Agent": SEC_UA },
+        signal,
+      });
+      if (!res.ok) {
+        throw new Error(`SEC ticker list unavailable (${res.status})`);
+      }
+      return (await res.json()) as Record<string, RawTicker>;
+    },
+  );
+
+  if (derived?.version !== meta.version) {
+    derived = { version: meta.version, map: parseTickerMap(data) };
   }
-  const raw = (await res.json()) as Record<string, RawTicker>;
-  tickerCache = parseTickerMap(raw);
-  return tickerCache;
+  return derived.map;
 }
 
 export async function lookupCik(symbol: string): Promise<CikEntry | null> {
@@ -96,7 +115,18 @@ export function parseFilings(
   return filings;
 }
 
-/** Fetch recent filings for a ticker. Returns [] when the company isn't found. */
+/**
+ * Fetch recent filings for a ticker. Returns [] when the company isn't found.
+ *
+ * Routed through the Platform Data Layer: SEC rate-limits aggressively, and the
+ * research route, the AI context builder, and the IC report pipeline all ask for
+ * the same company's filings within the same second. Deduplication turns that
+ * into one request; the `filings` policy (6h TTL, persisted) keeps it that way
+ * across reloads.
+ *
+ * The abort signal is forwarded to `fetch` so a cancelled research request
+ * actually tears the SEC call down rather than leaving it to complete unobserved.
+ */
 export async function getRecentFilings(
   symbol: string,
   max = 10,
@@ -104,13 +134,161 @@ export async function getRecentFilings(
   const entry = await lookupCik(symbol);
   if (!entry) return [];
 
-  const res = await fetch(
-    `https://data.sec.gov/submissions/CIK${entry.cik}.json`,
-    { headers: { "User-Agent": SEC_UA } },
+  const result = await getDataset<Filing[]>(
+    "filings",
+    { symbol: symbol.toUpperCase(), max },
+    async (signal) => {
+      const res = await fetch(
+        `https://data.sec.gov/submissions/CIK${entry.cik}.json`,
+        { headers: { "User-Agent": SEC_UA }, signal },
+      );
+      if (!res.ok) {
+        throw new Error(`SEC submissions unavailable for ${symbol} (${res.status})`);
+      }
+      const raw = (await res.json()) as RawSubmissions;
+      return parseFilings(raw, entry.cik, max);
+    },
   );
-  if (!res.ok) {
-    throw new Error(`SEC submissions unavailable for ${symbol} (${res.status})`);
+  return result.data;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Form D full-text search — private-company "search by name" for Private     */
+/* Markets manual assets. A different SEC EDGAR endpoint than the ticker-     */
+/* keyed lookups above (private companies have no ticker), but the same       */
+/* free, no-key, User-Agent-only access model, so it lives in this file       */
+/* rather than a separate client.                                             */
+/* -------------------------------------------------------------------------- */
+
+const EDGAR_FULL_TEXT_SEARCH_URL = "https://efts.sec.gov/LATEST/search-index";
+
+export interface FormDFiling {
+  cik: string;
+  entityName: string;
+  form: string; // "D" | "D/A"
+  filedDate: string;
+  accessionNumber: string;
+}
+
+interface RawFullTextSearchHit {
+  _source?: {
+    ciks?: string[];
+    display_names?: string[];
+    form?: string;
+    file_date?: string;
+    adsh?: string;
+  };
+}
+
+interface RawFullTextSearchResponse {
+  hits?: { hits?: RawFullTextSearchHit[] };
+}
+
+/** Strips the "(CIK 0001234567)" suffix EDGAR's search index appends to display names. */
+function cleanEntityName(displayName: string): string {
+  return displayName.replace(/\s*\(CIK\s+\d+\)\s*$/, "").trim();
+}
+
+/** Parse EDGAR's full-text search response into Form D filing rows. Pure so it is unit-testable against a fixture. */
+export function parseFormDSearchHits(raw: RawFullTextSearchResponse, max = 8): FormDFiling[] {
+  const hits = raw.hits?.hits ?? [];
+  const filings: FormDFiling[] = [];
+  for (const hit of hits) {
+    const cik = hit._source?.ciks?.[0];
+    const name = hit._source?.display_names?.[0];
+    const accessionNumber = hit._source?.adsh;
+    if (!cik || !name || !accessionNumber) continue;
+    filings.push({
+      cik,
+      entityName: cleanEntityName(name),
+      form: hit._source?.form ?? "D",
+      filedDate: hit._source?.file_date ?? "",
+      accessionNumber,
+    });
+    if (filings.length >= max) break;
   }
-  const raw = (await res.json()) as RawSubmissions;
-  return parseFilings(raw, entry.cik, max);
+  return filings;
+}
+
+/**
+ * Search SEC Form D (private-offering) filings by company/issuer name. Free,
+ * no API key — same fair-access policy as the rest of EDGAR (User-Agent
+ * header, ≤10 req/s). Returns [] on no match or any failure; never throws,
+ * since this is a search-first convenience, not a required data source —
+ * the manual asset form always falls back to letting the user type the
+ * company name in directly.
+ */
+export async function searchFormD(companyName: string, max = 8): Promise<FormDFiling[]> {
+  const trimmed = companyName.trim();
+  if (!trimmed) return [];
+  const url = new URL(EDGAR_FULL_TEXT_SEARCH_URL);
+  url.searchParams.set("q", `"${trimmed}"`);
+  url.searchParams.set("forms", "D");
+  try {
+    const res = await fetch(url.toString(), { headers: { "User-Agent": SEC_UA } });
+    if (!res.ok) return [];
+    const raw = (await res.json()) as RawFullTextSearchResponse;
+    return parseFormDSearchHits(raw, max);
+  } catch {
+    return [];
+  }
+}
+
+export interface FormDDetails {
+  entityName: string | null;
+  /** ISO date the issuer first sold securities in this offering. */
+  dateOfFirstSale: string | null;
+  /** Total amount the offering was for — NOT the company's valuation. Form D
+   *  discloses capital raised, never a share price or pre/post-money figure,
+   *  so this is shown as reference context only, never used to auto-fill a
+   *  "last round valuation" field. */
+  totalOfferingAmount: number | null;
+  totalAmountSold: number | null;
+}
+
+function xmlField(xml: string, tag: string): string | null {
+  return xml.match(new RegExp(`<${tag}>\\s*([^<]+?)\\s*</${tag}>`))?.[1] ?? null;
+}
+
+/** Nested `<tag><value>...</value></tag>` fields, used by a few Form D fields (e.g. dateOfFirstSale). */
+function xmlNestedValue(xml: string, tag: string): string | null {
+  return xml.match(new RegExp(`<${tag}>\\s*<value>\\s*([^<]+?)\\s*</value>`))?.[1] ?? null;
+}
+
+function xmlNumberField(xml: string, tag: string): number | null {
+  const raw = xmlField(xml, tag);
+  if (raw == null) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Extracts the handful of Form D fields this app cares about. Intentionally
+ * a small targeted regex extractor rather than a general XML parser —
+ * primary_doc.xml has a large, mostly-irrelevant schema (related persons,
+ * exemptions claimed, sales compensation...) and pulling in a full XML
+ * dependency for five flat fields isn't worth it at this scope.
+ */
+export function parseFormDXml(xml: string): FormDDetails {
+  return {
+    entityName: xmlField(xml, "entityName"),
+    dateOfFirstSale: xmlNestedValue(xml, "dateOfFirstSale"),
+    totalOfferingAmount: xmlNumberField(xml, "totalOfferingAmount"),
+    totalAmountSold: xmlNumberField(xml, "totalAmountSold"),
+  };
+}
+
+/** Fetch and parse one Form D filing's offering details. Returns null on any failure — same non-fatal convention as the rest of this module. */
+export async function getFormDDetails(cik: string, accessionNumber: string): Promise<FormDDetails | null> {
+  const cikNumber = String(Number(cik));
+  const accessionPath = accessionNumber.replace(/-/g, "");
+  const url = `https://www.sec.gov/Archives/edgar/data/${cikNumber}/${accessionPath}/primary_doc.xml`;
+  try {
+    const res = await fetch(url, { headers: { "User-Agent": SEC_UA } });
+    if (!res.ok) return null;
+    const xml = await res.text();
+    return parseFormDXml(xml);
+  } catch {
+    return null;
+  }
 }

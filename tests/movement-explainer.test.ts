@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { windowReturn, volumeAnomaly } from "@/lib/movement-explainer";
+import { windowReturn, volumeAnomaly, parseMovementResponse } from "@/lib/movement-explainer";
 import type { HistoryPoint } from "@/lib/types";
 
 function history(closes: number[], volumes?: number[]): HistoryPoint[] {
@@ -51,5 +51,35 @@ describe("volumeAnomaly", () => {
     const closes = Array.from({ length: 26 }, (_, i) => 100 + i);
     const h = history(closes); // no volumes
     expect(volumeAnomaly(h)).toBeNull();
+  });
+});
+
+describe("parseMovementResponse", () => {
+  it("defaults confidence/persistence when a valid parse omits them", () => {
+    const raw = '{"summary":"Rate cut drove the rally.","drivers":[]}';
+    const movement = parseMovementResponse(raw);
+    expect(movement.summary).toBe("Rate cut drove the rally.");
+    expect(movement.confidence).toBe(0);
+    expect(movement.persistence).toBe("transient");
+  });
+
+  it("joins a driver's evidence array instead of crashing on .map/.length downstream", () => {
+    const raw = '{"summary":"ok","drivers":[{"category":"macro","description":"d","evidence":["a","b"],"direction":"bullish"}]}';
+    const movement = parseMovementResponse(raw);
+    expect(movement.drivers).toHaveLength(1);
+    expect(movement.drivers[0].evidence).toBe("a; b");
+  });
+
+  it("normalizes an invented direction/persistence variant to a safe enum value", () => {
+    const raw = '{"summary":"ok","drivers":[{"direction":"Very Bullish"}],"persistence":"long-term"}';
+    const movement = parseMovementResponse(raw);
+    expect(movement.drivers[0].direction).toBe("neutral");
+    expect(movement.persistence).toBe("transient");
+  });
+
+  it("returns the unavailable-message default on total garbage instead of throwing", () => {
+    const movement = parseMovementResponse("the model refused to answer");
+    expect(movement.summary).toBe("Unable to generate an explanation — insufficient evidence or AI unavailable.");
+    expect(movement.drivers).toEqual([]);
   });
 });

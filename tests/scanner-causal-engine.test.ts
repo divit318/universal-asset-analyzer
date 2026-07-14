@@ -94,4 +94,36 @@ describe("buildCausalChains", () => {
     expect(result).toEqual(events);
     expect(runPromptMock).not.toHaveBeenCalled();
   });
+
+  it("defaults omitted fields on a valid-but-incomplete effect instead of crashing", async () => {
+    const events = [event("m1")];
+    runPromptMock.mockResolvedValue(JSON.stringify({
+      effects: [{ order: 1, description: "rates fall" }], // missing direction/affectedSectors/affectedTickers
+    }));
+
+    const result = await buildCausalChains(events);
+
+    expect(result[0].causalChain).toHaveLength(1);
+    expect(result[0].causalChain[0].direction).toBe("neutral");
+    expect(result[0].causalChain[0].affectedSectors).toEqual([]);
+    expect(result[0].causalChain[0].affectedTickers).toEqual([]);
+  });
+
+  it("normalizes an invented direction variant instead of propagating it as-is", async () => {
+    const events = [event("m1")];
+    runPromptMock.mockResolvedValue(JSON.stringify({
+      effects: [{ order: 1, description: "d", direction: "Very Bullish" }],
+    }));
+
+    const result = await buildCausalChains(events);
+    expect(result[0].causalChain[0].direction).toBe("neutral");
+  });
+
+  it("falls back to an empty causal chain when the AI returns unparseable garbage", async () => {
+    const events = [event("m1")];
+    runPromptMock.mockResolvedValue("not json at all");
+
+    const result = await buildCausalChains(events);
+    expect(result[0].causalChain).toEqual([]);
+  });
 });

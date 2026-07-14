@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
 import { getPortfolioForIOS } from "@/lib/ios/server";
-import { buildInvestmentProfile } from "@/lib/ios/profile";
+import { buildInvestmentProfile, fromLegacyReport } from "@/lib/ios/profile";
 import { computePortfolioFit } from "@/lib/ios/fit-scorer";
 import { DEFAULT_CONSTRAINTS } from "@/lib/portfolio-analytics";
 import type { FitAssetData } from "@/lib/ios/types";
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
 
   const { report, objective, constraints } = await getPortfolioForIOS();
   const profile = buildInvestmentProfile(
-    report,
+    report ? fromLegacyReport(report) : null,
     objective,
     constraints ?? DEFAULT_CONSTRAINTS,
   );

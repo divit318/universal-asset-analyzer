@@ -184,40 +184,6 @@ export interface Notification {
   createdAt: string;
 }
 
-export type ScreenerSortField =
-  | "marketCap"
-  | "changePercent"
-  | "price"
-  | "volume"
-  | "peRatio";
-
-export interface ScreenerCriteria {
-  sector?: string | null;
-  /** Restrict to Yahoo exchange codes (e.g. NMS, NYQ, ASE) — primary US listings. */
-  exchanges?: string[] | null;
-  minPrice?: number | null;
-  maxPrice?: number | null;
-  minChangePercent?: number | null;
-  maxChangePercent?: number | null;
-  minMarketCap?: number | null; // in dollars
-  maxMarketCap?: number | null; // in dollars
-  minPE?: number | null;
-  maxPE?: number | null;
-  minVolume?: number | null;
-  sortField?: ScreenerSortField | null;
-  sortDir?: "asc" | "desc" | null;
-}
-
-export interface ScreenerRow {
-  symbol: string;
-  name: string;
-  sector: string;
-  price: number;
-  changePercent: number;
-  marketCap: number | null;
-  peRatio: number | null;
-  volume: number | null;
-}
 
 export interface Sp500Constituent {
   symbol: string;
@@ -274,11 +240,31 @@ export interface StockMetrics {
   // Financial strength
   debtToEquity: number | null; // ratio
   netDebtToEbitda: number | null; // ratio
+  /**
+   * Raw net debt in dollars (totalDebt - totalCash). Kept alongside the ratio
+   * because netDebtToEbitda is null whenever EBITDA is (e.g. mortgage REITs,
+   * whose spread-income model has no EBITDA line at all) — the dollar figure
+   * has no such dependency and is the honest "Net Debt" column REIT/equity
+   * leverage screens actually want when the ratio can't be formed.
+   */
+  netDebt: number | null; // $
   currentRatio: number | null;
 
   // Cash flow
   fcfMargin: number | null; // %
   fcfGrowthYoY: number | null; // %
+  /**
+   * Trailing operating cash flow. Carried for REIT screening, where it stands
+   * in for FFO — a REIT's earnings are swamped by depreciation, so P/E is
+   * meaningless and P/FFO is the real yardstick. See lib/assets/reit.ts.
+   *
+   * Optional because rows cached before this field existed deserialize without
+   * it, and because the composite scorer (lib/composite.ts) neither reads nor
+   * needs it — requiring it would force every caller that builds a metrics
+   * object to supply cash-flow data the scorer ignores.
+   */
+  operatingCashflow?: number | null; // $
+  ocfGrowthYoY?: number | null; // % (the FFO-growth proxy)
 
   // Shareholder returns
   dividendYield: number | null; // %
@@ -310,6 +296,106 @@ export type StockFundamentals = Omit<
   | "scores"
 > & { ebitda: number | null; freeCashflow: number | null; exchange: string | null; beta: number | null };
 
+/* -------------------------------------------------------------------------- */
+/* Fund fundamentals (ETF / mutual fund / closed-end fund)                     */
+/* -------------------------------------------------------------------------- */
+
+export interface FundHolding {
+  symbol: string;
+  name: string;
+  weightPercent: number; // 0-100
+}
+
+export interface FundSectorWeight {
+  sector: string;
+  weightPercent: number; // 0-100
+}
+
+/** Fund-shaped fundamentals — deliberately not a StockFundamentals variant: a
+ * fund has no P/E-driven valuation, no financial statements, no EPS. This is
+ * the fund research engine's own parallel type, mirroring how India's
+ * ScreenerInCompany is its own type rather than a StockFundamentals subset. */
+export interface FundProfileData {
+  family: string | null;
+  category: string | null;
+  legalType: string | null;
+  expenseRatio: number | null; // fraction, e.g. 0.0009 = 0.09%
+  turnoverPercent: number | null; // fraction
+  totalNetAssets: number | null; // raw dollars (Yahoo reports in millions; converted at the mapping layer)
+  holdings: FundHolding[];
+  sectorWeights: FundSectorWeight[];
+  assetAllocation: { stock: number | null; bond: number | null; cash: number | null; other: number | null }; // percentage-points, e.g. 60 = 60%
+  trailingReturns: { ytd: number | null; oneYear: number | null; threeYear: number | null; fiveYear: number | null }; // percentage-points, e.g. 22.2 = 22.2%
+  // Fund return minus its Yahoo category's return, in percentage-points — a
+  // relative-performance signal that doesn't require picking a benchmark ticker.
+  categoryRelativeReturns: { oneYear: number | null; threeYear: number | null };
+  risk: { beta: number | null; alpha: number | null; stdDev: number | null; sharpeRatio: number | null } | null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Crypto (market-data only — no on-chain/tokenomics provider yet)            */
+/* -------------------------------------------------------------------------- */
+
+/** Deliberately thin: crypto research today is market-data only (price/
+ * volatility/drawdown vs BTC). Extend with tokenomics/on-chain fields here
+ * once a data provider for those is chosen — see lib/research-engines/crypto/. */
+export interface CryptoProfileData {
+  symbol: string;
+  btcHistory: HistoryPoint[];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Commodities (market-data only — supply/demand is AI+news, not a scorer)   */
+/* -------------------------------------------------------------------------- */
+
+/** Same shape/rationale as CryptoProfileData — DBC (commodity index ETF) is
+ * commodities' de facto benchmark, the same role BTC plays for crypto. */
+export interface CommodityProfileData {
+  benchmarkHistory: HistoryPoint[];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Forex (market-data only — central bank/macro is AI+news, not a scorer)    */
+/* -------------------------------------------------------------------------- */
+
+/** Same shape/rationale as CommodityProfileData — the US Dollar Index (DXY)
+ * is forex's de facto benchmark for USD pairs, same role BTC/DBC play for
+ * crypto/commodities. */
+export interface ForexProfileData {
+  symbol: string;
+  benchmarkHistory: HistoryPoint[];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Derivatives (options chain) — additive module on equity/fund underlyings, */
+/* not a distinct detected asset class. See lib/derivatives-analysis.ts.     */
+/* -------------------------------------------------------------------------- */
+
+export interface OptionContract {
+  contractSymbol: string;
+  strike: number;
+  lastPrice: number;
+  bid: number | null;
+  ask: number | null;
+  volume: number | null;
+  openInterest: number | null;
+  impliedVolatility: number | null; // decimal, e.g. 0.28 = 28%
+  inTheMoney: boolean;
+}
+
+export interface OptionsExpirationChain {
+  expirationDate: string; // ISO date
+  calls: OptionContract[];
+  puts: OptionContract[];
+}
+
+export interface OptionsChainData {
+  underlyingSymbol: string;
+  underlyingPrice: number;
+  expirationDates: string[]; // all available, ISO, ascending
+  chains: OptionsExpirationChain[]; // the near-term + (if available) a farther-dated expiration
+}
+
 /** A live price snapshot merged onto the cached fundamentals at screen time. */
 export interface PriceSnapshot {
   symbol: string;
@@ -320,48 +406,6 @@ export interface PriceSnapshot {
 }
 
 /** Inclusive numeric range filter; either bound may be null/absent. */
-export interface Range {
-  min?: number | null;
-  max?: number | null;
-}
-
-/** Every filterable dimension. All ranges are optional. */
-export interface FundamentalScreenerCriteria {
-  sector?: string | null;
-  industry?: string | null;
-  marketCap?: Range; // in dollars
-  forwardPE?: Range;
-  evToEbitda?: Range;
-  fcfYield?: Range;
-  revenueGrowthYoY?: Range;
-  revenueCagr3y?: Range;
-  epsGrowthYoY?: Range;
-  epsCagr3y?: Range;
-  roic?: Range;
-  roe?: Range;
-  grossMargin?: Range;
-  operatingMargin?: Range;
-  debtToEquity?: Range;
-  netDebtToEbitda?: Range;
-  currentRatio?: Range;
-  fcfMargin?: Range;
-  fcfGrowthYoY?: Range;
-  dividendYield?: Range;
-  buybackYield?: Range;
-  oneYearReturn?: Range;
-  distanceFrom52WkHigh?: Range;
-  institutionalOwnership?: Range;
-  earningsSurprisePct?: Range;
-  // Composite-score floors
-  valueScore?: Range;
-  growthScore?: Range;
-  qualityScore?: Range;
-  financialHealthScore?: Range;
-  overallScore?: Range;
-  sortField?: string | null;
-  sortDir?: "asc" | "desc" | null;
-}
-
 export type DatasetStage = "empty" | "building" | "ready" | "error";
 
 export interface DatasetStatus {
@@ -422,6 +466,8 @@ export interface FundamentalsSnapshot {
   currentRatio: number | null;
   quickRatio: number | null;
   freeCashflow: number | null;
+  /** Cash from operations. Backs the REIT P/FFO proxy (marketCap ÷ OCF) — see lib/assets/reit.ts. */
+  operatingCashflow: number | null;
   totalCash: number | null;
   totalDebt: number | null;
   ebitda: number | null;
@@ -1052,3 +1098,66 @@ export interface TimelineFeed {
   thesisEvolution: ThesisEvolution | null;
   generatedAt: string;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Manual assets — Real Estate / Private Markets / Alternatives / Structured  */
+/* Products. No ticker, no API: user-entered facts + computed metrics (see   */
+/* lib/manual-asset-analysis.ts). Standalone from Portfolio's aggregate      */
+/* analytics for now (see project decisions) — its own ledger + research     */
+/* view inside the Research Hub.                                             */
+/* -------------------------------------------------------------------------- */
+
+export type ManualAssetCategory = "real_estate" | "private_market" | "alternative" | "structured_product";
+
+export interface RealEstateDetails {
+  propertyType: string; // "Single-family", "Multi-family", "Commercial", "Land", ...
+  address: string | null;
+  annualRentalIncome: number | null;
+  annualExpenses: number | null; // property tax + insurance + maintenance + HOA, combined
+  outstandingMortgage: number | null;
+  mortgageRatePercent: number | null; // annual, e.g. 6.5 = 6.5%
+}
+
+export interface PrivateMarketDetails {
+  companyName: string;
+  round: string | null; // "Seed", "Series A", "Secondary", ...
+  ownershipPercent: number | null;
+  lastRoundValuation: number | null; // company's total valuation at its most recent round, if known
+}
+
+export interface AlternativeDetails {
+  subcategory: string; // "Art", "Wine", "Watches", "Collectibles", "Other", ...
+  condition: string | null;
+  provenance: string | null;
+}
+
+export type StructuredProductType = "barrier_reverse_convertible" | "principal_protected_note" | "autocallable" | "other";
+
+export interface StructuredProductDetails {
+  productType: StructuredProductType;
+  underlyingSymbols: string[]; // e.g. ["AAPL"], or multiple for a worst-of structure
+  initialLevels: Record<string, number>; // underlying symbol -> price at issuance
+  barrierPercent: number | null; // e.g. 70 = 70% of the initial level
+  couponRatePercent: number | null; // annual, e.g. 8 = 8%/year
+  participationRatePercent: number | null; // upside participation for principal-protected notes, e.g. 100 = 1:1
+  principalProtectionPercent: number | null; // e.g. 100 = fully protected, null = not protected
+  maturityDate: string; // ISO date
+}
+
+interface ManualAssetBase {
+  id: string;
+  name: string;
+  acquisitionDate: string; // ISO date
+  acquisitionCost: number;
+  currentValue: number | null; // user's latest estimate
+  currentValueAsOf: string | null; // ISO date of that estimate
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ManualAsset =
+  | (ManualAssetBase & { category: "real_estate"; details: RealEstateDetails })
+  | (ManualAssetBase & { category: "private_market"; details: PrivateMarketDetails })
+  | (ManualAssetBase & { category: "alternative"; details: AlternativeDetails })
+  | (ManualAssetBase & { category: "structured_product"; details: StructuredProductDetails });

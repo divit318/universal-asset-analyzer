@@ -1,8 +1,7 @@
-import { isValidSymbol } from "@/lib/market";
+import { isValidSymbol, normalizeSymbol } from "@/lib/market";
 import { NextResponse } from "next/server";
-import { getHistory, getQuote, getQuoteSummary, getSectorEtf } from "@/lib/yahoo";
-import { getRecentFilings } from "@/lib/edgar";
-import { getCompanyNews } from "@/lib/news";
+import { getQuote } from "@/lib/yahoo";
+import { buildResearchBundle } from "@/lib/research-bundle";
 import type { ResearchData } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -10,12 +9,22 @@ export const dynamic = "force-dynamic";
 
 /**
  * GET /api/research?symbol=AAPL
- * Combines a Yahoo Finance quote + price history with recent SEC filings.
- * EDGAR failures are non-fatal: the quote still returns with `edgarError` set.
+ *
+ * The non-streaming research payload. The Research Hub itself uses
+ * `/api/research/bundle` (same plan, streamed section-by-section); this route
+ * stays as the plain-JSON entry point for callers that want the whole thing in
+ * one response.
+ *
+ * It no longer has a data-assembly implementation of its own. It used to run a
+ * three-stage serial pipeline right here — `await getQuote()`, then a
+ * `Promise.all`, then an awaited sector-ETF fetch — which was both slower than
+ * necessary and a second, drifting copy of what the bundle does. Both now
+ * execute the single orchestrated plan in lib/research-bundle.ts, so they cannot
+ * disagree, and this route inherits the plan's concurrency, failure isolation,
+ * and cancellation for free.
  */
-
 export async function GET(request: Request) {
-  const symbol = new URL(request.url).searchParams.get("symbol")?.trim().toUpperCase();
+  const symbol = normalizeSymbol(new URL(request.url).searchParams.get("symbol"));
   if (!symbol || !isValidSymbol(symbol)) {
     return NextResponse.json(
       { error: "A valid `symbol` query parameter is required (e.g. AAPL)" },
@@ -23,6 +32,8 @@ export async function GET(request: Request) {
     );
   }
 
+  // The quote gates the asset: no quote, no company, honest 404. It is cached by
+  // the platform, so the plan's own quote step below costs nothing extra.
   let quote;
   try {
     quote = await getQuote(symbol);
@@ -31,46 +42,20 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: message }, { status: 404 });
   }
 
-  // Fetch 5 years of history, SPY benchmark, sector profile, filings, and news in parallel.
-  const [history, spyHistory, profileResult, filingsResult, news] = await Promise.all([
-    getHistory(symbol, 1825),
-    getHistory("SPY", 1825),
-    getQuoteSummary(symbol, ["assetProfile"]).catch(() => null),
-    getRecentFilings(symbol).then(
-      (filings) => ({ filings, error: null as string | null }),
-      (err: unknown) => ({
-        filings: [],
-        error: err instanceof Error ? err.message : "EDGAR lookup failed",
-      }),
-    ),
-    getCompanyNews(symbol, 8).catch(() => []),
-  ]);
+  const isEquity = !quote.assetType || quote.assetType === "EQUITY";
 
-  // Resolve sector ETF then fetch its history (best-effort).
-  const sector = (profileResult as Record<string, unknown> | null)?.assetProfile != null
-    ? ((profileResult as Record<string, Record<string, unknown>>).assetProfile?.sector as string | null) ?? null
-    : null;
-  const sectorEtf = getSectorEtf(sector);
-  const timeout = <T>(ms: number, fallback: T): Promise<T> =>
-    new Promise((resolve) => setTimeout(() => resolve(fallback), ms));
-  const sectorHistory = sectorEtf
-    ? await Promise.race([
-        getHistory(sectorEtf, 1825).catch(() => [] as typeof spyHistory),
-        timeout(5000, [] as typeof spyHistory),
-      ])
-    : [];
+  const bundle = await buildResearchBundle(symbol, {
+    isEquity,
+    signal: request.signal,
+  });
 
   const payload: ResearchData = {
-    quote,
-    history,
-    filings: filingsResult.filings,
-    edgarError: filingsResult.error,
-    benchmarks: {
-      spy: spyHistory,
-      sectorEtf,
-      sector: sectorHistory,
-    },
-    news,
+    quote: bundle.quote,
+    history: bundle.history,
+    filings: bundle.filings,
+    edgarError: bundle.edgarError,
+    benchmarks: bundle.benchmarks,
+    news: bundle.news,
   };
   return NextResponse.json(payload);
 }

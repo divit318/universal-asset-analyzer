@@ -78,4 +78,29 @@ describe("buildCompanyOpportunities", () => {
     // still comes through — no user-facing crash from one bad sector.
     expect(result.map((o) => o.ticker)).toEqual(["BBB"]);
   });
+
+  it("drops a match missing the required symbol/rationale fields instead of crashing", async () => {
+    runPromptMock.mockResolvedValue(JSON.stringify({
+      matches: [{ direction: "bullish", confidence: 80 }, { symbol: "AAA", direction: "bullish", rationale: "r", timeframe: "medium", confidence: 80 }],
+    }));
+
+    const result = await buildCompanyOpportunities(
+      [marketEvent("e1", ["Technology"])],
+      [sectorImpact("Technology", 60, ["e1"])],
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].ticker).toBe("AAA");
+  });
+
+  it("returns [] for the sector when the AI response is unparseable garbage", async () => {
+    runPromptMock.mockResolvedValue("not json at all");
+
+    const result = await buildCompanyOpportunities(
+      [marketEvent("e1", ["Technology"])],
+      [sectorImpact("Technology", 60, ["e1"])],
+    );
+
+    expect(result).toEqual([]);
+  });
 });

@@ -1,12 +1,17 @@
-import type { ScreenerCriteria, ScreenerRow, ScreenerSortField } from "./types";
-
 /**
- * Universal equity screener backed by Yahoo Finance's live screener endpoint.
+ * Access to Yahoo Finance's live screener endpoint.
  *
- * Unlike a static constituent list, this scans the *entire* US-listed equity
- * universe (~10k names) and applies every filter server-side, so results are
- * exact rather than limited to a curated sample. The endpoint needs a
+ * Rather than screening a static constituent list, this queries the entire
+ * listed universe for a given quoteType and applies the filters server-side, so
+ * a universe is exact rather than a curated sample. The endpoint needs a
  * crumb + cookie pair, which we fetch once and cache.
+ *
+ * There used to be a second, criteria-object-based query builder here
+ * (`runScreener`/`buildQuery`/`mapScreenerRow`) hardcoded to EQUITY and to one
+ * fixed row shape. It was the last remnant of the pre-registry screener, and
+ * `pageRawScreener` + `q` below replaced it entirely — keeping two query
+ * builders for the same endpoint is exactly the duplication the universal
+ * screener exists to remove.
  */
 
 // A minimal UA is deliberate: Yahoo's auth endpoints throttle the verbose
@@ -58,14 +63,6 @@ type Operand =
   | { operator: "gt" | "lt" | "gte" | "lte" | "eq"; operands: [string, string | number] }
   | { operator: "and" | "or"; operands: Operand[] };
 
-const SORT_FIELD: Record<ScreenerSortField, string> = {
-  marketCap: "intradaymarketcap",
-  changePercent: "percentchange",
-  price: "intradayprice",
-  volume: "dayvolume",
-  peRatio: "peratio.lasttwelvemonths",
-};
-
 /**
  * Yahoo's screener `sector` operand uses its own taxonomy (not GICS). These are
  * the 11 sectors it recognises, surfaced in the UI dropdown.
@@ -84,78 +81,7 @@ export const SCREENER_SECTORS = [
   "Utilities",
 ] as const;
 
-/** Translate criteria into a Yahoo screener query tree. Pure. */
-export function buildQuery(c: ScreenerCriteria): Operand {
-  const operands: Operand[] = [{ operator: "eq", operands: ["region", "us"] }];
-  const add = (op: "gt" | "lt" | "gte" | "lte" | "eq", field: string, v: number | string | null | undefined) => {
-    if (v != null && v !== "") operands.push({ operator: op, operands: [field, v] });
-  };
-
-  if (c.sector) operands.push({ operator: "eq", operands: ["sector", c.sector] });
-  if (c.exchanges && c.exchanges.length) {
-    operands.push(
-      c.exchanges.length === 1
-        ? { operator: "eq", operands: ["exchange", c.exchanges[0]] }
-        : {
-            operator: "or",
-            operands: c.exchanges.map((e) => ({ operator: "eq", operands: ["exchange", e] })),
-          },
-    );
-  }
-  add("gte", "intradayprice", c.minPrice);
-  add("lte", "intradayprice", c.maxPrice);
-  add("gte", "percentchange", c.minChangePercent);
-  add("lte", "percentchange", c.maxChangePercent);
-  add("gte", "intradaymarketcap", c.minMarketCap);
-  add("lte", "intradaymarketcap", c.maxMarketCap);
-  add("gte", "peratio.lasttwelvemonths", c.minPE);
-  add("lte", "peratio.lasttwelvemonths", c.maxPE);
-  add("gte", "dayvolume", c.minVolume);
-
-  return { operator: "and", operands };
-}
-
-/* -------------------------------------------------------------------------- */
-/* Response mapping                                                           */
-/* -------------------------------------------------------------------------- */
-
-interface RawScreenerQuote {
-  symbol?: string;
-  longName?: string;
-  shortName?: string;
-  displayName?: string;
-  sector?: string;
-  sectorDisp?: string;
-  regularMarketPrice?: number;
-  regularMarketChangePercent?: number;
-  marketCap?: number;
-  trailingPE?: number;
-  regularMarketVolume?: number;
-}
-
-export function mapScreenerRow(q: RawScreenerQuote): ScreenerRow | null {
-  if (!q.symbol || q.regularMarketPrice == null) return null;
-  return {
-    symbol: q.symbol,
-    name: q.longName ?? q.displayName ?? q.shortName ?? q.symbol,
-    sector: q.sectorDisp ?? q.sector ?? "—",
-    price: q.regularMarketPrice,
-    changePercent: q.regularMarketChangePercent ?? 0,
-    marketCap: q.marketCap ?? null,
-    peRatio: q.trailingPE ?? null,
-    volume: q.regularMarketVolume ?? null,
-  };
-}
-
-export interface ScreenerResult {
-  rows: ScreenerRow[];
-  total: number;
-}
-
-/**
- * Run a live screen over the full US equity universe. `size` is capped at 250
- * (Yahoo's per-request maximum); `offset` paginates.
- */
+/** POST one screener query, minting a fresh session when asked to. */
 async function postScreener(
   body: object,
   forceFresh: boolean,
@@ -177,28 +103,67 @@ async function postScreener(
   );
 }
 
-export async function runScreener(
-  criteria: ScreenerCriteria,
-  size = 100,
-  offset = 0,
-): Promise<ScreenerResult> {
+/* -------------------------------------------------------------------------- */
+/* Generic screener access (multi-asset)                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A raw Yahoo screener row. Deliberately untyped beyond `symbol` — each asset
+ * class reads a different subset of the ~60 fields Yahoo returns (an ETF row
+ * carries netExpenseRatio and netAssets; a crypto row carries circulatingSupply
+ * and maxSupply; neither carries the other's), so narrowing here would mean
+ * maintaining a union of every field any class might want. The universe
+ * providers in lib/screener/universes/ do the narrowing, each for its own class.
+ */
+export type RawQuoteRow = Record<string, unknown> & { symbol?: string };
+
+export type ScreenerQuoteType =
+  | "EQUITY"
+  | "ETF"
+  | "MUTUALFUND"
+  | "CRYPTOCURRENCY"
+  | "FUTURE"
+  | "INDEX";
+
+export interface RawScreenerOptions {
+  quoteType: ScreenerQuoteType;
+  /** Yahoo query tree. Callers build this with `eq`/`gte`/`and` operands. */
+  query: Operand;
+  sortField: string;
+  sortDir?: "asc" | "desc";
+  size?: number;
+  offset?: number;
+}
+
+/**
+ * Run one page of a Yahoo screener query, for any quoteType.
+ *
+ * Note for anyone extending this: `quoteType: "CURRENCY"` is accepted by the
+ * endpoint but returns **zero rows** — verified. Forex therefore cannot be
+ * screened this way and uses a curated pair list instead
+ * (lib/assets/reference/policy-rates.ts). Likewise "FUTURE" returns individual
+ * dated + TAS contracts rather than anything you'd want to screen, which is why
+ * commodities use a curated contract list too.
+ */
+export async function runRawScreener(opts: RawScreenerOptions): Promise<{
+  rows: RawQuoteRow[];
+  total: number;
+}> {
   const body = {
-    size: Math.min(Math.max(size, 1), 250),
-    offset: Math.max(offset, 0),
-    sortField: SORT_FIELD[criteria.sortField ?? "marketCap"],
-    sortType: (criteria.sortDir ?? "desc").toUpperCase(),
-    quoteType: "EQUITY",
-    query: buildQuery(criteria),
+    size: Math.min(Math.max(opts.size ?? 100, 1), 250),
+    offset: Math.max(opts.offset ?? 0, 0),
+    sortField: opts.sortField,
+    sortType: (opts.sortDir ?? "desc").toUpperCase(),
+    quoteType: opts.quoteType,
+    query: opts.query,
     userId: "",
     userIdType: "guid",
   };
 
-  // A stale/throttled crumb (401/403/429) is retried once with a fresh session.
   let res = await postScreener(body, false);
   if (res.status === 401 || res.status === 403 || res.status === 429) {
     res = await postScreener(body, true);
   }
-
   if (!res.ok) {
     if (res.status === 429) {
       throw new Error("Yahoo is rate-limiting requests — wait a moment and retry");
@@ -208,7 +173,7 @@ export async function runScreener(
 
   const json = (await res.json()) as {
     finance?: {
-      result?: { total?: number; quotes?: RawScreenerQuote[] }[];
+      result?: { total?: number; quotes?: RawQuoteRow[] }[];
       error?: { description?: string } | null;
     };
   };
@@ -216,14 +181,46 @@ export async function runScreener(
     throw new Error(json.finance.error.description ?? "Screener query rejected");
   }
   const result = json.finance?.result?.[0];
-  const rows = (result?.quotes ?? [])
-    .map(mapScreenerRow)
-    .filter((r): r is ScreenerRow => r != null)
-    // The screener payload omits per-row sector; when the screen is scoped to a
-    // sector, every row is that sector, so backfill it for the table.
-    .map((r) =>
-      r.sector === "—" && criteria.sector ? { ...r, sector: criteria.sector } : r,
-    );
-
+  const rows = (result?.quotes ?? []).filter((q) => typeof q.symbol === "string");
   return { rows, total: result?.total ?? rows.length };
 }
+
+/** Page a screener query until `limit` rows are collected or Yahoo runs out. */
+export async function pageRawScreener(
+  opts: Omit<RawScreenerOptions, "size" | "offset">,
+  limit: number,
+): Promise<RawQuoteRow[]> {
+  const out: RawQuoteRow[] = [];
+  const seen = new Set<string>();
+  const PAGE = 250;
+
+  for (let offset = 0; offset < limit; offset += PAGE) {
+    const { rows } = await runRawScreener({
+      ...opts,
+      size: Math.min(PAGE, limit - offset),
+      offset,
+    });
+    if (rows.length === 0) break;
+    for (const r of rows) {
+      const sym = r.symbol as string;
+      if (seen.has(sym)) continue;
+      seen.add(sym);
+      out.push(r);
+    }
+    if (rows.length < PAGE) break; // last page
+  }
+
+  return out;
+}
+
+/** Operand helpers, so providers don't hand-build Yahoo's query trees. */
+export const q = {
+  eq: (field: string, value: string | number): Operand => ({
+    operator: "eq",
+    operands: [field, value],
+  }),
+  gte: (field: string, value: number): Operand => ({ operator: "gte", operands: [field, value] }),
+  lte: (field: string, value: number): Operand => ({ operator: "lte", operands: [field, value] }),
+  and: (...operands: Operand[]): Operand => ({ operator: "and", operands }),
+  or: (...operands: Operand[]): Operand => ({ operator: "or", operands }),
+};

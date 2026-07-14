@@ -10,6 +10,7 @@ interface Props {
   /** Fired when the user commits a symbol (pick from list or submit raw text). */
   onSelect: (symbol: string) => void;
   loading?: boolean;
+  placeholder?: string;
 }
 
 /**
@@ -17,7 +18,7 @@ interface Props {
  * and lets them pick with the mouse or arrow keys. Submitting raw text still
  * works, so power users can type "AAPL ⏎" without waiting for suggestions.
  */
-export function SymbolSearch({ value, onChange, onSelect, loading }: Props) {
+export function SymbolSearch({ value, onChange, onSelect, loading, placeholder }: Props) {
   const [items, setItems] = useState<SymbolSuggestion[]>([]);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
@@ -98,7 +99,7 @@ export function SymbolSearch({ value, onChange, onSelect, loading }: Props) {
         }}
         onFocus={() => value.trim() && setOpen(true)}
         onKeyDown={onKeyDown}
-        placeholder="Search ticker or name — e.g. AAPL, Apple, Nvidia"
+        placeholder={placeholder ?? "Search ticker or name — e.g. AAPL, Apple, Nvidia"}
         className="w-full rounded-lg border border-border bg-surface px-4 py-2.5 text-sm outline-none placeholder:text-muted focus:border-accent"
         aria-label="Search ticker or company name"
         role="combobox"

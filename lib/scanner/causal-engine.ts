@@ -16,19 +16,29 @@
  */
 
 import { runPrompt } from "../ai";
-import { extractJson } from "../json-extract";
+import { extractJsonObject } from "../json-extract";
 import type { MarketEvent, CausalEffect, SignalDirection } from "../types";
 
-interface RawEffect {
-  order: 1 | 2;
-  description: string;
-  direction: SignalDirection;
-  affectedSectors: string[];
-  affectedTickers: string[];
-}
-
-interface CausalResponse {
-  effects: RawEffect[];
+import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
+function sanitizeEffect(item: unknown): CausalEffect | null {
+  if (item === null || typeof item !== "object") return null;
+  const e = item as Record<string, unknown>;
+  if (typeof e.description !== "string") return null;
+  const order = Number(e.order);
+  const direction = typeof e.direction === "string" ? e.direction.toLowerCase() : "";
+  return {
+    order: order === 2 ? 2 : 1,
+    description: e.description,
+    direction: (["bullish", "bearish", "neutral"] as string[]).includes(direction)
+      ? (direction as SignalDirection)
+      : "neutral",
+    affectedSectors: Array.isArray(e.affectedSectors)
+      ? e.affectedSectors.filter((x): x is string => typeof x === "string")
+      : [],
+    affectedTickers: Array.isArray(e.affectedTickers)
+      ? e.affectedTickers.filter((x): x is string => typeof x === "string")
+      : [],
+  };
 }
 
 function buildCausalPrompt(event: MarketEvent): string {
@@ -48,7 +58,7 @@ Think like a seasoned sell-side analyst:
 - Which specific types of companies are most exposed?
 - Are there non-obvious second-order effects?
 
-Return ONLY valid JSON:
+${JSON_SCHEMA_LEAD_IN}
 {
   "effects": [
     {
@@ -86,15 +96,8 @@ async function buildCausalChainForEvent(
       maxTokens: 1200,
       json: true,
     });
-    const parsed = extractJson<CausalResponse>(raw);
-    if (!parsed?.effects?.length) return [];
-    return parsed.effects.map((e) => ({
-      order: e.order,
-      description: e.description,
-      direction: e.direction,
-      affectedSectors: e.affectedSectors ?? [],
-      affectedTickers: e.affectedTickers ?? [],
-    }));
+    const parsed = extractJsonObject(raw, { effects: [] as unknown[] });
+    return parsed.effects.map(sanitizeEffect).filter((e): e is CausalEffect => e !== null);
   } catch {
     return [];
   }

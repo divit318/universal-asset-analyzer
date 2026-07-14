@@ -9,11 +9,12 @@
  */
 
 import { runPrompt } from "../ai";
-import { extractJson } from "../json-extract";
+import { extractJsonObject } from "../json-extract";
 import type { MarketEvent, SectorImpact, SignalDirection } from "../types";
 import type { SectorPerformance } from "./signals";
 import { SECTOR_ETF_MAP as CANONICAL_SECTOR_ETF_MAP } from "../sector-rotation";
 
+import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
 interface RawSectorImpact {
   sector: string;
   direction: SignalDirection;
@@ -23,8 +24,26 @@ interface RawSectorImpact {
   keyLosers: string[];
 }
 
-interface SectorImpactResponse {
-  sectorImpacts: RawSectorImpact[];
+function sanitizeSectorImpact(item: unknown): RawSectorImpact | null {
+  if (item === null || typeof item !== "object") return null;
+  const s = item as Record<string, unknown>;
+  if (typeof s.sector !== "string" || typeof s.rationale !== "string") return null;
+  const direction = typeof s.direction === "string" ? s.direction.toLowerCase() : "";
+  const strength = Number(s.strength);
+  return {
+    sector: s.sector,
+    direction: (["bullish", "bearish", "neutral"] as string[]).includes(direction)
+      ? (direction as SignalDirection)
+      : "neutral",
+    strength: Number.isFinite(strength) ? strength : 0,
+    rationale: s.rationale,
+    keyBeneficiaries: Array.isArray(s.keyBeneficiaries)
+      ? s.keyBeneficiaries.filter((x): x is string => typeof x === "string")
+      : [],
+    keyLosers: Array.isArray(s.keyLosers)
+      ? s.keyLosers.filter((x): x is string => typeof x === "string")
+      : [],
+  };
 }
 
 // India-specific sector names have no direct GICS ETF equivalent; map them to
@@ -86,7 +105,7 @@ For each sector with a clear signal, provide:
 
 Only include sectors where you can make a specific, event-driven argument. Exclude sectors with no clear signal.
 
-Return ONLY valid JSON:
+${JSON_SCHEMA_LEAD_IN}
 {
   "sectorImpacts": [
     {
@@ -108,19 +127,20 @@ export async function analyzeSectorImpacts(
 ): Promise<SectorImpact[]> {
   if (events.length === 0) return [];
 
-  let parsed: SectorImpactResponse | null = null;
+  let sectorImpacts: RawSectorImpact[];
   try {
     const raw = await runPrompt(
       "opportunity-engine",
       buildSectorImpactPrompt(events, sectorPerf),
       { maxTokens: 2500, json: true },
     );
-    parsed = extractJson<SectorImpactResponse>(raw);
+    const parsed = extractJsonObject(raw, { sectorImpacts: [] as unknown[] });
+    sectorImpacts = parsed.sectorImpacts.map(sanitizeSectorImpact).filter((s): s is RawSectorImpact => s !== null);
   } catch {
     return [];
   }
 
-  if (!parsed?.sectorImpacts?.length) return [];
+  if (sectorImpacts.length === 0) return [];
 
   // Map driving event IDs per sector via affectedSectors cross-reference
   const sectorEventIds = new Map<string, string[]>();
@@ -138,14 +158,14 @@ export async function analyzeSectorImpacts(
     }
   }
 
-  return parsed.sectorImpacts.map((raw) => ({
+  return sectorImpacts.map((raw) => ({
     sector: raw.sector,
     etfTicker: SECTOR_ETF_MAP[raw.sector] ?? null,
     direction: raw.direction,
     strength: Math.max(0, Math.min(100, raw.strength)),
     rationale: raw.rationale,
-    keyBeneficiaries: raw.keyBeneficiaries ?? [],
-    keyLosers: raw.keyLosers ?? [],
+    keyBeneficiaries: raw.keyBeneficiaries,
+    keyLosers: raw.keyLosers,
     drivingEvents: sectorEventIds.get(raw.sector) ?? [],
   }));
 }

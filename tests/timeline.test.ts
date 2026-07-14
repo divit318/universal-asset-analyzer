@@ -7,6 +7,8 @@ import {
   deriveCatalystStatus,
   buildEventId,
   computeThesisEvolution,
+  parseTimelineDetail,
+  parseWhatChanged,
 } from "@/lib/timeline";
 import type { TimelineEvent } from "@/lib/types";
 
@@ -173,5 +175,54 @@ describe("computeThesisEvolution", () => {
     );
     const evolution = computeThesisEvolution("AAPL", events);
     expect(evolution.currentConfidence).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("parseTimelineDetail", () => {
+  it("fills omitted array fields with [] on a valid-but-incomplete parse", () => {
+    const raw = '{"executiveSummary":"Earnings beat expectations."}';
+    const detail = parseTimelineDetail(raw);
+    expect(detail.executiveSummary).toBe("Earnings beat expectations.");
+    expect(detail.supportingEvidence).toEqual([]);
+    expect(detail.bullCase).toEqual([]);
+  });
+
+  it("falls back to [] when bullCase arrives as the wrong kind", () => {
+    const raw = '{"executiveSummary":"ok","bullCase":"not an array"}';
+    const detail = parseTimelineDetail(raw);
+    expect(Array.isArray(detail.bullCase)).toBe(true);
+  });
+
+  it("clamps a numeric-string confidence into [0, 100] instead of propagating NaN", () => {
+    const raw = '{"executiveSummary":"ok","confidence":"150"}';
+    const detail = parseTimelineDetail(raw);
+    expect(detail.confidence).toBe(100);
+  });
+
+  it("returns the unavailable-message default on total garbage instead of throwing", () => {
+    const detail = parseTimelineDetail("the model refused to answer");
+    expect(detail.executiveSummary).toBe("Unable to generate an explanation — AI unavailable.");
+    expect(detail.supportingEvidence).toEqual([]);
+  });
+});
+
+describe("parseWhatChanged", () => {
+  it("fills omitted array fields with [] on a valid-but-incomplete parse", () => {
+    const raw = '{"managementExecution":"Delivered on guidance."}';
+    const result = parseWhatChanged(raw);
+    expect(result.managementExecution).toBe("Delivered on guidance.");
+    expect(result.assumptionsValidated).toEqual([]);
+    expect(result.assumptionsFailed).toEqual([]);
+  });
+
+  it("falls back to [] when assumptionsFailed arrives as the wrong kind", () => {
+    const raw = '{"assumptionsFailed":"not an array"}';
+    const result = parseWhatChanged(raw);
+    expect(result.assumptionsFailed).toEqual([]);
+  });
+
+  it("returns the unavailable-message default on total garbage instead of throwing", () => {
+    const result = parseWhatChanged("the model refused to answer");
+    expect(result.managementExecution).toBe("Unable to generate — AI unavailable.");
   });
 });

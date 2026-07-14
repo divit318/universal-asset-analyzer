@@ -6,7 +6,7 @@
  */
 
 import { runPrompt } from "./ai";
-import { extractJson } from "./json-extract";
+import { extractJsonObject } from "./json-extract";
 import type { AgentFinding } from "./ic-agents";
 import type { DetectedSignal } from "./ic-signals";
 
@@ -35,6 +35,20 @@ function buildSignalSummary(signals: DetectedSignal[]): string {
   return signals
     .map((s) => `[${s.severity.toUpperCase()}] ${s.category}: ${s.description}`)
     .join("\n");
+}
+
+/** Exported for unit testing — pure, no I/O. */
+export function parseThesis(raw: string): Thesis {
+  return extractJsonObject(raw, {
+    bull: "Thesis formation unavailable — AI response could not be parsed.",
+    bear: "",
+    base: "",
+    variantPerception: "",
+    marketExpectations: "",
+    keyCatalysts: [] as string[],
+    keyRisks: [] as string[],
+    keyDrivers: [] as string[],
+  });
 }
 
 export async function formThesis(
@@ -69,7 +83,7 @@ Synthesise all findings into a structured thesis. Return as JSON:
 
   try {
     const raw = await runPrompt("investment-thesis", prompt, { maxTokens: 1500, json: true, model });
-    return extractJson<Thesis>(raw);
+    return parseThesis(raw);
   } catch {
     return {
       bull: "Thesis formation unavailable — AI response could not be parsed.",

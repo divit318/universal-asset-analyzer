@@ -88,7 +88,7 @@ export default function Home() {
         <div className="flex max-w-3xl flex-col gap-4">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="brand">Local AI · No API Keys</Badge>
-            <Badge variant="neutral">US &amp; Indian Markets</Badge>
+            <Badge variant="neutral">Global Markets</Badge>
             <Badge variant="positive">AI Portfolio Management</Badge>
           </div>
           <h1 className="text-balance text-4xl font-semibold leading-[1.1] tracking-tight sm:text-5xl">

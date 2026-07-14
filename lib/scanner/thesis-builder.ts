@@ -12,7 +12,8 @@
  */
 
 import { runPrompt } from "../ai";
-import { extractJson } from "../json-extract";
+import { extractJsonObject } from "../json-extract";
+import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
 import type {
   ScannerOpportunity,
   MarketEvent,
@@ -20,18 +21,7 @@ import type {
   InvestmentThesis,
 } from "../types";
 
-interface ThesisResponse {
-  headline: string;
-  summary: string;
-  bullCase: string[];
-  bearCase: string[];
-  keyCatalysts: string[];
-  keyRisks: string[];
-  timeHorizon: "days" | "weeks" | "months" | "quarters" | "years";
-  confidence: number;
-  potentialWinners: string[];
-  potentialLosers: string[];
-}
+const TIME_HORIZONS: InvestmentThesis["timeHorizon"][] = ["days", "weeks", "months", "quarters", "years"];
 
 function buildThesisPrompt(
   opp: ScannerOpportunity,
@@ -76,7 +66,7 @@ ${eventContext}
 Write a complete investment thesis. Be specific, analytical, and honest about risks.
 Avoid generic statements. Reference the specific events and mechanisms.
 
-Return ONLY valid JSON:
+${JSON_SCHEMA_LEAD_IN}
 {
   "headline": "<10 words max — the core investment case>",
   "summary": "<2-3 sentences: what is the opportunity, why does it exist now, why this company>",
@@ -118,18 +108,26 @@ export async function buildTheses(
         buildThesisPrompt(opp, drivingEvents, sectorImpact),
         { maxTokens: 1500, json: true },
       );
-      const parsed = extractJson<ThesisResponse>(raw);
+      const parsed = extractJsonObject(raw, {
+        headline: "",
+        summary: "",
+        bullCase: [] as string[],
+        bearCase: [] as string[],
+        keyCatalysts: [] as string[],
+        keyRisks: [] as string[],
+        timeHorizon: "months" as InvestmentThesis["timeHorizon"],
+        confidence: 60,
+        potentialWinners: [] as string[],
+        potentialLosers: [] as string[],
+      });
+      const timeHorizon = typeof parsed.timeHorizon === "string" ? parsed.timeHorizon.toLowerCase() : "";
+      const confidence = Number(parsed.confidence);
       thesis = {
-        headline: parsed.headline ?? "",
-        summary: parsed.summary ?? "",
-        bullCase: parsed.bullCase ?? [],
-        bearCase: parsed.bearCase ?? [],
-        keyCatalysts: parsed.keyCatalysts ?? [],
-        keyRisks: parsed.keyRisks ?? [],
-        timeHorizon: parsed.timeHorizon ?? "months",
-        confidence: Math.max(0, Math.min(100, parsed.confidence ?? 60)),
-        potentialWinners: parsed.potentialWinners ?? [],
-        potentialLosers: parsed.potentialLosers ?? [],
+        ...parsed,
+        timeHorizon: (TIME_HORIZONS as string[]).includes(timeHorizon)
+          ? (timeHorizon as InvestmentThesis["timeHorizon"])
+          : "months",
+        confidence: Math.max(0, Math.min(100, Number.isFinite(confidence) ? confidence : 60)),
       };
     } catch {
       // Thesis is best-effort — opportunity still surfaces without it

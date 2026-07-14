@@ -83,4 +83,21 @@ describe("buildTheses", () => {
     expect(result[3].thesis?.headline).toBe("Headline for T3"); // neighbor unaffected
     expect(result[5].thesis?.headline).toBe("Headline for T5");
   });
+
+  it("defaults omitted array/enum fields on a valid-but-incomplete parse", async () => {
+    runPromptMock.mockResolvedValue(JSON.stringify({ headline: "h", summary: "s" }));
+
+    const result = await buildTheses([opportunity("T0")], events, sectorImpacts);
+
+    expect(result[0].thesis?.bullCase).toEqual([]);
+    expect(result[0].thesis?.keyRisks).toEqual([]);
+    expect(result[0].thesis?.timeHorizon).toBe("months");
+  });
+
+  it("normalizes an invented timeHorizon variant to a valid enum value", async () => {
+    runPromptMock.mockResolvedValue(JSON.stringify({ headline: "h", timeHorizon: "next-decade" }));
+
+    const result = await buildTheses([opportunity("T0")], events, sectorImpacts);
+    expect(result[0].thesis?.timeHorizon).toBe("months");
+  });
 });

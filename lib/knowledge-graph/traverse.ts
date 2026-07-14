@@ -7,9 +7,10 @@
  */
 
 import { runPrompt } from "../ai";
-import { extractJson } from "../json-extract";
+import { extractJsonObject } from "../json-extract";
 import type { GraphNode, GraphEdge, ConnectionExplanation } from "./types";
 
+import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
 /** Pure: BFS shortest path between two nodes, treating edges as undirected for connectivity purposes. */
 export function findPath(nodes: GraphNode[], edges: GraphEdge[], fromId: string, toId: string): GraphEdge[] | null {
   if (fromId === toId) return [];
@@ -53,12 +54,6 @@ export function describePath(nodes: GraphNode[], path: GraphEdge[]): string {
   return parts.join("; then ");
 }
 
-interface RawExplanationResponse {
-  explanation: string;
-  historicalEvolution: string;
-  confidence: number;
-}
-
 function buildExplainPrompt(fromLabel: string, toLabel: string, deterministicSummary: string): string {
   return `You are an investment analyst explaining a connection discovered in a knowledge graph built from real portfolio, sector-rotation, and event data.
 
@@ -66,7 +61,7 @@ CONNECTION: ${fromLabel} to ${toLabel}
 DETERMINISTIC PATH (each step is a real, computed relationship — do not invent facts beyond this):
 ${deterministicSummary}
 
-Explain this connection in plain English for an investor, and note how this kind of connection typically evolves over time. Return ONLY valid JSON:
+Explain this connection in plain English for an investor, and note how this kind of connection typically evolves over time. ${JSON_SCHEMA_LEAD_IN}
 {
   "explanation": "<2-4 sentence plain-English explanation of why/how these are connected, grounded only in the path above>",
   "historicalEvolution": "<1-2 sentences on how this kind of relationship typically plays out or has played out>",
@@ -114,16 +109,16 @@ export async function explainConnection(
     return { nodeId: id, label: n?.label ?? id, type: n?.type ?? ("company" as const) };
   });
 
-  let parsed: RawExplanationResponse | null = null;
+  let parsed = EXPLANATION_DEFAULTS;
   try {
     const raw = await runPrompt(
       "knowledge-graph-explain",
       buildExplainPrompt(nodeById.get(fromId)?.label ?? fromId, nodeById.get(toId)?.label ?? toId, deterministicSummary),
       { maxTokens: 700, json: true },
     );
-    parsed = extractJson<RawExplanationResponse>(raw);
+    parsed = parseExplanationResponse(raw);
   } catch {
-    parsed = null;
+    // parsed stays at defaults
   }
 
   return {
@@ -133,10 +128,26 @@ export async function explainConnection(
     path: pathDetail,
     pathEdges: path,
     deterministicSummary,
-    aiExplanation: parsed
+    // No explanation (runPrompt failed, or the model returned unparseable/empty
+    // JSON) falls back to the deterministic summary rather than showing blank text.
+    aiExplanation: parsed.explanation
       ? `${parsed.explanation} ${parsed.historicalEvolution}`.trim()
       : deterministicSummary,
-    confidence: Math.max(0, Math.min(100, parsed?.confidence ?? 50)),
+    confidence: Math.max(0, Math.min(100, parsed.confidence)),
     generatedAt,
   };
+}
+
+const EXPLANATION_DEFAULTS = { explanation: "", historicalEvolution: "", confidence: 50 };
+
+/** Exported for unit testing — pure, no I/O. */
+export function parseExplanationResponse(raw: string): typeof EXPLANATION_DEFAULTS {
+  const parsed = extractJsonObject(raw, EXPLANATION_DEFAULTS);
+  return { ...parsed, confidence: coerceConfidence(parsed.confidence) };
+}
+
+/** Models occasionally return confidence as a numeric string; NaN falls back to neutral. */
+function coerceConfidence(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : 50;
 }

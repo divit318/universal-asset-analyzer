@@ -505,7 +505,7 @@ export default function ICReportPage() {
   useEffect(() => {
     document.title = symbol
       ? `${symbol.toUpperCase()} IC Report · UAA`
-      : "Deep Research · UAA";
+      : "IC Report · UAA";
     return () => { document.title = "Universal Asset Analyzer"; };
   }, [symbol]);
 
@@ -641,7 +641,7 @@ export default function ICReportPage() {
       {/* Header */}
       <header className="flex flex-col gap-1.5">
         <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-semibold tracking-tight">IC Deep Research</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">IC Report</h1>
           <span className="rounded-full border border-brand/30 bg-brand/10 px-2.5 py-0.5 text-label font-semibold uppercase tracking-widest text-brand">
             Multi-agent
           </span>

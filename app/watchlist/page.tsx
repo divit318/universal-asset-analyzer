@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { downloadBlob } from "@/lib/download";
 import type { Quote, WatchlistItem } from "@/lib/types";
@@ -13,6 +13,8 @@ import { useToast } from "@/app/_components/toast";
 import { useIOSSafe } from "@/lib/ios-context";
 import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
 import { WatchlistAlerts } from "./_components/watchlist-alerts";
+import { BuyModal } from "./_components/buy-modal";
+import { ArrivalHighlight, useArrivalTarget } from "@/app/_components/arrival-highlight";
 import { PageShell } from "@/app/_components/ui";
 
 function WatchlistDigestPanel({ digest, loading }: { digest: WatchlistDigest | null; loading: boolean }) {
@@ -225,6 +227,14 @@ function NotesModal({ item, onSave, onCancel }: {
 }
 
 export default function WatchlistPage() {
+  return (
+    <Suspense fallback={null}>
+      <WatchlistPageInner />
+    </Suspense>
+  );
+}
+
+function WatchlistPageInner() {
   const [items, setItems] = useState<WatchlistItem[]>([]);
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
   const [loading, setLoading] = useState(true);
@@ -233,6 +243,8 @@ export default function WatchlistPage() {
   const [editingAlerts, setEditingAlerts] = useState<WatchlistItem | null>(null);
   const [editingNotes, setEditingNotes] = useState<WatchlistItem | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<WatchlistItem | null>(null);
+  const [buyingItem, setBuyingItem] = useState<WatchlistItem | null>(null);
+  const [ownedSymbols, setOwnedSymbols] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState("");
   const [digest, setDigest] = useState<WatchlistDigest | null>(null);
   const [digestLoading, setDigestLoading] = useState(false);
@@ -244,10 +256,23 @@ export default function WatchlistPage() {
   const toast = useToast();
   // IOS — declared early so the digest effect can access portfolio context
   const ios = useIOSSafe();
+  const highlightTarget = useArrivalTarget();
 
   useEffect(() => {
     document.title = "Watchlist · UAA";
     return () => { document.title = "Universal Asset Analyzer"; };
+  }, []);
+
+  const loadOwned = useCallback(async () => {
+    try {
+      const res = await fetch("/api/portfolio");
+      const json = await res.json();
+      if (!res.ok) return;
+      const holdings = (json.holdings ?? []) as { symbol: string | null }[];
+      setOwnedSymbols(new Set(holdings.filter((h) => h.symbol).map((h) => h.symbol!.toUpperCase())));
+    } catch {
+      /* owned-status is an enhancement — degrade gracefully */
+    }
   }, []);
 
   const load = useCallback(async () => {
@@ -270,12 +295,13 @@ export default function WatchlistPage() {
       } else {
         setQuotes({});
       }
+      void loadOwned();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadOwned]);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [load]);
@@ -401,6 +427,7 @@ export default function WatchlistPage() {
 
   return (
     <PageShell py="py-10">
+      <ArrivalHighlight targetId={highlightTarget} />
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-3">
@@ -576,6 +603,7 @@ export default function WatchlistPage() {
             return (
               <li
                 key={item.symbol}
+                data-arrival-target={item.symbol}
                 className={`flex flex-col bg-surface transition-colors ${hasAlert ? "border-l-4 border-l-negative" : ""}`}
               >
                 {/* Alert banners */}
@@ -606,6 +634,11 @@ export default function WatchlistPage() {
                       {hasAlert && (
                         <span className="rounded-full bg-negative/15 px-1.5 py-0.5 text-[0.6rem] font-bold uppercase tracking-wide text-negative">
                           Alert
+                        </span>
+                      )}
+                      {ownedSymbols.has(item.symbol) && (
+                        <span className="rounded-full border border-positive/30 bg-positive/10 px-1.5 py-0.5 text-[0.6rem] font-bold uppercase tracking-wide text-positive">
+                          ✓ Owned
                         </span>
                       )}
                     </div>
@@ -680,6 +713,14 @@ export default function WatchlistPage() {
                   {/* Actions */}
                   <div className="flex shrink-0 flex-col items-end gap-1.5">
                     <button
+                      onClick={() => setBuyingItem(item)}
+                      disabled={!q}
+                      title={!q ? "Waiting for a live price" : `Buy ${item.symbol}`}
+                      className="rounded-md bg-brand-strong px-3 py-1.5 text-xs font-semibold text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+                    >
+                      Buy
+                    </button>
+                    <button
                       onClick={() => setEditingAlerts(item)}
                       className="rounded-md border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-brand hover:text-brand"
                     >
@@ -727,6 +768,18 @@ export default function WatchlistPage() {
             toast("Notes saved");
           }}
           onCancel={() => setEditingNotes(null)}
+        />
+      ) : null}
+
+      {buyingItem ? (
+        <BuyModal
+          item={buyingItem}
+          onClose={() => setBuyingItem(null)}
+          onSuccess={(result) => {
+            setOwnedSymbols((prev) => new Set(prev).add(result.symbol));
+            toast(`Bought ${result.symbol} — added to Portfolio`, "success");
+            void loadOwned();
+          }}
         />
       ) : null}
 

@@ -102,3 +102,29 @@ export function extractJsonObject<T extends Record<string, unknown>>(
   }
   return out as T;
 }
+
+/**
+ * Like {@link extractJsonObject} but for TOP-LEVEL ARRAYS. Never throws.
+ * - parse failure or non-array result → []
+ * - if `sanitizeItem` is given, it maps each raw element to a valid item or null;
+ *   nulls are dropped. Use it to guarantee per-item field presence.
+ */
+export function extractJsonArray<T>(
+  raw: string,
+  sanitizeItem?: (item: unknown) => T | null,
+): T[] {
+  let parsed: unknown;
+  try {
+    parsed = extractJson<unknown>(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  if (!sanitizeItem) return parsed as T[];
+  const out: T[] = [];
+  for (const item of parsed) {
+    const v = sanitizeItem(item);
+    if (v !== null) out.push(v);
+  }
+  return out;
+}

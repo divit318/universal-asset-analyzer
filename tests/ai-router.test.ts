@@ -1,34 +1,45 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resetHealth } from "@/lib/ai/health";
-import { AllModelsFailedError, candidateModels, pickModel, route } from "@/lib/ai/router";
+import {
+  AllModelsFailedError,
+  candidateModels,
+  pickModel,
+  route,
+  scoreModels,
+} from "@/lib/ai/router";
 import { TASK_REGISTRY } from "@/lib/ai/task-registry";
+import { specForInstalled } from "@/lib/ai/models";
 import type {
   AIProvider,
   ProviderCompleteRequest,
   ProviderCompleteResult,
   ProviderHealth,
+  ProviderModelInfo,
 } from "@/lib/ai/provider";
 
 /** A scriptable fake provider: each model id maps to a canned result or an error to throw. */
 class FakeProvider implements AIProvider {
   readonly id = "fake";
   calls: string[] = [];
+  /** Every request the router issued — lets us assert on generation settings, not just model choice. */
+  requests: ProviderCompleteRequest[] = [];
 
   constructor(
-    private installed: string[],
+    private installed: ProviderModelInfo[],
     private behavior: Record<string, ProviderCompleteResult | Error>,
   ) {}
 
-  async listModels(): Promise<string[]> {
+  async listModels(): Promise<ProviderModelInfo[]> {
     return this.installed;
   }
 
   async healthCheck(): Promise<ProviderHealth> {
-    return { reachable: this.installed.length > 0, models: this.installed };
+    return { reachable: this.installed.length > 0, models: this.installed.map((m) => m.id) };
   }
 
   async complete(request: ProviderCompleteRequest): Promise<ProviderCompleteResult> {
     this.calls.push(request.model);
+    this.requests.push(request);
     const outcome = this.behavior[request.model];
     if (outcome === undefined) throw new Error(`unscripted model ${request.model}`);
     if (outcome instanceof Error) throw outcome;
@@ -40,63 +51,181 @@ class FakeProvider implements AIProvider {
   }
 }
 
+/** The models actually installed on the dev machine, with their real sizes. */
+const INSTALLED: ProviderModelInfo[] = [
+  { id: "qwen3:30b-a3b", sizeGb: 18.6 },
+  { id: "qwen3:14b", sizeGb: 9.3 },
+  { id: "mistral:latest", sizeGb: 4.4 },
+  { id: "qwen2.5-coder:14b", sizeGb: 9.0 },
+];
+
 beforeEach(() => {
   resetHealth();
+  // A 17GB-class machine: 12.75GB budget. Pinned so these tests assert routing
+  // policy rather than the size of whatever box CI happens to run on.
+  process.env.AI_MAX_MODEL_GB = "12.75";
 });
 
-describe("candidateModels", () => {
-  it("prefix-matches a preferred registry id against a tagged installed model", () => {
-    const candidates = candidateModels(TASK_REGISTRY["company-research"], ["qwen3:30b-a3b", "mistral:latest"]);
+afterEach(() => {
+  delete process.env.AI_MAX_MODEL_GB;
+  delete process.env.AI_DISABLED_MODELS;
+  delete process.env.AI_TASK_NL_SCREENER;
+});
+
+describe("memory feasibility gate", () => {
+  it("excludes a model whose weights exceed the memory budget", () => {
+    // qwen3:30b-a3b is the highest-quality model in the registry, so a purely
+    // quality-driven scorer would pick it for a deep task. It is 18.6GB on a
+    // 12.75GB budget: it cannot stay resident, and measured at 0.9 tok/s (302s
+    // for one answer). Eligibility, not ranking — it must not appear at all.
+    const candidates = candidateModels(
+      "investment-thesis",
+      TASK_REGISTRY["investment-thesis"],
+      INSTALLED,
+    );
+    expect(candidates).not.toContain("qwen3:30b-a3b");
+    expect(candidates[0]).toBe("qwen3:14b");
+  });
+
+  it("admits the big model when the machine actually has the memory for it", () => {
+    process.env.AI_MAX_MODEL_GB = "48"; // a 64GB workstation
+    const candidates = candidateModels(
+      "investment-thesis",
+      TASK_REGISTRY["investment-thesis"],
+      INSTALLED,
+    );
+    // Same registry, same code — the better model becomes routable purely because
+    // the hardware can hold it.
     expect(candidates[0]).toBe("qwen3:30b-a3b");
   });
 
-  it("falls back to any installed model when nothing preferred is installed", () => {
-    const candidates = candidateModels(TASK_REGISTRY["company-research"], ["mistral:7b"]);
-    expect(candidates).toContain("mistral:7b");
-  });
-
-  it("does not match an unrelated model that merely shares a text prefix with a preferred one", () => {
-    // Regression: "qwen3-coder" is a different, coding-specialized model —
-    // it must not satisfy a "qwen3" preference just because the string
-    // starts the same. Only devstral/qwen2.5-coder/mistral are installed
-    // (real repro case), so this should land in the ungoverned fallback tier.
-    const candidates = candidateModels(TASK_REGISTRY["comparison"], [
-      "devstral:24b",
-      "qwen2.5-coder:14b",
-      "qwen3-coder:latest",
-      "mistral:latest",
+  it("falls back to an over-budget model rather than failing when nothing else is installed", () => {
+    const candidates = candidateModels("company-research", TASK_REGISTRY["company-research"], [
+      { id: "qwen3:30b-a3b", sizeGb: 18.6 },
     ]);
-    expect(candidates).not.toContain("qwen3-coder:latest");
+    expect(candidates).toEqual(["qwen3:30b-a3b"]);
+  });
+});
+
+describe("scoring", () => {
+  it("prefers the faster model for a light, interactive task", () => {
+    // nl-screener parses a search box. There is no research quality to protect,
+    // and a human is watching a spinner — mistral answers in ~7s vs ~17s.
+    const candidates = candidateModels("nl-screener", TASK_REGISTRY["nl-screener"], INSTALLED);
+    expect(candidates[0]).toBe("mistral:latest");
   });
 
-  it("falls back to an installed model the registry has never heard of, rather than failing", () => {
-    // Regression: e.g. "devstral" doesn't fuzzy-match any MODEL_REGISTRY id.
-    const candidates = candidateModels(TASK_REGISTRY["company-research"], ["devstral:latest"]);
-    expect(candidates).toEqual(["devstral:latest"]);
+  it("prefers the stronger model for a deep, background task", () => {
+    // An IC risk review is the product. It runs in the background, so paying 2x
+    // the latency for materially better reasoning is the right trade.
+    const candidates = candidateModels("risk-review", TASK_REGISTRY["risk-review"], INSTALLED);
+    expect(candidates[0]).toBe("qwen3:14b");
   });
 
-  it("prefers a capability-matching model over one that lacks the required capability", () => {
-    const candidates = candidateModels(TASK_REGISTRY.coding, ["qwen2.5-coder:7b", "mistral:7b"]);
-    expect(candidates[0]).toBe("qwen2.5-coder:7b");
+  it("is deterministic — identical inputs always produce identical order", () => {
+    const specs = INSTALLED.map((m) => specForInstalled(m.id));
+    const a = scoreModels(TASK_REGISTRY["company-research"], specs).map((s) => s.id);
+    const b = scoreModels(TASK_REGISTRY["company-research"], [...specs].reverse()).map((s) => s.id);
+    expect(a).toEqual(b);
+  });
+});
+
+describe("capability gates", () => {
+  it("routes a coding task only to a coding-capable model", () => {
+    const candidates = candidateModels("coding", TASK_REGISTRY.coding, INSTALLED);
+    expect(candidates[0]).toBe("qwen2.5-coder:14b");
   });
 
-  it("still offers a non-matching installed model as a last resort rather than failing outright", () => {
-    // Only mistral is installed — it isn't coding-capable, but graceful
-    // degradation means the task still gets a candidate to try.
-    const candidates = candidateModels(TASK_REGISTRY.coding, ["mistral:7b"]);
-    expect(candidates).toContain("mistral:7b");
+  it("never prefers an unknown model, which the registry cannot vouch for", () => {
+    // Regression: the old genericSpec() inferred capabilities from the model's
+    // NAME, which tagged devstral (23.6B, dense, coding) as "fast". An unknown
+    // model now gets no capabilities, so a capable known model always wins.
+    const candidates = candidateModels("nl-screener", TASK_REGISTRY["nl-screener"], [
+      { id: "mistral:latest", sizeGb: 4.4 },
+      { id: "some-unknown-model:latest", sizeGb: 5 },
+    ]);
+    expect(candidates[0]).toBe("mistral:latest");
+  });
+
+  it("still offers an unknown model as a last resort rather than failing outright", () => {
+    const candidates = candidateModels("company-research", TASK_REGISTRY["company-research"], [
+      { id: "some-unknown-model:latest", sizeGb: 5 },
+    ]);
+    expect(candidates).toEqual(["some-unknown-model:latest"]);
   });
 
   it("returns nothing when nothing at all is installed", () => {
-    const candidates = candidateModels(TASK_REGISTRY.coding, []);
-    expect(candidates).toHaveLength(0);
+    expect(candidateModels("coding", TASK_REGISTRY.coding, [])).toHaveLength(0);
+  });
+
+  it("still leaves a deep task a degraded fallback behind its capable model", () => {
+    // Only qwen3:14b carries the `reasoning` capability on this host. If the
+    // candidate list were capability-only, every deep task would have exactly
+    // ONE model and no recovery — a single timeout would hard-fail an IC report
+    // instead of degrading to a weaker but working answer.
+    const candidates = candidateModels("risk-review", TASK_REGISTRY["risk-review"], INSTALLED);
+    expect(candidates[0]).toBe("qwen3:14b"); // capable model still wins
+    expect(candidates.length).toBeGreaterThan(1); // ...but it is not alone
+    expect(candidates).toContain("mistral:latest");
+  });
+});
+
+describe("configuration", () => {
+  it("honors an env pin, overriding the scorer", () => {
+    process.env.AI_TASK_NL_SCREENER = "qwen3:14b";
+    const candidates = candidateModels("nl-screener", TASK_REGISTRY["nl-screener"], INSTALLED);
+    expect(candidates[0]).toBe("qwen3:14b"); // scorer would have said mistral
+  });
+
+  it("does not let a pin smuggle a model past the memory gate", () => {
+    process.env.AI_TASK_NL_SCREENER = "qwen3:30b-a3b";
+    const candidates = candidateModels("nl-screener", TASK_REGISTRY["nl-screener"], INSTALLED);
+    expect(candidates).not.toContain("qwen3:30b-a3b");
+    expect(candidates[0]).toBe("mistral:latest"); // falls through to normal scoring
+  });
+
+  it("removes a disabled model from routing entirely", () => {
+    process.env.AI_DISABLED_MODELS = "mistral:latest";
+    const candidates = candidateModels("nl-screener", TASK_REGISTRY["nl-screener"], INSTALLED);
+    expect(candidates).not.toContain("mistral:latest");
+  });
+});
+
+describe("thinking control", () => {
+  it("forces thinking OFF for a JSON task", async () => {
+    // The platform's worst bug: qwen3 under format:"json" WITH thinking on
+    // returns the literal two-token string `{}` — 0/3 valid across trials vs 3/3
+    // with thinking off. `{}` parses cleanly, so every JSON task silently
+    // received an empty object and rendered its fallback.
+    const provider = new FakeProvider([{ id: "qwen3:14b", sizeGb: 9.3 }], {
+      "qwen3:14b": { content: '{"verdict":"BUY"}', reasoning: "" },
+    });
+    await route(
+      "investment-thesis",
+      { messages: [{ role: "user", content: "hi" }] },
+      { providers: [provider] },
+    );
+    expect(provider.requests[0].json).toBe(true);
+    expect(provider.requests[0].thinking).toBe(false);
+  });
+
+  it("does not send a thinking flag to a model with no reasoning channel", async () => {
+    const provider = new FakeProvider([{ id: "mistral:latest", sizeGb: 4.4 }], {
+      "mistral:latest": { content: "{}", reasoning: "" },
+    });
+    await route(
+      "nl-screener",
+      { messages: [{ role: "user", content: "hi" }] },
+      { providers: [provider] },
+    );
+    expect(provider.requests[0].thinking).toBeUndefined();
   });
 });
 
 describe("route", () => {
   it("returns a normalized response from the first successful candidate", async () => {
-    const provider = new FakeProvider(["qwen3:8b"], {
-      "qwen3:8b": { content: "answer", reasoning: "" },
+    const provider = new FakeProvider([{ id: "qwen3:14b", sizeGb: 9.3 }], {
+      "qwen3:14b": { content: "answer", reasoning: "" },
     });
     const res = await route(
       "company-research",
@@ -104,67 +233,101 @@ describe("route", () => {
       { providers: [provider] },
     );
     expect(res.content).toBe("answer");
-    expect(res.model).toBe("qwen3:8b");
+    expect(res.model).toBe("qwen3:14b");
     expect(res.provider).toBe("fake");
     expect(res.errors).toEqual([]);
   });
 
-  it("falls back to the next preferred model when the first fails, without surfacing the failure", async () => {
-    const provider = new FakeProvider(["qwen3:8b", "deepseek-r1:7b"], {
-      "qwen3:8b": new Error("timeout"),
-      "deepseek-r1:7b": { content: "fallback answer", reasoning: "" },
-    });
+  it("falls back to the next candidate when the first fails, without surfacing the failure", async () => {
+    const provider = new FakeProvider(
+      [
+        { id: "qwen3:14b", sizeGb: 9.3 },
+        { id: "mistral:latest", sizeGb: 4.4 },
+      ],
+      {
+        "qwen3:14b": new Error("timeout"),
+        "mistral:latest": { content: "fallback answer", reasoning: "" },
+      },
+    );
     const res = await route(
       "company-research",
       { messages: [{ role: "user", content: "hi" }] },
       { providers: [provider] },
     );
     expect(res.content).toBe("fallback answer");
-    expect(res.model).toBe("deepseek-r1:7b");
-    expect(res.errors).toEqual(["qwen3:8b: timeout"]);
-    expect(provider.calls).toEqual(["qwen3:8b", "deepseek-r1:7b"]);
+    expect(res.model).toBe("mistral:latest");
+    expect(res.errors).toEqual(["qwen3:14b: timeout"]);
+    expect(provider.calls).toEqual(["qwen3:14b", "mistral:latest"]);
   });
 
   it("throws AllModelsFailedError when every candidate fails", async () => {
-    const provider = new FakeProvider(["qwen3:8b", "deepseek-r1:7b"], {
-      "qwen3:8b": new Error("timeout"),
-      "deepseek-r1:7b": new Error("connection refused"),
-    });
+    const provider = new FakeProvider(
+      [
+        { id: "qwen3:14b", sizeGb: 9.3 },
+        { id: "mistral:latest", sizeGb: 4.4 },
+      ],
+      {
+        "qwen3:14b": new Error("timeout"),
+        "mistral:latest": new Error("connection refused"),
+      },
+    );
     await expect(
-      route("company-research", { messages: [{ role: "user", content: "hi" }] }, { providers: [provider] }),
+      route(
+        "company-research",
+        { messages: [{ role: "user", content: "hi" }] },
+        { providers: [provider] },
+      ),
     ).rejects.toBeInstanceOf(AllModelsFailedError);
   });
 
   it("throws AllModelsFailedError immediately when nothing is installed", async () => {
     const provider = new FakeProvider([], {});
     await expect(
-      route("company-research", { messages: [{ role: "user", content: "hi" }] }, { providers: [provider] }),
+      route(
+        "company-research",
+        { messages: [{ role: "user", content: "hi" }] },
+        { providers: [provider] },
+      ),
     ).rejects.toBeInstanceOf(AllModelsFailedError);
   });
 
   it("honors an explicit model override and does not substitute another model on failure", async () => {
-    const provider = new FakeProvider(["qwen3:8b", "deepseek-r1:7b"], {
-      "deepseek-r1:7b": new Error("timeout"),
-    });
+    const provider = new FakeProvider(
+      [
+        { id: "qwen3:14b", sizeGb: 9.3 },
+        { id: "mistral:latest", sizeGb: 4.4 },
+      ],
+      { "mistral:latest": new Error("timeout") },
+    );
     await expect(
       route(
         "company-research",
         { messages: [{ role: "user", content: "hi" }] },
-        { providers: [provider], model: "deepseek-r1:7b" },
+        { providers: [provider], model: "mistral:latest" },
       ),
     ).rejects.toBeInstanceOf(AllModelsFailedError);
-    expect(provider.calls).toEqual(["deepseek-r1:7b"]);
+    expect(provider.calls).toEqual(["mistral:latest"]);
   });
 
   it("deprioritizes a model after repeated failures on a later route() call", async () => {
-    const provider = new FakeProvider(["qwen3:8b", "deepseek-r1:7b"], {
-      "qwen3:8b": new Error("timeout"),
-      "deepseek-r1:7b": { content: "ok", reasoning: "" },
-    });
-    // Two failures trip the health cooldown for qwen3:8b.
-    await route("company-research", { messages: [{ role: "user", content: "1" }] }, { providers: [provider] });
-    provider.calls = [];
-    await route("company-research", { messages: [{ role: "user", content: "2" }] }, { providers: [provider] });
+    const provider = new FakeProvider(
+      [
+        { id: "qwen3:14b", sizeGb: 9.3 },
+        { id: "mistral:latest", sizeGb: 4.4 },
+      ],
+      {
+        "qwen3:14b": new Error("timeout"),
+        "mistral:latest": { content: "ok", reasoning: "" },
+      },
+    );
+    // Two failures trip the health cooldown for qwen3:14b.
+    for (const q of ["1", "2"]) {
+      await route(
+        "company-research",
+        { messages: [{ role: "user", content: q }] },
+        { providers: [provider] },
+      );
+    }
     provider.calls = [];
 
     const res = await route(
@@ -172,21 +335,23 @@ describe("route", () => {
       { messages: [{ role: "user", content: "3" }] },
       { providers: [provider] },
     );
-    // Unhealthy qwen3:8b is tried last now, but deepseek-r1:7b still answers.
-    expect(res.model).toBe("deepseek-r1:7b");
+    expect(res.model).toBe("mistral:latest");
+    expect(provider.calls[0]).toBe("mistral:latest"); // the cooling model is no longer tried first
   });
 });
 
 describe("pickModel", () => {
   it("returns the top candidate for the task without running anything", async () => {
-    const provider = new FakeProvider(["mistral:7b", "qwen3:8b"], {});
+    const provider = new FakeProvider(INSTALLED, {});
     const model = await pickModel("company-research", { providers: [provider] });
-    expect(model).toBe("qwen3:8b");
+    expect(model).toBe("qwen3:14b");
     expect(provider.calls).toEqual([]); // pickModel never calls complete()
   });
 
   it("uses a pre-fetched installed list when provided, skipping listModels()", async () => {
-    const model = await pickModel("company-research", { installed: ["deepseek-r1:7b"] });
-    expect(model).toBe("deepseek-r1:7b");
+    const model = await pickModel("company-research", {
+      installed: [{ id: "mistral:latest", sizeGb: 4.4 }],
+    });
+    expect(model).toBe("mistral:latest");
   });
 });

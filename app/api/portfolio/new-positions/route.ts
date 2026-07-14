@@ -13,7 +13,7 @@ import { NextResponse } from "next/server";
 import { listWatchlist } from "@/lib/db";
 import { runPrompt } from "@/lib/ai";
 import { AllModelsFailedError } from "@/lib/ai/router";
-import { extractJson } from "@/lib/json-extract";
+import { extractJsonArray } from "@/lib/json-extract";
 import { gatherWatchlistAlerts, type WatchlistPortfolioContext } from "@/lib/ai-watchlist";
 import type { PortfolioObjective, PortfolioConstraints, NewPositionRecommendation, PortfolioReport } from "@/lib/portfolio-analytics";
 
@@ -135,45 +135,43 @@ Respond with ONLY a JSON array (no markdown, no explanation outside JSON):
 ]`;
 }
 
-function parseRecommendations(raw: string): NewPositionRecommendation[] | null {
-  try {
-    const parsed = extractJson<Partial<NewPositionRecommendation & { fromWatchlist?: boolean }>[]>(raw);
-    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+function sanitizeRecommendation(item: unknown): NewPositionRecommendation | null {
+  if (item === null || typeof item !== "object") return null;
+  const r = item as Partial<NewPositionRecommendation & { fromWatchlist?: boolean }>;
+  if (!r.symbol || !r.name || !r.reason) return null;
+  return {
+    symbol: String(r.symbol ?? "").toUpperCase(),
+    name: String(r.name ?? ""),
+    currentPrice: null,
+    marketCap: null,
+    sector: String(r.sector ?? "Unknown"),
+    reason: String(r.reason ?? ""),
+    weaknessAddressed: String(r.weaknessAddressed ?? ""),
+    expectedImpact: {
+      diversification: (["improves", "neutral", "reduces"].includes(String(r.expectedImpact?.diversification ?? "")) ? r.expectedImpact?.diversification : "neutral") as "improves" | "neutral" | "reduces",
+      risk: (["reduces", "neutral", "increases"].includes(String(r.expectedImpact?.risk ?? "")) ? r.expectedImpact?.risk : "neutral") as "reduces" | "neutral" | "increases",
+      growthPotential: (["high", "medium", "low"].includes(String(r.expectedImpact?.growthPotential ?? "")) ? r.expectedImpact?.growthPotential : "medium") as "high" | "medium" | "low",
+      incomePotential: (["high", "medium", "low"].includes(String(r.expectedImpact?.incomePotential ?? "")) ? r.expectedImpact?.incomePotential : "low") as "high" | "medium" | "low",
+    },
+    suggestedAllocationPct: Math.min(25, Math.max(1, Number(r.suggestedAllocationPct ?? 5))),
+    suggestedDollarAmount: 0, // computed below based on portfolio value
+    confidenceScore: Math.min(100, Math.max(0, Number(r.confidenceScore ?? 65))),
+    breakdown: {
+      portfolioFitScore: Math.min(100, Math.max(0, Number(r.breakdown?.portfolioFitScore ?? 65))),
+      fundamentalScore:  Math.min(100, Math.max(0, Number(r.breakdown?.fundamentalScore  ?? 65))),
+      technicalScore:    Math.min(100, Math.max(0, Number(r.breakdown?.technicalScore    ?? 60))),
+      valuationScore:    Math.min(100, Math.max(0, Number(r.breakdown?.valuationScore    ?? 60))),
+      momentumScore:     Math.min(100, Math.max(0, Number(r.breakdown?.momentumScore     ?? 60))),
+    },
+    supportingFactors: Array.isArray(r.supportingFactors) ? r.supportingFactors.slice(0, 4).map(String) : [],
+    fromWatchlist: r.fromWatchlist ?? false,
+    autoQualified: false, // recomputed accurately below once autoQualifiedSymbols is known
+  };
+}
 
-    return parsed
-      .filter((r) => r.symbol && r.name && r.reason)
-      .slice(0, 6)
-      .map((r) => ({
-        symbol: String(r.symbol ?? "").toUpperCase(),
-        name: String(r.name ?? ""),
-        currentPrice: null,
-        marketCap: null,
-        sector: String(r.sector ?? "Unknown"),
-        reason: String(r.reason ?? ""),
-        weaknessAddressed: String(r.weaknessAddressed ?? ""),
-        expectedImpact: {
-          diversification: (["improves", "neutral", "reduces"].includes(String(r.expectedImpact?.diversification ?? "")) ? r.expectedImpact?.diversification : "neutral") as "improves" | "neutral" | "reduces",
-          risk: (["reduces", "neutral", "increases"].includes(String(r.expectedImpact?.risk ?? "")) ? r.expectedImpact?.risk : "neutral") as "reduces" | "neutral" | "increases",
-          growthPotential: (["high", "medium", "low"].includes(String(r.expectedImpact?.growthPotential ?? "")) ? r.expectedImpact?.growthPotential : "medium") as "high" | "medium" | "low",
-          incomePotential: (["high", "medium", "low"].includes(String(r.expectedImpact?.incomePotential ?? "")) ? r.expectedImpact?.incomePotential : "low") as "high" | "medium" | "low",
-        },
-        suggestedAllocationPct: Math.min(25, Math.max(1, Number(r.suggestedAllocationPct ?? 5))),
-        suggestedDollarAmount: 0, // computed below based on portfolio value
-        confidenceScore: Math.min(100, Math.max(0, Number(r.confidenceScore ?? 65))),
-        breakdown: {
-          portfolioFitScore: Math.min(100, Math.max(0, Number(r.breakdown?.portfolioFitScore ?? 65))),
-          fundamentalScore:  Math.min(100, Math.max(0, Number(r.breakdown?.fundamentalScore  ?? 65))),
-          technicalScore:    Math.min(100, Math.max(0, Number(r.breakdown?.technicalScore    ?? 60))),
-          valuationScore:    Math.min(100, Math.max(0, Number(r.breakdown?.valuationScore    ?? 60))),
-          momentumScore:     Math.min(100, Math.max(0, Number(r.breakdown?.momentumScore     ?? 60))),
-        },
-        supportingFactors: Array.isArray(r.supportingFactors) ? r.supportingFactors.slice(0, 4).map(String) : [],
-        fromWatchlist: r.fromWatchlist ?? false,
-        autoQualified: false, // recomputed accurately below once autoQualifiedSymbols is known
-      }));
-  } catch {
-    return null;
-  }
+function parseRecommendations(raw: string): NewPositionRecommendation[] | null {
+  const recommendations = extractJsonArray(raw, sanitizeRecommendation).slice(0, 6);
+  return recommendations.length > 0 ? recommendations : null;
 }
 
 export async function POST(request: Request) {

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { listPortfolio } from "@/lib/db";
 import { getQuotes } from "@/lib/yahoo";
 import { runPrompt } from "@/lib/ai";
-import { extractJson } from "@/lib/json-extract";
+import { extractJsonObject } from "@/lib/json-extract";
 import { formatCurrency } from "@/lib/format";
 import { gatherPortfolioManagerEvidence, buildBriefEvidenceSuffix } from "@/lib/ai-portfolio-manager";
 
@@ -108,17 +108,16 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
   let parsed: Omit<PortfolioBrief, "model" | "generatedAt">;
   try {
     const raw = await runPrompt("portfolio-intelligence", prompt, { json: true, maxTokens: 600 });
-    const extracted = extractJson<Partial<Omit<PortfolioBrief, "model" | "generatedAt">>>(raw);
-    // Local models occasionally omit a field despite the prompt — extractJson only
-    // guarantees parseable JSON, not schema completeness. Default missing fields
-    // rather than letting the client crash on e.g. actionItems.length.
-    parsed = {
-      headline: extracted.headline ?? "Portfolio summary",
-      narrative: extracted.narrative ?? "",
-      topOpportunity: extracted.topOpportunity ?? "",
-      biggestRisk: extracted.biggestRisk ?? "",
-      actionItems: Array.isArray(extracted.actionItems) ? extracted.actionItems : [],
-    };
+    // extractJsonObject guarantees parseable, schema-complete JSON — local
+    // models occasionally omit a field despite the prompt, and a bare cast
+    // would let the client crash on e.g. actionItems.length.
+    parsed = extractJsonObject(raw, {
+      headline: "Portfolio summary",
+      narrative: "",
+      topOpportunity: "",
+      biggestRisk: "",
+      actionItems: [] as string[],
+    });
   } catch {
     parsed = {
       headline: "Portfolio summary — start Ollama for AI intelligence",

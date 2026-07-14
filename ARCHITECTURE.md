@@ -2,9 +2,79 @@
 
 Complete reference for every major UAA module: what it does, what it needs, what it produces, and how modules talk to each other.
 
+---
+
+## Platform Data Layer (`lib/platform/`) — read this first
+
+**Every fetch in UAA goes through one path.** Nothing bypasses it: not the
+Screener, not the Scanner, not the AI context builder, not AI generation itself.
+
+```
+caller → getDataset()
+           → cache read   (fresh?         serve — provider never contacted)
+           → cache read   (stale-in-SWR?  serve NOW, refresh in background)
+           → dedupe       (identical work already running? attach to it)
+           → provider fetch → normalize → cache write → return
+```
+
+This is wired in at the **provider boundary** (`lib/yahoo.ts`, `lib/edgar.ts`,
+`lib/ai/context.ts`), not at the ~48 call sites — so bypassing it is impossible
+by construction, and every module observes the same normalized value for a given
+asset without knowing the platform exists.
+
+| File | Role |
+|------|------|
+| `registry.ts` | **The single source of truth for cache policy.** Per-dataset TTL/SWR/persist + the dependency graph. There is deliberately no universal TTL. |
+| `cache.ts` | Smart Cache: L1 in-process LRU + L2 SQLite (`platform_cache`), stale-while-revalidate, dependency-aware invalidation. |
+| `dedup.ts` | Request Deduplication Manager. Refcounted — one consumer cancelling never kills a request others still need. |
+| `orchestrator.ts` | `runPlan()`: DAG execution, concurrency limits, per-step failure isolation, retries, cancellation. Plus `mapLimit()` for batch work. |
+| `data-layer.ts` | The façade: `getDataset` / `peekDataset` / `invalidateAsset`. |
+| `client/` | Browser half: subscription store (granular re-render), `useDataset` (cancellation + dedup + SWR), `useResearchBundle` (streams the bundle). |
+
+**Cache policy is dataset-scoped, never page-scoped.** A live quote (15s TTL, no
+SWR, never persisted) and a 10-K (6h TTL, persisted) have nothing in common
+except being "data".
+
+**Invalidation is dependency-aware.** `invalidateAsset("AAPL", "filings")`
+cascades filings → statements → fundamentals → peers → companyContext →
+aiVerdict, and stops. Apple's price history, Apple's profile, and every other
+symbol are untouched. A price tick invalidates valuation and the verdict — not
+the business overview.
+
+**Observability:** `GET /api/platform` (cache hit rate, how much duplicate
+provider work dedup eliminated, what's in flight, the registered policies).
+`DELETE /api/platform?symbol=AAPL&dataset=filings` invalidates.
+
+### Orchestrated research (`lib/research-bundle.ts`)
+
+One declared plan; `/api/research` (JSON) and `/api/research/bundle` (NDJSON,
+streamed per section) both execute it, so they cannot drift. Independent steps
+run concurrently; only the two real dependency chains are ordered
+(`profile → sectorHistory`, `fundamentals → peers/sectorRotation`).
+
+This replaced a four-stage waterfall. Measured, cold cache: full research
+2264ms → 1455ms; **time-to-first-paint 764ms → 163ms**; warm revisit 36ms.
+
+### AI streaming (`lib/ai/streaming-json.ts` + `/api/ai/report`)
+
+**Ollama serializes requests** (measured: 3 concurrent generations ≈ 3
+sequential). So per-section generation would cost ~9x one generation — it was
+built, measured at 138s vs 40s, and rejected. Instead: **one generation** (the
+same `buildVerdictPrompt` the non-streamed `/api/ai/verdict` uses), parsed
+incrementally, with each top-level JSON field emitted the instant it closes.
+
+The assembled report is therefore *the same object* the non-streamed route
+returns — not an approximation. Total generation time is unchanged; only
+time-to-first-section improves (32s → 7s on MSFT, 42s → 4s on JPM). Complete
+sections only — never tokens, never half-written sentences.
+
+---
+
 ## Core Data Sources
 
 These are not modules but foundational services that other modules depend on.
+**All of them now route through the Platform Data Layer above** — the caching
+notes in each section below describe the dataset policy, not a private cache.
 
 ### Yahoo Finance (`lib/yahoo.ts`)
 **Purpose**: Real-time US market data from Yahoo Finance API.
