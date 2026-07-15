@@ -20,7 +20,22 @@ export interface ProviderCompleteRequest {
   timeoutMs?: number;
   /** Ask the model to respond with JSON only. */
   json?: boolean;
+  /**
+   * Toggle chain-of-thought on a reasoning model. `undefined` = the model has no
+   * reasoning channel, so don't send the flag at all. The Router forces `false`
+   * under `json` — the two cannot be combined (see router.ts:resolveThinking).
+   */
+  thinking?: boolean;
+  /** Context window to allocate. Omit to accept the provider's default. */
+  numCtx?: number;
   signal?: AbortSignal;
+}
+
+/** An installed model and what it costs to run. */
+export interface ProviderModelInfo {
+  id: string;
+  /** Weights size in GB. The Router gates on this — a model bigger than RAM thrashes. */
+  sizeGb: number;
 }
 
 export interface ProviderCompleteResult {
@@ -42,7 +57,7 @@ export interface AIProvider {
   /** Stable id used in registry/router logs and the normalized response ("provider" field). */
   readonly id: string;
   /** Models currently available to run, best-effort (empty array, not a throw, when unreachable). */
-  listModels(): Promise<string[]>;
+  listModels(): Promise<ProviderModelInfo[]>;
   /** Cheap reachability probe used by the Router to skip a dead provider before trying models. */
   healthCheck(): Promise<ProviderHealth>;
   /** Single-shot completion. */

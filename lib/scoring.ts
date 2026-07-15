@@ -11,7 +11,6 @@ import type {
   RiskItem,
   RiskLevel,
   ScoreBucket,
-  ScoreFactor,
   ScoreResult,
   SectorRotationEntry,
 } from "./types";
@@ -20,7 +19,7 @@ import { sectorGroup } from "./sector";
 // this is safe in client bundles, unlike importing lib/sector-rotation.ts
 // (which pulls in node:sqlite via lib/db.ts).
 import type { MarketRegion } from "./market";
-import { lerp } from "./score-math";
+import { lerp, mk, bucket } from "./score-math";
 import { scoreToRecommendation, RECOMMENDATION_LABEL, TIER_EDGES } from "./recommendation";
 
 /* -------------------------------------------------------------------------- */
@@ -29,44 +28,6 @@ import { scoreToRecommendation, RECOMMENDATION_LABEL, TIER_EDGES } from "./recom
 
 const pct = (v: number) => `${(v * 100).toFixed(0)}%`;
 const ratio = (v: number) => v.toFixed(2);
-
-interface FactorResult {
-  factor: ScoreFactor;
-  hasData: boolean;
-}
-
-/** Build one factor; missing data yields half credit and is flagged. */
-function mk(
-  label: string,
-  value: number | null | undefined,
-  worst: number,
-  best: number,
-  max: number,
-  detail: (v: number) => string,
-): FactorResult {
-  if (value == null || Number.isNaN(value)) {
-    return { factor: { label, points: Math.round(max * 0.5), max, detail: "n/a" }, hasData: false };
-  }
-  return {
-    factor: { label, points: Math.round(lerp(value, worst, best, max)), max, detail: detail(value) },
-    hasData: true,
-  };
-}
-
-function bucket(name: string, results: FactorResult[]): {
-  bucket: ScoreBucket;
-  dataCount: number;
-  total: number;
-} {
-  const factors = results.map((r) => r.factor);
-  const points = factors.reduce((s, f) => s + f.points, 0);
-  const max = factors.reduce((s, f) => s + f.max, 0);
-  return {
-    bucket: { name, points, max, factors },
-    dataCount: results.filter((r) => r.hasData).length,
-    total: results.length,
-  };
-}
 
 /* -------------------------------------------------------------------------- */
 /* Buckets (sector-aware)                                                     */

@@ -1,6 +1,5 @@
-import { checkHealth, streamChat } from "@/lib/ai/ollama";
-import { specForInstalled } from "@/lib/ai/models";
-import { pickModel } from "@/lib/ai/router";
+import { checkHealth } from "@/lib/ai/ollama";
+import { runTaskChat } from "@/lib/ai/orchestrator";
 import { gatherPortfolioManagerEvidence, buildAuditEvidenceBlock } from "@/lib/ai-portfolio-manager";
 
 export const runtime = "nodejs";
@@ -26,13 +25,6 @@ export async function POST(request: Request) {
       { status: 503 },
     );
   }
-
-  const model = await pickModel("portfolio-intelligence", { installed: models });
-  if (!model) {
-    return Response.json({ error: "No models installed", code: "model_missing" }, { status: 503 });
-  }
-
-  const spec = specForInstalled(model);
 
   // Build analytics context from the compact summary
   const health     = (a.health as { total: number; grade: string; summary: string } | null) ?? null;
@@ -113,11 +105,9 @@ Keep it under 400 words. Be direct. Avoid generic advice.`;
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        for await (const delta of streamChat({
-          model,
-          messages,
-          temperature: spec.temperature,
-          numCtx: Math.min(spec.contextWindow, 8192),
+        // Model choice, generation settings, and fallback are the Router's job —
+        // this route names the task and supplies the conversation, nothing more.
+        for await (const delta of runTaskChat("portfolio-audit", messages, {
           signal: request.signal,
         })) {
           controller.enqueue(encoder.encode(delta));

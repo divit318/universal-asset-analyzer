@@ -45,57 +45,50 @@ async function responseToUint8(res: Response): Promise<Uint8Array> {
 /* -------------------------------------------------------------------------- */
 
 describe("POST /api/export/screener", () => {
+  /**
+   * The export is now registry-driven: it takes an asset class and normalized
+   * RankedCandidate rows, and builds the sheet from that class's declared
+   * columns. So the same route exports an equity screen and a bond screen.
+   */
+  function candidate(symbol: string, metrics: Record<string, number | null>, attributes: Record<string, string | null> = {}) {
+    return {
+      symbol,
+      name: `${symbol} Inc.`,
+      assetClass: "equity",
+      price: 180,
+      changePercent: 1.2,
+      rank: 1,
+      rankScore: 82,
+      confidence: 100,
+      percentiles: { overallScore: 95 },
+      metrics,
+      attributes,
+      match: { passed: [], strengths: [], warnings: ["High leverage"] },
+    };
+  }
+
   it("returns xlsx with correct headers and magic bytes", async () => {
     const { POST } = await import("@/app/api/export/screener/route");
 
     const rows = [
-      {
-        symbol: "AAPL",
-        name: "Apple Inc.",
-        sector: "Technology",
-        industry: "Consumer Electronics",
-        price: 180,
-        changePercent: 1.2,
-        marketCap: 2.8e12,
-        peRatio: 28,
-        forwardPE: 25,
-        pegRatio: 1.2,
-        priceToBook: 45,
-        evToEbitda: 20,
-        revenueGrowth: 8,
-        earningsGrowth: 12,
-        grossMargin: 43,
-        netMargin: 25,
-        operatingMargin: 30,
-        returnOnEquity: 160,
-        returnOnAssets: 22,
-        debtToEquity: 1.5,
-        currentRatio: 0.94,
-        fcfYield: 3.5,
-        dividendYield: 0.5,
-        payoutRatio: 15,
-        volume: 55e6,
-        fiftyTwoWeekHigh: 200,
-        fiftyTwoWeekLow: 130,
-        analystUpside: 12,
-        scores: {
-          overall: 82,
-          value: 45,
-          growth: 70,
-          quality: 88,
-          momentum: 75,
-          financialHealth: 60,
+      candidate(
+        "AAPL",
+        {
+          overallScore: 82, valueScore: 45, growthScore: 70, qualityScore: 88,
+          marketCap: 2.8e12, forwardPE: 25, revenueGrowthYoY: 8, roic: 30,
+          fcfYield: 3.5, dividendYield: 0.5,
         },
-      },
+        { sector: "Technology" },
+      ),
     ];
 
-    const res = await POST(makeRequest({ rows }));
+    const res = await POST(makeRequest({ assetClass: "equity", rows }));
 
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain(
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
-    expect(res.headers.get("Content-Disposition")).toContain("screener-");
+    expect(res.headers.get("Content-Disposition")).toContain("screen-");
     expect(res.headers.get("Content-Disposition")).toContain(".xlsx");
 
     const buf = await responseToUint8(res);
@@ -103,12 +96,33 @@ describe("POST /api/export/screener", () => {
     expect(isXlsxMagic(buf)).toBe(true);
   });
 
-  it("handles empty rows array", async () => {
+  it("exports a bond screen through the same route", async () => {
     const { POST } = await import("@/app/api/export/screener/route");
-    const res = await POST(makeRequest({ rows: [] }));
+
+    const rows = [
+      {
+        ...candidate("AGG", { yield: 4.2, spread: 0.4, duration: 3.83, maturity: 9.41, investmentGradePct: 100, expenseRatio: 0.03, aum: 120e9 }, { issuerType: "Government", avgRating: "AA", riskLevel: "Low" }),
+        assetClass: "bond",
+      },
+    ];
+
+    const res = await POST(makeRequest({ assetClass: "bond", rows }));
     expect(res.status).toBe(200);
-    const buf = await responseToUint8(res);
-    expect(isXlsxMagic(buf)).toBe(true);
+    expect(res.headers.get("Content-Disposition")).toContain("uaa-bond-screen-");
+    expect(isXlsxMagic(await responseToUint8(res))).toBe(true);
+  });
+
+  it("handles an empty result set", async () => {
+    const { POST } = await import("@/app/api/export/screener/route");
+    const res = await POST(makeRequest({ assetClass: "equity", rows: [] }));
+    expect(res.status).toBe(200);
+    expect(isXlsxMagic(await responseToUint8(res))).toBe(true);
+  });
+
+  it("rejects an unknown asset class", async () => {
+    const { POST } = await import("@/app/api/export/screener/route");
+    const res = await POST(makeRequest({ assetClass: "options", rows: [] }));
+    expect(res.status).toBe(400);
   });
 });
 

@@ -1,110 +1,74 @@
 import { describe, expect, it } from "vitest";
-import { applyFilters, parseCriteria } from "@/lib/screener";
-import { buildQuery, mapScreenerRow } from "@/lib/yahoo-screener";
-import type { ScreenerRow } from "@/lib/types";
+import { q, SCREENER_SECTORS } from "@/lib/yahoo-screener";
 
-const rows: ScreenerRow[] = [
-  { symbol: "AAA", name: "Alpha", sector: "Tech", price: 100, changePercent: 2, marketCap: 5e9, peRatio: 18, volume: 1e6 },
-  { symbol: "BBB", name: "Beta", sector: "Energy", price: 20, changePercent: -3, marketCap: 1e9, peRatio: null, volume: 5e5 },
-  { symbol: "CCC", name: "Gamma", sector: "Tech", price: 250, changePercent: 0.5, marketCap: null, peRatio: 40, volume: 2e6 },
-];
+/**
+ * The Yahoo screener query builder.
+ *
+ * This used to test `buildQuery`/`mapScreenerRow` — a criteria-object builder
+ * hardcoded to EQUITY and to one fixed row shape. Both were removed once the
+ * universal screener's universe providers took over: each builds its own query
+ * from the `q` operand helpers below and narrows the raw response itself (an
+ * ETF row and a crypto row share almost no fields). What is left to test is the
+ * operand tree those helpers produce.
+ */
 
-describe("applyFilters", () => {
-  it("returns all rows for empty criteria", () => {
-    expect(applyFilters(rows, {})).toHaveLength(3);
+describe("query operands", () => {
+  it("builds a leaf equality operand", () => {
+    expect(q.eq("region", "us")).toEqual({ operator: "eq", operands: ["region", "us"] });
   });
 
-  it("filters by sector case-insensitively", () => {
-    const r = applyFilters(rows, { sector: "tech" });
-    expect(r.map((x) => x.symbol)).toEqual(["AAA", "CCC"]);
+  it("builds numeric bound operands", () => {
+    expect(q.gte("intradaymarketcap", 1e10)).toEqual({
+      operator: "gte",
+      operands: ["intradaymarketcap", 1e10],
+    });
+    expect(q.lte("dayvolume", 5e6)).toEqual({ operator: "lte", operands: ["dayvolume", 5e6] });
   });
 
-  it("filters by price range", () => {
-    const r = applyFilters(rows, { minPrice: 50, maxPrice: 200 });
-    expect(r.map((x) => x.symbol)).toEqual(["AAA"]);
+  it("nests operands under and/or", () => {
+    const query = q.and(q.eq("region", "us"), q.gte("intradaymarketcap", 3e8));
+    expect(query.operator).toBe("and");
+    expect(query.operands).toHaveLength(2);
+    expect(query.operands).toContainEqual({ operator: "eq", operands: ["region", "us"] });
   });
 
-  it("filters by change percent", () => {
-    const r = applyFilters(rows, { minChangePercent: 0 });
-    expect(r.map((x) => x.symbol)).toEqual(["AAA", "CCC"]);
+  it("composes the small/mid-cap tranche query the equity universe actually sends", () => {
+    const exchanges = q.or(
+      q.eq("exchange", "NMS"),
+      q.eq("exchange", "NYQ"),
+      q.eq("exchange", "ASE"),
+    );
+    const query = q.and(
+      q.eq("region", "us"),
+      exchanges,
+      q.gte("intradaymarketcap", 3e8),
+      q.lte("intradaymarketcap", 1e10),
+      q.gte("dayvolume", 200_000),
+    );
+
+    expect(query.operands).toHaveLength(5);
+    expect(query.operands).toContainEqual(exchanges);
+    // The market-cap band must be bounded on BOTH sides. Without the ceiling
+    // this tranche would just re-fetch the mega-caps the first tranche already
+    // has, and the small-cap universe would stay empty.
+    expect(query.operands).toContainEqual({ operator: "gte", operands: ["intradaymarketcap", 3e8] });
+    expect(query.operands).toContainEqual({ operator: "lte", operands: ["intradaymarketcap", 1e10] });
   });
 
-  it("excludes null market cap when minMarketCap is set", () => {
-    const r = applyFilters(rows, { minMarketCap: 2e9 });
-    expect(r.map((x) => x.symbol)).toEqual(["AAA"]);
-  });
-
-  it("preserves input order", () => {
-    const r = applyFilters(rows, { maxChangePercent: 100 });
-    expect(r.map((x) => x.symbol)).toEqual(["AAA", "BBB", "CCC"]);
+  it("composes the REIT universe query", () => {
+    const query = q.and(
+      q.eq("region", "us"),
+      q.eq("sector", "Real Estate"),
+      q.gte("intradaymarketcap", 2e8),
+    );
+    expect(query.operands).toContainEqual({ operator: "eq", operands: ["sector", "Real Estate"] });
   });
 });
 
-describe("parseCriteria", () => {
-  it("coerces numeric strings and trims sector", () => {
-    expect(
-      parseCriteria({ sector: " Tech ", minPrice: "10", maxPrice: "", maxPE: "25" }),
-    ).toEqual({
-      sector: "Tech",
-      minPrice: 10,
-      maxPrice: null,
-      minChangePercent: null,
-      maxChangePercent: null,
-      minMarketCap: null,
-      maxMarketCap: null,
-      minPE: null,
-      maxPE: 25,
-      minVolume: null,
-      sortField: null,
-      sortDir: null,
-    });
-  });
-
-  it("rejects non-numeric values as null", () => {
-    expect(parseCriteria({ minPrice: "abc" }).minPrice).toBeNull();
-  });
-
-  it("only accepts known sort fields and directions", () => {
-    expect(parseCriteria({ sortField: "peRatio", sortDir: "asc" })).toMatchObject({
-      sortField: "peRatio",
-      sortDir: "asc",
-    });
-    expect(parseCriteria({ sortField: "bogus", sortDir: "sideways" })).toMatchObject({
-      sortField: null,
-      sortDir: null,
-    });
-  });
-});
-
-describe("buildQuery (universal screener)", () => {
-  it("always scopes to US-listed equities", () => {
-    const q = buildQuery({});
-    expect(q.operator).toBe("and");
-    expect(q.operands).toContainEqual({ operator: "eq", operands: ["region", "us"] });
-  });
-
-  it("maps min/max filters onto the right Yahoo fields", () => {
-    const q = buildQuery({ minMarketCap: 1e10, maxPE: 20, sector: "Technology" });
-    expect(q.operands).toContainEqual({ operator: "gte", operands: ["intradaymarketcap", 1e10] });
-    expect(q.operands).toContainEqual({ operator: "lte", operands: ["peratio.lasttwelvemonths", 20] });
-    expect(q.operands).toContainEqual({ operator: "eq", operands: ["sector", "Technology"] });
-  });
-});
-
-describe("mapScreenerRow", () => {
-  it("maps a raw quote and drops rows without a price", () => {
-    expect(
-      mapScreenerRow({ symbol: "AAPL", longName: "Apple Inc.", sectorDisp: "Technology", regularMarketPrice: 200, marketCap: 3e12, trailingPE: 30, regularMarketVolume: 5e7 }),
-    ).toEqual({
-      symbol: "AAPL",
-      name: "Apple Inc.",
-      sector: "Technology",
-      price: 200,
-      changePercent: 0,
-      marketCap: 3e12,
-      peRatio: 30,
-      volume: 5e7,
-    });
-    expect(mapScreenerRow({ symbol: "NOPRICE" })).toBeNull();
+describe("SCREENER_SECTORS", () => {
+  it("exposes Yahoo's own 11-sector taxonomy (not GICS)", () => {
+    expect(SCREENER_SECTORS).toHaveLength(11);
+    expect(SCREENER_SECTORS).toContain("Real Estate");
+    expect(SCREENER_SECTORS).toContain("Financial Services"); // GICS calls this "Financials"
   });
 });

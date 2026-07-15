@@ -6,7 +6,7 @@ This file provides comprehensive guidance to Claude Code when working with the U
 
 **UAA is an institutional-grade equity research platform** that runs entirely locally, powered by:
 - **Live market data** (Yahoo Finance for US equities, screener.in for Indian markets)
-- **Offline AI** (Ollama + llama3.2 for local inference — no external LLM APIs)
+- **Offline AI** (Ollama for local inference — no external LLM APIs). Feature code names a *task*, never a model; the AI Platform (`lib/ai/`) routes it to the best local model that fits in memory. See `lib/ai/ARCHITECTURE.md`.
 - **Quant scoring** (Python DuckDB engine for systematic signal generation)
 - **User-owned state** (SQLite database, no cloud sync, no subscriptions)
 
@@ -120,6 +120,7 @@ The design philosophy is **transparency over convenience**: users see the resear
 
 | Module | Purpose | Key Files |
 |--------|---------|-----------|
+| **Home** (`/`) | Personalized daily dashboard composed from an independent module registry (today's brief, recent activity, watchlist/market intel, sector rotation). Adding a module never touches `app/page.tsx` — register it, map it, place it in the layout. | `lib/home/registry.ts`, `lib/home/layout.ts`, `app/_home/module-map.ts` |
 | **Research** (`/research`, `/research/india`) | Deep equity research: quote, history, filings, news, insider trades, copilot chat (persisted per session). India variant uses screener.in API. | `lib/ai-research.ts`, `lib/edgar.ts`, `lib/news.ts`, `lib/screener-in.ts` |
 | **Screener** (`/screener`) | Fundamental screening with 24h cached Yahoo data, live prices, composite scoring (value/quality/momentum). | `lib/fundamental-screener.ts`, `lib/composite.ts`, `lib/dataset.ts` |
 | **Scanner** (`/scanner`) | Event-driven signals: earnings surprises, insider transactions, technical breaks. | `lib/event-screener.ts`, `lib/indicators.ts` |
@@ -131,7 +132,6 @@ The design philosophy is **transparency over convenience**: users see the resear
 | **IC Report** (`/ic-report`) | Institutional research via multi-agent pipeline (9 agent domains: business, industry, competition, management, capitalAllocation, accounting, valuation, governance, risk). | `lib/ic-agents.ts`, `lib/ic-questions.ts`, `lib/ic-signals.ts` |
 | **Engine** (`/engine`) | Quant scorecard powered by Python DuckDB pipeline. Runs separately, outputs Parquet, read-only from Next.js. | `engine/daily_run.py` |
 | **Thematic** (`/thematic`) | 10-stage thematic analysis framework with supply chains, commodities, geopolitics, company tiers, opportunity scoring. | `lib/thematic-engine.ts` |
-| **Analyze** (`/analyze`) | Asset upload → structured breakdown (legacy, minimal active development). | `app/analyze/page.tsx` |
 
 ---
 
@@ -255,6 +255,8 @@ scanner_cache
 - **Charts**: Recharts for all interactive charts (line, multi-line, heatmap patterns).
 - **Typography**: Geist (sans-serif), Geist Mono (code/data).
 - **Accessibility**: Semantic HTML, focus rings, skip-to-content link in root layout.
+- **Theming mechanism**: `data-theme="dark" | "light"` attribute on `<html>`, set by `app/_components/theme.tsx`. Selectors are `:root, [data-theme="dark"]` and `[data-theme="light"]` — **not** a `.dark` class.
+- **Never run `npx shadcn init` (or any shadcn CLI command) in this repo.** It rewrites `app/globals.css`, appending a competing `:root {}` / `.dark {}` block that reuses the exact same token names UAA already owns (`--background`, `--foreground`, `--card`, `--muted`, `--muted-foreground`, `--accent`, `--border`, etc.). Because CSS resolves same-specificity custom properties by source order, its plain `:root {}` (unconditional) silently wins over UAA's `[data-theme="dark"]` block regardless of theme, while its `.dark {}` companion never fires at all (nothing here ever sets a `.dark` class) — producing app-wide near-invisible text with zero build or lint errors. It also creates `components.json`, `components/ui/*`, `lib/utils.ts`, and pulls in an unrelated dependency tree (three.js, framer-motion-adjacent `motion`, cmdk, base-ui). This exact failure mode shipped once (2026-07-15); the fix was `git checkout -- app/globals.css package.json package-lock.json` + deleting the shadcn scaffold + `npm install`. If a shadcn component is ever genuinely wanted, hand-port only the component file and manually map its classes onto UAA's existing tokens — do not run `init`.
 
 ---
 
@@ -278,11 +280,38 @@ scanner_cache
 - Validate input early, handle errors with `try/catch`
 - Use `ReadableStream` for long-running operations (IC report, copilot)
 
-**Caching Strategy**
-- **Fundamentals**: 24h TTL in SQLite (refreshed on screener load)
-- **Live quotes**: No cache, always fresh
-- **Filings**: Cached by CIK internally in `lib/edgar.ts`
-- **Parquet**: Daily output from quant engine, read-only from Next.js
+**Caching Strategy — the Platform Data Layer owns this**
+- **Never add a cache to a module.** Every fetch already goes through
+  `lib/platform/` (cache + dedup + policy), wired in at the provider boundary
+  (`lib/yahoo.ts`, `lib/edgar.ts`, `lib/ai/context.ts`). A new private `Map`
+  cache in a feature file is the exact mistake this layer exists to prevent —
+  the codebase previously had five of them, none aware of the others.
+- **Cache lifetimes live in `lib/platform/registry.ts` and nowhere else.** To
+  change how long something is cached, edit its dataset policy there.
+- **Adding a new data source?** Wrap the fetch in `getDataset("<dataset>", params,
+  fetcher)` and declare the dataset's policy + dependents in the registry. You
+  get caching, disk persistence, dedup, SWR, and dependency-aware invalidation
+  with no further work.
+- **Invalidate by naming the event, not the caches**:
+  `invalidateAsset("AAPL", "filings")` — the registry's dependency graph works
+  out the cascade.
+- **Parquet**: Daily output from quant engine, read-only from Next.js (outside the platform).
+- **Two legacy SQLite stores predate the platform and still exist**:
+  `fundamentals_cache` (the Screener's 24h snapshot, `lib/dataset.ts`) and
+  `scanner_cache` (a 15-min keyed store for AI output, used by `lib/timeline.ts`,
+  `lib/movement-explainer.ts`, `lib/ai-financial-insight.ts`). Both sit *above*
+  platform-routed fetches rather than bypassing them — they memoize derived
+  results, not provider calls — so they are not a second provider path. They are
+  still the next thing to fold into the registry. Do not add to them.
+
+**Performance**
+- Don't hand-roll `Promise.all` waterfalls in routes. Declare a plan and let
+  `runPlan()` (lib/platform/orchestrator.ts) handle order, concurrency, failure
+  isolation, and cancellation. See `lib/research-bundle.ts` for the pattern.
+- Client data goes through `useDataset` (lib/platform/client/) — it gives you
+  cancellation on symbol change, dedup, and per-key re-render. Do not write a
+  bare `useEffect` + `fetch` + three `useState` slots; that pattern is what left
+  ten stale-response races on the research page.
 
 **Performance**
 - Parallel fetch: `Promise.all([req1, req2, req3])` not serial
@@ -389,7 +418,8 @@ npx vitest run tests/composite.test.ts  # single file
 | **Direct DB calls** | Page imports DatabaseSync | Use `lib/db.ts` CRUD functions | Single schema source of truth |
 | **Server-only imports in client** | Client imports ExcelJS/PDFKit | Use `app/api/` routes only | Listed in `next.config.ts` as serverExternalPackages |
 | **Hardcoded endpoints** | `fetch("http://localhost:11434/...")` | Use `process.env.OLLAMA_HOST` | Enables configuration via env vars |
-| **Direct Ollama calls** | Feature imports `lib/ai/ollama.ts` and calls `generate()`/`streamChat()` itself | Call `runPrompt(taskType, prompt, opts)` from `lib/ai.ts` | Task routing, retry/fallback, and model selection all live in the orchestrator — see `lib/ai/ARCHITECTURE.md` |
+| **Direct Ollama calls** | Feature imports `lib/ai/ollama.ts` and calls `generate()`/`streamChat()` itself | `runPrompt(taskType, prompt, opts)` from `lib/ai.ts`; `runTaskChat()` for multi-turn/streaming | Task routing, retry/fallback, memory-feasibility, and thinking control all live in the Router — see `lib/ai/ARCHITECTURE.md` |
+| **Naming a model in feature code** | `preferredModels: ["qwen3"]`, `model: "mistral"` | Declare what the task *needs* in `lib/ai/task-registry.ts`; pin in `lib/ai/config.ts` if you must override | The registry drifted to preferring models that weren't installed precisely because policy was duplicated per task |
 | **Missing data handling** | `quote.peRatio / quote.roe` without null check | `if (x == null) return 0` before division | Financial data is frequently incomplete |
 | **Mixing logic & UI** | Page component contains scoring logic | Move to `lib/`, expose via `app/api/` | Decouples testing, reuse, server/client |
 | **Serial requests** | `await req1; await req2; await req3;` | `await Promise.all([req1, req2, req3])` | Parallel fetching is 2-3x faster |

@@ -57,4 +57,28 @@ describe("deduplicateIntoEvents", () => {
     expect(result).toHaveLength(1);
     expect(result[0].headline).toBe("Story A");
   });
+
+  it("drops a cluster assignment missing clusterId/masterHeadline instead of crashing", async () => {
+    const items = [newsItem("Story A"), newsItem("Story B")];
+    runPromptMock.mockResolvedValue(JSON.stringify({
+      clusters: [
+        { index: 0, category: "macro" }, // missing clusterId + masterHeadline
+        { index: 1, clusterId: "story-b", category: "macro", masterHeadline: "Story B happened", summary: "s" },
+      ],
+    }));
+
+    const result = await deduplicateIntoEvents(items);
+    expect(result).toHaveLength(1);
+    expect(result[0].headline).toBe("Story B happened");
+  });
+
+  it("normalizes an invented category variant instead of propagating it as-is", async () => {
+    const items = [newsItem("Story A")];
+    runPromptMock.mockResolvedValue(JSON.stringify({
+      clusters: [{ index: 0, clusterId: "a", category: "SUPER-MACRO", masterHeadline: "Story A happened", summary: "s" }],
+    }));
+
+    const result = await deduplicateIntoEvents(items);
+    expect(result[0].category).toBe("company");
+  });
 });

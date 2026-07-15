@@ -1,19 +1,34 @@
 /**
  * Task Registry — the single place task→model routing policy lives.
  *
- * Every AI call in the app names a `TaskType`; this registry says which
- * models are preferred for it, in priority order, plus generation defaults
- * (temperature/maxTokens/timeout/json mode). The Router (./router.ts) turns
- * a TaskType into an actual model choice against what's installed and
- * healthy. Adding a task or changing its routing is a registry edit — no
- * feature code changes.
+ * Every AI call in the app names a {@link TaskType}. This registry declares what
+ * that task *needs*; the Router (./router.ts) works out which installed model
+ * best satisfies it. Adding a task, or a model, changes nothing else.
+ *
+ * ## Why requirements instead of a model list
+ *
+ * The previous registry hand-maintained a `preferredModels: string[]` for each
+ * of 30 tasks — 30 copies of the same policy, which is precisely how it drifted:
+ * it listed `deepseek-r1` and `llama3.1` (neither installed, so the top
+ * preference of every reasoning task silently resolved to nothing) while not
+ * knowing the models that *were* installed. Adding one model meant editing 30
+ * lines, so nobody did.
+ *
+ * A task now declares its reasoning complexity, latency sensitivity, context
+ * needs, and output shape. The Router scores the installed models against that.
+ * To override a specific decision, pin the task in ./config.ts — no code change.
  */
-
-import type { ModelCapability } from "./models";
 
 /** Every distinct AI job in the app. Add new tasks here, not ad hoc model picks. */
 export type TaskType =
   | "company-research" // general company research / free-text copilot Q&A
+  | "fund-research" // fund (ETF/mutual/closed-end): holdings, allocation, cost, category-relative performance
+  | "crypto-research" // crypto: momentum, relative strength vs BTC, risk-adjusted return, drawdown
+  | "commodity-research" // commodity: momentum, relative strength vs index, news-grounded supply/demand
+  | "forex-research" // forex: momentum, relative strength vs Dollar Index, news-grounded macro
+  | "derivatives-research" // options chain: implied vol, term structure, open-interest positioning, Greeks
+  | "macro-research" // yield curve shape/trend + news-grounded inflation/GDP/employment
+  | "manual-asset-research" // real estate / private markets / alternatives: computed metrics over user-entered facts
   | "investment-thesis" // bull/bear thesis generation, IC thesis synthesis, verdicts
   | "sec-filing-analysis" // filings-grounded deep analysis
   | "risk-review" // 10-K / risk-domain IC agent
@@ -21,11 +36,12 @@ export type TaskType =
   | "scenario-analysis" // valuation scenarios, divergence explanations
   | "stress-testing" // portfolio/position stress scenarios
   | "explain-movement" // "why did this move" narratives
-  | "portfolio-intelligence" // portfolio brief, CIO panel, audit, new-position suggestions
+  | "portfolio-intelligence" // portfolio brief + new-position suggestions (JSON)
+  | "portfolio-audit" // CIO audit memo (prose; see note in the registry below)
   | "watchlist-intelligence" // watchlist digest/alerts summarization
   | "opportunity-engine" // scanner: classification, causal chains, sector/company impact, dedup
   | "comparison" // multi-stock comparison narrative
-  | "ic-agent-analysis" // IC agent domains without a more specific task (business/industry/competition/management/capitalAllocation/governance)
+  | "ic-agent-analysis" // IC agent domains without a more specific task
   | "thematic-analysis" // thematic engine's 10-stage framework
   | "market-summary" // regime/macro narrative
   | "daily-briefing" // Mission Control's daily digest narration
@@ -35,160 +51,228 @@ export type TaskType =
   | "nl-screener" // natural-language screener query parsing
   | "quick-summary" // short, low-stakes single-field summaries
   | "chart-qa" // one-off interactive Q&A about the fullscreen chart workspace's current context
-  | "coding"; // code generation/review (not yet used by any feature; reserved)
+  | "coding"; // code generation/review (reserved; no feature ships this yet)
+
+/** How much genuine multi-step reasoning the task needs. */
+export type Complexity =
+  /** Institutional analysis: theses, filings, valuation, risk. Quality dominates. */
+  | "deep"
+  /** Substantive narrative or structured analysis. Balanced. */
+  | "standard"
+  /** Short, mechanical, low-stakes: parse a query, one-line summary. Speed dominates. */
+  | "light";
+
+/** How much the user is waiting on this. */
+export type LatencySensitivity =
+  /** A human is watching a spinner. Every second counts. */
+  | "interactive"
+  /** On-page content the user expects "soon". */
+  | "standard"
+  /** Background/long-running job; correctness far outweighs latency. */
+  | "background";
 
 export interface TaskConfig {
-  /** Model ids tried in order; the Router intersects this with what's installed & healthy. */
-  preferredModels: string[];
-  /** Capabilities a model must have to be considered at all, beyond the preferred list. */
-  requiredCapabilities?: ModelCapability[];
+  /** Reasoning requirement — drives how heavily model quality is weighted. */
+  complexity: Complexity;
+  /** Latency requirement — drives how heavily model speed is weighted. */
+  latency: LatencySensitivity;
+  /** Minimum usable context window, when the task assembles a large dossier. */
+  contextTokens?: number;
+  /** Output requirement: the model must emit JSON only. Implies `thinking: false`. */
+  jsonMode?: boolean;
+  /**
+   * Opt into chain-of-thought for reasoning models.
+   *
+   * Off everywhere by default, and deliberately so: measured on qwen3:14b,
+   * thinking cost 143s vs 28s (5x) for a comparable answer, and under
+   * `jsonMode` it is not merely slow but *broken* — the model returns the
+   * literal `{}` (0/3 valid vs 3/3 with thinking off). The Router hard-forces
+   * this to false whenever `jsonMode` is set; setting both is a config error,
+   * not a preference.
+   */
+  thinking?: boolean;
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
-  /** Ask the model to respond with JSON only. */
-  jsonMode?: boolean;
 }
 
 /**
- * Routing policy per task. `preferredModels` reference {@link MODEL_REGISTRY}
- * ids (see ./models.ts) and are matched prefix-aware, so "qwen3" here matches
- * an installed "qwen3:30b-a3b" tag without pinning the exact size/quant.
+ * What each task needs. Note there is not a single model name in this file —
+ * that is the point.
  */
 export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
-  "company-research": {
-    preferredModels: ["qwen3", "deepseek-r1", "llama3.1"],
-    requiredCapabilities: ["long-context"],
-  },
+  /* ---- Deep analysis: institutional research quality is the product ------- */
   "investment-thesis": {
-    preferredModels: ["qwen3", "deepseek-r1"],
-    requiredCapabilities: ["chain-of-thought"],
+    complexity: "deep",
+    latency: "background",
+    jsonMode: true,
     maxTokens: 2048,
     timeoutMs: 300_000,
-    jsonMode: true,
   },
   "sec-filing-analysis": {
-    preferredModels: ["deepseek-r1", "qwen3"],
-    requiredCapabilities: ["chain-of-thought", "long-context"],
-    maxTokens: 2048,
+    complexity: "deep",
+    latency: "background",
+    contextTokens: 16_000,
     jsonMode: true,
+    maxTokens: 2048,
+    timeoutMs: 300_000,
   },
   "risk-review": {
-    preferredModels: ["deepseek-r1", "qwen3"],
-    requiredCapabilities: ["chain-of-thought"],
+    complexity: "deep",
+    latency: "background",
+    jsonMode: true,
     maxTokens: 1536,
     timeoutMs: 300_000,
-    jsonMode: true,
   },
   "accounting-red-flags": {
-    preferredModels: ["deepseek-r1", "qwen3"],
-    requiredCapabilities: ["chain-of-thought"],
+    complexity: "deep",
+    latency: "background",
+    jsonMode: true,
     maxTokens: 1536,
     timeoutMs: 300_000,
-    jsonMode: true,
   },
   "scenario-analysis": {
-    preferredModels: ["deepseek-r1", "qwen3"],
-    requiredCapabilities: ["chain-of-thought"],
+    complexity: "deep",
+    latency: "background",
+    jsonMode: true,
     maxTokens: 2048,
     timeoutMs: 300_000,
-    jsonMode: true,
   },
   "stress-testing": {
-    preferredModels: ["deepseek-r1", "qwen3"],
-    requiredCapabilities: ["chain-of-thought"],
+    complexity: "deep",
+    latency: "background",
+    jsonMode: true,
     maxTokens: 1536,
-    jsonMode: true,
-  },
-  "explain-movement": {
-    preferredModels: ["deepseek-r1", "qwen3", "llama3.1"],
-    maxTokens: 1024,
-  },
-  "portfolio-intelligence": {
-    preferredModels: ["qwen3", "deepseek-r1", "llama3.1"],
-    maxTokens: 1024,
-    jsonMode: true,
-  },
-  "watchlist-intelligence": {
-    preferredModels: ["qwen3", "llama3.1"],
-    maxTokens: 1024,
-    jsonMode: true,
-  },
-  "opportunity-engine": {
-    preferredModels: ["qwen3", "llama3.1"],
-    maxTokens: 2048,
     timeoutMs: 300_000,
-    jsonMode: true,
-  },
-  comparison: {
-    preferredModels: ["qwen3", "deepseek-r1"],
-    maxTokens: 1800,
-    jsonMode: true,
   },
   "ic-agent-analysis": {
-    preferredModels: ["qwen3", "deepseek-r1", "llama3.1"],
+    complexity: "deep",
+    latency: "background",
+    jsonMode: true,
     maxTokens: 1200,
     timeoutMs: 300_000,
-    jsonMode: true,
   },
   "thematic-analysis": {
-    preferredModels: ["qwen3", "llama3.1"],
+    complexity: "deep",
+    latency: "background",
+    jsonMode: true,
     maxTokens: 2048,
     timeoutMs: 300_000,
+  },
+
+  /* ---- Standard: substantive research the user is waiting on -------------- */
+  "company-research": {
+    complexity: "standard",
+    latency: "standard",
+    contextTokens: 16_000,
+  },
+  "fund-research": { complexity: "standard", latency: "standard", contextTokens: 16_000 },
+  "crypto-research": { complexity: "standard", latency: "standard", contextTokens: 16_000 },
+  "commodity-research": { complexity: "standard", latency: "standard", contextTokens: 16_000 },
+  "forex-research": { complexity: "standard", latency: "standard", contextTokens: 16_000 },
+  "derivatives-research": { complexity: "standard", latency: "standard", contextTokens: 16_000 },
+  "macro-research": { complexity: "standard", latency: "standard", contextTokens: 16_000 },
+  "manual-asset-research": { complexity: "standard", latency: "standard", contextTokens: 16_000 },
+  comparison: {
+    complexity: "standard",
+    latency: "standard",
     jsonMode: true,
+    maxTokens: 1800,
   },
-  "market-summary": {
-    preferredModels: ["qwen3", "llama3.1", "mistral"],
-    maxTokens: 800,
+  "portfolio-intelligence": {
+    complexity: "standard",
+    latency: "standard",
+    jsonMode: true,
+    maxTokens: 1024,
+    timeoutMs: 180_000,
   },
-  "daily-briefing": {
-    preferredModels: ["qwen3", "llama3.1", "mistral"],
-    maxTokens: 800,
+  // Split out from portfolio-intelligence: the CIO panel streams a *prose* memo
+  // while the brief and new-position callers want JSON. One task cannot declare
+  // two output shapes — when the audit route bypassed the platform this went
+  // unnoticed, but routing it through a `jsonMode: true` task would have turned
+  // the memo into a JSON blob. Output shape is a task property, not a call-site
+  // flag.
+  "portfolio-audit": {
+    complexity: "standard",
+    latency: "standard",
+    maxTokens: 1024,
+    timeoutMs: 180_000,
+  },
+  "watchlist-intelligence": {
+    complexity: "standard",
+    latency: "standard",
+    jsonMode: true,
+    maxTokens: 1024,
+  },
+  "opportunity-engine": {
+    complexity: "standard",
+    latency: "background",
+    jsonMode: true,
+    maxTokens: 2048,
+    timeoutMs: 300_000,
   },
   "timeline-analysis": {
-    preferredModels: ["qwen3", "llama3.1"],
+    complexity: "standard",
+    latency: "standard",
+    jsonMode: true,
     maxTokens: 1800,
-    jsonMode: true,
   },
-  "knowledge-graph-explain": {
-    preferredModels: ["qwen3", "llama3.1", "mistral"],
-    maxTokens: 600,
+  "explain-movement": {
+    complexity: "standard",
+    latency: "standard",
+    maxTokens: 1024,
   },
-  "calendar-brief": {
-    preferredModels: ["qwen3", "llama3.1", "mistral"],
-    maxTokens: 600,
-  },
+
+  /* ---- Light: short output where latency is what the user actually feels -- */
+  "market-summary": { complexity: "light", latency: "standard", maxTokens: 800 },
+  "daily-briefing": { complexity: "light", latency: "standard", maxTokens: 800 },
+  "knowledge-graph-explain": { complexity: "light", latency: "interactive", maxTokens: 600 },
+  "calendar-brief": { complexity: "light", latency: "interactive", maxTokens: 600 },
   "nl-screener": {
-    preferredModels: ["qwen3", "llama3.1"],
-    requiredCapabilities: ["structured-json"],
-    maxTokens: 512,
+    // Parsing a search box into filters. The user is staring at a spinner and
+    // there is no research quality to protect — pure latency play.
+    complexity: "light",
+    latency: "interactive",
     jsonMode: true,
+    maxTokens: 512,
+    temperature: 0.1,
   },
-  "quick-summary": {
-    preferredModels: ["llama3.1", "mistral", "qwen3"],
-    maxTokens: 400,
-  },
-  // Interactive — the user is waiting on this one, unlike the batch/IC tasks
-  // above with 300s timeouts. Leads with the "fast" + structured-json model
-  // rather than qwen3, since this app's users have previously hit multi-minute
-  // hangs on heavier models; qwen3/mistral remain as fallbacks.
+  "quick-summary": { complexity: "light", latency: "interactive", maxTokens: 400 },
+  // Interactive — a human is watching this exact spinner while the fullscreen
+  // chart's AI dock is open. Standard complexity (real interpretive judgment
+  // about a chart's selection/context, not just parsing a search box like
+  // nl-screener) but interactive latency, so speed is weighted the same as
+  // nl-screener; jsonMode alone now gates on "structured-json" (see
+  // requiredCapabilities in router.ts), no separate capability list needed.
   "chart-qa": {
-    preferredModels: ["llama3.1", "qwen3", "mistral"],
-    requiredCapabilities: ["structured-json"],
+    complexity: "standard",
+    latency: "interactive",
+    jsonMode: true,
     temperature: 0.35,
     maxTokens: 900,
     timeoutMs: 45_000,
-    jsonMode: true,
   },
+
+  /* ---- Reserved ---------------------------------------------------------- */
   coding: {
-    preferredModels: ["qwen2.5-coder", "qwen3"],
-    requiredCapabilities: ["coding"],
+    complexity: "standard",
+    latency: "standard",
     maxTokens: 2048,
   },
 };
 
-/** Map an IC agent domain to its task — accounting/valuation/risk get the reasoning-heavy route. */
+/** Map an IC agent domain to its task — accounting/valuation/risk get their own. */
 export function taskForAgentDomain(
-  domain: "business" | "industry" | "competition" | "management" | "capitalAllocation" | "accounting" | "valuation" | "governance" | "risk",
+  domain:
+    | "business"
+    | "industry"
+    | "competition"
+    | "management"
+    | "capitalAllocation"
+    | "accounting"
+    | "valuation"
+    | "governance"
+    | "risk",
 ): TaskType {
   switch (domain) {
     case "accounting":

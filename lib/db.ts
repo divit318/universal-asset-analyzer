@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import type { ChartDrawingRecord, PortfolioPosition, PortfolioLot, ResearchNote, StockFundamentals, WatchlistItem, SectorRotationEntry, TimelineEvent, Notification, Decision, DecisionAction, DecisionHorizon } from "./types";
+import type { ChartDrawingRecord, PortfolioPosition, PortfolioLot, ResearchNote, StockFundamentals, WatchlistItem, SectorRotationEntry, TimelineEvent, Notification, Decision, DecisionAction, DecisionHorizon, ManualAsset, ManualAssetCategory } from "./types";
 import { aggregateOpenPositions } from "./portfolio-lots";
 import type { AlertEvent } from "./alerts";
 
@@ -29,6 +29,23 @@ function getDb(): DatabaseSync {
       symbol     TEXT PRIMARY KEY,
       data       TEXT NOT NULL,
       updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS platform_cache (
+      cache_key  TEXT PRIMARY KEY,
+      dataset    TEXT NOT NULL,
+      symbol     TEXT,
+      value      TEXT NOT NULL,
+      fetched_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      source     TEXT NOT NULL,
+      version    INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE INDEX IF NOT EXISTS idx_platform_cache_symbol  ON platform_cache(symbol);
+    CREATE INDEX IF NOT EXISTS idx_platform_cache_dataset ON platform_cache(dataset);
+    CREATE TABLE IF NOT EXISTS real_estate_lookup_cache (
+      address_key TEXT PRIMARY KEY,
+      data        TEXT NOT NULL,
+      updated_at  INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS portfolio (
       symbol   TEXT PRIMARY KEY,
@@ -144,10 +161,80 @@ function getDb(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS idx_chart_drawing_scope
       ON chart_drawing (symbol, timeframe);
+    CREATE TABLE IF NOT EXISTS manual_asset (
+      id                  TEXT PRIMARY KEY,
+      category            TEXT NOT NULL,
+      name                TEXT NOT NULL,
+      acquisition_date    TEXT NOT NULL,
+      acquisition_cost    REAL NOT NULL,
+      current_value       REAL,
+      current_value_as_of TEXT,
+      notes               TEXT,
+      details             TEXT NOT NULL,
+      created_at          TEXT NOT NULL,
+      updated_at          TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_manual_asset_category ON manual_asset (category);
+
+    CREATE TABLE IF NOT EXISTS portfolio_snapshot (
+      id         TEXT PRIMARY KEY,
+      label      TEXT NOT NULL,
+      objective  TEXT,
+      holdings   TEXT NOT NULL,
+      summary    TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_portfolio_snapshot_created ON portfolio_snapshot (created_at DESC);
+    CREATE TABLE IF NOT EXISTS saved_screen (
+      id          TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      asset_class TEXT NOT NULL,
+      template_id TEXT,
+      -- FilterValues, JSON-serialized. Stored opaquely and re-validated against
+      -- the Asset Registry on load (lib/screener/filter-engine.ts#parseFilters),
+      -- so a screen saved against a metric that later loses its data provider
+      -- degrades to "that filter is gone" rather than to a broken screen.
+      filters     TEXT NOT NULL,
+      sort_key    TEXT NOT NULL,
+      sort_dir    TEXT NOT NULL,
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_saved_screen_class ON saved_screen (asset_class);
+
+    -- "Continue where you left off". One row per (kind, ref) — revisiting a
+    -- symbol bumps its timestamp rather than appending, so the list stays a set
+    -- of *places* the user has been, not a raw event log that fills with twenty
+    -- consecutive AAPL views.
+    CREATE TABLE IF NOT EXISTS activity (
+      kind  TEXT NOT NULL,
+      ref   TEXT NOT NULL,
+      label TEXT NOT NULL,
+      href  TEXT NOT NULL,
+      at    TEXT NOT NULL,
+      PRIMARY KEY (kind, ref)
+    );
+    CREATE INDEX IF NOT EXISTS idx_activity_at ON activity (at DESC);
   `);
   // Migrate existing watchlist rows: add new columns if the DB predates them
   for (const col of ["target_price REAL", "alert_pct_drop REAL", "notes TEXT"]) {
     try { db.exec(`ALTER TABLE watchlist ADD COLUMN ${col}`); } catch { /* already exists */ }
+  }
+  // Universal Portfolio: a lot used to be implicitly "shares of a US equity, in
+  // USD". These columns make that explicit so the ledger can also hold a bond
+  // fund, 1.4 BTC, or $50k of cash.
+  //
+  // The DEFAULTs are what preserve backward compatibility: every pre-existing row
+  // is, in fact, an equity position in USD priced per share, so the defaults are
+  // the identity mapping and no existing holding's value changes. See
+  // tests/portfolio-migration.test.ts, which asserts exactly that.
+  for (const col of [
+    "asset_class TEXT NOT NULL DEFAULT 'equity'",
+    "currency TEXT NOT NULL DEFAULT 'USD'",
+    "unit TEXT NOT NULL DEFAULT 'shares'",
+    "meta TEXT",
+  ]) {
+    try { db.exec(`ALTER TABLE portfolio_lot ADD COLUMN ${col}`); } catch { /* already exists */ }
   }
   // One-time: seed the lot ledger from the legacy aggregate `portfolio` table so
   // existing holdings survive the move to a lot-backed model. Each legacy row
@@ -391,8 +478,61 @@ export function getFreshFundamentals(maxAgeMs: number): {
   return { rows: parsed, builtAt };
 }
 
-export function clearFundamentals(): void {
-  getDb().prepare("DELETE FROM fundamentals_cache").run();
+/**
+ * Drop cached fundamentals. With `symbols`, only those rows — the cache is
+ * shared by every enriched universe (equities and REITs both draw on it, and
+ * they overlap), so a "Refresh data" on one class must not evict the other's
+ * work and force it to re-fetch hundreds of companies it already had.
+ */
+export function clearFundamentals(symbols?: string[]): void {
+  const database = getDb();
+  if (!symbols) {
+    database.prepare("DELETE FROM fundamentals_cache").run();
+    return;
+  }
+  if (symbols.length === 0) return;
+
+  const stmt = database.prepare("DELETE FROM fundamentals_cache WHERE symbol = ?");
+  database.exec("BEGIN");
+  try {
+    for (const symbol of symbols) stmt.run(symbol);
+    database.exec("COMMIT");
+  } catch (err) {
+    database.exec("ROLLBACK");
+    throw err;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Real estate lookup cache (RentCast address search — free tier is 50        */
+/* calls/month, so results are cached for a long TTL at the route layer).     */
+/* -------------------------------------------------------------------------- */
+
+function normalizeAddressKey(address: string): string {
+  return address.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+export function putRealEstateLookup(address: string, data: unknown): void {
+  const key = normalizeAddressKey(address);
+  getDb()
+    .prepare(
+      `INSERT INTO real_estate_lookup_cache (address_key, data, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(address_key) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
+    )
+    .run(key, JSON.stringify(data), Date.now());
+}
+
+export function getCachedRealEstateLookup<T>(
+  address: string,
+  maxAgeMs: number,
+): { data: T; updatedAt: number } | null {
+  const key = normalizeAddressKey(address);
+  const row = getDb()
+    .prepare("SELECT data, updated_at FROM real_estate_lookup_cache WHERE address_key = ?")
+    .get(key) as unknown as { data: string; updated_at: number } | undefined;
+  if (!row) return null;
+  if (Date.now() - row.updated_at > maxAgeMs) return null;
+  return { data: JSON.parse(row.data) as T, updatedAt: row.updated_at };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -517,6 +657,290 @@ export function removePosition(symbol: string): void {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Universal Portfolio — asset-class-aware lot access                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A lot row including the universal columns (asset_class, currency, unit, meta).
+ * Consumed by lib/portfolio/store.ts, which maps it into the Universal Holdings
+ * Model. The SQL stays here so lib/db.ts remains the single schema source of truth.
+ */
+export interface UniversalLotRow {
+  id: number;
+  symbol: string;
+  name: string;
+  shares: number;
+  price: number;
+  kind: string;
+  fees: number;
+  trade_date: string;
+  created_at: string;
+  asset_class: string | null;
+  currency: string | null;
+  unit: string | null;
+  meta: string | null;
+}
+
+export function listUniversalLots(): UniversalLotRow[] {
+  return getDb()
+    .prepare("SELECT * FROM portfolio_lot ORDER BY trade_date, id")
+    .all() as unknown as UniversalLotRow[];
+}
+
+/**
+ * Replace a symbol's ledger with one opening lot, carrying its asset class.
+ * Same semantics as {@link upsertPosition} — which it now backs — but class-aware,
+ * so a bond fund is stored AS a bond fund instead of silently as an equity.
+ */
+export function upsertUniversalPosition(input: {
+  symbol: string;
+  name: string;
+  quantity: number;
+  avgCost: number;
+  assetClass: string;
+  currency?: string;
+  unit?: string;
+  meta?: Record<string, unknown> | null;
+}): void {
+  const sym = input.symbol.toUpperCase();
+  const now = new Date().toISOString();
+  const db = getDb();
+
+  db.prepare("DELETE FROM portfolio_lot WHERE symbol = ?").run(sym);
+  db.prepare(
+    `INSERT INTO portfolio_lot
+       (symbol, name, shares, price, kind, fees, trade_date, created_at, asset_class, currency, unit, meta)
+     VALUES (?, ?, ?, ?, 'buy', 0, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    sym,
+    input.name,
+    input.quantity,
+    input.avgCost,
+    now.slice(0, 10),
+    now,
+    input.assetClass,
+    (input.currency ?? "USD").toUpperCase(),
+    input.unit ?? "shares",
+    input.meta ? JSON.stringify(input.meta) : null,
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Transaction Engine — batch trade execution, snapshots, undo                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Append one buy/sell transaction, carrying the universal columns. Same shape
+ * as {@link addLot} but class-aware, and — unlike {@link upsertUniversalPosition}
+ * — additive rather than destructive: it does not touch the symbol's existing
+ * lots. This is what preserves real trade history (and therefore correct
+ * average-cost/realized-P&L via lib/portfolio-lots.ts's aggregateLots()) when a
+ * position is resized, instead of collapsing it into one "opening lot" that
+ * looks like the position was bought fresh today.
+ */
+export function addUniversalLot(input: {
+  symbol: string;
+  name: string;
+  shares: number;
+  price: number;
+  kind: "buy" | "sell";
+  assetClass: string;
+  currency?: string;
+  unit?: string;
+  fees?: number;
+  tradeDate?: string;
+  meta?: Record<string, unknown> | null;
+}): void {
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO portfolio_lot
+         (symbol, name, shares, price, kind, fees, trade_date, created_at, asset_class, currency, unit, meta)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      input.symbol.toUpperCase(),
+      input.name,
+      input.shares,
+      input.price,
+      input.kind,
+      input.fees ?? 0,
+      input.tradeDate ?? now.slice(0, 10),
+      now,
+      input.assetClass,
+      (input.currency ?? "USD").toUpperCase(),
+      input.unit ?? "shares",
+      input.meta ? JSON.stringify(input.meta) : null,
+    );
+}
+
+export interface LotWrite {
+  symbol: string;
+  name: string;
+  shares: number;
+  price: number;
+  kind: "buy" | "sell";
+  assetClass: string;
+  currency?: string;
+  unit?: string;
+  meta?: Record<string, unknown> | null;
+}
+
+/**
+ * Atomically append a batch of new lots and delete a batch of manual assets, as
+ * one all-or-nothing unit. This is the Transaction Engine's write primitive —
+ * executing N trades as N separate HTTP calls (the ad hoc approach used before
+ * this existed) has zero cross-holding atomicity; a failure partway through
+ * leaves some holdings updated and others not, with nothing to roll back.
+ * Follows the exact BEGIN/COMMIT/ROLLBACK shape already used by
+ * {@link putFundamentals} and {@link putTimelineEvents}.
+ */
+export function executeTradeBatch(lots: LotWrite[], manualAssetIdsToDelete: string[]): void {
+  if (lots.length === 0 && manualAssetIdsToDelete.length === 0) return;
+  const database = getDb();
+  const now = new Date().toISOString();
+  const lotStmt = database.prepare(
+    `INSERT INTO portfolio_lot (symbol, name, shares, price, kind, fees, trade_date, created_at, asset_class, currency, unit, meta)
+     VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
+  );
+  const manualStmt = database.prepare("DELETE FROM manual_asset WHERE id = ?");
+
+  database.exec("BEGIN");
+  try {
+    for (const lot of lots) {
+      lotStmt.run(
+        lot.symbol.toUpperCase(),
+        lot.name,
+        lot.shares,
+        lot.price,
+        lot.kind,
+        now.slice(0, 10),
+        now,
+        lot.assetClass,
+        (lot.currency ?? "USD").toUpperCase(),
+        lot.unit ?? "shares",
+        lot.meta ? JSON.stringify(lot.meta) : null,
+      );
+    }
+    for (const id of manualAssetIdsToDelete) manualStmt.run(id);
+    database.exec("COMMIT");
+  } catch (err) {
+    database.exec("ROLLBACK");
+    throw err;
+  }
+}
+
+export interface PortfolioSnapshotSummary {
+  totalValue: number;
+  totalCost: number;
+  health: number;
+  healthGrade: string;
+  volatility: number | null;
+  topAssetClassWeight: number;
+  allocation: { assetClass: string; weight: number }[];
+}
+
+export interface PortfolioSnapshot {
+  id: string;
+  label: string;
+  objective: string | null;
+  summary: PortfolioSnapshotSummary;
+  createdAt: string;
+}
+
+interface PortfolioSnapshotRow {
+  id: string;
+  label: string;
+  objective: string | null;
+  holdings: string;
+  summary: string;
+  created_at: string;
+}
+
+/**
+ * Capture the CURRENT raw ledger state — every lot (full history, not just the
+ * open-position aggregate) and every manual asset — as a restorable snapshot.
+ * This is deliberately a snapshot of the RAW rows, not a derived aggregate:
+ * restoring it later is then a straight wipe-and-reinsert, which is exact and
+ * needs no reconstruction logic (and correctly rolls back trade history too,
+ * not just the current balance).
+ */
+export function snapshotPortfolio(
+  label: string,
+  objective: string | null,
+  summary: PortfolioSnapshotSummary,
+): string {
+  const id = globalThis.crypto?.randomUUID?.() ?? `snap-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const database = getDb();
+  const lots = database.prepare("SELECT * FROM portfolio_lot").all() as unknown as UniversalLotRow[];
+  const manualAssets = database.prepare("SELECT * FROM manual_asset").all() as unknown as ManualAssetRow[];
+  const now = new Date().toISOString();
+  database
+    .prepare(
+      `INSERT INTO portfolio_snapshot (id, label, objective, holdings, summary, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(id, label, objective, JSON.stringify({ lots, manualAssets }), JSON.stringify(summary), now);
+  return id;
+}
+
+function rowToSnapshot(r: Omit<PortfolioSnapshotRow, "holdings">): PortfolioSnapshot {
+  return { id: r.id, label: r.label, objective: r.objective, summary: JSON.parse(r.summary), createdAt: r.created_at };
+}
+
+export function getSnapshot(id: string): PortfolioSnapshot | null {
+  const r = getDb()
+    .prepare("SELECT id, label, objective, summary, created_at FROM portfolio_snapshot WHERE id = ?")
+    .get(id) as unknown as Omit<PortfolioSnapshotRow, "holdings"> | undefined;
+  return r ? rowToSnapshot(r) : null;
+}
+
+export function listSnapshots(limit = 20): PortfolioSnapshot[] {
+  const rows = getDb()
+    .prepare("SELECT id, label, objective, summary, created_at FROM portfolio_snapshot ORDER BY created_at DESC LIMIT ?")
+    .all(limit) as unknown as Omit<PortfolioSnapshotRow, "holdings">[];
+  return rows.map(rowToSnapshot);
+}
+
+/**
+ * Restore the portfolio to exactly the raw ledger state captured in a snapshot
+ * — the Undo primitive. Wipes both ledgers and re-inserts the snapshotted rows
+ * verbatim (including original ids), atomically. Returns false if the snapshot
+ * id doesn't exist.
+ */
+export function restoreSnapshot(id: string): boolean {
+  const row = getDb().prepare("SELECT holdings FROM portfolio_snapshot WHERE id = ?").get(id) as unknown as { holdings: string } | undefined;
+  if (!row) return false;
+  const { lots, manualAssets } = JSON.parse(row.holdings) as { lots: UniversalLotRow[]; manualAssets: ManualAssetRow[] };
+
+  const database = getDb();
+  const insertLot = database.prepare(
+    `INSERT INTO portfolio_lot (id, symbol, name, shares, price, kind, fees, trade_date, created_at, asset_class, currency, unit, meta)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const insertManual = database.prepare(
+    `INSERT INTO manual_asset (id, category, name, acquisition_date, acquisition_cost, current_value, current_value_as_of, notes, details, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+
+  database.exec("BEGIN");
+  try {
+    database.exec("DELETE FROM portfolio_lot");
+    database.exec("DELETE FROM manual_asset");
+    for (const l of lots) {
+      insertLot.run(l.id, l.symbol, l.name, l.shares, l.price, l.kind, l.fees, l.trade_date, l.created_at, l.asset_class, l.currency, l.unit, l.meta);
+    }
+    for (const m of manualAssets) {
+      insertManual.run(m.id, m.category, m.name, m.acquisition_date, m.acquisition_cost, m.current_value, m.current_value_as_of, m.notes, m.details, m.created_at, m.updated_at);
+    }
+    database.exec("COMMIT");
+  } catch (err) {
+    database.exec("ROLLBACK");
+    throw err;
+  }
+  return true;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Notifications (alert delivery)                                             */
 /* -------------------------------------------------------------------------- */
 
@@ -577,6 +1001,11 @@ export function listNotifications(limit = 50): Notification[] {
     .prepare("SELECT * FROM notification ORDER BY created_at DESC, id DESC LIMIT ?")
     .all(limit) as unknown as NotificationRow[];
   return rows.map(rowToNotification);
+}
+
+export function getNotificationById(id: number): Notification | null {
+  const row = getDb().prepare("SELECT * FROM notification WHERE id = ?").get(id) as NotificationRow | undefined;
+  return row ? rowToNotification(row) : null;
 }
 
 export function unreadNotificationCount(): number {
@@ -695,6 +1124,127 @@ export function closeDecision(id: number, closePrice: number | null): void {
 
 export function deleteDecision(id: number): void {
   getDb().prepare("DELETE FROM decision WHERE id = ?").run(id);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Manual assets (Real Estate / Private Markets / Alternatives / Structured   */
+/* Products) — no ticker, no live price; `details` is a category-specific     */
+/* JSON blob (same "generic row + opaque JSON" shape as fundamentals_cache).  */
+/* -------------------------------------------------------------------------- */
+
+export interface ManualAssetRow {
+  id: string;
+  category: string;
+  name: string;
+  acquisition_date: string;
+  acquisition_cost: number;
+  current_value: number | null;
+  current_value_as_of: string | null;
+  notes: string | null;
+  details: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function rowToManualAsset(r: ManualAssetRow): ManualAsset {
+  return {
+    id: r.id,
+    category: r.category as ManualAssetCategory,
+    name: r.name,
+    acquisitionDate: r.acquisition_date,
+    acquisitionCost: r.acquisition_cost,
+    currentValue: r.current_value,
+    currentValueAsOf: r.current_value_as_of,
+    notes: r.notes,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    // The DB doesn't enforce that `details`'s shape matches `category` — the
+    // API layer (app/api/manual-assets/) is the single writer and always
+    // sends a matching pair, the same trust boundary fundamentals_cache uses
+    // for its opaque StockFundamentals JSON.
+    details: JSON.parse(r.details),
+  } as ManualAsset;
+}
+
+export interface CreateManualAssetInput {
+  category: ManualAssetCategory;
+  name: string;
+  acquisitionDate: string;
+  acquisitionCost: number;
+  currentValue?: number | null;
+  currentValueAsOf?: string | null;
+  notes?: string | null;
+  details: ManualAsset["details"];
+}
+
+export function createManualAsset(input: CreateManualAssetInput): ManualAsset {
+  const id = globalThis.crypto?.randomUUID?.() ?? `ma-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO manual_asset
+        (id, category, name, acquisition_date, acquisition_cost, current_value, current_value_as_of, notes, details, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      input.category,
+      input.name,
+      input.acquisitionDate,
+      input.acquisitionCost,
+      input.currentValue ?? null,
+      input.currentValueAsOf ?? null,
+      input.notes ?? null,
+      JSON.stringify(input.details),
+      now,
+      now,
+    );
+  return getManualAsset(id)!;
+}
+
+export function getManualAsset(id: string): ManualAsset | null {
+  const r = getDb().prepare("SELECT * FROM manual_asset WHERE id = ?").get(id) as unknown as ManualAssetRow | undefined;
+  return r ? rowToManualAsset(r) : null;
+}
+
+export function listManualAssets(category?: ManualAssetCategory): ManualAsset[] {
+  const rows = category
+    ? (getDb().prepare("SELECT * FROM manual_asset WHERE category = ? ORDER BY created_at DESC").all(category) as unknown as ManualAssetRow[])
+    : (getDb().prepare("SELECT * FROM manual_asset ORDER BY created_at DESC").all() as unknown as ManualAssetRow[]);
+  return rows.map(rowToManualAsset);
+}
+
+export interface UpdateManualAssetInput {
+  name?: string;
+  currentValue?: number | null;
+  currentValueAsOf?: string | null;
+  notes?: string | null;
+  details?: ManualAsset["details"];
+}
+
+export function updateManualAsset(id: string, input: UpdateManualAssetInput): ManualAsset | null {
+  const existing = getManualAsset(id);
+  if (!existing) return null;
+  getDb()
+    .prepare(
+      `UPDATE manual_asset SET
+        name = ?, current_value = ?, current_value_as_of = ?, notes = ?, details = ?, updated_at = ?
+       WHERE id = ?`,
+    )
+    .run(
+      input.name ?? existing.name,
+      input.currentValue !== undefined ? input.currentValue : existing.currentValue,
+      input.currentValueAsOf !== undefined ? input.currentValueAsOf : existing.currentValueAsOf,
+      input.notes !== undefined ? input.notes : existing.notes,
+      JSON.stringify(input.details ?? existing.details),
+      new Date().toISOString(),
+      id,
+    );
+  return getManualAsset(id);
+}
+
+export function deleteManualAsset(id: string): void {
+  getDb().prepare("DELETE FROM manual_asset WHERE id = ?").run(id);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -909,4 +1459,272 @@ export function listTimelineEventsForSymbols(symbols: string[]): TimelineEvent[]
     .prepare(`SELECT id, symbol, timestamp, data FROM timeline_event WHERE symbol IN (${placeholders}) ORDER BY timestamp DESC`)
     .all(...symbols.map((s) => s.toUpperCase())) as unknown as TimelineEventRow[];
   return rows.map((r) => JSON.parse(r.data) as TimelineEvent);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Saved screens                                                              */
+/* -------------------------------------------------------------------------- */
+
+/** A saved screener configuration. `filters` is stored as opaque JSON — see the table comment. */
+export interface SavedScreen {
+  id: string;
+  name: string;
+  assetClass: string;
+  templateId: string | null;
+  filters: Record<string, unknown>;
+  sortKey: string;
+  sortDir: "asc" | "desc";
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface SavedScreenRow {
+  id: string;
+  name: string;
+  asset_class: string;
+  template_id: string | null;
+  filters: string;
+  sort_key: string;
+  sort_dir: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function toSavedScreen(r: SavedScreenRow): SavedScreen {
+  let filters: Record<string, unknown> = {};
+  try {
+    filters = JSON.parse(r.filters) as Record<string, unknown>;
+  } catch {
+    // A corrupted filter blob must not take down the whole saved-screens list;
+    // the screen loads with no filters and the user can re-set them.
+  }
+  return {
+    id: r.id,
+    name: r.name,
+    assetClass: r.asset_class,
+    templateId: r.template_id,
+    filters,
+    sortKey: r.sort_key,
+    sortDir: r.sort_dir === "asc" ? "asc" : "desc",
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+export function listSavedScreens(assetClass?: string): SavedScreen[] {
+  const db = getDb();
+  const rows = (
+    assetClass
+      ? db
+          .prepare("SELECT * FROM saved_screen WHERE asset_class = ? ORDER BY updated_at DESC")
+          .all(assetClass)
+      : db.prepare("SELECT * FROM saved_screen ORDER BY updated_at DESC").all()
+  ) as unknown as SavedScreenRow[];
+  return rows.map(toSavedScreen);
+}
+
+export function getSavedScreen(id: string): SavedScreen | null {
+  const row = getDb()
+    .prepare("SELECT * FROM saved_screen WHERE id = ?")
+    .get(id) as unknown as SavedScreenRow | undefined;
+  return row ? toSavedScreen(row) : null;
+}
+
+/** Create or overwrite a saved screen. Reusing an id updates it in place, preserving created_at. */
+export function saveScreen(input: Omit<SavedScreen, "createdAt" | "updatedAt">): SavedScreen {
+  const now = new Date().toISOString();
+  const existing = getSavedScreen(input.id);
+  const createdAt = existing?.createdAt ?? now;
+
+  getDb()
+    .prepare(
+      `INSERT INTO saved_screen (id, name, asset_class, template_id, filters, sort_key, sort_dir, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         name = excluded.name,
+         asset_class = excluded.asset_class,
+         template_id = excluded.template_id,
+         filters = excluded.filters,
+         sort_key = excluded.sort_key,
+         sort_dir = excluded.sort_dir,
+         updated_at = excluded.updated_at`,
+    )
+    .run(
+      input.id,
+      input.name,
+      input.assetClass,
+      input.templateId,
+      JSON.stringify(input.filters),
+      input.sortKey,
+      input.sortDir,
+      createdAt,
+      now,
+    );
+
+  return { ...input, createdAt, updatedAt: now };
+}
+
+export function deleteSavedScreen(id: string): void {
+  getDb().prepare("DELETE FROM saved_screen WHERE id = ?").run(id);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Platform cache (lib/platform/cache.ts persistence tier)                     */
+/* -------------------------------------------------------------------------- */
+//
+// The disk tier behind the Smart Cache. Only datasets whose policy sets
+// `persist: true` land here — expensive-to-rebuild, slow-moving things
+// (statements, filings, profiles, price history, AI reports) that should
+// survive a process restart rather than being re-downloaded on every `npm run
+// dev`. Live quotes are deliberately absent.
+//
+// Unlike `scanner_cache`, writes here do NOT globally prune: expiry is decided
+// per row by the dataset's own policy, so one feature's write can never evict
+// another feature's still-valid data.
+
+export interface PlatformCacheRow {
+  cacheKey: string;
+  dataset: string;
+  symbol: string | null;
+  value: string;
+  fetchedAt: number;
+  expiresAt: number;
+  source: string;
+  version: number;
+}
+
+interface RawPlatformCacheRow {
+  cache_key: string;
+  dataset: string;
+  symbol: string | null;
+  value: string;
+  fetched_at: number;
+  expires_at: number;
+  source: string;
+  version: number;
+}
+
+export function getPlatformCache(cacheKey: string): PlatformCacheRow | null {
+  const row = getDb()
+    .prepare("SELECT * FROM platform_cache WHERE cache_key = ?")
+    .get(cacheKey) as unknown as RawPlatformCacheRow | undefined;
+  if (!row) return null;
+  return {
+    cacheKey: row.cache_key,
+    dataset: row.dataset,
+    symbol: row.symbol,
+    value: row.value,
+    fetchedAt: row.fetched_at,
+    expiresAt: row.expires_at,
+    source: row.source,
+    version: row.version,
+  };
+}
+
+export function putPlatformCache(row: PlatformCacheRow): void {
+  getDb()
+    .prepare(
+      `INSERT INTO platform_cache (cache_key, dataset, symbol, value, fetched_at, expires_at, source, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(cache_key) DO UPDATE SET
+         value      = excluded.value,
+         fetched_at = excluded.fetched_at,
+         expires_at = excluded.expires_at,
+         source     = excluded.source,
+         version    = excluded.version`,
+    )
+    .run(
+      row.cacheKey,
+      row.dataset,
+      row.symbol,
+      row.value,
+      row.fetchedAt,
+      row.expiresAt,
+      row.source,
+      row.version,
+    );
+}
+
+/** Selective invalidation: by exact key, by dataset, by symbol, or by (symbol, dataset) pairs. */
+export function deletePlatformCache(opts: {
+  cacheKey?: string;
+  symbol?: string;
+  datasets?: string[];
+}): number {
+  const database = getDb();
+  const where: string[] = [];
+  const args: (string | number)[] = [];
+
+  if (opts.cacheKey) {
+    where.push("cache_key = ?");
+    args.push(opts.cacheKey);
+  }
+  if (opts.symbol) {
+    where.push("symbol = ?");
+    args.push(opts.symbol);
+  }
+  if (opts.datasets && opts.datasets.length > 0) {
+    where.push(`dataset IN (${opts.datasets.map(() => "?").join(", ")})`);
+    args.push(...opts.datasets);
+  }
+  if (where.length === 0) return 0;
+
+  const result = database
+    .prepare(`DELETE FROM platform_cache WHERE ${where.join(" AND ")}`)
+    .run(...args);
+  return Number(result.changes ?? 0);
+}
+
+/** Drop rows whose stale-while-revalidate window has fully elapsed. Called on a timer, not on every write. */
+export function prunePlatformCache(now = Date.now()): number {
+  const result = getDb()
+    .prepare("DELETE FROM platform_cache WHERE expires_at < ?")
+    .run(now);
+  return Number(result.changes ?? 0);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Activity — "Continue where you left off" (home Module 10)                   */
+/* -------------------------------------------------------------------------- */
+
+interface ActivityRow {
+  kind: string;
+  ref: string;
+  label: string;
+  href: string;
+  at: string;
+}
+
+/**
+ * Records that the user visited something. Upserts on (kind, ref): a second
+ * visit to the same research page moves it to the top of the list rather than
+ * adding a duplicate entry.
+ *
+ * Deliberately fire-and-forget at the call site — a failure to log a visit must
+ * never break the page the user is actually trying to read.
+ */
+export function recordActivity(input: {
+  kind: string;
+  ref: string;
+  label: string;
+  href: string;
+}): void {
+  getDb()
+    .prepare(
+      `INSERT INTO activity (kind, ref, label, href, at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(kind, ref) DO UPDATE SET label = excluded.label, href = excluded.href, at = excluded.at`,
+    )
+    .run(input.kind, input.ref, input.label, input.href, new Date().toISOString());
+
+  // Keep the table bounded. The homepage shows a handful; nobody is served by
+  // an unbounded history, and this is cheaper than a scheduled prune.
+  getDb().prepare(
+    `DELETE FROM activity WHERE rowid NOT IN (SELECT rowid FROM activity ORDER BY at DESC LIMIT 50)`,
+  ).run();
+}
+
+export function listActivity(limit = 6): ActivityRow[] {
+  return getDb()
+    .prepare("SELECT kind, ref, label, href, at FROM activity ORDER BY at DESC LIMIT ?")
+    .all(limit) as unknown as ActivityRow[];
 }

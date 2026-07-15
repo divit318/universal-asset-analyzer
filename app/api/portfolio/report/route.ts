@@ -1,90 +1,45 @@
 /**
- * GET /api/portfolio/report
+ * GET /api/portfolio/report — the Universal Portfolio Report.
  *
- * Orchestrates all portfolio data fetching and runs the analytics engine.
- * Results are cached for 5 minutes to keep subsequent tab switches instant.
- * All computation is deterministic — the AI explanation layer is a separate
- * endpoint (/api/portfolio/audit).
+ * Covers every asset class the user holds, including the real estate, private
+ * markets, alternatives and structured products that live in the `manual_asset`
+ * ledger and were previously invisible to the Portfolio entirely.
+ *
+ * Two things this route deliberately no longer does:
+ *
+ *   - It holds NO private cache. It used to keep `let cached: {report, at}` with its
+ *     own 5-minute TTL — invisible to the platform layer, un-invalidatable, and
+ *     unaware of the four other caches around it. CLAUDE.md: "Never add a cache to a
+ *     module." Caching now happens where it belongs, in lib/platform/, at the
+ *     provider boundary, so Portfolio shares a cache with Research and Screener
+ *     instead of re-fetching quotes they just fetched.
+ *
+ *   - It hand-rolls NO fetch waterfall. lib/portfolio/context.ts declares one plan
+ *     and lets runPlan() own concurrency, failure isolation and cancellation.
  */
 import { NextResponse } from "next/server";
-import { listPortfolio } from "@/lib/db";
-import { getQuotes, getHistory } from "@/lib/yahoo";
-import { getFundamentals } from "@/lib/fundamentals";
-import { getFinancialStatements } from "@/lib/statements";
-import { computePortfolioReport, type PortfolioReport, type PositionInput } from "@/lib/portfolio-analytics";
-import { getLatestSectorRotation } from "@/lib/sector-rotation";
+import { buildPortfolioReport } from "@/lib/portfolio/report";
+import { OBJECTIVES, type Objective } from "@/lib/portfolio/engines/optimize";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const CACHE_TTL_MS = 5 * 60 * 1000;
-let cached: { report: PortfolioReport; at: number } | null = null;
-
-/** Settled best-effort: returns null on any failure. */
-async function tryOr<T>(fn: () => Promise<T>): Promise<T | null> {
-  try { return await fn(); } catch { return null; }
-}
-
-async function getSpyReturn1y(): Promise<number | null> {
-  try {
-    const hist = await getHistory("SPY", 380);
-    if (hist.length < 240) return null;
-    const first = hist[0].adjClose ?? hist[0].close;
-    const last = hist[hist.length - 1].adjClose ?? hist[hist.length - 1].close;
-    return first > 0 ? ((last - first) / first) * 100 : null;
-  } catch {
-    return null;
-  }
+function parseObjective(v: string | null): Objective {
+  return v && v in OBJECTIVES ? (v as Objective) : "maximize_sharpe";
 }
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const fresh = url.searchParams.get("fresh") === "1";
 
-  if (!fresh && cached && Date.now() - cached.at < CACHE_TTL_MS) {
-    return NextResponse.json(cached.report);
+  try {
+    const report = await buildPortfolioReport({
+      objective: parseObjective(url.searchParams.get("objective")),
+      baseCurrency: url.searchParams.get("currency") ?? "USD",
+    });
+    return NextResponse.json(report);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to build portfolio report";
+    console.error("[portfolio/report]", err);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
-
-  const positions = listPortfolio();
-  if (positions.length === 0) {
-    const empty = computePortfolioReport([], [], null);
-    return NextResponse.json(empty);
-  }
-
-  const symbols = positions.map((p) => p.symbol);
-
-  // Parallel: quotes + SPY history (fast), then fundamentals + position histories (slower)
-  const [quotes, spyHistory, spyReturn1y] = await Promise.all([
-    getQuotes(symbols).catch(() => [] as Awaited<ReturnType<typeof getQuotes>>),
-    getHistory("SPY", 120).catch(() => []),
-    getSpyReturn1y(),
-  ]);
-
-  const quoteMap = new Map(quotes.map((q) => [q.symbol, q]));
-
-  // Fetch fundamentals + 90-day history for each position in parallel
-  const inputs: PositionInput[] = await Promise.all(
-    positions.map(async (position): Promise<PositionInput> => {
-      const [fundamentals, statements, history] = await Promise.all([
-        tryOr(() => getFundamentals(position.symbol)),
-        tryOr(() => getFinancialStatements(position.symbol)),
-        getHistory(position.symbol, 90).catch(() => []),
-      ]);
-
-      return {
-        position,
-        quote: quoteMap.get(position.symbol) ?? null,
-        snapshot: fundamentals?.snapshot ?? null,
-        statements,
-        analyst: fundamentals?.analyst ?? null,
-        history,
-      };
-    }),
-  );
-
-  const rotationSnapshot = getLatestSectorRotation();
-  const report = computePortfolioReport(inputs, spyHistory, spyReturn1y, rotationSnapshot);
-  cached = { report, at: Date.now() };
-
-  return NextResponse.json(report);
 }

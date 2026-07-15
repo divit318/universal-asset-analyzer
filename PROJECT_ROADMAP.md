@@ -412,7 +412,6 @@ Phase 0 audit found 3 of 7 requested "new" systems already existed (Portfolio De
 | Item | Severity | Impact | Effort |
 |------|----------|--------|--------|
 | DuckDB lock contention | Medium | Occasional timeout on engine runs | Low (already partially fixed) |
-| Legacy /analyze module | Low | Unused, clutters nav | Low (delete) |
 | Parquet snapshots → ClickHouse | Medium | Daily latency on signals | High |
 | Test coverage <80% | Medium | Regressions slip through | Medium |
 | No e2e tests | Medium | UI breaks go unnoticed | High |

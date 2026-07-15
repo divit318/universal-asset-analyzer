@@ -76,7 +76,6 @@ export async function POST(request: Request) {
           volume: null,
           exchange: "NSE",
         },
-        screenerIn: body.company,
         history: body.history ?? [],
         question: body.question,
       });

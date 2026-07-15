@@ -1,18 +1,22 @@
 /**
  * Ollama Provider — the only AIProvider implementation today.
  *
- * Wraps the existing HTTP service layer (../ollama.ts: retry/backoff, typed
- * connection errors, <think> tag segregation) behind the provider-agnostic
- * {@link AIProvider} interface. Every field a future provider (a different
- * local runtime, or a hosted API) would need to supply lives here and only
- * here — the Router never imports ../ollama.ts directly.
+ * Wraps the HTTP service layer (../ollama.ts: retry/backoff, typed connection
+ * errors, reasoning segregation) behind the provider-agnostic {@link AIProvider}
+ * interface. Every field a future provider would need to supply lives here and
+ * only here — the Router never imports ../ollama.ts directly.
+ *
+ * Reasoning arrives on two channels and both are handled: modern Ollama returns
+ * it in a native `thinking` field, while older models inline it as <think> tags
+ * in the answer text. Reading only one of the two is how chain-of-thought
+ * previously vanished (or leaked into answers) depending on the model.
  */
 
 import {
   checkHealth,
   createThinkingSplitter,
   generate,
-  listInstalledModels,
+  listModelInfo,
   splitThinking,
   streamChat,
   type ChatTurn,
@@ -23,6 +27,7 @@ import type {
   ProviderCompleteRequest,
   ProviderCompleteResult,
   ProviderHealth,
+  ProviderModelInfo,
 } from "../provider";
 
 function toChatTurns(messages: ProviderChatTurn[]): ChatTurn[] {
@@ -32,8 +37,8 @@ function toChatTurns(messages: ProviderChatTurn[]): ChatTurn[] {
 export class OllamaProvider implements AIProvider {
   readonly id = "ollama" as const;
 
-  async listModels(): Promise<string[]> {
-    return listInstalledModels();
+  async listModels(): Promise<ProviderModelInfo[]> {
+    return listModelInfo();
   }
 
   async healthCheck(): Promise<ProviderHealth> {
@@ -41,9 +46,9 @@ export class OllamaProvider implements AIProvider {
   }
 
   /**
-   * Single-shot completion. Single system+user pairs go through `generate()`
-   * (fewer round-trip concerns); anything with real multi-turn history is
-   * built from `streamChat()`'s deltas so no HTTP logic is duplicated.
+   * Single-shot completion. A single system+user pair goes through `generate()`;
+   * anything with real multi-turn history is assembled from `streamChat()`'s
+   * deltas so no HTTP logic is duplicated.
    */
   async complete(request: ProviderCompleteRequest): Promise<ProviderCompleteResult> {
     const isSimpleTurn =
@@ -58,10 +63,18 @@ export class OllamaProvider implements AIProvider {
         system,
         temperature: request.temperature,
         json: request.json,
+        think: request.thinking,
+        numCtx: request.numCtx,
+        maxTokens: request.maxTokens,
         timeoutMs: request.timeoutMs,
       });
-      const { reasoning, answer } = splitThinking(raw);
-      return { content: answer, reasoning };
+      // Native `thinking` field first; fall back to inline <think> tags for
+      // models/runtimes that still embed reasoning in the answer text.
+      const inline = splitThinking(raw.content);
+      return {
+        content: inline.answer,
+        reasoning: raw.thinking || inline.reasoning,
+      };
     }
 
     let answer = "";
@@ -74,6 +87,11 @@ export class OllamaProvider implements AIProvider {
       model: request.model,
       messages: toChatTurns(request.messages),
       temperature: request.temperature,
+      json: request.json,
+      think: request.thinking,
+      numCtx: request.numCtx,
+      maxTokens: request.maxTokens,
+      onThinking: (t) => (reasoning += t),
       signal: request.signal,
     })) {
       splitter.push(delta);
@@ -95,6 +113,14 @@ export class OllamaProvider implements AIProvider {
       model: request.model,
       messages: toChatTurns(request.messages),
       temperature: request.temperature,
+      // Was silently dropped once: a streamed JSON task generated UNCONSTRAINED
+      // while its non-streamed twin ran under `format: "json"`, making the
+      // streamed path materially slower and chattier for the same prompt.
+      json: request.json,
+      think: request.thinking,
+      numCtx: request.numCtx,
+      maxTokens: request.maxTokens,
+      onThinking: onReasoning,
       signal: request.signal,
     })) {
       splitter.push(delta);

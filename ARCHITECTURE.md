@@ -2,9 +2,79 @@
 
 Complete reference for every major UAA module: what it does, what it needs, what it produces, and how modules talk to each other.
 
+---
+
+## Platform Data Layer (`lib/platform/`) — read this first
+
+**Every fetch in UAA goes through one path.** Nothing bypasses it: not the
+Screener, not the Scanner, not the AI context builder, not AI generation itself.
+
+```
+caller → getDataset()
+           → cache read   (fresh?         serve — provider never contacted)
+           → cache read   (stale-in-SWR?  serve NOW, refresh in background)
+           → dedupe       (identical work already running? attach to it)
+           → provider fetch → normalize → cache write → return
+```
+
+This is wired in at the **provider boundary** (`lib/yahoo.ts`, `lib/edgar.ts`,
+`lib/ai/context.ts`), not at the ~48 call sites — so bypassing it is impossible
+by construction, and every module observes the same normalized value for a given
+asset without knowing the platform exists.
+
+| File | Role |
+|------|------|
+| `registry.ts` | **The single source of truth for cache policy.** Per-dataset TTL/SWR/persist + the dependency graph. There is deliberately no universal TTL. |
+| `cache.ts` | Smart Cache: L1 in-process LRU + L2 SQLite (`platform_cache`), stale-while-revalidate, dependency-aware invalidation. |
+| `dedup.ts` | Request Deduplication Manager. Refcounted — one consumer cancelling never kills a request others still need. |
+| `orchestrator.ts` | `runPlan()`: DAG execution, concurrency limits, per-step failure isolation, retries, cancellation. Plus `mapLimit()` for batch work. |
+| `data-layer.ts` | The façade: `getDataset` / `peekDataset` / `invalidateAsset`. |
+| `client/` | Browser half: subscription store (granular re-render), `useDataset` (cancellation + dedup + SWR), `useResearchBundle` (streams the bundle). |
+
+**Cache policy is dataset-scoped, never page-scoped.** A live quote (15s TTL, no
+SWR, never persisted) and a 10-K (6h TTL, persisted) have nothing in common
+except being "data".
+
+**Invalidation is dependency-aware.** `invalidateAsset("AAPL", "filings")`
+cascades filings → statements → fundamentals → peers → companyContext →
+aiVerdict, and stops. Apple's price history, Apple's profile, and every other
+symbol are untouched. A price tick invalidates valuation and the verdict — not
+the business overview.
+
+**Observability:** `GET /api/platform` (cache hit rate, how much duplicate
+provider work dedup eliminated, what's in flight, the registered policies).
+`DELETE /api/platform?symbol=AAPL&dataset=filings` invalidates.
+
+### Orchestrated research (`lib/research-bundle.ts`)
+
+One declared plan; `/api/research` (JSON) and `/api/research/bundle` (NDJSON,
+streamed per section) both execute it, so they cannot drift. Independent steps
+run concurrently; only the two real dependency chains are ordered
+(`profile → sectorHistory`, `fundamentals → peers/sectorRotation`).
+
+This replaced a four-stage waterfall. Measured, cold cache: full research
+2264ms → 1455ms; **time-to-first-paint 764ms → 163ms**; warm revisit 36ms.
+
+### AI streaming (`lib/ai/streaming-json.ts` + `/api/ai/report`)
+
+**Ollama serializes requests** (measured: 3 concurrent generations ≈ 3
+sequential). So per-section generation would cost ~9x one generation — it was
+built, measured at 138s vs 40s, and rejected. Instead: **one generation** (the
+same `buildVerdictPrompt` the non-streamed `/api/ai/verdict` uses), parsed
+incrementally, with each top-level JSON field emitted the instant it closes.
+
+The assembled report is therefore *the same object* the non-streamed route
+returns — not an approximation. Total generation time is unchanged; only
+time-to-first-section improves (32s → 7s on MSFT, 42s → 4s on JPM). Complete
+sections only — never tokens, never half-written sentences.
+
+---
+
 ## Core Data Sources
 
 These are not modules but foundational services that other modules depend on.
+**All of them now route through the Platform Data Layer above** — the caching
+notes in each section below describe the dataset policy, not a private cache.
 
 ### Yahoo Finance (`lib/yahoo.ts`)
 **Purpose**: Real-time US market data from Yahoo Finance API.
@@ -399,6 +469,8 @@ These modules track user holdings and provide position-level analysis.
 
 **Architecture constraint learned the hard way**: `lib/portfolio-analytics.ts` is imported by both server routes and client components (for its types/constants). It must never import anything that transitively reaches `lib/db.ts` (node:sqlite, server-only) — e.g. `lib/sector-rotation.ts` does reach `db.ts`, so `portfolio-analytics.ts` takes rotation data as a plain parameter instead of importing the module. Check the *whole* import chain, not just the direct import, before adding a dependency to a dual-use file.
 
+**Background alert monitor** (`lib/monitor.ts`, `instrumentation.ts`): watchlist/portfolio alerts no longer depend on a browser tab being open or an external cron. `instrumentation.ts`'s `register()` (Next's server-start hook, node runtime only) calls `startMonitorScheduler()`, which runs `runMonitor()` — the same logic behind `POST /api/monitor/run` and `scripts/monitor.mjs` — on a timer (`UAA_MONITOR_INTERVAL_MS`, default 5 min, floored at 60s, `0` disables). A `Symbol.for` global guard keeps it idempotent across dev hot-reloads. The header bell's 90s poll and this timer both evaluate the same alerts safely because `createNotifications` dedupes per condition per 24h.
+
 ---
 
 ### Research Notes (`lib/db.ts` + components)
@@ -611,8 +683,8 @@ names a model or talks HTTP.
 - `lib/ai/prompt-builder.ts` — reusable, versioned system/developer/user
   prompt templates (additive; the Research Copilot's own `lib/ai/prompt.ts`
   predates it and stays as-is).
-- `lib/ollama.ts` — pure prompt builder for the legacy `/analyze` feature (no
-  HTTP, despite the name).
+- `lib/ollama.ts` — pure prompt builder for `analyzeAsset()`'s quote+filings
+  analysis (`/api/ai`; no HTTP, despite the name).
 - `lib/json-extract.ts` — the single JSON-from-LLM-response parser. Never
   hand-roll fence stripping in routes or engines.
 - Graceful degradation if Ollama offline (UI shows fallback message).
@@ -723,6 +795,30 @@ Unit tests in `tests/[module].test.ts` for:
 - Data parsing (EDGAR, screener.in)
 - Formatting utilities
 
-Component rendering and UI interaction tested manually in browser (no automated tests).
-
 External API calls mocked or skipped in tests (don't hit live APIs).
+
+### E2E tests (Playwright)
+
+`e2e/` holds a **smoke** suite, not a full behavioral one: every page renders,
+with no unfiltered console/page errors, plus a few deeper journeys. Run with
+`npm run test:e2e` (`npm run test:e2e:ui` for the interactive runner).
+
+- `e2e/pages.spec.ts` — one test per route (≥17 routes) asserting the header
+  and page `<h1>` render and console is clean. Long-running pipelines
+  (`/scanner`, `/ic-report`, `/thematic`) only assert their idle "start"
+  affordance, never the pipeline result.
+- `e2e/journeys.spec.ts` — three deeper flows: command-palette search →
+  research (with `/api/search` mocked via `page.route`), a watchlist
+  add/remove round-trip against the real (isolated) DB, and theme-toggle
+  persistence.
+- `e2e/helpers.ts` — the console-error tripwire (the highest-value assertion
+  in the suite — catches hydration mismatches and client crashes that `tsc`
+  + eslint + unit tests miss) and its allowlist of expected offline noise
+  (no Ollama, sometimes no network).
+- Runs against a **production** build (`next build && next start -p 3111`)
+  against an **isolated** SQLite DB at `e2e/.tmp/e2e.db` — never the real
+  `data/app.db`. Fully offline-tolerant: no Ollama required, AI panels must
+  show their fallback state, and pages that hard-depend on live Yahoo quotes
+  accept either data or their designed empty/error state.
+- Kept fully separate from `npm run test` (Vitest): e2e specs live under
+  `e2e/*.spec.ts`, outside Vitest's `tests/**/*.test.ts` include glob.

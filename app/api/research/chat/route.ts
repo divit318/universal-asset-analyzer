@@ -1,26 +1,346 @@
 import { isValidSymbol } from "@/lib/market";
+import { detectAssetClass } from "@/lib/asset-class";
 import { buildCompanyContext } from "@/lib/ai/context";
-import {
-  ModelMissingError,
-  OllamaUnavailableError,
-  checkHealth,
-  createThinkingSplitter,
-  streamChat,
-} from "@/lib/ai/ollama";
+import { ModelMissingError, OllamaUnavailableError, checkHealth } from "@/lib/ai/ollama";
 import { specForInstalled } from "@/lib/ai/models";
 import { pickModel } from "@/lib/ai/router";
+import { runTaskChat } from "@/lib/ai/orchestrator";
 import { buildBlocks, classifyIntent, selectBlocks } from "@/lib/ai/retrieval";
 import { buildMessages } from "@/lib/ai/prompt";
 import { getAction, suggestFollowUps } from "@/lib/ai/actions";
 import { extractCitations, loadHistory, persistTurn } from "@/lib/ai/memory";
 import { verifyGrounding } from "@/lib/ai/grounding";
 import type { ChatRequest, ChatStreamEvent, ResearchIntent, PortfolioContextForAI, ContextBlock } from "@/lib/ai/types";
+import { getFundProfile, getHistory, getMacroSummary } from "@/lib/yahoo";
+import { computeFundScore } from "@/lib/fund-scoring";
+import { fundChatWithData } from "@/lib/ai-fund-research";
+import { computeCryptoScore } from "@/lib/crypto-scoring";
+import { cryptoChatWithData } from "@/lib/ai-crypto-research";
+import { computeCommodityScore } from "@/lib/commodity-scoring";
+import { commodityChatWithData } from "@/lib/ai-commodity-research";
+import { COMMODITY_BENCHMARK_SYMBOL } from "@/lib/research-engines/commodity";
+import { computeForexScore, DOLLAR_INDEX_SYMBOL } from "@/lib/forex-scoring";
+import { forexChatWithData } from "@/lib/ai-forex-research";
+import { macroChatWithData } from "@/lib/ai-macro-research";
+import type { NewsItem, Quote } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const encoder = new TextEncoder();
 const line = (ev: ChatStreamEvent) => encoder.encode(JSON.stringify(ev) + "\n");
+
+const FUND_FOLLOWUPS = [
+  "What are the top holdings?",
+  "How does the expense ratio compare to peers?",
+  "Is this fund concentrated or diversified?",
+];
+
+/**
+ * Fund-native chat path: no equity CompanyContext/retrieval/citations — just
+ * fund data → fundChatWithData(). Delivered as a single `delta` (fund answers
+ * aren't token-streamed; runPromptWithMeta returns the complete text) so the
+ * client's existing NDJSON parser needs no changes.
+ */
+async function respondAsFund(
+  symbol: string,
+  name: string,
+  question: string,
+  history: { role: "user" | "assistant"; content: string }[],
+  sessionId: string | undefined,
+): Promise<Response> {
+  const [fund, priceHistory] = await Promise.all([getFundProfile(symbol), getHistory(symbol, 730)]);
+  const score = computeFundScore(fund, priceHistory);
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        const { answer, model } = await fundChatWithData({ symbol, name, fund, score, history, question });
+        controller.enqueue(line({ type: "delta", text: answer }));
+
+        const grounding = verifyGrounding(answer, JSON.stringify({ fund, score }), {});
+        controller.enqueue(line({ type: "meta", citations: [], suggestions: FUND_FOLLOWUPS, model, grounding }));
+
+        if (sessionId && answer.trim()) {
+          try {
+            persistTurn(sessionId, symbol, question, { content: answer.trim(), citations: [], reasoning: "", grounding });
+          } catch {
+            /* persistence is non-critical */
+          }
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Generation failed";
+        controller.enqueue(line({ type: "error", message, code: "internal" }));
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+const CRYPTO_FOLLOWUPS = [
+  "How is this performing vs BTC?",
+  "What's the risk-adjusted return?",
+  "How far is this from its recent high?",
+];
+
+/**
+ * Crypto-native chat path: market-data only (momentum/relative-strength/
+ * risk), no equity CompanyContext/retrieval/citations — same shape as
+ * respondAsFund above.
+ */
+async function respondAsCrypto(
+  quote: Quote,
+  question: string,
+  history: { role: "user" | "assistant"; content: string }[],
+  sessionId: string | undefined,
+): Promise<Response> {
+  const symbol = quote.symbol;
+  const isBtc = symbol.toUpperCase().startsWith("BTC-USD");
+  const [priceHistory, btcHistory] = await Promise.all([
+    getHistory(symbol, 730),
+    isBtc ? Promise.resolve([]) : getHistory("BTC-USD", 730),
+  ]);
+  const score = computeCryptoScore(symbol, priceHistory, btcHistory.length > 0 ? btcHistory : null);
+  const facts = {
+    symbol,
+    name: quote.name,
+    price: quote.price,
+    currency: quote.currency,
+    changePercent: quote.changePercent,
+    marketCap: quote.marketCap,
+  };
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        const { answer, model } = await cryptoChatWithData({ facts, score, history, question });
+        controller.enqueue(line({ type: "delta", text: answer }));
+
+        const grounding = verifyGrounding(answer, JSON.stringify({ facts, score }), {});
+        controller.enqueue(line({ type: "meta", citations: [], suggestions: CRYPTO_FOLLOWUPS, model, grounding }));
+
+        if (sessionId && answer.trim()) {
+          try {
+            persistTurn(sessionId, symbol, question, { content: answer.trim(), citations: [], reasoning: "", grounding });
+          } catch {
+            /* persistence is non-critical */
+          }
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Generation failed";
+        controller.enqueue(line({ type: "error", message, code: "internal" }));
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+const COMMODITY_FOLLOWUPS = [
+  "What does recent news suggest about supply/demand?",
+  "How is this performing vs the commodity index?",
+  "What's the risk-adjusted return?",
+];
+
+/**
+ * Commodity-native chat path: market-data + news (for supply/demand
+ * context), no equity CompanyContext retrieval/citations — same shape as
+ * respondAsCrypto above. `news` is ctx.news (already fetched by
+ * buildCompanyContext for every symbol), not a second fetch.
+ */
+async function respondAsCommodity(
+  quote: Quote,
+  news: NewsItem[],
+  question: string,
+  history: { role: "user" | "assistant"; content: string }[],
+  sessionId: string | undefined,
+): Promise<Response> {
+  const symbol = quote.symbol;
+  const [priceHistory, benchmarkHistory] = await Promise.all([
+    getHistory(symbol, 730),
+    getHistory(COMMODITY_BENCHMARK_SYMBOL, 730),
+  ]);
+  const score = computeCommodityScore(priceHistory, benchmarkHistory.length > 0 ? benchmarkHistory : null);
+  const facts = {
+    symbol,
+    name: quote.name,
+    price: quote.price,
+    currency: quote.currency,
+    changePercent: quote.changePercent,
+  };
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        const { answer, model } = await commodityChatWithData({ facts, score, news, history, question });
+        controller.enqueue(line({ type: "delta", text: answer }));
+
+        const grounding = verifyGrounding(answer, JSON.stringify({ facts, score, news }), {});
+        controller.enqueue(line({ type: "meta", citations: [], suggestions: COMMODITY_FOLLOWUPS, model, grounding }));
+
+        if (sessionId && answer.trim()) {
+          try {
+            persistTurn(sessionId, symbol, question, { content: answer.trim(), citations: [], reasoning: "", grounding });
+          } catch {
+            /* persistence is non-critical */
+          }
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Generation failed";
+        controller.enqueue(line({ type: "error", message, code: "internal" }));
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+const FOREX_FOLLOWUPS = [
+  "What does recent news suggest about central banks/rates?",
+  "How is this performing vs the US Dollar Index?",
+  "What's the risk-adjusted return?",
+];
+
+/**
+ * Forex-native chat path: market-data + news (for macro context), no equity
+ * CompanyContext retrieval/citations — same shape as respondAsCommodity
+ * above. `news` is ctx.news, not a second fetch.
+ */
+async function respondAsForex(
+  quote: Quote,
+  news: NewsItem[],
+  question: string,
+  history: { role: "user" | "assistant"; content: string }[],
+  sessionId: string | undefined,
+): Promise<Response> {
+  const symbol = quote.symbol;
+  const isDxy = symbol.toUpperCase() === DOLLAR_INDEX_SYMBOL.toUpperCase();
+  const [priceHistory, benchmarkHistory] = await Promise.all([
+    getHistory(symbol, 730),
+    isDxy ? Promise.resolve([]) : getHistory(DOLLAR_INDEX_SYMBOL, 730),
+  ]);
+  const score = computeForexScore(symbol, priceHistory, benchmarkHistory.length > 0 ? benchmarkHistory : null);
+  const facts = {
+    symbol,
+    name: quote.name,
+    price: quote.price,
+    currency: quote.currency,
+    changePercent: quote.changePercent,
+  };
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        const { answer, model } = await forexChatWithData({ facts, score, news, history, question });
+        controller.enqueue(line({ type: "delta", text: answer }));
+
+        const grounding = verifyGrounding(answer, JSON.stringify({ facts, score, news }), {});
+        controller.enqueue(line({ type: "meta", citations: [], suggestions: FOREX_FOLLOWUPS, model, grounding }));
+
+        if (sessionId && answer.trim()) {
+          try {
+            persistTurn(sessionId, symbol, question, { content: answer.trim(), citations: [], reasoning: "", grounding });
+          } catch {
+            /* persistence is non-critical */
+          }
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Generation failed";
+        controller.enqueue(line({ type: "error", message, code: "internal" }));
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+const MACRO_FOLLOWUPS = [
+  "Is the yield curve inverted right now?",
+  "Is the curve steepening or flattening?",
+  "What does recent news suggest about inflation or Fed policy?",
+];
+
+/**
+ * Macro-native chat path: the full 4-tenor yield curve + news, no equity
+ * CompanyContext retrieval/citations — same shape as respondAsForex above,
+ * except the "symbol" searched doesn't change what's fetched (always the
+ * whole curve, not just the one tenor searched).
+ */
+async function respondAsMacro(
+  symbol: string,
+  news: NewsItem[],
+  question: string,
+  history: { role: "user" | "assistant"; content: string }[],
+  sessionId: string | undefined,
+): Promise<Response> {
+  const summary = await getMacroSummary();
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        const { answer, model } = await macroChatWithData({ summary, news, history, question });
+        controller.enqueue(line({ type: "delta", text: answer }));
+
+        const grounding = verifyGrounding(answer, JSON.stringify({ summary, news }), {});
+        controller.enqueue(line({ type: "meta", citations: [], suggestions: MACRO_FOLLOWUPS, model, grounding }));
+
+        if (sessionId && answer.trim()) {
+          try {
+            persistTurn(sessionId, symbol, question, { content: answer.trim(), citations: [], reasoning: "", grounding });
+          } catch {
+            /* persistence is non-critical */
+          }
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Generation failed";
+        controller.enqueue(line({ type: "error", message, code: "internal" }));
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
 
 function buildPortfolioContextBlock(ctx: PortfolioContextForAI): ContextBlock {
   const lines: string[] = [
@@ -92,9 +412,9 @@ export async function POST(request: Request) {
       { status: 503 },
     );
   }
-  const model = body.model && models.includes(body.model)
-    ? body.model
-    : await pickModel("company-research", { installed: models });
+  // A user-picked model is honored strictly; otherwise the Router decides.
+  const pinnedModel = body.model && models.includes(body.model) ? body.model : undefined;
+  const model = pinnedModel ?? (await pickModel("company-research"));
   if (!model) {
     return Response.json(
       { error: "No Ollama models are installed. Run `ollama pull qwen3` (or mistral).", code: "model_missing" },
@@ -109,6 +429,28 @@ export async function POST(request: Request) {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Could not load company data";
     return Response.json({ error: message }, { status: 404 });
+  }
+
+  const history = body.sessionId ? loadHistory(body.sessionId) : (body.messages ?? []);
+
+  // Funds have no P/E, no filings, no analyst coverage — routing them through
+  // the equity retrieval/prompt pipeline would just produce a context full of
+  // nulls. Branch to the fund-native path before any equity-specific work.
+  const assetClass = detectAssetClass(ctx.quote);
+  if (assetClass === "fund") {
+    return respondAsFund(symbol, ctx.name, question, history, body.sessionId);
+  }
+  if (assetClass === "crypto") {
+    return respondAsCrypto(ctx.quote, question, history, body.sessionId);
+  }
+  if (assetClass === "commodity") {
+    return respondAsCommodity(ctx.quote, ctx.news, question, history, body.sessionId);
+  }
+  if (assetClass === "forex") {
+    return respondAsForex(ctx.quote, ctx.news, question, history, body.sessionId);
+  }
+  if (assetClass === "macro") {
+    return respondAsMacro(symbol, ctx.news, question, history, body.sessionId);
   }
 
   const spec = specForInstalled(model);
@@ -126,7 +468,6 @@ export async function POST(request: Request) {
     blocks.unshift(buildPortfolioContextBlock(body.portfolioContext!));
   }
 
-  const history = body.sessionId ? loadHistory(body.sessionId) : (body.messages ?? []);
   const messages = buildMessages({
     symbol: ctx.symbol,
     name: ctx.name,
@@ -144,28 +485,31 @@ export async function POST(request: Request) {
     async start(controller) {
       let answer = "";
       let reasoning = "";
-      const splitter = createThinkingSplitter({
-        onAnswer: (t) => {
-          answer += t;
-          controller.enqueue(line({ type: "delta", text: t }));
-        },
-        onReasoning: (t) => {
-          reasoning += t;
-          controller.enqueue(line({ type: "reasoning", text: t }));
-        },
-      });
 
       try {
-        for await (const delta of streamChat({
-          model,
-          messages,
-          temperature: spec.temperature,
-          numCtx: spec.contextWindow,
+        // The platform owns model choice, generation settings, fallback, and the
+        // separation of reasoning from answer. This route supplies a task name
+        // and a conversation — it no longer touches Ollama.
+        const turns = runTaskChat("company-research", messages, {
+          model: pinnedModel,
           signal: request.signal,
-        })) {
-          splitter.push(delta);
+          onReasoning: (t) => {
+            reasoning += t;
+            controller.enqueue(line({ type: "reasoning", text: t }));
+          },
+        });
+
+        // Drive the generator by hand rather than with `for await`, which
+        // discards a generator's return value — here that is the id of the model
+        // that actually answered, which may differ from our up-front pick if the
+        // Router had to fall back.
+        let step = await turns.next();
+        while (!step.done) {
+          answer += step.value;
+          controller.enqueue(line({ type: "delta", text: step.value }));
+          step = await turns.next();
         }
-        splitter.end();
+        const answeredBy = step.value;
 
         const citations = extractCitations(answer, ctx);
         // Verify the answer against the exact evidence it was handed: trace
@@ -176,7 +520,9 @@ export async function POST(request: Request) {
           blocks.map((b) => b.body).join("\n\n"),
           { allowedTags: blocks.map((b) => b.source) },
         );
-        controller.enqueue(line({ type: "meta", citations, suggestions, model, grounding }));
+        controller.enqueue(
+          line({ type: "meta", citations, suggestions, model: answeredBy, grounding }),
+        );
 
         if (body.sessionId && answer.trim()) {
           try {

@@ -1,0 +1,294 @@
+/**
+ * Universal Allocation Engine.
+ *
+ * Allocation is the thing the Portfolio is actually ABOUT, and the current engine
+ * has exactly one view of it: GICS sector. That view cannot express "I am 70%
+ * equities", "I am 100% USD", or "I can't sell 40% of this portfolio for a year" —
+ * the three facts that dominate almost every real portfolio decision.
+ *
+ * Every breakdown here is the same fold over the same normalized field, which is
+ * why adding a new one (by tax treatment, by issuer, by vintage) is a three-line
+ * change rather than a new subsystem.
+ */
+
+import { LIQUIDITY_ORDER, PORTFOLIO_CLASS_LABEL } from "../model/types";
+import type {
+  Factor,
+  Holding,
+  Liquidity,
+  PortfolioAssetClass,
+} from "../model/types";
+import { FACTORS, FACTOR_LABEL } from "../model/types";
+
+export interface AllocationSlice {
+  key: string;
+  label: string;
+  value: number;
+  weight: number;
+  count: number;
+  /** Confidence-weighted mean score of the slice's holdings; null if none are scored. */
+  avgScore: number | null;
+}
+
+export interface AllocationView {
+  /** What this breakdown is keyed on — "assetClass", "sector", … */
+  dimension: string;
+  slices: AllocationSlice[];
+  /**
+   * Herfindahl-Hirschman Index over this dimension's weights, 0-10000.
+   * <1500 = diversified, >2500 = concentrated.
+   */
+  hhi: number;
+  /**
+   * Share of portfolio value that could NOT be classified on this dimension.
+   * Surfaced rather than silently lumped into "Unknown" — a sector breakdown that
+   * is 60% unclassified is not a sector breakdown, and the UI must be able to say so.
+   */
+  unclassifiedPct: number;
+}
+
+export interface PortfolioAllocation {
+  byAssetClass: AllocationView;
+  bySector: AllocationView;
+  byGeography: AllocationView;
+  byCurrency: AllocationView;
+  byLiquidity: AllocationView;
+  /** Dollar-weighted net exposure to each macro factor. */
+  byFactor: { factor: Factor; label: string; exposure: number }[];
+}
+
+/* -------------------------------------------------------------------------- */
+
+export function computeHHI(weights: number[]): number {
+  return weights.reduce((s, w) => s + (w / 100) ** 2, 0) * 10000;
+}
+
+/**
+ * Confidence-weighted mean of holding scores.
+ *
+ * A plain average would let a 90-score-at-15%-confidence holding drag a slice's
+ * quality up as hard as a 90-at-95%. Weighting by (value × confidence) means
+ * thinly-evidenced scores contribute in proportion to how much we actually know —
+ * and a slice where nothing is scored returns null, not 50.
+ */
+function confidenceWeightedScore(holdings: Holding[]): number | null {
+  let num = 0;
+  let den = 0;
+  for (const h of holdings) {
+    if (!h.score) continue;
+    const w = h.valuation.valueBase * (h.score.confidence / 100);
+    num += h.score.score * w;
+    den += w;
+  }
+  return den > 0 ? Math.round(num / den) : null;
+}
+
+/** Generic fold. Every allocation view in the app comes from this one function. */
+function groupBy(
+  holdings: Holding[],
+  totalValue: number,
+  dimension: string,
+  keyOf: (h: Holding) => string | null,
+  labelOf: (key: string) => string = (k) => k,
+): AllocationView {
+  const groups = new Map<string, Holding[]>();
+  let unclassified = 0;
+
+  for (const h of holdings) {
+    const key = keyOf(h);
+    if (key == null || key === "") {
+      unclassified += h.valuation.valueBase;
+      continue;
+    }
+    const list = groups.get(key) ?? [];
+    list.push(h);
+    groups.set(key, list);
+  }
+
+  const slices: AllocationSlice[] = [...groups.entries()]
+    .map(([key, hs]) => {
+      const value = hs.reduce((s, h) => s + h.valuation.valueBase, 0);
+      return {
+        key,
+        label: labelOf(key),
+        value,
+        weight: totalValue > 0 ? (value / totalValue) * 100 : 0,
+        count: hs.length,
+        avgScore: confidenceWeightedScore(hs),
+      };
+    })
+    .sort((a, b) => b.weight - a.weight);
+
+  return {
+    dimension,
+    slices,
+    hhi: Math.round(computeHHI(slices.map((s) => s.weight))),
+    unclassifiedPct: totalValue > 0 ? (unclassified / totalValue) * 100 : 0,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+
+export function computeAllocation(holdings: Holding[], totalValue: number): PortfolioAllocation {
+  const byAssetClass = groupBy(
+    holdings,
+    totalValue,
+    "assetClass",
+    (h) => h.assetClass,
+    (k) => PORTFOLIO_CLASS_LABEL[k as PortfolioAssetClass] ?? k,
+  );
+
+  const bySector = groupBy(holdings, totalValue, "sector", (h) => h.attributes.sector ?? null);
+
+  const byGeography = groupBy(holdings, totalValue, "geography", (h) => h.attributes.geography ?? null);
+
+  // Currency comes off the holding itself, not an attribute — it is always known,
+  // so this view is never unclassified. FX risk is not an optional extra.
+  const byCurrency = groupBy(holdings, totalValue, "currency", (h) => h.currency.toUpperCase());
+
+  const byLiquidity = groupBy(
+    holdings,
+    totalValue,
+    "liquidity",
+    (h) => h.liquidity,
+    (k) => ({ t0: "Same day", t1: "Days", t2: "Weeks", illiquid: "Illiquid" })[k as Liquidity] ?? k,
+  );
+  // Keep liquidity in its natural order (most→least liquid) rather than by weight —
+  // a liquidity ladder read out of order is useless.
+  byLiquidity.slices.sort(
+    (a, b) => LIQUIDITY_ORDER.indexOf(a.key as Liquidity) - LIQUIDITY_ORDER.indexOf(b.key as Liquidity),
+  );
+
+  const byFactor = computeFactorExposure(holdings, totalValue);
+
+  return { byAssetClass, bySector, byGeography, byCurrency, byLiquidity, byFactor };
+}
+
+/**
+ * Dollar-weighted net exposure to each macro factor.
+ *
+ * This is the replacement for the old SECTOR_FACTOR_MAP, which keyed off GICS
+ * sector and therefore assigned *zero* factor exposure to every bond, every
+ * commodity and every crypto holding — they silently contributed nothing to the
+ * portfolio's factor picture. A portfolio that was 50% long-duration Treasuries
+ * showed no interest-rate exposure at all.
+ */
+export function computeFactorExposure(
+  holdings: Holding[],
+  totalValue: number,
+): { factor: Factor; label: string; exposure: number }[] {
+  if (totalValue <= 0) return [];
+
+  return FACTORS.map((factor) => {
+    let exposure = 0;
+    for (const h of holdings) {
+      const sensitivity = h.factors[factor];
+      if (sensitivity == null) continue;
+      exposure += sensitivity * (h.valuation.valueBase / totalValue);
+    }
+    return {
+      factor,
+      label: FACTOR_LABEL[factor],
+      exposure: Math.round(exposure * 100) / 100,
+    };
+  }).filter((f) => Math.abs(f.exposure) > 0.001);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Concentration                                                               */
+/* -------------------------------------------------------------------------- */
+
+export interface ConcentrationFinding {
+  type: "holding" | "assetClass" | "sector" | "geography" | "currency" | "liquidity";
+  label: string;
+  pct: number;
+  severity: "high" | "medium";
+  message: string;
+}
+
+/**
+ * Concentration is now checked on FIVE dimensions, not two.
+ *
+ * The old engine warned on single-position and single-sector weight only. It would
+ * pass a portfolio that is 100% USD, 100% equities, and 45% illiquid without a word
+ * — three of the most common ways a real portfolio actually gets hurt.
+ */
+export function computeConcentration(
+  holdings: Holding[],
+  allocation: PortfolioAllocation,
+): ConcentrationFinding[] {
+  const out: ConcentrationFinding[] = [];
+
+  for (const h of holdings) {
+    if (h.weight >= 25) {
+      out.push({
+        type: "holding",
+        label: h.symbol ?? h.name,
+        pct: h.weight,
+        severity: "high",
+        message: `${h.symbol ?? h.name} is ${h.weight.toFixed(1)}% of the portfolio — single-asset concentration risk.`,
+      });
+    } else if (h.weight >= 15) {
+      out.push({
+        type: "holding",
+        label: h.symbol ?? h.name,
+        pct: h.weight,
+        severity: "medium",
+        message: `${h.symbol ?? h.name} is ${h.weight.toFixed(1)}% of the portfolio.`,
+      });
+    }
+  }
+
+  for (const s of allocation.byAssetClass.slices) {
+    if (s.weight >= 80 && allocation.byAssetClass.slices.length > 0) {
+      out.push({
+        type: "assetClass",
+        label: s.label,
+        pct: s.weight,
+        severity: "high",
+        message: `${s.weight.toFixed(0)}% of the portfolio is in ${s.label}. This is a single-asset-class bet, whatever the diversification within it.`,
+      });
+    }
+  }
+
+  for (const s of allocation.bySector.slices) {
+    if (s.weight >= 40) {
+      out.push({
+        type: "sector",
+        label: s.label,
+        pct: s.weight,
+        severity: s.weight >= 50 ? "high" : "medium",
+        message: `${s.label} is ${s.weight.toFixed(1)}% of the portfolio — sector concentration risk.`,
+      });
+    }
+  }
+
+  // Home-currency bias: invisible to the old model, which had no currency concept.
+  for (const s of allocation.byCurrency.slices) {
+    if (s.weight >= 90 && allocation.byCurrency.slices.length === 1) {
+      out.push({
+        type: "currency",
+        label: s.label,
+        pct: s.weight,
+        severity: "medium",
+        message: `100% ${s.label} exposure. The portfolio has no currency diversification — a sustained dollar decline hits everything at once.`,
+      });
+    }
+  }
+
+  const illiquid = allocation.byLiquidity.slices
+    .filter((s) => s.key === "illiquid" || s.key === "t2")
+    .reduce((sum, s) => sum + s.weight, 0);
+  if (illiquid >= 30) {
+    out.push({
+      type: "liquidity",
+      label: "Illiquid holdings",
+      pct: illiquid,
+      severity: illiquid >= 50 ? "high" : "medium",
+      message: `${illiquid.toFixed(0)}% of the portfolio cannot be sold quickly. In a drawdown you can only rebalance with the other ${(100 - illiquid).toFixed(0)}%.`,
+    });
+  }
+
+  const order = { high: 0, medium: 1 };
+  return out.sort((a, b) => order[a.severity] - order[b.severity] || b.pct - a.pct);
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseFilings, parseTickerMap } from "@/lib/edgar";
+import { parseFilings, parseTickerMap, parseFormDSearchHits, parseFormDXml } from "@/lib/edgar";
 
 describe("parseTickerMap", () => {
   it("builds an upper-cased ticker map with zero-padded CIKs", () => {
@@ -49,5 +49,108 @@ describe("parseFilings", () => {
 
   it("returns [] when there are no recent filings", () => {
     expect(parseFilings({}, "0000320193")).toEqual([]);
+  });
+});
+
+describe("parseFormDSearchHits", () => {
+  // Fixture shaped like a real efts.sec.gov/LATEST/search-index response.
+  const raw = {
+    hits: {
+      hits: [
+        {
+          _source: {
+            ciks: ["0002012115", "0002006833"],
+            display_names: [
+              "MAV OpenAI Fund I, a series of MAV Alternate Investments, LP  (CIK 0002012115)",
+              "QP-MAV OpenAI Fund I, a series of MAV Alternate Investments, LP  (CIK 0002006833)",
+            ],
+            form: "D",
+            file_date: "2024-03-22",
+            adsh: "0002012115-24-000002",
+          },
+        },
+        {
+          _source: {
+            ciks: ["0002041780"],
+            display_names: ["OPENAI - FUTURUM A SERIES OF MASTER FUND I LLC  (CIK 0002041780)"],
+            form: "D/A",
+            file_date: "2025-02-18",
+            adsh: "0002041780-25-000003",
+          },
+        },
+      ],
+    },
+  };
+
+  it("strips the (CIK ...) suffix and takes the first cik/name pair per hit", () => {
+    const filings = parseFormDSearchHits(raw);
+    expect(filings).toHaveLength(2);
+    expect(filings[0]).toEqual({
+      cik: "0002012115",
+      entityName: "MAV OpenAI Fund I, a series of MAV Alternate Investments, LP",
+      form: "D",
+      filedDate: "2024-03-22",
+      accessionNumber: "0002012115-24-000002",
+    });
+    expect(filings[1].entityName).toBe("OPENAI - FUTURUM A SERIES OF MASTER FUND I LLC");
+    expect(filings[1].form).toBe("D/A");
+  });
+
+  it("respects the max limit", () => {
+    expect(parseFormDSearchHits(raw, 1)).toHaveLength(1);
+  });
+
+  it("skips hits missing a cik, name, or accession number", () => {
+    const incomplete = { hits: { hits: [{ _source: { display_names: ["No CIK Inc"], form: "D", file_date: "2024-01-01", adsh: "x" } }] } };
+    expect(parseFormDSearchHits(incomplete)).toEqual([]);
+  });
+
+  it("returns [] when there are no hits", () => {
+    expect(parseFormDSearchHits({})).toEqual([]);
+  });
+});
+
+describe("parseFormDXml", () => {
+  it("extracts entity name, date of first sale, and offering amounts from real Form D XML shape", () => {
+    const xml = `<?xml version="1.0"?>
+<edgarSubmission>
+  <primaryIssuer>
+    <entityName>OpenAI-01, a Series of OpenAI Opp Fund LLC</entityName>
+  </primaryIssuer>
+  <offeringData>
+    <typeOfFiling>
+      <dateOfFirstSale>
+        <value>2026-04-14</value>
+      </dateOfFirstSale>
+    </typeOfFiling>
+    <offeringSalesAmountsList>
+      <totalOfferingAmount>8475135</totalOfferingAmount>
+      <totalAmountSold>8475135</totalAmountSold>
+      <totalRemaining>0</totalRemaining>
+    </offeringSalesAmountsList>
+  </offeringData>
+</edgarSubmission>`;
+    expect(parseFormDXml(xml)).toEqual({
+      entityName: "OpenAI-01, a Series of OpenAI Opp Fund LLC",
+      dateOfFirstSale: "2026-04-14",
+      totalOfferingAmount: 8475135,
+      totalAmountSold: 8475135,
+    });
+  });
+
+  it("returns null fields instead of throwing when a value is non-numeric (e.g. 'Indefinite')", () => {
+    const xml = `<edgarSubmission><offeringData><offeringSalesAmountsList><totalOfferingAmount>Indefinite</totalOfferingAmount></offeringSalesAmountsList></offeringData></edgarSubmission>`;
+    const result = parseFormDXml(xml);
+    expect(result.totalOfferingAmount).toBeNull();
+    expect(result.entityName).toBeNull();
+  });
+
+  it("returns all nulls for empty input", () => {
+    expect(parseFormDXml("")).toEqual({
+      entityName: null,
+      dateOfFirstSale: null,
+      totalOfferingAmount: null,
+      totalAmountSold: null,
+    });
   });
 });

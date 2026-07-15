@@ -22,8 +22,9 @@ import { getRecentFilings } from "./edgar";
 import { getFundamentals } from "./fundamentals";
 import { getHistory, getQuote } from "./yahoo";
 import { runPrompt } from "./ai";
-import { extractJson } from "./json-extract";
+import { extractJsonObject } from "./json-extract";
 import { gatherWatchlistAlerts } from "./ai-watchlist";
+import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
 import {
   listPortfolio,
   listWatchlist,
@@ -517,21 +518,6 @@ export function findTimelineEvent(symbol: string, eventId: string): { event: Tim
 /* AI-backed event detail panel (on-demand, cached)                           */
 /* -------------------------------------------------------------------------- */
 
-interface RawDetailResponse {
-  executiveSummary: string;
-  background: string;
-  rootCause: string;
-  immediateReaction: string;
-  longTermImplications: string;
-  supportingEvidence: string[];
-  bullCase: string[];
-  bearCase: string[];
-  historicalContext: string;
-  currentRelevance: string;
-  investmentTakeaway: string;
-  confidence: number;
-}
-
 function buildDetailPrompt(event: TimelineEvent, related: TimelineEvent[]): string {
   const relatedDesc = related.length
     ? related.map((r) => `- [${r.timestamp.slice(0, 10)}] ${r.title} (${r.category}, ${r.impact})`).join("\n")
@@ -550,7 +536,7 @@ ${relatedDesc}
 
 Using only the facts above (do not invent numbers or events not present here), write an institutional research note.
 
-Return ONLY valid JSON:
+${JSON_SCHEMA_LEAD_IN}
 {
   "executiveSummary": "<2-3 sentences: what happened and why it matters>",
   "background": "<context needed to understand this event>",
@@ -565,6 +551,36 @@ Return ONLY valid JSON:
   "investmentTakeaway": "<one actionable sentence for an investor today>",
   "confidence": <0-100 integer, how confident you are in this analysis given the available evidence>
 }`;
+}
+
+const TIMELINE_DETAIL_RAW_DEFAULTS = {
+  executiveSummary: "",
+  background: "",
+  rootCause: "",
+  immediateReaction: "",
+  longTermImplications: "",
+  supportingEvidence: [] as string[],
+  bullCase: [] as string[],
+  bearCase: [] as string[],
+  historicalContext: "",
+  currentRelevance: "",
+  investmentTakeaway: "",
+  confidence: 0,
+};
+
+const TIMELINE_DETAIL_DEFAULTS = {
+  ...TIMELINE_DETAIL_RAW_DEFAULTS,
+  executiveSummary: "Unable to generate an explanation — AI unavailable.",
+};
+
+/** Exported for unit testing — pure, no I/O. */
+export function parseTimelineDetail(raw: string): typeof TIMELINE_DETAIL_DEFAULTS {
+  const parsed = extractJsonObject(raw, TIMELINE_DETAIL_RAW_DEFAULTS);
+  return {
+    ...parsed,
+    executiveSummary: parsed.executiveSummary || TIMELINE_DETAIL_DEFAULTS.executiveSummary,
+    confidence: Math.max(0, Math.min(100, Number.isFinite(Number(parsed.confidence)) ? Number(parsed.confidence) : 0)),
+  };
 }
 
 /** AI-generated rich detail panel for one timeline event. Cached (scanner_cache, 15-min TTL). */
@@ -583,28 +599,17 @@ export async function explainTimelineEvent(event: TimelineEvent, allEvents: Time
     .filter((e) => e.id !== event.id && Math.abs(new Date(e.timestamp).getTime() - new Date(event.timestamp).getTime()) < 90 * 86_400_000)
     .slice(0, 5);
 
-  let parsed: RawDetailResponse | null = null;
+  let parsed = TIMELINE_DETAIL_DEFAULTS;
   try {
     const raw = await runPrompt("timeline-analysis", buildDetailPrompt(event, related), { maxTokens: 1800, json: true });
-    parsed = extractJson<RawDetailResponse>(raw);
+    parsed = parseTimelineDetail(raw);
   } catch {
-    parsed = null;
+    // parsed stays at defaults
   }
 
   const detail: TimelineEventDetail = {
     eventId: event.id,
-    executiveSummary: parsed?.executiveSummary ?? "Unable to generate an explanation — AI unavailable.",
-    background: parsed?.background ?? "",
-    rootCause: parsed?.rootCause ?? "",
-    immediateReaction: parsed?.immediateReaction ?? "",
-    longTermImplications: parsed?.longTermImplications ?? "",
-    supportingEvidence: parsed?.supportingEvidence ?? [],
-    bullCase: parsed?.bullCase ?? [],
-    bearCase: parsed?.bearCase ?? [],
-    historicalContext: parsed?.historicalContext ?? "",
-    currentRelevance: parsed?.currentRelevance ?? "",
-    investmentTakeaway: parsed?.investmentTakeaway ?? "",
-    confidence: Math.max(0, Math.min(100, parsed?.confidence ?? 0)),
+    ...parsed,
     relatedEventIds: related.map((r) => r.id),
     generatedAt: new Date().toISOString(),
   };
@@ -616,13 +621,6 @@ export async function explainTimelineEvent(event: TimelineEvent, allEvents: Time
 /* -------------------------------------------------------------------------- */
 /* "What Changed Since Then?"                                                 */
 /* -------------------------------------------------------------------------- */
-
-interface RawWhatChangedResponse {
-  assumptionsValidated: string[];
-  assumptionsFailed: string[];
-  managementExecution: string;
-  currentRelevance: string;
-}
 
 function buildWhatChangedPrompt(
   fromEvent: TimelineEvent,
@@ -644,13 +642,34 @@ ${subsequentDesc}
 
 STOCK PRICE RESPONSE SINCE THIS EVENT: ${responseDesc}
 
-Using only the facts above, assess what changed. Return ONLY valid JSON:
+Using only the facts above, assess what changed. ${JSON_SCHEMA_LEAD_IN}
 {
   "assumptionsValidated": ["<assumption from the original event that proved correct>"],
   "assumptionsFailed": ["<assumption that did not hold up>"],
   "managementExecution": "<1-2 sentences on how management executed against what was signaled>",
   "currentRelevance": "<is the original event still relevant to the thesis today>"
 }`;
+}
+
+const WHAT_CHANGED_RAW_DEFAULTS = {
+  assumptionsValidated: [] as string[],
+  assumptionsFailed: [] as string[],
+  managementExecution: "",
+  currentRelevance: "",
+};
+
+const WHAT_CHANGED_DEFAULTS = {
+  ...WHAT_CHANGED_RAW_DEFAULTS,
+  managementExecution: "Unable to generate — AI unavailable.",
+};
+
+/** Exported for unit testing — pure, no I/O. */
+export function parseWhatChanged(raw: string): typeof WHAT_CHANGED_DEFAULTS {
+  const parsed = extractJsonObject(raw, WHAT_CHANGED_RAW_DEFAULTS);
+  return {
+    ...parsed,
+    managementExecution: parsed.managementExecution || WHAT_CHANGED_DEFAULTS.managementExecution,
+  };
 }
 
 /** "What Changed Since Then?" — deterministic subsequent-event lookup + stock response, AI narrative. */
@@ -672,25 +691,22 @@ export async function computeWhatChanged(symbol: string, eventId: string): Promi
       ? ((endPoint.close - startPoint.close) / startPoint.close) * 100
       : null;
 
-  let parsed: RawWhatChangedResponse | null = null;
+  let parsed = WHAT_CHANGED_DEFAULTS;
   try {
     const raw = await runPrompt("timeline-analysis", buildWhatChangedPrompt(fromEvent, subsequentEvents, stockResponsePercent), {
       maxTokens: 1000,
       json: true,
     });
-    parsed = extractJson<RawWhatChangedResponse>(raw);
+    parsed = parseWhatChanged(raw);
   } catch {
-    parsed = null;
+    // parsed stays at defaults
   }
 
   return {
     fromEventId: eventId,
     subsequentEvents: subsequentEvents.slice(0, 20),
-    assumptionsValidated: parsed?.assumptionsValidated ?? [],
-    assumptionsFailed: parsed?.assumptionsFailed ?? [],
-    managementExecution: parsed?.managementExecution ?? "Unable to generate — AI unavailable.",
+    ...parsed,
     stockResponsePercent,
-    currentRelevance: parsed?.currentRelevance ?? "",
     generatedAt: new Date().toISOString(),
   };
 }

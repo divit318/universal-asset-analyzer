@@ -25,6 +25,7 @@ import { getLatestSectorRotation, findSectorRotationEntry } from "../sector-rota
 import { getTimelineFeed } from "../timeline";
 import { getOpportunityMapData } from "../opportunity-map";
 import { getKnowledgeGraph } from "../knowledge-graph";
+import { getDataset, invalidateAsset } from "../platform/data-layer";
 import type { CompanyContext } from "./types";
 import type { SectorRotationEntry } from "../types";
 
@@ -43,23 +44,18 @@ async function tryOr<T>(
   }
 }
 
-const CACHE_TTL_MS = 5 * 60 * 1000;
-const MAX_CACHE_SIZE = 50;
-const cache = new Map<string, { at: number; ctx: CompanyContext }>();
-
-function evictOldest(): void {
-  let oldestKey = "";
-  let oldestAt = Infinity;
-  for (const [k, v] of cache) {
-    if (v.at < oldestAt) { oldestKey = k; oldestAt = v.at; }
-  }
-  if (oldestKey) cache.delete(oldestKey);
-}
-
 /**
  * Build (or return a cached) CompanyContext for a symbol. The live quote is the
  * one hard requirement — without it there's no company to analyze, so a quote
  * failure rejects. Everything else is best-effort.
+ *
+ * Caching and deduplication are the platform's job (`companyContext` dataset),
+ * not this module's. That matters more here than anywhere else: building a
+ * context fans out to nine providers, and the verdict route, the chat route, and
+ * the IC report all ask for the same symbol's context at the same moment. The
+ * bespoke Map cache this used to keep couldn't coalesce those — they all missed
+ * together and all rebuilt the world. Now one build serves all three, and a new
+ * filing invalidates it automatically via the registry's dependency graph.
  */
 export async function buildCompanyContext(
   rawSymbol: string,
@@ -68,18 +64,27 @@ export async function buildCompanyContext(
   const symbol = rawSymbol.trim().toUpperCase();
   if (!symbol) throw new Error("A symbol is required");
 
-  const cached = cache.get(symbol);
-  if (!opts.fresh && cached && Date.now() - cached.at < CACHE_TTL_MS) {
-    return cached.ctx;
-  }
+  const result = await getDataset<CompanyContext>(
+    "companyContext",
+    { symbol },
+    () => assembleCompanyContext(symbol),
+    { fresh: opts.fresh, symbol },
+  );
+  return result.data;
+}
 
+async function assembleCompanyContext(symbol: string): Promise<CompanyContext> {
   const warnings: string[] = [];
 
-  // The quote is required; fetch it first so we can fail fast.
-  const quote = await getQuote(symbol);
-
-  const [profile, fundamentals, statements, filings, news, peers, history, graph] =
+  // The quote is required, but it does NOT need to block the other eight
+  // sources — none of them depend on it. Fetch everything at once and enforce
+  // the requirement afterwards, rather than paying a serial round-trip for it.
+  const [quoteResult, profile, fundamentals, statements, filings, news, peers, history, graph] =
     await Promise.all([
+      getQuote(symbol).then(
+        (q) => ({ ok: true as const, quote: q }),
+        (err: unknown) => ({ ok: false as const, err }),
+      ),
       tryOr("profile", warnings, () => getCompanyProfile(symbol), null),
       tryOr("fundamentals", warnings, () => getFundamentals(symbol), null),
       tryOr("statements", warnings, () => getFinancialStatements(symbol), null),
@@ -89,6 +94,9 @@ export async function buildCompanyContext(
       tryOr("price history", warnings, () => getHistory(symbol, 420), []),
       tryOr("knowledge graph", warnings, () => getKnowledgeGraph("symbol", symbol), null),
     ]);
+
+  if (!quoteResult.ok) throw quoteResult.err;
+  const quote = quoteResult.quote;
 
   const momentum = computeMomentum(history);
 
@@ -214,12 +222,18 @@ export async function buildCompanyContext(
     graphNeighbors,
   };
 
-  if (cache.size >= MAX_CACHE_SIZE) evictOldest();
-  cache.set(symbol, { at: Date.now(), ctx });
   return ctx;
 }
 
-/** Drop a cached bundle (e.g. after a watchlist change). */
+/**
+ * Drop a cached bundle (e.g. after a watchlist change).
+ *
+ * Dependency-aware: this clears the context *and* the AI verdict derived from
+ * it (see the registry's `companyContext → aiVerdict` edge), because a verdict
+ * built on a context that no longer holds is exactly the kind of quietly-stale
+ * output the platform exists to prevent. Price history, profile, and every other
+ * symbol are untouched.
+ */
 export function invalidateContext(symbol: string): void {
-  cache.delete(symbol.trim().toUpperCase());
+  invalidateAsset(symbol.trim().toUpperCase(), "companyContext");
 }

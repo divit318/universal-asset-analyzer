@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { parseAiResponse } from "../lib/event-screener";
 import type { NewsItem } from "../lib/types";
 
 /**
@@ -121,5 +122,39 @@ describe("News deduplication logic", () => {
       makeNewsItem({ headline: "rbi holds rate at 6.5%" }),
     ];
     expect(dedupe(items)).toHaveLength(1);
+  });
+});
+
+describe("parseAiResponse", () => {
+  it("fills omitted fields with conservative defaults on a valid-but-incomplete parse", () => {
+    const result = parseAiResponse('{"themes":["Rate Cycle"]}');
+    expect(result.themes).toEqual(["Rate Cycle"]);
+    expect(result.signals).toEqual([]);
+    expect(result.summary).toBe("");
+  });
+
+  it("drops a signal missing the required ticker/name fields instead of crashing", () => {
+    const raw = JSON.stringify({
+      signals: [
+        { direction: "bullish", confidence: 80 },
+        { ticker: "HDFCBANK", name: "HDFC Bank", direction: "bullish", confidence: 78, theme: "t", rationale: "r", timeframe: "medium" },
+      ],
+    });
+    const result = parseAiResponse(raw);
+    expect(result.signals).toHaveLength(1);
+    expect(result.signals[0].ticker).toBe("HDFCBANK");
+  });
+
+  it("normalizes an invented direction variant instead of propagating it as-is", () => {
+    const raw = JSON.stringify({ signals: [{ ticker: "T", name: "T Corp", direction: "Very Bullish" }] });
+    const result = parseAiResponse(raw);
+    expect(result.signals[0].direction).toBe("neutral");
+  });
+
+  it("returns empty defaults on total garbage instead of throwing", () => {
+    const result = parseAiResponse("the model refused to answer");
+    expect(result.themes).toEqual([]);
+    expect(result.signals).toEqual([]);
+    expect(result.summary).toBe("");
   });
 });

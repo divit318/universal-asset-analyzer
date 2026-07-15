@@ -1,5 +1,11 @@
 # Background alert monitoring
 
+The server now runs this monitor itself every `UAA_MONITOR_INTERVAL_MS`
+(default 5 min; `0` disables) via `instrumentation.ts` -> `lib/monitor.ts` — no
+external scheduling required. `scripts/monitor.mjs` remains useful for native
+OS notifications (the built-in scheduler only logs and persists — it doesn't
+toast) and for headless setups that prefer an external driver.
+
 `scripts/monitor.mjs` drives the server-side alert monitor on a schedule so
 watchlist/portfolio alerts fire even when no browser tab is open, raising a
 native macOS notification for each genuinely-new alert (the server 24h-dedupes,

@@ -8,7 +8,7 @@
 
 import { runPrompt } from "./ai";
 import { taskForAgentDomain } from "./ai/task-registry";
-import { extractJson } from "./json-extract";
+import { extractJsonObject } from "./json-extract";
 import { verifyGrounding, collectClaimText, type GroundingReport } from "./ai/grounding";
 import type { InvestigativeQuestion, AgentDomain } from "./ic-questions";
 import type { FundamentalsSnapshot, FinancialStatements, InsiderActivity, AnalystConsensus } from "./types";
@@ -250,29 +250,27 @@ IMPORTANT: Reply with ONLY a raw JSON object. No markdown, no code fences, no ex
 }
 
 /** Extract agent JSON from a raw LLM response, with multiple fallback strategies. */
-function extractAgentJson(raw: string): {
+export function extractAgentJson(raw: string): {
   findings: string;
   keyInsights: string[];
   confidence: "high" | "medium" | "low";
   dataLimitations: string | null;
 } {
   // Strategy 1: shared brace/fence extraction (lib/json-extract.ts)
-  try {
-    const parsed = extractJson<{
-      findings?: string;
-      keyInsights?: string[];
-      confidence?: string;
-      dataLimitations?: string | null;
-    }>(raw);
-    if (parsed.findings) {
-      return {
-        findings: parsed.findings,
-        keyInsights: Array.isArray(parsed.keyInsights) ? parsed.keyInsights : [],
-        confidence: normaliseConfidence(parsed.confidence),
-        dataLimitations: parsed.dataLimitations ?? null,
-      };
-    }
-  } catch { /* fall through */ }
+  const parsed = extractJsonObject(raw, {
+    findings: "",
+    keyInsights: [] as string[],
+    confidence: "",
+    dataLimitations: null as string | null,
+  });
+  if (parsed.findings) {
+    return {
+      findings: parsed.findings,
+      keyInsights: parsed.keyInsights,
+      confidence: normaliseConfidence(parsed.confidence),
+      dataLimitations: parsed.dataLimitations,
+    };
+  }
 
   // Strategy 2: extract prose text by aggressively stripping all JSON scaffolding
   const cleanText = raw

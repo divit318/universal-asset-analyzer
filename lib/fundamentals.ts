@@ -62,6 +62,7 @@ interface RawFinancialData {
   currentRatio?: number;
   quickRatio?: number;
   freeCashflow?: number;
+  operatingCashflow?: number;
   totalCash?: number;
   totalDebt?: number;
   ebitda?: number;
@@ -186,6 +187,7 @@ export function mapSnapshot(symbol: string, raw: RawSummary): FundamentalsSnapsh
     currentRatio: n(fd.currentRatio),
     quickRatio: n(fd.quickRatio),
     freeCashflow: n(fd.freeCashflow),
+    operatingCashflow: n(fd.operatingCashflow),
     totalCash: n(fd.totalCash),
     totalDebt: n(fd.totalDebt),
     ebitda: n(fd.ebitda),

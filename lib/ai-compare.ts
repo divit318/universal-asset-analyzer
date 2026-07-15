@@ -13,7 +13,7 @@ import { getFinancialStatements } from "./statements";
 import { getHistory, getQuote } from "./yahoo";
 import { computeScore, computeMomentum, assessRisks, classifyInvestmentPersonality } from "./scoring";
 import { formatCurrency, formatPercent, formatMarketCap } from "./format";
-import { extractJson } from "./json-extract";
+import { extractJsonObject } from "./json-extract";
 import { verifyGrounding, collectClaimText, type GroundingReport } from "./ai/grounding";
 import type { FundamentalsData, Quote } from "./types";
 
@@ -105,6 +105,34 @@ const fmt = {
   x: (v: number | null) => (v == null ? "n/a" : `${v.toFixed(1)}x`),
   score: (v: number | null) => (v == null ? "n/a" : `${v}/100`),
 };
+
+type FlatAI = {
+  overview?: string; valuation?: string; quality?: string; growth?: string;
+  financialHealth?: string; momentum?: string; verdict?: string;
+  capitalAllocation?: string; competitivePositioning?: string; riskComparison?: string;
+  winner?: string | null; winnerRationale?: string;
+  executiveSummary?: string; conditionsForChange?: string; confidenceScore?: number;
+  sections?: ComparisonResult["sections"];
+};
+
+/** Exported for unit testing — pure, no I/O. */
+export function parseCompareResponse(raw: string): FlatAI {
+  const flat = extractJsonObject<FlatAI>(raw, {
+    overview: "", valuation: "", quality: "", growth: "",
+    financialHealth: "", momentum: "", verdict: "",
+    capitalAllocation: "", competitivePositioning: "", riskComparison: "",
+    winner: null, winnerRationale: "",
+    executiveSummary: "", conditionsForChange: "", confidenceScore: undefined,
+    sections: undefined,
+  });
+  // extractJsonObject does not recurse — guard the one nested-object field
+  // against the model returning a non-object (every other field is a plain
+  // string/number already tolerated by the `??`/typeof checks in compareStocks).
+  if (flat.sections && (typeof flat.sections !== "object" || Array.isArray(flat.sections))) {
+    flat.sections = undefined;
+  }
+  return flat;
+}
 
 function buildComparePrompt(stocks: CompareStock[]): { prompt: string; evidence: string } {
   const symbols = stocks.map((s) => s.symbol);
@@ -249,15 +277,6 @@ export async function compareStocks(symbols: string[]): Promise<ComparisonResult
   const { prompt, evidence } = buildComparePrompt(stocks);
   let model = "unavailable";
 
-  type FlatAI = {
-    overview?: string; valuation?: string; quality?: string; growth?: string;
-    financialHealth?: string; momentum?: string; verdict?: string;
-    capitalAllocation?: string; competitivePositioning?: string; riskComparison?: string;
-    winner?: string | null; winnerRationale?: string;
-    executiveSummary?: string; conditionsForChange?: string; confidenceScore?: number;
-    sections?: ComparisonResult["sections"];
-  };
-
   let flat: FlatAI = {};
   try {
     const { text: raw, model: usedModel } = await runPromptWithMeta("comparison", prompt, {
@@ -265,12 +284,15 @@ export async function compareStocks(symbols: string[]): Promise<ComparisonResult
       json: true,
     });
     model = usedModel;
-    flat = extractJson<FlatAI>(raw);
+    flat = parseCompareResponse(raw);
   } catch {
     // AI unavailable — metric table still works
   }
 
-  const aiUnavailable = Object.keys(flat).length === 0;
+  // `model` only stays "unavailable" when runPromptWithMeta itself threw
+  // (Ollama down); a connected-but-garbage response still gets a `model` value
+  // and falls through to extractJsonObject's conservative field defaults above.
+  const aiUnavailable = model === "unavailable";
 
   // The prompt returns a flat object; normalise into sections shape.
   const sections: ComparisonResult["sections"] = flat.sections ?? {

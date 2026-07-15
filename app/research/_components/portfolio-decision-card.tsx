@@ -1,26 +1,34 @@
 "use client";
 
-import { ACTION_LABEL, type PositionRecommendation } from "@/lib/portfolio-analytics";
+import { formatCurrency } from "@/lib/format";
+import type { Recommendation } from "@/lib/portfolio/engines/recommend";
 
 /**
- * Portfolio Decision Engine, surfaced for the researched symbol. Reuses
- * PortfolioReport.recommendations as-is (computed by
- * lib/portfolio-analytics.ts's computeRecommendations(), already exposed via
- * IOSContextValue.report) — no new scoring/decision logic, only a Research-
- * scoped view of the same recommendation shown in the Portfolio Decision
- * Queue for a holding.
+ * Portfolio Decision Engine, surfaced for the researched symbol.
+ *
+ * Reuses UniversalPortfolioReport.recommendations as-is (computed by
+ * lib/portfolio/engines/recommend.ts, already exposed via IOSContextValue.report)
+ * — no new scoring/decision logic, only a Research-scoped view of the same
+ * recommendation shown in the Portfolio Decision Center. Every impact figure below
+ * is SIMULATED, not asserted — see the engine's docstring.
  */
 
-const ACTION_STYLE: Record<PositionRecommendation["action"], string> = {
-  STRONG_BUY: "border-positive/60 bg-positive/15 text-positive",
+const ACTION_STYLE: Record<Recommendation["action"], string> = {
+  ADD:        "border-positive/60 bg-positive/15 text-positive",
   INCREASE:   "border-positive/40 bg-positive/8 text-positive",
   HOLD:       "border-warning/40 bg-warning/8 text-warning",
   REDUCE:     "border-orange-400/40 bg-orange-400/10 text-orange-400",
   SELL:       "border-negative/40 bg-negative/10 text-negative",
+  REALLOCATE: "border-brand/40 bg-brand/8 text-brand",
 };
 
-export function PortfolioDecisionCard({ recommendation }: { recommendation: PositionRecommendation }) {
+const ACTION_LABEL: Record<Recommendation["action"], string> = {
+  ADD: "Add", INCREASE: "Increase", HOLD: "Hold", REDUCE: "Reduce", SELL: "Sell", REALLOCATE: "Reallocate",
+};
+
+export function PortfolioDecisionCard({ recommendation }: { recommendation: Recommendation }) {
   const r = recommendation;
+  const i = r.impact;
 
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
@@ -32,48 +40,48 @@ export function PortfolioDecisionCard({ recommendation }: { recommendation: Posi
           </span>
         </div>
         <span className="font-mono text-xs text-muted">
-          {r.currentWeight.toFixed(1)}% held → {r.targetWeight.toFixed(1)}% target
+          {formatCurrency(r.amount)} · {r.confidence}% confidence
         </span>
       </div>
 
-      <p className="text-xs leading-5 text-foreground/85">{r.reasoning}</p>
+      <p className="text-xs leading-5 text-foreground/85">{r.rationale}</p>
 
-      {(r.catalysts.length > 0 || r.risks.length > 0) && (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {r.catalysts.length > 0 && (
-            <div>
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-positive/70">Catalysts</p>
-              <ul className="space-y-1">
-                {r.catalysts.map((c, i) => (
-                  <li key={i} className="flex gap-1.5 text-[11px] leading-5 text-muted">
-                    <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-positive/50" />
-                    {c}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {r.risks.length > 0 && (
-            <div>
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-negative/70">Risks</p>
-              <ul className="space-y-1">
-                {r.risks.map((rk, i) => (
-                  <li key={i} className="flex gap-1.5 text-[11px] leading-5 text-muted">
-                    <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-negative/50" />
-                    {rk}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
+      <div className="flex flex-wrap gap-3 border-t border-border pt-2.5 text-[11px]">
+        <span>
+          <span className="text-muted">Health: </span>
+          <span className={`font-mono font-semibold ${i.healthDelta >= 0 ? "text-positive" : "text-negative"}`}>
+            {i.healthDelta >= 0 ? "+" : ""}{i.healthDelta.toFixed(1)}pts
+          </span>
+        </span>
+        {i.riskDelta != null && (
+          <span>
+            <span className="text-muted">Volatility: </span>
+            <span className={`font-mono font-semibold ${i.riskDelta <= 0 ? "text-positive" : "text-negative"}`}>
+              {i.riskDelta >= 0 ? "+" : ""}{i.riskDelta.toFixed(1)}pp
+            </span>
+          </span>
+        )}
+        {i.incomeDelta !== 0 && (
+          <span>
+            <span className="text-muted">Income: </span>
+            <span className={`font-mono font-semibold ${i.incomeDelta > 0 ? "text-positive" : "text-negative"}`}>
+              {i.incomeDelta > 0 ? "+" : "−"}{formatCurrency(Math.abs(i.incomeDelta))}/yr
+            </span>
+          </span>
+        )}
+      </div>
 
-      {r.keyMetrics.length > 0 && (
-        <div className="flex flex-wrap gap-2 border-t border-border pt-2.5">
-          {r.keyMetrics.map((m, i) => (
-            <span key={i} className="rounded-lg border border-border bg-surface-2 px-2 py-1 text-[10px] text-muted">{m}</span>
-          ))}
+      {r.tradeoffs.length > 0 && (
+        <div>
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted/70">Tradeoffs</p>
+          <ul className="space-y-1">
+            {r.tradeoffs.map((t, idx) => (
+              <li key={idx} className="flex gap-1.5 text-[11px] leading-5 text-muted">
+                <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-muted/50" />
+                {t}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>

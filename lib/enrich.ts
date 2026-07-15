@@ -51,6 +51,7 @@ interface RawFinancialData {
   revenueGrowth?: number;
   earningsGrowth?: number;
   freeCashflow?: number;
+  operatingCashflow?: number;
   totalDebt?: number;
   totalCash?: number;
   debtToEquity?: number;
@@ -135,6 +136,17 @@ export function mapFundamentals(
       ? (fcfPair.at(-1)! / fcfPair.at(-2)! - 1) * 100
       : null;
 
+  // Operating cash flow + its growth. Carried purely for the REIT screener,
+  // where OCF is the FFO proxy (see lib/assets/reit.ts). Prefer the annual time
+  // series; fall back to financialData's TTM figure when the series is absent.
+  const ocf = series(ts, "operatingCashFlow");
+  const ocfPair = ocf.filter((x): x is number => x != null);
+  const ocfGrowthYoY =
+    ocfPair.length >= 2 && ocfPair.at(-2)! > 0
+      ? (ocfPair.at(-1)! / ocfPair.at(-2)! - 1) * 100
+      : null;
+  const operatingCashflow = last(ocf) ?? num(fd.operatingCashflow);
+
   // Buyback yield ≈ 1-year reduction in diluted share count.
   const sh = shares.filter((x): x is number => x != null);
   const buybackYield =
@@ -182,10 +194,13 @@ export function mapFundamentals(
       return null;
     })(),
     netDebtToEbitda,
+    netDebt: nd,
     currentRatio: num(fd.currentRatio),
 
     fcfMargin,
     fcfGrowthYoY,
+    operatingCashflow,
+    ocfGrowthYoY,
 
     dividendYield: pct(num(sd.dividendYield)),
     buybackYield,
@@ -195,7 +210,13 @@ export function mapFundamentals(
 
     // Extra raw figures kept for the live price layer (FCF yield needs market cap).
     ebitda: num(fd.ebitda),
-    freeCashflow: num(fd.freeCashflow),
+    // financialData.freeCashflow (Yahoo's TTM figure) is frequently absent for
+    // financials, foreign filers and recent IPOs. Falling back to the latest
+    // annual figure from the time series (fcfLast, already fetched above for
+    // fcfMargin/fcfGrowthYoY) recovers FCF yield for those names using data
+    // this call already pulled, rather than leaving it null when Yahoo simply
+    // hasn't computed the TTM roll-up yet.
+    freeCashflow: num(fd.freeCashflow) ?? fcfLast,
     exchange: raw.price?.exchangeName ?? raw.price?.fullExchangeName ?? null,
     // Market beta (best-effort). Bounded to a sane band; ADR/thin names can
     // report garbage. Feeds risk-oriented objectives in the fit scorer.

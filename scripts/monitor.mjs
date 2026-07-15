@@ -2,11 +2,15 @@
 /**
  * Background alert monitor.
  *
- * The header bell only evaluates alerts while a browser tab is open. This script
- * drives the same server-side monitor (/api/monitor/run) on a schedule, so
- * watchlist/portfolio alerts keep firing and persisting even with no tab open —
- * and raises a native OS notification for genuinely-new ones (24h-deduped by the
- * server, so it never re-notifies the same condition).
+ * The server now runs this same monitor itself on a timer (instrumentation.ts
+ * -> lib/monitor.ts, every UAA_MONITOR_INTERVAL_MS — default 5 min, 0 disables),
+ * so this script is optional. It's still useful for native OS notifications
+ * (the built-in scheduler only logs and persists — it doesn't toast) and for
+ * headless setups that prefer an external driver. It hits the same
+ * server-side monitor (/api/monitor/run) on a schedule, so watchlist/portfolio
+ * alerts keep firing and persisting even with no tab open — and raises a
+ * native OS notification for genuinely-new ones (24h-deduped by the server,
+ * so it never re-notifies the same condition).
  *
  * Run it from cron or launchd; see scripts/README.md. Requires the UAA server to
  * be running (npm run dev / npm start). Configure the base URL with UAA_URL.

@@ -35,7 +35,7 @@ function enrichedEvent(): MarketEvent {
   return { ...baseEvent(), causalChain: [{ order: 1, description: "real causal effect", direction: "bullish", affectedSectors: [], affectedTickers: [] }] };
 }
 
-const { runScannerPipeline } = await import("@/lib/scanner/index");
+const { runScannerPipeline, sanitizeTheme, sanitizeRiskAlert } = await import("@/lib/scanner/index");
 
 describe("runScannerPipeline — stage wiring", () => {
   beforeEach(() => {
@@ -74,5 +74,37 @@ describe("runScannerPipeline — stage wiring", () => {
     await runScannerPipeline({});
 
     expect(callOrder).toEqual(["causal", "sector"]);
+  });
+});
+
+describe("sanitizeTheme", () => {
+  it("defaults momentum and topTickers when a valid item omits them", () => {
+    const theme = sanitizeTheme({ name: "AI Infra", description: "d" });
+    expect(theme).toEqual({ name: "AI Infra", description: "d", momentum: 0, topTickers: [] });
+  });
+
+  it("drops items missing the required name/description fields", () => {
+    expect(sanitizeTheme({ momentum: 80 })).toBeNull();
+  });
+
+  it("filters out non-string entries from topTickers instead of crashing", () => {
+    const theme = sanitizeTheme({ name: "n", description: "d", topTickers: ["AAPL", 123, null] });
+    expect(theme?.topTickers).toEqual(["AAPL"]);
+  });
+});
+
+describe("sanitizeRiskAlert", () => {
+  it("defaults severity and array fields when a valid item omits them", () => {
+    const alert = sanitizeRiskAlert({ headline: "Rate shock", rationale: "r" });
+    expect(alert).toEqual({ headline: "Rate shock", severity: "medium", affectedSectors: [], affectedTickers: [], rationale: "r" });
+  });
+
+  it("drops items missing the required headline/rationale fields", () => {
+    expect(sanitizeRiskAlert({ severity: "high" })).toBeNull();
+  });
+
+  it("normalizes an invented severity variant to a valid enum value", () => {
+    const alert = sanitizeRiskAlert({ headline: "h", rationale: "r", severity: "CRITICAL" });
+    expect(alert?.severity).toBe("medium");
   });
 });

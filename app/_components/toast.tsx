@@ -12,14 +12,27 @@ import { createPortal } from "react-dom";
 
 type ToastType = "success" | "error" | "info";
 
+interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 interface Toast {
   id: number;
   message: string;
   type: ToastType;
+  action?: ToastAction;
+}
+
+interface ToastOptions {
+  /** A single action button (e.g. "Undo") shown alongside the message. */
+  action?: ToastAction;
+  /** Override the default 4s auto-dismiss — a toast with an action stays up longer by default. */
+  durationMs?: number;
 }
 
 interface ToastContextValue {
-  toast: (message: string, type?: ToastType) => void;
+  toast: (message: string, type?: ToastType, options?: ToastOptions) => void;
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null);
@@ -32,12 +45,12 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   // useLayoutEffect is client-only — avoids SSR issues with createPortal
   useLayoutEffect(() => { setMounted(true); }, []); // eslint-disable-line react-hooks/set-state-in-effect
 
-  const toast = useCallback((message: string, type: ToastType = "success") => {
+  const toast = useCallback((message: string, type: ToastType = "success", options: ToastOptions = {}) => {
     const id = ++_nextId;
-    setToasts((prev) => [...prev, { id, message, type }]);
+    setToasts((prev) => [...prev, { id, message, type, action: options.action }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
+    }, options.durationMs ?? (options.action ? 8000 : 4000));
   }, []);
 
   return (
@@ -110,6 +123,17 @@ function ToastItem({
     >
       <span className="shrink-0">{icon}</span>
       <span className="flex-1 text-foreground">{toast.message}</span>
+      {toast.action && (
+        <button
+          onClick={() => {
+            toast.action!.onClick();
+            onDismiss();
+          }}
+          className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-surface-2"
+        >
+          {toast.action.label}
+        </button>
+      )}
       <button
         onClick={onDismiss}
         aria-label="Dismiss"

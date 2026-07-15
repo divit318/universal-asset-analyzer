@@ -19,9 +19,10 @@
 import { getQuote, getHistory } from "./yahoo";
 import { getCompanyNews } from "./news";
 import { runPrompt } from "./ai";
-import { extractJson } from "./json-extract";
+import { extractJsonObject } from "./json-extract";
 import { getLatestSectorRotation, findSectorRotationEntry } from "./sector-rotation";
 import { getScannerCache, putScannerCache } from "./db";
+import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
 import type {
   MovementExplanation,
   MovementDriver,
@@ -49,6 +50,51 @@ interface RawMovementResponse {
   }[];
   confidence: number;
   persistence: "transient" | "short-term" | "durable";
+}
+
+/** Models invent variants ("Bullish", "up") — normalize case and fall back to "neutral". */
+function normalizeDirection(value: unknown): "bullish" | "bearish" | "neutral" {
+  const v = typeof value === "string" ? value.toLowerCase() : "";
+  return v === "bullish" || v === "bearish" ? v : "neutral";
+}
+
+/** Models invent variants ("Short-term", "long-term") — normalize case and fall back to "transient". */
+function normalizePersistence(value: unknown): "transient" | "short-term" | "durable" {
+  const v = typeof value === "string" ? value.toLowerCase() : "";
+  return v === "short-term" || v === "durable" ? v : "transient";
+}
+
+const MOVEMENT_RAW_DEFAULTS = {
+  summary: "",
+  drivers: [] as RawMovementResponse["drivers"],
+  confidence: 0,
+  persistence: "transient" as RawMovementResponse["persistence"],
+};
+
+const MOVEMENT_DEFAULTS = {
+  summary: "Unable to generate an explanation — insufficient evidence or AI unavailable.",
+  drivers: [] as MovementDriver[],
+  confidence: 0,
+  persistence: "transient" as RawMovementResponse["persistence"],
+};
+
+/** Exported for unit testing — pure, no I/O. */
+export function parseMovementResponse(raw: string): typeof MOVEMENT_DEFAULTS {
+  const parsed = extractJsonObject(raw, MOVEMENT_RAW_DEFAULTS);
+  return {
+    summary: parsed.summary || MOVEMENT_DEFAULTS.summary,
+    drivers: parsed.drivers.filter((d) => d != null && typeof d === "object").map((d) => ({
+      category: d.category ?? "other",
+      description: d.description ?? "",
+      // Model occasionally returns an array of evidence snippets instead of
+      // one string despite the schema — coerce defensively rather than
+      // trusting the declared RawMovementResponse type.
+      evidence: Array.isArray(d.evidence) ? (d.evidence as string[]).join("; ") : (d.evidence ?? ""),
+      direction: normalizeDirection(d.direction),
+    })),
+    confidence: Math.max(0, Math.min(100, Number.isFinite(Number(parsed.confidence)) ? Number(parsed.confidence) : 0)),
+    persistence: normalizePersistence(parsed.persistence),
+  };
 }
 
 /** Exported for unit testing — pure, no I/O. */
@@ -114,7 +160,7 @@ ${newsDesc}
 
 Identify the most likely drivers of this movement. For each driver, cite the specific evidence above that supports it — do not invent facts not present in the evidence. If the evidence is too thin to explain the move confidently, say so and lower your confidence score accordingly.
 
-Return ONLY valid JSON:
+${JSON_SCHEMA_LEAD_IN}
 {
   "summary": "<2-3 sentence plain-English explanation of the movement>",
   "drivers": [
@@ -189,15 +235,15 @@ export async function explainMovement(
 
   const evidence = { changePercent, volumeAnomalyPct, news, sectorContext };
 
-  let parsed: RawMovementResponse | null = null;
+  let movement = MOVEMENT_DEFAULTS;
   try {
     const raw = await runPrompt("explain-movement", buildMovementPrompt(input, evidence), {
       maxTokens: 1200,
       json: true,
     });
-    parsed = extractJson<RawMovementResponse>(raw);
+    movement = parseMovementResponse(raw);
   } catch {
-    parsed = null;
+    // movement stays at defaults
   }
 
   const explanation: MovementExplanation = {
@@ -205,18 +251,10 @@ export async function explainMovement(
     subjectKind,
     asOf: new Date().toISOString(),
     observedMove: { changePercent, windowDays },
-    summary: parsed?.summary ?? "Unable to generate an explanation — insufficient evidence or AI unavailable.",
-    drivers: (parsed?.drivers ?? []).map((d) => ({
-      category: d.category ?? "other",
-      description: d.description ?? "",
-      // Model occasionally returns an array of evidence snippets instead of
-      // one string despite the schema — coerce defensively rather than
-      // trusting the declared RawMovementResponse type.
-      evidence: Array.isArray(d.evidence) ? (d.evidence as string[]).join("; ") : (d.evidence ?? ""),
-      direction: d.direction ?? "neutral",
-    })),
-    confidence: Math.max(0, Math.min(100, parsed?.confidence ?? 0)),
-    persistence: parsed?.persistence ?? "transient",
+    summary: movement.summary,
+    drivers: movement.drivers,
+    confidence: movement.confidence,
+    persistence: movement.persistence,
   };
 
   putScannerCache(cacheKey, JSON.stringify(explanation));

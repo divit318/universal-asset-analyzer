@@ -34,7 +34,8 @@ import { applyFundamentalGate } from "./fundamental-gate";
 import { scoreOpportunities, segmentOpportunities, refreshProfileWithThesis } from "./opportunity-scorer";
 import { buildTheses } from "./thesis-builder";
 import { runPrompt } from "../ai";
-import { extractJson } from "../json-extract";
+import { extractJsonObject } from "../json-extract";
+import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
 import type {
   ScannerResult,
   ScannerProgressEvent,
@@ -72,6 +73,21 @@ interface RawEmergingTheme {
   topTickers: string[];
 }
 
+export function sanitizeTheme(item: unknown): RawEmergingTheme | null {
+  if (item === null || typeof item !== "object") return null;
+  const t = item as Record<string, unknown>;
+  if (typeof t.name !== "string" || typeof t.description !== "string") return null;
+  const momentum = Number(t.momentum);
+  return {
+    name: t.name,
+    description: t.description,
+    momentum: Number.isFinite(momentum) ? momentum : 0,
+    topTickers: Array.isArray(t.topTickers)
+      ? t.topTickers.filter((x): x is string => typeof x === "string")
+      : [],
+  };
+}
+
 async function detectEmergingThemes(
   events: MarketEvent[],
 ): Promise<EmergingTheme[]> {
@@ -96,7 +112,7 @@ For each theme:
 - momentum: 0-100 (how strongly the current events support this theme)
 - topTickers: 2-4 most obvious tickers to research (NSE format for Indian stocks, no suffixes)
 
-Return ONLY valid JSON:
+${JSON_SCHEMA_LEAD_IN}
 {
   "themes": [
     {
@@ -110,8 +126,9 @@ Return ONLY valid JSON:
 
   try {
     const raw = await runPrompt("opportunity-engine", prompt, { maxTokens: 1200, json: true });
-    const parsed = extractJson<{ themes: RawEmergingTheme[] }>(raw);
-    return (parsed.themes ?? []).map((t) => ({
+    const parsed = extractJsonObject(raw, { themes: [] as unknown[] });
+    const themes = parsed.themes.map(sanitizeTheme).filter((t): t is RawEmergingTheme => t !== null);
+    return themes.map((t) => ({
       name: t.name,
       description: t.description,
       momentum: Math.max(0, Math.min(100, t.momentum)),
@@ -135,6 +152,26 @@ Return ONLY valid JSON:
 /* Risk alert extraction                                                       */
 /* -------------------------------------------------------------------------- */
 
+export function sanitizeRiskAlert(item: unknown): Omit<RiskAlert, "id"> | null {
+  if (item === null || typeof item !== "object") return null;
+  const a = item as Record<string, unknown>;
+  if (typeof a.headline !== "string" || typeof a.rationale !== "string") return null;
+  const severity = typeof a.severity === "string" ? a.severity.toLowerCase() : "";
+  return {
+    headline: a.headline,
+    severity: (["high", "medium", "low"] as string[]).includes(severity)
+      ? (severity as RiskAlert["severity"])
+      : "medium",
+    affectedSectors: Array.isArray(a.affectedSectors)
+      ? a.affectedSectors.filter((x): x is string => typeof x === "string")
+      : [],
+    affectedTickers: Array.isArray(a.affectedTickers)
+      ? a.affectedTickers.filter((x): x is string => typeof x === "string")
+      : [],
+    rationale: a.rationale,
+  };
+}
+
 async function extractRiskAlerts(events: MarketEvent[]): Promise<RiskAlert[]> {
   const bearishEvents = events.filter((e) =>
     e.causalChain.some((c) => c.direction === "bearish") ||
@@ -148,7 +185,7 @@ async function extractRiskAlerts(events: MarketEvent[]): Promise<RiskAlert[]> {
 EVENTS:
 ${bearishEvents.slice(0, 8).map((e) => `• ${e.headline}: ${e.summary}`).join("\n")}
 
-Return ONLY valid JSON:
+${JSON_SCHEMA_LEAD_IN}
 {
   "alerts": [
     {
@@ -163,8 +200,9 @@ Return ONLY valid JSON:
 
   try {
     const raw = await runPrompt("opportunity-engine", prompt, { maxTokens: 800, json: true });
-    const parsed = extractJson<{ alerts: Omit<RiskAlert, "id">[] }>(raw);
-    return (parsed.alerts ?? []).slice(0, 3).map((a) => ({
+    const parsed = extractJsonObject(raw, { alerts: [] as unknown[] });
+    const alerts = parsed.alerts.map(sanitizeRiskAlert).filter((a): a is Omit<RiskAlert, "id"> => a !== null);
+    return alerts.slice(0, 3).map((a) => ({
       ...a,
       id: crypto.randomUUID(),
     }));

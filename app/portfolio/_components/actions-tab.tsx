@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { usePortfolio } from "@/lib/portfolio-context";
 import type { PositionRecommendation, PortfolioReport } from "@/lib/portfolio-analytics";
 import { ACTION_LABEL } from "@/lib/portfolio-analytics";
 import { formatCurrency } from "@/lib/format";
 import { MovementExplainerCard } from "@/app/_components/movement-explainer-card";
+import { InvestCashPanel } from "./invest-cash-panel";
 
 /* ─────────────── Before/After impact computation ─────────────── */
 
@@ -241,72 +242,6 @@ function DecisionCard({
   );
 }
 
-/* ─────────────── Invest Cash widget ─────────────── */
-
-function InvestCash() {
-  const [cash, setCash]       = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState<string | null>(null);
-  const [result, setResult]   = useState<{ symbol: string; name: string; dollarAmount: number; shareCount: number | null; reason: string }[] | null>(null);
-
-  async function compute() {
-    const amount = parseFloat(cash.replace(/,/g, "").replace("$", ""));
-    if (!Number.isFinite(amount) || amount <= 0) { setError("Enter a valid dollar amount"); return; }
-    setLoading(true); setError(null); setResult(null);
-    try {
-      const res  = await fetch("/api/portfolio/invest", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cashAmount: amount }) });
-      const json = await res.json();
-      if (!res.ok) throw new Error((json as { error?: string }).error ?? "Failed");
-      setResult((json as { allocations: typeof result }).allocations);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed");
-    } finally { setLoading(false); }
-  }
-
-  return (
-    <div className="rounded-xl border border-border bg-surface p-5">
-      <p className="text-sm font-semibold mb-1">Invest New Cash</p>
-      <p className="text-xs text-muted mb-4">Intelligently allocate new capital across underweight positions with the highest composite scores.</p>
-      <div className="flex gap-2 mb-3">
-        <div className="relative flex-1">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">$</span>
-          <input
-            value={cash}
-            onChange={(e) => setCash(e.target.value)}
-            placeholder="10,000"
-            className="w-full rounded-lg border border-border bg-surface-2 pl-7 pr-3 py-2 font-mono text-sm outline-none focus:border-accent placeholder:text-muted"
-            onKeyDown={(e) => { if (e.key === "Enter") void compute(); }}
-          />
-        </div>
-        <button
-          onClick={() => void compute()}
-          disabled={loading}
-          className="rounded-lg bg-accent-strong px-5 py-2 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50 transition-opacity"
-        >
-          {loading ? "…" : "Allocate"}
-        </button>
-      </div>
-      {error && <p className="text-xs text-negative mb-2">{error}</p>}
-      {result && (
-        <div className="divide-y divide-border rounded-lg border border-border overflow-hidden">
-          {result.map((a, i) => (
-            <div key={i} className="flex items-center justify-between px-4 py-2.5 bg-surface">
-              <div>
-                <span className="font-mono font-semibold text-sm text-accent">{a.symbol}</span>
-                {a.shareCount != null && a.shareCount > 0 && (
-                  <span className="text-xs text-muted ml-2">~{a.shareCount} shares</span>
-                )}
-                <p className="text-xs text-muted">{a.reason}</p>
-              </div>
-              <span className="font-mono font-semibold text-positive text-sm">{formatCurrency(a.dollarAmount)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /* ─────────────── Summary stats ─────────────── */
 
 function ActionSummaryStrip({ report, actions }: { report: PortfolioReport; actions: PositionRecommendation[] }) {
@@ -430,7 +365,7 @@ export function ActionsTab() {
         </div>
       )}
 
-      <InvestCash />
+      <InvestCashPanel />
 
       {/* HOLD positions summary */}
       {report.recommendations.filter((r) => r.action === "HOLD").length > 0 && (

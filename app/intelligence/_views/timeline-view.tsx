@@ -1,14 +1,26 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import type { TimelineEvent, TimelineFeed, TimelineScope } from "@/lib/types";
 import { useIntelligence } from "@/lib/intelligence/context";
 import { ScopeSwitcher } from "@/app/timeline/_components/scope-switcher";
 import { TimelineFilterBar, DEFAULT_FILTERS, type FilterState } from "@/app/timeline/_components/timeline-filters";
 import { VisualTimeline } from "@/app/timeline/_components/visual-timeline";
-import { ThesisEvolutionPanel } from "@/app/timeline/_components/thesis-evolution-panel";
 import { EventDetailDrawer } from "@/app/timeline/_components/event-detail-drawer";
 import { MovementExplainerCard } from "@/app/_components/movement-explainer-card";
+
+// Only recharts-bearing chain in this view — deferred so it doesn't load
+// on the "graph" secondary-view path, which statically imports this module.
+const ThesisEvolutionPanel = dynamic(
+  () => import("@/app/timeline/_components/thesis-evolution-panel").then((m) => m.ThesisEvolutionPanel),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-[320px] w-full animate-pulse rounded-xl border border-border bg-surface" />
+    ),
+  },
+);
 
 function buildQuery(scope: TimelineScope, id: string, filters: FilterState): string {
   const params = new URLSearchParams({ scope, id });

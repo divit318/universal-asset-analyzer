@@ -1,5 +1,11 @@
 /** Pure number/currency formatting helpers shared across the UI. */
 
+/** Text color for a signed value: green above zero, red below, muted at zero or unknown. */
+export function toneClass(value: number | null): string {
+  if (value == null) return "text-muted";
+  return value > 0 ? "text-positive" : value < 0 ? "text-negative" : "text-muted";
+}
+
 export function formatNumber(value: number | null | undefined, digits = 2): string {
   if (value == null || Number.isNaN(value)) return "—";
   return value.toLocaleString("en-US", {

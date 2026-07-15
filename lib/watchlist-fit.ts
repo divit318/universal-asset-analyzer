@@ -136,6 +136,7 @@ export async function enrichForFit(
       operatingMargin: f.operatingMargin,
       debtToEquity: f.debtToEquity,
       netDebtToEbitda: f.netDebtToEbitda,
+      netDebt: f.netDebt,
       currentRatio: f.currentRatio,
       fcfMargin: f.fcfMargin,
       fcfGrowthYoY: f.fcfGrowthYoY,

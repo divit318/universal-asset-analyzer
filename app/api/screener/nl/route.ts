@@ -1,64 +1,76 @@
 import { NextResponse } from "next/server";
-import type { FundamentalScreenerCriteria } from "@/lib/types";
 import { listInstalledModels } from "@/lib/ai/ollama";
 import { runPromptWithMeta } from "@/lib/ai";
 import { extractJson } from "@/lib/json-extract";
 import { specForInstalled } from "@/lib/ai/models";
+import { availableMetrics, getAssetClass, isAssetClassId } from "@/lib/assets/registry";
+import type { AssetClassId } from "@/lib/assets/types";
+import { parseFilters } from "@/lib/screener/filter-engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SYSTEM_PROMPT = `You are a financial screener assistant. Given a plain-English description of an investment strategy or stock type, output a valid JSON object that encodes the screening criteria.
+/**
+ * Natural-language → filters.
+ *
+ * The schema handed to the model is now *generated from the Asset Registry*
+ * rather than hardcoded. That's the whole reason this route went from
+ * equity-only to universal without gaining a single branch: ask for a crypto
+ * screen and the model is shown crypto's metrics, their units and their real
+ * ranges; ask for bonds and it's shown duration and credit quality. It also
+ * means a metric can never be offered to the model unless it has a live data
+ * source behind it, because `availableMetrics()` is the same function the
+ * filter registry is built from.
+ *
+ * The model's output still goes through `parseFilters`, so anything it invents
+ * is discarded rather than trusted.
+ */
 
-The JSON must conform to this TypeScript interface:
-{
-  sector?: string | null,           // e.g. "Technology", "Healthcare", "Energy"
-  industry?: string | null,         // partial match, e.g. "Semiconductors"
-  marketCap?: { min?: number, max?: number },  // in dollars, e.g. 1e9 = $1B
-  forwardPE?: { min?: number, max?: number },  // forward P/E ratio
-  evToEbitda?: { min?: number, max?: number }, // EV/EBITDA multiple
-  fcfYield?: { min?: number, max?: number },   // free cash flow yield %
-  revenueGrowthYoY?: { min?: number, max?: number }, // revenue growth % YoY
-  revenueCagr3y?: { min?: number, max?: number },    // 3-year revenue CAGR %
-  epsGrowthYoY?: { min?: number, max?: number },     // EPS growth % YoY
-  epsCagr3y?: { min?: number, max?: number },        // 3-year EPS CAGR %
-  roic?: { min?: number, max?: number },        // return on invested capital %
-  roe?: { min?: number, max?: number },         // return on equity %
-  grossMargin?: { min?: number, max?: number }, // gross margin %
-  operatingMargin?: { min?: number, max?: number }, // operating margin %
-  debtToEquity?: { min?: number, max?: number },    // debt/equity ratio
-  netDebtToEbitda?: { min?: number, max?: number }, // net debt / EBITDA
-  currentRatio?: { min?: number, max?: number },    // current assets / current liabilities
-  fcfMargin?: { min?: number, max?: number },       // free cash flow margin %
-  fcfGrowthYoY?: { min?: number, max?: number },    // FCF growth % YoY
-  dividendYield?: { min?: number, max?: number },   // dividend yield %
-  buybackYield?: { min?: number, max?: number },    // net buyback yield %
-  oneYearReturn?: { min?: number, max?: number },   // 1-year price return %
-  distanceFrom52WkHigh?: { min?: number, max?: number }, // % from 52-week high (negative = below)
-  institutionalOwnership?: { min?: number, max?: number }, // % held by institutions
-  earningsSurprisePct?: { min?: number, max?: number },   // avg EPS surprise %
-  valueScore?: { min?: number, max?: number },          // composite value score 0-100
-  growthScore?: { min?: number, max?: number },         // composite growth score 0-100
-  qualityScore?: { min?: number, max?: number },        // composite quality score 0-100
-  financialHealthScore?: { min?: number, max?: number }, // financial health score 0-100
-  overallScore?: { min?: number, max?: number },         // overall composite score 0-100
-  sortField?: string,  // field name to sort by, e.g. "overallScore", "revenueGrowthYoY"
-  sortDir?: "asc" | "desc"
+function buildSchema(assetClass: AssetClassId): string {
+  const metrics = availableMetrics(assetClass);
+
+  const lines = metrics.map((m) => {
+    if (m.options) {
+      return `  ${m.key}?: { value: string } | { values: string[] },  // ${m.label}. One of: ${m.options.join(" | ")}`;
+    }
+    const unit =
+      m.unit === "$B"
+        ? "in dollars (1000000000 = $1B)"
+        : m.unit === "%"
+          ? "percent units (15 = 15%)"
+          : m.unit === "x"
+            ? "a multiple (15 = 15x)"
+            : m.unit === "yrs"
+              ? "in years"
+              : m.unit === "score"
+                ? "0-100"
+                : "a raw number";
+    return `  ${m.key}?: { min?: number, max?: number },  // ${m.label} — ${unit}. ${m.description}`;
+  });
+
+  return `{\n${lines.join("\n")}\n}`;
 }
+
+function buildSystemPrompt(assetClass: AssetClassId): string {
+  const def = getAssetClass(assetClass);
+
+  return `You are a screening assistant for ${def.label.toLowerCase()}. Given a plain-English description of what someone is looking for, output a valid JSON object encoding the screening filters.
+
+The JSON must conform to this schema (every field optional):
+
+${buildSchema(assetClass)}
 
 Rules:
 - Only include fields relevant to the user's description. Omit everything else.
-- marketCap ranges are in dollars (e.g. 1000000000 for $1B, 10000000000 for $10B).
-- % fields are in percent units (e.g. 15 means 15%).
-- For "large cap" use marketCap.min = 10000000000. For "small cap" use marketCap.max = 2000000000. For "mid cap" use min=2000000000, max=10000000000.
-- For "cheap" or "value", use forwardPE.max around 15, or valueScore.min around 60.
-- For "growth", use revenueGrowthYoY.min >= 15 or growthScore.min >= 60.
-- For "quality" or "profitable", use roe.min >= 15, grossMargin.min >= 40, or qualityScore.min >= 60.
-- For "dividend", use dividendYield.min >= 2.
-- For "safe" or "conservative balance sheet", use debtToEquity.max <= 0.5 or financialHealthScore.min >= 65.
-- For "momentum" or "trending up", use oneYearReturn.min >= 20 or distanceFrom52WkHigh.min >= -10.
-- Default sortDir to "desc". Default sortField to "overallScore" unless a more specific field fits the description.
-- Output ONLY the JSON object. No explanation, no markdown code fences.`;
+- Use ONLY the field names listed above. Any other field name will be discarded.
+- Respect each field's stated units.
+- For categorical fields, use only the listed allowed values, spelled exactly.
+- Do not invent thresholds the user didn't imply — a vague request should produce few filters, not many.
+- Output ONLY the JSON object. No explanation, no markdown code fences.
+
+Available templates for this asset class, if the description matches one closely: ${def.templates.map((t) => `${t.id} (${t.name}: ${t.tagline})`).join("; ")}.
+If one clearly matches, also include "templateId": "<id>".`;
+}
 
 /** GET /api/screener/nl — list installed, enabled Ollama models for the model picker. */
 export async function GET() {
@@ -67,11 +79,11 @@ export async function GET() {
   return NextResponse.json({ models });
 }
 
-/** POST /api/screener/nl — body { prompt, model } → FundamentalScreenerCriteria */
+/** POST /api/screener/nl — body { prompt, model, assetClass } → { filters, templateId } */
 export async function POST(request: Request) {
-  let body: { prompt?: string; model?: string };
+  let body: { prompt?: string; model?: string; assetClass?: string };
   try {
-    body = await request.json();
+    body = (await request.json()) as typeof body;
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
@@ -79,12 +91,15 @@ export async function POST(request: Request) {
   const userPrompt = body.prompt?.trim();
   if (!userPrompt) return NextResponse.json({ error: "`prompt` is required" }, { status: 400 });
 
+  const assetClass: AssetClassId = isAssetClassId(body.assetClass) ? body.assetClass : "equity";
+  const def = getAssetClass(assetClass);
+
   let raw: string;
   let model: string;
   try {
     const result = await runPromptWithMeta("nl-screener", userPrompt, {
       model: body.model?.trim() || undefined,
-      system: SYSTEM_PROMPT,
+      system: buildSystemPrompt(assetClass),
       temperature: 0.1,
       timeoutMs: 30_000,
     });
@@ -95,11 +110,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status: 502 });
   }
 
-  if (!raw) return NextResponse.json({ error: "Ollama returned an empty response" }, { status: 502 });
+  if (!raw) {
+    return NextResponse.json({ error: "Ollama returned an empty response" }, { status: 502 });
+  }
 
-  let criteria: FundamentalScreenerCriteria;
+  let parsed: Record<string, unknown>;
   try {
-    criteria = extractJson<FundamentalScreenerCriteria>(raw);
+    parsed = extractJson<Record<string, unknown>>(raw);
   } catch {
     return NextResponse.json(
       { error: "Ollama did not return valid JSON. Try rephrasing your description.", raw },
@@ -107,5 +124,14 @@ export async function POST(request: Request) {
     );
   }
 
-  return NextResponse.json({ criteria, model });
+  const templateId =
+    typeof parsed.templateId === "string" && def.templates.some((t) => t.id === parsed.templateId)
+      ? parsed.templateId
+      : null;
+
+  // The model's output is untrusted: parseFilters drops any key that isn't a
+  // real, available metric on this class, and coerces the rest into shape.
+  const filters = parseFilters(assetClass, parsed);
+
+  return NextResponse.json({ assetClass, filters, templateId, model });
 }

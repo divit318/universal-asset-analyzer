@@ -4,7 +4,7 @@ import type { InvestigativeQuestion, AgentDomain } from "@/lib/ic-questions";
 const runPromptMock = vi.fn();
 vi.mock("@/lib/ai", () => ({ runPrompt: (...args: unknown[]) => runPromptMock(...args) }));
 
-const { runAgentNetwork } = await import("@/lib/ic-agents");
+const { runAgentNetwork, extractAgentJson } = await import("@/lib/ic-agents");
 
 function question(domain: AgentDomain): InvestigativeQuestion {
   return {
@@ -77,5 +77,36 @@ describe("runAgentNetwork", () => {
     await runAgentNetwork(baseInput(["business", "risk", "valuation"]));
 
     expect(active.maxConcurrent).toBe(1);
+  });
+});
+
+describe("extractAgentJson", () => {
+  it("defaults keyInsights/dataLimitations when a valid parse omits them", () => {
+    const parsed = extractAgentJson('{"findings":"Strong pricing power.","confidence":"high"}');
+    expect(parsed.findings).toBe("Strong pricing power.");
+    expect(parsed.keyInsights).toEqual([]);
+    expect(parsed.dataLimitations).toBeNull();
+  });
+
+  it("falls back to [] when keyInsights arrives as the wrong kind", () => {
+    const parsed = extractAgentJson('{"findings":"ok","keyInsights":"not an array"}');
+    expect(Array.isArray(parsed.keyInsights)).toBe(true);
+    expect(parsed.keyInsights).toEqual([]);
+  });
+
+  it("normalizes an invented confidence variant to a valid enum value via substring match", () => {
+    const parsed = extractAgentJson('{"findings":"ok","confidence":"Extremely High"}');
+    expect(parsed.confidence).toBe("high");
+  });
+
+  it("falls back to low for a confidence value that matches no known substring", () => {
+    const parsed = extractAgentJson('{"findings":"ok","confidence":"uncertain"}');
+    expect(parsed.confidence).toBe("low");
+  });
+
+  it("falls through to prose-extraction strategy 2 on total garbage instead of throwing", () => {
+    const parsed = extractAgentJson("The company shows strong fundamentals with no clear JSON structure.");
+    expect(parsed.confidence).toBe("low");
+    expect(parsed.dataLimitations).toBe("AI response format could not be fully parsed.");
   });
 });

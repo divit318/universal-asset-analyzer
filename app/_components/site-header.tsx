@@ -87,6 +87,12 @@ export function SiteHeader() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const activeId = activeObjective(pathname);
 
+  // Migration seam: the marketing site (currently /landing, future /) ships its
+  // own chrome and must not inherit the authenticated app nav. This is the ONE
+  // predicate that changes when /landing is promoted to / and the app moves to
+  // /app. It is a no-op for every existing route, so app behavior is unchanged.
+  if (pathname === "/landing" || pathname.startsWith("/landing/")) return null;
+
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-surface/85 backdrop-blur-xl">
       <nav className="mx-auto flex h-14 w-full max-w-7xl items-center gap-2 px-6">

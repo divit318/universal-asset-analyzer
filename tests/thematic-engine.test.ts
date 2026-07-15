@@ -173,4 +173,48 @@ describe("runThematicEngine — failure tracking", () => {
     expect(report.stageFailures.length).toBeGreaterThan(0);
     expect(report.stageFailures.every((f) => f.error === "model unavailable")).toBe(true);
   });
+
+  it("defaults an omitted array field on a valid-but-incomplete stage response, without recording a stage failure", async () => {
+    runPromptMock.mockReset();
+    runPromptMock.mockImplementation(async (_task: string, prompt: string) => {
+      if (prompt.includes("bottleneck in the")) {
+        // scarceFactors omitted despite a valid, parseable response
+        return JSON.stringify({ score: 7, bottleneckTier: 3, bottleneckDescription: "d", substituteRisk: "low", substituteRationale: "r", expansionDifficulty: "e" });
+      }
+      return routeByPrompt(prompt);
+    });
+
+    const report = await runThematicEngine({ theme: "AI Compute" });
+
+    expect(report.stageFailures).toEqual([]); // valid parse, not a tracked failure
+    expect(report.bottleneck.score).toBe(7); // real data preserved
+    expect(report.bottleneck.scarceFactors).toEqual([]); // missing field defaulted, no crash
+  });
+
+  it("normalizes an invented substituteRisk variant on a valid stage response", async () => {
+    runPromptMock.mockReset();
+    runPromptMock.mockImplementation(async (_task: string, prompt: string) => {
+      if (prompt.includes("bottleneck in the")) {
+        return JSON.stringify({ score: 7, bottleneckTier: 3, bottleneckDescription: "d", scarceFactors: [], substituteRisk: "Very High Indeed", substituteRationale: "r", expansionDifficulty: "e" });
+      }
+      return routeByPrompt(prompt);
+    });
+
+    const report = await runThematicEngine({ theme: "AI Compute" });
+    expect(report.bottleneck.substituteRisk).toBe("medium"); // invalid enum falls back to the neutral default
+  });
+
+  it("still tracks a stage failure when that stage's response is truly unparseable garbage", async () => {
+    runPromptMock.mockReset();
+    runPromptMock.mockImplementation(async (_task: string, prompt: string) => {
+      if (prompt.includes("bottleneck in the")) return "the model refused to answer";
+      return routeByPrompt(prompt);
+    });
+
+    const report = await runThematicEngine({ theme: "AI Compute" });
+
+    expect(report.stageFailures).toHaveLength(1);
+    expect(report.stageFailures[0].stage).toBe("Bottleneck");
+    expect(report.bottleneck.score).toBe(5); // neutral default
+  });
 });

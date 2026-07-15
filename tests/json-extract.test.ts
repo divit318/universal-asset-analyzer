@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractJson, extractJsonObject } from "@/lib/json-extract";
+import { extractJson, extractJsonObject, extractJsonArray } from "@/lib/json-extract";
 
 describe("extractJson", () => {
   it("parses clean JSON objects", () => {
@@ -100,5 +100,51 @@ describe("extractJsonObject", () => {
     const d = { items: [] as number[] };
     extractJsonObject('{"items":[1,2]}', d);
     expect(d.items).toEqual([]);
+  });
+});
+
+describe("extractJsonArray", () => {
+  it("parses a clean top-level array", () => {
+    const raw = '[{"symbol":"AAPL"},{"symbol":"MSFT"}]';
+    expect(extractJsonArray<{ symbol: string }>(raw)).toEqual([
+      { symbol: "AAPL" },
+      { symbol: "MSFT" },
+    ]);
+  });
+
+  it("returns [] on parse failure instead of throwing", () => {
+    expect(extractJsonArray("the model refused to answer")).toEqual([]);
+  });
+
+  it("returns [] when the parsed result is an object, not an array", () => {
+    expect(extractJsonArray('{"symbol":"AAPL"}')).toEqual([]);
+  });
+
+  it("parses fenced arrays", () => {
+    const raw = '```json\n[1, 2, 3]\n```';
+    expect(extractJsonArray<number>(raw)).toEqual([1, 2, 3]);
+  });
+
+  it("passes items through unchanged when no sanitizer is given", () => {
+    const raw = '[{"a":1},{"b":2}]';
+    expect(extractJsonArray(raw)).toEqual([{ a: 1 }, { b: 2 }]);
+  });
+
+  it("uses sanitizeItem to validate and drop invalid rows", () => {
+    const raw = '[{"symbol":"AAPL"},{"nope":true},{"symbol":"MSFT"}]';
+    const out = extractJsonArray<{ symbol: string }>(raw, (item) => {
+      const obj = item as { symbol?: unknown };
+      return typeof obj.symbol === "string" ? { symbol: obj.symbol } : null;
+    });
+    expect(out).toEqual([{ symbol: "AAPL" }, { symbol: "MSFT" }]);
+  });
+
+  it("drops all items and returns [] when every item fails sanitizeItem", () => {
+    const raw = '[{"nope":1},{"nope":2}]';
+    const out = extractJsonArray<{ symbol: string }>(raw, (item) => {
+      const obj = item as { symbol?: unknown };
+      return typeof obj.symbol === "string" ? { symbol: obj.symbol } : null;
+    });
+    expect(out).toEqual([]);
   });
 });

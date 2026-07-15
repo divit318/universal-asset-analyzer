@@ -12,7 +12,7 @@
  */
 
 import { runPrompt } from "./ai";
-import { extractJson } from "./json-extract";
+import { extractJsonObject } from "./json-extract";
 import type { FundamentalsSnapshot, FinancialStatements, AnalystConsensus } from "./types";
 import type { ScreenerInCompany } from "./screener-in";
 
@@ -181,6 +181,58 @@ export interface ValuationResult {
   scenarios: ValuationScenario[];
   dcfSensitivity: string;
   valuationVerdict: string;
+}
+
+const CONFIDENCE_LEVELS = ["high", "medium", "low"] as const;
+
+function sanitizeApproach(item: unknown): ValuationApproach | null {
+  if (item === null || typeof item !== "object") return null;
+  const a = item as Record<string, unknown>;
+  if (typeof a.method !== "string") return null;
+  const confidence = typeof a.confidence === "string" ? a.confidence.toLowerCase() : "";
+  return {
+    method: a.method,
+    priceTarget: typeof a.priceTarget === "string" ? a.priceTarget : "",
+    impliedUpside: typeof a.impliedUpside === "string" ? a.impliedUpside : "",
+    assumptions: typeof a.assumptions === "string" ? a.assumptions : "",
+    confidence: (CONFIDENCE_LEVELS as readonly string[]).includes(confidence)
+      ? (confidence as ValuationApproach["confidence"])
+      : "medium",
+  };
+}
+
+function sanitizeScenario(item: unknown): ValuationScenario | null {
+  if (item === null || typeof item !== "object") return null;
+  const s = item as Record<string, unknown>;
+  if (typeof s.label !== "string") return null;
+  return {
+    label: s.label,
+    priceTarget: typeof s.priceTarget === "string" ? s.priceTarget : "",
+    impliedUpside: typeof s.impliedUpside === "string" ? s.impliedUpside : "",
+    keyAssumptions: Array.isArray(s.keyAssumptions)
+      ? s.keyAssumptions.filter((x): x is string => typeof x === "string")
+      : [],
+  };
+}
+
+/** Exported for unit testing — pure, no I/O. */
+export function parseValuation(raw: string): ValuationResult {
+  // extractJsonObject does not recurse into nested arrays — approaches/scenarios
+  // need per-item sanitation since the UI maps over them and indexes `confidence`.
+  const parsed = extractJsonObject(raw, {
+    currentPrice: "n/a",
+    intrinsicValueRange: "n/a",
+    impliedUpside: "n/a",
+    approaches: [] as unknown[],
+    scenarios: [] as unknown[],
+    dcfSensitivity: "",
+    valuationVerdict: "",
+  });
+  return {
+    ...parsed,
+    approaches: parsed.approaches.map(sanitizeApproach).filter((a): a is ValuationApproach => a !== null),
+    scenarios: parsed.scenarios.map(sanitizeScenario).filter((s): s is ValuationScenario => s !== null),
+  };
 }
 
 function buildValuationContext(
@@ -476,7 +528,7 @@ Return as JSON:
 
   try {
     const raw = await runPrompt("scenario-analysis", prompt, { maxTokens: 2000, json: true, model });
-    return extractJson<ValuationResult>(raw);
+    return parseValuation(raw);
   } catch {
     const px = currentPrice ?? snapshot.price;
     const analystTarget = analyst.targetMean;

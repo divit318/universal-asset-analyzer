@@ -158,9 +158,10 @@ portfolio-brief crash.
    that actually crashed (`portfolio-brief`) was fixed. A dedicated pass
    should add the same "default missing fields after extraction" treatment
    (or a small shared validator) to the rest.
-3. `app/portfolio/_components/position-recommendations.tsx` is confirmed
+3. ~~`app/portfolio/_components/position-recommendations.tsx` is confirmed
    still dead code (defined, never imported — `actions-tab.tsx`'s
-   `DecisionCard` is the live "Decision Queue" UI). Delete if asked.
+   `DecisionCard` is the live "Decision Queue" UI).~~ Done — deleted in
+   PLAN-legacy-cleanup.
 4. Mobile/narrow-viewport layouts were reasoned about via responsive
    classes, not screenshotted — worth a real device-width pass if the
    browser tooling supports it in a future session.

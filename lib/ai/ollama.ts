@@ -10,10 +10,9 @@
  * code path to any hosted/paid provider.
  */
 
-export const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
+import { JSON_ONLY_INSTRUCTION } from "./prompts";
 
-/** Default model when a caller doesn't pick one explicitly. */
-export const DEFAULT_MODEL = process.env.OLLAMA_MODEL ?? "llama3.2";
+export const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
 
 /** Raised when Ollama can't be reached at all (daemon not running). */
 export class OllamaUnavailableError extends Error {
@@ -34,14 +33,27 @@ export class ModelMissingError extends Error {
 }
 
 interface TagsResponse {
-  models?: { name?: string; model?: string }[];
+  models?: { name?: string; model?: string; size?: number }[];
+}
+
+/** An installed model as Ollama reports it, including its on-disk footprint. */
+export interface InstalledModel {
+  id: string;
+  /**
+   * Weights size in GB, straight from Ollama. The Router compares this against
+   * the machine's memory budget: a model larger than RAM isn't "slower", it
+   * thrashes (measured: an 18.6GB model on a 17GB host ran at 0.9 tok/s, ~11x
+   * slower than a 4.4GB one). Read from the daemon rather than hardcoded in the
+   * registry so the number can never drift from what's actually installed.
+   */
+  sizeGb: number;
 }
 
 /**
- * List installed model ids. Best-effort: returns [] when Ollama is unreachable
- * so callers (e.g. the model picker) can degrade gracefully instead of throwing.
+ * List installed models with their sizes. Best-effort: returns [] when Ollama
+ * is unreachable so callers (e.g. the model picker) degrade gracefully.
  */
-export async function listInstalledModels(): Promise<string[]> {
+export async function listModelInfo(): Promise<InstalledModel[]> {
   try {
     const res = await fetch(`${OLLAMA_HOST}/api/tags`, {
       signal: AbortSignal.timeout(4000),
@@ -49,11 +61,19 @@ export async function listInstalledModels(): Promise<string[]> {
     if (!res.ok) return [];
     const data = (await res.json()) as TagsResponse;
     return (data.models ?? [])
-      .map((m) => m.model ?? m.name)
-      .filter((id): id is string => Boolean(id));
+      .map((m) => ({ id: m.model ?? m.name ?? "", sizeGb: (m.size ?? 0) / 1e9 }))
+      .filter((m) => Boolean(m.id));
   } catch {
     return [];
   }
+}
+
+/**
+ * List installed model ids. Best-effort: returns [] when Ollama is unreachable
+ * so callers (e.g. the model picker) can degrade gracefully instead of throwing.
+ */
+export async function listInstalledModels(): Promise<string[]> {
+  return (await listModelInfo()).map((m) => m.id);
 }
 
 export interface HealthStatus {
@@ -90,13 +110,73 @@ export interface ChatOptions {
   temperature?: number;
   /** Upper bound on context tokens Ollama keeps in the window. */
   numCtx?: number;
+  /** Cap on generated tokens. Omit to let the model run to its natural stop. */
+  maxTokens?: number;
+  /**
+   * Toggle a hybrid reasoning model's chain-of-thought (Qwen3 et al).
+   *
+   * Left unset, Qwen3 thinks by default, and thinking is expensive and — under
+   * `format: "json"` — outright broken:
+   *   - prose:  143s with thinking vs 28s without, for a comparable answer (5x).
+   *   - json:   thinking + format:"json" returns the literal string `{}` in two
+   *             tokens, 0/3 valid vs 3/3 with thinking off. `{}` *parses*, so
+   *             this failed silently — every JSON task got an empty object.
+   * The Router therefore forces this to false whenever `json` is set.
+   */
+  think?: boolean;
+  /** Receives reasoning deltas when `think` is on; answer deltas are yielded. */
+  onThinking?: (delta: string) => void;
+  /**
+   * Constrain the model to emit JSON only — the streaming counterpart of
+   * {@link GenerateOptions.json}.
+   *
+   * Without this, a streamed JSON task free-forms: the model wraps its object in
+   * a ```json fence, adds a preamble and a sign-off, and generally writes more
+   * tokens than asked. Measured on the report route, that made the streamed
+   * verdict ~45% slower than the identical non-streamed one — which would have
+   * made streaming a net downgrade rather than a pure latency win.
+   */
+  json?: boolean;
   signal?: AbortSignal;
 }
 
 interface OllamaChatChunk {
-  message?: { content?: string };
+  /**
+   * `thinking` is Ollama's *native* reasoning channel — modern builds return
+   * chain-of-thought here rather than as inline <think> tags in `content`.
+   * Anything that only scans `content` for tags (see {@link splitThinking})
+   * silently sees no reasoning at all on these models.
+   */
+  message?: { content?: string; thinking?: string };
   done?: boolean;
   error?: string;
+}
+
+function withJsonInstruction(messages: ChatTurn[]): ChatTurn[] {
+  return messages.map((m, i) =>
+    i === messages.length - 1 && m.role === "user"
+      ? { ...m, content: `${m.content}\n\n${JSON_ONLY_INSTRUCTION}` }
+      : m,
+  );
+}
+
+/**
+ * Ollama request options common to both call shapes. `think` is sent only when
+ * explicitly set, so non-reasoning models (mistral) never see an unknown field.
+ */
+function buildBody(opts: ChatOptions, stream: boolean) {
+  return JSON.stringify({
+    model: opts.model,
+    messages: opts.json ? withJsonInstruction(opts.messages) : opts.messages,
+    stream,
+    ...(opts.json ? { format: "json" } : {}),
+    ...(opts.think === undefined ? {} : { think: opts.think }),
+    options: {
+      temperature: opts.temperature ?? 0.4,
+      ...(opts.numCtx ? { num_ctx: opts.numCtx } : {}),
+      ...(opts.maxTokens ? { num_predict: opts.maxTokens } : {}),
+    },
+  });
 }
 
 /**
@@ -110,15 +190,7 @@ interface OllamaChatChunk {
 export async function* streamChat(
   opts: ChatOptions,
 ): AsyncGenerator<string, void, unknown> {
-  const body = JSON.stringify({
-    model: opts.model,
-    messages: opts.messages,
-    stream: true,
-    options: {
-      temperature: opts.temperature ?? 0.4,
-      ...(opts.numCtx ? { num_ctx: opts.numCtx } : {}),
-    },
-  });
+  const body = buildBody(opts, true);
 
   const res = await withRetry(() =>
     fetch(`${OLLAMA_HOST}/api/chat`, {
@@ -171,6 +243,10 @@ export async function* streamChat(
         }
         throw new Error(chunk.error);
       }
+      // Native reasoning channel — routed to the caller's sink, never yielded
+      // into the answer stream.
+      const thought = chunk.message?.thinking;
+      if (thought) opts.onThinking?.(thought);
       const piece = chunk.message?.content;
       if (piece) yield piece;
       if (chunk.done) return;
@@ -179,12 +255,24 @@ export async function* streamChat(
 }
 
 export interface GenerateOptions {
-  model?: string;
+  /** Required: the Router always resolves a model. There is no ambient default. */
+  model: string;
   system?: string;
   temperature?: number;
   /** Append a strict JSON-only instruction to the prompt. */
   json?: boolean;
+  /** See {@link ChatOptions.think}. Forced false by the Router under `json`. */
+  think?: boolean;
+  numCtx?: number;
+  maxTokens?: number;
   timeoutMs?: number;
+}
+
+export interface GenerateResult {
+  /** The answer text. */
+  content: string;
+  /** Native chain-of-thought, when the model emitted one. */
+  thinking: string;
 }
 
 /**
@@ -194,27 +282,18 @@ export interface GenerateOptions {
  */
 export async function generate(
   prompt: string,
-  opts: GenerateOptions = {},
-): Promise<string> {
-  const model = opts.model ?? DEFAULT_MODEL;
-  const content = opts.json
-    ? `${prompt}\n\nRespond ONLY with valid JSON. No markdown, no explanation.`
-    : prompt;
+  opts: GenerateOptions,
+): Promise<GenerateResult> {
   const messages: ChatTurn[] = [
     ...(opts.system ? [{ role: "system" as const, content: opts.system }] : []),
-    { role: "user" as const, content },
+    { role: "user" as const, content: prompt },
   ];
 
   const res = await withRetry(() =>
     fetch(`${OLLAMA_HOST}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        messages,
-        stream: false,
-        options: { temperature: opts.temperature ?? 0.4 },
-      }),
+      body: buildBody({ ...opts, messages }, false),
       signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000),
     }),
   );
@@ -223,11 +302,14 @@ export async function generate(
   if (!res.ok || data.error) {
     const message = data.error ?? `Ollama request failed (${res.status}).`;
     if (/not found|no such model|try pulling/i.test(message)) {
-      throw new ModelMissingError(model);
+      throw new ModelMissingError(opts.model);
     }
     throw new Error(message);
   }
-  return (data.message?.content ?? "").trim();
+  return {
+    content: (data.message?.content ?? "").trim(),
+    thinking: (data.message?.thinking ?? "").trim(),
+  };
 }
 
 /**
@@ -262,10 +344,14 @@ const THINK_OPEN = "<think>";
 const THINK_CLOSE = "</think>";
 
 /**
- * Split a completed reasoning-model response into its hidden reasoning and the
- * user-facing answer. DeepSeek-R1 / Qwen3 wrap chain-of-thought in
- * <think>…</think>; we strip it from the answer but keep it for an optional
- * "show reasoning" toggle. Pure / testable.
+ * Split a completed response into hidden reasoning and the user-facing answer,
+ * for models that wrap chain-of-thought in inline <think>…</think> tags.
+ *
+ * Legacy path. Current Ollama builds return reasoning in a separate `thinking`
+ * field instead (see {@link OllamaChatChunk}), which is what the provider reads
+ * first. This remains as a fallback for models/runtimes that still inline the
+ * tags — but it must not be the *only* reasoning handling, which is what let
+ * chain-of-thought leak into answers unnoticed. Pure / testable.
  */
 export function splitThinking(text: string): { reasoning: string; answer: string } {
   const open = text.indexOf(THINK_OPEN);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bestIndex } from "@/lib/ai-compare";
+import { bestIndex, parseCompareResponse } from "@/lib/ai-compare";
 
 /**
  * Unit tests for the N-way metric table winner logic in ai-compare — the
@@ -42,5 +42,27 @@ describe("bestIndex — lower is better (e.g. P/E, D/E)", () => {
 
   it("a lone non-null value wins outright, regardless of magnitude", () => {
     expect(bestIndex([null, 9.6, null], false)).toBe(1);
+  });
+});
+
+describe("parseCompareResponse", () => {
+  it("fills omitted fields with '' on a valid-but-incomplete parse", () => {
+    const raw = '{"overview":"AAPL leads on growth.","winner":"AAPL"}';
+    const flat = parseCompareResponse(raw);
+    expect(flat.overview).toBe("AAPL leads on growth.");
+    expect(flat.valuation).toBe("");
+    expect(flat.winner).toBe("AAPL");
+  });
+
+  it("drops a non-object 'sections' field instead of letting it leak through", () => {
+    const raw = '{"overview":"ok","sections":"not an object"}';
+    const flat = parseCompareResponse(raw);
+    expect(flat.sections).toBeUndefined();
+  });
+
+  it("returns all-empty defaults on total garbage instead of throwing", () => {
+    const flat = parseCompareResponse("the model refused to answer");
+    expect(flat.overview).toBe("");
+    expect(flat.winner).toBeNull();
   });
 });

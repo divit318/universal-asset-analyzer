@@ -353,24 +353,30 @@ export interface PortfolioReport {
 
 /* ============================================================
    Pure math helpers
+
+   mean/stddev/pearson/dailyReturns/maxDrawdown are exported (originally
+   portfolio-only) because they're genuinely asset-agnostic — correlation,
+   volatility, and drawdown math has no equity-specific assumption baked in.
+   lib/crypto-scoring.ts reuses them rather than reimplementing the same
+   formulas, the same reasoning that promoted mk()/bucket() to score-math.ts.
    ============================================================ */
 
 function clamp(v: number, lo = 0, hi = 100): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
-function mean(xs: number[]): number {
+export function mean(xs: number[]): number {
   if (xs.length === 0) return 0;
   return xs.reduce((s, x) => s + x, 0) / xs.length;
 }
 
-function stddev(xs: number[]): number {
+export function stddev(xs: number[]): number {
   if (xs.length < 2) return 0;
   const m = mean(xs);
   return Math.sqrt(xs.reduce((s, x) => s + (x - m) ** 2, 0) / xs.length);
 }
 
-function pearson(xs: number[], ys: number[]): number {
+export function pearson(xs: number[], ys: number[]): number {
   const n = Math.min(xs.length, ys.length);
   if (n < 5) return 0;
   const mx = mean(xs.slice(0, n));
@@ -386,7 +392,7 @@ function pearson(xs: number[], ys: number[]): number {
   return denom === 0 ? 0 : clamp(cov / denom, -1, 1);
 }
 
-function dailyReturns(history: HistoryPoint[]): number[] {
+export function dailyReturns(history: HistoryPoint[]): number[] {
   const closes = history.map((h) => h.adjClose ?? h.close).filter((c) => c > 0);
   const ret: number[] = [];
   for (let i = 1; i < closes.length; i++) {
@@ -442,7 +448,7 @@ export function computeRiskAdjustedRatios(
   return { sharpe, sortino };
 }
 
-function maxDrawdown(returns: number[]): number {
+export function maxDrawdown(returns: number[]): number {
   let peak = 1;
   let maxDD = 0;
   let value = 1;
@@ -1525,29 +1531,40 @@ export function computeCashAllocation(
   // Allocate new cash proportionally to recommended increases, capped by target weight gap
   const buys = report.recommendations
     .filter((r) => r.action === "INCREASE" || r.action === "STRONG_BUY")
-    .sort((a, b) => b.composite - a.composite);
+    .sort((a, b) => b.composite - a.composite)
+    .slice(0, 5);
 
   if (buys.length === 0) {
-    // Fall back to top-scoring positions
+    // Fall back to top-scoring positions. Weights are normalized against however
+    // many positions are actually available (< 3 when the portfolio is that small)
+    // so the fallback always allocates the full cash amount rather than a fraction.
     const sorted = [...report.positions].sort((a, b) => (b.score?.composite ?? 0) - (a.score?.composite ?? 0));
-    return sorted.slice(0, 3).map((p, i) => {
-      const share = cashAmount * [0.5, 0.3, 0.2][i];
+    const top = sorted.slice(0, 3);
+    const rawShares = [0.5, 0.3, 0.2].slice(0, top.length);
+    const shareTotal = rawShares.reduce((s, w) => s + w, 0);
+    const fractions = rawShares.map((w) => w / shareTotal);
+    return top.map((p, i) => {
+      const share = cashAmount * fractions[i];
       return {
         symbol: p.symbol,
         name: p.name,
         dollarAmount: share,
         shareCount: p.price ? Math.floor(share / p.price) : null,
         targetWeight: p.weight + (share / (report.totalValue + cashAmount)) * 100,
-        reason: `Highest composite score (${p.score?.composite ?? 50}/100) among held positions`,
+        reason: `Highest composite score (${p.score?.composite ?? 0}/100) among held positions`,
       };
     });
   }
 
-  const weights = buys.map((r) => Math.max(0, r.delta));
-  const totalDelta = weights.reduce((s, w) => s + w, 0);
+  // Weight by a blend of "room to target" (delta) and conviction (composite score).
+  // classifyAction grants STRONG_BUY down to delta > -1 (a high-conviction name can be
+  // at/slightly above its target weight), so delta alone can be <= 0 for an included
+  // buy — floor it at 0.5pp so a STRONG_BUY never gets zeroed out of its own allocation.
+  const weights = buys.map((r) => Math.max(0.5, r.delta) * (r.composite / 100));
+  const totalWeight = weights.reduce((s, w) => s + w, 0);
 
-  return buys.slice(0, 5).map((r, i) => {
-    const frac = totalDelta > 0 ? weights[i] / totalDelta : 1 / buys.length;
+  return buys.map((r, i) => {
+    const frac = totalWeight > 0 ? weights[i] / totalWeight : 1 / buys.length;
     const dollarAmount = Math.round(cashAmount * frac * 100) / 100;
     const pos = report.positions.find((p) => p.symbol === r.symbol);
     return {

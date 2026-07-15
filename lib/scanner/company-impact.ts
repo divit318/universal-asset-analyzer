@@ -11,8 +11,9 @@
  */
 
 import { runPrompt } from "../ai";
-import { extractJson } from "../json-extract";
+import { extractJsonObject } from "../json-extract";
 import { getFreshFundamentals } from "../db";
+import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
 import type {
   MarketEvent,
   SectorImpact,
@@ -30,8 +31,22 @@ interface CompanyMatchRaw {
   confidence: number; // 0-100
 }
 
-interface CompanyMatchResponse {
-  matches: CompanyMatchRaw[];
+function sanitizeMatch(item: unknown): CompanyMatchRaw | null {
+  if (item === null || typeof item !== "object") return null;
+  const m = item as Record<string, unknown>;
+  if (typeof m.symbol !== "string" || typeof m.rationale !== "string") return null;
+  const direction = typeof m.direction === "string" ? m.direction.toLowerCase() : "";
+  const timeframe = typeof m.timeframe === "string" ? m.timeframe.toLowerCase() : "";
+  const confidence = Number(m.confidence);
+  return {
+    symbol: m.symbol,
+    direction: direction === "bearish" ? "bearish" : "bullish",
+    rationale: m.rationale,
+    timeframe: (["short", "medium", "long"] as string[]).includes(timeframe)
+      ? (timeframe as SignalTimeframe)
+      : "medium",
+    confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(100, confidence)) : 0,
+  };
 }
 
 function buildCompanyMatchPrompt(
@@ -68,7 +83,7 @@ Assign:
 
 Only include companies where the link is specific and clear. Do not include companies just because they're in the sector.
 
-Return ONLY valid JSON:
+${JSON_SCHEMA_LEAD_IN}
 {
   "matches": [
     {
@@ -143,21 +158,22 @@ export async function buildCompanyOpportunities(
     );
     if (drivingEvents.length === 0) continue;
 
-    let parsed: CompanyMatchResponse | null = null;
+    let matches: CompanyMatchRaw[];
     try {
       const raw = await runPrompt(
         "opportunity-engine",
         buildCompanyMatchPrompt(sector, drivingEvents, sectorCompanies),
         { maxTokens: 1500, json: true },
       );
-      parsed = extractJson<CompanyMatchResponse>(raw);
+      const parsed = extractJsonObject(raw, { matches: [] as unknown[] });
+      matches = parsed.matches.map(sanitizeMatch).filter((m): m is CompanyMatchRaw => m !== null);
     } catch {
       continue;
     }
 
-    if (!parsed?.matches?.length) continue;
+    if (matches.length === 0) continue;
 
-    for (const match of parsed.matches) {
+    for (const match of matches) {
       if (seen.has(match.symbol)) continue;
       seen.add(match.symbol);
 

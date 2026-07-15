@@ -58,7 +58,7 @@ export interface ICReportInput {
   analyst?: AnalystConsensus;
   insider?: InsiderActivity;
   screenerIn?: ScreenerInCompany | null;
-  /** Optional Ollama model override (e.g. "mistral", "llama3.2"). Falls back to OLLAMA_MODEL env var. */
+  /** Optional user-picked model override. Omit to let the Router choose per task. */
   model?: string;
 }
 

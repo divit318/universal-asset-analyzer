@@ -4,12 +4,11 @@ import { useEffect, useState } from "react";
 import type { MarketRegime, Recommendation, SectorRotationEntry } from "@/lib/types";
 
 /**
- * Market → Sector → Company regime ladder. Market regime reuses the same
- * cheap, deterministic computation /api/dashboard already exposes (no AI,
- * no full Scanner run — see that route's getRegime()). Sector regime is the
- * Sector Rotation entry already fetched by SectorContextCard, passed down
- * to avoid a duplicate fetch. Company regime relabels the existing
- * composite recommendation — no new scoring.
+ * Market → Sector → Company regime ladder. Market regime comes from /api/regime
+ * — the Scanner's last snapshot when fresh, a live macro/sector computation
+ * otherwise (no AI, no Scanner run). Sector regime is the Sector Rotation entry
+ * already fetched by SectorContextCard, passed down to avoid a duplicate fetch.
+ * Company regime relabels the existing composite recommendation — no new scoring.
  *
  * There is deliberately no separate "industry regime" rung: no data source
  * in this codebase tracks GICS industry-level (as opposed to sector-level)
@@ -62,7 +61,7 @@ export function MacroContextLadder({ sectorEntry, industry, recommendation }: Pr
 
   useEffect(() => {
     let cancelled = false;
-    void fetch("/api/dashboard")
+    void fetch("/api/regime")
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => { if (!cancelled) setRegime(data?.regime ?? null); })
       .catch(() => { /* best-effort */ })

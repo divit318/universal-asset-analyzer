@@ -73,16 +73,26 @@ export function computePositionAction(input: PositionActionInput): PositionActio
   const deltaAmount = deltaShares * price;
 
   // No-trade band: ignore deltas below the larger of $50 or 0.5% of the book.
+  // This dollar floor alone isn't enough — on a small portfolio, $50 can be
+  // half the account, which would swallow a real double-digit-percentage-point
+  // drift (e.g. 20.9% actual vs. a 9.0% target) and mislabel it "near target".
+  // A weight is only "hold" if it's close in BOTH dollar terms and percentage-
+  // point terms, so the tighter of the two constraints always wins.
   const tol = Math.max(50, portfolioValue * 0.005);
+  const pctGap = currentPct - targetPct;
+  const PCT_TOL = 1.5; // percentage points
 
   let kind: PositionActionKind;
   if (fitTier === "avoid") {
     kind = isInPortfolio ? "exit" : "avoid";
   } else if (!isInPortfolio) {
-    kind = targetPct > 0 && deltaAmount > tol ? "initiate" : "avoid";
-  } else if (deltaAmount > tol) {
+    // Same fix as below: a meaningful target weight (e.g. 11% suggested on a
+    // tiny test portfolio) shouldn't be mislabeled "doesn't fit" just because
+    // 11% of a small book happens to fall under the flat $50 floor.
+    kind = targetPct > 0 && (deltaAmount > tol || pctGap < -PCT_TOL) ? "initiate" : "avoid";
+  } else if (deltaAmount > tol || pctGap < -PCT_TOL) {
     kind = "add";
-  } else if (deltaAmount < -tol) {
+  } else if (deltaAmount < -tol || pctGap > PCT_TOL) {
     kind = targetShares <= 0 ? "exit" : "trim";
   } else {
     kind = "hold";
