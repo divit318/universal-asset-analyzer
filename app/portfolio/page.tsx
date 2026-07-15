@@ -274,6 +274,7 @@ function PortfolioPageInner() {
               objectives={OBJECTIVES}
               loading={loading}
               totalPortfolioValue={report.totalValue}
+              atEquilibrium={report.atEquilibrium}
               onExecuted={() => {
                 refresh();
                 setThesisRefreshSignal((n) => n + 1);

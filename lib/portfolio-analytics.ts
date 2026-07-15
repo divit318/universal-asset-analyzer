@@ -206,26 +206,6 @@ export interface PositionRecommendation {
   risks: string[];
 }
 
-export interface Trade {
-  symbol: string;
-  name: string;
-  action: "BUY" | "SELL";
-  dollarAmount: number;
-  sharesApprox: number | null;
-  fromWeight: number;
-  toWeight: number;
-  reason: string;
-}
-
-export interface RebalanceProposal {
-  trades: Trade[];
-  sectorChanges: { sector: string; from: number; to: number }[];
-  buyTotal: number;
-  sellTotal: number;
-  netCash: number;         // sell - buy (positive means cash freed)
-  estimatedRiskReduction: number | null;  // % vol reduction
-}
-
 export interface MissingExposure {
   type: "sector" | "factor" | "geography" | "style";
   name: string;
@@ -311,15 +291,6 @@ export interface OpportunityRank {
   weight: number;
 }
 
-export interface CashAllocation {
-  symbol: string;
-  name: string;
-  dollarAmount: number;
-  shareCount: number | null;
-  targetWeight: number;
-  reason: string;
-}
-
 export interface PortfolioReport {
   generatedAt: string;
   positionCount: number;
@@ -340,7 +311,6 @@ export interface PortfolioReport {
   // Analytics
   health: HealthScore;
   recommendations: PositionRecommendation[];
-  rebalance: RebalanceProposal;
   gaps: GapAnalysis;
   risk: RiskAnalytics;
   factors: FactorExposure;
@@ -882,63 +852,6 @@ function computeRecommendations(
       risks: buildRisks(p, snap, rotationSnapshot),
     };
   });
-}
-
-/* ============================================================
-   Rebalancing Engine
-   ============================================================ */
-
-function computeRebalance(
-  positions: EnrichedPosition[],
-  recommendations: PositionRecommendation[],
-  sectorAlloc: SectorAllocation[],
-): RebalanceProposal {
-  const trades: Trade[] = recommendations
-    .filter((r) => Math.abs(r.delta) > 1.5)   // > 1.5% delta = worth a trade
-    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
-    .map((r) => {
-      return {
-        symbol: r.symbol,
-        name: r.name,
-        action: r.delta > 0 ? "BUY" : "SELL",
-        dollarAmount: Math.abs(r.suggestedDollar),
-        sharesApprox: r.suggestedShares,
-        fromWeight: r.currentWeight,
-        toWeight: r.targetWeight,
-        reason:
-          r.delta > 0
-            ? `Score ${r.composite}/100 — increase to ${r.targetWeight.toFixed(1)}% target`
-            : `Score ${r.composite}/100 — trim from ${r.currentWeight.toFixed(1)}% to ${r.targetWeight.toFixed(1)}%`,
-      };
-    });
-
-  // Sector before/after from position weights
-  const targetMap = new Map(recommendations.map((r) => [r.symbol, r.targetWeight]));
-  const sectorBefore = new Map(sectorAlloc.map((s) => [s.sector, s.weight]));
-  const sectorAfter = new Map<string, number>();
-  for (const p of positions) {
-    const t = targetMap.get(p.symbol) ?? p.weight;
-    sectorAfter.set(p.sector, (sectorAfter.get(p.sector) ?? 0) + t);
-  }
-  const sectorChanges = [...sectorBefore.entries()]
-    .filter(([sector]) => sectorAfter.has(sector))
-    .map(([sector, from]) => ({ sector, from, to: sectorAfter.get(sector) ?? from }))
-    .filter((c) => Math.abs(c.to - c.from) > 0.5)
-    .sort((a, b) => Math.abs(b.to - b.from) - Math.abs(a.to - a.from));
-
-  const sells = trades.filter((t) => t.action === "SELL");
-  const buys = trades.filter((t) => t.action === "BUY");
-  const sellTotal = sells.reduce((s, t) => s + t.dollarAmount, 0);
-  const buyTotal = buys.reduce((s, t) => s + t.dollarAmount, 0);
-
-  // Rough risk reduction estimate from HHI improvement
-  const hhiBefore = computeHHI(positions.map((p) => p.weight));
-  const targetWeights = positions.map((p) => targetMap.get(p.symbol) ?? p.weight);
-  const hhiAfter = computeHHI(targetWeights);
-  const estimatedRiskReduction =
-    hhiBefore > 0 ? clamp(((hhiBefore - hhiAfter) / hhiBefore) * 100 * 0.4, 0, 25) : null;
-
-  return { trades, sectorChanges, buyTotal, sellTotal, netCash: sellTotal - buyTotal, estimatedRiskReduction };
 }
 
 /* ============================================================
@@ -1521,64 +1434,6 @@ function computeOpportunities(
 }
 
 /* ============================================================
-   Invest New Cash
-   ============================================================ */
-
-export function computeCashAllocation(
-  cashAmount: number,
-  report: PortfolioReport,
-): CashAllocation[] {
-  // Allocate new cash proportionally to recommended increases, capped by target weight gap
-  const buys = report.recommendations
-    .filter((r) => r.action === "INCREASE" || r.action === "STRONG_BUY")
-    .sort((a, b) => b.composite - a.composite)
-    .slice(0, 5);
-
-  if (buys.length === 0) {
-    // Fall back to top-scoring positions. Weights are normalized against however
-    // many positions are actually available (< 3 when the portfolio is that small)
-    // so the fallback always allocates the full cash amount rather than a fraction.
-    const sorted = [...report.positions].sort((a, b) => (b.score?.composite ?? 0) - (a.score?.composite ?? 0));
-    const top = sorted.slice(0, 3);
-    const rawShares = [0.5, 0.3, 0.2].slice(0, top.length);
-    const shareTotal = rawShares.reduce((s, w) => s + w, 0);
-    const fractions = rawShares.map((w) => w / shareTotal);
-    return top.map((p, i) => {
-      const share = cashAmount * fractions[i];
-      return {
-        symbol: p.symbol,
-        name: p.name,
-        dollarAmount: share,
-        shareCount: p.price ? Math.floor(share / p.price) : null,
-        targetWeight: p.weight + (share / (report.totalValue + cashAmount)) * 100,
-        reason: `Highest composite score (${p.score?.composite ?? 0}/100) among held positions`,
-      };
-    });
-  }
-
-  // Weight by a blend of "room to target" (delta) and conviction (composite score).
-  // classifyAction grants STRONG_BUY down to delta > -1 (a high-conviction name can be
-  // at/slightly above its target weight), so delta alone can be <= 0 for an included
-  // buy — floor it at 0.5pp so a STRONG_BUY never gets zeroed out of its own allocation.
-  const weights = buys.map((r) => Math.max(0.5, r.delta) * (r.composite / 100));
-  const totalWeight = weights.reduce((s, w) => s + w, 0);
-
-  return buys.map((r, i) => {
-    const frac = totalWeight > 0 ? weights[i] / totalWeight : 1 / buys.length;
-    const dollarAmount = Math.round(cashAmount * frac * 100) / 100;
-    const pos = report.positions.find((p) => p.symbol === r.symbol);
-    return {
-      symbol: r.symbol,
-      name: r.name,
-      dollarAmount,
-      shareCount: pos?.price ? Math.floor(dollarAmount / pos.price) : null,
-      targetWeight: r.currentWeight + (dollarAmount / (report.totalValue + cashAmount)) * 100,
-      reason: r.reasoning.split(".")[0],
-    };
-  });
-}
-
-/* ============================================================
    Main Orchestrator
    ============================================================ */
 
@@ -1605,7 +1460,6 @@ export function computePortfolioReport(
       concentrationWarnings: [],
       health: { total: 0, grade: "F", dimensions: [], summary: "No positions." },
       recommendations: [],
-      rebalance: { trades: [], sectorChanges: [], buyTotal: 0, sellTotal: 0, netCash: 0, estimatedRiskReduction: null },
       gaps: { missing: [], overweight: [], concentrationScore: 0 },
       risk: { annualizedVolatility: null, beta: null, sharpeRatio: null, sortinoRatio: null, maxDrawdown: null, var95Pct: null, var95Dollar: null, hhi: 0, topPositionWeight: 0, topSectorWeight: 0, concentrationRisk: "low" },
       factors: { tilts: [], topFactor: "", bottomFactor: "" },
@@ -1732,7 +1586,6 @@ export function computePortfolioReport(
   const risk = computeRiskAnalytics(positions, positionHistories, spyHistory, totalValue);
   const health = computeHealthScore(positions, sectorAllocation, { hhi, topPosPct, topSecPct });
   const recommendations = computeRecommendations(positions, snapshots, analysts, totalValue, rotationSnapshot);
-  const rebalance = computeRebalance(positions, recommendations, sectorAllocation);
   const gaps = computeGapAnalysis(sectorAllocation, positions);
   const factors = computeFactorExposure(positions);
   const scenarios = computeScenarios(positions, totalValue, rotationSnapshot);
@@ -1772,7 +1625,6 @@ export function computePortfolioReport(
     concentrationWarnings,
     health,
     recommendations,
-    rebalance,
     gaps,
     risk,
     factors,

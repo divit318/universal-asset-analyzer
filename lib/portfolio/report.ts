@@ -92,6 +92,16 @@ export interface UniversalPortfolioReport {
   /** Same recommendations, ranked and narrated as investment-committee decisions. */
   decisions: DecisionCard[];
   optimization: OptimizationResult;
+  /**
+   * True when BOTH engines agree there is nothing left to do for the current
+   * objective: the optimizer proposes no rebalancing trades AND the recommendation
+   * engine surfaces no material improvement. This is the single, jointly-true
+   * "you're done" signal the two tabs previously lacked — each could only speak for
+   * itself, so a converged optimizer still sat next to a Decision Center insisting
+   * on a trade. A mature optimizer must be able to say "at equilibrium", and mean it
+   * across the whole page.
+   */
+  atEquilibrium: boolean;
 }
 
 export interface ReportOptions {
@@ -170,6 +180,7 @@ export async function buildPortfolioReport(
     recommendations,
     decisions,
     optimization,
+    atEquilibrium: optimization.trades.length === 0 && recommendations.length === 0,
   };
 }
 

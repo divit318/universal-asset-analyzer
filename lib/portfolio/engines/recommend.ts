@@ -25,6 +25,7 @@ import { simulate, type PortfolioEvaluation, type ImpactEstimate, type Portfolio
 import { normalizeHoldings } from "../model/holding";
 import type { Holding, MarketContext } from "../model/types";
 import { PORTFOLIO_CLASS_LABEL } from "../model/types";
+import { TRIM_TRIGGER_PCT, TRIM_TARGET_PCT } from "../policy";
 
 export type RecommendationAction = "ADD" | "INCREASE" | "REDUCE" | "SELL" | "HOLD" | "REALLOCATE";
 
@@ -346,10 +347,15 @@ export function computeRecommendations(
   /* ---- Trim over-concentrated holdings, each one simulated ---- */
 
   for (const h of evaluation.holdings) {
-    if (h.weight < 20) continue;
+    // Only flag a position that exceeds the portfolio's single-holding cap by more
+    // than the hysteresis band, and trim it back TO the cap — never below it. The
+    // optimizer targets exactly this cap for a high-conviction name, so trimming
+    // below it (the old code trimmed any ≥20% holding down to 15%) set up an
+    // infinite 15%↔20% ping-pong: trim to 15, optimizer rebuilds to 20, repeat.
+    // Sharing the cap via lib/portfolio/policy.ts makes it a true shared fixed point.
+    if (h.weight <= TRIM_TRIGGER_PCT) continue;
 
-    // Trim to 15%, the level at which single-name risk stops dominating.
-    const target = 15;
+    const target = TRIM_TARGET_PCT;
     const amount = Math.round(((h.weight - target) / 100) * evaluation.totalValue);
     if (amount <= 0) continue;
 

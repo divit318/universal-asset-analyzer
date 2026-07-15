@@ -4,8 +4,8 @@ import { computeAllocation, computeConcentration } from "@/lib/portfolio/engines
 import { computeRisk } from "@/lib/portfolio/engines/risk";
 import { computeHealth } from "@/lib/portfolio/engines/health";
 import { runScenario, getScenario, applyShocks } from "@/lib/portfolio/engines/scenario";
-import { evaluate } from "@/lib/portfolio/engines/simulate";
-import { optimize, DEFAULT_CONSTRAINTS, computeTradeImpacts } from "@/lib/portfolio/engines/optimize";
+import { evaluate, applyTargetPlanConserving } from "@/lib/portfolio/engines/simulate";
+import { optimize, DEFAULT_CONSTRAINTS, computeTradeImpacts, type Objective } from "@/lib/portfolio/engines/optimize";
 import { computeRecommendations } from "@/lib/portfolio/engines/recommend";
 import { buildDecisionCards } from "@/lib/portfolio/engines/decision";
 import { contentHash, fallbackThesis, fallbackIdentity } from "@/lib/portfolio/thesis";
@@ -435,6 +435,145 @@ describe("optimize — class zeroed out of the objective", () => {
     const gld = result.holdings.find((h) => h.symbol === "GLD")!;
     expect(gld.targetWeight).toBe(0);
     expect(gld.constrained).toBe(false);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Convergence, value conservation, and the 100% invariant                     */
+/* -------------------------------------------------------------------------- */
+
+describe("optimize — convergent, idempotent, value-conserving", () => {
+  const OBJECTIVES_UNDER_TEST: Objective[] = [
+    "maximize_return",
+    "minimize_volatility",
+    "maximize_sharpe",
+    "maximize_income",
+    "maximize_diversification",
+    "preserve_capital",
+  ];
+
+  /** A mixed portfolio that holds SOME but not all of what the objectives want. */
+  function mixed(c: MarketContext) {
+    const { holdings } = normalizeHoldings([
+      raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 100 }),
+      raw({ id: "g", assetClass: "commodity", symbol: "GLD", quantity: 40 }),
+      raw({ id: "b", assetClass: "bond", symbol: "IEF", quantity: 80 }),
+    ], c);
+    return evaluate(holdings, c);
+  }
+
+  /** Apply the plan the SAME value-conserving way the executor does. */
+  function applyPlan(evaluation: ReturnType<typeof evaluate>, result: ReturnType<typeof optimize>, c: MarketContext) {
+    const changes = result.trades.map((t) => ({ holdingId: t.holdingId, targetWeight: t.targetWeight }));
+    return evaluate(applyTargetPlanConserving(evaluation.holdings, changes, c), c);
+  }
+
+  it.each(OBJECTIVES_UNDER_TEST)("class targets sum to exactly 100%% for %s", (objective) => {
+    const c = ctx();
+    const result = optimize(mixed(c), objective, DEFAULT_CONSTRAINTS, undefined, c);
+    const sum = result.classTargets.reduce((s, t) => s + t.targetWeight, 0);
+    expect(sum).toBeCloseTo(100, 0);
+  });
+
+  it.each(OBJECTIVES_UNDER_TEST)("converges in ONE round for %s — re-optimizing proposes no trades", (objective) => {
+    const c = ctx();
+    const evaluation = mixed(c);
+    const first = optimize(evaluation, objective, DEFAULT_CONSTRAINTS, undefined, c);
+
+    const applied = applyPlan(evaluation, first, c);
+
+    // The whole point: after executing the plan, running the optimizer again on the
+    // resulting portfolio must produce nothing. This is the regression guard for the
+    // "execute → immediately more trades, forever" bug.
+    const second = optimize(applied, objective, DEFAULT_CONSTRAINTS, undefined, c);
+    expect(second.trades.length).toBe(0);
+  });
+
+  it.each(OBJECTIVES_UNDER_TEST)("conserves total portfolio value through a rebalance for %s", (objective) => {
+    const c = ctx();
+    const evaluation = mixed(c);
+    const result = optimize(evaluation, objective, DEFAULT_CONSTRAINTS, undefined, c);
+    const applied = applyPlan(evaluation, result, c);
+    // A rebalance is not new money — total value is unchanged (within rounding).
+    expect(applied.totalValue).toBeCloseTo(evaluation.totalValue, 0);
+  });
+
+  it("routes the budget of UNAVAILABLE asset classes to cash, then converges", () => {
+    // An all-equity, single-holding portfolio under Maximize Sharpe: the objective
+    // wants bonds/REITs/commodities/cash the portfolio doesn't hold, AND the single
+    // equity name can't legally exceed the 20% per-holding cap. Everything the
+    // rebalancer can't place must land in cash — and re-running must be a no-op.
+    const c = ctx();
+    const { holdings } = normalizeHoldings([
+      raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 500 }),
+    ], c);
+    const evaluation = evaluate(holdings, c);
+
+    const result = optimize(evaluation, "maximize_sharpe", DEFAULT_CONSTRAINTS, undefined, c);
+
+    // AAPL is trimmed to at most the single-holding cap; the rest is cash.
+    const aapl = result.holdings.find((h) => h.symbol === "AAPL")!;
+    expect(aapl.targetWeight).toBeLessThanOrEqual(DEFAULT_CONSTRAINTS.maxHoldingPct + 0.1);
+
+    const changes = result.trades.map((t) => ({ holdingId: t.holdingId, targetWeight: t.targetWeight }));
+    const applied = evaluate(applyTargetPlanConserving(evaluation.holdings, changes, c), c);
+
+    const cashWeight = applied.allocation.byAssetClass.slices.find((s) => s.key === "cash")?.weight ?? 0;
+    expect(cashWeight).toBeGreaterThan(50);
+    expect(applied.totalValue).toBeCloseTo(evaluation.totalValue, 0);
+
+    const second = optimize(applied, "maximize_sharpe", DEFAULT_CONSTRAINTS, undefined, c);
+    expect(second.trades.length).toBe(0);
+  });
+
+  it("never sizes a holding above the single-holding cap (water-filling redistributes the overflow)", () => {
+    // Two equity names, one scoring far higher: the high scorer would be tilted past
+    // the cap, so its overflow must redistribute to the other name (not vanish, the
+    // old clamp bug), and no holding may exceed the cap.
+    const c = ctx();
+    const { holdings } = normalizeHoldings([
+      raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 100 }),
+      raw({ id: "b", assetClass: "bond", symbol: "IEF", quantity: 50 }),
+    ], c);
+    const evaluation = evaluate(holdings, c);
+    const result = optimize(evaluation, "maximize_return", DEFAULT_CONSTRAINTS, undefined, c);
+    for (const t of result.holdings) {
+      if (t.assetClass === "cash") continue;
+      expect(t.targetWeight).toBeLessThanOrEqual(DEFAULT_CONSTRAINTS.maxHoldingPct + 0.1);
+    }
+  });
+
+  it("enforces the minimum-cash floor", () => {
+    // target_allocation with 100% equity and no cash entry must still leave the
+    // minimum cash buffer, funded by scaling the equity target down.
+    const c = ctx();
+    const { holdings } = normalizeHoldings([
+      raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 100 }),
+      raw({ id: "b", assetClass: "bond", symbol: "IEF", quantity: 100 }),
+    ], c);
+    const evaluation = evaluate(holdings, c);
+    const result = optimize(evaluation, "target_allocation", DEFAULT_CONSTRAINTS, { equity: 100 }, c);
+    const cashTarget = result.classTargets.find((t) => t.assetClass === "cash")?.targetWeight ?? 0;
+    expect(cashTarget).toBeGreaterThanOrEqual(DEFAULT_CONSTRAINTS.minCashPct - 0.1);
+  });
+
+  it("is idempotent — a second optimize on an already-optimal portfolio is a no-op", () => {
+    // Feed the optimizer a portfolio that already sits at a maximize_sharpe-shaped
+    // mix; it should propose nothing rather than churn.
+    const c = ctx();
+    const evaluation = mixed(c);
+    const once = optimize(evaluation, "maximize_sharpe", DEFAULT_CONSTRAINTS, undefined, c);
+    const applied = applyPlan(evaluation, once, c);
+    const twice = optimize(applied, "maximize_sharpe", DEFAULT_CONSTRAINTS, undefined, c);
+    const thrice = optimize(
+      applyPlan(applied, twice, c),
+      "maximize_sharpe",
+      DEFAULT_CONSTRAINTS,
+      undefined,
+      c,
+    );
+    expect(twice.trades.length).toBe(0);
+    expect(thrice.trades.length).toBe(0);
   });
 });
 

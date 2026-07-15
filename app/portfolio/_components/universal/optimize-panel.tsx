@@ -43,6 +43,7 @@ export function OptimizePanel({
   objectives,
   loading,
   totalPortfolioValue,
+  atEquilibrium,
   onExecuted,
 }: {
   optimization: OptimizationResult;
@@ -51,6 +52,8 @@ export function OptimizePanel({
   objectives: Record<Objective, ObjectiveConfig>;
   loading: boolean;
   totalPortfolioValue: number;
+  /** True when BOTH engines agree nothing is left to do (no trades AND no recommendations). */
+  atEquilibrium: boolean;
   /** Called after a successful implementation so the parent can refresh the report + thesis. */
   onExecuted: () => void;
 }) {
@@ -383,9 +386,13 @@ export function OptimizePanel({
         </Card>
       ) : (
         <Card className="p-8 text-center">
-          <p className="text-sm font-semibold text-foreground">Already at target.</p>
+          <p className="text-sm font-semibold text-foreground">
+            {atEquilibrium ? "At equilibrium — nothing left to do." : "Already at target."}
+          </p>
           <p className="mt-1 text-xs text-muted">
-            The portfolio matches the {objectives[objective].label} allocation within tolerance.
+            {atEquilibrium
+              ? `The portfolio matches the ${objectives[objective].label} allocation and the Decision Center has no material improvement to suggest. Re-optimizing produces no further trades.`
+              : `The portfolio matches the ${objectives[objective].label} allocation within tolerance.`}
           </p>
         </Card>
       )}

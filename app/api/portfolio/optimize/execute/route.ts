@@ -68,7 +68,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "None of the requested trades matched a live optimization trade" }, { status: 400 });
     }
 
-    const result = executeTrades(before.evaluation, toExecute, objective);
+    const result = executeTrades(before.evaluation, toExecute, objective, before.ctx.baseCurrency);
 
     // Re-evaluate fresh AFTER the write so the "after" summary and the
     // post-execution snapshot reflect what was actually written, not the

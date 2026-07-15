@@ -18,7 +18,8 @@
 import { computeAllocation } from "./allocation";
 import { computeRisk } from "./risk";
 import { computeHealth } from "./health";
-import type { Holding, MarketContext } from "../model/types";
+import { normalizeHoldings } from "../model/holding";
+import type { Holding, MarketContext, RawHolding } from "../model/types";
 import type { PortfolioAllocation } from "./allocation";
 import type { UniversalRisk } from "./risk";
 import type { HealthScore } from "./health";
@@ -121,6 +122,100 @@ export function applyChange(holdings: Holding[], change: PortfolioChange): Holdi
 
 export function applyChanges(holdings: Holding[], changes: PortfolioChange[]): Holding[] {
   return changes.reduce(applyChange, holdings);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Value-conserving rebalance                                                  */
+/* -------------------------------------------------------------------------- */
+
+export interface TargetWeightChange {
+  holdingId: string;
+  /** The weight (0-100) this holding should move to. */
+  targetWeight: number;
+}
+
+/** A synthetic base-currency cash holding, valued by the real cash adapter. */
+function makeCashHolding(valueBase: number, ctx: MarketContext): Holding {
+  const raw: RawHolding = {
+    id: `cash:${ctx.baseCurrency.toUpperCase()}`,
+    assetClass: "cash",
+    symbol: null,
+    name: `${ctx.baseCurrency.toUpperCase()} Cash`,
+    currency: ctx.baseCurrency.toUpperCase(),
+    quantity: valueBase,
+    unit: "currency",
+    costBasis: valueBase,
+    acquiredAt: new Date().toISOString(),
+    manualValue: null,
+    manualValueAsOf: null,
+    meta: { synthetic: true },
+  };
+  return normalizeHoldings([raw], ctx).holdings[0];
+}
+
+/** Set a cash holding to an absolute base value (resize() can't grow one from 0). */
+function setCashValue(h: Holding, newValueBase: number): Holding {
+  const v = Math.max(0, newValueBase);
+  return {
+    ...h,
+    quantity: v,
+    costBasis: v,
+    costBasisBase: v,
+    valuation: { ...h.valuation, value: v, valueBase: v },
+    unrealizedPL: 0,
+    unrealizedPct: 0,
+  };
+}
+
+/**
+ * Apply target-weight changes with TOTAL PORTFOLIO VALUE CONSERVED.
+ *
+ * This is the simulation twin of how executeTrades() actually rebalances: the
+ * portfolio's total base value is held FIXED, each targeted holding is set to
+ * `targetWeight%` of that fixed total, and whatever the targets don't account for
+ * is parked in (base-currency) cash — the same residual-to-cash plug the executor
+ * writes as a real lot.
+ *
+ * Why this matters: the old `applyChange("target")` path let total value drift on
+ * every simulated rebalance (a lone "sell" shrank the pie, a lone "buy" grew it
+ * from nowhere), so a rebalance PREVIEW never matched what execution did, and
+ * re-running the optimizer on the drifted result produced fresh phantom trades
+ * forever. Conserving value here makes the preview honest and makes the optimizer
+ * converge: re-run it on this output and it proposes nothing.
+ */
+export function applyTargetPlanConserving(
+  holdings: Holding[],
+  changes: TargetWeightChange[],
+  ctx: MarketContext,
+): Holding[] {
+  const total = holdings.reduce((s, h) => s + h.valuation.valueBase, 0);
+  if (total <= 0) return holdings;
+
+  const byId = new Map(changes.map((c) => [c.holdingId, c.targetWeight]));
+  const resized = holdings.map((h) =>
+    byId.has(h.id) ? resize(h, (byId.get(h.id)! / 100) * total) : h,
+  );
+
+  const placed = resized.reduce((s, h) => s + h.valuation.valueBase, 0);
+  const drift = total - placed;
+  if (Math.abs(drift) < 1e-6) return resized;
+
+  const base = ctx.baseCurrency.toUpperCase();
+  const cashIdx = resized.findIndex(
+    (h) => h.assetClass === "cash" && h.currency.toUpperCase() === base,
+  );
+
+  if (cashIdx >= 0) {
+    const next = [...resized];
+    next[cashIdx] = setCashValue(next[cashIdx], next[cashIdx].valuation.valueBase + drift);
+    return next;
+  }
+
+  // No base-currency cash holding to absorb the residual. A positive drift (net
+  // sell) opens one; a negative drift (net buy the portfolio can't fund from
+  // non-existent cash) is left unfunded rather than fabricating negative cash.
+  if (drift > 0) return [...resized, makeCashHolding(drift, ctx)];
+  return resized;
 }
 
 /* -------------------------------------------------------------------------- */

@@ -21,9 +21,10 @@
  * special case for either.
  */
 
-import { evaluate, applyChange, applyChanges, estimateImpact, type PortfolioEvaluation, type PortfolioChange, type ImpactEstimate } from "./simulate";
+import { evaluate, estimateImpact, applyTargetPlanConserving, type PortfolioEvaluation, type ImpactEstimate, type TargetWeightChange } from "./simulate";
 import type { Holding, MarketContext, PortfolioAssetClass } from "../model/types";
 import { PORTFOLIO_CLASS_LABEL } from "../model/types";
+import { MAX_SINGLE_HOLDING_PCT, MATERIAL_WEIGHT_DELTA_PCT } from "../policy";
 
 export type Objective =
   | "maximize_return"
@@ -116,7 +117,7 @@ export interface Constraints {
 }
 
 export const DEFAULT_CONSTRAINTS: Constraints = {
-  maxHoldingPct: 20,
+  maxHoldingPct: MAX_SINGLE_HOLDING_PCT,
   maxAssetClassPct: 70,
   maxSectorPct: 40,
   minCashPct: 2,
@@ -192,26 +193,49 @@ function distributeWithinClass(
     return out;
   }
 
-  const equal = budget / holdings.length;
-
-  const raw = holdings.map((h) => {
+  // Confidence-weighted relative weights: tilt away from equal weight in
+  // proportion to BOTH how good the score is and how much we trust it.
+  const items = holdings.map((h) => {
     const score = h.score?.score ?? 50;
     const conf = (h.score?.confidence ?? 0) / 100;
-    // Tilt away from equal weight in proportion to BOTH how good the score is and
-    // how much we trust it.
     const tilt = ((score - 50) / 50) * conf * 0.6;
-    return { id: h.id, w: Math.max(equal * (1 + tilt), 0) };
+    return { id: h.id, weight: Math.max(1 + tilt, 1e-4), alloc: 0, capped: false };
   });
 
-  const total = raw.reduce((s, x) => s + x.w, 0);
-  if (total <= 0) {
-    for (const h of holdings) out.set(h.id, equal);
-    return out;
+  // WATER-FILLING. The old code did a single proportional split then clamped each
+  // holding to maxHoldingPct — and threw the clamped-off budget AWAY. So a class
+  // whose top name wanted 30% (capped to 20%) silently placed only its capped
+  // shares, and ~10pp of the class's intended allocation evaporated on every run,
+  // leaving a permanent, unreachable gap in the class-target bar. Here the freed
+  // budget is redistributed across the not-yet-capped holdings, repeating until
+  // either the whole budget is placed or every holding is at the cap. The unplaced
+  // remainder (all holdings capped) is intentionally NOT forced in — the caller
+  // routes it to cash so targets still sum to 100.
+  let remaining = Math.min(budget, items.length * maxHoldingPct);
+  for (let guard = 0; guard <= items.length && remaining > 1e-9; guard++) {
+    const active = items.filter((i) => !i.capped);
+    const wsum = active.reduce((s, i) => s + i.weight, 0);
+    if (wsum <= 0) break;
+
+    let cappedThisRound = false;
+    let distributed = 0;
+    for (const i of active) {
+      const add = (i.weight / wsum) * remaining;
+      if (i.alloc + add >= maxHoldingPct - 1e-9) {
+        distributed += maxHoldingPct - i.alloc;
+        i.alloc = maxHoldingPct;
+        i.capped = true;
+        cappedThisRound = true;
+      } else {
+        i.alloc += add;
+        distributed += add;
+      }
+    }
+    remaining -= distributed;
+    if (!cappedThisRound) break;
   }
 
-  for (const { id, w } of raw) {
-    out.set(id, clamp((w / total) * budget, 0, maxHoldingPct));
-  }
+  for (const i of items) out.set(i.id, clamp(i.alloc, 0, maxHoldingPct));
   return out;
 }
 
@@ -243,30 +267,25 @@ export function optimize(
 
   const desired = normalize(rawTarget);
 
-  /* ---- Stage 1: asset-class targets, reconciled with what's actually held ---- */
-
   const heldClasses = new Set(holdings.map((h) => h.assetClass));
 
-  // Illiquid holdings cannot be traded to a target. Pretending otherwise produces a
-  // plan the user physically cannot execute — so we FREEZE them at current weight
-  // and allocate the remaining budget around them. This is the difference between a
-  // plan and a fantasy.
-  const frozen = holdings.filter(
-    (h) => h.liquidity === "illiquid" || constraints.lockedHoldingIds.includes(h.id),
-  );
-  const frozenWeight = frozen.reduce((s, h) => s + h.weight, 0);
+  const isFrozen = (h: Holding) =>
+    h.liquidity === "illiquid" || constraints.lockedHoldingIds.includes(h.id);
+  const isExcluded = (h: Holding) => constraints.excludedSymbols.includes(h.symbol ?? "");
 
+  // Illiquid/locked holdings cannot be traded to a target. Pretending otherwise
+  // produces a plan the user physically cannot execute — so we FREEZE them at
+  // current weight and allocate the remaining budget around them.
+  const frozen = holdings.filter(isFrozen);
+  const frozenWeight = frozen.reduce((s, h) => s + h.weight, 0);
   if (frozenWeight > 0) {
     warnings.push(
       `${frozenWeight.toFixed(0)}% of the portfolio is illiquid or locked and cannot be rebalanced. Targets below apply to the tradeable ${(100 - frozenWeight).toFixed(0)}%.`,
     );
   }
 
-  const tradeableBudget = 100 - frozenWeight;
+  const tradeableBudget = Math.max(0, 100 - frozenWeight);
 
-  // Distribute the desired allocation over the tradeable portion, capped by the
-  // per-class constraint.
-  const classTargets = new Map<PortfolioAssetClass, number>();
   const frozenByClass = new Map<PortfolioAssetClass, number>();
   for (const h of frozen) {
     frozenByClass.set(h.assetClass, (frozenByClass.get(h.assetClass) ?? 0) + h.weight);
@@ -274,31 +293,117 @@ export function optimize(
 
   let desiredSum = 0;
   for (const pct of desired.values()) desiredSum += pct;
-
+  const scaledDesired = new Map<PortfolioAssetClass, number>();
   for (const [cls, pct] of desired) {
-    const scaled = desiredSum > 0 ? (pct / desiredSum) * tradeableBudget : 0;
-    const withFrozen = scaled + (frozenByClass.get(cls) ?? 0);
-    classTargets.set(cls, Math.min(withFrozen, constraints.maxAssetClassPct));
-  }
-  // Classes held but not in the target (e.g. a private stake under a growth
-  // objective) keep their frozen weight rather than being zeroed out of existence.
-  for (const [cls, w] of frozenByClass) {
-    if (!classTargets.has(cls)) classTargets.set(cls, w);
-  }
-  // Every OTHER held class — tradeable, but simply not part of this objective's
-  // strategic mix (e.g. Commodities/Forex/Structured Products under "Maximize
-  // Return") — must get an explicit 0% entry, not be left absent from the map.
-  // Without this, the per-holding loop below never visits that class's holdings
-  // at all, so they never receive a target and the trade list silently omits the
-  // sell-down the class-level summary is telling the user should happen.
-  for (const cls of heldClasses) {
-    if (!classTargets.has(cls)) classTargets.set(cls, 0);
+    scaledDesired.set(cls, desiredSum > 0 ? (pct / desiredSum) * tradeableBudget : 0);
   }
 
-  const classTargetList: ClassTarget[] = [...new Set([...classTargets.keys(), ...heldClasses])]
+  /* ---- Per-holding non-cash targets; CASH is the residual plug ------------- *
+   *
+   * The governing invariant: Σ targetWeights over EVERY holding (incl. cash) is
+   * exactly 100. Any budget the rebalancer cannot place — a class the portfolio
+   * doesn't hold, a per-class cap, a per-holding cap, an objective that simply
+   * wants less than 100% invested — flows to cash. Because the executor conserves
+   * total value by writing that same residual as a real cash lot, executing this
+   * plan lands the portfolio exactly here, so RE-RUNNING the optimizer proposes
+   * nothing: the engine is convergent and idempotent by construction.
+   *
+   * This replaces the old two-stage code whose class targets could sum to less
+   * than 100 (budget for unheld classes was warned about then dropped; capped
+   * budget was discarded), so executing its plan was a net sell into the void —
+   * the portfolio shrank, weights drifted, and the next run proposed the same
+   * sells again, forever. */
+
+  const targetWeights = new Map<string, number>();
+
+  // Frozen and excluded holdings are held at their current weight.
+  for (const h of holdings) {
+    if (isFrozen(h) || isExcluded(h)) targetWeights.set(h.id, h.weight);
+  }
+
+  // Place each non-cash class's tradeable budget across its tradeable holdings.
+  for (const cls of heldClasses) {
+    if (cls === "cash") continue;
+    const tradeableInClass = holdings.filter(
+      (h) => h.assetClass === cls && !isFrozen(h) && !isExcluded(h),
+    );
+    if (tradeableInClass.length === 0) continue;
+
+    const frozenW = frozenByClass.get(cls) ?? 0;
+    // 0 when the objective doesn't want this class → its holdings sell to cash.
+    const desiredBudget = scaledDesired.get(cls) ?? 0;
+    const budgetForTradeable = Math.max(
+      0,
+      Math.min(desiredBudget - frozenW, constraints.maxAssetClassPct - frozenW),
+    );
+    const dist = distributeWithinClass(tradeableInClass, budgetForTradeable, constraints.maxHoldingPct);
+    for (const [id, w] of dist) targetWeights.set(id, w);
+  }
+
+  // Cash target = whatever the non-cash targets left unplaced.
+  const nonCashSum = () =>
+    holdings.reduce((s, h) => (h.assetClass === "cash" ? s : s + (targetWeights.get(h.id) ?? 0)), 0);
+
+  let cashTarget = 100 - nonCashSum();
+
+  // Enforce the minimum-cash floor by scaling down TRADEABLE non-cash targets
+  // (never frozen/excluded ones) to free up the shortfall.
+  if (cashTarget < constraints.minCashPct) {
+    const toFree = constraints.minCashPct - cashTarget;
+    const reducible = holdings.filter(
+      (h) => h.assetClass !== "cash" && !isFrozen(h) && !isExcluded(h) && (targetWeights.get(h.id) ?? 0) > 0,
+    );
+    const redSum = reducible.reduce((s, h) => s + (targetWeights.get(h.id) ?? 0), 0);
+    if (redSum > 0) {
+      const factor = Math.max(0, (redSum - toFree) / redSum);
+      for (const h of reducible) targetWeights.set(h.id, (targetWeights.get(h.id) ?? 0) * factor);
+      cashTarget = 100 - nonCashSum();
+    }
+  }
+
+  // Assign the cash target to the cash holding(s) (proportional to current weight).
+  // With no cash holding the target is realized purely by the executor's plug.
+  const cashHoldings = holdings.filter((h) => h.assetClass === "cash");
+  if (cashHoldings.length > 0) {
+    const curCash = cashHoldings.reduce((s, h) => s + h.weight, 0);
+    for (const h of cashHoldings) {
+      const share = curCash > 0 ? h.weight / curCash : 1 / cashHoldings.length;
+      targetWeights.set(h.id, cashTarget * share);
+    }
+  }
+
+  /* ---- Warnings ----------------------------------------------------------- */
+
+  for (const [cls, pct] of scaledDesired) {
+    if (cls === "cash") continue;
+    if (pct > 3 && !heldClasses.has(cls)) {
+      warnings.push(
+        `Target allocation includes ${pct.toFixed(0)}% ${PORTFOLIO_CLASS_LABEL[cls]}, but the portfolio holds none — the rebalancer parks that share in cash. See the Decision Center to actually add ${PORTFOLIO_CLASS_LABEL[cls]}.`,
+      );
+    }
+  }
+  const desiredCashScaled = scaledDesired.get("cash") ?? 0;
+  if (cashTarget > desiredCashScaled + 5) {
+    warnings.push(
+      `${(cashTarget - desiredCashScaled).toFixed(0)}% of the portfolio is routed to cash because the objective's other targets can't be fully placed (unheld classes, or the per-holding / per-class caps). Adding holdings in the under-target classes would deploy it.`,
+    );
+  }
+
+  /* ---- Class-target display (realized weights + cash; sums to 100) --------- */
+
+  const realizedByClass = new Map<PortfolioAssetClass, number>();
+  for (const h of holdings) {
+    const w = targetWeights.get(h.id) ?? h.weight;
+    realizedByClass.set(h.assetClass, (realizedByClass.get(h.assetClass) ?? 0) + w);
+  }
+  if (cashHoldings.length === 0 && cashTarget > 0.05) {
+    realizedByClass.set("cash", (realizedByClass.get("cash") ?? 0) + cashTarget);
+  }
+
+  const classTargetList: ClassTarget[] = [...new Set([...realizedByClass.keys(), ...heldClasses])]
     .map((cls) => {
       const current = allocation.byAssetClass.slices.find((s) => s.key === cls)?.weight ?? 0;
-      const target = classTargets.get(cls) ?? 0;
+      const target = realizedByClass.get(cls) ?? 0;
       return {
         assetClass: cls,
         label: PORTFOLIO_CLASS_LABEL[cls],
@@ -309,42 +414,12 @@ export function optimize(
     })
     .sort((a, b) => b.targetWeight - a.targetWeight);
 
-  /* ---- Stage 2: within-class sizing ---- */
-
-  const targetWeights = new Map<string, number>();
-
-  for (const [cls, budget] of classTargets) {
-    const inClass = holdings.filter(
-      (h) => h.assetClass === cls && !constraints.excludedSymbols.includes(h.symbol ?? ""),
-    );
-    const frozenInClass = inClass.filter((h) => frozen.includes(h));
-    const tradeableInClass = inClass.filter((h) => !frozen.includes(h));
-
-    for (const h of frozenInClass) targetWeights.set(h.id, h.weight);
-
-    const frozenW = frozenInClass.reduce((s, h) => s + h.weight, 0);
-    const remaining = Math.max(budget - frozenW, 0);
-
-    const dist = distributeWithinClass(tradeableInClass, remaining, constraints.maxHoldingPct);
-    for (const [id, w] of dist) targetWeights.set(id, w);
-  }
-
-  // A class the portfolio is targeted to hold but currently doesn't → surface it as
-  // a gap the Decision Center should fill, rather than silently dropping the target.
-  for (const [cls, target] of classTargets) {
-    if (target > 3 && !heldClasses.has(cls)) {
-      warnings.push(
-        `Target allocation includes ${target.toFixed(0)}% ${PORTFOLIO_CLASS_LABEL[cls]}, but the portfolio holds none. See the Decision Center for how to add it.`,
-      );
-    }
-  }
-
   /* ---- Build the trade list ---- */
 
   const targets: TargetWeight[] = holdings.map((h) => {
     const target = targetWeights.get(h.id) ?? h.weight;
     const delta = target - h.weight;
-    const isFrozen = frozen.includes(h);
+    const frozenH = isFrozen(h);
 
     return {
       holdingId: h.id,
@@ -355,32 +430,35 @@ export function optimize(
       targetWeight: Math.round(target * 10) / 10,
       delta: Math.round(delta * 10) / 10,
       dollarDelta: Math.round((delta / 100) * totalValue),
-      action: isFrozen ? "HOLD" : delta > 0.5 ? "BUY" : delta < -0.5 ? "SELL" : "HOLD",
-      reason: isFrozen
+      action: frozenH
+        ? "HOLD"
+        : delta > MATERIAL_WEIGHT_DELTA_PCT ? "BUY" : delta < -MATERIAL_WEIGHT_DELTA_PCT ? "SELL" : "HOLD",
+      reason: frozenH
         ? `${h.liquidity === "illiquid" ? "Illiquid" : "Locked"} — held at current weight.`
-        : delta > 0.5
+        : delta > MATERIAL_WEIGHT_DELTA_PCT
           ? `Below ${PORTFOLIO_CLASS_LABEL[h.assetClass]} target for the ${OBJECTIVES[objective].label} objective.`
-          : delta < -0.5
+          : delta < -MATERIAL_WEIGHT_DELTA_PCT
             ? `Above ${PORTFOLIO_CLASS_LABEL[h.assetClass]} target for the ${OBJECTIVES[objective].label} objective.`
             : "At target.",
-      constrained: isFrozen,
+      constrained: frozenH,
     };
   });
 
+  // Cash is the residual plug the executor balances automatically — it is never an
+  // actionable row (a "sell cash" IS the other trades; showing it would double-count).
   const trades = targets
-    .filter((t) => !t.constrained && Math.abs(t.delta) > 1)
+    .filter((t) => !t.constrained && t.assetClass !== "cash" && Math.abs(t.delta) > MATERIAL_WEIGHT_DELTA_PCT)
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
 
-  /* ---- Measure what the plan actually does ---- */
+  /* ---- Measure what the plan actually does (value-conserving) ---- */
 
-  const changes: PortfolioChange[] = trades.map((t) => ({
-    kind: "target",
+  const changes: TargetWeightChange[] = trades.map((t) => ({
     holdingId: t.holdingId,
     targetWeight: t.targetWeight,
   }));
 
   const after = ctx
-    ? evaluate(applyChanges(holdings, changes), ctx)
+    ? evaluate(applyTargetPlanConserving(holdings, changes, ctx), ctx)
     : evaluation;
   const impact = estimateImpact(evaluation, after);
 
@@ -412,8 +490,8 @@ export function computeTradeImpacts(
 ): Map<string, ImpactEstimate> {
   const out = new Map<string, ImpactEstimate>();
   for (const t of trades) {
-    const change: PortfolioChange = { kind: "target", holdingId: t.holdingId, targetWeight: t.targetWeight };
-    const after = evaluate(applyChange(evaluation.holdings, change), ctx);
+    const change: TargetWeightChange = { holdingId: t.holdingId, targetWeight: t.targetWeight };
+    const after = evaluate(applyTargetPlanConserving(evaluation.holdings, [change], ctx), ctx);
     out.set(t.holdingId, estimateImpact(evaluation, after));
   }
   return out;

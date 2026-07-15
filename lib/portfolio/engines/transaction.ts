@@ -37,7 +37,7 @@ import {
   type PortfolioSnapshotSummary,
   type PortfolioSnapshot,
 } from "../../db";
-import { applyChanges, evaluate, estimateImpact, type PortfolioChange, type PortfolioEvaluation, type ImpactEstimate } from "./simulate";
+import { applyTargetPlanConserving, evaluate, estimateImpact, type PortfolioEvaluation, type ImpactEstimate } from "./simulate";
 import { computeRecommendations } from "./recommend";
 import { buildDecisionCards, type DecisionCard } from "./decision";
 import type { PortfolioAssetClass, MarketContext } from "../model/types";
@@ -67,13 +67,16 @@ export function previewTrades(
   ctx: MarketContext,
   selected: SelectedTarget[],
 ): PreviewResult {
-  const changes: PortfolioChange[] = selected.map((t) => ({
-    kind: "target",
-    holdingId: t.holdingId,
-    targetWeight: t.targetWeight,
-  }));
-
-  const afterHoldings = applyChanges(evaluation.holdings, changes);
+  // Value-conserving, exactly like execution: the selected holdings move to their
+  // target weights and the residual is parked in cash. This is what makes the
+  // preview match what the executor actually writes — and what lets the "remaining
+  // recommendations" panel below reflect a real post-trade portfolio rather than a
+  // value-drifted phantom.
+  const afterHoldings = applyTargetPlanConserving(
+    evaluation.holdings,
+    selected.map((t) => ({ holdingId: t.holdingId, targetWeight: t.targetWeight })),
+    ctx,
+  );
   const after = evaluate(afterHoldings, ctx);
   const impact = estimateImpact(evaluation, after);
 
@@ -208,21 +211,94 @@ export function buildLotWrites(
 }
 
 /**
+ * The cash-balancing entry that makes a batch conserve total portfolio value.
+ *
+ * A rebalance is not new money: selling one holding to buy another must not change
+ * what the portfolio is worth. But the ledger only understands "buy/sell N shares",
+ * so on its own a batch of buys inflates tracked value out of nothing and a batch
+ * of sells destroys it — the executor's original sin, and the deepest driver of the
+ * "execute → immediately more trades, forever" loop (every net sell shrank the pie,
+ * every remaining weight drifted up, the next optimizer run proposed the same sells
+ * again).
+ *
+ * So every batch gets ONE balancing cash lot equal to the negative of its net cash
+ * flow: net buys draw the shortfall from cash, net sells (and manual-asset exits)
+ * park the proceeds in cash. This holds for a FULL plan (nets to ≈0, plug ≈ nothing)
+ * and for any PARTIAL selection (plug absorbs the imbalance) alike, which is what
+ * makes cash "update correctly after every buy and sell". Pure — no I/O — so it is
+ * unit-testable without the database.
+ */
+export function cashBalancingLot(
+  evaluation: PortfolioEvaluation,
+  built: BuildLotWritesResult,
+  baseCurrency: string,
+): LotWriteInstruction | null {
+  const base = (baseCurrency || "USD").toUpperCase();
+
+  let net = 0; // signed cash flow: a buy consumes cash (+), a sell releases it (−)
+  for (const lot of built.lots) {
+    if (lot.assetClass === "cash") continue; // cash is never itself an actionable trade
+    net += (lot.kind === "buy" ? 1 : -1) * lot.shares * lot.price;
+  }
+  for (const id of built.manualAssetIdsToDelete) {
+    const h = evaluation.holdings.find((x) => x.id === `manual:${id}`);
+    if (h) net -= h.valuation.valueBase; // exiting a manual asset releases its full value
+  }
+
+  const plug = -net; // >0 → park proceeds (buy cash); <0 → draw cash to fund buys (sell cash)
+  if (Math.abs(plug) < 0.5) return null;
+
+  const cashLot = (shares: number, kind: "buy" | "sell", reason: string): LotWriteInstruction => ({
+    symbol: `CASH-${base}`,
+    name: `${base} Cash`,
+    shares, // 1 unit of cash == 1 base-currency dollar, so price is always 1
+    price: 1,
+    kind,
+    assetClass: "cash",
+    currency: base,
+    unit: "currency",
+    meta: { reason, balancing: true },
+  });
+
+  if (plug > 0) return cashLot(plug, "buy", "Rebalance proceeds parked in cash");
+
+  // Net buy: draw the shortfall from existing base-currency cash, never below zero.
+  const available =
+    evaluation.holdings.find((h) => h.assetClass === "cash" && h.currency.toUpperCase() === base)
+      ?.valuation.valueBase ?? 0;
+  const draw = Math.min(-plug, available);
+  if (draw < 0.5) return null; // no cash to draw on — the buys stay (partly) unfunded
+  return cashLot(draw, "sell", "Cash drawn to fund rebalance buys");
+}
+
+/**
  * Execute a batch of trades against the REAL portfolio. Snapshots the current
- * state first (for undo), then writes every trade as one atomic unit — either
- * all of it lands or none of it does.
+ * state first (for undo), then writes every trade PLUS the cash-balancing entry as
+ * one atomic unit — either all of it lands or none of it does. The balancing entry
+ * is what guarantees total value is conserved, so re-running the optimizer on the
+ * result proposes no further trades.
  */
 export function executeTrades(
   evaluation: PortfolioEvaluation,
   trades: TradeToExecute[],
   objective: Objective,
+  baseCurrency = "USD",
 ): ExecuteResult {
   const snapshotId = snapshotPortfolio("pre-execution", objective, summaryOf(evaluation));
-  const { lots, manualAssetIdsToDelete, skipped } = buildLotWrites(evaluation, trades, { objective, snapshotId });
+  const built = buildLotWrites(evaluation, trades, { objective, snapshotId });
 
-  executeTradeBatch(lots, manualAssetIdsToDelete);
+  const plug = cashBalancingLot(evaluation, built, baseCurrency);
+  const lots = plug ? [...built.lots, plug] : built.lots;
 
-  return { snapshotId, executedCount: lots.length + manualAssetIdsToDelete.length, skipped };
+  executeTradeBatch(lots, built.manualAssetIdsToDelete);
+
+  // executedCount counts the trades the USER selected — the balancing cash lot is
+  // internal bookkeeping, not one of them.
+  return {
+    snapshotId,
+    executedCount: built.lots.length + built.manualAssetIdsToDelete.length,
+    skipped: built.skipped,
+  };
 }
 
 /** Record a labeled snapshot without executing anything — used for the "after" side of Feature 10. */

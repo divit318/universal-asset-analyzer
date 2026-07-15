@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { normalizeHoldings } from "@/lib/portfolio/model/holding";
 import { evaluate } from "@/lib/portfolio/engines/simulate";
-import { buildLotWrites, previewTrades, type TradeToExecute } from "@/lib/portfolio/engines/transaction";
+import { buildLotWrites, cashBalancingLot, previewTrades, type TradeToExecute } from "@/lib/portfolio/engines/transaction";
 import type { MarketContext, RawHolding } from "@/lib/portfolio/model/types";
 
 /* -------------------------------------------------------------------------- */
@@ -167,7 +167,7 @@ describe("buildLotWrites", () => {
 });
 
 describe("previewTrades", () => {
-  it("matches optimize.ts's own target-weight simulation mechanism exactly (zero duplicated math)", () => {
+  it("conserves total value and routes the residual to cash (matches execution exactly)", () => {
     const c = ctx();
     const { holdings } = normalizeHoldings([
       raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 100 }),
@@ -175,18 +175,25 @@ describe("previewTrades", () => {
     ], c);
     const evaluation = evaluate(holdings, c);
     const aapl = evaluation.holdings.find((h) => h.symbol === "AAPL")!;
+    const totalBefore = evaluation.totalValue;
 
     const { after, impact } = previewTrades(evaluation, c, [{ holdingId: aapl.id, targetWeight: 20 }]);
 
-    // A single isolated "target" change (no offsetting buy elsewhere) shrinks
-    // total portfolio value too, so the resulting weight doesn't land exactly
-    // on 20% — this is the real applyChange()/"target" mechanic optimize.ts's
-    // own impact calc already relies on, not something previewTrades invents.
-    // What must hold is that it moved substantially toward the target.
+    // Value-conserving now: total is held fixed, AAPL lands EXACTLY on its target
+    // weight, and the freed value shows up as a new cash position — the same thing
+    // the executor's cash-balancing lot writes, so preview == execution.
     expect(aapl.weight).toBeGreaterThan(75);
     const trimmed = after.holdings.find((h) => h.symbol === "AAPL")!;
-    expect(trimmed.weight).toBeLessThan(aapl.weight);
-    expect(trimmed.weight).toBeGreaterThan(20);
+    expect(trimmed.weight).toBeCloseTo(20, 1);
+
+    // Total portfolio value is unchanged — a rebalance is not new money.
+    expect(after.totalValue).toBeCloseTo(totalBefore, 0);
+
+    // The residual is parked in a base-currency cash holding.
+    const cash = after.holdings.find((h) => h.assetClass === "cash");
+    expect(cash).toBeDefined();
+    expect(cash!.valuation.valueBase).toBeGreaterThan(0);
+
     // The DB is untouched — this is purely a hypothetical evaluation.
     expect(impact).toBeDefined();
     expect(typeof impact.healthDelta).toBe("number");
@@ -201,5 +208,136 @@ describe("previewTrades", () => {
     previewTrades(evaluation, c, [{ holdingId: evaluation.holdings[0].id, targetWeight: 5 }]);
 
     expect(evaluation.holdings[0].weight).toBe(originalWeight);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* cashBalancingLot — the entry that makes execution conserve value            */
+/* -------------------------------------------------------------------------- */
+
+describe("cashBalancingLot", () => {
+  /** Total tracked-value change of a batch, including the balancing lot. Must be ~0
+   *  for a value-conserving execution. */
+  function netValueChange(
+    built: ReturnType<typeof buildLotWrites>,
+    plug: ReturnType<typeof cashBalancingLot>,
+    evaluation: ReturnType<typeof evaluate>,
+  ): number {
+    const all = plug ? [...built.lots, plug] : built.lots;
+    let change = 0;
+    for (const lot of all) change += (lot.kind === "buy" ? 1 : -1) * lot.shares * lot.price;
+    for (const id of built.manualAssetIdsToDelete) {
+      const h = evaluation.holdings.find((x) => x.id === `manual:${id}`);
+      if (h) change -= h.valuation.valueBase;
+    }
+    return change;
+  }
+
+  it("parks NET-SELL proceeds in a cash BUY lot", () => {
+    const c = ctx();
+    const { holdings } = normalizeHoldings([raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 100 })], c);
+    const ev = evaluate(holdings, c);
+    const trades: TradeToExecute[] = [{
+      holdingId: ev.holdings[0].id, symbol: "AAPL", name: "Apple", assetClass: "equity",
+      dollarDelta: -3000, reason: "trim",
+    }];
+    const built = buildLotWrites(ev, trades, { objective: "maximize_sharpe" });
+    const plug = cashBalancingLot(ev, built, "USD");
+
+    expect(plug).not.toBeNull();
+    expect(plug!.kind).toBe("buy");
+    expect(plug!.symbol).toBe("CASH-USD");
+    expect(plug!.price).toBe(1);
+    expect(plug!.shares).toBeCloseTo(3000, 0);
+    expect(netValueChange(built, plug, ev)).toBeCloseTo(0, 4);
+  });
+
+  it("draws from existing cash to fund a NET BUY", () => {
+    const c = ctx();
+    const { holdings } = normalizeHoldings([
+      raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 100 }),
+      raw({ id: "cash1", assetClass: "cash", quantity: 5000, costBasis: 5000 }),
+    ], c);
+    const ev = evaluate(holdings, c);
+    const aaplId = ev.holdings.find((h) => h.symbol === "AAPL")!.id;
+    const trades: TradeToExecute[] = [{
+      holdingId: aaplId, symbol: "AAPL", name: "Apple", assetClass: "equity",
+      dollarDelta: 2000, reason: "add",
+    }];
+    const built = buildLotWrites(ev, trades, { objective: "maximize_sharpe" });
+    const plug = cashBalancingLot(ev, built, "USD");
+
+    expect(plug!.kind).toBe("sell");
+    expect(plug!.symbol).toBe("CASH-USD");
+    expect(plug!.shares).toBeCloseTo(2000, 0);
+    expect(netValueChange(built, plug, ev)).toBeCloseTo(0, 4);
+  });
+
+  it("does not fabricate cash to fund a buy when there is none to draw on", () => {
+    const c = ctx();
+    const { holdings } = normalizeHoldings([raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 100 })], c);
+    const ev = evaluate(holdings, c);
+    const trades: TradeToExecute[] = [{
+      holdingId: ev.holdings[0].id, symbol: "AAPL", name: "Apple", assetClass: "equity",
+      dollarDelta: 2000, reason: "add",
+    }];
+    const built = buildLotWrites(ev, trades, { objective: "maximize_sharpe" });
+    expect(cashBalancingLot(ev, built, "USD")).toBeNull();
+  });
+
+  it("needs no balancing entry when buys and sells already net to zero", () => {
+    const c = ctx();
+    const { holdings } = normalizeHoldings([
+      raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 100 }),
+      raw({ id: "b", assetClass: "bond", symbol: "IEF", quantity: 100 }),
+    ], c);
+    const ev = evaluate(holdings, c);
+    const trades: TradeToExecute[] = [
+      { holdingId: ev.holdings.find((h) => h.symbol === "AAPL")!.id, symbol: "AAPL", name: "Apple", assetClass: "equity", dollarDelta: -2000, reason: "trim" },
+      { holdingId: ev.holdings.find((h) => h.symbol === "IEF")!.id, symbol: "IEF", name: "Treasury", assetClass: "bond", dollarDelta: 2000, reason: "add" },
+    ];
+    const built = buildLotWrites(ev, trades, { objective: "maximize_sharpe" });
+    expect(cashBalancingLot(ev, built, "USD")).toBeNull();
+  });
+
+  it("releases the value of an exited manual asset into cash", () => {
+    const c = ctx();
+    const { holdings } = normalizeHoldings([
+      raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 100 }),
+      raw({ id: "manual:re1", assetClass: "real_estate", name: "House", manualValue: 300_000, manualValueAsOf: new Date().toISOString(), meta: { details: {} } }),
+    ], c);
+    const ev = evaluate(holdings, c);
+    const trades: TradeToExecute[] = [{
+      holdingId: "manual:re1", symbol: null, name: "House", assetClass: "real_estate",
+      dollarDelta: -300_000, reason: "exit",
+    }];
+    const built = buildLotWrites(ev, trades, { objective: "maximize_sharpe" });
+    const plug = cashBalancingLot(ev, built, "USD");
+
+    expect(built.manualAssetIdsToDelete).toEqual(["re1"]);
+    expect(plug!.kind).toBe("buy");
+    expect(plug!.shares).toBeCloseTo(300_000, 0);
+    expect(netValueChange(built, plug, ev)).toBeCloseTo(0, 2);
+  });
+
+  it("conserves value for a PARTIAL, mixed selection (arbitrary subset of trades)", () => {
+    // A partial implementation is just an arbitrary subset — the balancing entry
+    // must still make the whole batch net to zero.
+    const c = ctx();
+    const { holdings } = normalizeHoldings([
+      raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 100 }),
+      raw({ id: "b", assetClass: "bond", symbol: "IEF", quantity: 100 }),
+    ], c);
+    const ev = evaluate(holdings, c);
+    const trades: TradeToExecute[] = [
+      { holdingId: ev.holdings.find((h) => h.symbol === "AAPL")!.id, symbol: "AAPL", name: "Apple", assetClass: "equity", dollarDelta: -3000, reason: "trim" },
+      { holdingId: ev.holdings.find((h) => h.symbol === "IEF")!.id, symbol: "IEF", name: "Treasury", assetClass: "bond", dollarDelta: 1000, reason: "add" },
+    ];
+    const built = buildLotWrites(ev, trades, { objective: "maximize_sharpe" });
+    const plug = cashBalancingLot(ev, built, "USD");
+    // net -2000 → park 2000 in cash.
+    expect(plug!.kind).toBe("buy");
+    expect(plug!.shares).toBeCloseTo(2000, 0);
+    expect(netValueChange(built, plug, ev)).toBeCloseTo(0, 4);
   });
 });

@@ -1,16 +1,16 @@
 # Graph Report - universal-asset-analyzer  (2026-07-15)
 
 ## Corpus Check
-- 678 files · ~549,295 words
+- 661 files · ~537,399 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 4874 nodes · 12505 edges · 211 communities (203 shown, 8 thin omitted)
-- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 128 edges (avg confidence: 0.64)
+- 4761 nodes · 12264 edges · 199 communities (192 shown, 7 thin omitted)
+- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 131 edges (avg confidence: 0.64)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `7dd991ba`
+- Built from commit: `79fa286a`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -196,37 +196,25 @@
 - [[_COMMUNITY_ic-thesis.ts|ic-thesis.ts]]
 - [[_COMMUNITY_response.ts|response.ts]]
 - [[_COMMUNITY_performance-panel.tsx|performance-panel.tsx]]
-- [[_COMMUNITY_eslint.config.mjs|eslint.config.mjs]]
 - [[_COMMUNITY_cache.ts|cache.ts]]
 - [[_COMMUNITY_fixtures.ts|fixtures.ts]]
 - [[_COMMUNITY_portfolio-transaction-db.test.ts|portfolio-transaction-db.test.ts]]
 - [[_COMMUNITY_ic-thesis.ts|ic-thesis.ts]]
-- [[_COMMUNITY_StockFundamentals|StockFundamentals]]
-- [[_COMMUNITY_ComparePage|ComparePage]]
-- [[_COMMUNITY_macro-context-ladder.tsx|macro-context-ladder.tsx]]
 - [[_COMMUNITY_mission-control.test.ts|mission-control.test.ts]]
-- [[_COMMUNITY_route.ts|route.ts]]
-- [[_COMMUNITY_task-registry.ts|task-registry.ts]]
 - [[_COMMUNITY_ScannerOpportunity|ScannerOpportunity]]
-- [[_COMMUNITY_context.ts|context.ts]]
 - [[_COMMUNITY_market-regime-banner.tsx|market-regime-banner.tsx]]
-- [[_COMMUNITY_ollama.ts|ollama.ts]]
-- [[_COMMUNITY_AIProvider|AIProvider]]
-- [[_COMMUNITY_StockMetrics|StockMetrics]]
 - [[_COMMUNITY_fixtures.ts|fixtures.ts]]
-- [[_COMMUNITY_scanner-pipeline.test.ts|scanner-pipeline.test.ts]]
-- [[_COMMUNITY_route.ts|route.ts]]
 - [[_COMMUNITY_route.ts|route.ts]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `formatCurrency()` - 118 edges
+1. `formatCurrency()` - 94 edges
 2. `getDb()` - 65 edges
 3. `getHistory()` - 64 edges
 4. `runPrompt()` - 63 edges
 5. `extractJsonObject()` - 61 edges
-6. `ScoreResult` - 58 edges
-7. `Quote` - 41 edges
-8. `normalizeSymbol()` - 40 edges
+6. `ScoreResult` - 57 edges
+7. `normalizeSymbol()` - 40 edges
+8. `Quote` - 40 edges
 9. `NewsItem` - 39 edges
 10. `getQuote()` - 38 edges
 
@@ -239,25 +227,25 @@
   app/api/engine/route.ts → verify_pipeline.py
 - `GET()` --indirect_call--> `err()`  [INFERRED]
   app/api/home/route.ts → verify_pipeline.py
-- `withTimeout()` --calls--> `run()`  [INFERRED]
-  lib/platform/orchestrator.ts → app/api/monitor/run/route.ts
+- `ManualAssetChatRequest` --references--> `ChatMessage`  [EXTRACTED]
+  app/api/manual-assets/[id]/chat/route.ts → lib/ai-research.ts
 
 ## Import Cycles
 - None detected.
 
-## Communities (211 total, 8 thin omitted)
+## Communities (199 total, 7 thin omitted)
 
 ### Community 0 - "server.ts"
-Cohesion: 0.11
-Nodes (25): GET(), POST(), fetchDefaultReport(), IOSContextValue, IOSCtx, IOSProvider(), rankByFit(), ALL_SECTORS (+17 more)
+Cohesion: 0.09
+Nodes (35): GET(), POST(), GET(), fetchDefaultReport(), IOSContextValue, IOSCtx, IOSProvider(), rankByFit() (+27 more)
 
 ### Community 1 - "index.ts"
 Cohesion: 0.12
 Nodes (28): LEGEND, ConnectionExplainer(), GraphCanvas(), NODE_COLOR, SimNode, InsightsPanel(), NodeDetailPanel(), TYPE_LABEL (+20 more)
 
 ### Community 2 - "opportunity-engine.ts"
-Cohesion: 0.24
-Nodes (6): CollapsibleSection(), ACTION_TONE, DecisionCardView(), DecisionCenter(), DIFFICULTY_LABEL, scoreTone()
+Cohesion: 0.09
+Nodes (27): Button(), ButtonProps, ButtonSize, ButtonVariant, SIZE, VARIANT, StatTile(), StatTileProps (+19 more)
 
 ### Community 3 - "indicators.ts"
 Cohesion: 0.16
@@ -268,44 +256,44 @@ Cohesion: 0.14
 Nodes (31): build_features(), _drawdown(), _ema(), _garman_klass_vol(), _obv(), _parkinson_vol(), DataFrame, ndarray (+23 more)
 
 ### Community 5 - "portfolio-analytics.ts"
-Cohesion: 0.07
-Nodes (39): applyScenarioShocks(), BenchmarkResult, buildCatalysts(), buildRisks(), clamp(), computeAlerts(), computeCorrelation(), computeCustomScenario() (+31 more)
+Cohesion: 0.05
+Nodes (53): ACTION_LABEL, ALL_SECTORS, applyScenarioShocks(), BenchmarkResult, buildCatalysts(), buildRisks(), clamp(), computeAlerts() (+45 more)
 
 ### Community 6 - "formatCurrency"
-Cohesion: 0.13
-Nodes (19): compact(), OwnershipCard(), OwnershipInsight(), pct(), ALWAYS, block(), buildBlocks(), classifyIntent() (+11 more)
+Cohesion: 0.29
+Nodes (7): compact(), OwnershipCard(), OwnershipInsight(), pct(), describeOwnership(), pct(), OwnershipData
 
 ### Community 7 - "types.ts"
-Cohesion: 0.11
-Nodes (27): isHealthy(), markFailure(), markSuccess(), ModelHealthState, resetHealth(), state, stateFor(), ModelCapability (+19 more)
+Cohesion: 0.10
+Nodes (34): disabledModels(), isHealthy(), markFailure(), markSuccess(), ModelHealthState, resetHealth(), state, stateFor() (+26 more)
 
 ### Community 8 - "page.tsx"
 Cohesion: 0.03
-Nodes (54): InvestmentVerdict, AssetScoreCard(), RiskProfileCard(), useRecordActivity(), CommodityScoreCard(), AnalystCard(), DIST, COLORS (+46 more)
+Nodes (57): InvestmentVerdict, CommodityScoreCard(), COLORS, DecisionHero(), Props, SIGNAL_CLASS, DownloadIcon(), FinancialInsightCard() (+49 more)
 
 ### Community 9 - "runPrompt"
-Cohesion: 0.08
-Nodes (43): runPrompt(), assertParseable(), BottleneckScore, buildDependencyChain(), coerceEnum(), coerceNumber(), coerceStringArray(), CommodityFrameworkScore (+35 more)
+Cohesion: 0.07
+Nodes (45): buildPrompt(), POST(), runPrompt(), assertParseable(), BottleneckScore, buildDependencyChain(), coerceEnum(), coerceNumber() (+37 more)
 
 ### Community 10 - "db.ts"
-Cohesion: 0.07
-Nodes (32): ActivityRow, CacheRow, CreateDecisionInput, DecisionRow, getSavedScreen(), getSnapshot(), listSnapshots(), LotWrite (+24 more)
+Cohesion: 0.06
+Nodes (43): POST(), GET(), POST(), VALID_CATEGORIES, ActivityRow, CacheRow, CreateDecisionInput, createManualAsset() (+35 more)
 
 ### Community 11 - "PROJECT_ROADMAP.md: UAA Development Roadmap"
 Cohesion: 0.04
 Nodes (45): 1. Maintain Token Efficiency (In Progress), 2. Single Source of Truth for Every Algorithm (Completed), 3. Non-Fatal Failures (Completed), 4. Parallel Fetching (Completed), 5. Loose Module Coupling (In Progress), 6. Graceful Degradation Under Load (Completed), Architectural Priorities, Code Quality (+37 more)
 
 ### Community 12 - "portfolio-performance.ts"
-Cohesion: 0.08
-Nodes (36): GET(), parseSignalLog(), SignalRow, GET(), pct(), PerformancePanel(), toneClass(), BacktestInput (+28 more)
+Cohesion: 0.26
+Nodes (15): GET(), listLots(), rowToLot(), buildPerformance(), benchmarkComparison, CashFlow, lotCashFlows(), npv() (+7 more)
 
 ### Community 13 - "page.tsx"
 Cohesion: 0.06
 Nodes (43): GET(), COUNTRY_FLAG, daysFromNow(), daysLabel(), EventDrawer(), EventDrawerProps, formatDate(), getLinks() (+35 more)
 
 ### Community 14 - "page.tsx"
-Cohesion: 0.08
-Nodes (33): CommodityInsightRequest, POST(), ForexInsightRequest, AiInsightPanel(), AiInsightPanelProps, AiCommodityInsight(), AiCommodityInsightProps, PROMPT_HINTS (+25 more)
+Cohesion: 0.19
+Nodes (14): CommodityInsightRequest, GET(), POST(), AiCommodityInsight(), AiCommodityInsightProps, PROMPT_HINTS, SECTION_LABELS, commodityChatWithData() (+6 more)
 
 ### Community 15 - "page.tsx"
 Cohesion: 0.05
@@ -316,20 +304,20 @@ Cohesion: 0.22
 Nodes (23): applyGates(), bucketPct(), clamp(), computePortfolioFit(), computeSuggestedAllocation(), fitTier(), growthScore(), hasFundamentals() (+15 more)
 
 ### Community 17 - "daily_run.py"
-Cohesion: 0.07
-Nodes (48): buildPortfolioContextBlock(), COMMODITY_FOLLOWUPS, CRYPTO_FOLLOWUPS, encoder, FOREX_FOLLOWUPS, FUND_FOLLOWUPS, MACRO_FOLLOWUPS, POST() (+40 more)
+Cohesion: 0.06
+Nodes (62): buildPortfolioContextBlock(), COMMODITY_FOLLOWUPS, CRYPTO_FOLLOWUPS, encoder, FOREX_FOLLOWUPS, FUND_FOLLOWUPS, MACRO_FOLLOWUPS, POST() (+54 more)
 
 ### Community 18 - "page.tsx"
-Cohesion: 0.09
-Nodes (16): EmergingThemeCard(), MarketRegimeBanner(), REGIME_STYLE, MarketSummaryCard(), RiskAlertRow(), SEVERITY_STYLE, DIR_STYLE, PortfolioImpact() (+8 more)
+Cohesion: 0.04
+Nodes (36): CLASS_STYLE, SectorRotationPanel(), CAT_STYLE, CausalChainCard(), DIR_COLOR, EmergingThemeCard(), MarketRegimeBanner(), REGIME_STYLE (+28 more)
 
 ### Community 19 - "types.ts"
-Cohesion: 0.14
-Nodes (25): POST(), Candidate, CANDIDATES, candidatesFor(), candidateSymbols(), candidateToRaw(), GapKind, buildOptions() (+17 more)
+Cohesion: 0.09
+Nodes (35): POST(), BuyBody, POST(), GET(), BuyResult, addUniversalLot(), Candidate, CANDIDATES (+27 more)
 
 ### Community 20 - "ic-report.ts"
-Cohesion: 0.11
-Nodes (39): ComparisonResult, GroundingReport, FundamentalsParts, AGENT_CONFIG, AgentContext, AgentFailure, AgentFinding, AgentNetworkInput (+31 more)
+Cohesion: 0.13
+Nodes (29): AGENT_CONFIG, AgentFailure, AgentFinding, AgentNetworkResult, buildDataContext(), extractAgentJson(), formatNum(), normaliseConfidence() (+21 more)
 
 ### Community 21 - "ARCHITECTURE.md: UAA Module System"
 Cohesion: 0.05
@@ -353,23 +341,23 @@ Nodes (34): _backoff_sleep(), _cache_path(), enrich_fundamentals(), fetch_buybac
 
 ### Community 26 - "useChartTheme"
 Cohesion: 0.09
-Nodes (31): cryptoClass, metrics, equityClass, metrics, ETF_FOCUS, ETF_REGIONS, ETF_STYLES, etfClass (+23 more)
+Nodes (38): bondClass, CREDIT_RATINGS, ISSUER_TYPES, metrics, RISK_LEVELS, commodityClass, metrics, cryptoClass (+30 more)
 
 ### Community 27 - "dependencies"
 Cohesion: 0.06
 Nodes (35): dependencies, d3-force, exceljs, lucide-react, next, pdfkit, react, react-dom (+27 more)
 
 ### Community 28 - "brief-tab.tsx"
-Cohesion: 0.07
-Nodes (26): ACTION_STYLE, BriefTab(), closestStyle(), deriveStatus(), DNA_ORDER, dnaLabel(), PortfolioDNA(), PortfolioStatus (+18 more)
+Cohesion: 0.12
+Nodes (17): PreviewSide, PortfolioAllocation, benefitFor(), DecisionCard, ImplementationDifficulty, OpportunityCost, opportunityCostFor(), WhyExplanation (+9 more)
 
 ### Community 29 - "screener-in.ts"
-Cohesion: 0.05
-Nodes (56): GET(), InvestmentSnapshot(), InvestmentSnapshotProps, ScorePill(), toGrade(), CompetitivePositionSummary(), computeRanks(), fmtCr() (+48 more)
+Cohesion: 0.17
+Nodes (24): GET(), between(), fetchScreenerInCompany(), getDIIHolding(), getFIIHolding(), getPeers(), getPromoterHolding(), getRatio() (+16 more)
 
 ### Community 30 - "page.tsx"
-Cohesion: 0.08
-Nodes (20): AiComparison, bucketPct(), CategoryWinner, COLOR_BG, COLORS, CompareChart, ComparePage(), CompareRadar (+12 more)
+Cohesion: 0.06
+Nodes (31): AiComparison, bucketPct(), CategoryWinner, COLOR_BG, COLORS, CompareChart, ComparePage(), CompareRadar (+23 more)
 
 ### Community 31 - "page.tsx"
 Cohesion: 0.16
@@ -380,100 +368,100 @@ Cohesion: 0.09
 Nodes (29): fetch_fii_flow_nse(), fetch_india_macro_features(), fetch_us_macro_features(), ndarray, Macro feature loader for HMM regime model augmentation (fix 3.2).  US features:, Fetch FII net buy/sell from NSE India public API endpoint.     Returns FII net f, Fetch closing prices for a ticker via yfinance. Returns None on failure., Z-score of last value vs rolling window. (+21 more)
 
 ### Community 33 - "build.ts"
-Cohesion: 0.21
-Nodes (27): getLatestSectorRotationSnapshots(), listPortfolio(), listTimelineEventsForSymbols(), addScannerEvidence(), addSectorRotationEdges(), addTimelineEvidence(), buildGraph(), buildHoldingsGraph() (+19 more)
+Cohesion: 0.20
+Nodes (28): getLatestSectorRotationSnapshots(), listPortfolio(), listTimelineEventsForSymbols(), addScannerEvidence(), addSectorRotationEdges(), addTimelineEvidence(), buildGraph(), buildHoldingsGraph() (+20 more)
 
 ### Community 34 - "scoring.ts"
-Cohesion: 0.11
-Nodes (33): computeFundScore(), costBucket(), diversificationBucket(), pct(), performanceBucket(), riskBucket(), bucket(), FactorResult (+25 more)
+Cohesion: 0.10
+Nodes (29): loadStock(), lerp(), analystSignal(), assessRisks(), bucketRatio(), buildRationale(), clamp(), classifyInvestmentPersonality() (+21 more)
 
 ### Community 35 - "Quote"
-Cohesion: 0.12
-Nodes (25): ImpactRow(), StateRow(), ConfirmationModal(), ImplementationBar(), LivePreviewPanel(), OptimizePanel(), PortfolioDiffChart(), SelectionToolbar() (+17 more)
+Cohesion: 0.09
+Nodes (40): CollapsibleSection(), Badge(), ACTION_TONE, DecisionCardView(), DecisionCenter(), DIFFICULTY_LABEL, scoreTone(), ImpactRow() (+32 more)
 
 ### Community 36 - "holdings-tab.tsx"
-Cohesion: 0.15
-Nodes (12): ACTION_BADGE, ACTION_ROW_GLOW, costBasis(), currentValue(), HoldingsTable(), HoldingsTableProps, loadSortState(), PositionWithQuote (+4 more)
+Cohesion: 0.12
+Nodes (17): ClassGroup(), CURRENCY_KEYS, formatMetric(), HoldingRow(), HoldingsPanel(), METRIC_LABEL, MULTIPLE_KEYS, PERCENT_KEYS (+9 more)
 
 ### Community 37 - "sector-rotation.ts"
-Cohesion: 0.11
-Nodes (22): GET(), VALID_KINDS, ContributionGroup, DIR_DOT, GROUP_FOR, GROUP_ORDER, groupDrivers(), MovementExplainerCard() (+14 more)
+Cohesion: 0.18
+Nodes (14): GET(), VALID_KINDS, buildMovementPrompt(), explainMovement(), ExplainMovementInput, MOVEMENT_DEFAULTS, MOVEMENT_RAW_DEFAULTS, normalizePersistence() (+6 more)
 
 ### Community 38 - "scoring-consistency.test.ts"
-Cohesion: 0.15
-Nodes (31): alternativeAdapter, bondAdapter, cashAdapter, commodityAdapter, cryptoAdapter, equityAdapter, etfAdapter, forexAdapter (+23 more)
+Cohesion: 0.13
+Nodes (39): alternativeAdapter, bondAdapter, cashAdapter, commodityAdapter, cryptoAdapter, equityAdapter, etfAdapter, forexAdapter (+31 more)
 
 ### Community 39 - "CLAUDE.md: Universal Asset Analyzer (UAA)"
 Cohesion: 0.07
 Nodes (27): Architecture Decisions, Architecture Diagram, CLAUDE.md: Universal Asset Analyzer (UAA), Code & Architecture Essentials, Common Patterns, Critical Mistakes to Avoid, Current Application Architecture, Derivable State (Never persisted) (+19 more)
 
 ### Community 40 - "getHistory"
-Cohesion: 0.06
-Nodes (37): ArrivalHighlight(), useArrivalTarget(), ConfirmDialog(), ConfirmDialogProps, Dialog(), DialogProps, Drawer(), DrawerProps (+29 more)
+Cohesion: 0.07
+Nodes (28): ArrivalHighlight(), useArrivalTarget(), ConfirmDialog(), ConfirmDialogProps, Dialog(), DialogProps, Drawer(), DrawerProps (+20 more)
 
 ### Community 41 - "listWatchlist"
-Cohesion: 0.11
-Nodes (39): GET(), respondAsForex(), computeCommodityScore(), drawdownBucket(), momentumBucket(), pctFromWindowHigh(), relativeStrengthBucket(), riskAdjustedBucket() (+31 more)
+Cohesion: 0.10
+Nodes (48): pct1(), ScoreCard(), computeCommodityScore(), drawdownBucket(), momentumBucket(), pctFromWindowHigh(), relativeStrengthBucket(), riskAdjustedBucket() (+40 more)
 
 ### Community 42 - "context.ts"
-Cohesion: 0.17
-Nodes (18): DELETE(), GET(), POST(), GET(), POST(), DELETE(), addLot(), addNote() (+10 more)
+Cohesion: 0.16
+Nodes (19): DELETE(), GET(), POST(), GET(), POST(), DELETE(), addLot(), addNote() (+11 more)
 
 ### Community 43 - "route.ts"
-Cohesion: 0.22
-Nodes (9): BriefPortfolio, buildPrompt(), cacheKey(), deterministicBriefing(), generateHomeBrief(), RAW_DEFAULTS, RawBrief, readNote() (+1 more)
+Cohesion: 0.12
+Nodes (10): HEADER_FILL, HEADER_FONT, HoldingsTable(), cellValue(), Props, ResultsTable(), formatCount(), formatMetricValue() (+2 more)
 
 ### Community 44 - "route.ts"
-Cohesion: 0.08
-Nodes (43): SectionState, HomeContext, HomeContextValue, useHome(), useHomeSlice(), HOME_MODULE_IDS, HomeModuleProps, ModuleShell() (+35 more)
+Cohesion: 0.10
+Nodes (28): useHome(), useHomeSlice(), HOME_MODULE_IDS, HomeModuleProps, ModuleShell(), AiInvestmentBriefModule(), ContinueModule(), definition (+20 more)
 
 ### Community 45 - "route.ts"
-Cohesion: 0.10
-Nodes (16): GapAnalysisPanel(), PRIORITY_BADGE, PRIORITY_STYLE, RiskLabTab(), RiskSummaryCard(), CorrelationHeatmap(), CustomScenarioBuilder(), FactorExposureChart() (+8 more)
+Cohesion: 0.16
+Nodes (15): BOND_CATEGORIES, ScreenerCandidate, UniverseStatus, CacheOptions, createUniverseCache(), UniverseProvider, creditProfile(), HY_BUCKETS (+7 more)
 
 ### Community 46 - "page.tsx"
-Cohesion: 0.22
-Nodes (15): ManualAssetChatRequest, POST(), POST(), CATEGORY_FOCUS, fmtMoney(), fmtNum(), fmtPct(), ManualAssetChatInput (+7 more)
+Cohesion: 0.14
+Nodes (27): ManualAssetChatRequest, POST(), POST(), DELETE(), GET(), PATCH(), CATEGORY_FOCUS, fmtMoney() (+19 more)
 
 ### Community 47 - "page.tsx"
-Cohesion: 0.16
-Nodes (31): POST(), POST(), buildSchema(), buildSystemPrompt(), POST(), GET(), POST(), resolveClass() (+23 more)
+Cohesion: 0.22
+Nodes (19): POST(), POST(), buildSchema(), buildSystemPrompt(), POST(), GET(), POST(), availableMetrics() (+11 more)
 
 ### Community 48 - "page.tsx"
-Cohesion: 0.20
-Nodes (16): FilterPanel(), Props, UNIT_SUFFIX, countActive(), Draft, draftFromTemplate(), DraftValue, emptyDraft() (+8 more)
+Cohesion: 0.19
+Nodes (17): FilterPanel(), Props, UNIT_SUFFIX, countActive(), Draft, draftFromTemplate(), DraftValue, emptyDraft() (+9 more)
 
 ### Community 49 - "loader.py"
-Cohesion: 0.08
-Nodes (52): CRYPTO_SECTOR_MAP, cryptoBase(), cryptoSector, CURRENCIES, CurrencyRef, exotics, FX_PAIRS, getPair() (+44 more)
+Cohesion: 0.20
+Nodes (28): inflationDifferential(), policyDivergence(), rateDifferential(), realRateDifferential(), annualizedVolatility(), closes(), distanceFromHigh(), drawdown() (+20 more)
 
 ### Community 50 - "USTransactionCostModel"
-Cohesion: 0.11
-Nodes (13): get_us_costs(), Transaction cost model — NSE equity delivery charges (2025 schedule) and US equi, SEC fee + FINRA TAF + half-spread on sell., Return a USTransactionCostModel with the correct market cap tier.     market_cap, Cost of buying `value` worth of stock., Cost of selling `value` worth of stock., Total cost of buying then selling `value`., Round-trip cost as fraction of trade value (1.0 = 100%). (+5 more)
+Cohesion: 0.13
+Nodes (10): SEC fee + FINRA TAF + half-spread on sell., Cost of buying `value` worth of stock., Cost of selling `value` worth of stock., Total cost of buying then selling `value`., Round-trip cost as fraction of trade value (1.0 = 100%)., US equity transaction costs (2025 schedule, assumes retail DMA execution)., Convert per-share TAF to per-dollar fraction using avg_price., Crossing half-spread on buy. (+2 more)
 
 ### Community 51 - "index.ts"
 Cohesion: 0.09
-Nodes (33): computeLiveRegime(), applyFundamentalGate(), assessMarketRegime(), detectEmergingThemes(), emit(), extractRiskAlerts(), RawEmergingTheme, runScannerPipeline() (+25 more)
+Nodes (35): computeLiveRegime(), buildCausalChainForEvent(), buildCausalChains(), buildCausalPrompt(), sanitizeEffect(), applyFundamentalGate(), assessMarketRegime(), detectEmergingThemes() (+27 more)
 
 ### Community 52 - "ollama.ts"
-Cohesion: 0.09
-Nodes (26): GET(), buildBody(), ChatOptions, ChatTurn, createThinkingSplitter(), generate(), GenerateOptions, GenerateResult (+18 more)
+Cohesion: 0.14
+Nodes (12): createThinkingSplitter(), listModelInfo(), splitThinking(), AIProvider, ProviderCompleteRequest, ProviderCompleteResult, ProviderHealth, ProviderModelInfo (+4 more)
 
 ### Community 53 - "movement-explainer.ts"
-Cohesion: 0.19
-Nodes (15): buildBearCase(), buildBullCase(), buildExplanation(), buildOpportunityProfile(), CATEGORY_PRIORITY, deriveCategories(), deriveConviction(), deriveVolatility() (+7 more)
+Cohesion: 0.10
+Nodes (24): HORIZON_LABEL, InvestmentThesisPanel(), buildBearCase(), buildBullCase(), buildExplanation(), buildOpportunityProfile(), CATEGORY_PRIORITY, Conviction (+16 more)
 
 ### Community 54 - "intelligence-tab.tsx"
 Cohesion: 0.08
 Nodes (7): PRESET_THEMES, STAGE_META, TIER_COLORS, AnalystChecklistItem, PolicyItem, ThematicReport, TierCompany
 
 ### Community 55 - "dataset.ts"
-Cohesion: 0.15
-Nodes (19): getReitUniverse(), getUniverse(), isCleanUsSymbol(), isPreferredShare(), PRIMARY_EXCHANGES, toEntries(), UniverseEntry, US (+11 more)
+Cohesion: 0.16
+Nodes (18): getReitUniverse(), getUniverse(), isCleanUsSymbol(), isPreferredShare(), PRIMARY_EXCHANGES, toEntries(), US, Auth (+10 more)
 
 ### Community 56 - "timeline.ts"
-Cohesion: 0.19
-Nodes (9): useChartTheme(), rebase(), RelativeStrengthChart(), MarginTrendChart(), norm, PeerRadarChart(), RevenueFcfChart(), SectorAllocationChart() (+1 more)
+Cohesion: 0.09
+Nodes (16): useChartTheme(), rebase(), RelativeStrengthChart(), MarginTrendChart(), norm, PeerRadarChart(), RevenueFcfChart(), SectorAllocationChart() (+8 more)
 
 ### Community 57 - "MASTER_ARCHITECTURE_BLUEPRINT.md"
 Cohesion: 0.09
@@ -484,36 +472,36 @@ Cohesion: 0.13
 Nodes (14): CommandPalette(), Item, activeObjective(), ALL_TOOLS, NAV, NavObjective, NavTool, OllamaStatusBadge() (+6 more)
 
 ### Community 59 - "opportunity-detail-panel.tsx"
-Cohesion: 0.10
-Nodes (20): Props, TIER_LABELS, TIER_STYLES, IMPACT_ICON, IMPACT_TEXT, PortfolioFitPanel(), Props, TIER_COLORS (+12 more)
+Cohesion: 0.11
+Nodes (18): Props, IMPACT_ICON, IMPACT_TEXT, PortfolioFitPanel(), Props, TIER_COLORS, KIND_STYLE, PositionActionCard() (+10 more)
 
 ### Community 60 - "india-snapshot.ts"
-Cohesion: 0.11
-Nodes (25): GET(), VALID_SCOPES, GET(), VALID_SCOPES, GET(), GET(), parseFilters(), VALID_SCOPES (+17 more)
+Cohesion: 0.12
+Nodes (18): GET(), VALID_SCOPES, GET(), VALID_SCOPES, VALID_SCOPES, VALID_VIEWS, VIEW_LABEL, GraphView() (+10 more)
 
 ### Community 61 - "fundamentals.ts"
-Cohesion: 0.13
-Nodes (23): CryptoInsightRequest, Props, AiCryptoInsight(), AiCryptoInsightProps, PROMPT_HINTS, SECTION_LABELS, CryptoChatInput, cryptoChatWithData() (+15 more)
+Cohesion: 0.08
+Nodes (35): CryptoInsightRequest, GET(), POST(), ForexInsightRequest, POST(), AiInsightPanel(), AiInsightPanelProps, AssetScoreCard() (+27 more)
 
 ### Community 62 - "analyze.ts"
-Cohesion: 0.10
-Nodes (11): GroundingBadge(), CONF_STYLE, CONF_TOOLTIP, SEV_STYLE, STAGE_LABELS, STAGE_ORDER, StreamEvent, Markdown() (+3 more)
+Cohesion: 0.11
+Nodes (8): CONF_STYLE, CONF_TOOLTIP, SEV_STYLE, STAGE_LABELS, STAGE_ORDER, StreamEvent, ICProgressEvent, ICReportStage
 
 ### Community 63 - "market.ts"
-Cohesion: 0.08
-Nodes (25): BarShapeProps, CandleChart(), CandleChartProps, CandleColors, CandleData, CandleTooltip(), fmtDate(), fmtPrice() (+17 more)
+Cohesion: 0.13
+Nodes (14): CandleChartProps, Benchmarks, ChartMode, fmtPrice(), fmtTooltipDate(), fmtVol(), InteractiveChart(), PERIOD_DAYS (+6 more)
 
 ### Community 64 - "index.ts"
-Cohesion: 0.12
-Nodes (29): ModuleGrid(), SPAN, HOME_MODULES, GRID, HOME_LAYOUT, HomeLayoutConfig, LayoutGroup, LayoutSlot (+21 more)
+Cohesion: 0.11
+Nodes (30): ModuleGrid(), SPAN, HOME_MODULES, GRID, HOME_LAYOUT, HomeLayoutConfig, LayoutGroup, LayoutSlot (+22 more)
 
 ### Community 65 - "regime.py"
 Cohesion: 0.19
 Nodes (20): _bic(), fit_market_regime(), _make_obs(), _map_states(), predict_regimes(), predict_regimes_from_index(), DataFrame, ndarray (+12 more)
 
 ### Community 66 - "ai-research.ts"
-Cohesion: 0.22
-Nodes (14): GET(), buildEquityFacts(), buildPortfolioFacts(), hasPortfolioContext(), PortfolioFacts, readPortfolioFacts(), buildVerdictPrompt(), BY_ID (+6 more)
+Cohesion: 0.25
+Nodes (11): buildEquityFacts(), buildPortfolioFacts(), hasPortfolioContext(), PortfolioFacts, buildVerdictPrompt(), BY_ID, REPORT_SECTIONS, ReportSectionId (+3 more)
 
 ### Community 67 - "route.ts"
 Cohesion: 0.15
@@ -524,8 +512,8 @@ Cohesion: 0.16
 Nodes (21): fetchEconomicTimesNews(), fetchGoogleNews(), fetchMarketNews(), fetchMoneycontrolNews(), fetchNewsApi(), fetchNseAnnouncements(), fetchRss(), fetchYahooNews() (+13 more)
 
 ### Community 69 - "page.tsx"
-Cohesion: 0.16
-Nodes (13): AlternativeMetricsCard(), ManualAssetChat(), PrivateMarketMetricsCard(), RealEstateMetricsCard(), CATEGORY_LABEL, DIR_STYLE, SignalCard(), TIMEFRAME_LABEL (+5 more)
+Cohesion: 0.07
+Nodes (35): POST(), AnalystCard(), DIST, InsiderTable(), TYPE_STYLE, FundProfileCard(), NewsItemRow(), DIR_STYLE (+27 more)
 
 ### Community 70 - "yahoo-screener.ts"
 Cohesion: 0.15
@@ -541,7 +529,7 @@ Nodes (18): 1. Use Serena for File Location, 2. Use Graphify for Dependencies, 3
 
 ### Community 73 - "route.ts"
 Cohesion: 0.04
-Nodes (56): BacktestPage(), BacktestResponse, pct(), TIER_TONE, Badge(), BadgeProps, BadgeVariant, VARIANT (+48 more)
+Nodes (54): BacktestPage(), BacktestResponse, pct(), TIER_TONE, BadgeProps, BadgeVariant, VARIANT, Card() (+46 more)
 
 ### Community 74 - "route.ts"
 Cohesion: 0.12
@@ -564,28 +552,28 @@ Cohesion: 0.12
 Nodes (22): GET(), POST(), run(), register(), AlertEvent, AlertKind, AlertSeverity, evaluateAlerts() (+14 more)
 
 ### Community 79 - "getQuoteSummary"
-Cohesion: 0.18
-Nodes (15): DELETE(), GET(), PATCH(), GET(), POST(), VALID_CATEGORIES, createManualAsset(), CreateManualAssetInput (+7 more)
+Cohesion: 0.15
+Nodes (13): COMMODITIES, COMMODITY_SECTORS, CommodityRef, CommoditySector, FUTURES_MONTH_CODES, GeopoliticalExposure, getCommodity(), BOND_CATEGORY_SET (+5 more)
 
 ### Community 80 - "yahoo.ts"
-Cohesion: 0.09
-Nodes (25): GET(), OptionsExpirationChain, buildOptionsChain(), getSectorEtf(), mapContract(), mapExpiration(), mapHistory(), mapQuote() (+17 more)
+Cohesion: 0.07
+Nodes (33): GET(), GET(), computeMacroSummary(), YIELD_CURVE_SYMBOLS, YieldLevels, Curve, getYieldCurve(), TENORS (+25 more)
 
 ### Community 81 - "CompareEntry"
-Cohesion: 0.23
-Nodes (9): GET(), Conviction, OpportunityCategory, VolatilityTier, buildClusters(), getOpportunityMapData(), OpportunityCluster, OpportunityMapData (+1 more)
+Cohesion: 0.25
+Nodes (9): POST(), GET(), computeWatchlistAlerts(), gatherWatchlistAlerts(), generateWatchlistDigest(), summariseOne(), WatchlistPortfolioContext, WatchlistStockSummary (+1 more)
 
 ### Community 82 - "fundamental-screener.ts"
-Cohesion: 0.09
-Nodes (23): HoldingsTable(), BOND_CATEGORIES, bondClass, CREDIT_RATINGS, ISSUER_TYPES, metrics, RISK_LEVELS, getYieldCurve() (+15 more)
+Cohesion: 0.11
+Nodes (27): useRecordActivity(), TrackRecord, VALID_KINDS, ActivityEntry, ActivityKind, HomeBriefChunk, HomeDigest, MarketGroup (+19 more)
 
 ### Community 83 - "provenance.ts"
-Cohesion: 0.16
-Nodes (14): AXES, CompareRadar(), Props, CHART_SERIES, ChartTheme, DARK, getChartTheme(), LIGHT (+6 more)
+Cohesion: 0.14
+Nodes (18): InvestmentSnapshot(), InvestmentSnapshotProps, ScorePill(), toGrade(), computeIndiaSnapshot(), computeRisks(), computeStrengths(), IndiaDerivedInputs (+10 more)
 
 ### Community 84 - "page.tsx"
-Cohesion: 0.12
-Nodes (13): CompareEntry, BLUE, COL_ARGB, COL_BEST_FILL_ARGB, CompareExportPayload, MetricDef, NAVY, SECTION_BG_FILLS (+5 more)
+Cohesion: 0.09
+Nodes (17): CompareEntry, BLUE, COL_ARGB, COL_BEST_FILL_ARGB, CompareExportPayload, MetricDef, NAVY, SECTION_BG_FILLS (+9 more)
 
 ### Community 85 - "ic-signals.ts"
 Cohesion: 0.22
@@ -596,8 +584,8 @@ Cohesion: 0.12
 Nodes (16): AI grounding & verification, Analysis-to-action layer, Decision journal & track record  (`/journal`), New surfaces at a glance, Onboarding + progressive disclosure, Performance analytics — *are you beating the index?*, Phase 0 — Foundations (fix the substrate), Phase 1 — Repair broken promises (+8 more)
 
 ### Community 87 - "market-summary.ts"
-Cohesion: 0.13
-Nodes (18): GET(), CLASS_STYLE, SectorContextCard(), WINDOWS, putSectorRotationSnapshot(), ResearchBundle, buildSectorRotationSnapshot(), computeSectorReturns() (+10 more)
+Cohesion: 0.22
+Nodes (12): GET(), putSectorRotationSnapshot(), buildSectorRotationSnapshot(), computeSectorReturns(), computeSectorRotation(), getLatestSectorRotation(), pctReturn(), SectorEtf (+4 more)
 
 ### Community 88 - "PROGRESS.md — Principal Engineer Session (2026-07-04)"
 Cohesion: 0.12
@@ -608,52 +596,52 @@ Cohesion: 0.12
 Nodes (15): 1. Vision & Direction, 2. Scope & Anti-Goals, 3.1 Design tokens (`app/globals.css`), 3.2 Typography, 3.3 Motion, 3.4 Iconography, 3.5 Shared component primitives (`app/_components/`), 3.6 Chart theming (Recharts) (+7 more)
 
 ### Community 90 - "normalizeSymbol"
-Cohesion: 0.18
-Nodes (12): VALID_SCOPES, VALID_VIEWS, VIEW_LABEL, GraphView(), TimelineView(), IntelligenceContext, IntelligenceContextValue, IntelligenceFocus (+4 more)
+Cohesion: 0.07
+Nodes (63): DELETE(), GET(), GET(), GET(), detectAssetClass(), deletePlatformCache(), getPlatformCache(), prunePlatformCache() (+55 more)
 
 ### Community 91 - "listPortfolio"
-Cohesion: 0.10
-Nodes (14): ACTION_THEME, ActionsTab(), ActionSummaryStrip(), BeforeAfterRow(), computeAfterState(), DecisionCard(), InvestCashPanel(), RebalancePanel() (+6 more)
+Cohesion: 0.13
+Nodes (20): line(), SectionState, asOf(), emptySubscribe(), HomeHeader(), useHydrated(), fetchBrief(), fetchDigest() (+12 more)
 
 ### Community 92 - "retrieval.ts"
-Cohesion: 0.11
-Nodes (22): TaskType, ASSET_CLASS_LABEL, AssetClass, MACRO_SYMBOLS, QUOTE_TYPE_TO_ASSET_CLASS, COMMODITY_MODULES, commodityEngine, fetchCommodityData() (+14 more)
+Cohesion: 0.08
+Nodes (29): MacroContextLadder(), Props, REC_CLASS, SECTOR_CLASS_STYLE, TREND_LABEL, ASSET_CLASS_LABEL, AssetClass, MACRO_SYMBOLS (+21 more)
 
 ### Community 93 - "composite.ts"
-Cohesion: 0.21
-Nodes (13): createEnrichedDataset(), sleep(), withRetry(), clearFundamentals(), getFreshFundamentals(), putFundamentals(), CompositeScores, StockFundamentals (+5 more)
+Cohesion: 0.19
+Nodes (15): GET(), DELETE(), GET(), PATCH(), POST(), createEnrichedDataset(), addToWatchlist(), getFreshFundamentals() (+7 more)
 
 ### Community 94 - "Universal Asset Analyzer — Complete User Guide"
 Cohesion: 0.13
 Nodes (14): 10. Quant Engine, 1. Research, 2. Discover, 3. Themes, 4. Compare, 5. Watchlist, 6. Portfolio, 7. Screener (+6 more)
 
 ### Community 95 - "PageShell"
-Cohesion: 0.10
-Nodes (35): GET(), putTimelineEvents(), buildDetailPrompt(), buildEventId(), buildWhatChangedPrompt(), CATEGORY_BASE_IMPORTANCE, CATEGORY_DEFAULT_IMPACT, CATEGORY_PATTERNS (+27 more)
+Cohesion: 0.08
+Nodes (49): GET(), GET(), parseFilters(), VALID_SCOPES, GET(), listTimelineEvents(), putTimelineEvents(), isValidSymbol() (+41 more)
 
 ### Community 96 - "kelly.py"
 Cohesion: 0.23
 Nodes (13): _build_return_matrix(), compute_position_sizes(), equal_risk_contribution(), fractional_kelly(), DataFrame, ndarray, Kelly criterion + Equal Risk Contribution (ERC) portfolio optimizer. Fractional, Scale portfolio weights to hit target annual volatility. (+5 more)
 
 ### Community 97 - "dedup.ts"
-Cohesion: 0.12
-Nodes (8): CAT_STYLE, CausalChainCard(), DIR_COLOR, SourceExplorer(), MarketEvent, runPromptMock, runPromptMock, runPromptMock
+Cohesion: 0.40
+Nodes (5): baseEvent(), causalEngineMock, enrichedEvent(), runPromptMock, sectorImpactMock
 
 ### Community 98 - "ai.ts"
-Cohesion: 0.17
-Nodes (19): IndiaAiRequest, POST(), AiSectionInsight(), AiSectionInsightProps, SECTION_LABELS, IndiaData, IndiaDerivedData, CompareStock (+11 more)
+Cohesion: 0.12
+Nodes (27): IndiaAiRequest, POST(), AiRequest, POST(), AiSectionInsight(), AiSectionInsightProps, SECTION_LABELS, IndiaData (+19 more)
 
 ### Community 99 - "new-positions-panel.tsx"
 Cohesion: 0.09
-Nodes (29): HEADER_FILL, HEADER_FONT, Props, AssetClassId, equityDataset, reitDataset, RankResult, RankedCandidate (+21 more)
+Nodes (25): EnrichedDataset, equityDataset, reitDataset, sleep(), withRetry(), clearFundamentals(), bondUniverse, commodityUniverse (+17 more)
 
 ### Community 100 - "enrich.ts"
-Cohesion: 0.10
-Nodes (26): GET(), DataProvenance(), DOT, ago(), NotificationBell(), TrackRecord, ActionQueueCard, ActionQueueItem (+18 more)
+Cohesion: 0.12
+Nodes (21): buildCacheKey(), GET(), POST(), ScanRequest, DataProvenance(), DOT, ago(), NotificationBell() (+13 more)
 
 ### Community 101 - "getQuote"
-Cohesion: 0.25
-Nodes (8): line(), asOf(), emptySubscribe(), HomeHeader(), useHydrated(), fetchBrief(), fetchDigest(), HomeProvider()
+Cohesion: 0.24
+Nodes (11): computeRiskAdjustedRatios(), pearson(), computeHHI(), computeCorrelation(), computeRisk(), CorrelationMatrix, PROXY_VOLATILITY, quantile() (+3 more)
 
 ### Community 102 - "route.ts"
 Cohesion: 0.20
@@ -664,12 +652,12 @@ Cohesion: 0.18
 Nodes (9): BLUE, NAVY, normaliseSignal(), POST(), ScorecardRow, SIGNAL_FILL, SIGNAL_FONT, SIGNAL_LABEL (+1 more)
 
 ### Community 104 - "event-screener.ts"
-Cohesion: 0.12
-Nodes (23): DuckDBPyConnection, _compute_roic_safe(), export_detail_snapshots(), export_scorecard_snapshot(), fetch_fundamentals(), fetch_ohlcv(), get_db(), get_price_matrix() (+15 more)
+Cohesion: 0.15
+Nodes (11): CURRENCIES, CurrencyRef, exotics, FX_PAIRS, getPair(), majors, minors, PAIR_TYPES (+3 more)
 
 ### Community 105 - "company-impact.ts"
-Cohesion: 0.19
-Nodes (14): getFxRateToUsd(), GET(), POST(), GET(), POST(), GET(), respondAsFund(), GET() (+6 more)
+Cohesion: 0.15
+Nodes (17): DcfPrefill, GET(), r(), DETAIL_DIR, detailSnapshotPath(), DUCKDB_PATH, GET(), LIVE_QUERY_SCRIPT() (+9 more)
 
 ### Community 106 - "DESIGN_PROGRESS.md — Design/Frontend Session (2026-07-04)"
 Cohesion: 0.17
@@ -684,47 +672,47 @@ Cohesion: 0.29
 Nodes (21): abstain(), assetAllocation(), cashManagement(), clamp(), computeHealth(), concentration(), correlationDim(), currencyDiversification() (+13 more)
 
 ### Community 109 - "page.tsx"
-Cohesion: 0.14
-Nodes (19): adapters, ageInDays(), listClassAdapters(), NormalizedHolding, PortfolioClassAdapter, HoldingScore, HoldingUnit, Income (+11 more)
+Cohesion: 0.19
+Nodes (14): GET(), parseSignalLog(), SignalRow, BacktestInput, BEARISH, BULLISH, mean(), pearson() (+6 more)
 
 ### Community 110 - "ownership-timeline.tsx"
 Cohesion: 0.20
 Nodes (8): buildTimelineData(), HOLDER_COLORS, HOLDER_LABELS, num(), OwnershipTimeline(), TooltipPayload, TrendInsight(), ScreenerInShareholding
 
 ### Community 111 - "route.ts"
-Cohesion: 0.14
-Nodes (20): cellValue(), ResultsTable(), getMetric(), FilterValues, actualValue(), constraintLabel(), explain(), activeFilters() (+12 more)
+Cohesion: 0.18
+Nodes (20): getMetric(), AssetClassId, FilterValues, actualValue(), constraintLabel(), explain(), activeFilters(), inRange() (+12 more)
 
 ### Community 112 - "symbol-search.tsx"
 Cohesion: 0.13
 Nodes (14): Acceptance criteria (verify each), Critical design decisions (follow exactly), Edge cases a weaker model will miss, Files to touch, Goal, PLAN-e2e-smoke-suite: Playwright end-to-end smoke tests for every page, Step 1 — Install and scaffold, Step 2 — `playwright.config.ts` (+6 more)
 
 ### Community 114 - "message.tsx"
-Cohesion: 0.26
-Nodes (12): GET(), ContextResponse, buildCompanyContext(), buildModelOptions(), fitsInMemory(), genericSpec(), MODEL_REGISTRY, ModelOption (+4 more)
+Cohesion: 0.14
+Nodes (20): GET(), GET(), ContextResponse, CopilotCoverage, CopilotStatus, barColor(), DATASETS, ResearchConfidenceMeter() (+12 more)
 
 ### Community 115 - "ownership-card.tsx"
-Cohesion: 0.18
-Nodes (17): FundInsightRequest, GET(), POST(), AiFundInsight(), AiFundInsightProps, SECTION_LABELS, FundPerformanceCard(), pct1() (+9 more)
+Cohesion: 0.19
+Nodes (16): FundInsightRequest, GET(), POST(), AiFundInsightProps, SECTION_LABELS, FundPerformanceCard(), pct1(), pp1() (+8 more)
 
 ### Community 116 - "ranked-peers.tsx"
 Cohesion: 0.15
 Nodes (14): GET(), POST(), ScanRequest, buildScanPrompt(), enrichWithQuote(), parseAiResponse(), RawScanResponse, RawSignal (+6 more)
 
 ### Community 117 - "ratio-sparklines.tsx"
-Cohesion: 0.53
-Nodes (5): buildCausalChainForEvent(), buildCausalChains(), buildCausalPrompt(), sanitizeEffect(), CausalEffect
+Cohesion: 0.26
+Nodes (10): ChartTheme, DARK, getChartTheme(), LIGHT, getServerSnapshot(), getSnapshot(), subscribe(), Theme (+2 more)
 
 ### Community 118 - "progress-stream.tsx"
 Cohesion: 0.16
 Nodes (20): Booster, fit_quantile_models(), _isotonic_project(), _load_calibration_shifts(), _make_feature_matrix(), _make_targets(), predict_distribution(), _prob_up_from_quantiles() (+12 more)
 
 ### Community 119 - "prompt.ts"
-Cohesion: 0.24
-Nodes (11): cagr(), enrichSymbol(), mapFundamentals(), MODULES, num(), RawFinancialData, RawProfile, RawSummary (+3 more)
+Cohesion: 0.23
+Nodes (12): cagr(), enrichSymbol(), mapFundamentals(), MODULES, num(), RawFinancialData, RawProfile, RawSummary (+4 more)
 
 ### Community 120 - "upload-form.tsx"
-Cohesion: 0.13
+Cohesion: 0.14
 Nodes (22): GET(), MacroInsightRequest, POST(), AiMacroInsight(), AiMacroInsightProps, PROMPT_HINTS, SECTION_LABELS, SHAPE_LABEL (+14 more)
 
 ### Community 121 - "smart-alerts.tsx"
@@ -732,12 +720,12 @@ Cohesion: 0.25
 Nodes (7): AlertLike, SEVERITY_DOT, SEVERITY_LABEL, SEVERITY_STYLE, SmartAlerts(), TYPE_ICON, WatchlistIntelligenceCard()
 
 ### Community 122 - "ai-portfolio-manager.ts"
-Cohesion: 0.11
-Nodes (20): buildRecommendationPrompt(), getReport(), objectivePromptClause(), parseRecommendations(), POST(), RequestBody, sanitizeRecommendation(), AuditState (+12 more)
+Cohesion: 0.16
+Nodes (17): buildRecommendationPrompt(), getReport(), objectivePromptClause(), parseRecommendations(), POST(), RequestBody, sanitizeRecommendation(), IOSServerContext (+9 more)
 
 ### Community 123 - "button.tsx"
-Cohesion: 0.09
-Nodes (33): _compute_regime_score(), _compute_signal(), _get_fundamentals_map(), _get_price_df(), is_nse_expiry_week(), _load_ic_weights(), DataFrame, date (+25 more)
+Cohesion: 0.06
+Nodes (59): DuckDBPyConnection, _compute_regime_score(), _compute_signal(), _get_fundamentals_map(), _get_price_df(), is_nse_expiry_week(), _load_ic_weights(), DataFrame (+51 more)
 
 ### Community 124 - "card.tsx"
 Cohesion: 0.16
@@ -748,12 +736,12 @@ Cohesion: 0.14
 Nodes (13): Acceptance criteria (verify each), Edge cases a weaker model will miss, Files to touch, Goal, PLAN-legacy-cleanup: Delete the orphaned /analyze module, dead code, and the unused framer-motion dependency, Step 1 — Prove each deletion is safe (do NOT skip), Step 2 — Delete the /analyze chain, Step 3 — Delete the dead portfolio component (+5 more)
 
 ### Community 126 - "valuation-history-chart.tsx"
-Cohesion: 0.12
-Nodes (15): ClassGroup(), CURRENCY_KEYS, formatMetric(), HoldingRow(), HoldingsPanel(), METRIC_LABEL, MULTIPLE_KEYS, PERCENT_KEYS (+7 more)
+Cohesion: 0.30
+Nodes (4): MarketContext, RawHolding, Valuation, BuiltEvaluation
 
 ### Community 127 - "metrics-grid.tsx"
-Cohesion: 0.16
-Nodes (15): DcfPrefill, buildProjection(), buildScenarios(), buildSensitivity(), buildWaccRange(), DcfField(), DcfInputs, DcfPage() (+7 more)
+Cohesion: 0.18
+Nodes (14): buildProjection(), buildScenarios(), buildSensitivity(), buildWaccRange(), DcfField(), DcfInputs, DcfPage(), parseShorthand() (+6 more)
 
 ### Community 128 - "ic-agents.ts"
 Cohesion: 0.15
@@ -764,12 +752,12 @@ Cohesion: 0.15
 Nodes (12): Acceptance criteria (verify each), Edge cases a weaker model will miss, Files to touch, Goal, PLAN-research-page-performance: Lazy-load the remaining recharts chains on `/research`, Step 1 — Record the baseline, Step 2 — Study the house pattern, Step 3 — Convert, one import at a time (+4 more)
 
 ### Community 130 - "event-screener.test.ts"
-Cohesion: 0.11
-Nodes (28): buildValuation(), f2(), fMoney(), fPct(), generateReport(), GET(), kvBlock(), navyCell() (+20 more)
+Cohesion: 0.24
+Nodes (13): buildValuation(), f2(), fMoney(), fPct(), generateReport(), GET(), kvBlock(), navyCell() (+5 more)
 
 ### Community 131 - "investment-personality-badge.tsx"
-Cohesion: 0.18
-Nodes (14): GET(), cache, EMPTY, extractPeer(), getPeerComparison(), loadSectorMetrics(), median(), medianOf() (+6 more)
+Cohesion: 0.40
+Nodes (9): GET(), POST(), resolveClass(), getRanking(), getTemplate(), applyFilters(), refreshUniverse(), runScreen() (+1 more)
 
 ### Community 132 - "Universal Asset Analyzer"
 Cohesion: 0.22
@@ -780,8 +768,8 @@ Cohesion: 0.38
 Nodes (6): classifyIc(), DATA_HEALTH_PATH, GET(), IcQuality, readOosMetrics(), SIGNAL_LOG_PATH
 
 ### Community 135 - "route.ts"
-Cohesion: 0.25
-Nodes (9): pct1(), ScoreCard(), RECOMMENDATION_LABEL, RECOMMENDATION_RING, RECOMMENDATION_TONE, scoreLabel(), scoreTone(), scoreToRecommendation() (+1 more)
+Cohesion: 0.33
+Nodes (8): CRYPTO_SECTOR_MAP, cryptoBase(), cryptoSector, computeFdv(), distanceFrom52Wk(), HistoryStats, num(), toCandidate()
 
 ### Community 136 - "Background alert monitoring"
 Cohesion: 0.50
@@ -792,20 +780,20 @@ Cohesion: 0.15
 Nodes (4): JsonFieldStreamer, State, StreamedField, VERDICT
 
 ### Community 146 - "route.ts"
-Cohesion: 0.16
-Nodes (17): POST(), applyShocks(), describeShocks(), FactorShocks, getScenario(), HoldingImpact, INFLATION_1PP, inflationSensitivity() (+9 more)
+Cohesion: 0.17
+Nodes (10): definition, priceOf(), REGIME_TONE, SENTIMENT_TONE, TickerCell(), definition, Mover(), signed() (+2 more)
 
 ### Community 147 - "route.ts"
-Cohesion: 0.09
-Nodes (47): ManageBody, POST(), ExecuteBody, POST(), summaryOf(), annualIncomeOf(), POST(), PreviewBody (+39 more)
+Cohesion: 0.08
+Nodes (43): GET(), ManageBody, POST(), ExecuteBody, POST(), summaryOf(), annualIncomeOf(), POST() (+35 more)
 
 ### Community 148 - "badge.tsx"
-Cohesion: 0.33
-Nodes (12): blend(), computeScores(), financialHealthScore(), growthScore(), momentumScore(), qualityScore(), ScorableMetrics, valueScore() (+4 more)
+Cohesion: 0.41
+Nodes (11): blend(), computeScores(), financialHealthScore(), growthScore(), momentumScore(), qualityScore(), ScorableMetrics, valueScore() (+3 more)
 
 ### Community 149 - "shareholding-chart.tsx"
-Cohesion: 0.23
-Nodes (9): POST(), buildPrompt(), POST(), analyzeAsset(), runTask(), RunTaskOptions, runTaskText(), buildAnalysisPrompt() (+1 more)
+Cohesion: 0.11
+Nodes (19): encoder, POST(), GET(), buildBody(), ChatOptions, ChatTurn, checkHealth(), generate() (+11 more)
 
 ### Community 150 - "route.ts"
 Cohesion: 0.38
@@ -816,112 +804,112 @@ Cohesion: 0.17
 Nodes (11): Acceptance criteria (verify each), Edge cases a weaker model will miss, Files to touch, Goal, Non-goals, PLAN-ai-json-hardening: Schema-safe LLM JSON at every `extractJson` call site, Step 1 — Add `extractJsonArray` to `lib/json-extract.ts`, Step 2 — Migrate call sites, one FILE at a time, committing per file (+3 more)
 
 ### Community 152 - "ai-portfolio-manager.ts"
-Cohesion: 0.18
-Nodes (9): RecommendationCard(), HORIZON_LABEL, InvestmentThesisPanel(), CONVICTION_STYLE, DIR_STYLE, OpportunityCard(), VERDICT_STYLE, VOLATILITY_STYLE (+1 more)
+Cohesion: 0.28
+Nodes (6): eslintConfig, envNumber(), envPin(), memoryBudgetGb(), pinnedModels(), TASK_MODEL_PINS
 
 ### Community 153 - "route.ts"
-Cohesion: 0.09
-Nodes (26): ThesisEvolutionPanel, IMPACT_DOT, TimelinePreviewCard(), ManualAssetDetail(), NewsItemRow(), categoryLabel(), CATALYST_STYLE, EventCard() (+18 more)
+Cohesion: 0.11
+Nodes (18): ThesisEvolutionPanel, IMPACT_DOT, TimelinePreviewCard(), SCOPE_TABS, ScopeSwitcher(), ALL_CATEGORIES, DEFAULT_FILTERS, FilterState (+10 more)
 
 ### Community 154 - "progress-stream.tsx"
-Cohesion: 0.05
-Nodes (85): DELETE(), GET(), GET(), invalidateContext(), detectAssetClass(), deletePlatformCache(), getPlatformCache(), prunePlatformCache() (+77 more)
+Cohesion: 0.15
+Nodes (21): entries, EntryStatus, getEntry(), IDLE, notify(), resetSymbol(), setData(), setEntry() (+13 more)
 
 ### Community 155 - "upload-form.tsx"
-Cohesion: 0.17
-Nodes (21): BuyBody, POST(), DELETE(), GET(), POST(), PostBody, addUniversalLot(), listUniversalLots() (+13 more)
+Cohesion: 0.24
+Nodes (15): DELETE(), POST(), PostBody, listUniversalLots(), removePosition(), upsertUniversalPosition(), hasClassAdapter(), HoldingUnit (+7 more)
 
 ### Community 156 - "movement-explainer-card.tsx"
-Cohesion: 0.26
-Nodes (10): bottleneckJson(), chainJson(), commodityJson(), companyMappingJson(), futureStateJson(), policyJson(), routeByPrompt(), runPromptMock (+2 more)
+Cohesion: 0.15
+Nodes (13): StockFundamentals, dbRows, runPromptMock, bottleneckJson(), chainJson(), commodityJson(), companyMappingJson(), futureStateJson() (+5 more)
 
 ### Community 157 - "live_oos.py"
-Cohesion: 0.48
-Nodes (6): DETAIL_DIR, detailSnapshotPath(), DUCKDB_PATH, GET(), LIVE_QUERY_SCRIPT(), READ_SNAPSHOT_SCRIPT()
+Cohesion: 0.20
+Nodes (11): BarShapeProps, CandleChart(), CandleColors, CandleData, CandleTooltip(), fmtDate(), fmtPrice(), fmtVol() (+3 more)
 
 ### Community 158 - "AI Orchestration Layer"
 Cohesion: 0.25
 Nodes (7): AI Platform, Call shapes, Request flow, The Research Copilot is a special case, not an exception, Two rules that are not style preferences, What this layer deliberately does not do, Where to change what
 
 ### Community 159 - "ai-compare.ts"
-Cohesion: 0.15
-Nodes (14): GET(), PortfolioBrief, encoder, POST(), AIPortfolioBrief(), BriefContext, checkHealth(), buildAuditEvidenceBlock() (+6 more)
+Cohesion: 0.32
+Nodes (6): CompanyProfile, mapProfile(), MODULES, pct(), RawOfficer, RawProfileSummary
 
 ### Community 160 - "earnings-card.tsx"
 Cohesion: 0.36
 Nodes (6): ALLOWED_CONSOLE_PATTERNS, collectPageErrors(), expectShellRendered(), filterAllowedErrors(), SECTION_ORDER, ROUTES
 
 ### Community 161 - "runPromptWithMeta"
-Cohesion: 0.07
-Nodes (28): CLASS_STYLE, SectorRotationPanel(), InsiderTable(), TYPE_STYLE, InvestmentPersonalityBadge(), Props, TAG_STYLE, ResearchNotes() (+20 more)
+Cohesion: 0.05
+Nodes (33): RiskProfileCard(), ConvictionBreakdown(), Props, REC_COLOR, REC_LABEL, RISK_CHIP, InvestmentPersonalityBadge(), Props (+25 more)
 
 ### Community 162 - "card.tsx"
-Cohesion: 0.11
-Nodes (24): definition, priceOf(), REGIME_TONE, SENTIMENT_TONE, TickerCell(), MarketGroup, MarketGroupId, MarketIntelligence (+16 more)
+Cohesion: 0.44
+Nodes (8): clamp01to100(), computeSentiment(), labelFor(), scoreBreadth(), scoreMomentum(), scoreVolatility(), SentimentInputs, WEIGHTS
 
 ### Community 163 - "AIProvider"
-Cohesion: 0.17
-Nodes (19): GET(), activeRecommendationFor(), buildPrompt(), cacheKeyFor(), confidenceFor(), explainHolding(), fallbackExplanation(), hashOf() (+11 more)
+Cohesion: 0.13
+Nodes (27): GET(), putScannerCache(), applyTargetPlanConserving(), makeCashHolding(), setCashValue(), activeRecommendationFor(), buildPrompt(), cacheKeyFor() (+19 more)
 
 ### Community 164 - "ic-thesis.ts"
-Cohesion: 0.38
-Nodes (7): formatClock(), ProgressStream(), STAGE_LABELS, averageHistoricalDuration(), estimateRemainingMs(), loadScanHistory(), recordScanDuration()
+Cohesion: 0.43
+Nodes (5): aggregateLots(), aggregateOpenPositions(), chronologically(), PositionAggregate, tidy()
 
 ### Community 165 - "fixtures.ts"
 Cohesion: 0.07
 Nodes (33): LandingFooter(), LandingHeader(), Reveal(), SectionPlaceholder(), REGISTRY, resolveSection(), SectionProps, Comparison() (+25 more)
 
 ### Community 166 - "valuation-history-chart.tsx"
-Cohesion: 0.09
-Nodes (35): loadStock(), assembleCompanyContext(), tryOr(), listAllNotes(), buildFundamentalsData(), buildValuation(), priceAtDate(), rv() (+27 more)
+Cohesion: 0.13
+Nodes (19): getFundamentals(), mapAnalyst(), mapEarnings(), mapInsider(), mapOwnership(), mapSnapshot(), MODULES, n() (+11 more)
 
 ### Community 168 - "calendar.test.ts"
 Cohesion: 0.50
 Nodes (3): getQuoteSummaryMock, listPortfolioMock, listWatchlistMock
 
 ### Community 169 - "ic-agents.test.ts"
-Cohesion: 0.20
-Nodes (9): POST(), bestIndex(), buildComparePrompt(), buildMetricTable(), CompareMetricRow, compareStocks(), FlatAI, fmt (+1 more)
+Cohesion: 0.18
+Nodes (12): bestConcept(), cagr(), Concept, ConceptUnit, deriveStatements(), extractAnnual(), fetchConcept(), getFinancialStatementsYahoo() (+4 more)
 
 ### Community 172 - "scanner-causal-engine.test.ts"
-Cohesion: 0.10
-Nodes (32): GET(), listActivity(), buildRecommendedActions(), buildRecentActivity(), VALID_KINDS, toBriefPortfolio(), ActivityEntry, ActivityKind (+24 more)
+Cohesion: 0.15
+Nodes (16): GET(), buildRecommendedActions(), buildRecentActivity(), toBriefPortfolio(), PulseMover, RecommendedAction, buildHomeDigest(), buildPortfolioPulse() (+8 more)
 
 ### Community 175 - "route.ts"
-Cohesion: 0.16
-Nodes (17): GET(), AddManualAssetForm(), CATEGORY_LABEL, PRODUCT_TYPE_LABEL, getCachedRealEstateLookup(), normalizeAddressKey(), putRealEstateLookup(), FormDDetails (+9 more)
+Cohesion: 0.31
+Nodes (11): GET(), getCachedRealEstateLookup(), normalizeAddressKey(), putRealEstateLookup(), apiKey(), firstNumber(), firstString(), RealEstateLookupResult (+3 more)
 
 ### Community 176 - "getQuotes"
 Cohesion: 0.27
 Nodes (11): GET(), getNotificationById(), rowToNotification(), fallback(), ok(), ResolvedDestination, resolveDestination(), routeDefault() (+3 more)
 
 ### Community 177 - "financial-charts.tsx"
-Cohesion: 0.13
-Nodes (7): AnnualMarginChart(), AnnualRevenueChart(), QuarterlyProfitChart(), QuarterlyRevenueChart(), TooltipProps, ScreenerInAnnualPL, ScreenerInQuarterlyPL
+Cohesion: 0.52
+Nodes (5): GET(), buildFundamentalsData(), buildValuation(), priceAtDate(), rv()
 
 ### Community 178 - "badge.tsx"
-Cohesion: 0.26
-Nodes (11): cagrPercent(), computeAlternativeMetrics(), computePrivateMarketMetrics(), computeRealEstateMetrics(), computeStructuredProductMetrics(), SCENARIO_LEVELS, yearsBetween(), computeManualAssetMetrics() (+3 more)
+Cohesion: 0.29
+Nodes (7): CompetitivePositionSummary(), computeRanks(), fmtCr(), Metric, METRIC_HIGH_IS_BETTER, parseNum(), RankedPeers()
 
 ### Community 179 - "metrics-grid.tsx"
-Cohesion: 0.07
-Nodes (40): GET(), AllocationPanel(), CLASS_COLOR, FALLBACK, PreviewSide, AllocationSlice, AllocationView, computeAllocation() (+32 more)
+Cohesion: 0.09
+Nodes (33): POST(), buildMarketContext(), dominantRating(), fetchFx(), RawProfile, AllocationSlice, computeAllocation(), computeFactorExposure() (+25 more)
 
 ### Community 180 - "crypto.ts"
-Cohesion: 0.21
-Nodes (11): GET(), r(), CompanyProfile, getCompanyProfile(), mapProfile(), MODULES, pct(), RawOfficer (+3 more)
+Cohesion: 0.14
+Nodes (23): assembleCompanyContext(), invalidateContext(), tryOr(), listAllNotes(), getRecentFilings(), lookupCik(), detectMarket(), cache (+15 more)
 
 ### Community 181 - "thesis-builder.ts"
-Cohesion: 0.20
-Nodes (5): DIR_STYLE, SectorRotationGrid(), SectorImpact, dbRows, runPromptMock
+Cohesion: 0.24
+Nodes (7): isPositiveUp(), LOWER_IS_BETTER, matchGroup(), RATIO_GROUPS, RatioCard(), RatioSparklines(), ScreenerInRatio
 
 ### Community 182 - "json-extract.ts"
 Cohesion: 0.31
 Nodes (8): extractJson(), extractJsonArray(), outermostSpan(), Span, tryParseSpan(), pickCommodityProxies(), dedupe(), item()
 
 ### Community 183 - "company-impact.ts"
-Cohesion: 0.33
-Nodes (9): buildCompanyMatchPrompt(), buildCompanyOpportunities(), CompanyMatchRaw, getSectorVariants(), sanitizeMatch(), uid(), RawSectorImpact, SignalDirection (+1 more)
+Cohesion: 0.25
+Nodes (8): ContributionGroup, DIR_DOT, GROUP_FOR, GROUP_ORDER, groupDrivers(), MovementExplainerCard(), PERSISTENCE_LABEL, MovementExplanation
 
 ### Community 184 - "valuation-history-chart.tsx"
 Cohesion: 0.29
@@ -932,116 +920,72 @@ Cohesion: 0.43
 Nodes (7): buildExcel(), buildPdf(), buildPositions(), compact(), EnrichedPosition, GET(), PortfolioPosition
 
 ### Community 186 - "valuation-history-chart.tsx"
-Cohesion: 0.16
-Nodes (6): GET(), GET(), YIELD_CURVE_SYMBOLS, Curve, TENORS, getQuotes()
+Cohesion: 0.22
+Nodes (4): GET(), GET(), listWatchlist(), getOpportunityMapData()
 
 ### Community 187 - "ic-thesis.ts"
-Cohesion: 0.14
-Nodes (8): ConvictionBreakdown(), Props, REC_COLOR, REC_LABEL, RISK_CHIP, LEVEL_STYLE, RiskHeatmap(), RiskLevel
+Cohesion: 0.38
+Nodes (6): FundDetail, parseDetail(), pct(), RawFundDetail, SECTOR_LABEL, FundHolding
 
 ### Community 188 - "response.ts"
-Cohesion: 0.19
-Nodes (8): PortfolioFitBadge(), NewPositionsPanel(), delta(), formatVal(), MetricRow, MetricRowDisplay(), TradeImpactModal(), TradeImpactModalProps
+Cohesion: 0.47
+Nodes (3): getFxRateToUsd(), safeGetQuote(), getQuote()
 
 ### Community 189 - "performance-panel.tsx"
-Cohesion: 0.29
-Nodes (8): POST(), buildDigestPrompt(), computeWatchlistAlerts(), generateWatchlistDigest(), summariseOne(), WatchlistDigest, WatchlistPortfolioContext, WatchlistStockSummary
-
-### Community 190 - "eslint.config.mjs"
-Cohesion: 0.24
-Nodes (7): eslintConfig, disabledModels(), envNumber(), envPin(), memoryBudgetGb(), pinnedModels(), TASK_MODEL_PINS
+Cohesion: 0.47
+Nodes (4): AIResponse, estimateConfidence(), normalizeResponse(), ResponseConfidence
 
 ### Community 191 - "cache.ts"
 Cohesion: 0.22
-Nodes (14): POST(), buildCacheKey(), GET(), POST(), ScanRequest, generateFinancialInsight(), getScannerCache(), getScannerSnapshot() (+6 more)
+Nodes (18): POST(), Props, buildFinancialInsightPrompt(), FinancialInsightInput, FinancialInsightResult, generateFinancialInsight(), statementsSummary(), FundamentalsParts (+10 more)
 
 ### Community 192 - "fixtures.ts"
-Cohesion: 0.20
-Nodes (21): GET(), respondWithCommodityVerdict(), respondWithCryptoVerdict(), respondWithForexVerdict(), respondWithFundVerdict(), respondWithMacroVerdict(), ClaimKind, collectClaimText() (+13 more)
+Cohesion: 0.13
+Nodes (30): GET(), respondWithCommodityVerdict(), respondWithCryptoVerdict(), respondWithForexVerdict(), respondWithFundVerdict(), respondWithMacroVerdict(), readPortfolioFacts(), ClaimKind (+22 more)
 
 ### Community 194 - "ic-thesis.ts"
-Cohesion: 0.24
-Nodes (8): Props, SymbolSearch(), GraphScopeSwitcher(), SCOPE_TABS, SCOPE_TABS, ScopeSwitcher(), GICS_SECTORS, TimelineScope
-
-### Community 195 - "StockFundamentals"
-Cohesion: 0.18
-Nodes (9): StatTile(), StatTileProps, StatTone, TONE_ACCENT, TONE_BORDER, TONE_TEXT, PRODUCT_TYPE_LABEL, StructuredProductPayoffCard() (+1 more)
-
-### Community 196 - "ComparePage"
-Cohesion: 0.20
-Nodes (9): commodityClass, metrics, COMMODITIES, COMMODITY_SECTORS, CommodityRef, CommoditySector, FUTURES_MONTH_CODES, GeopoliticalExposure (+1 more)
-
-### Community 197 - "macro-context-ladder.tsx"
-Cohesion: 0.22
-Nodes (8): MacroContextLadder(), Props, REC_CLASS, SECTOR_CLASS_STYLE, TREND_LABEL, IndiaSnapshot, AssetScore, Recommendation
+Cohesion: 0.13
+Nodes (15): Props, SymbolSearch(), Toast, ToastAction, ToastContext, ToastContextValue, ToastOptions, ToastType (+7 more)
 
 ### Community 198 - "mission-control.test.ts"
-Cohesion: 0.20
-Nodes (3): dbMocks, getQuotesMock, putScannerSnapshotMock
-
-### Community 199 - "route.ts"
-Cohesion: 0.36
-Nodes (7): DELETE(), GET(), PATCH(), POST(), addToWatchlist(), removeFromWatchlist(), updateWatchlistItem()
-
-### Community 200 - "task-registry.ts"
-Cohesion: 0.32
-Nodes (6): Complexity, LatencySensitivity, TASK_REGISTRY, TaskConfig, taskForAgentDomain(), tasks
+Cohesion: 0.15
+Nodes (6): OpportunitySnapshotCard, PortfolioAlert, PositionRecommendation, dbMocks, getQuotesMock, putScannerSnapshotMock
 
 ### Community 201 - "ScannerOpportunity"
-Cohesion: 0.25
-Nodes (5): OpportunityProfile, ScannerOpportunity, events, runPromptMock, sectorImpacts
-
-### Community 202 - "context.ts"
-Cohesion: 0.36
-Nodes (7): buildMarketContext(), dominantRating(), fetchFx(), RawProfile, ContextFundamentals, ContextQuote, portfolioSymbols()
+Cohesion: 0.11
+Nodes (18): DIR_STYLE, SectorRotationGrid(), OpportunityProfile, buildCompanyMatchPrompt(), buildCompanyOpportunities(), CompanyMatchRaw, getSectorVariants(), sanitizeMatch() (+10 more)
 
 ### Community 203 - "market-regime-banner.tsx"
-Cohesion: 0.33
-Nodes (7): POST(), buildMarketSummaryPrompt(), generateMarketSummary(), MacroSignal, macroSignals, regime, sectorRotation
-
-### Community 204 - "ollama.ts"
-Cohesion: 0.38
-Nodes (5): AiRequest, AnalysisInput, Filing, filings, quote
-
-### Community 206 - "StockMetrics"
-Cohesion: 0.47
-Nodes (3): EnrichedDataset, DatasetStatus, StockMetrics
+Cohesion: 0.15
+Nodes (20): GET(), PortfolioBrief, POST(), buildAuditEvidenceBlock(), buildBriefEvidenceSuffix(), formatSectorRotationEvidence(), formatWatchlistEvidence(), gatherPortfolioManagerEvidence() (+12 more)
 
 ### Community 207 - "fixtures.ts"
 Cohesion: 0.40
 Nodes (4): AAPL_EVIDENCE, GROUNDING_EVAL_CASES, GroundingEvalCase, RELIANCE_EVIDENCE
 
-### Community 208 - "scanner-pipeline.test.ts"
-Cohesion: 0.40
-Nodes (5): baseEvent(), causalEngineMock, enrichedEvent(), runPromptMock, sectorImpactMock
-
 ### Community 209 - "route.ts"
 Cohesion: 0.50
 Nodes (3): GET(), readScorecardSnapshot(), SNAPSHOT_PATH
 
-### Community 210 - "route.ts"
-Cohesion: 0.83
-Nodes (3): POST(), recordActivity(), isActivityKind()
-
 ## Knowledge Gaps
-- **1174 isolated node(s):** `AiInsightPanelProps`, `DARK`, `LIGHT`, `Item`, `DOT` (+1169 more)
+- **1165 isolated node(s):** `AiInsightPanelProps`, `DARK`, `LIGHT`, `Item`, `DOT` (+1160 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **8 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **7 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `err()` connect `route.ts` to `event-screener.test.ts`, `AIProvider`, `enrich.ts`, `types.ts`, `scanner-causal-engine.test.ts`, `route.ts`, `route.ts`, `types.ts`, `metrics-grid.tsx`, `ic-report.ts`, `verify_pipeline.py`?**
-  _High betweenness centrality (0.150) - this node is a cross-community bridge._
-- **Why does `formatCurrency()` connect `Quote` to `opportunity-engine.ts`, `formatCurrency`, `page.tsx`, `portfolio-performance.ts`, `route.ts`, `shareholding-chart.tsx`, `ai-portfolio-manager.ts`, `route.ts`, `brief-tab.tsx`, `page.tsx`, `ai-compare.ts`, `AIProvider`, `holdings-tab.tsx`, `getHistory`, `ic-agents.test.ts`, `route.ts`, `route.ts`, `metrics-grid.tsx`, `opportunity-detail-panel.tsx`, `response.ts`, `performance-panel.tsx`, `fixtures.ts`, `ai-research.ts`, `page.tsx`, `route.ts`, `ollama.ts`, `listPortfolio`, `valuation-history-chart.tsx`, `metrics-grid.tsx`?**
-  _High betweenness centrality (0.055) - this node is a cross-community bridge._
+- **Why does `err()` connect `route.ts` to `server.ts`, `event-screener.test.ts`, `AIProvider`, `types.ts`, `scanner-causal-engine.test.ts`, `route.ts`, `types.ts`, `metrics-grid.tsx`, `ic-report.ts`, `verify_pipeline.py`?**
+  _High betweenness centrality (0.135) - this node is a cross-community bridge._
+- **Why does `formatCurrency()` connect `Quote` to `opportunity-engine.ts`, `page.tsx`, `daily_run.py`, `route.ts`, `route.ts`, `page.tsx`, `AIProvider`, `holdings-tab.tsx`, `getHistory`, `route.ts`, `opportunity-detail-panel.tsx`, `fixtures.ts`, `ic-thesis.ts`, `ai-research.ts`, `page.tsx`, `route.ts`, `market-regime-banner.tsx`, `CompareEntry`, `ai.ts`, `metrics-grid.tsx`?**
+  _High betweenness centrality (0.042) - this node is a cross-community bridge._
 - **Why does `POST()` connect `route.ts` to `Quote`?**
-  _High betweenness centrality (0.039) - this node is a cross-community bridge._
+  _High betweenness centrality (0.032) - this node is a cross-community bridge._
 - **What connects `AiInsightPanelProps`, `DARK`, `LIGHT` to the rest of the system?**
-  _1305 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _1296 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `server.ts` be split into smaller, more focused modules?**
-  _Cohesion score 0.10931174089068826 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.08627450980392157 - nodes in this community are weakly interconnected._
 - **Should `index.ts` be split into smaller, more focused modules?**
   _Cohesion score 0.12307692307692308 - nodes in this community are weakly interconnected._
-- **Should `build_features` be split into smaller, more focused modules?**
-  _Cohesion score 0.1431451612903226 - nodes in this community are weakly interconnected._
+- **Should `opportunity-engine.ts` be split into smaller, more focused modules?**
+  _Cohesion score 0.08636977058029689 - nodes in this community are weakly interconnected._
