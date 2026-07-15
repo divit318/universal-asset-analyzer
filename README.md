@@ -67,6 +67,7 @@ you want those integrations live.
 
 | Module | Route | Purpose |
 |--------|-------|---------|
+| Home | `/` | Personalized daily dashboard — today's brief, recent activity, watchlist/market intel, sector rotation — composed from an independent module registry (`lib/home/registry.ts`, `app/_home/module-map.ts`) |
 | Research | `/research` | Deep research for any symbol; the page auto-detects asset class (equity, crypto, forex, commodity, fund/ETF, derivative) and renders the right module. `/research/india` covers India equities via screener.in |
 | Manual assets | `/research/manual` | Real estate, private markets, and other non-quoted assets tracked by hand |
 | Macro | `/research/macro` | Macro indicator dashboards |
@@ -89,12 +90,31 @@ estate/private markets) is centered on `lib/assets/` (the platform-wide asset
 registry — see `ARCHITECTURE.md`) and `lib/portfolio/` (the universal
 factor-based portfolio engine).
 
+## Landing page
+
+`/landing` is the public marketing experience — a story-driven page (hero →
+problem → solution → local-first privacy → features → interactive demo →
+comparison → pricing → FAQ → final CTA) built to become the future site root.
+It ships its own chrome (the authenticated app header is suppressed on this
+subtree) and is fully static, image-free, and dependency-free: repo design
+tokens, CSS-keyframe motion via a native `IntersectionObserver`, and a canned
+(no-network) demo.
+
+- Structure is data-driven from `app/landing/landing-config.ts` (`SECTIONS`);
+  each section is a component resolved by id in
+  `app/landing/_components/section-registry.tsx`.
+- **Migration path** — promoting `/landing` to `/` is routing-only: flip
+  `LANDING_HOME` / `APP_ENTRY` in `landing-config.ts` and the suppression
+  predicate in `app/_components/site-header.tsx`. No section component changes.
+- Specs: `e2e/landing.spec.ts`.
+
 ## Project structure
 
 ```
 app/            Next.js App Router — pages + API routes (app/api/*)
   _components/  Shared UI (used by 2+ modules)
   [module]/     Module pages + module-specific components
+  landing/      Public marketing page (/landing) — future site root
 lib/            Domain logic — market data, scoring, AI orchestration, DB
 lib/ai/         AI provider routing layer (router, orchestrator, task registry) — see lib/ai/ARCHITECTURE.md
 lib/assets/     Cross-asset-class registry (source of truth for all 7 asset classes)

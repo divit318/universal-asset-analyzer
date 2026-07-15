@@ -1,36 +1,32 @@
 "use client";
 
 /**
- * /intelligence — Mission Control, the personalized daily digest, with
- * Graph and Timeline kept as secondary "explore" destinations reached via
- * `?view=graph` / `?view=timeline` (preserving every existing deep-link from
- * Scanner, Portfolio, Research, Watchlist, and Compare).
+ * /intelligence — Graph and Timeline, the two exploration surfaces.
  *
- * This used to be a three-tab merge of Graph + Opportunity Map + Timeline
- * sharing only a focus-state context, not a data model — each tab was a
- * separate re-visualization of data already shown elsewhere (Opportunity Map
- * duplicated Scanner's own opportunity list with zero new analytical
- * content). Mission Control replaces that with a single composed digest
- * (lib/mission-control.ts) built from engines that already exist across the
- * app — portfolio health/alerts, Scanner opportunities, sector rotation,
- * decision-journal calibration, upcoming events — so this page finally
- * answers "what should I know/do today" instead of re-drawing data you can
- * already see on Scanner or Portfolio.
+ * Mission Control used to live here. It is now the homepage (see app/page.tsx):
+ * "what should I know and do right now" is the question a user has when they
+ * open the app, so it belongs on the page they open, not one click into it.
+ * Keeping a copy here would have given the same digest two homes and two
+ * fetch paths — which is the duplication this page was created to end, not to
+ * repeat.
  *
- * Graph remains genuinely differentiated (no other page visualizes entity
- * relationships) but is exploratory rather than a daily-habit surface, so it
- * — along with Timeline — is demoted to a secondary view instead of a
- * co-equal tab.
+ * Graph and Timeline stay because they are genuinely differentiated: nothing
+ * else visualizes entity relationships or a per-symbol event history. They are
+ * exploratory rather than daily-habit surfaces, which is exactly why they work
+ * as destinations rather than as a dashboard.
+ *
+ * Bare /intelligence redirects to the homepage. Every existing deep link
+ * (?view=graph / ?view=timeline, plus scope/id) from Scanner, Portfolio,
+ * Research, Watchlist and Compare continues to work unchanged.
  */
 
-import { Suspense, useCallback } from "react";
+import { Suspense, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { IntelligenceProvider, type IntelligenceView, type IntelligenceFocus } from "@/lib/intelligence/context";
 import type { GraphScope } from "@/lib/knowledge-graph";
 import { GraphView } from "./_views/graph-view";
 import { TimelineView } from "./_views/timeline-view";
-import { MissionControlView } from "./_views/mission-control-view";
 import { PageShell, PageHeader } from "@/app/_components/ui";
 
 const VALID_SCOPES: GraphScope[] = ["symbol", "sector", "portfolio", "watchlist"];
@@ -63,14 +59,16 @@ function IntelligencePageInner() {
     [router],
   );
 
+  // The digest this page used to render is now the homepage. Send bare
+  // /intelligence there rather than keeping a second copy of it alive.
+  useEffect(() => {
+    if (!secondaryView) router.replace("/");
+  }, [secondaryView, router]);
+
   if (!secondaryView) {
     return (
       <PageShell>
-        <PageHeader
-          title="Intelligence"
-          description="Your daily briefing — what changed, what needs attention, and what to do about it."
-        />
-        <MissionControlView />
+        <p className="py-12 text-center text-sm text-muted">Taking you to your dashboard…</p>
       </PageShell>
     );
   }
@@ -78,8 +76,8 @@ function IntelligencePageInner() {
   return (
     <PageShell>
       <div className="flex items-center gap-3">
-        <Link href="/intelligence" className="text-sm text-muted transition-colors hover:text-brand">
-          ← Back to Mission Control
+        <Link href="/" className="text-sm text-muted transition-colors hover:text-brand">
+          ← Back to dashboard
         </Link>
       </div>
       <PageHeader title={VIEW_LABEL[secondaryView]} />

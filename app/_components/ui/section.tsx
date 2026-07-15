@@ -97,7 +97,7 @@ export function Section<T>({
   return (
     <Card className={className}>
       {title ? (
-        <h2 className="mb-3 text-sm font-semibold text-fg">{title}</h2>
+        <h2 className="mb-3 text-sm font-semibold text-foreground">{title}</h2>
       ) : null}
       {content}
     </Card>
@@ -162,12 +162,12 @@ export function SectionSkeleton({ tier = 3 }: { tier?: SectionTier }) {
 function SectionError({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
     <div className="flex h-full flex-col items-start justify-center gap-2 py-4" role="status">
-      <p className="text-sm text-danger">{message}</p>
+      <p className="text-sm text-negative">{message}</p>
       {onRetry ? (
         <button
           type="button"
           onClick={onRetry}
-          className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-fg-muted transition-colors hover:border-border-strong hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+          className="rounded-control border border-border px-2.5 py-1 text-xs font-medium text-muted outline-none transition-colors hover:border-border-strong hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
         >
           Retry
         </button>
@@ -182,7 +182,7 @@ function SectionEmpty({ message }: { message: string }) {
   // it with "still loading" is one of the ways a research tool loses trust.
   return (
     <div className="flex h-full items-center justify-center py-6">
-      <p className="text-sm text-fg-subtle">{message}</p>
+      <p className="text-sm text-faint">{message}</p>
     </div>
   );
 }

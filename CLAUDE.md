@@ -120,6 +120,7 @@ The design philosophy is **transparency over convenience**: users see the resear
 
 | Module | Purpose | Key Files |
 |--------|---------|-----------|
+| **Home** (`/`) | Personalized daily dashboard composed from an independent module registry (today's brief, recent activity, watchlist/market intel, sector rotation). Adding a module never touches `app/page.tsx` — register it, map it, place it in the layout. | `lib/home/registry.ts`, `lib/home/layout.ts`, `app/_home/module-map.ts` |
 | **Research** (`/research`, `/research/india`) | Deep equity research: quote, history, filings, news, insider trades, copilot chat (persisted per session). India variant uses screener.in API. | `lib/ai-research.ts`, `lib/edgar.ts`, `lib/news.ts`, `lib/screener-in.ts` |
 | **Screener** (`/screener`) | Fundamental screening with 24h cached Yahoo data, live prices, composite scoring (value/quality/momentum). | `lib/fundamental-screener.ts`, `lib/composite.ts`, `lib/dataset.ts` |
 | **Scanner** (`/scanner`) | Event-driven signals: earnings surprises, insider transactions, technical breaks. | `lib/event-screener.ts`, `lib/indicators.ts` |
@@ -254,6 +255,8 @@ scanner_cache
 - **Charts**: Recharts for all interactive charts (line, multi-line, heatmap patterns).
 - **Typography**: Geist (sans-serif), Geist Mono (code/data).
 - **Accessibility**: Semantic HTML, focus rings, skip-to-content link in root layout.
+- **Theming mechanism**: `data-theme="dark" | "light"` attribute on `<html>`, set by `app/_components/theme.tsx`. Selectors are `:root, [data-theme="dark"]` and `[data-theme="light"]` — **not** a `.dark` class.
+- **Never run `npx shadcn init` (or any shadcn CLI command) in this repo.** It rewrites `app/globals.css`, appending a competing `:root {}` / `.dark {}` block that reuses the exact same token names UAA already owns (`--background`, `--foreground`, `--card`, `--muted`, `--muted-foreground`, `--accent`, `--border`, etc.). Because CSS resolves same-specificity custom properties by source order, its plain `:root {}` (unconditional) silently wins over UAA's `[data-theme="dark"]` block regardless of theme, while its `.dark {}` companion never fires at all (nothing here ever sets a `.dark` class) — producing app-wide near-invisible text with zero build or lint errors. It also creates `components.json`, `components/ui/*`, `lib/utils.ts`, and pulls in an unrelated dependency tree (three.js, framer-motion-adjacent `motion`, cmdk, base-ui). This exact failure mode shipped once (2026-07-15); the fix was `git checkout -- app/globals.css package.json package-lock.json` + deleting the shadcn scaffold + `npm install`. If a shadcn component is ever genuinely wanted, hand-port only the component file and manually map its classes onto UAA's existing tokens — do not run `init`.
 
 ---
 

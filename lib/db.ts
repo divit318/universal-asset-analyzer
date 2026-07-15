@@ -190,6 +190,20 @@ function getDb(): DatabaseSync {
       updated_at  TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_saved_screen_class ON saved_screen (asset_class);
+
+    -- "Continue where you left off". One row per (kind, ref) — revisiting a
+    -- symbol bumps its timestamp rather than appending, so the list stays a set
+    -- of *places* the user has been, not a raw event log that fills with twenty
+    -- consecutive AAPL views.
+    CREATE TABLE IF NOT EXISTS activity (
+      kind  TEXT NOT NULL,
+      ref   TEXT NOT NULL,
+      label TEXT NOT NULL,
+      href  TEXT NOT NULL,
+      at    TEXT NOT NULL,
+      PRIMARY KEY (kind, ref)
+    );
+    CREATE INDEX IF NOT EXISTS idx_activity_at ON activity (at DESC);
   `);
   // Migrate existing watchlist rows: add new columns if the DB predates them
   for (const col of ["target_price REAL", "alert_pct_drop REAL", "notes TEXT"]) {
@@ -1582,4 +1596,50 @@ export function prunePlatformCache(now = Date.now()): number {
     .prepare("DELETE FROM platform_cache WHERE expires_at < ?")
     .run(now);
   return Number(result.changes ?? 0);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Activity — "Continue where you left off" (home Module 10)                   */
+/* -------------------------------------------------------------------------- */
+
+interface ActivityRow {
+  kind: string;
+  ref: string;
+  label: string;
+  href: string;
+  at: string;
+}
+
+/**
+ * Records that the user visited something. Upserts on (kind, ref): a second
+ * visit to the same research page moves it to the top of the list rather than
+ * adding a duplicate entry.
+ *
+ * Deliberately fire-and-forget at the call site — a failure to log a visit must
+ * never break the page the user is actually trying to read.
+ */
+export function recordActivity(input: {
+  kind: string;
+  ref: string;
+  label: string;
+  href: string;
+}): void {
+  getDb()
+    .prepare(
+      `INSERT INTO activity (kind, ref, label, href, at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(kind, ref) DO UPDATE SET label = excluded.label, href = excluded.href, at = excluded.at`,
+    )
+    .run(input.kind, input.ref, input.label, input.href, new Date().toISOString());
+
+  // Keep the table bounded. The homepage shows a handful; nobody is served by
+  // an unbounded history, and this is cheaper than a scheduled prune.
+  getDb().prepare(
+    `DELETE FROM activity WHERE rowid NOT IN (SELECT rowid FROM activity ORDER BY at DESC LIMIT 50)`,
+  ).run();
+}
+
+export function listActivity(limit = 6): ActivityRow[] {
+  return getDb()
+    .prepare("SELECT kind, ref, label, href, at FROM activity ORDER BY at DESC LIMIT ?")
+    .all(limit) as unknown as ActivityRow[];
 }

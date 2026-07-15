@@ -26,6 +26,7 @@ import { detectMarket, MARKET_BADGE, MARKET_LABEL, type MarketRegion } from "@/l
 import { detectAssetClass } from "@/lib/asset-class";
 import { useResearchBundle } from "@/lib/platform/client/use-research-bundle";
 import { useDataset, useDatasetValue } from "@/lib/platform/client/use-dataset";
+import { useRecordActivity } from "@/app/_home/use-record-activity";
 import {
   formatCompact,
   formatCurrency,
@@ -1447,6 +1448,19 @@ function ResearchPageInner() {
   const sectorEntry = useDatasetValue<{ etf: string | null; history: HistoryPoint[] }>("sectorHistory", activeSymbol);
   const filingsEntry = useDatasetValue<Filing[]>("filings", activeSymbol);
   const newsEntry = useDatasetValue<NewsItem[]>("news", activeSymbol);
+
+  // Feeds the homepage's "Continue where you left off". Recorded only once the
+  // quote resolves, so a mistyped ticker never lands in the user's history.
+  useRecordActivity(
+    activeSymbol && quoteEntry.data
+      ? {
+          kind: "research",
+          ref: activeSymbol,
+          label: `${activeSymbol} — ${quoteEntry.data.name}`,
+          href: `/research?symbol=${encodeURIComponent(activeSymbol)}`,
+        }
+      : null,
+  );
 
   // ResearchData is assembled from whatever has arrived so far. Sections that
   // are still in flight are simply absent, and fill in as they land.
