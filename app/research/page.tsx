@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TrendingUp, TrendingDown, Clock3, Network, Link2, Bookmark } from "lucide-react";
 import type {
   FundamentalsData,
@@ -14,6 +14,7 @@ import type {
   TimelineEvent,
 } from "@/lib/types";
 import type { InvestmentVerdict } from "@/app/api/ai/verdict/route";
+import type { ChartQARelatedTarget } from "@/lib/ai-chart-qa";
 import type { ScreenerInCompany, ScreenerInPeer } from "@/lib/screener-in";
 import { detectMarket, MARKET_BADGE, MARKET_LABEL, type MarketRegion } from "@/lib/market";
 import {
@@ -29,6 +30,8 @@ import {
 import { DownloadIcon } from "./_components/download-icon";
 import { SymbolSearch } from "@/app/_components/symbol-search";
 import { ResearchCopilot } from "./_components/copilot/research-copilot";
+import type { AskAIPayload } from "./_components/pattern-analysis-panel";
+import { RESEARCH_ACTIONS } from "@/lib/ai/actions";
 import { ResearchNotes } from "./_components/research-notes";
 import { DecisionHero } from "./_components/decision-hero";
 import { MovementExplainerCard } from "@/app/_components/movement-explainer-card";
@@ -219,6 +222,41 @@ function ResearchWorkspace({
   // Movement Explainer result, lifted up so WhyNowCard can reuse the top
   // driver without a second fetch.
   const [movementExplanation, setMovementExplanation] = useState<MovementExplanation | null>(null);
+
+  // A question queued by the candlestick chart's "Ask AI" / "Technical
+  // Analysis" quick actions — consumed once by ResearchCopilot's own
+  // useEffect, which auto-sends it and clears this back to null.
+  const [pendingCopilotAsk, setPendingCopilotAsk] = useState<AskAIPayload | null>(null);
+  const copilotSectionRef = useRef<HTMLDivElement>(null);
+
+  const handleChartAskAI = useCallback((payload: AskAIPayload) => {
+    setTab("details");
+    setPendingCopilotAsk(payload);
+    requestAnimationFrame(() =>
+      copilotSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    );
+  }, [setTab, setPendingCopilotAsk]);
+
+  const handleOpenTechnical = useCallback(() => {
+    const action = RESEARCH_ACTIONS.find((a) => a.id === "technical");
+    if (!action) return;
+    handleChartAskAI({ question: action.instruction, action: action.id, label: action.label });
+  }, [handleChartAskAI]);
+
+  // The fullscreen AI dock's "Related Context" navigation — "earnings"/"analysis"
+  // just switch tabs (both already render at the top of their content, so no
+  // scroll target is needed there); "copilot" reuses handleChartAskAI exactly,
+  // since that's the same "ask a question and jump to the Details tab" mechanism.
+  const handleChartNavigate = useCallback(
+    (target: ChartQARelatedTarget, payload?: AskAIPayload) => {
+      if (target === "copilot" && payload) {
+        handleChartAskAI(payload);
+        return;
+      }
+      setTab(target === "earnings" ? "financials" : "analysis");
+    },
+    [handleChartAskAI, setTab],
+  );
 
   // Most recent Timeline milestone, populated once TimelinePreviewCard (Details
   // tab) has loaded — lets WhyNowCard cite it without a second fetch.
@@ -591,6 +629,10 @@ function ResearchWorkspace({
         symbol={quote.symbol}
         history={history}
         benchmarks={benchmarks ?? { spy: [], sectorEtf: null, sector: [] }}
+        news={news}
+        onAskAI={handleChartAskAI}
+        onOpenTechnical={handleOpenTechnical}
+        onNavigate={handleChartNavigate}
       />
 
       {/* ── 5b. Explain Every Movement — auto-loads (single instance on this page) ── */}
@@ -916,7 +958,16 @@ function ResearchWorkspace({
           )}
 
           {/* AI Copilot */}
-          <ResearchCopilot symbol={quote.symbol} name={quote.name} isEquity={isEquity} portfolioContext={portfolioContextForAI} />
+          <div ref={copilotSectionRef}>
+            <ResearchCopilot
+              symbol={quote.symbol}
+              name={quote.name}
+              isEquity={isEquity}
+              portfolioContext={portfolioContextForAI}
+              pendingAsk={pendingCopilotAsk}
+              onPendingAskHandled={() => setPendingCopilotAsk(null)}
+            />
+          </div>
 
           {/* User notes */}
           <ResearchNotes symbol={quote.symbol} />

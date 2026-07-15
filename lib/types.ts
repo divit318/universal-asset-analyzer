@@ -118,6 +118,17 @@ export interface ResearchNote {
   createdAt: string; // ISO timestamp
 }
 
+/** A persisted chart drawing row. `data` is a JSON-serialized DrawingObject payload (points/style/locked/hidden/metadata) — see app/research/_components/chart-workspace/types.ts. */
+export interface ChartDrawingRecord {
+  id: number;
+  symbol: string;
+  timeframe: string;
+  type: string;
+  data: string;
+  createdAt: number; // Unix ms
+  updatedAt: number; // Unix ms
+}
+
 export interface PortfolioPosition {
   symbol: string;
   name: string;
@@ -1042,6 +1053,80 @@ export interface TimelineFilters {
   relatedMetric?: string;
   catalystOnly?: boolean;
   openThesisOnly?: boolean;
+}
+
+/**
+ * The fullscreen chart workspace's AI dock context — everything needed to
+ * answer one free-text question about the current chart state. Built fresh
+ * client-side on every submit (see
+ * app/research/_components/chart-workspace/build-chart-context.ts) and never
+ * persisted or cached, since a free-text question isn't a stable cache key.
+ * Deliberately plain/JSON-serializable and free of any chart-workspace UI
+ * types (DrawingToolId/DrawingStyle live under app/, and lib/ never imports
+ * from app/) — the drawing-specific fields below are structurally
+ * equivalent, just typed with plain strings instead of those unions.
+ */
+export type ChartQASelectionKind = "overview" | "drawing" | "pattern" | "candle";
+
+export interface ChartQACandle {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number | null;
+}
+
+export interface ChartQASelection {
+  kind: ChartQASelectionKind;
+  /** The context-indicator text, e.g. "Chart Overview", "Trend Line", "Pattern · Bullish Engulfing", "Candle". */
+  label: string;
+  /** Present only when kind === "drawing". */
+  drawing?: {
+    type: string;
+    points: { timestamp: number; value: number }[];
+    style: { color: string; opacity: number; thickness: number; lineStyle: string; textSize: number };
+  };
+  /** Present only when kind === "pattern". Structurally matches lib/pattern-signals.ts's TechnicalSignal — not
+   *  imported directly to avoid a circular import (pattern-signals.ts already imports HistoryPoint from here). */
+  signal?: {
+    name: string;
+    direction: "bullish" | "bearish" | "neutral";
+    description: string;
+    date: string;
+    confidence: number;
+    confirmations: { label: string; detail: string }[];
+  };
+  /** Present when kind === "pattern" or "candle" — the hovered bar's OHLCV. */
+  candle?: ChartQACandle;
+}
+
+export interface ChartQAOtherDrawing {
+  type: string;
+  label: string;
+}
+
+export interface ChartQANewsItem {
+  headline: string;
+  source: string;
+  publishedAt: string;
+}
+
+export interface ChartQAContext {
+  symbol: string;
+  periodKey: string;
+  candleInterval: string;
+  indicatorsEnabled: string[];
+  visibleCandleCount: number;
+  visibleDateRange: { from: string; to: string };
+  visiblePriceRange: { low: number; high: number };
+  /** Deterministic, e.g. "+12.4% over the visible range; price above SMA50 and SMA200". */
+  trendSummary: string;
+  /** Deterministic, e.g. "latest bar 1.4x its 20-bar average volume". */
+  volumeSummary: string;
+  selection: ChartQASelection;
+  otherDrawings: ChartQAOtherDrawing[];
+  nearbyNews: ChartQANewsItem[];
 }
 
 export interface TimelineFeed {

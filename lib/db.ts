@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import type { PortfolioPosition, PortfolioLot, ResearchNote, StockFundamentals, WatchlistItem, SectorRotationEntry, TimelineEvent, Notification, Decision, DecisionAction, DecisionHorizon } from "./types";
+import type { ChartDrawingRecord, PortfolioPosition, PortfolioLot, ResearchNote, StockFundamentals, WatchlistItem, SectorRotationEntry, TimelineEvent, Notification, Decision, DecisionAction, DecisionHorizon } from "./types";
 import { aggregateOpenPositions } from "./portfolio-lots";
 import type { AlertEvent } from "./alerts";
 
@@ -133,6 +133,17 @@ function getDb(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS idx_decision_symbol ON decision (symbol);
     CREATE INDEX IF NOT EXISTS idx_decision_created ON decision (created_at DESC);
+    CREATE TABLE IF NOT EXISTS chart_drawing (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      symbol     TEXT NOT NULL,
+      timeframe  TEXT NOT NULL,
+      type       TEXT NOT NULL,
+      data       TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_chart_drawing_scope
+      ON chart_drawing (symbol, timeframe);
   `);
   // Migrate existing watchlist rows: add new columns if the DB predates them
   for (const col of ["target_price REAL", "alert_pct_drop REAL", "notes TEXT"]) {
@@ -259,6 +270,80 @@ export function addNote(symbol: string, content: string): ResearchNote {
 
 export function deleteNote(id: number): void {
   getDb().prepare("DELETE FROM research_notes WHERE id = ?").run(id);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Chart drawings — persisted trend lines, Fibonacci, pitchforks, etc.        */
+/* Scoped by exact (symbol, timeframe); `data` is the JSON-serialized         */
+/* DrawingObject payload (points/style/locked/hidden/metadata).              */
+/* -------------------------------------------------------------------------- */
+
+interface ChartDrawingRow {
+  id: number;
+  symbol: string;
+  timeframe: string;
+  type: string;
+  data: string;
+  created_at: number;
+  updated_at: number;
+}
+
+function mapChartDrawingRow(r: ChartDrawingRow): ChartDrawingRecord {
+  return {
+    id: r.id,
+    symbol: r.symbol,
+    timeframe: r.timeframe,
+    type: r.type,
+    data: r.data,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+export function listChartDrawings(symbol: string, timeframe: string): ChartDrawingRecord[] {
+  const rows = getDb()
+    .prepare(
+      "SELECT id, symbol, timeframe, type, data, created_at, updated_at FROM chart_drawing WHERE symbol = ? AND timeframe = ? ORDER BY id ASC",
+    )
+    .all(symbol.toUpperCase(), timeframe) as unknown as ChartDrawingRow[];
+  return rows.map(mapChartDrawingRow);
+}
+
+export function insertChartDrawing(
+  symbol: string,
+  timeframe: string,
+  type: string,
+  data: string,
+): ChartDrawingRecord {
+  const now = Date.now();
+  const result = getDb()
+    .prepare(
+      "INSERT INTO chart_drawing (symbol, timeframe, type, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .run(symbol.toUpperCase(), timeframe, type, data, now, now) as unknown as { lastInsertRowid: number };
+  return {
+    id: Number(result.lastInsertRowid),
+    symbol: symbol.toUpperCase(),
+    timeframe,
+    type,
+    data,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export function updateChartDrawing(id: number, data: string): void {
+  getDb().prepare("UPDATE chart_drawing SET data = ?, updated_at = ? WHERE id = ?").run(data, Date.now(), id);
+}
+
+export function deleteChartDrawing(id: number): void {
+  getDb().prepare("DELETE FROM chart_drawing WHERE id = ?").run(id);
+}
+
+export function clearChartDrawings(symbol: string, timeframe: string): void {
+  getDb()
+    .prepare("DELETE FROM chart_drawing WHERE symbol = ? AND timeframe = ?")
+    .run(symbol.toUpperCase(), timeframe);
 }
 
 /* -------------------------------------------------------------------------- */

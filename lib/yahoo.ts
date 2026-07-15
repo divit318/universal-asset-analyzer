@@ -66,12 +66,28 @@ interface RawChartQuote {
 
 /** Map raw chart rows into clean history points, dropping gaps. Pure. */
 export function mapHistory(rows: RawChartQuote[]): HistoryPoint[] {
+  return mapHistoryRows(rows, (d) => d.toISOString().slice(0, 10));
+}
+
+/**
+ * Same mapping as `mapHistory`, but keeps the full ISO timestamp instead of
+ * truncating to a bare `YYYY-MM-DD`. Daily bars only need calendar-day
+ * granularity, but intraday bars (5m/15m/30m/60m) need their time-of-day
+ * preserved — truncating it collapses every bar in a trading day onto the
+ * same date-only string, which is why the chart's x-axis and crosshair panel
+ * used to show an identical time for every intraday candle.
+ */
+export function mapIntradayHistory(rows: RawChartQuote[]): HistoryPoint[] {
+  return mapHistoryRows(rows, (d) => d.toISOString());
+}
+
+function mapHistoryRows(rows: RawChartQuote[], formatDate: (d: Date) => string): HistoryPoint[] {
   return rows
     .filter((r): r is { date: Date | string; close: number; open?: number | null; high?: number | null; low?: number | null; adjclose?: number | null; volume?: number | null } =>
       r.close != null && r.date != null,
     )
     .map((r) => ({
-      date: new Date(r.date).toISOString().slice(0, 10),
+      date: formatDate(new Date(r.date)),
       close: r.close,
       adjClose: r.adjclose ?? r.close,
       ...(r.open != null ? { open: r.open } : {}),
@@ -234,6 +250,78 @@ export async function getHistory(
     return data;
   } catch {
     // History is best-effort; an empty series still lets the page render.
+    return [];
+  }
+}
+
+/** Intraday intervals this app actually offers (see the chart workspace's Candle Interval control). */
+export type IntradayInterval = "5m" | "15m" | "30m" | "60m";
+
+/**
+ * In-memory TTL cache for intraday bars — separate from `historyCache` since
+ * intraday data goes stale far faster than daily bars (a few minutes, not a
+ * full trading day).
+ */
+const INTRADAY_TTL_MS = 2 * 60 * 1000;
+const INTRADAY_CACHE_MAX = 100;
+const intradayCache = new Map<string, { at: number; data: HistoryPoint[] }>();
+
+/**
+ * Yahoo's real retention window per intraday interval. Confirmed empirically
+ * (not documented anywhere): requesting a `period1` beyond this window doesn't
+ * truncate to what's available — it silently returns a fully EMPTY series. So
+ * unlike `getHistory`, this can't "return whatever it actually has"; the
+ * request has to be clamped to a known-good window before it's sent.
+ * 5m/15m/30m cut off at exactly 60 days (61 already returns 0 bars); 60m
+ * showed no failure up to 730 days in testing, so 730 is used as a verified-
+ * safe cap rather than a guessed limit.
+ */
+const INTRADAY_MAX_DAYS: Record<IntradayInterval, number> = {
+  "5m": 60,
+  "15m": 60,
+  "30m": 60,
+  "60m": 730,
+};
+
+export function intradayRetentionDays(interval: IntradayInterval): number {
+  return INTRADAY_MAX_DAYS[interval];
+}
+
+/**
+ * Real intraday history from Yahoo (5m/15m/30m/60m — confirmed supported by
+ * yahoo-finance2's chart() interval enum). `rangeDays` is clamped to Yahoo's
+ * actual retention window for the interval (see INTRADAY_MAX_DAYS) so a
+ * request for more history than exists degrades to the max available window
+ * instead of silently coming back empty.
+ */
+export async function getIntradayHistory(
+  symbol: string,
+  interval: IntradayInterval,
+  rangeDays: number,
+): Promise<HistoryPoint[]> {
+  const clampedDays = Math.min(rangeDays, INTRADAY_MAX_DAYS[interval]);
+  const key = `${symbol.toUpperCase()}:${interval}:${clampedDays}`;
+  const hit = intradayCache.get(key);
+  if (hit && Date.now() - hit.at < INTRADAY_TTL_MS) return hit.data;
+
+  try {
+    const period1 = new Date();
+    period1.setDate(period1.getDate() - clampedDays);
+    const result = (await yahooFinance.chart(symbol, {
+      period1,
+      interval,
+    } as unknown as Parameters<typeof yahooFinance.chart>[1])) as { quotes?: RawChartQuote[] };
+    const data = mapIntradayHistory(result?.quotes ?? []);
+    if (data.length > 0) {
+      if (intradayCache.size >= INTRADAY_CACHE_MAX) {
+        const oldest = intradayCache.keys().next().value;
+        if (oldest !== undefined) intradayCache.delete(oldest);
+      }
+      intradayCache.set(key, { at: Date.now(), data });
+    }
+    return data;
+  } catch {
+    // Best-effort, same as getHistory — an empty series still lets the chart render.
     return [];
   }
 }

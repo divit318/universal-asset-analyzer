@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import {
   Bar,
   BarChart,
@@ -13,13 +14,11 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { HistoryPoint } from "@/lib/types";
-import {
-  buildTechnicalSummary,
-  calcSma,
-  type CandlePattern,
-} from "@/lib/indicators";
+import type { HistoryPoint, NewsItem } from "@/lib/types";
+import { buildTechnicalSummary, calcSma, type CandlePattern } from "@/lib/indicators";
+import { buildTechnicalSignals, type TechnicalSignal } from "@/lib/pattern-signals";
 import { useChartTheme, type ChartTheme } from "@/app/_components/chart-theme";
+import { PatternAnalysisPanel, type AskAIPayload } from "./pattern-analysis-panel";
 
 /* -------------------------------------------------------------------------- */
 /* Categorical overlay colors — theme-neutral (legible on light & dark).      */
@@ -58,8 +57,14 @@ interface CandleData {
 }
 
 export interface CandleChartProps {
+  symbol: string;
   history: HistoryPoint[];
   since: string;
+  /** Display label for the current period selector (e.g. "6M") — read-only in the Analysis Panel. */
+  periodLabel?: string;
+  news?: NewsItem[];
+  onAskAI?: (payload: AskAIPayload) => void;
+  onOpenTechnical?: () => void;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -99,6 +104,11 @@ function fmtAxisDate(date: string, count: number): string {
 /* From y, height, close, and the known y-axis domain [yMin, yMax] we can    */
 /* derive the pixel y-position for any other price:                           */
 /*   toY(p) = y + height * (1 − (p − yMin) / (close − yMin))                */
+/*                                                                            */
+/* `indexOffset` translates a rendered-data-local index back into full        */
+/* priceData space so `patternMap` lookups stay correct while zoomed (the     */
+/* shape function only ever sees the index within whatever `data` array was  */
+/* actually passed to the chart — `displayData`, which may be a zoomed slice) */
 /* -------------------------------------------------------------------------- */
 
 interface BarShapeProps {
@@ -117,6 +127,8 @@ function makeCandleShape(
   yMax: number,
   patternMap: Map<number, CandlePattern[]>,
   colors: CandleColors,
+  indexOffset: number,
+  focusRange: { start: number; end: number } | null,
 ) {
   const { positive: POSITIVE, negative: NEGATIVE, axis: AXIS } = colors;
   return function CandleBarShape(props: BarShapeProps) {
@@ -147,13 +159,17 @@ function makeCandleShape(
     // Candle body is 70% of bar width, min 1px each side
     const halfW = Math.max(Math.floor(width * 0.35), 1);
 
-    const pats = index != null ? (patternMap.get(index) ?? []) : [];
+    const globalIndex = index != null ? index + indexOffset : null;
+    const pats = globalIndex != null ? (patternMap.get(globalIndex) ?? []) : [];
     const hasBullish = pats.some((p) => p.direction === "bullish");
     const hasBearish = pats.some((p) => p.direction === "bearish");
     const hasNeutral = !hasBullish && !hasBearish && pats.some((p) => p.direction === "neutral");
 
+    const dimmed = focusRange != null && index != null && (index < focusRange.start || index > focusRange.end);
+    const opacity = dimmed ? 0.25 : 1;
+
     return (
-      <g>
+      <g opacity={opacity}>
         {/* High-to-Low wick */}
         <line x1={cx} y1={yH} x2={cx} y2={yL} stroke={color} strokeWidth={1} />
         {/* Open-to-Close body */}
@@ -300,7 +316,15 @@ function MacdTooltip({ active, payload, label, ct }: {
 /* Main CandleChart component                                                  */
 /* -------------------------------------------------------------------------- */
 
-export function CandleChart({ history, since }: CandleChartProps) {
+export function CandleChart({
+  symbol,
+  history,
+  since,
+  periodLabel,
+  news,
+  onAskAI = () => {},
+  onOpenTechnical = () => {},
+}: CandleChartProps) {
   const ct = useChartTheme();
   const AXIS = ct.axis;
   const GRID = ct.grid;
@@ -312,6 +336,28 @@ export function CandleChart({ history, since }: CandleChartProps) {
   const [showBB, setShowBB] = useState(false);
   const [showRsi, setShowRsi] = useState(true);
   const [showMacd, setShowMacd] = useState(false);
+
+  // The pattern the user clicked in "Key Technical Signals" — drives the
+  // transient zoom/highlight overlay. Independent of `since` (the user's
+  // chosen period), which is never touched by this interaction.
+  const [focusedSignal, setFocusedSignal] = useState<TechnicalSignal | null>(null);
+
+  // Changing the period always clears any active focus — the overlay
+  // shouldn't survive the user picking a different window.
+  useEffect(() => {
+    /* eslint-disable-next-line react-hooks/set-state-in-effect */
+    setFocusedSignal(null);
+  }, [since]);
+
+  // Escape clears focus too.
+  useEffect(() => {
+    if (!focusedSignal) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFocusedSignal(null);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [focusedSignal]);
 
   // Compute all indicators over the full history (correct EMA/RSI warm-up)
   const { rsi: fullRsi, macd: fullMacd, bb: fullBb } = useMemo(
@@ -335,26 +381,31 @@ export function CandleChart({ history, since }: CandleChartProps) {
 
   const hasOhlc = sliced.some((p) => p.open != null && p.high != null && p.low != null);
 
-  // Detect patterns over full history; keep those in visible window
-  const allPatterns = useMemo(() => buildTechnicalSummary(history).patterns, [history]);
-  const visiblePatterns = useMemo(
+  // Curated technical signals over the FULL history (absolute index) — used
+  // for historical-similar-setups stats, which compare across all history,
+  // not just the visible window.
+  const allSignals = useMemo(() => buildTechnicalSignals(history), [history]);
+
+  // Re-indexed to the visible/sliced window — used for the chart markers,
+  // the "Key Technical Signals" list, and click targeting.
+  const visibleSignals = useMemo(
     () =>
-      allPatterns
-        .filter((p) => p.index >= fullStart)
-        .map((p) => ({ ...p, index: p.index - fullStart })),
-    [allPatterns, fullStart],
+      allSignals
+        .filter((s) => s.index >= fullStart)
+        .map((s) => ({ ...s, index: s.index - fullStart })),
+    [allSignals, fullStart],
   );
 
   // Build index → patterns lookup for the shape renderer
   const patternMap = useMemo(() => {
     const m = new Map<number, CandlePattern[]>();
-    for (const pat of visiblePatterns) {
-      const arr = m.get(pat.index) ?? [];
-      arr.push(pat);
-      m.set(pat.index, arr);
+    for (const sig of visibleSignals) {
+      const arr = m.get(sig.index) ?? [];
+      arr.push(sig);
+      m.set(sig.index, arr);
     }
     return m;
-  }, [visiblePatterns]);
+  }, [visibleSignals]);
 
   // Build chart data aligned to the sliced window
   const priceData: CandleData[] = useMemo(
@@ -387,29 +438,68 @@ export function CandleChart({ history, since }: CandleChartProps) {
   const hasRsiData = priceData.some((d) => d.rsi != null);
   const count = priceData.length;
 
-  // Y-axis domain with 3% padding so wicks and pattern markers stay in view
-  const yMin = useMemo(() => Math.min(...priceData.map((d) => d.low)) * 0.97, [priceData]);
-  const yMax = useMemo(() => Math.max(...priceData.map((d) => d.high)) * 1.03, [priceData]);
+  // Transient zoom window — layered on top of `since`, cleared automatically
+  // when the period changes or when focus is cleared. Padding is a fixed
+  // context window around the pattern's own span (tunable per pattern).
+  const zoomDomain = useMemo(() => {
+    if (!focusedSignal) return null;
+    const idx = focusedSignal.index;
+    if (idx < 0 || idx >= priceData.length) return null;
+    const pad = 8;
+    const start = Math.max(0, idx - focusedSignal.span + 1 - pad);
+    const end = Math.min(priceData.length - 1, idx + pad);
+    return { start, end };
+  }, [focusedSignal, priceData.length]);
+
+  const displayData = useMemo(
+    () => (zoomDomain ? priceData.slice(zoomDomain.start, zoomDomain.end + 1) : priceData),
+    [priceData, zoomDomain],
+  );
+
+  // The candle span the pattern actually covers, in displayData-local index
+  // space — everything else in the zoomed view dims.
+  const focusRange = useMemo(() => {
+    if (!focusedSignal || !zoomDomain) return null;
+    const highlightEnd = focusedSignal.index - zoomDomain.start;
+    const highlightStart = highlightEnd - focusedSignal.span + 1;
+    return {
+      start: Math.max(0, highlightStart),
+      end: Math.min(displayData.length - 1, highlightEnd),
+    };
+  }, [focusedSignal, zoomDomain, displayData.length]);
+
+  // Y-axis domain with 3% padding so wicks and pattern markers stay in view.
+  // Derived from displayData so a zoomed view gets a tighter, more legible
+  // domain (identical to the full domain when not zoomed, since
+  // displayData === priceData in that case).
+  const yMin = useMemo(() => Math.min(...displayData.map((d) => d.low)) * 0.97, [displayData]);
+  const yMax = useMemo(() => Math.max(...displayData.map((d) => d.high)) * 1.03, [displayData]);
 
   // Memoize the shape renderer so it only regenerates when domain or patterns change
   const candleShape = useMemo(
-    () => makeCandleShape(yMin, yMax, patternMap, { positive: POSITIVE, negative: NEGATIVE, axis: AXIS }),
-    [yMin, yMax, patternMap, POSITIVE, NEGATIVE, AXIS],
+    () =>
+      makeCandleShape(
+        yMin,
+        yMax,
+        patternMap,
+        { positive: POSITIVE, negative: NEGATIVE, axis: AXIS },
+        zoomDomain?.start ?? 0,
+        focusRange,
+      ),
+    [yMin, yMax, patternMap, POSITIVE, NEGATIVE, AXIS, zoomDomain, focusRange],
   );
 
-  // Recent unique patterns (last 20 candles, deduplicated by name)
-  const recentPatterns = useMemo(() => {
-    const seen = new Set<string>();
-    return [...visiblePatterns]
-      .filter((p) => p.index >= priceData.length - 20)
-      .reverse()
-      .filter((p) => {
-        if (seen.has(p.name)) return false;
-        seen.add(p.name);
-        return true;
-      })
-      .slice(0, 6);
-  }, [visiblePatterns, priceData.length]);
+  // Key Technical Signals — the curated, confidence-scored list (already
+  // filtered + sorted most-recent-first by buildTechnicalSignals). Capped for
+  // compactness; unlike the old dedup-by-name cap, distinct occurrences of the
+  // same pattern at different dates are each meaningful and kept.
+  const keySignals = useMemo(() => visibleSignals.slice(0, 8), [visibleSignals]);
+
+  function handleSignalClick(sig: TechnicalSignal) {
+    setFocusedSignal((prev) =>
+      prev && prev.name === sig.name && prev.date === sig.date ? null : sig,
+    );
+  }
 
   if (sliced.length < 2) {
     return (
@@ -455,6 +545,17 @@ export function CandleChart({ history, since }: CandleChartProps) {
             {label}
           </button>
         ))}
+        {focusedSignal && (
+          <>
+            <span className="h-4 w-px bg-border" />
+            <button
+              onClick={() => setFocusedSignal(null)}
+              className="rounded px-2.5 py-1 text-xs font-medium text-brand transition-colors hover:bg-surface-2"
+            >
+              ✕ Clear focus
+            </button>
+          </>
+        )}
       </div>
 
       {/* ── OHLC warning ─────────────────────────────────────────────────── */}
@@ -465,87 +566,94 @@ export function CandleChart({ history, since }: CandleChartProps) {
       )}
 
       {/* ── Main candlestick chart ───────────────────────────────────────── */}
-      <ResponsiveContainer width="100%" height={300}>
-        <ComposedChart
-          data={priceData}
-          margin={{ top: 8, right: 4, left: 0, bottom: 0 }}
-          syncId="uaa-candle"
-          barCategoryGap="10%"
-        >
-          <CartesianGrid stroke={GRID} vertical={false} />
-          <XAxis
-            dataKey="date"
-            stroke={AXIS}
-            tick={{ fontSize: 11, fill: AXIS }}
-            tickLine={false}
-            axisLine={false}
-            tickFormatter={(d) => fmtAxisDate(d, count)}
-            minTickGap={48}
-          />
-          <YAxis
-            stroke={AXIS}
-            tick={{ fontSize: 11, fill: AXIS }}
-            tickLine={false}
-            axisLine={false}
-            tickFormatter={fmtPrice}
-            width={56}
-            domain={[yMin, yMax]}
-          />
-          <Tooltip
-            content={
-              <CandleTooltip
-                showSma50={showSma50}
-                showSma200={showSma200}
-                showBB={showBB}
-                ct={ct}
-              />
-            }
-          />
+      <motion.div
+        key={focusedSignal ? `${focusedSignal.name}-${focusedSignal.date}` : "full"}
+        initial={{ opacity: 0.4, scale: 0.98 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.35, ease: "easeOut" }}
+      >
+        <ResponsiveContainer width="100%" height={300}>
+          <ComposedChart
+            data={displayData}
+            margin={{ top: 8, right: 4, left: 0, bottom: 0 }}
+            syncId="uaa-candle"
+            barCategoryGap="10%"
+          >
+            <CartesianGrid stroke={GRID} vertical={false} />
+            <XAxis
+              dataKey="date"
+              stroke={AXIS}
+              tick={{ fontSize: 11, fill: AXIS }}
+              tickLine={false}
+              axisLine={false}
+              tickFormatter={(d) => fmtAxisDate(d, count)}
+              minTickGap={48}
+            />
+            <YAxis
+              stroke={AXIS}
+              tick={{ fontSize: 11, fill: AXIS }}
+              tickLine={false}
+              axisLine={false}
+              tickFormatter={fmtPrice}
+              width={56}
+              domain={[yMin, yMax]}
+            />
+            <Tooltip
+              content={
+                <CandleTooltip
+                  showSma50={showSma50}
+                  showSma200={showSma200}
+                  showBB={showBB}
+                  ct={ct}
+                />
+              }
+            />
 
-          {/*
-           * The Bar with shape={candleShape} is the core of the candle rendering.
-           * dataKey="close" gives Recharts a value to compute y and height from.
-           * The shape function uses those pixel values plus yMin/yMax (closure) to
-           * derive pixel positions for open, high, and low and draws the full candle.
-           * fillOpacity/strokeOpacity=0 hides the default bar rect — only our SVG shows.
-           */}
-          <Bar
-            dataKey="close"
-            fillOpacity={0}
-            strokeOpacity={0}
-            isAnimationActive={false}
-            shape={candleShape}
-          />
+            {/*
+             * The Bar with shape={candleShape} is the core of the candle rendering.
+             * dataKey="close" gives Recharts a value to compute y and height from.
+             * The shape function uses those pixel values plus yMin/yMax (closure) to
+             * derive pixel positions for open, high, and low and draws the full candle.
+             * fillOpacity/strokeOpacity=0 hides the default bar rect — only our SVG shows.
+             */}
+            <Bar
+              dataKey="close"
+              fillOpacity={0}
+              strokeOpacity={0}
+              isAnimationActive={false}
+              shape={candleShape}
+            />
 
-          {/* SMA overlays */}
-          {showSma50 && (
-            <Line type="monotone" dataKey="sma50" stroke={AMBER} strokeWidth={1.5}
-              dot={false} activeDot={false} connectNulls isAnimationActive={false} />
-          )}
-          {showSma200 && (
-            <Line type="monotone" dataKey="sma200" stroke={PURPLE} strokeWidth={1.5}
-              strokeDasharray="5 3" dot={false} activeDot={false} connectNulls isAnimationActive={false} />
-          )}
+            {/* SMA overlays */}
+            {showSma50 && (
+              <Line type="monotone" dataKey="sma50" stroke={AMBER} strokeWidth={1.5}
+                dot={false} activeDot={false} connectNulls isAnimationActive={false} />
+            )}
+            {showSma200 && (
+              <Line type="monotone" dataKey="sma200" stroke={PURPLE} strokeWidth={1.5}
+                strokeDasharray="5 3" dot={false} activeDot={false} connectNulls isAnimationActive={false} />
+            )}
 
-          {/* Bollinger Bands — three lines (upper, middle, lower) */}
-          {showBB && (
-            <>
-              <Line type="monotone" dataKey="bbUpper" stroke={TEAL} strokeWidth={1}
-                strokeOpacity={0.7} dot={false} activeDot={false} connectNulls isAnimationActive={false} />
-              <Line type="monotone" dataKey="bbMiddle" stroke={TEAL} strokeWidth={0.8}
-                strokeDasharray="4 3" strokeOpacity={0.45} dot={false} activeDot={false} connectNulls isAnimationActive={false} />
-              <Line type="monotone" dataKey="bbLower" stroke={TEAL} strokeWidth={1}
-                strokeOpacity={0.7} dot={false} activeDot={false} connectNulls isAnimationActive={false} />
-            </>
-          )}
-        </ComposedChart>
-      </ResponsiveContainer>
+            {/* Bollinger Bands — three lines (upper, middle, lower) */}
+            {showBB && (
+              <>
+                <Line type="monotone" dataKey="bbUpper" stroke={TEAL} strokeWidth={1}
+                  strokeOpacity={0.7} dot={false} activeDot={false} connectNulls isAnimationActive={false} />
+                <Line type="monotone" dataKey="bbMiddle" stroke={TEAL} strokeWidth={0.8}
+                  strokeDasharray="4 3" strokeOpacity={0.45} dot={false} activeDot={false} connectNulls isAnimationActive={false} />
+                <Line type="monotone" dataKey="bbLower" stroke={TEAL} strokeWidth={1}
+                  strokeOpacity={0.7} dot={false} activeDot={false} connectNulls isAnimationActive={false} />
+              </>
+            )}
+          </ComposedChart>
+        </ResponsiveContainer>
+      </motion.div>
 
       {/* ── Volume sub-chart ─────────────────────────────────────────────── */}
       {hasVolume && (
         <ResponsiveContainer width="100%" height={52}>
           <BarChart
-            data={priceData}
+            data={displayData}
             margin={{ top: 0, right: 4, left: 0, bottom: 0 }}
             barCategoryGap="10%"
             syncId="uaa-candle"
@@ -594,7 +702,7 @@ export function CandleChart({ history, since }: CandleChartProps) {
           </div>
           <ResponsiveContainer width="100%" height={72}>
             <ComposedChart
-              data={priceData}
+              data={displayData}
               margin={{ top: 2, right: 4, left: 0, bottom: 0 }}
               syncId="uaa-candle"
             >
@@ -659,7 +767,7 @@ export function CandleChart({ history, since }: CandleChartProps) {
           </div>
           <ResponsiveContainer width="100%" height={72}>
             <ComposedChart
-              data={priceData}
+              data={displayData}
               margin={{ top: 2, right: 4, left: 0, bottom: 0 }}
               syncId="uaa-candle"
             >
@@ -686,34 +794,59 @@ export function CandleChart({ history, since }: CandleChartProps) {
         </div>
       )}
 
-      {/* ── Detected patterns panel ──────────────────────────────────────── */}
-      {recentPatterns.length > 0 && (
+      {/* ── Analysis Panel — opens when a Key Technical Signal is clicked ─── */}
+      {focusedSignal && (
+        <PatternAnalysisPanel
+          signal={focusedSignal}
+          symbol={symbol}
+          points={history}
+          allSignals={allSignals}
+          news={news}
+          period={periodLabel ?? ""}
+          onClose={() => setFocusedSignal(null)}
+          onAskAI={onAskAI}
+          onOpenTechnical={onOpenTechnical}
+        />
+      )}
+
+      {/* ── Key Technical Signals ────────────────────────────────────────── */}
+      {keySignals.length > 0 && (
         <div className="mt-1 rounded-lg border border-border bg-surface-2 p-3">
           <p className="mb-2 text-xs font-medium text-muted uppercase tracking-wide">
-            Recent Patterns Detected
+            Key Technical Signals
           </p>
-          <div className="flex flex-col gap-2">
-            {recentPatterns.map((pat, idx) => (
-              <div key={idx} className="flex items-start gap-2.5">
-                <span
-                  className="mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-xs font-medium"
-                  style={{
-                    background:
-                      pat.direction === "bullish" ? "rgba(74,222,128,0.15)"
-                      : pat.direction === "bearish" ? "rgba(248,113,113,0.15)"
-                      : "rgba(154,163,175,0.15)",
-                    color:
-                      pat.direction === "bullish" ? POSITIVE
-                      : pat.direction === "bearish" ? NEGATIVE
-                      : AXIS,
-                  }}
+          <div className="flex flex-col gap-1">
+            {keySignals.map((sig) => {
+              const isFocused = focusedSignal?.name === sig.name && focusedSignal?.date === sig.date;
+              return (
+                <button
+                  key={`${sig.name}-${sig.date}`}
+                  onClick={() => handleSignalClick(sig)}
+                  className={`flex items-start gap-2.5 rounded-md p-1.5 text-left transition-colors ${
+                    isFocused ? "bg-brand/10" : "hover:bg-surface-3"
+                  }`}
                 >
-                  {pat.direction === "bullish" ? "▲" : pat.direction === "bearish" ? "▼" : "●"}{" "}
-                  {pat.name}
-                </span>
-                <p className="text-xs leading-relaxed text-muted">{pat.description}</p>
-              </div>
-            ))}
+                  <span
+                    className="mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-xs font-medium"
+                    style={{
+                      background:
+                        sig.direction === "bullish" ? "rgba(74,222,128,0.15)"
+                        : sig.direction === "bearish" ? "rgba(248,113,113,0.15)"
+                        : "rgba(154,163,175,0.15)",
+                      color:
+                        sig.direction === "bullish" ? POSITIVE
+                        : sig.direction === "bearish" ? NEGATIVE
+                        : AXIS,
+                    }}
+                  >
+                    {sig.direction === "bullish" ? "▲" : sig.direction === "bearish" ? "▼" : "●"}{" "}
+                    {sig.name}
+                  </span>
+                  <span className="flex-1 text-xs leading-relaxed text-muted">{sig.description}</span>
+                  <span className="shrink-0 font-mono text-xs text-faint">{sig.confidence}%</span>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -728,13 +861,13 @@ export function CandleChart({ history, since }: CandleChartProps) {
           <span className="inline-block h-2 w-3 rounded-sm" style={{ background: NEGATIVE }} />
           Bearish candle
         </span>
-        {visiblePatterns.length > 0 && (
+        {visibleSignals.length > 0 && (
           <>
             <span className="flex items-center gap-1 text-xs text-muted">
-              <span style={{ color: POSITIVE }}>▲</span> Bullish pattern
+              <span style={{ color: POSITIVE }}>▲</span> Bullish signal
             </span>
             <span className="flex items-center gap-1 text-xs text-muted">
-              <span style={{ color: NEGATIVE }}>▼</span> Bearish pattern
+              <span style={{ color: NEGATIVE }}>▼</span> Bearish signal
             </span>
           </>
         )}

@@ -15,8 +15,12 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { HistoryPoint } from "@/lib/types";
+import { Maximize2 } from "lucide-react";
+import type { HistoryPoint, NewsItem } from "@/lib/types";
+import type { ChartQARelatedTarget } from "@/lib/ai-chart-qa";
 import { CandleChart } from "./candle-chart";
+import type { AskAIPayload } from "./pattern-analysis-panel";
+import { ChartWorkspace } from "./chart-workspace/chart-workspace";
 import { CHART_SERIES, useChartTheme } from "@/app/_components/chart-theme";
 
 /* -------------------------------------------------------------------------- */
@@ -45,6 +49,10 @@ interface Props {
   symbol: string;
   history: HistoryPoint[];
   benchmarks: Benchmarks;
+  news?: NewsItem[];
+  onAskAI?: (payload: AskAIPayload) => void;
+  onOpenTechnical?: () => void;
+  onNavigate?: (target: ChartQARelatedTarget, payload?: AskAIPayload) => void;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -213,7 +221,7 @@ function RelativeTooltip({
 /* Main component                                                              */
 /* -------------------------------------------------------------------------- */
 
-export function InteractiveChart({ symbol, history, benchmarks }: Props) {
+export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, onOpenTechnical, onNavigate }: Props) {
   const ct = useChartTheme();
   const AXIS = ct.axis;
   const GRID = ct.grid;
@@ -225,6 +233,7 @@ export function InteractiveChart({ symbol, history, benchmarks }: Props) {
   const [mode, setMode] = useState<ChartMode>("price");
   const [showSma50, setShowSma50] = useState(true);
   const [showSma200, setShowSma200] = useState(true);
+  const [fullscreenOpen, setFullscreenOpen] = useState(false);
 
   // Compute SMAs once over the full dataset so values are correct for recent periods.
   const sma50Map = useMemo(() => buildSmaMap(history, 50), [history]);
@@ -379,8 +388,28 @@ export function InteractiveChart({ symbol, history, benchmarks }: Props) {
           >
             vs Index &amp; Sector
           </button>
+          <span className="h-4 w-px bg-border" />
+          <button
+            onClick={() => setFullscreenOpen(true)}
+            title="Fullscreen technical analysis"
+            className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+          >
+            <Maximize2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+            Fullscreen
+          </button>
         </div>
       </div>
+
+      {fullscreenOpen && (
+        <ChartWorkspace
+          key={symbol}
+          symbol={symbol}
+          history={history}
+          news={news}
+          onClose={() => setFullscreenOpen(false)}
+          onNavigate={onNavigate ?? (() => {})}
+        />
+      )}
 
       {/* ── Price mode ───────────────────────────────────────────────────── */}
       {mode === "price" && (
@@ -507,7 +536,15 @@ export function InteractiveChart({ symbol, history, benchmarks }: Props) {
 
       {/* ── Candles mode ─────────────────────────────────────────────────── */}
       {mode === "candles" && (
-        <CandleChart history={history} since={since} />
+        <CandleChart
+          symbol={symbol}
+          history={history}
+          since={since}
+          periodLabel={period}
+          news={news}
+          onAskAI={onAskAI}
+          onOpenTechnical={onOpenTechnical}
+        />
       )}
 
       {/* ── Relative performance mode ─────────────────────────────────────── */}

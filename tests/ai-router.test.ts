@@ -110,19 +110,19 @@ describe("route", () => {
   });
 
   it("falls back to the next preferred model when the first fails, without surfacing the failure", async () => {
-    const provider = new FakeProvider(["qwen3:8b", "deepseek-r1:7b"], {
+    const provider = new FakeProvider(["qwen3:8b", "llama3.1:8b"], {
       "qwen3:8b": new Error("timeout"),
-      "deepseek-r1:7b": { content: "fallback answer", reasoning: "" },
+      "llama3.1:8b": { content: "fallback answer", reasoning: "" },
     });
     const res = await route(
-      "company-research",
+      "explain-movement",
       { messages: [{ role: "user", content: "hi" }] },
       { providers: [provider] },
     );
     expect(res.content).toBe("fallback answer");
-    expect(res.model).toBe("deepseek-r1:7b");
+    expect(res.model).toBe("llama3.1:8b");
     expect(res.errors).toEqual(["qwen3:8b: timeout"]);
-    expect(provider.calls).toEqual(["qwen3:8b", "deepseek-r1:7b"]);
+    expect(provider.calls).toEqual(["qwen3:8b", "llama3.1:8b"]);
   });
 
   it("throws AllModelsFailedError when every candidate fails", async () => {
@@ -157,23 +157,23 @@ describe("route", () => {
   });
 
   it("deprioritizes a model after repeated failures on a later route() call", async () => {
-    const provider = new FakeProvider(["qwen3:8b", "deepseek-r1:7b"], {
+    const provider = new FakeProvider(["qwen3:8b", "llama3.1:8b"], {
       "qwen3:8b": new Error("timeout"),
-      "deepseek-r1:7b": { content: "ok", reasoning: "" },
+      "llama3.1:8b": { content: "ok", reasoning: "" },
     });
     // Two failures trip the health cooldown for qwen3:8b.
-    await route("company-research", { messages: [{ role: "user", content: "1" }] }, { providers: [provider] });
+    await route("explain-movement", { messages: [{ role: "user", content: "1" }] }, { providers: [provider] });
     provider.calls = [];
-    await route("company-research", { messages: [{ role: "user", content: "2" }] }, { providers: [provider] });
+    await route("explain-movement", { messages: [{ role: "user", content: "2" }] }, { providers: [provider] });
     provider.calls = [];
 
     const res = await route(
-      "company-research",
+      "explain-movement",
       { messages: [{ role: "user", content: "3" }] },
       { providers: [provider] },
     );
-    // Unhealthy qwen3:8b is tried last now, but deepseek-r1:7b still answers.
-    expect(res.model).toBe("deepseek-r1:7b");
+    // Unhealthy qwen3:8b is tried last now, but llama3.1:8b still answers.
+    expect(res.model).toBe("llama3.1:8b");
   });
 });
 

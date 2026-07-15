@@ -34,6 +34,7 @@ export type TaskType =
   | "calendar-brief" // earnings calendar AI brief
   | "nl-screener" // natural-language screener query parsing
   | "quick-summary" // short, low-stakes single-field summaries
+  | "chart-qa" // one-off interactive Q&A about the fullscreen chart workspace's current context
   | "coding"; // code generation/review (not yet used by any feature; reserved)
 
 export interface TaskConfig {
@@ -165,6 +166,18 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
   "quick-summary": {
     preferredModels: ["llama3.1", "mistral", "qwen3"],
     maxTokens: 400,
+  },
+  // Interactive — the user is waiting on this one, unlike the batch/IC tasks
+  // above with 300s timeouts. Leads with the "fast" + structured-json model
+  // rather than qwen3, since this app's users have previously hit multi-minute
+  // hangs on heavier models; qwen3/mistral remain as fallbacks.
+  "chart-qa": {
+    preferredModels: ["llama3.1", "qwen3", "mistral"],
+    requiredCapabilities: ["structured-json"],
+    temperature: 0.35,
+    maxTokens: 900,
+    timeoutMs: 45_000,
+    jsonMode: true,
   },
   coding: {
     preferredModels: ["qwen2.5-coder", "qwen3"],

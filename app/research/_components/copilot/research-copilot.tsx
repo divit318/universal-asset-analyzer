@@ -5,6 +5,7 @@ import { RESEARCH_ACTIONS } from "@/lib/ai/actions";
 import { Message } from "./message";
 import { useCopilot } from "./use-copilot";
 import type { PortfolioContextForAI } from "@/lib/ai/types";
+import type { AskAIPayload } from "../pattern-analysis-panel";
 
 /**
  * The persistent AI Equity Research Copilot. It stays attached to the currently
@@ -14,12 +15,15 @@ import type { PortfolioContextForAI } from "@/lib/ai/types";
  * citations, and suggested follow-ups. Replaces the old one-click "Analyze".
  */
 export function ResearchCopilot({
-  symbol, name, isEquity = true, portfolioContext,
+  symbol, name, isEquity = true, portfolioContext, pendingAsk, onPendingAskHandled,
 }: {
   symbol: string;
   name: string;
   isEquity?: boolean;
   portfolioContext?: PortfolioContextForAI;
+  /** A question queued externally (e.g. the chart's Ask AI / Technical Analysis quick actions). */
+  pendingAsk?: AskAIPayload | null;
+  onPendingAskHandled?: () => void;
 }) {
   const {
     status, messages, error, models, model, setModel,
@@ -34,6 +38,16 @@ export function ResearchCopilot({
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, suggestions]);
+
+  // Auto-send a question queued by an external quick action. Waits for the
+  // copilot to finish warming up (status !== "init") before firing, then
+  // clears the queue via onPendingAskHandled so it never re-sends.
+  useEffect(() => {
+    if (!pendingAsk || status === "init") return;
+    void send({ question: pendingAsk.question, action: pendingAsk.action, label: pendingAsk.label, portfolioContext });
+    onPendingAskHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAsk, status]);
 
   function submit() {
     const q = input.trim();

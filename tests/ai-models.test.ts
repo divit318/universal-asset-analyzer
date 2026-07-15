@@ -56,7 +56,7 @@ describe("MODEL_REGISTRY", () => {
   it("gives every entry the orchestration fields the Router depends on", () => {
     for (const spec of MODEL_REGISTRY) {
       expect(spec.provider).toBe("ollama");
-      expect(spec.enabled).toBe(true);
+      expect(typeof spec.enabled).toBe("boolean");
       expect(spec.priority).toBeGreaterThan(0);
       expect(spec.maxTokens).toBeGreaterThan(0);
       expect(spec.timeoutMs).toBeGreaterThan(0);

@@ -3,6 +3,7 @@ import type { FundamentalScreenerCriteria } from "@/lib/types";
 import { listInstalledModels } from "@/lib/ai/ollama";
 import { runPromptWithMeta } from "@/lib/ai";
 import { extractJson } from "@/lib/json-extract";
+import { specForInstalled } from "@/lib/ai/models";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -59,9 +60,11 @@ Rules:
 - Default sortDir to "desc". Default sortField to "overallScore" unless a more specific field fits the description.
 - Output ONLY the JSON object. No explanation, no markdown code fences.`;
 
-/** GET /api/screener/nl — list installed Ollama models for the model picker. */
+/** GET /api/screener/nl — list installed, enabled Ollama models for the model picker. */
 export async function GET() {
-  return NextResponse.json({ models: await listInstalledModels() });
+  const installed = await listInstalledModels();
+  const models = installed.filter((id) => specForInstalled(id).enabled);
+  return NextResponse.json({ models });
 }
 
 /** POST /api/screener/nl — body { prompt, model } → FundamentalScreenerCriteria */

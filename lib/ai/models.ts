@@ -87,7 +87,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     timeoutMs: 150_000,
     capabilities: ["chain-of-thought", "long-context"],
     priority: 2,
-    enabled: true,
+    enabled: false,
     blurb: "Chain-of-thought reasoning model; best for valuation and risk logic.",
   },
   {
