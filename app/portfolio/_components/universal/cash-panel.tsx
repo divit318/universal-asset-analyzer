@@ -2,136 +2,301 @@
 
 import { useState } from "react";
 import { Card, Button, Input, Field, Badge } from "@/app/_components/ui";
+import { CollapsibleSection } from "@/app/_components/collapsible-section";
 import { formatCurrency } from "@/lib/format";
-import type { CashAllocationPlan } from "@/lib/portfolio/engines/cash";
+import { useToast } from "@/app/_components/toast";
+import { OBJECTIVES, type Objective, type ObjectiveConfig } from "@/lib/portfolio/engines/optimize";
+import { PORTFOLIO_ASSET_CLASSES, PORTFOLIO_CLASS_LABEL, type PortfolioAssetClass } from "@/lib/portfolio/model/types";
+import { useCashPreview } from "./cash/use-cash-preview";
+import { useCashSelection } from "./cash/use-cash-selection";
+import { RecommendationRow } from "./cash/recommendation-row";
+import { MarginalBenefitChart } from "./cash/marginal-benefit-chart";
+import { AnalysisPanel } from "./cash/analysis-panel";
+import { CashConfirmationModal } from "./cash/cash-confirmation-modal";
+import { SnapshotHistory } from "./optimize/snapshot-history";
 
 /**
- * "How should I allocate new cash?" — across the whole universe, not just what you
- * already own.
+ * The Capital Allocation Engine — "How should I deploy new cash?"
  *
- * The engine this replaces could only route new cash into EXISTING positions. If your
- * portfolio was 100% tech stocks, its advice on a $50k inflow was: buy more tech
- * stocks. "Add a Treasury ETF" and "hold it in cash" weren't opinions it disagreed
- * with — they were sentences it could not form.
+ * Pick an objective (the same strategic-target table the Optimize tab uses —
+ * "Income" means the same thing in both places), enter an amount, and a
+ * fine-grained greedy simulation finds where each dollar does the most good,
+ * across the entire investable universe: existing holdings, every candidate
+ * exposure, and cash itself. This engine only ever ADDS — it never sells what
+ * you already hold; that is the Optimize tab's job.
  *
- * The plan is built by greedy marginal simulation: each tranche goes wherever the real
- * engines say it does the most good, so diversified advice falls out of diminishing
- * returns rather than being imposed by a rule.
+ * Every number below — the ranking, the alternatives considered, the
+ * diminishing-returns curve, the reasons a candidate was rejected — is read
+ * directly off the same simulation that built the plan, never asserted.
  */
-export function CashPanel() {
-  const [amount, setAmount] = useState("");
-  const [plan, setPlan] = useState<CashAllocationPlan | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+export function CashPanel({ onExecuted }: { onExecuted?: () => void }) {
+  const [amountInput, setAmountInput] = useState("");
+  const [objective, setObjective] = useState<Objective>("maximize_sharpe");
+  const [customTarget, setCustomTarget] = useState<Partial<Record<PortfolioAssetClass, number>>>({});
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [snapshotRefreshSignal, setSnapshotRefreshSignal] = useState(0);
+  const toast = useToast();
 
-  async function run(e: React.FormEvent) {
-    e.preventDefault();
-    const value = Number(amount);
-    if (!Number.isFinite(value) || value <= 0) {
-      setErr("Enter a positive amount");
-      return;
-    }
+  const amount = Number(amountInput);
+  const validAmount = Number.isFinite(amount) && amount > 0;
+  const customTargetSum = Object.values(customTarget).reduce((s, v) => s + (v ?? 0), 0);
+  const customTargetReady = objective !== "target_allocation" || customTargetSum > 0;
 
-    setLoading(true);
-    setErr(null);
+  const { plan, loading, error } = useCashPreview(
+    validAmount && customTargetReady ? amount : 0,
+    objective,
+    objective === "target_allocation" ? customTarget : undefined,
+  );
+
+  const selection = useCashSelection(plan?.items ?? []);
+  const objectiveEntries = Object.entries(OBJECTIVES) as [Objective, ObjectiveConfig][];
+
+  async function handleConfirmedExecute() {
+    if (!plan) return;
+    setSubmitting(true);
     try {
-      const res = await fetch("/api/portfolio/allocate-cash", {
+      const res = await fetch("/api/portfolio/allocate-cash/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: value }),
+        body: JSON.stringify({
+          amount: plan.cashAmount,
+          objective,
+          customTarget: objective === "target_allocation" ? customTarget : undefined,
+          selected: selection.selectedItems.map((i) => i.symbol),
+        }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Failed to allocate");
-      setPlan(json as CashAllocationPlan);
-    } catch (e2) {
-      setErr(e2 instanceof Error ? e2.message : "Failed to allocate");
+      if (!res.ok) throw new Error(json.error ?? "Failed to deploy cash");
+
+      setShowConfirm(false);
+      setSnapshotRefreshSignal((n) => n + 1);
+      onExecuted?.();
+
+      const snapshotId = json.snapshotId as string;
+      toast(
+        `${formatCurrency(plan.cashAmount)} deployed — ${json.executedCount} position${json.executedCount === 1 ? "" : "s"} bought.`,
+        "success",
+        {
+          action: {
+            label: "Undo",
+            onClick: async () => {
+              try {
+                const undoRes = await fetch("/api/portfolio/optimize/undo", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ snapshotId }),
+                });
+                if (!undoRes.ok) throw new Error("Undo failed");
+                setSnapshotRefreshSignal((n) => n + 1);
+                onExecuted?.();
+                toast("Deployment reverted.", "info");
+              } catch {
+                toast("Undo failed — the deployment is still applied.", "error");
+              }
+            },
+          },
+        },
+      );
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Failed to deploy cash", "error");
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   }
 
   return (
-    <Card className="flex flex-col gap-4 p-5">
-      <div>
-        <h3 className="text-sm font-semibold text-foreground">Allocate new cash</h3>
-        <p className="mt-1 text-xs leading-relaxed text-muted">
-          Considers every asset class — including holding the cash — and picks whatever
-          measurably improves the portfolio most.
-        </p>
-      </div>
+    <div className="flex flex-col gap-4">
+      <Card className="flex flex-col gap-4 p-5">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">Allocate new cash</h3>
+          <p className="mt-1 text-xs leading-relaxed text-muted">
+            Pick an objective and an amount — the optimizer finds where the next dollar does the most good
+            across your entire portfolio, every candidate exposure, and cash itself.
+          </p>
+        </div>
 
-      <form onSubmit={run} className="flex items-end gap-2">
-        <div className="flex-1"><Field label="Amount">
-          <Input
-            type="number" step="any" min="0"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder="50000"
-          />
-        </Field></div>
-        <Button type="submit" variant="primary" disabled={loading}>
-          {loading ? "Simulating…" : "Allocate"}
-        </Button>
-      </form>
+        <div className="flex flex-col gap-2">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted">Objective</h4>
+          <div className="flex flex-wrap gap-1.5">
+            {objectiveEntries.map(([id, cfg]) => {
+              const active = id === objective;
+              return (
+                <button
+                  key={id}
+                  onClick={() => setObjective(id)}
+                  title={cfg.description}
+                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                    active
+                      ? "border-brand bg-brand/10 font-semibold text-foreground"
+                      : "border-border text-muted hover:border-brand/40 hover:text-foreground"
+                  }`}
+                >
+                  <span aria-hidden>{cfg.icon}</span>
+                  {cfg.label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[11px] leading-relaxed text-muted/70">{OBJECTIVES[objective].description}</p>
+        </div>
 
-      {err && <p className="text-xs text-negative">{err}</p>}
+        {objective === "target_allocation" && (
+          <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface/40 p-3">
+            <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+              Custom target allocation
+            </h4>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {PORTFOLIO_ASSET_CLASSES.map((cls) => (
+                <label key={cls} className="flex items-center justify-between gap-2 text-[11px]">
+                  <span className="text-muted">{PORTFOLIO_CLASS_LABEL[cls]}</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={customTarget[cls] ?? ""}
+                    onChange={(e) =>
+                      setCustomTarget((prev) => ({ ...prev, [cls]: e.target.value === "" ? undefined : Number(e.target.value) }))
+                    }
+                    className="w-16 rounded border border-border bg-surface-2 px-1.5 py-1 text-right font-mono text-xs outline-none focus:border-brand"
+                  />
+                </label>
+              ))}
+            </div>
+            {customTargetSum === 0 && (
+              <p className="text-[11px] text-warning">Enter at least one target percentage.</p>
+            )}
+          </div>
+        )}
+
+        <div className="flex items-end gap-2">
+          <div className="flex-1">
+            <Field label="Amount">
+              <Input
+                type="number"
+                step="any"
+                min="0"
+                value={amountInput}
+                onChange={(e) => setAmountInput(e.target.value)}
+                placeholder="50000"
+              />
+            </Field>
+          </div>
+        </div>
+
+        {error && <p className="text-xs text-negative">{error}</p>}
+      </Card>
+
+      {loading && !plan && <Card className="p-8 text-center text-xs text-muted">Simulating…</Card>}
 
       {plan && (
-        <div className="flex flex-col gap-3 border-t border-border pt-4">
-          <p className="text-xs leading-relaxed text-muted">{plan.summary}</p>
+        <>
+          <Card className="flex flex-col gap-2 p-4">
+            <p className="text-xs leading-relaxed text-muted">{plan.summary}</p>
+          </Card>
 
           {plan.items.length > 0 && (
-            <ul className="flex flex-col gap-2">
-              {plan.items.map((item) => (
-                <li
-                  key={item.symbol ?? item.name}
-                  className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface/40 p-3"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex min-w-0 flex-col">
-                      <span className="flex items-center gap-1.5">
-                        {item.symbol && (
-                          <span className="font-mono text-sm font-semibold text-foreground">
-                            {item.symbol}
-                          </span>
-                        )}
-                        <Badge variant="neutral">{item.assetClass}</Badge>
-                      </span>
-                      <span className="truncate text-[11px] text-muted">{item.name}</span>
-                    </div>
-                    <div className="flex shrink-0 flex-col items-end">
-                      <span className="font-mono text-sm font-bold tabular-nums text-foreground">
-                        {formatCurrency(item.dollarAmount)}
-                      </span>
-                      <span className="font-mono text-[10px] tabular-nums text-muted">
-                        {item.shareCount != null ? `${item.shareCount} shares · ` : ""}
-                        → {item.resultingWeight.toFixed(1)}%
-                      </span>
-                    </div>
-                  </div>
-                  <p className="text-[11px] leading-relaxed text-muted">{item.reason}</p>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {/* Holding cash is a legitimate outcome, and it is rendered as one rather
-              than as a failure to find something to buy. */}
-          {plan.heldAsCash > 0 && (
-            <div className="flex items-center justify-between rounded-lg border border-border bg-surface/40 p-3">
-              <div className="flex flex-col">
-                <span className="text-xs font-semibold text-foreground">Hold as cash</span>
-                <span className="text-[11px] text-muted">
-                  Nothing else improved the portfolio more than keeping the optionality.
+            <Card className="flex flex-col gap-3 p-5">
+              <div className="flex items-baseline justify-between">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted">
+                  Recommended allocations
+                </h3>
+                <span className="text-[11px] text-muted/70">
+                  {plan.items.length} {plan.items.length === 1 ? "position" : "positions"} · ranked by measured impact
                 </span>
               </div>
-              <span className="font-mono text-sm font-bold tabular-nums text-foreground">
+              <ul className="flex flex-col gap-2">
+                {plan.items.map((item) => (
+                  <RecommendationRow
+                    key={item.symbol ?? item.name}
+                    item={item}
+                    selected={item.symbol ? selection.isSelected(item.symbol) : false}
+                    onToggle={() => item.symbol && selection.toggle(item.symbol)}
+                  />
+                ))}
+              </ul>
+            </Card>
+          )}
+
+          {/* Holding cash is a legitimate outcome, rendered with a real reason —
+              never a bare "Hold as Cash" label. */}
+          {plan.heldAsCash > 0 && (
+            <Card className="flex items-center justify-between gap-3 p-4">
+              <div className="flex flex-col gap-1">
+                <span className="text-xs font-semibold text-foreground">Held as cash</span>
+                <p className="text-[11px] leading-relaxed text-muted">{plan.heldAsCashSentence}</p>
+              </div>
+              <span className="shrink-0 font-mono text-sm font-bold tabular-nums text-foreground">
                 {formatCurrency(plan.heldAsCash)}
               </span>
-            </div>
+            </Card>
           )}
-        </div>
+
+          <MarginalBenefitChart points={plan.marginalBenefit} />
+
+          {plan.rejectedOpportunities.length > 0 && (
+            <CollapsibleSection
+              title="Opportunities not selected"
+              subtitle={`${plan.rejectedOpportunities.length} candidate${plan.rejectedOpportunities.length === 1 ? "" : "s"} considered and rejected — why`}
+            >
+              <ul className="flex flex-col gap-1.5">
+                {plan.rejectedOpportunities.map((r) => (
+                  <li
+                    key={r.symbol ?? r.subject}
+                    className="flex flex-col gap-0.5 rounded-lg border border-border/60 bg-surface/30 p-2.5 text-[11px]"
+                  >
+                    <span className="flex items-center gap-1.5 font-medium text-foreground">
+                      {r.symbol && <span className="font-mono">{r.symbol}</span>}
+                      <span>{r.subject}</span>
+                      <Badge variant="neutral">{r.reasonLabel}</Badge>
+                    </span>
+                    <span className="text-muted">{r.sentence}</span>
+                  </li>
+                ))}
+              </ul>
+            </CollapsibleSection>
+          )}
+
+          <CollapsibleSection title="Why this plan" subtitle="The optimizer's full reasoning">
+            <div className="flex flex-col gap-2 text-[11px] leading-relaxed text-muted">
+              <p><span className="font-semibold text-foreground">Why: </span>{plan.why.why}</p>
+              <p><span className="font-semibold text-foreground">Why now: </span>{plan.why.whyNow}</p>
+              <p><span className="font-semibold text-foreground">Why this amount: </span>{plan.why.whyThisAmount}</p>
+              <p><span className="font-semibold text-foreground">Why not an alternative: </span>{plan.why.whyNotAlternative}</p>
+              <p><span className="font-semibold text-foreground">Why not nothing: </span>{plan.why.whyNotNothing}</p>
+            </div>
+          </CollapsibleSection>
+
+          <AnalysisPanel plan={plan} />
+
+          <SnapshotHistory refreshSignal={snapshotRefreshSignal} />
+
+          <div className="sticky bottom-4 z-20 flex items-center justify-between gap-3 rounded-lg border border-border bg-surface/95 p-3 shadow-2xl backdrop-blur">
+            <div className="flex flex-col">
+              <span className="text-xs font-semibold text-foreground">
+                {selection.selectedItems.length} position{selection.selectedItems.length === 1 ? "" : "s"} selected
+              </span>
+              <span className="text-[11px] text-muted">
+                {formatCurrency(selection.totalSelected)} of {formatCurrency(plan.cashAmount)} deployed
+              </span>
+            </div>
+            <Button variant="primary" size="sm" onClick={() => setShowConfirm(true)}>
+              Deploy Cash
+            </Button>
+          </div>
+
+          <CashConfirmationModal
+            open={showConfirm}
+            onClose={() => setShowConfirm(false)}
+            onConfirm={handleConfirmedExecute}
+            plan={plan}
+            selectedItems={selection.selectedItems}
+            totalSelected={selection.totalSelected}
+            submitting={submitting}
+          />
+        </>
       )}
-    </Card>
+    </div>
   );
 }

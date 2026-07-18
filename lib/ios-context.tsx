@@ -119,6 +119,9 @@ export interface IOSContextValue {
 
   /** True when symbol is in the user's rejected list. */
   isRejected: (symbol: string) => boolean;
+
+  /** Force the portfolio report to refetch — call after a trade so `report`/`profile` reflect it immediately. */
+  refreshReport: () => void;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -190,7 +193,7 @@ export function IOSProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const { data: report, isInitialLoading } = useDataset<UniversalPortfolioReport>(
+  const { data: report, isInitialLoading, refresh: refreshReport } = useDataset<UniversalPortfolioReport>(
     "portfolioReport",
     "maximize_sharpe",
     fetchDefaultReport,
@@ -302,6 +305,7 @@ export function IOSProvider({ children }: { children: ReactNode }) {
       rejectSymbol,
       clearRejection,
       isRejected,
+      refreshReport,
     }),
     [
       profile,
@@ -314,6 +318,7 @@ export function IOSProvider({ children }: { children: ReactNode }) {
       rejectSymbol,
       clearRejection,
       isRejected,
+      refreshReport,
     ],
   );
 

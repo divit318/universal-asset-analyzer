@@ -32,15 +32,11 @@ import type { TaskType } from "../ai/task-registry";
 
 export type HomeModuleId =
   | "todays-brief"
-  | "ai-investment-brief"
-  | "recommended-actions"
-  | "portfolio-pulse"
+  | "book"
+  | "attention-queue"
+  | "radar"
   | "market-intelligence"
-  | "opportunity-feed"
-  | "watchlist-intelligence"
-  | "upcoming-events"
-  | "portfolio-performance"
-  | "continue";
+  | "ai-investment-brief";
 
 /* ------------------------------------------------------------------ */
 /* Sizing & layout vocabulary                                          */

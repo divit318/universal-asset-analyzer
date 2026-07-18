@@ -25,7 +25,7 @@ import { SIZE, BREAKPOINTS } from "./types";
  * layout config's job. Lower number = more important.
  */
 const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
-  /* ---------------- Narrative (AI) ---------------- */
+  /* ---------------- Command row ---------------- */
 
   "todays-brief": {
     id: "todays-brief",
@@ -38,9 +38,11 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     refreshIntervalMs: null,
     cache: { via: "stream", datasets: [] },
     priority: 1,
-    defaultSize: SIZE.full,
-    minSize: SIZE.full,
-    preferredLayout: "full",
+    // The hero, but not full-bleed: it sits beside the book rail in the command
+    // row, so it defaults to two-thirds and survives at half.
+    defaultSize: SIZE.wide,
+    minSize: SIZE.half,
+    preferredLayout: "wide",
     screens: [...BREAKPOINTS],
     requires: [],
     dataSources: ["ai", "portfolio-engine", "sector-rotation", "scanner"],
@@ -49,6 +51,104 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     ai: { task: "daily-briefing", required: false },
     navTarget: null,
   },
+
+  "book": {
+    id: "book",
+    title: "Book",
+    description: "Health, return vs. benchmark, cash, and today's P&L.",
+    loading: "eager",
+    refresh: "on-focus",
+    refreshIntervalMs: null,
+    // Merges what portfolio-pulse (health) and portfolio-performance (return)
+    // read — the same digest slices, no new endpoint.
+    cache: { via: "digest", datasets: ["quotes.batch", "history"] },
+    priority: 2,
+    // The command row's one-third rail beside the brief.
+    defaultSize: SIZE.rail,
+    minSize: SIZE.rail,
+    preferredLayout: "rail",
+    screens: [...BREAKPOINTS],
+    requires: ["portfolio"],
+    dataSources: ["portfolio-engine", "yahoo"],
+    dependencies: [],
+    ai: null,
+    navTarget: { href: "/portfolio", label: "Open portfolio" },
+  },
+
+  /* ---------------- Attention row ---------------- */
+
+  "attention-queue": {
+    id: "attention-queue",
+    title: "Attention",
+    description: "One ranked, dismissible stream of everything that needs a decision.",
+    loading: "eager",
+    refresh: "on-focus",
+    refreshIntervalMs: null,
+    // Rides the digest (deterministic, no AI in its paint path). The dismissal
+    // state joins in the digest build server-side; the queue never fetches.
+    cache: { via: "digest", datasets: ["quotes.batch", "fundamentals"] },
+    priority: 3,
+    // The centerpiece: two-thirds of the attention row, survives at half.
+    defaultSize: SIZE.wide,
+    minSize: SIZE.half,
+    preferredLayout: "wide",
+    screens: [...BREAKPOINTS],
+    requires: [],
+    dataSources: ["portfolio-engine", "watchlist", "calendar", "scanner", "notifications"],
+    dependencies: [],
+    ai: null,
+    // Terminal by design — each row carries its own primary deep link, so the
+    // card header has no single "open this".
+    navTarget: null,
+  },
+
+  "radar": {
+    id: "radar",
+    title: "Radar",
+    description: "Ideas entering the pipeline — scanner fits and buy candidates.",
+    loading: "deferred",
+    refresh: "on-focus",
+    refreshIntervalMs: null,
+    cache: { via: "digest", datasets: [] },
+    priority: 4,
+    // The attention row's one-third rail beside the queue.
+    defaultSize: SIZE.rail,
+    minSize: SIZE.rail,
+    preferredLayout: "rail",
+    screens: [...BREAKPOINTS],
+    requires: [],
+    dataSources: ["scanner", "watchlist", "portfolio-engine"],
+    dependencies: [],
+    ai: null,
+    navTarget: { href: "/scanner", label: "Scanner" },
+  },
+
+  /* ---------------- Tape ---------------- */
+
+  "market-intelligence": {
+    id: "market-intelligence",
+    title: "Market Intelligence",
+    description: "Indices, volatility, breadth, rates, commodities, currencies, and crypto.",
+    loading: "eager",
+    // The one module where the number on screen is genuinely live. Quotes carry a
+    // 15s TTL in the platform registry, so a 60s poll costs at most one provider
+    // round-trip per minute regardless of how many tabs are open.
+    refresh: "interval",
+    refreshIntervalMs: 60 * 1000,
+    cache: { via: "digest", datasets: ["quotes.batch", "sectorRotation"] },
+    priority: 5,
+    defaultSize: SIZE.full,
+    minSize: SIZE.full,
+    preferredLayout: "full",
+    screens: [...BREAKPOINTS],
+    requires: [],
+    dataSources: ["yahoo", "scanner", "sector-rotation"],
+    dependencies: [],
+    ai: null,
+    navTarget: { href: "/scanner", label: "Market scanner" },
+  },
+
+  /* ---------------- Long read ---------------- */
 
   "ai-investment-brief": {
     id: "ai-investment-brief",
@@ -70,179 +170,6 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     dataSources: ["ai", "portfolio-engine", "sector-rotation", "scanner"],
     dependencies: ["todays-brief"],
     ai: { task: "daily-briefing", required: false },
-    navTarget: null,
-  },
-
-  /* ---------------- Action ---------------- */
-
-  "recommended-actions": {
-    id: "recommended-actions",
-    title: "Top Recommended Actions",
-    description: "Ranked decisions from the portfolio engine — score, confidence, expected impact.",
-    loading: "eager",
-    refresh: "on-focus",
-    refreshIntervalMs: null,
-    cache: { via: "digest", datasets: ["quotes.batch", "fundamentals"] },
-    priority: 2,
-    defaultSize: SIZE.full,
-    minSize: SIZE.full,
-    preferredLayout: "full",
-    screens: [...BREAKPOINTS],
-    requires: [],
-    dataSources: ["portfolio-engine", "watchlist", "notifications"],
-    dependencies: [],
-    ai: null,
-    navTarget: { href: "/portfolio?tab=decisions", label: "All decisions" },
-  },
-
-  /* ---------------- Portfolio ---------------- */
-
-  "portfolio-pulse": {
-    id: "portfolio-pulse",
-    title: "Portfolio Pulse",
-    description: "Health, movers, concentration, drift, and cash — at a glance.",
-    loading: "eager",
-    refresh: "on-focus",
-    refreshIntervalMs: null,
-    cache: { via: "digest", datasets: ["quotes.batch"] },
-    priority: 3,
-    defaultSize: SIZE.wide,
-    minSize: SIZE.half,
-    preferredLayout: "wide",
-    screens: [...BREAKPOINTS],
-    requires: ["portfolio"],
-    dataSources: ["portfolio-engine"],
-    dependencies: [],
-    ai: null,
-    navTarget: { href: "/portfolio", label: "Open portfolio" },
-  },
-
-  "portfolio-performance": {
-    id: "portfolio-performance",
-    title: "Portfolio Performance",
-    description: "Money-weighted return (XIRR) against the benchmark.",
-    loading: "deferred",
-    refresh: "manual",
-    refreshIntervalMs: null,
-    cache: { via: "digest", datasets: ["history", "quotes.batch"] },
-    priority: 7,
-    // A four-column rail beside Portfolio Pulse. It holds three stats, so it
-    // does not shrink further — min is its default.
-    defaultSize: SIZE.rail,
-    minSize: SIZE.rail,
-    preferredLayout: "rail",
-    screens: [...BREAKPOINTS],
-    requires: ["portfolio"],
-    dataSources: ["portfolio-engine", "yahoo"],
-    dependencies: [],
-    ai: null,
-    navTarget: { href: "/portfolio?tab=performance", label: "Full performance" },
-  },
-
-  /* ---------------- Market ---------------- */
-
-  "market-intelligence": {
-    id: "market-intelligence",
-    title: "Market Intelligence",
-    description: "Indices, volatility, breadth, rates, commodities, currencies, and crypto.",
-    loading: "eager",
-    // The one module where the number on screen is genuinely live. Quotes carry a
-    // 15s TTL in the platform registry, so a 60s poll costs at most one provider
-    // round-trip per minute regardless of how many tabs are open.
-    refresh: "interval",
-    refreshIntervalMs: 60 * 1000,
-    cache: { via: "digest", datasets: ["quotes.batch", "sectorRotation"] },
-    priority: 4,
-    defaultSize: SIZE.full,
-    minSize: SIZE.full,
-    preferredLayout: "full",
-    screens: [...BREAKPOINTS],
-    requires: [],
-    dataSources: ["yahoo", "scanner", "sector-rotation"],
-    dependencies: [],
-    ai: null,
-    navTarget: { href: "/scanner", label: "Market scanner" },
-  },
-
-  "opportunity-feed": {
-    id: "opportunity-feed",
-    title: "Opportunity Feed",
-    description: "Scanner signals ranked by fit to your portfolio, not by raw score.",
-    loading: "deferred",
-    refresh: "manual",
-    refreshIntervalMs: null,
-    cache: { via: "digest", datasets: [] },
-    priority: 5,
-    defaultSize: SIZE.half,
-    minSize: SIZE.half,
-    preferredLayout: "half",
-    screens: [...BREAKPOINTS],
-    requires: ["scanner-snapshot"],
-    dataSources: ["scanner", "portfolio-engine"],
-    dependencies: [],
-    ai: null,
-    navTarget: { href: "/scanner", label: "Run scanner" },
-  },
-
-  "watchlist-intelligence": {
-    id: "watchlist-intelligence",
-    title: "Watchlist Intelligence",
-    description: "Buy candidates, near-buys, triggered alerts, and upcoming earnings.",
-    loading: "deferred",
-    refresh: "manual",
-    refreshIntervalMs: null,
-    cache: { via: "digest", datasets: ["quotes.batch"] },
-    priority: 8,
-    defaultSize: SIZE.half,
-    minSize: SIZE.half,
-    preferredLayout: "half",
-    screens: [...BREAKPOINTS],
-    requires: ["watchlist"],
-    dataSources: ["watchlist", "portfolio-engine"],
-    dependencies: [],
-    ai: null,
-    navTarget: { href: "/watchlist", label: "Open watchlist" },
-  },
-
-  /* ---------------- Context ---------------- */
-
-  "upcoming-events": {
-    id: "upcoming-events",
-    title: "Upcoming Events",
-    description: "Earnings, dividends, and economic events across your holdings and watchlist.",
-    loading: "deferred",
-    refresh: "manual",
-    refreshIntervalMs: null,
-    cache: { via: "digest", datasets: [] },
-    priority: 9,
-    defaultSize: SIZE.half,
-    minSize: SIZE.half,
-    preferredLayout: "half",
-    screens: [...BREAKPOINTS],
-    requires: [],
-    dataSources: ["calendar", "portfolio-engine", "watchlist"],
-    dependencies: [],
-    ai: null,
-    navTarget: { href: "/calendar", label: "Full calendar" },
-  },
-
-  continue: {
-    id: "continue",
-    title: "Continue Where You Left Off",
-    description: "Your recent research, screens, and reports.",
-    loading: "lazy",
-    refresh: "static",
-    refreshIntervalMs: null,
-    cache: { via: "digest", datasets: [] },
-    priority: 10,
-    defaultSize: SIZE.half,
-    minSize: SIZE.half,
-    preferredLayout: "half",
-    screens: [...BREAKPOINTS],
-    requires: [],
-    dataSources: ["portfolio-engine", "watchlist"],
-    dependencies: [],
-    ai: null,
     navTarget: null,
   },
 };

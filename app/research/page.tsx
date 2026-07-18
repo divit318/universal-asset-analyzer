@@ -4,7 +4,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { TrendingUp, TrendingDown, Clock3, Network, Link2, Bookmark } from "lucide-react";
+import { TrendingUp, TrendingDown, Clock3, Network, Link2, Bookmark, Wallet } from "lucide-react";
 import type {
   Filing,
   FundamentalsData,
@@ -61,6 +61,7 @@ import { ArrivalHighlight, useArrivalTarget } from "@/app/_components/arrival-hi
 import { TimelinePreviewCard } from "./_components/timeline-preview-card";
 import { GraphPreviewCard } from "./_components/graph-preview-card";
 import { RelatedOpportunitiesCard } from "./_components/related-opportunities-card";
+import { AddToPortfolioModal } from "@/app/_components/portfolio/add-to-portfolio-modal";
 
 // Fundamentals sub-components (US / global equity)
 import { ScoreCard } from "./_components/score-card";
@@ -312,6 +313,8 @@ function ResearchWorkspace({
   onCopyLink: () => void;
 }) {
   const { quote, history, filings, edgarError, benchmarks, news } = data;
+  const toast = useToast();
+  const [buyingOpen, setBuyingOpen] = useState(false);
   const market: MarketRegion = detectMarket(quote);
   const isEquity = !quote.assetType || quote.assetType === "EQUITY";
   const isIndia = market === "IN";
@@ -701,6 +704,13 @@ function ResearchWorkspace({
               <Bookmark className="h-4 w-4" strokeWidth={1.75} fill={saved ? "currentColor" : "none"} />
               {saved ? "Saved" : "Watchlist"}
             </button>
+            <button
+              onClick={() => setBuyingOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-control border border-brand/40 bg-brand-muted px-3 py-2 text-sm font-medium text-brand outline-none transition-colors hover:bg-brand/20 focus-visible:ring-2 focus-visible:ring-brand/40"
+            >
+              <Wallet className="h-4 w-4" strokeWidth={1.75} />
+              Add to Portfolio
+            </button>
           </div>
         </div>
 
@@ -782,6 +792,18 @@ function ResearchWorkspace({
           />
           {portfolioRecommendation && <PortfolioDecisionCard recommendation={portfolioRecommendation} />}
         </div>
+      )}
+
+      {buyingOpen && (
+        <AddToPortfolioModal
+          item={{ symbol: quote.symbol, name: quote.name }}
+          fit={portfolioFit ?? undefined}
+          onClose={() => setBuyingOpen(false)}
+          onSuccess={(result) => {
+            toast(`Bought ${result.symbol} — added to Portfolio`, "success");
+            ios?.refreshReport();
+          }}
+        />
       )}
 
       {/* ── 4b. Sector Intelligence — this company's sector rank/rotation ── */}

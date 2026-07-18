@@ -4,6 +4,7 @@ import path from "node:path";
 import type { ChartDrawingRecord, PortfolioPosition, PortfolioLot, ResearchNote, StockFundamentals, WatchlistItem, SectorRotationEntry, TimelineEvent, Notification, Decision, DecisionAction, DecisionHorizon, ManualAsset, ManualAssetCategory } from "./types";
 import { aggregateOpenPositions } from "./portfolio-lots";
 import type { AlertEvent } from "./alerts";
+import type { AttentionDismissal } from "./home/contracts";
 
 let db: DatabaseSync | null = null;
 
@@ -215,6 +216,17 @@ function getDb(): DatabaseSync {
       PRIMARY KEY (kind, ref)
     );
     CREATE INDEX IF NOT EXISTS idx_activity_at ON activity (at DESC);
+
+    -- Attention Queue dismissals (§13). One row per dismissed story identity
+    -- (dedupe_key). A dismissal suppresses the story until expires_at, after
+    -- which the same story is allowed back into the queue; a *materially worse*
+    -- version has a different dedupe_key and so is never suppressed by this row.
+    CREATE TABLE IF NOT EXISTS attention_dismissal (
+      dedupe_key   TEXT PRIMARY KEY,
+      dismissed_at INTEGER NOT NULL,
+      expires_at   INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_attention_dismissal_expires ON attention_dismissal (expires_at);
   `);
   // Migrate existing watchlist rows: add new columns if the DB predates them
   for (const col of ["target_price REAL", "alert_pct_drop REAL", "notes TEXT"]) {
@@ -1727,4 +1739,44 @@ export function listActivity(limit = 6): ActivityRow[] {
   return getDb()
     .prepare("SELECT kind, ref, label, href, at FROM activity ORDER BY at DESC LIMIT ?")
     .all(limit) as unknown as ActivityRow[];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Attention Queue dismissals (§13)                                            */
+/* -------------------------------------------------------------------------- */
+
+interface AttentionDismissalRow {
+  dedupe_key: string;
+  dismissed_at: number;
+  expires_at: number;
+}
+
+/** Persist (or refresh) a dismissal of a story identity until `expiresAt`. */
+export function dismissAttention(dedupeKey: string, dismissedAt: number, expiresAt: number): void {
+  getDb()
+    .prepare(
+      `INSERT INTO attention_dismissal (dedupe_key, dismissed_at, expires_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(dedupe_key) DO UPDATE SET dismissed_at = excluded.dismissed_at, expires_at = excluded.expires_at`,
+    )
+    .run(dedupeKey, dismissedAt, expiresAt);
+}
+
+/** Remove a dismissal — the Undo path (§14). */
+export function undismissAttention(dedupeKey: string): void {
+  getDb().prepare("DELETE FROM attention_dismissal WHERE dedupe_key = ?").run(dedupeKey);
+}
+
+/**
+ * Active (unexpired) dismissals, pruning lapsed rows opportunistically on read
+ * (§12 — the queue never accumulates dead dismissal rows). The digest joins
+ * this into its build server-side (§18).
+ */
+export function listActiveDismissals(now: number = Date.now()): AttentionDismissal[] {
+  const db = getDb();
+  db.prepare("DELETE FROM attention_dismissal WHERE expires_at <= ?").run(now);
+  const rows = db
+    .prepare("SELECT dedupe_key, dismissed_at, expires_at FROM attention_dismissal")
+    .all() as unknown as AttentionDismissalRow[];
+  return rows.map((r) => ({ dedupeKey: r.dedupe_key, dismissedAt: r.dismissed_at, expiresAt: r.expires_at }));
 }

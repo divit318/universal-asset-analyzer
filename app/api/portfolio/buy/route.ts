@@ -14,14 +14,23 @@
 import { NextResponse } from "next/server";
 import { isValidSymbol } from "@/lib/market";
 import { getQuotes } from "@/lib/yahoo";
-import { addUniversalLot } from "@/lib/portfolio/engines/transaction";
+import { addUniversalLot, executeTrades, type TradeToExecute } from "@/lib/portfolio/engines/transaction";
+import { buildEvaluation } from "@/lib/portfolio/report";
 import { listRawHoldings } from "@/lib/portfolio/store";
 import { TICKER_PRICED_ASSET_CLASSES, detectPortfolioAssetClass, type PortfolioAssetClass } from "@/lib/portfolio/model/types";
+import type { Objective } from "@/lib/portfolio/engines/optimize";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const TICKER_CLASSES = TICKER_PRICED_ASSET_CLASSES;
+
+/** A sell the Investment Recommendation modal's Funding Source step asked to execute first, to raise the cash this buy needs. */
+interface SellFirstInput {
+  holdingId: string;
+  amount: number;
+  reason?: string;
+}
 
 interface BuyBody {
   symbol?: string;
@@ -30,6 +39,16 @@ interface BuyBody {
   quantity?: number;
   amount?: number;
   assetClass?: string;
+  /** Funding: sell these existing holdings (by dollar amount) before recording the buy. */
+  sellFirst?: SellFirstInput[];
+  /** Objective the sell trades are recorded under — cosmetic (ledger provenance), does not affect execution. */
+  objective?: Objective;
+  /** Optional trade date (YYYY-MM-DD); defaults to today in addUniversalLot. */
+  tradeDate?: string;
+  /** Optional broker/commission fees, recorded on the lot. */
+  fees?: number;
+  /** Optional free-form provenance (broker, account, commission, taxes, notes) — merged into portfolio_lot.meta. */
+  meta?: Record<string, unknown>;
 }
 
 export async function POST(request: Request) {
@@ -70,6 +89,12 @@ export async function POST(request: Request) {
     assetClass = body.assetClass as PortfolioAssetClass;
   }
 
+  if (body.sellFirst != null) {
+    if (!Array.isArray(body.sellFirst) || body.sellFirst.some((s) => !s.holdingId || !Number.isFinite(s.amount) || s.amount <= 0)) {
+      return NextResponse.json({ error: "`sellFirst` must be an array of { holdingId, amount }" }, { status: 400 });
+    }
+  }
+
   // Price is ALWAYS the live server-fetched quote — never trust a client-supplied
   // price, which could be stale (user sat on the modal) or manipulated.
   let quotes;
@@ -84,6 +109,31 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: `No live price available for ${symbol}` }, { status: 502 });
   }
 
+  // Funding: raise cash by selling existing holdings BEFORE recording the buy —
+  // the same atomic, self-cash-balancing batch executor the Optimize tab already
+  // uses for rebalance trades, applied here to a Watchlist purchase's funding step.
+  let fundingSnapshotId: string | null = null;
+  if (body.sellFirst && body.sellFirst.length > 0) {
+    const { evaluation } = await buildEvaluation();
+    const trades: TradeToExecute[] = [];
+    for (const s of body.sellFirst) {
+      const holding = evaluation.holdings.find((h) => h.id === s.holdingId);
+      if (!holding) {
+        return NextResponse.json({ error: `Funding holding ${s.holdingId} not found` }, { status: 400 });
+      }
+      trades.push({
+        holdingId: holding.id,
+        symbol: holding.symbol,
+        name: holding.name,
+        assetClass: holding.assetClass,
+        dollarDelta: -Math.min(s.amount, holding.valuation.valueBase),
+        reason: s.reason ?? `Funding purchase of ${symbol}`,
+      });
+    }
+    const result = executeTrades(evaluation, trades, body.objective ?? "maximize_sharpe");
+    fundingSnapshotId = result.snapshotId;
+  }
+
   const shares = quantity ?? amount! / quote.price;
   if (!Number.isFinite(shares) || shares <= 0) {
     return NextResponse.json({ error: "Computed share quantity was zero or invalid" }, { status: 400 });
@@ -92,6 +142,8 @@ export async function POST(request: Request) {
   const resolvedClass = assetClass ?? detectPortfolioAssetClass(quote.assetType);
 
   const name = body.name?.trim() || quote.name || symbol;
+
+  const fees = body.fees != null && Number.isFinite(body.fees) && body.fees >= 0 ? body.fees : undefined;
 
   try {
     addUniversalLot({
@@ -102,7 +154,9 @@ export async function POST(request: Request) {
       kind: "buy",
       assetClass: resolvedClass,
       currency: quote.currency,
-      meta: { source: "watchlist_buy" },
+      fees,
+      tradeDate: body.tradeDate,
+      meta: { source: "watchlist_buy", ...body.meta },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to record purchase";
@@ -122,6 +176,7 @@ export async function POST(request: Request) {
       assetClass: resolvedClass,
       totalCost: shares * quote.price,
       holding,
+      fundingSnapshotId,
     },
     { status: 201 },
   );

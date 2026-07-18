@@ -99,7 +99,7 @@ export function Dialog({
       <div
         ref={panelRef}
         style={{ animation: "dialog-enter 150ms ease-out" }}
-        className={`relative w-full max-w-sm rounded-xl border border-border bg-surface shadow-2xl ${className}`}
+        className={`relative w-full rounded-xl border border-border bg-surface shadow-2xl ${className || "max-w-sm"}`}
       >
         {title && (
           <div className="flex items-center justify-between border-b border-border px-6 py-4">

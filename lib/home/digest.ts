@@ -31,10 +31,24 @@ import { getHistory, getQuote, getQuotes } from "../yahoo";
 import { portfolioPerformance } from "../portfolio-performance";
 import { buildMarketIntelligence } from "./market-intel";
 import { buildPortfolioPulse } from "./pulse";
+import { buildThreats } from "./threats";
+import { buildAttribution } from "./attribution";
+import { buildTimelineFeeds } from "./timeline";
 import { buildWatchlistIntelligence } from "./watchlist-intel";
 import { buildRecentActivity } from "./activity";
 import { buildRecommendedActions } from "./actions";
 import { deterministicBriefing, toBriefPortfolio } from "./brief";
+import {
+  buildAttentionQueue,
+  seedsFromActions,
+  seedsFromThreats,
+  seedsFromAlerts,
+  seedsFromEvents,
+  seedsFromSignals,
+  type WeightBySymbol,
+} from "./attention";
+import { listActiveDismissals } from "../db";
+import { estimateMarketStatus } from "../market-hours";
 import { MIN_DAYS_TO_ANNUALIZE, type HomeDigest, type PortfolioPerformanceSummary } from "./contracts";
 import type { PortfolioLot, WatchlistItem } from "../types";
 
@@ -187,21 +201,72 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
     ? await buildCalibration(ctx.report).catch(() => ({ status: "empty" as const, trackRecord: null, eligible: false }))
     : { status: "empty" as const, trackRecord: null, eligible: false };
 
+  const activity = buildRecentActivity();
+  const { timeline, intelligence } = buildTimelineFeeds({
+    activity: activity.entries,
+    notifications,
+    watchlistAlerts,
+    upcomingEvents: upcoming,
+  });
+
+  // The retired modules' engines now feed the Attention Queue instead of owning
+  // cards. These are the *same* already-computed slices the digest was building;
+  // the feeders are pure transforms of them, so the queue costs no extra fetch.
+  const recommendedActions = buildRecommendedActions(report, watchlistAlerts, notifications);
+  const threats = buildThreats(report);
+
+  // symbol → portfolio weight (0–1), for portfolio-weighted impact on
+  // threats/alerts/events. `Holding.weight` is a percentage.
+  const weightBySymbol: WeightBySymbol = new Map();
+  if (report) {
+    for (const h of report.holdings) {
+      if (h.symbol) weightBySymbol.set(h.symbol.toUpperCase(), h.weight / 100);
+    }
+  }
+
+  const now = Date.now();
+  const marketOpen = estimateMarketStatus("US", new Date(now)) === "open";
+  const dismissals = listActiveDismissals(now);
+
+  const attention = buildAttentionQueue({
+    feeders: [
+      { id: "actions", run: () => seedsFromActions(recommendedActions.actions) },
+      { id: "threats", run: () => seedsFromThreats(threats.threats) },
+      { id: "alerts", run: () => seedsFromAlerts(watchlistAlerts, weightBySymbol) },
+      { id: "events", run: () => seedsFromEvents(upcoming, weightBySymbol, now, marketOpen) },
+      { id: "signals", run: () => seedsFromSignals(opportunity.opportunities) },
+    ],
+    dismissals,
+    now,
+  });
+
   return {
     generatedAt: new Date().toISOString(),
+
+    attention,
 
     marketIntelligence:
       market ?? { status: "degraded", groups: [], breadthPct: null, sentiment: null, regime: null, sectorAttention: [] },
 
     portfolioPulse: buildPortfolioPulse(report),
 
-    recommendedActions: buildRecommendedActions(report, watchlistAlerts, notifications),
+    recommendedActions,
+
+    threats,
+
+    attribution: buildAttribution(
+      report,
+      performance?.benchmark ? { symbol: performance.benchmark.symbol, excessPct: performance.benchmark.excessPct } : null,
+    ),
 
     opportunityFeed: {
       status: opportunity.status,
       opportunities: opportunity.opportunities,
       scannerFreshness: opportunity.scannerFreshness,
     },
+
+    timeline,
+    intelligence,
 
     watchlistIntelligence: buildWatchlistIntelligence(watchlist, watchlistAlerts, upcoming),
 
@@ -210,7 +275,7 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
     performance:
       performance ?? { status: "degraded", xirrPct: null, holdingDays: 0, totalReturnPct: 0, totalReturnDollar: 0, benchmark: null },
 
-    activity: buildRecentActivity(),
+    activity,
 
     calibration,
 

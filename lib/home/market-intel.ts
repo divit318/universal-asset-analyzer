@@ -17,7 +17,7 @@
  * sentiment.ts.
  */
 
-import { getQuotes } from "../yahoo";
+import { getQuotes, getHistory } from "../yahoo";
 import { computeSentiment } from "./sentiment";
 import type { MarketGroup, MarketGroupId, MarketIntelligence, MarketTicker, SectorAttentionChange } from "./contracts";
 import type { CardStatus } from "../mission-control";
@@ -85,6 +85,30 @@ const TAPE: { id: MarketGroupId; label: string; tickers: { symbol: string; label
 
 const ALL_SYMBOLS = TAPE.flatMap((g) => g.tickers.map((t) => t.symbol));
 
+/**
+ * The curated set that gets a sparkline. NOT every tape symbol — fetching a
+ * history for all ~17 on every digest is the overhead the platform mandate
+ * exists to prevent. These are the instruments the Market Pulse strip leads
+ * with, and their histories are platform-cached (so a `getHistory` here
+ * collapses into the same entry a chart elsewhere already warmed).
+ */
+const SPARK_SYMBOLS = new Set(["^GSPC", "^VIX", "^TNX", "DX-Y.NYB", "CL=F", "GC=F", "BTC-USD"]);
+const SPARK_DAYS = 30;
+
+/** Compact close series per symbol, best-effort. A missing series is just no sparkline. */
+async function fetchSparklines(symbols: string[]): Promise<Map<string, number[]>> {
+  const out = new Map<string, number[]>();
+  const results = await Promise.allSettled(
+    symbols.map(async (s) => ({ s, hist: await getHistory(s, SPARK_DAYS) })),
+  );
+  for (const r of results) {
+    if (r.status !== "fulfilled") continue;
+    const closes = r.value.hist.map((h) => h.close).filter((c) => Number.isFinite(c));
+    if (closes.length >= 2) out.set(r.value.s.toUpperCase(), closes.slice(-SPARK_DAYS));
+  }
+  return out;
+}
+
 export interface MarketIntelInputs {
   /** From the Scanner snapshot or the live regime computation. Not recomputed here. */
   regime: MarketRegime | null;
@@ -118,6 +142,9 @@ export async function buildMarketIntelligence(inputs: MarketIntelInputs): Promis
 
   const bySymbol = new Map(quotes.map((q) => [q.symbol.toUpperCase(), q]));
 
+  // Sparklines for the curated pulse set, fetched alongside — never fatal.
+  const sparks = await fetchSparklines([...SPARK_SYMBOLS]).catch(() => new Map<string, number[]>());
+
   const groups: MarketGroup[] = TAPE.map((g) => ({
     id: g.id,
     label: g.label,
@@ -128,6 +155,7 @@ export async function buildMarketIntelligence(inputs: MarketIntelInputs): Promis
         label: t.label,
         price: q?.price ?? null,
         changePct: q?.changePercent ?? null,
+        series: sparks.get(t.symbol.toUpperCase()) ?? null,
       };
     }),
   })).filter((g) => g.tickers.some((t) => t.price != null));

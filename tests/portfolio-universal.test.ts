@@ -450,6 +450,8 @@ describe("optimize — convergent, idempotent, value-conserving", () => {
     "maximize_income",
     "maximize_diversification",
     "preserve_capital",
+    "balanced",
+    "growth",
   ];
 
   /** A mixed portfolio that holds SOME but not all of what the objectives want. */
@@ -574,6 +576,89 @@ describe("optimize — convergent, idempotent, value-conserving", () => {
     );
     expect(twice.trades.length).toBe(0);
     expect(thrice.trades.length).toBe(0);
+  });
+
+  it("enforces the sector cap — excess in an over-cap sector routes to cash, not silently dropped", () => {
+    // Three Technology-sector names: even after each is capped at the 20%
+    // per-holding limit (60% of capacity), the sector as a whole still exceeds the
+    // 40% cap, so the sector cap itself must bind — not just the holding cap — and
+    // scale all three down proportionally, with the freed budget reappearing in
+    // cash rather than evaporating (the exact bug already fixed once for
+    // maxHoldingPct/maxAssetClassPct).
+    const c = ctx({
+      quotes: new Map([
+        ["AAPL", { symbol: "AAPL", price: 200, changePercent: 1.2, currency: "USD", name: "Apple", marketCap: 3e12 }],
+        ["MSFT", { symbol: "MSFT", price: 400, changePercent: 0.8, currency: "USD", name: "Microsoft", marketCap: 3e12 }],
+        ["GOOGL", { symbol: "GOOGL", price: 170, changePercent: 0.5, currency: "USD", name: "Alphabet", marketCap: 2e12 }],
+        ["IEF", { symbol: "IEF", price: 95, changePercent: -0.1, currency: "USD", name: "7-10y Treasury", marketCap: null }],
+      ]),
+      history: new Map([
+        ["AAPL", walk(300, 0.0006, 0.018, 3)],
+        ["MSFT", walk(300, 0.0005, 0.016, 5)],
+        ["GOOGL", walk(300, 0.0005, 0.017, 9)],
+        ["IEF", walk(300, 0.0001, 0.004, 11)],
+      ]),
+      fundamentals: new Map([
+        ["AAPL", {
+          sector: "Technology", industry: "Consumer Electronics", country: "United States", currency: "USD",
+          dividendYield: 0.005, duration: null, maturity: null, creditQuality: null, expenseRatio: null,
+          marketCap: 3e12, peRatio: 30, priceToBook: 45, returnOnEquity: 0.55, revenueGrowth: 0.08,
+          operatingMargins: 0.30, debtToEquity: 150, operatingCashflow: 1.1e11, beta: 1.25,
+        }],
+        ["MSFT", {
+          sector: "Technology", industry: "Software", country: "United States", currency: "USD",
+          dividendYield: 0.007, duration: null, maturity: null, creditQuality: null, expenseRatio: null,
+          marketCap: 3e12, peRatio: 32, priceToBook: 14, returnOnEquity: 0.40, revenueGrowth: 0.12,
+          operatingMargins: 0.42, debtToEquity: 60, operatingCashflow: 1e11, beta: 0.9,
+        }],
+        ["GOOGL", {
+          sector: "Technology", industry: "Internet Content", country: "United States", currency: "USD",
+          dividendYield: 0.004, duration: null, maturity: null, creditQuality: null, expenseRatio: null,
+          marketCap: 2e12, peRatio: 25, priceToBook: 7, returnOnEquity: 0.30, revenueGrowth: 0.10,
+          operatingMargins: 0.32, debtToEquity: 12, operatingCashflow: 9e10, beta: 1.05,
+        }],
+      ]),
+    });
+    const { holdings } = normalizeHoldings([
+      raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 200 }),
+      raw({ id: "m", assetClass: "equity", symbol: "MSFT", quantity: 100 }),
+      raw({ id: "gg", assetClass: "equity", symbol: "GOOGL", quantity: 100 }),
+      raw({ id: "b", assetClass: "bond", symbol: "IEF", quantity: 20 }),
+    ], c);
+    const evaluation = evaluate(holdings, c);
+
+    const result = optimize(evaluation, "maximize_return", DEFAULT_CONSTRAINTS, undefined, c);
+
+    const techWeight = result.holdings
+      .filter((h) => h.symbol === "AAPL" || h.symbol === "MSFT" || h.symbol === "GOOGL")
+      .reduce((s, h) => s + h.targetWeight, 0);
+    expect(techWeight).toBeLessThanOrEqual(DEFAULT_CONSTRAINTS.maxSectorPct + 0.5);
+    expect(result.warnings.some((w) => w.toLowerCase().includes("sector"))).toBe(true);
+
+    const changes = result.trades.map((t) => ({ holdingId: t.holdingId, targetWeight: t.targetWeight }));
+    const applied = evaluate(applyTargetPlanConserving(evaluation.holdings, changes, c), c);
+    expect(applied.totalValue).toBeCloseTo(evaluation.totalValue, 0);
+
+    // Convergent: re-optimizing the capped result proposes nothing further.
+    const second = optimize(applied, "maximize_return", DEFAULT_CONSTRAINTS, undefined, c);
+    expect(second.trades.length).toBe(0);
+  });
+
+  it("enforces the country cap when tightened below the generous default", () => {
+    const c = ctx();
+    const { holdings } = normalizeHoldings([
+      raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 200 }),
+      raw({ id: "b", assetClass: "bond", symbol: "IEF", quantity: 100 }),
+    ], c);
+    const evaluation = evaluate(holdings, c);
+
+    const tightCountry = { ...DEFAULT_CONSTRAINTS, maxCountryPct: 30 };
+    const result = optimize(evaluation, "maximize_return", tightCountry, undefined, c);
+
+    const usWeight = result.holdings
+      .filter((h) => h.symbol === "AAPL") // only US-attributed holding in this fixture
+      .reduce((s, h) => s + h.targetWeight, 0);
+    expect(usWeight).toBeLessThanOrEqual(tightCountry.maxCountryPct + 0.5);
   });
 });
 

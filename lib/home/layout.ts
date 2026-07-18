@@ -54,58 +54,46 @@ export interface HomeLayoutConfig {
 const GRID: Record<Breakpoint, number> = { sm: 12, md: 12, lg: 12, xl: 12 };
 
 /**
- * The default homepage.
+ * The default homepage — "The Desk" (§4.1, §9). Four rows, top to bottom:
+ * what happened + where I stand (brief + book) → what needs me now (the
+ * Attention Queue + the Radar of ideas entering the pipeline) → what's the
+ * market doing (the tape) → the long read (collapsed).
  *
- * The order answers the question the page exists to answer, top to bottom:
- * what changed (brief) → what should I do (actions) → how am I doing (pulse) →
- * what's the market doing (intelligence) → what's next (opportunities, events)
- * → where was I (continue).
+ * Collapsing 14 modules to 6 is the proof the registry architecture works:
+ * retiring a module is a registry + layout + map edit; `app/page.tsx` is
+ * untouched and the validators catch any drift.
  */
 export const HOME_LAYOUT: HomeLayoutConfig = {
-  groupGap: "gap-8",
+  groupGap: "gap-6",
   groups: [
+    // Command row: the executive brief beside the book rail. "What happened,
+    // and how is my book" answered before the fold.
     {
-      id: "brief",
-      columns: GRID,
-      gap: "gap-4",
-      slots: [{ moduleId: "todays-brief" }],
-    },
-    {
-      id: "act",
-      label: "What to do",
-      description: "Ranked by the portfolio engine — highest decision score first.",
-      columns: GRID,
-      gap: "gap-4",
-      slots: [{ moduleId: "recommended-actions" }],
-    },
-    {
-      id: "position",
-      label: "Where you stand",
+      id: "command",
       columns: GRID,
       gap: "gap-4",
       slots: [
-        { moduleId: "portfolio-pulse" },
-        { moduleId: "portfolio-performance" },
+        { moduleId: "todays-brief" },
+        { moduleId: "book" },
       ],
     },
+    // Attention row: the ranked queue (the page's centerpiece) beside the
+    // Radar. "What needs a decision now, and what's worth a look next."
     {
-      id: "market",
-      label: "The market",
+      id: "attention",
+      columns: GRID,
+      gap: "gap-4",
+      slots: [
+        { moduleId: "attention-queue" },
+        { moduleId: "radar" },
+      ],
+    },
+    // The market tape — a full-width strip of compact instrument cards.
+    {
+      id: "tape",
       columns: GRID,
       gap: "gap-4",
       slots: [{ moduleId: "market-intelligence" }],
-    },
-    {
-      id: "explore",
-      label: "What's next",
-      columns: GRID,
-      gap: "gap-4",
-      slots: [
-        { moduleId: "opportunity-feed" },
-        { moduleId: "watchlist-intelligence" },
-        { moduleId: "upcoming-events" },
-        { moduleId: "continue" },
-      ],
     },
     {
       id: "note",

@@ -14,9 +14,11 @@
  * the layout by validateHomeComposition().
  */
 
+import type { CSSProperties } from "react";
 import type { Breakpoint } from "@/lib/home/types";
 import { resolveLayout, resolveSlot, type HomeLayoutConfig } from "@/lib/home/layout";
 import { HOME_MODULES } from "./module-map";
+import { SymbolLinkRoot } from "./_atmosphere/symbol-link";
 
 /** span → the Tailwind class at each breakpoint. Static strings only. */
 const SPAN: Record<Breakpoint, Record<number, string>> = {
@@ -51,8 +53,12 @@ function spanClasses(span: Record<Breakpoint, number>): string {
 export function ModuleGrid({ config }: { config?: HomeLayoutConfig }) {
   const groups = resolveLayout(config);
 
+  // A single running index across every slot on the page, so the staggered
+  // entrance flows continuously top-to-bottom rather than restarting per group.
+  let revealIndex = 0;
+
   return (
-    <div className="flex flex-col gap-8">
+    <SymbolLinkRoot className="flex flex-col gap-8">
       {groups.map((group) => (
         <section key={group.id} className="flex flex-col gap-3">
           {group.label ? (
@@ -66,9 +72,14 @@ export function ModuleGrid({ config }: { config?: HomeLayoutConfig }) {
             {group.slots.map((slot) => {
               const resolved = resolveSlot(slot);
               const Module = HOME_MODULES[slot.moduleId];
+              const i = revealIndex++;
 
               return (
-                <div key={slot.moduleId} className={spanClasses(resolved.resolvedSpan)}>
+                <div
+                  key={slot.moduleId}
+                  className={`uaa-reveal ${spanClasses(resolved.resolvedSpan)}`}
+                  style={{ "--reveal-i": i } as CSSProperties}
+                >
                   <Module
                     collapsible={slot.collapsible}
                     defaultCollapsed={slot.defaultCollapsed}
@@ -79,6 +90,6 @@ export function ModuleGrid({ config }: { config?: HomeLayoutConfig }) {
           </div>
         </section>
       ))}
-    </div>
+    </SymbolLinkRoot>
   );
 }

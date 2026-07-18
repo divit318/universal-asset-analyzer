@@ -170,7 +170,7 @@ export function ModuleShell<T>({
   if (unmet) {
     const cta = UNMET[unmet];
     return (
-      <div className="flex h-full flex-col rounded-card border border-border bg-surface p-4 shadow-card">
+      <div className="uaa-card flex h-full flex-col p-4">
         {header}
         <div className="flex flex-1 flex-col items-start justify-center gap-2 py-6">
           <p className="text-sm text-muted">{cta.message}</p>
@@ -186,7 +186,7 @@ export function ModuleShell<T>({
   }
 
   return (
-    <div className="flex h-full flex-col rounded-card border border-border bg-surface p-4 shadow-card">
+    <div className="uaa-card flex h-full flex-col p-4">
       {header}
       {collapsed ? null : (
         <Section

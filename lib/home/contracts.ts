@@ -30,6 +30,13 @@ export interface MarketTicker {
   label: string;
   price: number | null;
   changePct: number | null;
+  /**
+   * A short recent-close series for the card's sparkline, oldest→newest.
+   * Null when no history was fetched for this symbol (only the curated Market
+   * Pulse instruments carry one — fetching a series for all ~17 tape symbols on
+   * every digest would be overhead the platform mandate exists to prevent).
+   */
+  series?: number[] | null;
 }
 
 export type MarketGroupId = "indices" | "volatility" | "rates" | "commodities" | "currencies" | "crypto";
@@ -81,6 +88,22 @@ export interface PulseMover {
   changeDollar: number;
 }
 
+/**
+ * One spoke of the Portfolio Health radar. Read directly from a scored
+ * `HealthDimension` — the radar is a projection of the health engine's real
+ * dimensions, never a second, invented set of axes.
+ */
+export interface HealthRadarAxis {
+  /** The health dimension's own name (e.g. "Diversification", "Liquidity"). */
+  axis: string;
+  /** Short label for tight radar rendering (e.g. "Divers.", "Income"). */
+  shortLabel: string;
+  /** 0-100. */
+  score: number;
+  /** False when the dimension abstained or was thinly evidenced — drawn faded. */
+  covered: boolean;
+}
+
 export interface PortfolioPulse {
   status: CardStatus;
   healthScore: number | null;
@@ -98,6 +121,193 @@ export interface PortfolioPulse {
   largestDrift: { label: string; driftPct: number } | null;
   /** Share of value that is marked to market rather than self-reported. */
   marketPricedPct: number;
+  /** The health engine's dimensions, projected onto radar spokes. */
+  radar: HealthRadarAxis[];
+  /** Highest-scoring covered dimension — what the book does best. */
+  biggestStrength: { label: string; score: number } | null;
+  /** Lowest-scoring covered dimension — the health score's biggest drag. */
+  biggestWeakness: { label: string; score: number } | null;
+  /** Coverage-adjusted share of health weight that was actually scoreable, 0-100. */
+  healthCoveragePct: number | null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Threat Center — portfolio vulnerabilities                           */
+/* ------------------------------------------------------------------ */
+
+export type ThreatCategory =
+  | "inflation"
+  | "rates"
+  | "currency"
+  | "concentration"
+  | "liquidity"
+  | "drawdown"
+  | "correlation"
+  | "credit"
+  | "scenario";
+
+/**
+ * One portfolio vulnerability. Every field is read from an engine that already
+ * measured it — `risk` (duration, inflation/credit sensitivity, FX%, illiquid%,
+ * VaR), `concentration` findings, or the harshest stress `scenario`. The module
+ * ranks and narrates; it does not invent a risk number.
+ */
+export interface ThreatItem {
+  id: string;
+  title: string;
+  category: ThreatCategory;
+  severity: "high" | "medium" | "low";
+  /** 0-1 likelihood when the source expresses one (scenarios do); else null. */
+  probability: number | null;
+  /** Estimated % of portfolio value at risk if it materializes. Negative = loss. */
+  impactPct: number | null;
+  detail: string;
+  mitigation: string;
+  href: string;
+}
+
+export interface ThreatCenter {
+  status: CardStatus;
+  threats: ThreatItem[];
+  /** Portfolio drawdown under the single harshest modelled scenario, in %. */
+  worstCasePct: number | null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Performance Attribution — what drove the return                     */
+/* ------------------------------------------------------------------ */
+
+export type AttributionKind = "holding" | "sector" | "cash" | "income" | "benchmark";
+
+/**
+ * One contribution row. Attribution is on cumulative unrealized P&L (which the
+ * report carries per-holding), not intraday — the digest ships no per-holding
+ * live quote to the client, so an honest "today by holding" is not derivable
+ * here. Cumulative attribution is, and it is labelled as such.
+ */
+export interface AttributionRow {
+  id: string;
+  label: string;
+  kind: AttributionKind;
+  /** Contribution to total return, in percentage points of cost basis. */
+  contributionPct: number;
+  contributionDollar: number;
+}
+
+export interface PerformanceAttribution {
+  status: CardStatus;
+  totalReturnPct: number;
+  totalReturnDollar: number;
+  /** Top positive and negative contributors, interleaved and ranked by magnitude. */
+  byHolding: AttributionRow[];
+  bySector: AttributionRow[];
+  /** Cash drag: the opportunity cost of the idle-cash weight. Null when no cash. */
+  cashDrag: AttributionRow | null;
+  benchmark: { symbol: string; excessPct: number } | null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Timeline & Intelligence — the event feeds                           */
+/* ------------------------------------------------------------------ */
+
+export type TimelineKind = "activity" | "notification" | "alert" | "event";
+export type TimelineTone = "positive" | "negative" | "warning" | "neutral";
+
+export interface TimelineItem {
+  id: string;
+  kind: TimelineKind;
+  title: string;
+  detail: string | null;
+  /** ISO timestamp. Past for history; future for upcoming events (countdown). */
+  at: string;
+  /** True when `at` is in the future — the UI shows a countdown, not "ago". */
+  upcoming: boolean;
+  tone: TimelineTone;
+  symbol: string | null;
+  href: string | null;
+}
+
+export interface TimelineFeed {
+  status: CardStatus;
+  items: TimelineItem[];
+}
+
+/* ------------------------------------------------------------------ */
+/* The Attention Queue — one ranked, finishable stream                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The five things that can need a decision. Deliberately kind-tagged rather
+ * than source-tagged: the user's question is "what needs me?", and a threat, a
+ * triggered alert, and an upcoming catalyst are all answers to it regardless of
+ * which engine produced them. The kind drives the chip label and the tie-break
+ * precedence, never a separate ranking heuristic — one score ranks them all.
+ */
+export type AttentionKind = "action" | "threat" | "alert" | "event" | "signal";
+
+/**
+ * One item in the Attention Queue. Every field except `score`, `id`, and
+ * `mergedHrefs` is supplied by a feeder (a pure transform of a digest slice);
+ * `score` is computed by `lib/home/attention.ts` alone (§4.2), never by a
+ * feeder. This is the single unit of importance that makes cross-module ranking
+ * possible — the contract RC3 said never existed.
+ */
+export interface AttentionItem {
+  /** Stable per story instance — used as the React key and focus target. */
+  id: string;
+  /**
+   * Story identity, severity band included (§12). Two feeders describing the
+   * same story collide here (dedupe); a *materially worse* version of the same
+   * story has a different band and therefore a different key, so it resurfaces
+   * past a prior dismissal (§19.4).
+   */
+  dedupeKey: string;
+  kind: AttentionKind;
+  symbol: string | null;
+  /** ≤ 60 chars. */
+  headline: string;
+  /** One sentence. */
+  rationale: string;
+  /** 0–100, geometric mean of the three inputs. Computed by the engine only. */
+  score: number;
+  /** The three 0–1 inputs, kept for calibration/debugging and score audit. */
+  impact: number;
+  urgency: number;
+  confidence: number;
+  /** ISO, for dated catalysts; null for undated items. */
+  occursAt: string | null;
+  /** The one deep link into the owning tool. Verb-labeled. */
+  primaryAction: { label: string; href: string };
+  /** Feeder id, for degraded-state attribution. */
+  source: string;
+  /** Extra links merged in from deduped sibling stories (§12). */
+  mergedHrefs?: { label: string; href: string }[];
+}
+
+/** What a feeder emits — the engine assigns `score`, `id`, and `mergedHrefs`. */
+export type AttentionSeed = Omit<AttentionItem, "score" | "mergedHrefs">;
+
+/**
+ * A persisted dismissal. `expiresAt` is an epoch-ms deadline after which the
+ * story is allowed back into the queue (per-kind TTL, §12); events store their
+ * catalyst time so the dismissal simply lapses when the date passes.
+ */
+export interface AttentionDismissal {
+  dedupeKey: string;
+  dismissedAt: number;
+  expiresAt: number;
+}
+
+export interface AttentionQueue {
+  status: CardStatus;
+  /** Ranked, deduped, dismissal-filtered. The UI caps how many it *shows*. */
+  items: AttentionItem[];
+  /** True open count, even when the UI caps the visible rows (§12, §18). */
+  openCount: number;
+  /** Feeder ids that threw — drives the degraded footer, never a blank zone (§11). */
+  degradedFeeders: string[];
+  /** When the queue was last assembled — the "you're clear" timestamp (§11). */
+  reviewedAt: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -270,14 +480,26 @@ export type HomeBriefChunk =
  */
 export interface HomeDigest {
   generatedAt: string;
+  /**
+   * The Attention Queue — the page's centerpiece. One ranked, dismissible
+   * stream merging the action/threat/alert/event/signal feeders. Rides the
+   * digest (deterministic, no AI in its paint path).
+   */
+  attention: AttentionQueue;
   marketIntelligence: MarketIntelligence;
   portfolioPulse: PortfolioPulse;
   recommendedActions: RecommendedActions;
+  threats: ThreatCenter;
+  attribution: PerformanceAttribution;
   opportunityFeed: {
     status: CardStatus;
     opportunities: OpportunitySnapshotItem[];
     scannerFreshness: Freshness | null;
   };
+  /** Full chronological feed of meaningful events (past + upcoming). */
+  timeline: TimelineFeed;
+  /** The high-signal, needs-interpretation subset — a filtered view of the feed. */
+  intelligence: TimelineFeed;
   watchlistIntelligence: WatchlistIntelligence;
   upcomingEvents: { status: CardStatus; events: UpcomingEventLite[] };
   performance: PortfolioPerformanceSummary;

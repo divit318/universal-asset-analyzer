@@ -252,7 +252,12 @@ function PortfolioPageInner() {
                 risk={report.risk}
                 annualIncome={report.annualIncome}
               />
-              <CashPanel />
+              <CashPanel
+                onExecuted={() => {
+                  refresh();
+                  setThesisRefreshSignal((n) => n + 1);
+                }}
+              />
             </div>
           )}
 
