@@ -8,6 +8,7 @@ import type { GroundingReport } from "@/lib/ai/types";
 import { downloadBlob } from "@/lib/download";
 import { SymbolSearch } from "@/app/_components/symbol-search";
 import { GroundingBadge } from "@/app/_components/grounding-badge";
+import { useFocusSafe } from "@/lib/focus-context";
 
 // Recharts is heavy; load the chart chunks only once the user has ≥2 stocks to
 // compare rather than shipping them in the initial /compare bundle.
@@ -264,6 +265,7 @@ function computeCategoryWinners(sections: SectionDef[], entries: CompareEntry[],
 }
 
 export default function ComparePage() {
+  const focus = useFocusSafe();
   const [symbols, setSymbols] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [market, setMarket] = useState<"US" | "IN">("US");
@@ -304,6 +306,7 @@ export default function ComparePage() {
     if (urlSyms.length > 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setSymbols(urlSyms);
+      for (const s of urlSyms) focus?.recordFocus(s);
     } else {
       // No URL params — restore from session (cleared on tab close)
       try {
@@ -317,7 +320,24 @@ export default function ComparePage() {
         }
       } catch { /* ignore corrupt storage */ }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Prefill the add-symbol box from the focus spine when Compare opens empty
+  // (§4.4). Seeds the input only — the user still adds it; a URL param or an
+  // existing/restored comparison wins.
+  const prefilledRef = useRef(false);
+  useEffect(() => {
+    if (prefilledRef.current || !focus?.mostRecent) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("symbols") || params.get("a") || symbols.length > 0 || input) {
+      prefilledRef.current = true;
+      return;
+    }
+    prefilledRef.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setInput(focus.mostRecent);
+  }, [focus?.mostRecent, symbols.length, input]);
 
   // Save to session immediately when comparison data loads (survives navigation and reload)
   useEffect(() => {
@@ -414,6 +434,7 @@ export default function ComparePage() {
       ? `${upper}.NS` : upper;
     if (symbols.includes(withSuffix)) return;
     setSymbols((prev) => [...prev, withSuffix]);
+    focus?.recordFocus(withSuffix);
     setInput("");
     setAiResult(null);
   }

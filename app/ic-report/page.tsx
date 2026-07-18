@@ -8,6 +8,7 @@ import type { DetectedSignal } from "@/lib/ic-signals";
 import { SymbolSearch } from "@/app/_components/symbol-search";
 import { PageShell } from "@/app/_components/ui";
 import { GroundingBadge } from "@/app/_components/grounding-badge";
+import { useFocusSafe } from "@/lib/focus-context";
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -456,6 +457,7 @@ function ProgressTracker({
 /* -------------------------------------------------------------------------- */
 
 export default function ICReportPage() {
+  const focus = useFocusSafe();
   const [symbol, setSymbol] = useState("");
   const [exchange, setExchange] = useState<"US" | "IN">("US");
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
@@ -480,9 +482,10 @@ export default function ICReportPage() {
     if (urlSymbol) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setSymbol(urlSymbol.toUpperCase());
+      focus?.recordFocus(urlSymbol);
       // Detect Indian exchange by suffix
       if (urlSymbol.toUpperCase().endsWith(".NS") || urlSymbol.toUpperCase().endsWith(".BO")) {
-         
+
         setExchange("IN");
       }
       return; // don't restore stale cached report when deep-linking
@@ -498,8 +501,23 @@ export default function ICReportPage() {
         }
       }
     } catch { /* ignore */ }
-   
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Prefill the symbol input from the focus spine when the page opens without a
+  // symbol of its own (§4.4). Seeds the input only — the report is still run
+  // manually; a URL param or this page's own restored report wins.
+  const prefilledRef = useRef(false);
+  useEffect(() => {
+    if (prefilledRef.current || !focus?.mostRecent) return;
+    if (new URLSearchParams(window.location.search).get("symbol") || symbol) {
+      prefilledRef.current = true;
+      return;
+    }
+    prefilledRef.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSymbol(focus.mostRecent);
+  }, [focus?.mostRecent, symbol]);
 
   // Dynamic page title
   useEffect(() => {
@@ -528,6 +546,7 @@ export default function ICReportPage() {
 
   async function run() {
     if (!symbol.trim()) return;
+    focus?.recordFocus(symbol);
     abortRef.current?.abort();
     abortRef.current = new AbortController();
 

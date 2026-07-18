@@ -26,6 +26,7 @@ import type { ScreenerInCompany, ScreenerInPeer } from "@/lib/screener-in";
 import { detectMarket, MARKET_BADGE, MARKET_LABEL, type MarketRegion } from "@/lib/market";
 import { detectAssetClass } from "@/lib/asset-class";
 import { useResearchBundle } from "@/lib/platform/client/use-research-bundle";
+import { useFocusSafe } from "@/lib/focus-context";
 import { useDataset, useDatasetValue } from "@/lib/platform/client/use-dataset";
 import { useRecordActivity } from "@/app/_home/use-record-activity";
 import {
@@ -1504,6 +1505,7 @@ export default function ResearchPage() {
 
 function ResearchPageInner() {
   const router = useRouter();
+  const focus = useFocusSafe();
   const [symbol, setSymbol] = useState("");
   /** The symbol currently being researched. Changing it cancels the previous plan. */
   const [activeSymbol, setActiveSymbol] = useState<string | null>(null);
@@ -1606,14 +1608,33 @@ function ResearchPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Prefill the search box from the focus spine when the Hub opens without a
+  // symbol of its own (§4.4). Seeds the box only — no fetch, no submit — so the
+  // user still chooses to run it; URL param and this page's own restore win.
+  const prefilledRef = useRef(false);
+  useEffect(() => {
+    if (prefilledRef.current || !focus?.mostRecent) return;
+    const param = new URLSearchParams(window.location.search).get("symbol");
+    if (param || sessionStorage.getItem("uaa_research_symbol") || symbol) {
+      prefilledRef.current = true;
+      return;
+    }
+    prefilledRef.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSymbol(focus.mostRecent);
+  }, [focus?.mostRecent, symbol]);
+
   useEffect(() => {
     if (!activeSymbol) return;
+    // A researched symbol is the strongest "acted on" signal — record it in the
+    // focus spine so other tools carry the working name (§4.4).
+    focus?.recordFocus(activeSymbol);
     try {
       sessionStorage.setItem("uaa_research_symbol", activeSymbol);
     } catch {
       /* private browsing / quota — non-fatal */
     }
-  }, [activeSymbol]);
+  }, [activeSymbol, focus]);
 
   // Update tab title
   useEffect(() => {

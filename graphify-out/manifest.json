@@ -20,8 +20,8 @@
     "semantic_hash": ""
   },
   "app/_components/command-palette.tsx": {
-    "mtime": 1783547972.5945256,
-    "ast_hash": "71f7732b8c43e3804110da8f1aec7bf9",
+    "mtime": 1784387959.5643132,
+    "ast_hash": "08d34477ecdb8150996fc65f676a252d",
     "semantic_hash": ""
   },
   "app/_components/data-provenance.tsx": {
@@ -460,13 +460,13 @@
     "semantic_hash": ""
   },
   "app/compare/page.tsx": {
-    "mtime": 1783547972.605774,
-    "ast_hash": "68a57a189a519ace6a6717862d15033c",
+    "mtime": 1784388171.411686,
+    "ast_hash": "ada44105beb960516021d72fadb41e47",
     "semantic_hash": ""
   },
   "app/dcf/page.tsx": {
-    "mtime": 1783547972.60589,
-    "ast_hash": "538049fb18a6448bb84aacc15486eeb7",
+    "mtime": 1784388286.7448864,
+    "ast_hash": "81ee196194b7638f8d2d7572109cd823",
     "semantic_hash": ""
   },
   "app/engine/page.tsx": {
@@ -475,8 +475,8 @@
     "semantic_hash": ""
   },
   "app/ic-report/page.tsx": {
-    "mtime": 1784110466.5337598,
-    "ast_hash": "ece61cbdc0a7abc6ba3e8f270b6d8eba",
+    "mtime": 1784388291.8927872,
+    "ast_hash": "97567bc274c9a0d72f4db58ff4ed4789",
     "semantic_hash": ""
   },
   "app/intelligence/_views/timeline-view.tsx": {
@@ -520,8 +520,8 @@
     "semantic_hash": ""
   },
   "app/layout.tsx": {
-    "mtime": 1783547972.6075835,
-    "ast_hash": "983654f127ea671d8ed6b0ef26bc6738",
+    "mtime": 1784387887.913196,
+    "ast_hash": "f3d69f77ad26a4b7686ecfedff829124",
     "semantic_hash": ""
   },
   "app/page.tsx": {
@@ -740,8 +740,8 @@
     "semantic_hash": ""
   },
   "app/research/page.tsx": {
-    "mtime": 1784386261.1762757,
-    "ast_hash": "34297b366d734756dbd7ef3ad714d86b",
+    "mtime": 1784388093.8013976,
+    "ast_hash": "79a42a3ec2e8ead3bf5b5054bf5e2ac2",
     "semantic_hash": ""
   },
   "app/scanner/_components/causal-chain.tsx": {
@@ -3857,6 +3857,41 @@
   ".playwright-mcp/page-2026-07-18T14-32-09-721Z.yml": {
     "mtime": 1784385129.72168,
     "ast_hash": "7a1c0b4e1a64ba1d53d4a8ce74e5ee1c",
+    "semantic_hash": ""
+  },
+  "lib/focus-context.tsx": {
+    "mtime": 1784387873.5734227,
+    "ast_hash": "0e8ab8e08bd322c86a83e3a56db445ed",
+    "semantic_hash": ""
+  },
+  "lib/focus.ts": {
+    "mtime": 1784387840.75159,
+    "ast_hash": "028571a4d4580ecc42edd8058861bc79",
+    "semantic_hash": ""
+  },
+  "tests/focus.test.ts": {
+    "mtime": 1784387854.2326362,
+    "ast_hash": "e85f0a655105b5c0447fbf2f6662662b",
+    "semantic_hash": ""
+  },
+  ".playwright-mcp/page-2026-07-18T14-55-36-426Z.yml": {
+    "mtime": 1784386536.8742716,
+    "ast_hash": "0a379e56af124154a9cb2159e3f04306",
+    "semantic_hash": ""
+  },
+  ".playwright-mcp/page-2026-07-18T14-56-10-328Z.yml": {
+    "mtime": 1784386570.3377268,
+    "ast_hash": "dde978bc3b168be9c3ba73b3b5591e8a",
+    "semantic_hash": ""
+  },
+  ".playwright-mcp/page-2026-07-18T14-56-57-873Z.yml": {
+    "mtime": 1784386617.8815086,
+    "ast_hash": "1ef8214127ddf127414233a24d768c51",
+    "semantic_hash": ""
+  },
+  ".playwright-mcp/page-2026-07-18T14-57-15-020Z.yml": {
+    "mtime": 1784386635.0262609,
+    "ast_hash": "bd8f957827c52b4e1fe57733e5fdd0ee",
     "semantic_hash": ""
   }
 }

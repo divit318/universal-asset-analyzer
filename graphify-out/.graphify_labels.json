@@ -197,9 +197,16 @@
   "195": "movement-explainer-card.tsx",
   "196": "feed-row.tsx",
   "197": "ic-agents.ts",
+  "198": "ios-context.tsx",
   "199": "ai-financial-insight.ts",
   "200": "route.ts",
+  "201": "progress-stream.tsx",
+  "202": "ic-questions.ts",
   "203": "market-regime-banner.tsx",
+  "204": "route.ts",
   "205": "valuation-history-chart.tsx",
+  "206": "earnings-card.tsx",
+  "207": "fund-shared.ts",
+  "208": "investment-thesis-panel.tsx",
   "209": "route.ts"
 }

@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { Search, CornerDownLeft, TrendingUp } from "lucide-react";
+import { Search, CornerDownLeft, TrendingUp, Plus } from "lucide-react";
 import type { SymbolSuggestion } from "@/lib/types";
 import { ALL_TOOLS } from "./nav-config";
+import { useFocus } from "@/lib/focus-context";
+import { useToast } from "./toast";
 
 /* Event other components dispatch to open the palette (e.g. the header button). */
 export const OPEN_PALETTE_EVENT = "uaa:open-palette";
@@ -14,9 +16,33 @@ type Item =
   | { kind: "ticker"; symbol: string; name: string; sub: string }
   | { kind: "tool"; href: string; label: string; desc: string; icon: React.ComponentType<{ className?: string; strokeWidth?: number }>; objective: string };
 
-/** Global ⌘K command palette — jump to any ticker's research or any tool. */
+/**
+ * The symbol-first verbs (§4.4). Derived from `ALL_TOOLS`'s `symbolParam`
+ * metadata rather than hardcoded, so a new symbol-taking tool joins the palette
+ * automatically. Short display labels only are mapped here; the hrefs and the
+ * query-param name both come from the nav config.
+ */
+const VERB_LABEL: Record<string, string> = {
+  "/research": "Research",
+  "/compare": "Compare",
+  "/dcf": "DCF",
+  "/ic-report": "IC Report",
+};
+const SYMBOL_TOOLS = ALL_TOOLS.filter((t) => t.symbolParam);
+
+function symbolVerbs(symbol: string): { label: string; href: string }[] {
+  const s = encodeURIComponent(symbol);
+  return SYMBOL_TOOLS.map((t) => ({
+    label: VERB_LABEL[t.href] ?? t.label,
+    href: `${t.href}?${t.symbolParam}=${s}`,
+  }));
+}
+
+/** Global ⌘K command palette — symbol-first: jump to any ticker with a verb list, or any tool. */
 export function CommandPalette() {
   const router = useRouter();
+  const { symbols: focusSymbols, recordFocus } = useFocus();
+  const toast = useToast();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [tickers, setTickers] = useState<SymbolSuggestion[]>([]);
@@ -60,8 +86,9 @@ export function CommandPalette() {
     };
   }, [open]);
 
-  // Debounced ticker search. The clear-on-empty happens inside the timeout
-  // (async), so we never call setState synchronously in the effect body.
+  // Debounced ticker search — reuses the app's one symbol-search path
+  // (/api/search), never a new lookup. The clear-on-empty happens inside the
+  // timeout (async), so we never call setState synchronously in the effect body.
   useEffect(() => {
     if (!open) return;
     const q = query.trim();
@@ -94,14 +121,17 @@ export function CommandPalette() {
     );
   }, [query]);
 
-  // Combined, ordered item list: matching tickers first, then tools.
+  // Combined, ordered item list. With a query, live ticker matches lead; with an
+  // empty query, the focus-symbol recents lead (§4.4). Tools always follow.
   const items = useMemo<Item[]>(() => {
-    const tk: Item[] = tickers.map((t) => ({
-      kind: "ticker",
-      symbol: t.symbol,
-      name: t.name,
-      sub: [t.type, t.exchange].filter(Boolean).join(" · "),
-    }));
+    const tk: Item[] = query.trim()
+      ? tickers.map((t) => ({
+          kind: "ticker",
+          symbol: t.symbol,
+          name: t.name,
+          sub: [t.type, t.exchange].filter(Boolean).join(" · "),
+        }))
+      : focusSymbols.map((s) => ({ kind: "ticker", symbol: s, name: "", sub: "recent" }));
     const tl: Item[] = toolMatches.map((t) => ({
       kind: "tool",
       href: t.href,
@@ -111,15 +141,54 @@ export function CommandPalette() {
       objective: t.objective,
     }));
     return [...tk, ...tl];
-  }, [tickers, toolMatches]);
+  }, [query, tickers, focusSymbols, toolMatches]);
+
+  const goTicker = useCallback(
+    (symbol: string) => {
+      recordFocus(symbol);
+      close();
+      router.push(`/research?symbol=${encodeURIComponent(symbol)}`);
+    },
+    [recordFocus, close, router],
+  );
+
+  const goVerb = useCallback(
+    (symbol: string, href: string) => {
+      recordFocus(symbol);
+      close();
+      router.push(href);
+    },
+    [recordFocus, close, router],
+  );
+
+  const addToWatchlist = useCallback(
+    async (symbol: string) => {
+      try {
+        const res = await fetch("/api/watchlist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ symbol }),
+        });
+        if (!res.ok) throw new Error();
+        recordFocus(symbol);
+        toast(`${symbol} added to watchlist`, "success");
+        close();
+      } catch {
+        toast(`Couldn't add ${symbol}`, "error");
+      }
+    },
+    [recordFocus, toast, close],
+  );
 
   const go = useCallback(
     (item: Item) => {
-      close();
-      if (item.kind === "ticker") router.push(`/research?symbol=${encodeURIComponent(item.symbol)}`);
-      else router.push(item.href);
+      if (item.kind === "ticker") goTicker(item.symbol);
+      else {
+        close();
+        router.push(item.href);
+      }
     },
-    [close, router],
+    [goTicker, close, router],
   );
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -150,6 +219,7 @@ export function CommandPalette() {
 
   let idx = -1;
   const showTickerHeader = items.some((i) => i.kind === "ticker");
+  const tickerHeaderLabel = query.trim() ? "Tickers" : "Recent";
   const firstToolIdx = items.findIndex((i) => i.kind === "tool");
 
   return createPortal(
@@ -186,11 +256,13 @@ export function CommandPalette() {
         {/* Results */}
         <div ref={listRef} className="max-h-[52vh] overflow-y-auto p-2">
           {items.length === 0 && (
-            <p className="px-3 py-8 text-center text-sm text-muted">No matches for “{query}”.</p>
+            <p className="px-3 py-8 text-center text-sm text-muted">
+              {query.trim() ? `No matches for “${query}”.` : "Type a ticker or a tool name."}
+            </p>
           )}
 
           {showTickerHeader && (
-            <p className="px-3 pb-1 pt-2 text-micro font-semibold uppercase tracking-widest text-faint">Tickers</p>
+            <p className="px-3 pb-1 pt-2 text-micro font-semibold uppercase tracking-widest text-faint">{tickerHeaderLabel}</p>
           )}
 
           {items.map((item) => {
@@ -199,25 +271,47 @@ export function CommandPalette() {
             const isActive = i === active;
             if (item.kind === "ticker") {
               return (
-                <button
-                  key={`t-${item.symbol}`}
-                  data-idx={i}
-                  onMouseMove={() => setActive(i)}
-                  onClick={() => go(item)}
-                  className={`flex w-full items-center gap-3 rounded-control px-3 py-2.5 text-left transition-colors ${
-                    isActive ? "bg-surface-3" : ""
-                  }`}
-                >
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control bg-brand-muted text-brand">
-                    <TrendingUp className="h-4 w-4" strokeWidth={2} />
-                  </span>
-                  <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                    <span className="font-mono text-sm font-semibold">{item.symbol}</span>
-                    <span className="truncate text-xs text-muted">{item.name}</span>
-                  </span>
-                  <span className="shrink-0 text-micro text-faint">{item.sub}</span>
-                  {isActive && <CornerDownLeft className="h-3.5 w-3.5 shrink-0 text-muted" />}
-                </button>
+                <div key={`t-${item.symbol}`}>
+                  <button
+                    data-idx={i}
+                    onMouseMove={() => setActive(i)}
+                    onClick={() => go(item)}
+                    className={`flex w-full items-center gap-3 rounded-control px-3 py-2.5 text-left transition-colors ${
+                      isActive ? "bg-surface-3" : ""
+                    }`}
+                  >
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control bg-brand-muted text-brand">
+                      <TrendingUp className="h-4 w-4" strokeWidth={2} />
+                    </span>
+                    <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                      <span className="font-mono text-sm font-semibold">{item.symbol}</span>
+                      {item.name ? <span className="truncate text-xs text-muted">{item.name}</span> : null}
+                    </span>
+                    <span className="shrink-0 text-micro text-faint">{item.sub}</span>
+                    {isActive && <CornerDownLeft className="h-3.5 w-3.5 shrink-0 text-muted" />}
+                  </button>
+
+                  {/* Verb list for the active symbol — the symbol-first affordance. */}
+                  {isActive && (
+                    <div className="flex flex-wrap items-center gap-1.5 px-3 pb-2 pl-12">
+                      {symbolVerbs(item.symbol).map((v) => (
+                        <button
+                          key={v.href}
+                          onClick={() => goVerb(item.symbol, v.href)}
+                          className="rounded-full border border-border bg-surface-2 px-2.5 py-1 text-micro font-medium text-muted transition-colors hover:border-brand/40 hover:text-brand"
+                        >
+                          {v.label}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => addToWatchlist(item.symbol)}
+                        className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2.5 py-1 text-micro font-medium text-muted transition-colors hover:border-brand/40 hover:text-brand"
+                      >
+                        <Plus className="h-3 w-3" strokeWidth={2} /> Add to watchlist
+                      </button>
+                    </div>
+                  )}
+                </div>
               );
             }
             const Icon = item.icon;
