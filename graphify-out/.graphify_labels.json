@@ -208,5 +208,15 @@
   "206": "earnings-card.tsx",
   "207": "fund-shared.ts",
   "208": "investment-thesis-panel.tsx",
-  "209": "route.ts"
+  "209": "route.ts",
+  "210": "getScannerCache",
+  "211": "movement-explainer-card.tsx",
+  "212": "macro-analysis.ts",
+  "213": "valuation-history-chart.tsx",
+  "214": "health.ts",
+  "215": "fixtures.ts",
+  "216": "route.ts",
+  "217": "research-confidence-meter.tsx",
+  "218": "DatasetStatus",
+  "219": "portfolio-stage-db.test.ts"
 }

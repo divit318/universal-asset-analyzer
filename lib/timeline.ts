@@ -294,7 +294,7 @@ function eventsFromSectorRotation(symbol: string, sector: string | null): Timeli
 /** Reuses lib/ai-watchlist.ts's alert pipeline (deterministic) as one-per-symbol-per-day "portfolio_impact" events. */
 async function eventsFromAlerts(symbol: string, name: string): Promise<TimelineEvent[]> {
   const alerts = await gatherWatchlistAlerts(undefined, {
-    items: [{ symbol, name, addedAt: new Date().toISOString(), targetPrice: null, alertPctDrop: null, notes: null }],
+    items: [{ symbol, name, addedAt: new Date().toISOString(), targetPrice: null, alertPctDrop: null, notes: null, stage: "surfaced", stageChangedAt: null }],
   });
   const today = new Date().toISOString().slice(0, 10);
   return alerts

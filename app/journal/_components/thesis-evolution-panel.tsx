@@ -1,5 +1,15 @@
 "use client";
 
+/**
+ * Thesis Evolution — how the investment case for a symbol has moved across its
+ * important events. Migrated into the Journal (§4.5, Phase D): it belongs beside
+ * the decision log, where "did my thesis hold up?" is the question being asked.
+ * Formerly lived under app/timeline/, which is now retired.
+ *
+ * Pure presentation — it renders a `ThesisEvolution` the caller supplies (the
+ * Journal fetches it from /api/timeline for the currently-selected symbol).
+ */
+
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import type { ThesisEvolution } from "@/lib/types";
 import { formatDate } from "@/lib/format";

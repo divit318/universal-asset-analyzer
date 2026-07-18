@@ -99,6 +99,14 @@ export interface AiAnalysis {
   analysis: string;
 }
 
+/**
+ * The Idea lifecycle stage (§4.5). A single `stage` on every tracked symbol
+ * turns Watchlist + Portfolio + Journal into three views of one pipeline.
+ * Descriptive, never a gate — a stage records where an idea is, it never blocks
+ * or warns against any action.
+ */
+export type IdeaStage = "surfaced" | "researching" | "thesis" | "owned" | "passed" | "exited";
+
 export interface WatchlistItem {
   symbol: string;
   name: string;
@@ -106,6 +114,10 @@ export interface WatchlistItem {
   targetPrice: number | null;
   alertPctDrop: number | null;
   notes: string | null;
+  /** Idea lifecycle stage. Defaults to "surfaced" for every row (§4.5). */
+  stage: IdeaStage;
+  /** Epoch-ms when the stage last changed; null for rows predating the migration. */
+  stageChangedAt: number | null;
   /** Joined from fundamentals_cache by /api/watchlist (null if never screened). */
   sector?: string | null;
   dividendYield?: number | null;

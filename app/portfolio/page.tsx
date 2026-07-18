@@ -38,14 +38,16 @@ import { OptimizePanel } from "./_components/universal/optimize-panel";
 import { CashPanel } from "./_components/universal/cash-panel";
 import { AddHoldingDialog } from "./_components/universal/add-holding-dialog";
 import { PortfolioThesisBanner } from "./_components/universal/portfolio-thesis";
+import { PipelineBoard } from "./_components/pipeline-board";
 import { ArrivalHighlight, useArrivalTarget } from "@/app/_components/arrival-highlight";
 
-type Tab = "dashboard" | "decisions" | "holdings" | "risk" | "optimize";
+type Tab = "dashboard" | "decisions" | "holdings" | "pipeline" | "risk" | "optimize";
 
 const TABS: TabItem<Tab>[] = [
   { id: "dashboard", label: "Dashboard" },
   { id: "decisions", label: "Decisions" },
   { id: "holdings",  label: "Holdings"  },
+  { id: "pipeline",  label: "Pipeline"  },
   { id: "risk",      label: "Risk Lab"  },
   { id: "optimize",  label: "Optimize"  },
 ];
@@ -268,6 +270,8 @@ function PortfolioPageInner() {
               onChanged={() => { refresh(); setThesisRefreshSignal((n) => n + 1); }}
             />
           )}
+
+          {tab === "pipeline" && <PipelineBoard />}
 
           {tab === "risk" && <RiskLab risk={report.risk} scenarios={report.scenarios} />}
 
