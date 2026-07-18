@@ -6,7 +6,7 @@ import {
   ListFilter,
   Radar,
   Network,
-  BrainCircuit,
+  Waypoints,
   Search,
   GitCompare,
   Calculator,
@@ -65,7 +65,10 @@ export const NAV: NavObjective[] = [
       { href: "/screener", label: "Screener", desc: "Filter by fundamentals, scores & AI criteria", icon: ListFilter, keywords: ["filter", "screen", "quant", "fundamental"] },
       { href: "/scanner", label: "Scanner", desc: "Live news & event-driven signals", icon: Radar, keywords: ["news", "events", "signals", "catalysts"] },
       { href: "/thematic", label: "Thematic", desc: "Map a macro theme's supply chain", icon: Network, keywords: ["theme", "supply chain", "macro", "industry"] },
-      { href: "/intelligence", label: "Intelligence", desc: "Graph, opportunity map & timeline", icon: BrainCircuit, keywords: ["graph", "opportunity", "timeline", "map"] },
+      // Engine + Backtest generate and validate ideas system-wide — a Discover
+      // job, not a single-company Research one (§4.3).
+      { href: "/engine", label: "Quant Engine", desc: "10-factor systematic scorecard", icon: Cog, keywords: ["quant", "factor", "scorecard", "systematic", "kelly"] },
+      { href: "/backtest", label: "Signal Backtest", desc: "Do the engine's signals actually work?", icon: History, keywords: ["backtest", "validation", "efficacy", "signal", "edge", "hit rate"] },
     ],
   },
   {
@@ -79,8 +82,9 @@ export const NAV: NavObjective[] = [
       { href: "/compare", label: "Compare", desc: "Up to 5 names side by side", icon: GitCompare, symbolParam: "symbols", keywords: ["versus", "vs", "side by side"] },
       { href: "/dcf", label: "DCF Valuation", desc: "Intrinsic value & sensitivity", icon: Calculator, symbolParam: "symbol", keywords: ["valuation", "intrinsic", "cash flow", "wacc"] },
       { href: "/ic-report", label: "IC Report", desc: "9-agent institutional deep dive", icon: FileText, symbolParam: "symbol", keywords: ["committee", "thesis", "bull", "bear", "deep dive"] },
-      { href: "/engine", label: "Quant Engine", desc: "10-factor systematic scorecard", icon: Cog, keywords: ["quant", "factor", "scorecard", "systematic", "kelly"] },
-      { href: "/backtest", label: "Signal Backtest", desc: "Do the engine's signals actually work?", icon: History, keywords: ["backtest", "validation", "efficacy", "signal", "edge", "hit rate"] },
+      // Promoted from two levels deep inside the dissolved /intelligence (§4.3).
+      // Its deep-link is scope+id, not a plain ?symbol=, so no symbolParam here.
+      { href: "/knowledge-graph", label: "Knowledge Graph", desc: "Explore how your names connect", icon: Waypoints, keywords: ["graph", "network", "relationships", "connections", "map"] },
     ],
   },
   {

@@ -45,8 +45,8 @@
     "semantic_hash": ""
   },
   "app/_components/nav-config.ts": {
-    "mtime": 1784110466.5039828,
-    "ast_hash": "09fe7dbd168c631eb22c8619c13d644f",
+    "mtime": 1784386150.3601947,
+    "ast_hash": "81899b317ca10cd5079cb2cd7de12d8e",
     "semantic_hash": ""
   },
   "app/_components/notification-bell.tsx": {
@@ -479,19 +479,14 @@
     "ast_hash": "ece61cbdc0a7abc6ba3e8f270b6d8eba",
     "semantic_hash": ""
   },
-  "app/intelligence/_views/graph-view.tsx": {
-    "mtime": 1783547972.606524,
-    "ast_hash": "183e8ec0737147c967622e406e050565",
-    "semantic_hash": ""
-  },
   "app/intelligence/_views/timeline-view.tsx": {
     "mtime": 1784110466.5342047,
     "ast_hash": "422cd289607e6ef4307f694f14ac5525",
     "semantic_hash": ""
   },
   "app/intelligence/page.tsx": {
-    "mtime": 1784110466.53472,
-    "ast_hash": "f3ef5ebca750b256d025197562a8cb8b",
+    "mtime": 1784386239.3938527,
+    "ast_hash": "7c96b387d09421b2a9db0651a3edbb8d",
     "semantic_hash": ""
   },
   "app/journal/page.tsx": {
@@ -605,8 +600,8 @@
     "semantic_hash": ""
   },
   "app/research/_components/graph-preview-card.tsx": {
-    "mtime": 1783547972.612443,
-    "ast_hash": "fe51e02203b9a3dfe68a0320fcc779ca",
+    "mtime": 1784386265.719351,
+    "ast_hash": "ab1a263e432fdc359f1b75f933995bef",
     "semantic_hash": ""
   },
   "app/research/_components/insider-table.tsx": {
@@ -745,8 +740,8 @@
     "semantic_hash": ""
   },
   "app/research/page.tsx": {
-    "mtime": 1784326611.792872,
-    "ast_hash": "9dd47265387d605818232a3fea93aa87",
+    "mtime": 1784386261.1762757,
+    "ast_hash": "34297b366d734756dbd7ef3ad714d86b",
     "semantic_hash": ""
   },
   "app/scanner/_components/causal-chain.tsx": {
@@ -760,8 +755,8 @@
     "semantic_hash": ""
   },
   "app/scanner/_components/investment-thesis-panel.tsx": {
-    "mtime": 1784110466.5677881,
-    "ast_hash": "a0031baec865d7b238f0614d2d37825f",
+    "mtime": 1784386271.341519,
+    "ast_hash": "b379c22c860032d788aa38e09877a2df",
     "semantic_hash": ""
   },
   "app/scanner/_components/market-regime-banner.tsx": {
@@ -875,8 +870,8 @@
     "semantic_hash": ""
   },
   "app/watchlist/page.tsx": {
-    "mtime": 1784325969.2229543,
-    "ast_hash": "a5449e072e8f4dd5d3c6408b93e7e762",
+    "mtime": 1784386275.1267908,
+    "ast_hash": "b5e0bf85eb6e6de989039309774bcc91",
     "semantic_hash": ""
   },
   "engine/__init__.py": {
@@ -2995,8 +2990,8 @@
     "semantic_hash": ""
   },
   "lib/home/registry.ts": {
-    "mtime": 1784384528.2415965,
-    "ast_hash": "a2b2a678a7cbd557a9692453c24a8c9a",
+    "mtime": 1784386300.9216383,
+    "ast_hash": "827b19ca5ce0f2834ffe5aa0feb5c923",
     "semantic_hash": ""
   },
   "lib/home/sentiment.ts": {
@@ -3205,8 +3200,8 @@
     "semantic_hash": ""
   },
   "tests/home-registry.test.ts": {
-    "mtime": 1784384620.8658793,
-    "ast_hash": "8a3b1b6281cf4ce46b7d142af81394f1",
+    "mtime": 1784386319.0986261,
+    "ast_hash": "b994b4825d409f624e39623381142256",
     "semantic_hash": ""
   },
   "tests/home-sentiment.test.ts": {
@@ -3837,6 +3832,31 @@
   "docs/UAA-SPEC-001-the-desk.md": {
     "mtime": 1784383533.2624168,
     "ast_hash": "ef1c19b95c1e995c12cc6ae100c9454d",
+    "semantic_hash": ""
+  },
+  "app/knowledge-graph/_components/graph-view.tsx": {
+    "mtime": 1784386185.9350026,
+    "ast_hash": "610883097e629322b66d80e9b69ae427",
+    "semantic_hash": ""
+  },
+  "app/knowledge-graph/page.tsx": {
+    "mtime": 1784386211.8711188,
+    "ast_hash": "610b014e00fd031f61a2a28ad4ece1d3",
+    "semantic_hash": ""
+  },
+  ".playwright-mcp/page-2026-07-18T14-30-59-229Z.yml": {
+    "mtime": 1784385059.2345536,
+    "ast_hash": "e2bcc0b7c06f09b5c1e6cbc96907c195",
+    "semantic_hash": ""
+  },
+  ".playwright-mcp/page-2026-07-18T14-31-36-347Z.yml": {
+    "mtime": 1784385096.3485372,
+    "ast_hash": "7228e57afbf5b43b171d710d7026d685",
+    "semantic_hash": ""
+  },
+  ".playwright-mcp/page-2026-07-18T14-32-09-721Z.yml": {
+    "mtime": 1784385129.72168,
+    "ast_hash": "7a1c0b4e1a64ba1d53d4a8ce74e5ee1c",
     "semantic_hash": ""
   }
 }

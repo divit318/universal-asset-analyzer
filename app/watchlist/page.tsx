@@ -450,7 +450,7 @@ function WatchlistPageInner() {
             Timeline
           </Link>
           <Link
-            href="/intelligence?view=graph&scope=watchlist&id=watchlist"
+            href="/knowledge-graph?scope=watchlist&id=watchlist"
             className="flex items-center rounded-lg border border-border px-4 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
           >
             Graph

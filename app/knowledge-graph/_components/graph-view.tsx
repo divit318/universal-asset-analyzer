@@ -1,13 +1,25 @@
 "use client";
 
+/**
+ * Graph view — the interactive knowledge graph, promoted to its own route
+ * (`/knowledge-graph`) in the IA repair (§4.3). It used to render only inside
+ * the dissolved `/intelligence` container; the orchestration was lifted here so
+ * the graph is a first-class destination rather than a widget buried two levels
+ * deep.
+ *
+ * Reads `focus` (scope + id) from the shared IntelligenceProvider so a symbol
+ * selected on a node re-scopes the graph in place. All the drawing/panels live
+ * in the sibling components in this directory.
+ */
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { KnowledgeGraph, ConnectionExplanation, NodeType, GraphScope } from "@/lib/knowledge-graph";
 import { useIntelligence } from "@/lib/intelligence/context";
-import { GraphScopeSwitcher } from "@/app/knowledge-graph/_components/graph-scope-switcher";
-import { GraphCanvas } from "@/app/knowledge-graph/_components/graph-canvas";
-import { NodeDetailPanel } from "@/app/knowledge-graph/_components/node-detail-panel";
-import { ConnectionExplainer } from "@/app/knowledge-graph/_components/connection-explainer";
-import { InsightsPanel } from "@/app/knowledge-graph/_components/insights-panel";
+import { GraphScopeSwitcher } from "./graph-scope-switcher";
+import { GraphCanvas } from "./graph-canvas";
+import { NodeDetailPanel } from "./node-detail-panel";
+import { ConnectionExplainer } from "./connection-explainer";
+import { InsightsPanel } from "./insights-panel";
 
 const LEGEND: { type: NodeType; label: string; color: string }[] = [
   { type: "company", label: "Company", color: "var(--accent)" },
@@ -19,7 +31,7 @@ const LEGEND: { type: NodeType; label: string; color: string }[] = [
   { type: "thesis", label: "Thesis", color: "var(--chart-3)" },
 ];
 
-/** Graph view of the Intelligence page — shares `focus` (scope+id) with the Timeline and Opportunity Map views. */
+/** The interactive graph. Shares `focus` (scope+id) via the IntelligenceProvider. */
 export function GraphView() {
   const { focus, setFocus, selectedTheme, setSelectedTheme } = useIntelligence();
   const { scope, id } = focus;

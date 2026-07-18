@@ -257,3 +257,31 @@ export function validateRegistry(): string[] {
 
   return problems;
 }
+
+/**
+ * Every navTarget must resolve to a route that actually exists (§19 Phase B).
+ * A home module whose "open this" points at a deleted route is a dead end the
+ * user hits from the most-visited page in the app — exactly the failure the IA
+ * repair introduced risk of, when `/intelligence` was dissolved.
+ *
+ * `knownRoutes` is the set of real route pathnames, passed in (like
+ * `componentIds` for `validateHomeComposition`) so this check stays free of the
+ * filesystem and of the nav config. The query/hash is stripped before the
+ * lookup, so `/portfolio?tab=performance` resolves against `/portfolio`.
+ *
+ * Returns a list of problems; empty means every navTarget is live.
+ */
+export function validateNavTargets(knownRoutes: Iterable<string>): string[] {
+  const problems: string[] = [];
+  const routes = new Set(knownRoutes);
+
+  for (const d of Object.values(DEFINITIONS)) {
+    if (!d.navTarget) continue;
+    const path = d.navTarget.href.split(/[?#]/)[0];
+    if (!routes.has(path)) {
+      problems.push(`${d.id}: navTarget "${d.navTarget.href}" points at a dead route (${path})`);
+    }
+  }
+
+  return problems;
+}

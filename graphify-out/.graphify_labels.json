@@ -197,16 +197,9 @@
   "195": "movement-explainer-card.tsx",
   "196": "feed-row.tsx",
   "197": "ic-agents.ts",
-  "198": "mission-control.test.ts",
   "199": "ai-financial-insight.ts",
   "200": "route.ts",
-  "201": "ScannerOpportunity",
-  "202": "page.tsx",
   "203": "market-regime-banner.tsx",
-  "204": "earnings-card.tsx",
   "205": "valuation-history-chart.tsx",
-  "206": "json-extract.ts",
-  "207": "fixtures.ts",
-  "209": "route.ts",
-  "210": "ic-thesis.ts"
+  "209": "route.ts"
 }

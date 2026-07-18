@@ -109,7 +109,7 @@ export function InvestmentThesisPanel({
             Timeline
           </Link>
           <Link
-            href={`/intelligence?view=graph&scope=symbol&id=${encodeURIComponent(ticker)}`}
+            href={`/knowledge-graph?scope=symbol&id=${encodeURIComponent(ticker)}`}
             className="rounded-md border border-border px-2.5 py-1 text-xs text-muted hover:border-accent/40 hover:text-accent transition-colors"
           >
             Graph
