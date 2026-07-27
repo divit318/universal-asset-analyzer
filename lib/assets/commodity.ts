@@ -289,7 +289,7 @@ export const commodityClass: AssetClassDefinition = {
   ],
 
   columns: [
-    { key: "rankScore", label: "Rank", align: "right" },
+    { key: "rankScore", label: "Match", align: "right" },
     { key: "price", label: "Price", align: "right" },
     { key: "return1m", label: "1M", align: "right" },
     { key: "return1y", label: "1Y", align: "right" },

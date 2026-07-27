@@ -373,7 +373,7 @@ export const bondClass: AssetClassDefinition = {
   ],
 
   columns: [
-    { key: "rankScore", label: "Rank", align: "right" },
+    { key: "rankScore", label: "Match", align: "right" },
     { key: "yield", label: "Yield", align: "right" },
     { key: "spread", label: "Spread", align: "right" },
     { key: "duration", label: "Duration", align: "right" },

@@ -364,7 +364,7 @@ export const etfClass: AssetClassDefinition = {
   ],
 
   columns: [
-    { key: "rankScore", label: "Rank", align: "right" },
+    { key: "rankScore", label: "Match", align: "right" },
     { key: "expenseRatio", label: "Expense", align: "right" },
     { key: "aum", label: "AUM", align: "right" },
     { key: "dividendYield", label: "Yield", align: "right" },

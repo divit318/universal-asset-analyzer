@@ -28,12 +28,38 @@ interface Props {
   emptyState?: ResultsEmptyState;
 }
 
-/** Colour the rank score the way the rest of the app colours scores. */
+/**
+ * Help text for the columns whose names are otherwise ambiguous.
+ *
+ * The table showed `#`, `Rank` and `Overall` adjacent to each other — three
+ * numbers, two of them 0-100 and one a position, with `Rank` sounding exactly
+ * like the position that `#` already was. `rankScore` is now labelled "Match"
+ * across every asset-class registry, and these tooltips state the difference at
+ * the point of confusion.
+ */
+const COLUMN_HELP: Record<string, string> = {
+  rankScore:
+    "How well this asset matches the ACTIVE screen — the template's own ranking factors, shrunk toward the middle when factor data is missing. Sorting default. Not the same as Overall.",
+  overallScore:
+    "The general-purpose screen score: quality, value, growth, financial health and momentum, with sector-aware thresholds. Independent of which template you ran.",
+  valueScore: "Valuation dimension of the Overall screen score, 0-100, sector-relative.",
+  growthScore: "Growth dimension of the Overall screen score, 0-100, sector-relative.",
+  qualityScore: "Quality dimension of the Overall screen score, 0-100, sector-relative.",
+  financialHealthScore: "Balance-sheet dimension of the Overall screen score, 0-100.",
+};
+
+/**
+ * Colour the match score using the app's semantic tokens.
+ *
+ * Previously raw Tailwind palette values (emerald/sky/amber/rose), which do not
+ * respond to the theme and drifted from the canonical recommendation tones in
+ * lib/recommendation.ts.
+ */
 function scoreTone(score: number): string {
-  if (score >= 75) return "text-emerald-500";
-  if (score >= 55) return "text-sky-500";
-  if (score >= 35) return "text-amber-500";
-  return "text-rose-500";
+  if (score >= 75) return "text-positive";
+  if (score >= 55) return "text-brand";
+  if (score >= 35) return "text-warning";
+  return "text-negative";
 }
 
 function cellValue(assetClass: AssetClassId, row: RankedCandidate, key: string): string {
@@ -222,6 +248,7 @@ export function ResultsTable({
               <th
                 key={col.key}
                 className={`px-3 py-2 font-medium ${col.align === "left" ? "text-left" : "text-right"}`}
+                title={COLUMN_HELP[col.key]}
               >
                 <button type="button" onClick={() => onSort(col.key)} className="hover:text-fg">
                   {col.label}

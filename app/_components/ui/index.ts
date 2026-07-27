@@ -12,3 +12,4 @@ export {
   type TaskProgressProps,
   type TaskProgressStep,
 } from "./task-progress";
+export { ScoreChip, type ScoreChipProps } from "./score-chip";

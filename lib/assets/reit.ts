@@ -356,7 +356,7 @@ export const reitClass: AssetClassDefinition = {
   ],
 
   columns: [
-    { key: "rankScore", label: "Rank", align: "right" },
+    { key: "rankScore", label: "Match", align: "right" },
     { key: "dividendYield", label: "Yield", align: "right" },
     { key: "pFfo", label: "P/FFO", align: "right" },
     { key: "ffoGrowthYoY", label: "FFO Gr", align: "right" },

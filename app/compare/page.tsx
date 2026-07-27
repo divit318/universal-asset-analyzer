@@ -162,9 +162,12 @@ const SECTIONS: SectionDef[] = [
     ],
   },
   {
-    title: "Composite Scores",
+    title: "Conviction & dimensions",
     metrics: [
-      { label: "Overall Score", getValue: (e) => e.score?.composite ?? null, format: score100, higherBetter: true },
+      // Named "Conviction" because it IS /research's Conviction score — same
+      // engine, and now the same inputs. "Overall Score" gave a reader no way to
+      // tell it apart from the Screener's Overall, which is a different engine.
+      { label: "Conviction", getValue: (e) => e.score?.composite ?? null, format: score100, higherBetter: true },
       { label: "Fundamental Score", getValue: (e) => e.score?.total ?? null, format: score100, higherBetter: true },
       { label: "Valuation Score", getValue: (e) => (e.score ? bucketPct(e.score, "Valuation") : null), format: score100, higherBetter: true },
       { label: "Growth Score", getValue: (e) => (e.score ? bucketPct(e.score, "Growth") : null), format: score100, higherBetter: true },
@@ -877,7 +880,7 @@ function StockCard({ entry, color, colorBg }: { entry: CompareEntry; color: stri
 
       {score && (
         <div className="mt-3 space-y-1.5">
-          <ScoreBar label="Overall" value={score.composite} color={color} />
+          <ScoreBar label="Conviction" value={score.composite} color={color} />
           <ScoreBar label="Quality" value={entry.score ? bucketPct(entry.score, "Quality") : null} color={color} />
           <ScoreBar label="Growth" value={entry.score ? bucketPct(entry.score, "Growth") : null} color={color} />
           <ScoreBar label="Health" value={entry.score ? bucketPct(entry.score, "Financial Health") : null} color={color} />

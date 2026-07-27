@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Card, Badge } from "@/app/_components/ui";
+import { Card, Badge, ScoreChip } from "@/app/_components/ui";
 import { formatCurrency } from "@/lib/format";
 // Import from lib/portfolio/classes (not model/adapter directly) — this module's
 // side effect registers all twelve class adapters. Client and server bundles are
@@ -157,31 +157,29 @@ export function formatMetric(key: string, value: number | null): string {
   }
 }
 
-function ScoreChip({ holding }: { holding: Holding }) {
-  // A null score renders as "no basis", NOT as 50. This is the visible face of the
-  // model's central rule: unknown must read as unknown.
-  if (!holding.score) {
-    return (
-      <span className="font-mono text-[11px] text-muted/50" title="This asset class has no scoreable data from our providers.">
-        no basis
-      </span>
-    );
-  }
-
-  const { score, confidence } = holding.score;
-  const tone = score >= 65 ? "text-positive" : score >= 40 ? "text-foreground" : "text-negative";
-
-  /* Confidence is shown next to every score — a 70 at 20% confidence must not
-     look like a 70 at 90%. It is rendered as a labelled suffix rather than as
-     "/{confidence}%", which produced strings like "68/80%" that read
-     unambiguously as a fraction ("68 out of 80") in a column headed SCORE. */
+/**
+ * The holding's own asset-class score, rendered as the `quality` kind.
+ *
+ * Naming it matters here more than anywhere else in the app: this column headed
+ * "SCORE" is what disagreed with /research's Conviction — AAPL read 76 here and
+ * 57 there. Both are right (an excellent business at a full price), but neither
+ * screen said which question it was answering. `quality` is explicitly NOT
+ * banded, so it no longer implies a buy/sell call it was never measuring.
+ *
+ * A null score still renders as "no basis", never as 50 — the visible face of the
+ * model's central rule that unknown must read as unknown.
+ */
+function HoldingScoreCell({ holding }: { holding: Holding }) {
   return (
-    <span
-      className="flex items-baseline justify-end gap-1.5"
-      title={`Score ${score}/100 · ${confidence}% data confidence. ${holding.score.why.join(". ")}`}
-    >
-      <span className={`font-mono text-sm font-semibold tabular-nums ${tone}`}>{score}</span>
-      <span className="font-mono text-[10px] tabular-nums text-muted/60">{confidence}% conf</span>
+    <span className="flex items-baseline justify-end">
+      <ScoreChip
+        kind="quality"
+        score={holding.score?.score ?? null}
+        confidence={holding.score?.confidence ?? null}
+        why={holding.score?.why}
+        size="sm"
+        showLabel={false}
+      />
     </span>
   );
 }
@@ -268,7 +266,7 @@ function HoldingRow({ h, onManage }: { h: Holding; onManage: (h: Holding) => voi
         ))}
 
         <td className="px-2 py-2.5 text-right">
-          <ScoreChip holding={h} />
+          <HoldingScoreCell holding={h} />
         </td>
 
         <td className="py-2.5 pl-2 pr-4 text-right">
@@ -383,7 +381,10 @@ function ClassGroup({ assetClass, holdings, totalValue, onManage }: {
                   {METRIC_LABEL[k] ?? k}
                 </th>
               ))}
-              <th className="px-2 py-2 text-right font-semibold">Score</th>
+              {/* "Quality", not "Score": this column measures the asset, not the
+                  decision, and calling it Score is what made it look like it
+                  contradicted the Conviction score on /research. */}
+              <th className="px-2 py-2 text-right font-semibold" title="How good the underlying asset is, setting price aside. Not a buy/sell call.">Quality</th>
               <th className="py-2 pl-2 pr-4 text-right font-semibold">Actions</th>
             </tr>
           </thead>
