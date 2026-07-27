@@ -13,7 +13,11 @@ let cached: string | null = null;
 export function enginePython(): string {
   if (cached) return cached;
 
-  const venvPython = path.join(process.cwd(), ".venv", "bin", "python");
+  // Built via join(), not path.join(process.cwd(), literal, ...) — that exact
+  // call shape makes Turbopack's output tracer treat .venv/bin as a directory
+  // asset reference, and it panics on .venv's Homebrew python symlink (which
+  // resolves outside the project root).
+  const venvPython = [process.cwd(), ".venv", "bin", "python"].join(path.sep);
   cached = fs.existsSync(venvPython) ? venvPython : "python3";
   return cached;
 }
