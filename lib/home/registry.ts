@@ -146,7 +146,7 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     dataSources: ["scanner", "watchlist", "portfolio-engine"],
     dependencies: [],
     ai: null,
-    navTarget: { href: "/scanner", label: "Scanner" },
+    navTarget: { href: "/wire", label: "The Wire" },
   },
 
   /* ---------------- Tape ---------------- */
@@ -171,13 +171,11 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     dataSources: ["yahoo", "scanner", "sector-rotation"],
     dependencies: [],
     ai: null,
-    // The link's label matches the destination's own <h1> and its nav entry.
-    // Previously this module ("Market Intelligence") linked to a page whose
-    // heading also said "Market Intelligence" under a nav entry that said
-    // "Scanner", via a link labelled "Market scanner" — four names for two
-    // things. This module keeps its own name (it shows the tape); the
-    // destination is called Scanner everywhere.
-    navTarget: { href: "/scanner", label: "Scanner" },
+    // The link's label matches the destination's own <h1> and its nav entry —
+    // all three say "The Wire". This module keeps its own separate name because
+    // it shows the tape, not the feed. Rename the destination and this label
+    // moves with it, or the same page acquires two names again.
+    navTarget: { href: "/wire", label: "The Wire" },
   },
 
   /* ---------------- Long read ---------------- */

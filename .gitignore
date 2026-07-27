@@ -58,8 +58,17 @@ next-env.d.ts
 __pycache__/
 *.pyc
 
+# python engine virtualenv (created via `python3.12 -m venv .venv`, see requirements.txt)
+/.venv/
+
 # graphify knowledge-graph tool cache (regenerate with `graphify update .`)
 /graphify-out/
+
+# Claude Code plugin-installed skill packages (vendored by the plugin manager, not project source)
+/.claude/skills/
+
+# one-off local scratch scripts
+/.scratch-capture.mjs
 
 # Playwright MCP browser debug session artifacts (console logs, traces)
 /.playwright-mcp/

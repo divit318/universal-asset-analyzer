@@ -18,6 +18,8 @@ import YahooFinance from "yahoo-finance2";
 import type { FundProfileData, FundSectorWeight, HistoryPoint, OptionContract, OptionsChainData, OptionsExpirationChain, Quote, SymbolSuggestion } from "./types";
 import { computeMacroSummary, YIELD_CURVE_SYMBOLS, type MacroSummary, type YieldLevels } from "./macro-analysis";
 import { getDataset } from "./platform/data-layer";
+import { countryForSuggestion } from "./market";
+import type { CacheMeta } from "./platform/types";
 
 // v3 requires an instance; suppress the one-time survey notice in server logs.
 const yahooFinance = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
@@ -147,11 +149,11 @@ export function getSectorEtf(sector: string | null | undefined): string | null {
  * `["assetProfile","price"]` are one cache entry rather than two — the research
  * route and the fundamentals route ask for overlapping module sets constantly.
  */
-export async function getQuoteSummary(
+async function getQuoteSummaryResult(
   symbol: string,
   modules: string[],
-): Promise<unknown> {
-  const result = await getDataset<unknown>(
+): Promise<{ data: unknown; meta: CacheMeta }> {
+  return getDataset<unknown>(
     "quoteSummary",
     { symbol: symbol.toUpperCase(), modules: [...modules].sort().join(",") },
     async () =>
@@ -164,7 +166,24 @@ export async function getQuoteSummary(
         { validateResult: false } as unknown as Parameters<typeof yahooFinance.quoteSummary>[2],
       ),
   );
+}
+
+export async function getQuoteSummary(
+  symbol: string,
+  modules: string[],
+): Promise<unknown> {
+  const result = await getQuoteSummaryResult(symbol, modules);
   return result.data;
+}
+
+/**
+ * Cache metadata for the same quoteSummary call `getFundamentals` makes —
+ * same params, so this is a cache hit (no extra provider round-trip) that
+ * hands back *when* that data was actually fetched, for freshness badges.
+ */
+export async function getQuoteSummaryMeta(symbol: string, modules: string[]): Promise<CacheMeta> {
+  const result = await getQuoteSummaryResult(symbol, modules);
+  return result.meta;
 }
 
 /** Annual financial-statement time series (revenue, EPS, FCF, shares, …). */
@@ -255,8 +274,8 @@ export async function getRichQuotes(symbols: string[]): Promise<RichQuote[]> {
   return result.data;
 }
 
-export async function getQuote(symbol: string): Promise<Quote> {
-  const result = await getDataset<Quote>(
+async function getQuoteResult(symbol: string): Promise<{ data: Quote; meta: CacheMeta }> {
+  return getDataset<Quote>(
     "quote",
     { symbol: symbol.toUpperCase() },
     async () => {
@@ -276,7 +295,17 @@ export async function getQuote(symbol: string): Promise<Quote> {
       }
     },
   );
+}
+
+export async function getQuote(symbol: string): Promise<Quote> {
+  const result = await getQuoteResult(symbol);
   return result.data;
+}
+
+/** Cache metadata for the same quote call `getQuote` makes — see getQuoteSummaryMeta. */
+export async function getQuoteMeta(symbol: string): Promise<CacheMeta> {
+  const result = await getQuoteResult(symbol);
+  return result.meta;
 }
 
 /**
@@ -411,6 +440,7 @@ export function mapSuggestion(raw: RawSearchQuote): SymbolSuggestion | null {
     name: raw.longname ?? raw.shortname ?? raw.symbol,
     exchange: raw.exchDisp ?? null,
     type: raw.typeDisp ?? raw.quoteType ?? null,
+    country: countryForSuggestion(raw.symbol, raw.quoteType),
   };
 }
 

@@ -10,6 +10,7 @@ import { normalizeSymbol } from "@/lib/market";
 import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";
+import { enginePython } from "@/lib/engine-python";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -98,7 +99,7 @@ export async function GET(req: NextRequest) {
   const script = snapshotExists ? READ_SNAPSHOT_SCRIPT(symbol) : LIVE_QUERY_SCRIPT(symbol);
 
   return new Promise<NextResponse>((resolve) => {
-    const py = spawn("python3", ["-c", script]);
+    const py = spawn(enginePython(), ["-c", script]);
     let out = ""; let err = "";
     py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { err += d.toString(); });

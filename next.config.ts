@@ -18,6 +18,10 @@ const nextConfig: NextConfig = {
         ? { exclude: ["error", "warn"] }
         : false,
   },
+  // Scanner was renamed to The Wire (app/scanner -> app/wire); keep old links working.
+  async redirects() {
+    return [{ source: "/scanner", destination: "/wire", permanent: true }];
+  },
 };
 
 export default nextConfig;

@@ -293,6 +293,64 @@ body::before {
 }
 .arrival-flash { animation: arrival-flash 1600ms var(--ease-out, ease-out) 2; border-radius: var(--radius-card, 12px); }
 
+/* ── Compare landing — flip preview cards ───────────────────────────────
+   3D flip on hover/focus; back face pre-rotated so it reads right side up
+   once the parent finishes its 180°. Reduced-motion gets an instant swap. */
+.flip-card { perspective: 1600px; }
+.flip-card-inner {
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 550ms var(--ease-spring, ease);
+}
+.flip-card:hover .flip-card-inner,
+.flip-card:focus-within .flip-card-inner {
+  transform: rotateY(180deg);
+}
+.flip-card-face {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.flip-card-back { transform: rotateY(180deg); }
+@media (prefers-reduced-motion: reduce) {
+  .flip-card-inner { transition: none; }
+}
+
+/* Mini radar preview (feature card back) — a slow "breathing" scale so the
+   shape reads as live telemetry rather than a static icon. */
+@keyframes radar-breathe {
+  0%, 100% { transform: scale(0.97); opacity: 0.88; }
+  50%      { transform: scale(1.015); opacity: 1; }
+}
+.animate-radar-breathe {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: radar-breathe 3.4s var(--ease-out, ease-in-out) infinite;
+}
+
+/* Mini line-chart draw-in (feature card back / live preview) */
+@keyframes line-draw {
+  from { stroke-dashoffset: var(--line-length, 240); }
+  to   { stroke-dashoffset: 0; }
+}
+.animate-line-draw {
+  stroke-dasharray: var(--line-length, 240);
+  animation: line-draw 1.6s var(--ease-out, ease-out) both;
+}
+/* AI Assistant trigger — idle "breathing" so the icon never reads as dead
+   chrome. Same intent as radar-breathe above, slower and subtler since this
+   one sits in the header at all times rather than inside a hovered card. */
+@keyframes assistant-breathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.02); }
+}
+.animate-assistant-breathe {
+  animation: assistant-breathe 8s var(--ease-out, ease-in-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-radar-breathe, .animate-line-draw, .animate-assistant-breathe { animation: none; }
+}
+
 /* Focus: suppress on mouse, keep a crisp keyboard ring */
 :focus:not(:focus-visible) {
   outline: none;
@@ -308,6 +366,270 @@ body::before {
 .nums {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1;
+}
+
+/* ── Compare page — institutional micro-interactions ────────────────────
+   Covered by the blanket prefers-reduced-motion rule below for the CSS-
+   driven pieces; count-up.tsx and background-depth.tsx use rAF loops and
+   check prefers-reduced-motion themselves since that rule can't reach them. */
+
+/* Section expand/collapse — Collapsible sets the target max-height inline;
+   this owns the transition so reduced-motion can neutralize it in one place. */
+.collapsible-panel {
+  transition: max-height 280ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+/* Scroll-triggered winner highlight — gray → tinted → final, once per row,
+   the "highlighter passing across the row" read. Two variants (best/worst)
+   so the mid-point tint is unambiguous rather than a generic flash. */
+@keyframes winner-reveal-positive {
+  0%   { background-color: transparent; color: var(--foreground); }
+  40%  { background-color: color-mix(in srgb, var(--positive) 20%, transparent); }
+  100% { background-color: color-mix(in srgb, var(--positive) 8%, transparent); color: var(--positive); }
+}
+@keyframes winner-reveal-negative {
+  0%   { background-color: transparent; color: var(--foreground); }
+  40%  { background-color: color-mix(in srgb, var(--negative) 20%, transparent); }
+  100% { background-color: color-mix(in srgb, var(--negative) 8%, transparent); color: var(--negative); }
+}
+.animate-winner-positive { animation: winner-reveal-positive 300ms var(--ease-out, ease-out) both; }
+.animate-winner-negative { animation: winner-reveal-negative 300ms var(--ease-out, ease-out) both; }
+
+/* Portfolio Fit — a single soft shimmer sweep across the recommended asset's
+   border every 8-10s (triggered from JS, not looping CSS), never a pulse. */
+@keyframes border-shimmer-sweep {
+  0%   { background-position: -150% 0; opacity: 0; }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { background-position: 250% 0; opacity: 0; }
+}
+.animate-border-shimmer {
+  position: relative;
+}
+.animate-border-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: linear-gradient(100deg, transparent 40%, color-mix(in srgb, var(--brand) 65%, transparent) 50%, transparent 60%);
+  background-size: 250% 100%;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: border-shimmer-sweep 1600ms ease-in-out;
+}
+
+/* ── The Wire ─────────────────────────────────────────────────────────
+   Value bar fill — score/strength/momentum bars grow to their value on
+   mount instead of appearing pre-filled. One keyframe, three call sites
+   (ScoreBar, StrengthBar, MomentumBar) via --bar-value. */
+@keyframes bar-fill {
+  from { width: 0%; }
+  to   { width: var(--bar-value, 100%); }
+}
+.animate-bar-fill {
+  animation: bar-fill 700ms var(--ease-out) both;
+}
+
+/* Card hover lift — subtle depth cue, applied broadly across Wire cards. */
+.card-lift {
+  transition: transform 200ms var(--ease-out), box-shadow 200ms var(--ease-out);
+}
+.card-lift:hover {
+  transform: translateY(-2px) scale(1.01);
+  box-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.35);
+}
+
+/* Cause → Effect connector — 2-3 particles flow from cause to effect once, on
+   arrival, never looping (same "arrival cue, not an idle loop" principle as
+   .arrival-flash and .animate-border-shimmer above). Timing/easing borrowed
+   from border-shimmer-sweep so this reads as the same motion system. */
+@keyframes particle-flow {
+  0%   { left: 0%; opacity: 0; }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
+.particle-flow {
+  position: relative;
+}
+.particle-flow .particle {
+  position: absolute;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--brand);
+  transform: translate(-50%, -50%);
+  animation: particle-flow 1600ms var(--ease-out, ease-in-out) both;
+}
+
+/* ── Loading Mark — Strata ────────────────────────────────────────────
+   The brand mark (four bars converging to a diamond) doubles as UAA's
+   signature loading indicator — one component (app/_components/loading-
+   mark.tsx), reused for page loads, AI research runs, and any other
+   long-running task instead of a generic spinner.
+
+   Default (no state class) renders fully resolved: bars at rest, terminus
+   a diamond. That's the safe fallback for SSR and the reduced-motion
+   override below.
+
+   is-loading: the bars and the terminus each play the *same* arrive-hold-
+   fade wave, staggered top to bottom — the terminus joins the wave
+   exactly like the bars above it (it doesn't sit there pre-rendered),
+   just held at rotate(0) so it reads as an undecided square rather than
+   the diamond.
+
+   is-done: see the dedicated resolve keyframes below — bars settle in
+   sequence, then the terminus turns from square to diamond only once
+   they're done, never all at once. */
+.uaa-loading-mark .mark-bar,
+.uaa-loading-mark .mark-terminus {
+  transform-box: fill-box;
+  transform-origin: center;
+  opacity: var(--mark-rest, 1);
+  transition: opacity 450ms var(--ease-out), transform 450ms var(--ease-out);
+}
+.uaa-loading-mark .mark-terminus {
+  transform: rotate(45deg);
+  transition: opacity 450ms var(--ease-out), transform 650ms var(--ease-spring);
+}
+
+@keyframes mark-bar-wave {
+  0%   { opacity: 0; transform: scaleX(0.4); }
+  28%  { opacity: var(--mark-rest, 1); transform: scaleX(1); }
+  72%  { opacity: var(--mark-rest, 1); transform: scaleX(1); }
+  100% { opacity: 0; transform: scaleX(0.4); }
+}
+@keyframes mark-terminus-wave {
+  0%   { opacity: 0; transform: rotate(0deg) scale(0.45); }
+  28%  { opacity: 1; transform: rotate(0deg) scale(1); }
+  72%  { opacity: 1; transform: rotate(0deg) scale(1); }
+  100% { opacity: 0; transform: rotate(0deg) scale(0.45); }
+}
+.uaa-loading-mark.is-loading .mark-bar {
+  animation: mark-bar-wave 2000ms var(--ease-out, ease-in-out) infinite;
+  transition: none;
+}
+.uaa-loading-mark.is-loading .mark-bar1 { animation-delay: 0ms; }
+.uaa-loading-mark.is-loading .mark-bar2 { animation-delay: 130ms; }
+.uaa-loading-mark.is-loading .mark-bar3 { animation-delay: 260ms; }
+.uaa-loading-mark.is-loading .mark-bar4 { animation-delay: 390ms; }
+.uaa-loading-mark.is-loading .mark-terminus {
+  animation: mark-terminus-wave 2000ms var(--ease-out, ease-in-out) infinite;
+  animation-delay: 520ms;
+  transition: none;
+}
+
+/* is-done plays one deterministic sequence, always identical regardless of what
+   phase the loading wave happened to be in when it was interrupted: bar1 -> bar2
+   -> bar3 -> bar4 arrive in order (same stagger rhythm as the loop, just without
+   fading back out), then the terminus arrives as a square, holds for a beat, and
+   only then turns into the diamond. Bars finishing before the terminus starts
+   its twist is the whole point — never a simultaneous "everything pops in and
+   spins at once." Each is a single self-contained keyframe animation (not a
+   transition), so it always starts from a clean 0% regardless of interruption. */
+@keyframes mark-bar-resolve {
+  0%   { opacity: 0; transform: scaleX(0.4); }
+  100% { opacity: var(--mark-rest, 1); transform: scaleX(1); }
+}
+@keyframes mark-terminus-resolve {
+  0%   { opacity: 0; transform: rotate(0deg) scale(0.45); animation-timing-function: var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)); }
+  35%  { opacity: 1; transform: rotate(0deg) scale(1); animation-timing-function: linear; }
+  49%  { opacity: 1; transform: rotate(0deg) scale(1); animation-timing-function: var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)); }
+  100% { opacity: 1; transform: rotate(45deg) scale(1); }
+}
+.uaa-loading-mark.is-done .mark-bar {
+  animation: mark-bar-resolve 380ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) both;
+}
+.uaa-loading-mark.is-done .mark-bar1 { animation-delay: 0ms; }
+.uaa-loading-mark.is-done .mark-bar2 { animation-delay: 110ms; }
+.uaa-loading-mark.is-done .mark-bar3 { animation-delay: 220ms; }
+.uaa-loading-mark.is-done .mark-bar4 { animation-delay: 330ms; }
+.uaa-loading-mark.is-done .mark-terminus {
+  opacity: 1;
+  animation: mark-terminus-resolve 1080ms both;
+  animation-delay: 440ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .uaa-loading-mark.is-loading .mark-bar,
+  .uaa-loading-mark.is-loading .mark-terminus,
+  .uaa-loading-mark.is-done .mark-bar,
+  .uaa-loading-mark.is-done .mark-terminus {
+    animation: none;
+  }
+}
+
+/* ── Boot Splash — the app's one full-screen loading moment ────────────
+   Overlays {children}, which is already fully mounted underneath — this is
+   what makes "the page is already rendered, just visually covered" literally
+   true, not a promise. Uses the shipped .uaa-loading-mark loading/done
+   sequence above unchanged; the only new motion lives in .is-exiting below,
+   scoped to this overlay so it can never reach the inline LoadingMark used
+   elsewhere (whose square = "unresolved" meaning must stay intact). */
+.uaa-boot-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  background: var(--background);
+}
+.uaa-boot-splash.is-exiting {
+  animation: boot-overlay-dissolve 380ms var(--ease-out) 260ms both;
+  pointer-events: none;
+}
+@keyframes boot-overlay-dissolve {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+/* The terminus's one deliberately-new move: once resolved as a diamond, a
+   brief glow, then it unwinds back to a square as the overlay above dissolves
+   around it — reads as "the answer becomes the open door," not a contradiction
+   of the inline mark's own vocabulary, because this only ever fires here. */
+.uaa-boot-splash.is-exiting .mark-terminus {
+  animation:
+    mark-boot-glow 260ms var(--ease-out) both,
+    mark-boot-unwind 340ms var(--ease-spring) 60ms both;
+}
+@keyframes mark-boot-glow {
+  0%, 100% { filter: drop-shadow(0 0 0 transparent); }
+  50%      { filter: drop-shadow(0 0 14px color-mix(in srgb, var(--brand) 65%, transparent)); }
+}
+@keyframes mark-boot-unwind {
+  from { transform: rotate(45deg); }
+  to   { transform: rotate(0deg); }
+}
+
+.uaa-boot-splash .boot-message-line {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 13px;
+  color: var(--muted);
+  letter-spacing: 0.01em;
+  text-align: center;
+  min-height: 20px;
+}
+.uaa-boot-splash .boot-message-text {
+  display: inline-block;
+  animation: boot-message-in 420ms var(--ease-out) both;
+}
+@keyframes boot-message-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .uaa-boot-splash.is-exiting,
+  .uaa-boot-splash.is-exiting .mark-terminus,
+  .uaa-boot-splash .boot-message-text {
+    animation: none;
+  }
 }
 
 /* ============================================================================

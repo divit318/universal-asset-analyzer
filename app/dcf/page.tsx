@@ -9,6 +9,7 @@ import { SymbolSearch } from "@/app/_components/symbol-search";
 import { useIOSSafe } from "@/lib/ios-context";
 import { useFocusSafe } from "@/lib/focus-context";
 import { PageShell } from "@/app/_components/ui";
+import { useBootReady } from "@/app/_components/boot-context";
 
 /* -------------------------------------------------------------------------- */
 /* Number shorthand parser — accepts "93.7B", "15.2M", "500K", raw integers  */
@@ -136,6 +137,8 @@ export default function DcfPage() {
   const [growthRate2,  setGrowthRate2]  = useState("8");
   const [terminalGrowth, setTerminalGrowth] = useState("3");
   const [discountRate, setDiscountRate] = useState("10");
+
+  useBootReady(!loading, "dcf");
 
   // Restore from sessionStorage on mount
   useEffect(() => {

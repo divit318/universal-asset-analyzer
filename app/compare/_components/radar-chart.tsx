@@ -12,6 +12,7 @@ import {
 } from "recharts";
 import type { CompareEntry } from "@/app/api/compare/route";
 import { CHART_SERIES, useChartTheme } from "@/app/_components/chart-theme";
+import { useHoverSymbol } from "./hover-symbol-context";
 
 const COLORS = CHART_SERIES;
 
@@ -35,6 +36,7 @@ interface Props {
 
 export function CompareRadar({ entries }: Props) {
   const ct = useChartTheme();
+  const { hovered, setHovered } = useHoverSymbol();
   const valid = entries.filter((e) => !e.error && e.score);
 
   const data = AXES.map(({ key, label }) => {
@@ -64,18 +66,27 @@ export function CompareRadar({ entries }: Props) {
             tick={{ fill: ct.axis, fontSize: 11 }}
           />
           <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
-          {valid.map((e, i) => (
-            <Radar
-              key={e.symbol}
-              name={e.symbol}
-              dataKey={e.symbol}
-              stroke={COLORS[i % COLORS.length]}
-              fill={COLORS[i % COLORS.length]}
-              fillOpacity={0.12}
-              strokeWidth={2}
-            />
-          ))}
+          {valid.map((e, i) => {
+            const isActive = hovered === e.symbol;
+            const isDimmed = hovered != null && !isActive;
+            return (
+              <Radar
+                key={e.symbol}
+                name={e.symbol}
+                dataKey={e.symbol}
+                stroke={COLORS[i % COLORS.length]}
+                fill={COLORS[i % COLORS.length]}
+                fillOpacity={isActive ? 0.22 : isDimmed ? 0.05 : 0.12}
+                strokeWidth={isActive ? 2.6 : 2}
+                strokeOpacity={isDimmed ? 0.4 : 1}
+                onMouseEnter={() => setHovered(e.symbol)}
+                onMouseLeave={() => setHovered(null)}
+              />
+            );
+          })}
           <Legend
+            onMouseEnter={(item) => setHovered(String(item.value))}
+            onMouseLeave={() => setHovered(null)}
             formatter={(value) => (
               <span style={{ color: COLORS[valid.findIndex((e) => e.symbol === value) % COLORS.length], fontSize: 12, fontFamily: "monospace", fontWeight: 600 }}>
                 {value}

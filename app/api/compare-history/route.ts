@@ -26,7 +26,10 @@ export async function GET(request: Request) {
     .map((s) => normalizeSymbol(s))
     .filter((s): s is string => s !== null)
     .slice(0, 5);
-  const days = Math.min(parseInt(searchParams.get("days") ?? "365", 10), 5 * 365);
+  // Capped at 20y rather than the old 5y so the Compare "Max" period (used by
+  // the non-equity performance chart) can actually reach further back for
+  // long-lived funds — getHistory itself still returns whatever's available.
+  const days = Math.min(parseInt(searchParams.get("days") ?? "365", 10), 20 * 365);
 
   if (!symbols.length) return Response.json({ error: "symbols required" }, { status: 400 });
 

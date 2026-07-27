@@ -69,6 +69,8 @@ export interface SymbolSuggestion {
   name: string;
   exchange: string | null;
   type: string | null; // "Equity", "ETF", "Cryptocurrency", …
+  /** Listing country (code + flag), or null for instruments not tied to one country (crypto, FX, indices). */
+  country: { code: string; flag: string } | null;
 }
 
 export interface Filing {
@@ -891,6 +893,32 @@ export interface ScannerProgressEvent {
   stage: ScannerStage;
   message: string;
   pct: number; // 0-100 progress
+}
+
+/**
+ * A ScannerResult field that's ready before the full pipeline finishes.
+ * Streamed from /api/scanner/v2 as {type:"partial", key, data} alongside the
+ * existing progress events, so sections can render as their own data lands
+ * instead of waiting for the final {type:"result"} at Assembly. `opportunities`
+ * and `highConviction` are each emitted twice — once after Opportunity Scoring
+ * (no theses yet) and again after Thesis Building (theses attached) — the
+ * second arrival replaces the first via the same `opp.id`, not a duplicate.
+ */
+export type ScannerPartialKey =
+  | "newsItems"
+  | "macroSignals"
+  | "marketRegime"
+  | "emergingThemes"
+  | "events"
+  | "riskAlerts"
+  | "sectorImpacts"
+  | "opportunities"
+  | "highConviction"
+  | "developing";
+
+export interface ScannerPartialEvent<K extends ScannerPartialKey = ScannerPartialKey> {
+  key: K;
+  data: ScannerResult[K];
 }
 
 export interface ScannerResult {

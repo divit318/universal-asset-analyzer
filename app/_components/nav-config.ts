@@ -63,7 +63,7 @@ export const NAV: NavObjective[] = [
     icon: Compass,
     tools: [
       { href: "/screener", label: "Screener", desc: "Filter by fundamentals, scores & AI criteria", icon: ListFilter, keywords: ["filter", "screen", "quant", "fundamental"] },
-      { href: "/scanner", label: "Scanner", desc: "Live news & event-driven signals", icon: Radar, keywords: ["news", "events", "signals", "catalysts"] },
+      { href: "/wire", label: "The Wire", desc: "Live news, event-driven signals & your portfolio's headlines", icon: Radar, keywords: ["news", "events", "signals", "catalysts", "scanner", "wire"] },
       { href: "/thematic", label: "Thematic", desc: "Map a macro theme's supply chain", icon: Network, keywords: ["theme", "supply chain", "macro", "industry"] },
       // Engine + Backtest generate and validate ideas system-wide — a Discover
       // job, not a single-company Research one (§4.3).

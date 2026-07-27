@@ -46,9 +46,9 @@ const UNMET: Record<Capability, { message: string; href: string; cta: string }> 
     cta: "Build a watchlist",
   },
   "scanner-snapshot": {
-    message: "Run the scanner once to surface opportunities.",
-    href: "/scanner",
-    cta: "Run scanner",
+    message: "Run The Wire once to surface opportunities.",
+    href: "/wire",
+    cta: "Run The Wire",
   },
   ollama: {
     message: "Start Ollama to enable AI narration.",

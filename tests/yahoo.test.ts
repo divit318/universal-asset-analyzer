@@ -10,9 +10,52 @@ describe("mapSuggestion", () => {
         shortname: "Apple",
         exchDisp: "NASDAQ",
         typeDisp: "Equity",
+        quoteType: "EQUITY",
         isYahooFinance: true,
       }),
-    ).toEqual({ symbol: "AAPL", name: "Apple Inc.", exchange: "NASDAQ", type: "Equity" });
+    ).toEqual({
+      symbol: "AAPL",
+      name: "Apple Inc.",
+      exchange: "NASDAQ",
+      type: "Equity",
+      country: { code: "US", flag: "🇺🇸" },
+    });
+  });
+
+  it("resolves a non-US listing's country from its ticker suffix", () => {
+    expect(
+      mapSuggestion({
+        symbol: "RELIANCE.NS",
+        longname: "Reliance Industries Limited",
+        exchDisp: "NSE",
+        typeDisp: "Equity",
+        quoteType: "EQUITY",
+        isYahooFinance: true,
+      })?.country,
+    ).toEqual({ code: "IN", flag: "🇮🇳" });
+
+    expect(
+      mapSuggestion({
+        symbol: "7203.T",
+        longname: "Toyota Motor Corporation",
+        exchDisp: "Tokyo",
+        typeDisp: "Equity",
+        quoteType: "EQUITY",
+        isYahooFinance: true,
+      })?.country,
+    ).toEqual({ code: "JP", flag: "🇯🇵" });
+  });
+
+  it("omits a flag for instruments not tied to one country", () => {
+    expect(
+      mapSuggestion({
+        symbol: "BTC-USD",
+        longname: "Bitcoin USD",
+        typeDisp: "Cryptocurrency",
+        quoteType: "CRYPTOCURRENCY",
+        isYahooFinance: true,
+      })?.country,
+    ).toBeNull();
   });
 
   it("drops non-Yahoo or symbol-less rows", () => {

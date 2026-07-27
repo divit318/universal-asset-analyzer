@@ -42,6 +42,8 @@ import {
 // Universal components
 import { DownloadIcon } from "./_components/download-icon";
 import { SymbolSearch } from "@/app/_components/symbol-search";
+import { LoadingMark } from "@/app/_components/loading-mark";
+import { useBootReady } from "@/app/_components/boot-context";
 import { ResearchCopilot } from "./_components/copilot/research-copilot";
 import type { AskAIPayload } from "./_components/pattern-analysis-panel";
 import { RESEARCH_ACTIONS } from "@/lib/ai/actions";
@@ -928,9 +930,7 @@ function ResearchWorkspace({
           )}
           {isIndia && indiaLoading && (
             <div className="flex items-center gap-3 rounded-xl border border-border bg-surface p-5 text-sm text-muted">
-              <svg className="h-4 w-4 animate-spin shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-              </svg>
+              <LoadingMark size={16} className="shrink-0" label="Loading India research data" />
               Loading India research data…
             </div>
           )}
@@ -1254,9 +1254,7 @@ function ResearchWorkspace({
 
               {isIndia && indiaLoading && (
                 <div className="flex items-center gap-2 text-sm text-muted">
-                  <svg className="h-4 w-4 animate-spin shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                    <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-                  </svg>
+                  <LoadingMark size={16} className="shrink-0" label="Loading shareholding data" />
                   Loading shareholding data…
                 </div>
               )}
@@ -1546,6 +1544,7 @@ function ResearchPageInner() {
   // switching symbols aborts everything still in flight — so a slow response for
   // the previous ticker can no longer overwrite the new one.
   const bundle = useResearchBundle(activeSymbol);
+  useBootReady(!bundle.streaming, "research");
 
   const quoteEntry = useDatasetValue<Quote>("quote", activeSymbol);
   const historyEntry = useDatasetValue<HistoryPoint[]>("history", activeSymbol);

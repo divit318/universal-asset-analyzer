@@ -124,7 +124,7 @@ The design philosophy is **transparency over convenience**: users see the resear
 | **Research** (`/research`, `/research/india`) | Deep equity research: quote, history, filings, news, insider trades, copilot chat (persisted per session). India variant uses screener.in API. | `lib/ai-research.ts`, `lib/edgar.ts`, `lib/news.ts`, `lib/screener-in.ts` |
 | **Screener** (`/screener`) | Fundamental screening with 24h cached Yahoo data, live prices, composite scoring (value/quality/momentum). | `lib/fundamental-screener.ts`, `lib/composite.ts`, `lib/dataset.ts` |
 | **Scanner** (`/scanner`) | Event-driven signals: earnings surprises, insider transactions, technical breaks. | `lib/event-screener.ts`, `lib/indicators.ts` |
-| **Compare** (`/compare`) | Multi-stock comparison across 14 metrics (price, growth, profitability, valuation, leverage). | `lib/ai-compare.ts` |
+| **Compare** (`/compare`) | "Asset Comparison" — equity comparison across 14 metrics (price, growth, profitability, valuation, leverage) plus a parallel, class-tailored framework for ETF/REIT/crypto/commodity/bond/forex (metrics, composite scores, risk flags, AI verdict per class). | `lib/ai-compare.ts` (equity), `lib/compare/` (non-equity framework) |
 | **Portfolio** (`/portfolio`) | Holdings tracking, P&L, portfolio metrics (beta, correlation, sector concentration), position fit analysis. | `lib/portfolio-analytics.ts`, `lib/db.ts` |
 | **Watchlist** (`/watchlist`) | Tracked tickers with alerts, notes, bulk monitoring. | `lib/db.ts` |
 | **DCF** (`/dcf`) | Intrinsic value calculator with sensitivity analysis. | `lib/fundamentals.ts` |

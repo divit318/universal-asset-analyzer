@@ -11,7 +11,8 @@ import type {
   OwnershipData,
 } from "./types";
 
-const MODULES = [
+/** Exported so callers needing the fundamentals fetch's cache freshness (not just its data) can ask for the same cache key via getQuoteSummaryMeta. */
+export const MODULES = [
   "assetProfile",
   "financialData",
   "summaryDetail",

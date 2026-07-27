@@ -6,6 +6,7 @@
  *
  * Event types:
  *   { type: "progress", stage, message, pct }
+ *   { type: "partial",  key, data }   — a ScannerResult field ready before Assembly
  *   { type: "result",   data: ScannerResult }
  *   { type: "error",    message }
  *   { type: "cached",   data: ScannerResult }
@@ -17,7 +18,7 @@ import { NextResponse } from "next/server";
 import { runScannerPipeline } from "@/lib/scanner/index";
 import { getScannerCache, putScannerCache } from "@/lib/db";
 import { persistScannerSnapshot } from "@/lib/scanner/cache";
-import type { ScannerProgressEvent } from "@/lib/types";
+import type { ScannerProgressEvent, ScannerPartialEvent } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -79,12 +80,17 @@ export async function POST(request: Request) {
         sendLine({ type: "progress", ...event });
       }
 
+      function onPartial(event: ScannerPartialEvent) {
+        sendLine({ type: "partial", ...event });
+      }
+
       try {
         const result = await runScannerPipeline({
           query,
           india,
           global: glob,
           onProgress,
+          onPartial,
         });
 
         // Persist to server-side cache

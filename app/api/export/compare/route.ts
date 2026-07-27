@@ -137,7 +137,7 @@ export async function POST(req: Request): Promise<Response> {
   // Row 1: Report title (merged across all columns)
   ws.mergeCells(1, 1, 1, n + 1);
   const titleCell = ws.getCell(1, 1);
-  titleCell.value = `Stock Comparison Report  ·  ${dateStr}`;
+  titleCell.value = `Asset Comparison Report  ·  ${dateStr}`;
   titleCell.fill = NAVY;
   titleCell.font = { ...WHITE_FONT, size: 12 };
   titleCell.alignment = { horizontal: "center", vertical: "middle" };

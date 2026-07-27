@@ -51,6 +51,7 @@ export type TaskType =
   | "nl-screener" // natural-language screener query parsing
   | "quick-summary" // short, low-stakes single-field summaries
   | "chart-qa" // one-off interactive Q&A about the fullscreen chart workspace's current context
+  | "app-assistant" // global "how do I…" helper: explains the app AND can navigate/preload pages, aware only of the current page — not a research surface
   | "coding"; // code generation/review (reserved; no feature ships this yet)
 
 /** How much genuine multi-step reasoning the task needs. */
@@ -250,6 +251,17 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     jsonMode: true,
     temperature: 0.35,
     maxTokens: 900,
+    timeoutMs: 45_000,
+  },
+  // A human is watching this exact panel too. Standard complexity — it has to
+  // reason about what the user is actually asking, not just parse a query —
+  // but the answer itself is short, so maxTokens stays low.
+  "app-assistant": {
+    complexity: "standard",
+    latency: "interactive",
+    jsonMode: true,
+    temperature: 0.3,
+    maxTokens: 500,
     timeoutMs: 45_000,
   },
 

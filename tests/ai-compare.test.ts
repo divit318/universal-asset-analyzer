@@ -47,11 +47,22 @@ describe("bestIndex — lower is better (e.g. P/E, D/E)", () => {
 
 describe("parseCompareResponse", () => {
   it("fills omitted fields with '' on a valid-but-incomplete parse", () => {
-    const raw = '{"overview":"AAPL leads on growth.","winner":"AAPL"}';
+    const raw = '{"overview":"AAPL leads on growth.","tradeoffSummary":"AAPL is ahead on growth."}';
     const flat = parseCompareResponse(raw);
     expect(flat.overview).toBe("AAPL leads on growth.");
     expect(flat.valuation).toBe("");
-    expect(flat.winner).toBe("AAPL");
+    expect(flat.tradeoffSummary).toBe("AAPL is ahead on growth.");
+  });
+
+  it("keeps a well-formed rankings array", () => {
+    const raw = '{"rankings":[{"rank":1,"symbol":"AAPL","thesis":"cheap growth","strengths":["low P/E"],"weaknesses":["slowing margins"],"bestFor":"value investors"}]}';
+    const flat = parseCompareResponse(raw);
+    expect(flat.rankings).toHaveLength(1);
+  });
+
+  it("falls back to an empty rankings array when the model omits it", () => {
+    const flat = parseCompareResponse('{"overview":"ok"}');
+    expect(flat.rankings).toEqual([]);
   });
 
   it("drops a non-object 'sections' field instead of letting it leak through", () => {
@@ -63,6 +74,7 @@ describe("parseCompareResponse", () => {
   it("returns all-empty defaults on total garbage instead of throwing", () => {
     const flat = parseCompareResponse("the model refused to answer");
     expect(flat.overview).toBe("");
-    expect(flat.winner).toBeNull();
+    expect(flat.rankings).toEqual([]);
+    expect(flat.noClearWinner).toBe(false);
   });
 });

@@ -13,6 +13,7 @@ import {
 } from "recharts";
 import type { CompareEntry } from "@/app/api/compare/route";
 import { useChartTheme, type ChartTheme } from "@/app/_components/chart-theme";
+import { useHoverSymbol } from "./hover-symbol-context";
 
 /* ─── types ────────────────────────────────────────────────────────────────── */
 type Period = "1M" | "3M" | "6M" | "YTD" | "1Y" | "3Y" | "5Y";
@@ -420,6 +421,7 @@ interface Props {
 
 export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Props) {
   const ct = useChartTheme();
+  const { hovered, setHovered } = useHoverSymbol();
   const [period, setPeriod] = useState<Period>("1Y");
   const [annualPeriod, setAnnualPeriod] = useState<AnnualPeriod>("5Y");
   const [metric, setMetric] = useState<Metric>("return");
@@ -671,8 +673,14 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
         {symbols.map((sym, i) => {
           const v = lastValues[sym];
           const isPos = v == null || !cfg.isGrowth || v >= 0;
+          const dimmed = hovered != null && hovered !== sym;
           return (
-            <div key={sym} className="flex items-center gap-1.5 text-xs">
+            <div
+              key={sym}
+              onMouseEnter={() => setHovered(sym)}
+              onMouseLeave={() => setHovered(null)}
+              className={`flex cursor-default items-center gap-1.5 text-xs transition-opacity duration-200 ease-out ${dimmed ? "opacity-60" : "opacity-100"}`}
+            >
               <span className="h-2 w-3 rounded-sm" style={{ background: colors[i] }} />
               <span className="font-mono font-semibold" style={{ color: colors[i] }}>{sym}</span>
               {v != null && (
@@ -737,8 +745,15 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
                     type="monotone"
                     dataKey={sym}
                     stroke={colors[i]}
-                    strokeWidth={1.8}
+                    strokeWidth={hovered == null ? 1.8 : hovered === sym ? 2.6 : 1.8}
+                    strokeOpacity={hovered == null || hovered === sym ? 1 : 0.4}
                     connectNulls
+                    isAnimationActive
+                    animationDuration={320}
+                    animationEasing="ease-out"
+                    style={{ transition: "stroke-width 200ms ease-out, stroke-opacity 200ms ease-out" }}
+                    onMouseEnter={() => setHovered(sym)}
+                    onMouseLeave={() => setHovered(null)}
                     dot={(dotProps: { cx?: number; cy?: number; index?: number; value?: number | null }) => (
                       <EndDot
                         key={`dot-${sym}-${dotProps.index}`}
@@ -801,8 +816,14 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
                     type="linear"
                     dataKey={sym}
                     stroke={colors[i]}
-                    strokeWidth={2.2}
+                    strokeWidth={hovered == null ? 2.2 : hovered === sym ? 3 : 2.2}
+                    strokeOpacity={hovered == null || hovered === sym ? 1 : 0.4}
                     connectNulls={false}
+                    isAnimationActive
+                    animationDuration={320}
+                    animationEasing="ease-out"
+                    onMouseEnter={() => setHovered(sym)}
+                    onMouseLeave={() => setHovered(null)}
                     dot={(dotProps: { cx?: number; cy?: number; value?: number | null }) => (
                       <AnnualDot
                         key={`adot-${sym}-${dotProps.cx}`}

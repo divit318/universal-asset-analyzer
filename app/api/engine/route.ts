@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";
+import { enginePython } from "@/lib/engine-python";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,7 +27,7 @@ async function readScorecardSnapshot(symbols?: string[]): Promise<object[]> {
 
   // Read Parquet via a minimal Python one-liner — fast, no DuckDB involved
   const filter = symbols?.length
-    ? `df = df[df["symbol"].isin(${JSON.stringify(symbols)})]`
+    ? `df = df.filter(pl.col("symbol").is_in(${JSON.stringify(symbols)}))`
     : "";
   const script = `
 import polars as pl, json, sys
@@ -36,7 +37,7 @@ print(df.to_pandas().to_json(orient="records", date_format="iso"))
 `.trim();
 
   return new Promise((resolve, reject) => {
-    const py = spawn("python3", ["-c", script]);
+    const py = spawn(enginePython(), ["-c", script]);
     let out = ""; let err = "";
     py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
@@ -96,7 +97,7 @@ export async function POST(req: NextRequest) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
-      const py = spawn("python3", args, {
+      const py = spawn(enginePython(), args, {
         cwd: process.cwd(),
         env: { ...process.env, PYTHONUNBUFFERED: "1" },
       });
