@@ -460,8 +460,6 @@ export default function ICReportPage() {
   const focus = useFocusSafe();
   const [symbol, setSymbol] = useState("");
   const [exchange, setExchange] = useState<"US" | "IN">("US");
-  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
-  const [selectedModel, setSelectedModel] = useState<string>("");
   const [running, setRunning] = useState(false);
   const [currentStage, setCurrentStage] = useState<ICReportStage | null>(null);
   const [completedAgents, setCompletedAgents] = useState(0);
@@ -527,19 +525,6 @@ export default function ICReportPage() {
     return () => { document.title = "Universal Asset Analyzer"; };
   }, [symbol]);
 
-  // Fetch available Ollama models on mount
-  useEffect(() => {
-    fetch("/api/screener/nl")
-      .then((r) => r.json())
-      .then((d: { models?: string[] }) => {
-        const models = d.models ?? [];
-        setOllamaModels(models);
-        if (models.length > 0 && !selectedModel) setSelectedModel(models[0]);
-      })
-      .catch(() => {/* Ollama offline — model picker hidden gracefully */});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const addEvent = useCallback((event: StreamEvent) => {
     setEvents((prev) => [...prev, event]);
   }, []);
@@ -573,7 +558,6 @@ export default function ICReportPage() {
         body: JSON.stringify({
           symbol: symbol.trim().toUpperCase(),
           exchange,
-          ...(selectedModel ? { model: selectedModel } : {}),
         }),
         signal: abortRef.current.signal,
       });
@@ -688,22 +672,20 @@ export default function ICReportPage() {
           <option value="US">US Markets</option>
           <option value="IN">Indian Markets (NSE/BSE)</option>
         </select>
-        {ollamaModels.length > 0 && (
-          <div className="flex items-center gap-2">
-            <span className="rounded-full bg-brand/10 px-2 py-0.5 text-xs font-medium text-brand">
-              Local AI
-            </span>
-            <select
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              className="rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand"
-            >
-              {ollamaModels.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-          </div>
-        )}
+        {/* Model selection is the Router's job, not the user's.
+            This used to be a dropdown of every installed Ollama model, defaulted
+            to whichever happened to be listed first — which meant a code model
+            (`qwen2.5-coder`, `qwen3-coder`) could be pinned for a nine-agent
+            equity analysis, and pinning ANY model bypasses the Router's
+            per-task selection, memory-fit gate, and failure fallback entirely.
+            The task registry already routes each of the nine agent domains to an
+            appropriate model; the report header reports which one answered. */}
+        <span
+          className="self-center rounded-full bg-brand/10 px-2.5 py-1 text-xs font-medium text-brand"
+          title="Each agent is routed to the best-fitting installed model for its task."
+        >
+          Local AI
+        </span>
         {running ? (
           <div className="flex items-center gap-3">
             <button
@@ -944,7 +926,16 @@ export default function ICReportPage() {
               </svg>
             </div>
             <div className="flex flex-col gap-2">
-              <p className="text-sm font-semibold">Enter a ticker to generate a full IC report</p>
+              {/* A deep link (/ic-report?symbol=AAPL) prefills the input, so
+                  "Enter a ticker" contradicted what the user could see. Report
+                  the actual next step instead. Generation stays explicit — it
+                  costs 3-15 minutes of local compute, which is not something to
+                  start on someone's behalf just because they followed a link. */}
+              <p className="text-sm font-semibold">
+                {symbol.trim()
+                  ? `Ready — generate the IC report for ${symbol.trim().toUpperCase()}`
+                  : "Enter a ticker to generate a full IC report"}
+              </p>
               <p className="max-w-sm text-xs leading-5 text-muted">
                 9 AI agents investigate your company: growth, valuation, competition, management, capital allocation,
                 accounting, governance, risks, and optionality.

@@ -280,7 +280,7 @@ export default function ScannerPage() {
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-semibold tracking-tight">Market Intelligence</h1>
+              <h1 className="text-2xl font-semibold tracking-tight">Scanner</h1>
               <span className="rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-label font-medium uppercase tracking-widest text-muted">
                 Live
               </span>
@@ -541,7 +541,7 @@ export default function ScannerPage() {
             <div className="flex flex-col gap-2">
               <p className="text-sm font-semibold">Run the Intelligence Pipeline</p>
               <p className="max-w-md text-xs leading-5 text-muted">
-                The Market Intelligence Scanner collects signals from all sources, clusters stories,
+                The Scanner collects signals from all sources, clusters stories,
                 maps cause-and-effect chains, cross-references fundamentals, and surfaces
                 investment opportunities — not just headlines.
               </p>

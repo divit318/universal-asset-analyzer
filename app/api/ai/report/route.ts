@@ -4,8 +4,17 @@ import { readPortfolioFacts } from "@/lib/ai/facts";
 import { sectionFor, sectionsInOrder } from "@/lib/ai/report-sections";
 import { runTaskStream } from "@/lib/ai/orchestrator";
 import { JsonFieldStreamer } from "@/lib/ai/streaming-json";
-import { assembleVerdict, offlineVerdict, planVerdict } from "@/lib/ai/verdict";
+import {
+  assembleVerdict,
+  cacheVerdict,
+  offlineVerdict,
+  peekVerdict,
+  planVerdict,
+  verdictCacheParams,
+} from "@/lib/ai/verdict";
+import { personalizationParams } from "@/lib/ai/verdict-params";
 import { normalizeSymbol } from "@/lib/market";
+import { REPORT_SECTIONS } from "@/lib/ai/report-sections";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -81,6 +90,9 @@ export async function GET(request: Request) {
     );
   }
 
+  const cacheParams = verdictCacheParams(ctx.symbol, plan.kind, personalizationParams(url));
+  const cached = url.searchParams.get("refresh") === "1" ? null : peekVerdict(cacheParams);
+
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
@@ -108,6 +120,41 @@ export async function GET(request: Request) {
         warnings: ctx.warnings,
         sections: sectionsInOrder().map((s) => ({ id: s.id, title: s.title, order: s.order })),
       });
+
+      /* A cached report replays instantly, section by section, in the same
+         protocol a live generation uses — so the client needs no special case and
+         a repeat visit costs nothing instead of another multi-minute inference.
+         The sections are emitted in schema order rather than arrival order
+         because a finished report has no arrival order. */
+      if (cached) {
+        const record = cached as unknown as Record<string, unknown>;
+        for (const spec of REPORT_SECTIONS) {
+          if (record[spec.id] === undefined) continue;
+          send({
+            type: "section",
+            id: spec.id,
+            title: spec.title,
+            order: spec.order,
+            data: record[spec.id],
+            elapsedMs: 0,
+          });
+        }
+        send({
+          type: "done",
+          verdict: cached,
+          grounding: cached.grounding,
+          model: cached.model,
+          durationMs: Date.now() - startedAt,
+          fromCache: true,
+        });
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          /* already closed by the client */
+        }
+        return;
+      }
 
       const parser = new JsonFieldStreamer();
       let model = "unknown";
@@ -158,6 +205,11 @@ export async function GET(request: Request) {
         // look-alike: identical defaults for omitted fields, identical claim
         // extraction, identical evidence block.
         const verdict = assembleVerdict(plan, parser.result(), model);
+
+        // Persist under the registry's `aiVerdict` policy so the next view is
+        // instant. `cacheVerdict` refuses to store an offline fallback, so an
+        // Ollama outage cannot pin "start Ollama" for the whole TTL.
+        cacheVerdict(cacheParams, verdict, ctx.symbol);
 
         send({
           type: "done",

@@ -31,6 +31,9 @@ import { collectClaimText, verifyGrounding, type GroundingReport } from "./groun
 import type { CompanyContext } from "./types";
 import type { TaskType } from "./task-registry";
 import { runPrompt } from "../ai";
+import { getDataset, peekDataset } from "../platform/data-layer";
+import { writeCache } from "../platform/cache";
+import { cacheKey } from "../platform/registry";
 import { extractJsonObject } from "../json-extract";
 import { detectAssetClass } from "../asset-class";
 import { formatCurrency, formatMarketCap } from "../format";
@@ -225,6 +228,100 @@ export async function generateVerdict(
     return assembleVerdict(plan, extractJsonObject<Record<string, unknown>>(raw, {}), "ollama");
   } catch {
     return offlineVerdict(plan);
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Caching                                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A verdict was generated while Ollama was unreachable.
+ *
+ * Thrown so the cache layer treats it as a failure and does NOT persist it. The
+ * platform's rule is "failures are never cached", and it matters more here than
+ * anywhere else: caching the offline fallback would pin "Start Ollama to
+ * generate the AI investment verdict" on screen for six hours after Ollama had
+ * already come back up.
+ */
+class VerdictUnavailableError extends Error {
+  constructor(readonly fallback: InvestmentVerdict) {
+    super("Verdict generation unavailable");
+    this.name = "VerdictUnavailableError";
+  }
+}
+
+/**
+ * Cache parameters for a verdict.
+ *
+ * Personalization is part of the key: a verdict written for a user whose book is
+ * underweight Technology says different things than a generic one, and serving
+ * one for the other would be a correctness bug, not a cache optimization. The
+ * `kind` is included so an asset that changes classification cannot read a
+ * verdict built from the wrong prompt.
+ */
+export function verdictCacheParams(
+  symbol: string,
+  kind: VerdictKind,
+  personalization: Record<string, string> = {},
+): Record<string, string> {
+  return { symbol: symbol.toUpperCase(), kind, ...personalization };
+}
+
+/**
+ * Read a cached verdict without generating one. Null on a true miss.
+ *
+ * Used by the streamed route to replay a finished report instantly instead of
+ * paying for the generation a second time.
+ */
+export function peekVerdict(params: Record<string, string>): InvestmentVerdict | null {
+  return peekDataset<InvestmentVerdict>("aiVerdict", params)?.data ?? null;
+}
+
+/** Persist a freshly-generated verdict under the platform's `aiVerdict` policy. */
+export function cacheVerdict(
+  params: Record<string, string>,
+  verdict: InvestmentVerdict,
+  symbol: string,
+): void {
+  if (verdict.model === "unavailable") return; // never cache a failure
+  writeCache("aiVerdict", cacheKey("aiVerdict", params), verdict, symbol.toUpperCase());
+}
+
+/**
+ * The verdict, from cache when possible.
+ *
+ * Goes through `getDataset`, so it inherits the whole platform contract that AI
+ * generation had been quietly bypassing despite being by far the most expensive
+ * thing to recompute: the registry's `aiVerdict` policy (6h fresh, 24h
+ * stale-while-revalidate, persisted across restarts), request deduplication, and
+ * — most importantly — dependency-aware invalidation. New filings, statements,
+ * or fundamentals drop the verdict; a price tick or a news headline does not.
+ *
+ * That policy already existed in lib/platform/registry.ts. Nothing was reading
+ * it, so every visit to a page re-ran a multi-minute local generation whose
+ * answer had not changed.
+ */
+export async function getVerdict(
+  plan: VerdictPlan,
+  params: Record<string, string>,
+  opts: { signal?: AbortSignal; fresh?: boolean } = {},
+): Promise<{ verdict: InvestmentVerdict; cached: boolean }> {
+  try {
+    const result = await getDataset<InvestmentVerdict>(
+      "aiVerdict",
+      params,
+      async () => {
+        const verdict = await generateVerdict(plan, { signal: opts.signal });
+        if (verdict.model === "unavailable") throw new VerdictUnavailableError(verdict);
+        return verdict;
+      },
+      { symbol: params.symbol, signal: opts.signal, fresh: opts.fresh },
+    );
+    return { verdict: result.data, cached: result.cached };
+  } catch (err) {
+    if (err instanceof VerdictUnavailableError) return { verdict: err.fallback, cached: false };
+    return { verdict: offlineVerdict(plan), cached: false };
   }
 }
 

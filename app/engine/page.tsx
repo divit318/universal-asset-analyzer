@@ -1037,7 +1037,7 @@ export default function EnginePage() {
     };
   }, []);
 
-  async function loadScorecard() {
+  const loadScorecard = useCallback(async () => {
     setLoading(true); setError(null);
     try {
       const res = await fetch("/api/engine");
@@ -1046,7 +1046,20 @@ export default function EnginePage() {
       setScorecard((json as { scorecard: ScorecardRow[] }).scorecard);
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     finally { setLoading(false); }
-  }
+  }, []);
+
+  /**
+   * Load the existing snapshot on arrival.
+   *
+   * Reading it is a local Parquet read with no external calls, so there is no
+   * reason to make the user click for it — and every reason not to. Arriving on a
+   * page that says "No scorecard for this universe" with every metric showing an
+   * em-dash, while a perfectly good 123-row scorecard sat on disk unread, is the
+   * kind of first impression that reads as "this feature is broken".
+   */
+  useEffect(() => {
+    void loadScorecard();
+  }, [loadScorecard]);
 
   async function runEngine(noForecast: boolean) {
     setRunning(true); setRunLog(""); setError(null);
@@ -1553,10 +1566,16 @@ export default function EnginePage() {
               </svg>
             </div>
             <div className="flex flex-col gap-2">
-              <p className="text-sm font-semibold">No scorecard for this universe</p>
+              {/* The snapshot is NOT universe-scoped — /api/engine reads whatever
+                  the last run produced, ignoring the selector. Saying "for this
+                  universe" implied the user had picked the wrong one and that
+                  switching it would reveal data, which was never true. */}
+              <p className="text-sm font-semibold">No scorecard generated yet</p>
               <p className="max-w-sm text-xs leading-5 text-muted">
-                Select a universe and run the engine to score stocks.
-                Fast run takes ~2–5 min. Full run with forecasts takes ~10–20 min.
+                Pick the universe to score, then run the engine. The selector above
+                chooses what the <em>next</em> run covers; results replace the
+                current snapshot. Fast run takes ~2–5 min, full run with Monte-Carlo
+                forecasts ~10–20 min.
               </p>
             </div>
             <div className="flex gap-3">

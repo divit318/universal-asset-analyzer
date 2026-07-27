@@ -54,12 +54,25 @@ const TABS: TabItem<Tab>[] = [
 
 const TAB_IDS: string[] = TABS.map((t) => t.id);
 
+/**
+ * Mirrors the real layout — five KPI tiles, the tab strip, then two panel
+ * columns — so the page does not visibly reflow when data lands. A generic stack
+ * of four bars is only marginally better than a blank screen, and this page takes
+ * several seconds to price a whole book.
+ */
 function Skeleton() {
   return (
-    <div className="flex flex-col gap-3">
-      {[0, 1, 2, 3].map((i) => (
-        <div key={i} className="h-20 animate-pulse rounded-xl border border-border bg-surface" />
-      ))}
+    <div className="flex flex-col gap-5">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <div key={i} className="h-[86px] animate-pulse rounded-card border border-border bg-surface" />
+        ))}
+      </div>
+      <div className="h-9 w-full max-w-md animate-pulse rounded-control bg-surface-2" />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="h-80 animate-pulse rounded-card border border-border bg-surface" />
+        <div className="h-80 animate-pulse rounded-card border border-border bg-surface" />
+      </div>
     </div>
   );
 }

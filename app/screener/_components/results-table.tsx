@@ -24,6 +24,8 @@ interface Props {
   onSort: (key: string) => void;
   watchlisted: Set<string>;
   onWatch: (row: RankedCandidate) => void;
+  /** Why the table would be empty — drives an accurate empty state. */
+  emptyState?: ResultsEmptyState;
 }
 
 /** Colour the rank score the way the rest of the app colours scores. */
@@ -121,6 +123,75 @@ function MatchDetail({ row }: { row: RankedCandidate }) {
   );
 }
 
+/**
+ * Why the table is empty. There are four different reasons and they need four
+ * different messages.
+ *
+ * The old empty state said one thing for all of them: "Every filter you set
+ * excludes assets whose value is unknown… Try loosening the tightest one." On a
+ * cold start — which is the very first thing a new user sees, and lasts for the
+ * ~13 minutes the universe takes to build — that text was simply false. No
+ * filters were set. It blamed the user for a condition that did not exist and
+ * sent them to adjust controls that were already empty, while the real answer
+ * ("the data is still loading") was never mentioned.
+ */
+export type ResultsEmptyState =
+  /** The universe is still being assembled. Nothing is wrong. */
+  | { kind: "building"; ready: number; total: number }
+  /** The universe failed to assemble. The user cannot fix this with filters. */
+  | { kind: "universe-error"; error: string }
+  /** Universe is ready, no filters set, and the screen has not been run yet. */
+  | { kind: "not-run" }
+  /** Universe is ready and the filters genuinely excluded everything. */
+  | { kind: "no-matches"; activeFilterCount: number };
+
+function EmptyResults({
+  def,
+  state,
+}: {
+  def: { label: string; noun: string };
+  state: ResultsEmptyState;
+}) {
+  const body = (() => {
+    switch (state.kind) {
+      case "building":
+        return {
+          title: `Building the ${def.label} universe`,
+          detail:
+            state.total > 0
+              ? `Fetching fundamentals for ${state.total.toLocaleString()} assets — ${state.ready.toLocaleString()} done. Results appear as soon as it finishes; you can leave this page and come back.`
+              : "Fetching the asset list and their fundamentals. Results appear as soon as it finishes.",
+        };
+      case "universe-error":
+        return {
+          title: "The universe could not be built",
+          detail: `${state.error} Use "Refresh data" to try again — this is a data-source problem, not a filter problem.`,
+        };
+      case "not-run":
+        return {
+          title: `Ready — pick a template or set a filter`,
+          detail: `The ${def.label} universe is loaded. Start from a template above, or set any filter and run the screen.`,
+        };
+      case "no-matches":
+        return {
+          title: "Nothing matched",
+          detail:
+            state.activeFilterCount > 0
+              ? `${state.activeFilterCount === 1 ? "Your active filter was" : `All ${state.activeFilterCount} active filters were`} applied and no ${def.noun} passed. A filter also excludes assets whose value is unknown, so a metric this universe is thin on can empty the table — try loosening the tightest one.`
+              : `No ${def.noun} passed. Try a different template or asset class.`,
+        };
+    }
+  })();
+
+  return (
+    <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
+      <p className="text-sm font-medium">{body.title}</p>
+      <p className="max-w-md text-xs text-muted">{body.detail}</p>
+      <Badge variant="neutral">{def.label}</Badge>
+    </div>
+  );
+}
+
 export function ResultsTable({
   assetClass,
   rows,
@@ -129,6 +200,7 @@ export function ResultsTable({
   onSort,
   watchlisted,
   onWatch,
+  emptyState = { kind: "no-matches", activeFilterCount: 0 },
 }: Props) {
   const def = getAssetClass(assetClass);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -238,16 +310,7 @@ export function ResultsTable({
         </tbody>
       </table>
 
-      {rows.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
-          <p className="text-sm font-medium">Nothing matched</p>
-          <p className="max-w-md text-xs text-muted">
-            Every filter you set excludes assets whose value is unknown, so a filter on a metric this
-            universe is thin on can empty the table. Try loosening the tightest one.
-          </p>
-          <Badge variant="neutral">{def.label}</Badge>
-        </div>
-      ) : null}
+      {rows.length === 0 ? <EmptyResults def={def} state={emptyState} /> : null}
     </div>
   );
 }

@@ -171,7 +171,13 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     dataSources: ["yahoo", "scanner", "sector-rotation"],
     dependencies: [],
     ai: null,
-    navTarget: { href: "/scanner", label: "Market scanner" },
+    // The link's label matches the destination's own <h1> and its nav entry.
+    // Previously this module ("Market Intelligence") linked to a page whose
+    // heading also said "Market Intelligence" under a nav entry that said
+    // "Scanner", via a link labelled "Market scanner" — four names for two
+    // things. This module keeps its own name (it shows the tape); the
+    // destination is called Scanner everywhere.
+    navTarget: { href: "/scanner", label: "Scanner" },
   },
 
   /* ---------------- Long read ---------------- */

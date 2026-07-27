@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { buildCompanyContext } from "@/lib/ai/context";
 import { readPortfolioFacts } from "@/lib/ai/facts";
 import { normalizeSymbol } from "@/lib/market";
-import { generateVerdict, planVerdict, type InvestmentVerdict } from "@/lib/ai/verdict";
+import { getVerdict, planVerdict, verdictCacheParams, type InvestmentVerdict } from "@/lib/ai/verdict";
+import { personalizationParams } from "@/lib/ai/verdict-params";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,5 +48,16 @@ export async function GET(request: Request) {
   }
 
   const plan = await planVerdict(ctx, readPortfolioFacts(url));
-  return NextResponse.json(await generateVerdict(plan, { signal: request.signal }));
+  const params = verdictCacheParams(ctx.symbol, plan.kind, personalizationParams(url));
+
+  // Read-through the platform cache. A repeat view of the same company with the
+  // same portfolio context costs nothing instead of another full local inference.
+  const { verdict, cached } = await getVerdict(plan, params, {
+    signal: request.signal,
+    fresh: url.searchParams.get("refresh") === "1",
+  });
+
+  return NextResponse.json(verdict, {
+    headers: { "X-UAA-Cache": cached ? "hit" : "miss" },
+  });
 }

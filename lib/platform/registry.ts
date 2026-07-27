@@ -112,11 +112,20 @@ export const DATASETS: Record<DatasetId, CachePolicy> = {
 
   companyContext: { ttlMs: 5 * MINUTE, swrMs: 15 * MINUTE, persist: false, source: "platform", label: "AI company context", dependents: ["aiVerdict"] },
 
-  // An AI report is the single most expensive thing the platform produces (tens
-  // of seconds of local inference). It is persisted and long-lived, and is only
-  // rebuilt when the *thesis* could have materially moved — which is precisely
-  // what the dependency cascade above encodes: new filings, new statements, or
-  // new fundamentals invalidate it; a price tick or a news headline does not.
+  // An AI report is the single most expensive thing the platform produces —
+  // measured at 115s of local inference for one equity verdict, against 0.04s to
+  // replay it from here. It is persisted and long-lived precisely so that a
+  // second look at a company costs nothing.
+  //
+  // What invalidates it: anything that could move the *thesis*. `filings`,
+  // `statements`, and `fundamentals` all declare it (directly or through
+  // `companyContext`), so a new 10-Q drops the verdict for that symbol alone.
+  //
+  // Note that `quote` also declares it, so an explicit
+  // `invalidateAsset(sym, "quote")` would drop the verdict too. Nothing calls
+  // that today — quotes expire on their own 15s TTL rather than by invalidation —
+  // but if a caller ever adds it, be aware it discards a two-minute generation
+  // for a price tick that does not change the argument.
   aiVerdict: { ttlMs: 6 * HOUR, swrMs: 24 * HOUR, persist: true, source: "platform", label: "AI investment verdict" },
   aiSection: { ttlMs: 6 * HOUR, swrMs: 24 * HOUR, persist: true, source: "platform", label: "AI report section" },
 };
