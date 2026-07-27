@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   forceSimulation,
   forceLink,
   forceManyBody,
   forceCenter,
   forceCollide,
+  forceX,
+  forceY,
   type Simulation,
   type SimulationNodeDatum,
 } from "d3-force";
@@ -68,6 +70,58 @@ export function GraphCanvas({
     return () => observer.disconnect();
   }, []);
 
+  /**
+   * Frame every node inside the viewport.
+   *
+   * A force layout settles wherever it settles; it has no notion of a viewport.
+   * Without this step nodes routinely came to rest outside the visible box — the
+   * graph shipped with labels clipped off both edges ("a's Bold $6.5…" on the
+   * left, "Appl" on the right) while most of the canvas sat empty. Panning to
+   * find your own data is not exploration, it is a bug.
+   *
+   * The padding is asymmetric because the label is, so the fit accounts for text
+   * that extends past a node's radius without wasting canvas on sides where
+   * nothing is drawn.
+   */
+  const fitToView = useCallback(
+    (pts: Map<string, { x: number; y: number }>) => {
+      if (pts.size === 0) return;
+
+      /* Label slack, measured from how the label is actually drawn: centred
+         horizontally and 13px BELOW the node. So it needs generous horizontal
+         room, a little below, and essentially none above. Padding all four sides
+         equally (the obvious first cut) wasted ~20% of the canvas. */
+      const PAD_X = 44;
+      const PAD_TOP = 6;
+      const PAD_BOTTOM = 26;
+
+      const radii = new Map(nodes.map((n) => [n.id, nodeRadius(n)]));
+
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const [id, p] of pts) {
+        const r = radii.get(id) ?? 8;
+        minX = Math.min(minX, p.x - r - PAD_X);
+        maxX = Math.max(maxX, p.x + r + PAD_X);
+        minY = Math.min(minY, p.y - r - PAD_TOP);
+        maxY = Math.max(maxY, p.y + r + PAD_BOTTOM);
+      }
+      if (!Number.isFinite(minX)) return;
+
+      const w = Math.max(1, maxX - minX);
+      const h = Math.max(1, maxY - minY);
+      // Never zoom past 1:1 — a three-node graph blown up to fill 900px looks
+      // broken rather than spacious.
+      const k = Math.max(0.3, Math.min(1, Math.min(size.width / w, size.height / h) * 0.96));
+      const cx = (minX + maxX) / 2;
+      const cy = (minY + maxY) / 2;
+
+      // The <g> is already translated by size/2, so this only has to cancel the
+      // layout's own centroid offset.
+      setTransform({ k, x: -cx * k, y: -cy * k });
+    },
+    [nodes, size.width, size.height],
+  );
+
   useEffect(() => {
     const simNodes: SimNode[] = nodes.map((n) => ({ id: n.id, node: n }));
     const linkForce = forceLink<SimNode, { source: string; target: string }>(
@@ -81,9 +135,28 @@ export function GraphCanvas({
       .force("link", linkForce)
       .force("charge", forceManyBody().strength(-260))
       .force("center", forceCenter(0, 0))
+      /* A gentle pull toward the origin on both axes.
+      
+         `forceCenter` only recentres the CENTROID; it does nothing to stop
+         individual nodes drifting. With charge at -260 and link strength at 0.35,
+         the news/event nodes — which have one edge or none — were being pushed
+         thousands of units out. The centroid stayed at zero, so nothing looked
+         wrong to the simulation, but the bounding box became so large that fitting
+         it to the viewport shrank the actual cluster to a third of the canvas.
+      
+         0.045 is weak enough that it does not distort the clustering the graph is
+         there to show, and strong enough that a poorly-connected node settles a
+         readable distance out instead of at infinity. */
+      .force("x", forceX(0).strength(0.045))
+      .force("y", forceY(0).strength(0.045))
       .force("collide", forceCollide<SimNode>().radius((d) => nodeRadius(d.node) + 10))
       .on("tick", () => {
         setPositions(new Map(simNodes.map((n) => [n.id, { x: n.x ?? 0, y: n.y ?? 0 }])));
+      })
+      .on("end", () => {
+        // Frame it once the layout has stopped moving. Fitting on every tick
+        // would make the whole graph visibly breathe while it settles.
+        fitToView(new Map(simNodes.map((n) => [n.id, { x: n.x ?? 0, y: n.y ?? 0 }])));
       });
 
     simRef.current = sim;
@@ -91,7 +164,20 @@ export function GraphCanvas({
       sim.stop();
       simRef.current = null;
     };
+    // `fitToView` depends on size; refitting on resize is handled separately so a
+    // window resize does not restart the whole simulation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges]);
+
+  // Re-frame when the container resizes, without disturbing the layout itself.
+  useEffect(() => {
+    if (positions.size === 0) return;
+    const id = setTimeout(() => fitToView(positions), 120);
+    return () => clearTimeout(id);
+    // Intentionally keyed on size only — refitting on every tick would fight the
+    // simulation, and refitting on `positions` would loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [size.width, size.height]);
 
   const screenToLocal = (clientX: number, clientY: number) => {
     const rect = containerRef.current!.getBoundingClientRect();
@@ -163,13 +249,46 @@ export function GraphCanvas({
   return (
     <div
       ref={containerRef}
-      className="relative h-[560px] w-full touch-none overflow-hidden rounded-xl border border-border bg-surface"
+      /* Taller, and sized to the viewport rather than to a fixed 560px. The graph
+         is the flagship expression of "everything is connected", and it was being
+         shown through a letterbox. `min-h` keeps it usable on a laptop; the vh
+         term lets a large display actually be used. */
+      className="relative h-[min(78vh,900px)] min-h-[520px] w-full touch-none overflow-hidden rounded-card border border-border bg-surface"
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerLeave={onPointerUp}
       onPointerDown={onBackgroundPointerDown}
       onWheel={onWheel}
     >
+      {/* Zoom/fit controls. "Fit" exists because a user who has panned away
+          needs a way back that is not "reload the page". */}
+      <div className="absolute right-3 top-3 z-10 flex items-center gap-1 rounded-control border border-border bg-surface/90 p-0.5 backdrop-blur">
+        {[
+          { label: "−", title: "Zoom out", onClick: () => setTransform((t) => ({ ...t, k: Math.max(0.3, t.k / 1.25) })) },
+          { label: "+", title: "Zoom in", onClick: () => setTransform((t) => ({ ...t, k: Math.min(3, t.k * 1.25) })) },
+        ].map((b) => (
+          <button
+            key={b.title}
+            type="button"
+            title={b.title}
+            onClick={(e) => { e.stopPropagation(); b.onClick(); }}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="h-6 w-6 rounded-control font-mono text-xs text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+          >
+            {b.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          title="Fit every node in view"
+          onClick={(e) => { e.stopPropagation(); fitToView(positions); }}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="rounded-control px-2 py-1 text-[10px] uppercase tracking-widest text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+        >
+          Fit
+        </button>
+      </div>
+
       <svg width={size.width} height={size.height} className="cursor-grab active:cursor-grabbing">
         <g transform={`translate(${size.width / 2 + transform.x}, ${size.height / 2 + transform.y}) scale(${transform.k})`}>
           {edges.map((edge) => {
@@ -179,15 +298,25 @@ export function GraphCanvas({
             const dimmed = highlightedEdgeIds != null && !highlightedEdgeIds.has(edge.id);
             const active = highlightedEdgeIds?.has(edge.id);
             return (
+              /* Edges are the entire point of this view — "how your names
+                 connect" — and they were effectively invisible: `--border`
+                 (#282d37) drawn 0.75px wide at 0.45 opacity on `--surface`, then
+                 scaled DOWN further by the zoom transform. The graph read as a
+                 field of unconnected dots.
+              
+                 Three fixes: the stronger border token, a higher floor on width
+                 and opacity, and `non-scaling-stroke` so a line stays 1px on
+                 screen no matter how far the view is zoomed out. */
               <line
                 key={edge.id}
                 x1={s.x}
                 y1={s.y}
                 x2={t.x}
                 y2={t.y}
-                stroke={active ? "var(--accent)" : "var(--border)"}
-                strokeWidth={active ? 2.5 : Math.max(0.75, edge.strength / 45)}
-                opacity={dimmed ? 0.12 : active ? 0.9 : 0.45}
+                stroke={active ? "var(--accent)" : "var(--border-strong)"}
+                strokeWidth={active ? 2.5 : Math.max(1.15, edge.strength / 45)}
+                vectorEffect="non-scaling-stroke"
+                opacity={dimmed ? 0.12 : active ? 0.9 : 0.75}
               />
             );
           })}
@@ -217,6 +346,11 @@ export function GraphCanvas({
                   stroke={NODE_COLOR[node.type]}
                   strokeWidth={isSelected || isConnectFrom ? 3 : 1.5}
                 />
+                {/* The drawn label is truncated to 18 characters to keep the
+                    canvas legible, so the full one has to remain recoverable —
+                    otherwise a node reading "Nvidia, SK Group P…" is unidentifiable
+                    without clicking it. */}
+                <title>{node.label}</title>
                 {(isSelected || isConnectFrom || r >= 14) && (
                   <text
                     y={r + 13}
