@@ -73,7 +73,7 @@ you want those integrations live.
 | Macro | `/research/macro` | Macro indicator dashboards |
 | Screener | `/screener` | Universal screener across all asset classes — cached fundamentals, live prices, composite value/quality/momentum scoring |
 | Scanner | `/scanner` | Event-driven signals: earnings surprises, insider transactions, technical breaks, causal thesis builder |
-| Compare | `/compare` | Multi-stock comparison across 14 metrics |
+| Compare | `/compare` | Asset comparison across equities, ETFs, REITs, crypto, commodities, bonds and forex — deep, class-tailored frameworks, not one generic template |
 | Portfolio | `/portfolio` | Holdings, lots/P&L, performance (XIRR + benchmark), decisions, rebalance/optimize, buy/allocate-cash flows across all asset classes |
 | Watchlist | `/watchlist` | Tracked tickers with alerts, notes, portfolio-fit scoring |
 | DCF | `/dcf` | Intrinsic value calculator with sensitivity analysis |

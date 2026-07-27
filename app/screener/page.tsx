@@ -18,8 +18,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PageShell, PageHeader, Button, Card, Badge } from "@/app/_components/ui";
 import { downloadBlob } from "@/lib/download";
-import { getAssetClass, listAssetClasses } from "@/lib/assets/registry";
+import { getAssetClass, isAssetClassId, listAssetClasses } from "@/lib/assets/registry";
 import type { AssetClassId } from "@/lib/assets/types";
+import { PENDING_SCREEN_KEY, type PendingScreenHandoff } from "@/app/_components/screener-handoff";
 import type { RankedCandidate, ScreenerResponse, UniverseStatus } from "@/lib/screener/types";
 import type { SavedScreen } from "@/lib/db";
 import { FilterPanel } from "./_components/filter-panel";
@@ -231,15 +232,48 @@ export default function ScreenerPage() {
    */
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    void run({
+    // The AI Assistant hands off a parsed natural-language screen this way —
+    // sessionStorage rather than the URL, since a filter object is richer
+    // than a clean query string (see app/_components/screener-handoff.ts).
+    // Applied once, then cleared, so a later plain visit to /screener isn't
+    // silently re-filtered.
+    let initial: RunOptions = {
       assetClass: "equity",
       templateId: null,
       draft: emptyDraft(),
       sortKey: getAssetClass("equity").defaultSort.key,
       sortDir: getAssetClass("equity").defaultSort.dir,
       offset: 0,
-    });
-    void loadSaved("equity");
+    };
+    try {
+      const pending = sessionStorage.getItem(PENDING_SCREEN_KEY);
+      if (pending) {
+        sessionStorage.removeItem(PENDING_SCREEN_KEY);
+        const handoff = JSON.parse(pending) as PendingScreenHandoff;
+        if (isAssetClassId(handoff.assetClass)) {
+          const handoffClass = getAssetClass(handoff.assetClass);
+          initial = {
+            assetClass: handoff.assetClass,
+            templateId: handoff.templateId,
+            draft: fromFilterValues(handoff.assetClass, handoff.filters),
+            sortKey: handoffClass.defaultSort.key,
+            sortDir: handoffClass.defaultSort.dir,
+            offset: 0,
+          };
+        }
+      }
+    } catch {
+      // Malformed/missing handoff — fall through to the equity default.
+    }
+
+    setAssetClass(initial.assetClass);
+    setTemplateId(initial.templateId);
+    setDraft(initial.draft);
+    setSortKey(initial.sortKey);
+    setSortDir(initial.sortDir);
+
+    void run(initial);
+    void loadSaved(initial.assetClass);
 
     void (async () => {
       try {

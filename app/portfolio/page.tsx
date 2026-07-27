@@ -39,6 +39,10 @@ import { CashPanel } from "./_components/universal/cash-panel";
 import { AddHoldingDialog } from "./_components/universal/add-holding-dialog";
 import { PortfolioThesisBanner } from "./_components/universal/portfolio-thesis";
 import { ArrivalHighlight, useArrivalTarget } from "@/app/_components/arrival-highlight";
+import { useBootReady } from "@/app/_components/boot-context";
+import { Reveal } from "@/app/_components/reveal";
+import { CountUp } from "@/app/_components/count-up";
+import { LoadingMark } from "@/app/_components/loading-mark";
 
 type Tab = "dashboard" | "decisions" | "holdings" | "risk" | "optimize";
 
@@ -52,15 +56,7 @@ const TABS: TabItem<Tab>[] = [
 
 const TAB_IDS: string[] = TABS.map((t) => t.id);
 
-function Skeleton() {
-  return (
-    <div className="flex flex-col gap-3">
-      {[0, 1, 2, 3].map((i) => (
-        <div key={i} className="h-20 animate-pulse rounded-xl border border-border bg-surface" />
-      ))}
-    </div>
-  );
-}
+const pct = (v: number, digits: number) => `${v >= 0 ? "+" : ""}${v.toFixed(digits)}%`;
 
 /* ─────────────────────────── Page ─────────────────────────── */
 
@@ -111,6 +107,7 @@ function PortfolioPageInner() {
   // the old one rather than racing it.
   const { data: report, error, isInitialLoading, revalidating, refresh } =
     useDataset<UniversalPortfolioReport>("portfolioReport", objective, fetcher);
+  useBootReady(!isInitialLoading, "portfolio");
 
   const loading = isInitialLoading || revalidating;
   const empty = !isInitialLoading && !error && (!report || report.holdingCount === 0);
@@ -137,7 +134,14 @@ function PortfolioPageInner() {
         </Card>
       )}
 
-      {isInitialLoading && <Skeleton />}
+      {/* Only the boot splash (or, off first-load, this one small inline
+          affordance) ever masks this wait — never a full-page skeleton grid. */}
+      {isInitialLoading && (
+        <div className="flex items-center gap-2 text-xs text-muted">
+          <LoadingMark size={16} label="Loading portfolio" />
+          Loading your portfolio…
+        </div>
+      )}
 
       {empty && (
         <Card className="flex flex-col items-center gap-3 p-12 text-center">
@@ -155,40 +159,42 @@ function PortfolioPageInner() {
 
       {report && report.holdingCount > 0 && (
         <div className="flex flex-col gap-5">
-          <PortfolioThesisBanner enabled={report.holdingCount > 0} refreshSignal={thesisRefreshSignal} />
+          <Reveal index={0}>
+            <PortfolioThesisBanner enabled={report.holdingCount > 0} refreshSignal={thesisRefreshSignal} />
+          </Reveal>
 
           {/* ── Headline ── */}
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <Reveal index={1} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <StatTile
               label="Total value"
-              value={formatCurrency(report.totalValue)}
+              value={<CountUp value={report.totalValue} format={formatCurrency} />}
               sublabel={`${report.holdingCount} holdings · ${report.allocation.byAssetClass.slices.length} asset classes`}
             />
             <StatTile
               label="Total return"
-              value={`${report.totalReturn >= 0 ? "+" : ""}${report.totalReturn.toFixed(1)}%`}
+              value={<CountUp value={report.totalReturn} format={(v) => pct(v, 1)} />}
               sublabel={formatCurrency(report.totalReturnDollar)}
               tone={report.totalReturn >= 0 ? "positive" : "negative"}
             />
             <StatTile
               label="Today"
-              value={`${report.todayChangePct >= 0 ? "+" : ""}${report.todayChangePct.toFixed(2)}%`}
+              value={<CountUp value={report.todayChangePct} format={(v) => pct(v, 2)} />}
               sublabel={formatCurrency(report.todayChangeDollar)}
               tone={report.todayChangePct >= 0 ? "positive" : "negative"}
             />
             {/* Income counts coupons, rent, staking and interest — not just dividends. */}
             <StatTile
               label="Annual income"
-              value={formatCurrency(report.annualIncome)}
+              value={<CountUp value={report.annualIncome} format={formatCurrency} />}
               sublabel={`${report.incomeYieldPct.toFixed(2)}% yield`}
             />
             <StatTile
               label="Health"
-              value={`${report.health.total} ${report.health.grade}`}
+              value={<><CountUp value={report.health.total} format={(v) => Math.round(v).toString()} /> {report.health.grade}</>}
               sublabel={`${report.health.coveragePct}% of dimensions applicable`}
               tone={report.health.total >= 70 ? "positive" : report.health.total >= 50 ? "default" : "warning"}
             />
-          </div>
+          </Reveal>
 
           {/* ── Data-quality disclosure ──────────────────────────────────────────
               A portfolio that is largely self-reported marks has a "total value" that
@@ -196,27 +202,29 @@ function PortfolioPageInner() {
               that softness. We say so instead of presenting it with the authority of a
               marked-to-market number. */}
           {report.marketPricedPct < 95 && (
-            <Card className="flex flex-col gap-1 border-border bg-surface/40 p-3.5">
-              <span className="text-[11px] font-semibold text-foreground">Valuation basis</span>
-              <p className="text-[11px] leading-relaxed text-muted">
-                <strong className="text-foreground">{report.marketPricedPct}%</strong> of
-                portfolio value is priced by a live market.{" "}
-                <strong className="text-foreground">{100 - report.marketPricedPct}%</strong>{" "}
-                comes from your own valuations or derived models
-                {report.stalePct > 0 && (
-                  <>
-                    , and <strong className="text-warning">{report.stalePct}%</strong> of value
-                    rests on a mark that has gone stale
-                  </>
-                )}
-                . Every percentage on this page is computed against that whole.
-              </p>
-            </Card>
+            <Reveal index={2}>
+              <Card className="flex flex-col gap-1 border-border bg-surface/40 p-3.5">
+                <span className="text-[11px] font-semibold text-foreground">Valuation basis</span>
+                <p className="text-[11px] leading-relaxed text-muted">
+                  <strong className="text-foreground">{report.marketPricedPct}%</strong> of
+                  portfolio value is priced by a live market.{" "}
+                  <strong className="text-foreground">{100 - report.marketPricedPct}%</strong>{" "}
+                  comes from your own valuations or derived models
+                  {report.stalePct > 0 && (
+                    <>
+                      , and <strong className="text-warning">{report.stalePct}%</strong> of value
+                      rests on a mark that has gone stale
+                    </>
+                  )}
+                  . Every percentage on this page is computed against that whole.
+                </p>
+              </Card>
+            </Reveal>
           )}
 
           {/* ── Concentration warnings ── */}
           {report.concentration.length > 0 && (
-            <div className="flex flex-col gap-1.5">
+            <Reveal index={3} className="flex flex-col gap-1.5">
               {report.concentration.slice(0, 3).map((c, i) => (
                 <div
                   key={i}
@@ -232,10 +240,12 @@ function PortfolioPageInner() {
                   <p className="text-xs leading-relaxed text-muted">{c.message}</p>
                 </div>
               ))}
-            </div>
+            </Reveal>
           )}
 
-          <Tabs tabs={TABS} active={tab} onChange={setTab} layoutId="portfolio-universal-tabs" />
+          <Reveal index={4}>
+            <Tabs tabs={TABS} active={tab} onChange={setTab} layoutId="portfolio-universal-tabs" />
+          </Reveal>
 
           {tab === "dashboard" && (
             <div className="flex flex-col gap-4">

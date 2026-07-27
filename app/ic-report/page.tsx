@@ -8,6 +8,7 @@ import type { DetectedSignal } from "@/lib/ic-signals";
 import { SymbolSearch } from "@/app/_components/symbol-search";
 import { PageShell } from "@/app/_components/ui";
 import { GroundingBadge } from "@/app/_components/grounding-badge";
+import { useTaskSplash } from "@/app/_components/boot-context";
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -469,22 +470,29 @@ export default function ICReportPage() {
   const [error, setError] = useState<string | null>(null);
   const [exportErr, setExportErr] = useState<string | null>(null);
   const [elapsedSecs, setElapsedSecs] = useState(0);
+  const taskSplash = useTaskSplash();
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef<number>(0);
+  // Set when the deep-link below carries autorun=1 (the AI Assistant's "generate
+  // a report on X" action) — consumed by the effect after this one, since `run()`
+  // closes over `symbol`, which is still "" in THIS effect until setSymbol lands.
+  const autoRunRef = useRef(false);
 
   // Restore last saved report from sessionStorage on mount; also read ?symbol= deep-link
   useEffect(() => {
-    // Deep-link from Scanner: /ic-report?symbol=TICKER
-    const urlSymbol = new URLSearchParams(window.location.search).get("symbol");
+    // Deep-link from the Wire or the AI Assistant: /ic-report?symbol=TICKER[&autorun=1]
+    const params = new URLSearchParams(window.location.search);
+    const urlSymbol = params.get("symbol");
     if (urlSymbol) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setSymbol(urlSymbol.toUpperCase());
       // Detect Indian exchange by suffix
       if (urlSymbol.toUpperCase().endsWith(".NS") || urlSymbol.toUpperCase().endsWith(".BO")) {
-         
+
         setExchange("IN");
       }
+      if (params.get("autorun") === "1") autoRunRef.current = true;
       return; // don't restore stale cached report when deep-linking
     }
     try {
@@ -498,8 +506,21 @@ export default function ICReportPage() {
         }
       }
     } catch { /* ignore */ }
-   
+
   }, []);
+
+  // Fires the auto-run queued above exactly once, as soon as `symbol` has
+  // actually landed from that effect — `run()` bails immediately on an empty
+  // symbol, so this can't fire prematurely.
+  useEffect(() => {
+    if (autoRunRef.current && symbol.trim()) {
+      autoRunRef.current = false;
+      void run();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run() is a plain
+    // function recreated each render (not memoized); depending on it here
+    // would re-fire on every render instead of once when symbol lands.
+  }, [symbol]);
 
   // Dynamic page title
   useEffect(() => {
@@ -547,6 +568,12 @@ export default function ICReportPage() {
     setCompletedAgents(0);
     setTotalAgents(0);
 
+    // A run is 3-15 minutes — the full-screen splash must cover only the
+    // kickoff, then hand off to the progress sidebar/live feed below, never
+    // the whole run (that would be exactly the "frozen" feeling this is
+    // meant to avoid).
+    taskSplash.show("ic-report");
+
     try {
       const res = await fetch("/api/ic-report", {
         method: "POST",
@@ -567,6 +594,7 @@ export default function ICReportPage() {
       const decoder = new TextDecoder();
       let buffer = "";
       let dispatchSeen = false;
+      let firstEventSeen = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -581,6 +609,14 @@ export default function ICReportPage() {
           try {
             const event = JSON.parse(line.slice(6)) as StreamEvent;
             addEvent(event);
+
+            if (!firstEventSeen) {
+              // Proof the pipeline is actually producing signal — let the
+              // splash finish its resolve sequence and dissolve into the
+              // progress sidebar/live feed, which already has this event.
+              firstEventSeen = true;
+              taskSplash.reportReady();
+            }
 
             if (event.stage !== "agent_complete") {
               setCurrentStage(event.stage);
@@ -623,6 +659,10 @@ export default function ICReportPage() {
         setError(err.message);
       }
     } finally {
+      // Safety net: if the request failed before a single event arrived,
+      // reportReady() never fired — dismiss the splash immediately rather
+      // than leaving it to its 20s failsafe.
+      taskSplash.hide();
       setRunning(false);
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     }
@@ -902,13 +942,11 @@ export default function ICReportPage() {
                 )}
               </div>
             ) : running ? (
-              <Card className="flex items-center justify-center py-20">
-                <div className="flex flex-col items-center gap-3 text-muted">
-                  <div className="h-8 w-8 animate-spin rounded-full border-2 border-border border-t-brand" />
-                  <span className="text-sm">
-                    {currentStage ? `${STAGE_LABELS[currentStage]}…` : "Initialising…"}
-                  </span>
-                </div>
+              // The full-screen splash already covered the kickoff; the sidebar's
+              // ProgressTracker + Live updates carry the rest of the run, so this
+              // pane stays quiet rather than duplicating a second spinner.
+              <Card className="flex items-center justify-center py-20 text-center text-sm text-muted">
+                {currentStage ? `${STAGE_LABELS[currentStage]}… track progress in the sidebar` : "Initialising…"}
               </Card>
             ) : null}
           </div>

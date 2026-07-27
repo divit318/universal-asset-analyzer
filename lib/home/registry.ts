@@ -161,13 +161,13 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     dataSources: ["yahoo", "scanner", "sector-rotation"],
     dependencies: [],
     ai: null,
-    navTarget: { href: "/scanner", label: "Market scanner" },
+    navTarget: { href: "/wire", label: "The Wire" },
   },
 
   "opportunity-feed": {
     id: "opportunity-feed",
     title: "Opportunity Feed",
-    description: "Scanner signals ranked by fit to your portfolio, not by raw score.",
+    description: "The Wire's signals ranked by fit to your portfolio, not by raw score.",
     loading: "deferred",
     refresh: "manual",
     refreshIntervalMs: null,
@@ -181,7 +181,7 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     dataSources: ["scanner", "portfolio-engine"],
     dependencies: [],
     ai: null,
-    navTarget: { href: "/scanner", label: "Run scanner" },
+    navTarget: { href: "/wire", label: "Open The Wire" },
   },
 
   "watchlist-intelligence": {

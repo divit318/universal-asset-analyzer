@@ -4,23 +4,38 @@
  * Fetches full fundamentals for every symbol in parallel, then runs a
  * structured comparison prompt that produces a delta analysis across ALL of
  * them at once: which is cheaper, which has better quality, which has better
- * growth, and an overall verdict naming one winner among the full set.
+ * growth — and a ranked verdict (every asset ranked with a thesis, strengths,
+ * weaknesses, and the investor it suits) rather than one forced winner.
  */
 
 import { runPromptWithMeta } from "./ai";
-import { getFundamentals } from "./fundamentals";
+import { getFundamentals, MODULES } from "./fundamentals";
 import { getFinancialStatements } from "./statements";
-import { getHistory, getQuote } from "./yahoo";
+import { getHistory, getQuote, getQuoteMeta, getQuoteSummaryMeta } from "./yahoo";
 import { computeScore, computeMomentum, assessRisks, classifyInvestmentPersonality } from "./scoring";
 import { formatCurrency, formatPercent, formatMarketCap } from "./format";
 import { extractJsonObject } from "./json-extract";
 import { verifyGrounding, collectClaimText, type GroundingReport } from "./ai/grounding";
+import { computeEntryBenchmarks, peerGroupOf, loadBenchmarkUniverse, type PeerBenchmark } from "./compare/benchmarks";
+import type { EntryFreshness } from "./compare/types";
 import type { FundamentalsData, Quote } from "./types";
 
 export interface CompareStock {
   symbol: string;
   quote: Quote;
   fundamentals: FundamentalsData;
+  freshness: EntryFreshness;
+}
+
+/** One ranked asset in the verdict — never a forced single winner. */
+export interface RankedAsset {
+  rank: number;
+  symbol: string;
+  thesis: string;
+  strengths: string[];
+  weaknesses: string[];
+  /** The kind of investor this pick suits best, e.g. "income-focused, low-turnover investors". */
+  bestFor: string;
 }
 
 export interface ComparisonResult {
@@ -39,18 +54,23 @@ export interface ComparisonResult {
     competitivePositioning: string;
     riskComparison: string;
   };
-  winner: string | null; // symbol of the better overall pick, or null if too close
-  winnerRationale: string;
-  /** One-paragraph "which is better and why", for the top-of-page executive summary. */
+  /** Every compared asset ranked 1..n, each with its own thesis — no forced single winner. */
+  rankings: RankedAsset[];
+  /** True when the model judged the field too close to call and said so instead of forcing an order. */
+  noClearWinner: boolean;
+  /** Why the ranking landed this way (or why it's a genuine toss-up dependent on the investor's objective). */
+  tradeoffSummary: string;
+  /** One-paragraph summary for the top-of-page executive summary. */
   executiveSummary: string;
-  /** What would have to change for the recommendation to flip. */
+  /** What would have to change for the ranking to shift. */
   conditionsForChange: string;
-  /** 0-100 confidence in the winner call. */
+  /** 0-100 confidence in the ranking. */
   confidenceScore: number;
   metricTable: CompareMetricRow[];
   /** Verification that the written comparison's figures trace to the metric
    *  table it was given. Absent when the AI was unavailable. */
   grounding?: GroundingReport;
+  freshness: Record<string, EntryFreshness>;
 }
 
 export interface CompareMetricRow {
@@ -59,14 +79,18 @@ export interface CompareMetricRow {
   values: Record<string, string>;
   /** Symbol with the best value, "tie" when within 5% of each other, or null when no symbol has data. */
   best: string | "tie" | null;
+  /** Sector-peer benchmark per symbol, present only where a reliable peer group exists. */
+  benchmarks?: Record<string, PeerBenchmark>;
 }
 
 async function loadStock(symbol: string): Promise<CompareStock> {
-  const [quote, fp, history, statementsResult] = await Promise.allSettled([
+  const [quote, fp, history, statementsResult, quoteMeta, fundamentalsMeta] = await Promise.allSettled([
     getQuote(symbol),
     getFundamentals(symbol),
     getHistory(symbol, 420),
     getFinancialStatements(symbol),
+    getQuoteMeta(symbol),
+    getQuoteSummaryMeta(symbol, MODULES),
   ]);
 
   if (quote.status === "rejected") throw new Error(`Could not load quote for ${symbol}`);
@@ -80,9 +104,17 @@ async function loadStock(symbol: string): Promise<CompareStock> {
   const score = computeScore(parts.snapshot, statements, parts.analyst, momentum);
   const risks = assessRisks(parts.snapshot, statements, parts.analyst, parts.insider);
 
+  const latestFiscalYear = statements?.fiscalYears.length ? statements.fiscalYears[statements.fiscalYears.length - 1] : null;
+  const freshness: EntryFreshness = {
+    price: { asOf: quoteMeta.status === "fulfilled" ? quoteMeta.value.fetchedAt : Date.now(), source: "yahoo" },
+    fundamentals: { asOf: fundamentalsMeta.status === "fulfilled" ? fundamentalsMeta.value.fetchedAt : Date.now(), source: "yahoo" },
+    statements: latestFiscalYear != null ? { asOf: `${latestFiscalYear}-12-31`, source: "sec_edgar", fiscalYear: latestFiscalYear } : null,
+  };
+
   return {
     symbol,
     quote: q,
+    freshness,
     fundamentals: {
       snapshot: parts.snapshot,
       statements,
@@ -110,7 +142,7 @@ type FlatAI = {
   overview?: string; valuation?: string; quality?: string; growth?: string;
   financialHealth?: string; momentum?: string; verdict?: string;
   capitalAllocation?: string; competitivePositioning?: string; riskComparison?: string;
-  winner?: string | null; winnerRationale?: string;
+  rankings?: unknown[]; noClearWinner?: boolean; tradeoffSummary?: string;
   executiveSummary?: string; conditionsForChange?: string; confidenceScore?: number;
   sections?: ComparisonResult["sections"];
 };
@@ -121,7 +153,7 @@ export function parseCompareResponse(raw: string): FlatAI {
     overview: "", valuation: "", quality: "", growth: "",
     financialHealth: "", momentum: "", verdict: "",
     capitalAllocation: "", competitivePositioning: "", riskComparison: "",
-    winner: null, winnerRationale: "",
+    rankings: [], noClearWinner: false, tradeoffSummary: "",
     executiveSummary: "", conditionsForChange: "", confidenceScore: undefined,
     sections: undefined,
   });
@@ -132,6 +164,62 @@ export function parseCompareResponse(raw: string): FlatAI {
     flat.sections = undefined;
   }
   return flat;
+}
+
+/** Validate one raw `rankings[]` element against the compared symbol set, dropping anything malformed rather than letting a half-shaped object reach the UI. */
+function sanitizeRanking(item: unknown, validSymbols: Set<string>): RankedAsset | null {
+  if (typeof item !== "object" || item === null) return null;
+  const r = item as Record<string, unknown>;
+  const symbol = typeof r.symbol === "string" ? r.symbol.toUpperCase().trim() : null;
+  if (!symbol || !validSymbols.has(symbol)) return null;
+  const asStringArray = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  return {
+    rank: typeof r.rank === "number" ? r.rank : 0,
+    symbol,
+    thesis: typeof r.thesis === "string" ? r.thesis : "",
+    strengths: asStringArray(r.strengths),
+    weaknesses: asStringArray(r.weaknesses),
+    bestFor: typeof r.bestFor === "string" ? r.bestFor : "",
+  };
+}
+
+/**
+ * Turn the model's raw rankings into a clean, ordered, deduplicated list — one
+ * entry per compared symbol, in rank order. Falls back to composite-score
+ * order (a real, already-computed number, never a fabricated one) for any
+ * symbol the model omitted or mis-shaped, so the ranked verdict never shows
+ * fewer assets than were actually compared.
+ */
+function normalizeRankings(raw: unknown[], stocks: CompareStock[]): RankedAsset[] {
+  const validSymbols = new Set(stocks.map((s) => s.symbol));
+  const bySymbol = new Map<string, RankedAsset>();
+  for (const item of raw) {
+    const r = sanitizeRanking(item, validSymbols);
+    if (r && !bySymbol.has(r.symbol)) bySymbol.set(r.symbol, r);
+  }
+
+  const fallbackOrder = [...stocks].sort(
+    (a, b) => (b.fundamentals.score.composite ?? 0) - (a.fundamentals.score.composite ?? 0),
+  );
+  for (const s of fallbackOrder) {
+    if (!bySymbol.has(s.symbol)) {
+      bySymbol.set(s.symbol, {
+        rank: 0, symbol: s.symbol, thesis: "", strengths: [], weaknesses: [],
+        bestFor: "",
+      });
+    }
+  }
+
+  return fallbackOrder
+    .map((s) => bySymbol.get(s.symbol)!)
+    .sort((a, b) => {
+      if (a.rank && b.rank) return a.rank - b.rank;
+      if (a.rank) return -1;
+      if (b.rank) return 1;
+      return 0;
+    })
+    .map((r, i) => ({ ...r, rank: i + 1 }));
 }
 
 function buildComparePrompt(stocks: CompareStock[]): { prompt: string; evidence: string } {
@@ -192,7 +280,7 @@ ${table}
 
 ${risksLines}
 
-Write a structured comparison covering all ${n} stocks. Be specific — cite numbers. Return as JSON:
+Write a structured comparison covering all ${n} stocks. Be specific — cite numbers. Do NOT force a single "winner" — rank every stock and give each its own thesis; if the field is genuinely close, say so explicitly instead of picking one arbitrarily. Return as JSON:
 {
   "overview": "2-3 sentences: what kind of companies these ${n} are and how they stack up against each other overall",
   "valuation": "Rank all ${n} from cheapest to most expensive and why — cite P/E, PEG, P/B, analyst upside specifically",
@@ -203,12 +291,16 @@ Write a structured comparison covering all ${n} stocks. Be specific — cite num
   "capitalAllocation": "Compare capital allocation across all ${n} — cite FCF conversion, buybacks/dilution, reinvestment discipline from the data given",
   "competitivePositioning": "Compare competitive position across all ${n} — infer from margin trends, growth durability, and market cap/scale in the data given",
   "riskComparison": "Compare the risk profiles of all ${n} directly — cite the risk categories/levels listed above for each symbol",
-  "verdict": "One clear paragraph: given all the above, rank all ${n} and say which is the best pick right now and why. Be decisive.",
-  "winner": "one of: ${symbolList} — or null if too close to call",
-  "winnerRationale": "One sentence max explaining the winner choice among all ${n}",
-  "executiveSummary": "2-3 sentences for a top-of-page summary covering ALL ${n} stocks: which is the best investment and why, written for someone who will only read this one paragraph",
-  "conditionsForChange": "One sentence: what would have to change for this recommendation to flip to a different one of the ${n} stocks",
-  "confidenceScore": "<0-100 integer — how confident are you in the winner call given the data available>"
+  "verdict": "One paragraph synthesizing the comparison as a whole, tying the sections above together",
+  "rankings": [
+    { "rank": 1, "symbol": "<one of: ${symbolList}>", "thesis": "1-2 sentences: the investment case for this pick specifically", "strengths": ["<short phrase, cite a number>", "..."], "weaknesses": ["<short phrase, cite a number>", "..."], "bestFor": "the type of investor this pick suits best, e.g. 'income-focused investors' or 'high-risk-tolerance growth investors'" }
+    // one entry per stock, rank 1..${n}, best first
+  ],
+  "noClearWinner": "<true if the field is genuinely close and the ranking shouldn't be read as decisive, false otherwise>",
+  "tradeoffSummary": "One paragraph: why the ranking landed this way, OR — if noClearWinner — why the right pick depends on the investor's own objective (income vs growth, risk tolerance, time horizon) rather than a factual edge",
+  "executiveSummary": "2-3 sentences for a top-of-page summary covering ALL ${n} stocks, written for someone who will only read this one paragraph",
+  "conditionsForChange": "One sentence: what would have to change for the ranking order to shift",
+  "confidenceScore": "<0-100 integer — how confident are you in this ranking given the data available>"
 }`;
 
   return { prompt, evidence };
@@ -229,7 +321,21 @@ export function bestIndex(values: (number | null)[], higherIsBetter: boolean): n
   return tied.length > 1 ? "tie" : best.i;
 }
 
-function buildMetricTable(stocks: CompareStock[]): CompareMetricRow[] {
+/** Registry metric key for the rows that have a like-for-like universe-wide equivalent to benchmark against — see lib/compare/benchmarks.ts. Composite/Analyst/Momentum rows are this file's own scoring, not directly comparable to the Screener universe's numbers, so they're deliberately left unbenchmarked. */
+const BENCHMARK_KEY: Partial<Record<string, string>> = {
+  "Forward P/E": "forwardPE",
+  "PEG ratio": "pegRatio",
+  "ROE": "roe",
+  "Operating margin": "operatingMargin",
+  "Revenue growth": "revenueGrowthYoY",
+  "Debt / Equity": "debtToEquity",
+  "Dividend yield": "dividendYield",
+};
+
+function buildMetricTable(
+  stocks: CompareStock[],
+  benchmarksBySymbol: Map<string, Record<string, PeerBenchmark>>,
+): CompareMetricRow[] {
   interface Row {
     label: string;
     higherBetter: boolean;
@@ -255,12 +361,40 @@ function buildMetricTable(stocks: CompareStock[]): CompareMetricRow[] {
     const winner = bestIndex(raw, row.higherBetter);
     const values: Record<string, string> = {};
     stocks.forEach((s, i) => { values[s.symbol] = row.format(raw[i]); });
+
+    const benchmarkKey = BENCHMARK_KEY[row.label];
+    let benchmarks: Record<string, PeerBenchmark> | undefined;
+    if (benchmarkKey) {
+      for (const s of stocks) {
+        const b = benchmarksBySymbol.get(s.symbol)?.[benchmarkKey];
+        if (b) {
+          benchmarks ??= {};
+          benchmarks[s.symbol] = b;
+        }
+      }
+    }
+
     return {
       metric: row.label,
       values,
       best: winner === null ? null : winner === "tie" ? "tie" : stocks[winner].symbol,
+      benchmarks,
     };
   });
+}
+
+/** Which registry metric key each snapshot field corresponds to, matching BENCHMARK_KEY above — used to build the per-symbol value map computeEntryBenchmarks needs. */
+function benchmarkValuesFor(s: CompareStock): Record<string, number | null> {
+  const snap = s.fundamentals.snapshot;
+  return {
+    forwardPE: snap.forwardPE,
+    pegRatio: snap.pegRatio,
+    roe: snap.returnOnEquity != null ? snap.returnOnEquity * 100 : null,
+    operatingMargin: snap.operatingMargins != null ? snap.operatingMargins * 100 : null,
+    revenueGrowthYoY: snap.revenueGrowth != null ? snap.revenueGrowth * 100 : null,
+    debtToEquity: snap.debtToEquity,
+    dividendYield: snap.dividendYield != null ? snap.dividendYield * 100 : null,
+  };
 }
 
 /** Compare 2-5 stocks together. Every input symbol must load successfully. */
@@ -269,10 +403,22 @@ export async function compareStocks(symbols: string[]): Promise<ComparisonResult
   if (upper.length < 2) throw new Error("At least two distinct symbols are required");
   if (upper.length > 5) throw new Error("At most 5 symbols can be compared at once");
 
-  const settled = await Promise.allSettled(upper.map((s) => loadStock(s)));
+  const [settled, equityUniverse] = await Promise.all([
+    Promise.allSettled(upper.map((s) => loadStock(s))),
+    loadBenchmarkUniverse("equity"),
+  ]);
   const firstFailure = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
   if (firstFailure) throw firstFailure.reason as Error;
   const stocks = settled.map((r) => (r as PromiseFulfilledResult<CompareStock>).value);
+
+  const benchmarksBySymbol = new Map<string, Record<string, PeerBenchmark>>();
+  for (const s of stocks) {
+    const peerGroup = peerGroupOf("equity", { sector: s.fundamentals.snapshot.sector });
+    benchmarksBySymbol.set(
+      s.symbol,
+      computeEntryBenchmarks("equity", Object.keys(BENCHMARK_KEY).map((l) => BENCHMARK_KEY[l]!), s.symbol, benchmarkValuesFor(s), peerGroup, equityUniverse),
+    );
+  }
 
   const { prompt, evidence } = buildComparePrompt(stocks);
   let model = "unavailable";
@@ -308,6 +454,9 @@ export async function compareStocks(symbols: string[]): Promise<ComparisonResult
     riskComparison: flat.riskComparison ?? "",
   };
 
+  const rankings = normalizeRankings(Array.isArray(flat.rankings) ? flat.rankings : [], stocks);
+  const rankingClaimText = rankings.flatMap((r) => [r.thesis, r.bestFor, ...r.strengths, ...r.weaknesses]);
+
   // Verify the written comparison against the metric table it was handed: every
   // P/E, margin, and growth figure the prose cites must trace to the data.
   const grounding = aiUnavailable
@@ -317,27 +466,32 @@ export async function compareStocks(symbols: string[]): Promise<ComparisonResult
           sections.overview, sections.valuation, sections.quality, sections.growth,
           sections.financialHealth, sections.momentum, sections.verdict,
           sections.capitalAllocation, sections.competitivePositioning, sections.riskComparison,
-          flat.executiveSummary, flat.winnerRationale, flat.conditionsForChange,
+          flat.executiveSummary, flat.tradeoffSummary, flat.conditionsForChange,
+          ...rankingClaimText,
         ]),
         evidence,
       );
 
-  // Only trust a winner the model actually named one of the compared symbols.
-  const winnerSymbol = flat.winner?.toUpperCase().trim();
-  const winner = winnerSymbol && upper.includes(winnerSymbol) ? winnerSymbol : null;
+  const freshness: Record<string, EntryFreshness> = {};
+  for (const s of stocks) freshness[s.symbol] = s.freshness;
 
   return {
     model,
     symbols: stocks.map((s) => s.symbol),
     sections,
-    winner,
-    winnerRationale: flat.winnerRationale ?? "",
+    rankings,
+    // Local models occasionally emit "true"/"false" as a string rather than a
+    // JSON boolean — coerce leniently rather than let a stringified true read
+    // as falsy and silently drop the "too close to call" signal.
+    noClearWinner: flat.noClearWinner === true || (flat.noClearWinner as unknown) === "true",
+    tradeoffSummary: flat.tradeoffSummary ?? "",
     executiveSummary: flat.executiveSummary ?? (aiUnavailable ? sections.overview : ""),
     conditionsForChange: flat.conditionsForChange ?? "",
     confidenceScore: typeof flat.confidenceScore === "number"
       ? Math.max(0, Math.min(100, Math.round(flat.confidenceScore)))
       : Math.min(...stocks.map((s) => s.fundamentals.score.confidence)),
-    metricTable: buildMetricTable(stocks),
+    metricTable: buildMetricTable(stocks, benchmarksBySymbol),
     grounding,
+    freshness,
   };
 }

@@ -73,8 +73,8 @@ export function RelatedOpportunitiesCard({ symbol }: { symbol: string }) {
           <h3 className="text-sm font-medium">Related Opportunities</h3>
           <p className="text-xs text-muted">Theme: {thisNode.theme}</p>
         </div>
-        <Link href="/scanner" className="text-xs text-accent hover:underline">
-          Explore in Scanner →
+        <Link href="/wire" className="text-xs text-accent hover:underline">
+          Explore in The Wire →
         </Link>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">

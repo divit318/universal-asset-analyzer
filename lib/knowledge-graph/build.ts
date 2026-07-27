@@ -120,7 +120,7 @@ function marketEventNode(event: MarketEvent): GraphNode {
     importance: 40 + event.causalChain.length * 10,
     confidence: 70,
     metrics: { category: event.category, publishedAt: event.publishedAt.slice(0, 10) },
-    href: "/scanner",
+    href: "/wire",
   };
 }
 
@@ -133,7 +133,7 @@ function opportunityNode(opp: ScannerOpportunity): GraphNode {
     importance: opp.opportunityScore.composite,
     confidence: opp.opportunityScore.composite,
     metrics: { verdict: opp.opportunityScore.verdict, direction: opp.direction, theme: opp.theme },
-    href: "/scanner",
+    href: "/wire",
   };
 }
 
@@ -255,7 +255,7 @@ function addScannerEvidence(builder: GraphBuilder, symbol: string, sector: strin
         importance: opportunity.thesis.confidence,
         confidence: opportunity.thesis.confidence,
         metrics: { timeHorizon: opportunity.thesis.timeHorizon },
-        href: "/scanner",
+        href: "/wire",
       });
       builder.addEdge({
         source: opportunityId(opportunity.id),

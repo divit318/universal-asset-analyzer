@@ -35,6 +35,7 @@ import {
   type ReactNode,
 } from "react";
 import { useDataset } from "@/lib/platform/client/use-dataset";
+import { useBootReady } from "@/app/_components/boot-context";
 import type { SectionState } from "@/app/_components/ui";
 import type { HomeBrief, HomeBriefChunk, HomeDigest } from "@/lib/home/contracts";
 import type { HomeModuleId, ModuleLifecycleEvent } from "@/lib/home/types";
@@ -131,6 +132,10 @@ async function fetchBrief(signal: AbortSignal): Promise<HomeBrief> {
 export function HomeProvider({ children }: { children: ReactNode }) {
   const digest = useDataset<HomeDigest>("home.digest", null, fetchDigest);
   const brief = useDataset<HomeBrief>("home.brief", null, fetchBrief);
+
+  // The digest alone paints the page — the brief is deliberately independent
+  // (see file doc comment), so the boot splash shouldn't wait on it either.
+  useBootReady(digest.status !== "loading", "home");
 
   const listeners = useRef(new Set<(e: ModuleLifecycleEvent, id: HomeModuleId) => void>());
 

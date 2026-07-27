@@ -896,7 +896,7 @@ export default function CalendarPage() {
               {[
                 { href: "/watchlist",  label: "Watchlist",  desc: "Add symbols to track their earnings and dividends here" },
                 { href: "/portfolio",  label: "Portfolio",  desc: "Portfolio events are highlighted and tracked separately" },
-                { href: "/scanner",    label: "Scanner",    desc: "Scan live news around upcoming earnings and macro events" },
+                { href: "/wire",       label: "The Wire",   desc: "Live news around upcoming earnings and macro events" },
               ].map((link) => (
                 <Link
                   key={link.href}

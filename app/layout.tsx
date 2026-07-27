@@ -1,9 +1,12 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import { SiteHeader } from "./_components/site-header";
 import { CommandPalette } from "./_components/command-palette";
+import { AppAssistant } from "./_components/ai-assistant";
 import { ToastProvider } from "./_components/toast";
 import { THEME_INIT_SCRIPT } from "./_components/theme";
+import { AppShell } from "./_components/app-shell";
 import { IOSProvider } from "@/lib/ios-context";
 import "./globals.css";
 
@@ -50,11 +53,19 @@ export default function RootLayout({
         </a>
         <IOSProvider>
           <ToastProvider>
-            <SiteHeader />
-            <CommandPalette />
-            <main id="main-content" className="flex flex-1 flex-col">
-              {children}
-            </main>
+            <AppShell>
+              <SiteHeader />
+              <CommandPalette />
+              {/* useSearchParams() (for page-context awareness) requires a
+                  Suspense boundary — same reason app/{watchlist,research,portfolio}
+                  wrap themselves for useArrivalTarget(). */}
+              <Suspense fallback={null}>
+                <AppAssistant />
+              </Suspense>
+              <main id="main-content" className="flex flex-1 flex-col">
+                {children}
+              </main>
+            </AppShell>
           </ToastProvider>
         </IOSProvider>
       </body>

@@ -40,10 +40,9 @@ export function annualizedVolatility(
 export function drawdown(history: HistoryPoint[]): number | null {
   const returns = dailyReturns(history);
   if (returns.length < 20) return null;
-  const dd = maxDrawdown(returns);
-  // lib/portfolio-analytics returns this as a positive magnitude; the registry
-  // declares it "higher is better", so it surfaces as a negative number.
-  return -Math.abs(dd * 100);
+  // lib/portfolio-analytics#maxDrawdown already returns a signed percentage
+  // (e.g. -8.9, not -0.089) — normalize the sign without rescaling again.
+  return -Math.abs(maxDrawdown(returns));
 }
 
 function sma(values: number[], period: number): number | null {

@@ -172,14 +172,27 @@ export function ResultsTable({
                   <td className="px-3 py-2 text-xs text-muted">{row.rank}</td>
 
                   <td className="px-3 py-2">
-                    <button
-                      type="button"
+                    <div
+                      role="button"
+                      tabIndex={0}
                       onClick={() => setExpanded(isOpen ? null : row.symbol)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setExpanded(isOpen ? null : row.symbol);
+                        }
+                      }}
                       aria-expanded={isOpen}
                       className="flex flex-col items-start text-left"
                     >
                       <span className="flex items-center gap-1.5 font-medium">
-                        {row.symbol}
+                        <Link
+                          href={`/research?symbol=${encodeURIComponent(row.symbol)}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="transition-colors hover:text-brand"
+                        >
+                          {row.symbol}
+                        </Link>
                         {hasWarnings ? (
                           <span
                             className="text-amber-500"
@@ -191,7 +204,7 @@ export function ResultsTable({
                         ) : null}
                       </span>
                       <span className="max-w-[220px] truncate text-xs text-muted">{row.name}</span>
-                    </button>
+                    </div>
                   </td>
 
                   {def.columns.map((col) => (

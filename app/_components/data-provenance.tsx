@@ -15,17 +15,20 @@ export function DataProvenance({
   source,
   asOf,
   ttlHours = 24,
+  liveLabel = false,
   className = "",
 }: {
   source: DataSourceId;
   asOf: string | number | null | undefined;
   /** Expected refresh window; drives the fresh/aging/stale color. */
   ttlHours?: number;
+  /** Show the literal word "Live" instead of "updated Xs ago" while the value is within its TTL — for data that's refetched on every request (a quote) rather than periodically refreshed. */
+  liveLabel?: boolean;
   className?: string;
 }) {
   const meta = DATA_SOURCES[source];
   const f = freshness(asOf, ttlHours);
-  const age = f.label === "unknown" ? "as-of unknown" : `updated ${f.label}`;
+  const age = f.label === "unknown" ? "as-of unknown" : liveLabel && f.level === "fresh" ? "Live" : `updated ${f.label}`;
   return (
     <span
       className={`inline-flex items-center gap-1.5 text-xs text-muted ${className}`}

@@ -3,15 +3,20 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useRef, useState } from "react";
-import { Menu, X, Search, ChevronDown } from "lucide-react";
+import { Menu, X, Search, ChevronDown, Sparkles } from "lucide-react";
 import { OllamaStatusBadge } from "./ollama-status";
 import { ThemeToggle } from "./theme";
 import { NotificationBell } from "./notification-bell";
 import { NAV, activeObjective, type NavObjective } from "./nav-config";
 import { OPEN_PALETTE_EVENT } from "./command-palette";
+import { OPEN_ASSISTANT_EVENT } from "./ai-assistant";
 
 function openPalette() {
   window.dispatchEvent(new Event(OPEN_PALETTE_EVENT));
+}
+
+function openAssistant() {
+  window.dispatchEvent(new Event(OPEN_ASSISTANT_EVENT));
 }
 
 /** A single top-level objective with a hover/focus dropdown of its tools. */
@@ -127,6 +132,17 @@ export function SiteHeader() {
             <kbd className="rounded border border-border bg-surface px-1 py-px font-sans text-micro font-medium text-faint">⌘K</kbd>
           </button>
 
+          <button
+            onClick={openAssistant}
+            aria-label="Open AI assistant"
+            title="AI Assistant"
+            className="group rounded-control p-1.5 text-muted transition-colors hover:bg-surface-2 hover:text-brand"
+          >
+            <Sparkles
+              className="h-[18px] w-[18px] animate-assistant-breathe transition-transform group-hover:scale-110 group-hover:animate-none"
+              strokeWidth={1.75}
+            />
+          </button>
           <NotificationBell />
           <OllamaStatusBadge />
           <ThemeToggle />

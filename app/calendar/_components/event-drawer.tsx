@@ -50,7 +50,7 @@ function daysLabel(d: number): string {
 
 function getLinks(ev: CalendarEvent): { label: string; href: string }[] {
   if (!ev.symbol) {
-    return [{ label: "Scanner", href: `/scanner` }];
+    return [{ label: "The Wire", href: "/wire" }];
   }
   const sym = ev.symbol;
   const links: { label: string; href: string }[] = [
@@ -60,7 +60,7 @@ function getLinks(ev: CalendarEvent): { label: string; href: string }[] {
     { label: "Compare", href: `/compare?symbols=${sym}` },
   ];
   if (ev.type === "earnings") {
-    links.push({ label: "Scanner", href: `/scanner` });
+    links.push({ label: "The Wire", href: "/wire" });
   }
   return links;
 }

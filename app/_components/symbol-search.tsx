@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import type { SymbolSuggestion } from "@/lib/types";
+import { LoadingMark } from "@/app/_components/loading-mark";
 
 interface Props {
   /** Controlled text value of the input. */
@@ -11,6 +12,12 @@ interface Props {
   onSelect: (symbol: string) => void;
   loading?: boolean;
   placeholder?: string;
+  /**
+   * "rich" renders a two-line result (flag + company name, then ticker · exchange)
+   * for global-search contexts where disambiguating listings across markets
+   * matters. Default "compact" keeps the existing single-line row unchanged.
+   */
+  variant?: "compact" | "rich";
 }
 
 /**
@@ -18,7 +25,7 @@ interface Props {
  * and lets them pick with the mouse or arrow keys. Submitting raw text still
  * works, so power users can type "AAPL ⏎" without waiting for suggestions.
  */
-export function SymbolSearch({ value, onChange, onSelect, loading, placeholder }: Props) {
+export function SymbolSearch({ value, onChange, onSelect, loading, placeholder, variant = "compact" }: Props) {
   const [items, setItems] = useState<SymbolSuggestion[]>([]);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
@@ -115,44 +122,67 @@ export function SymbolSearch({ value, onChange, onSelect, loading, placeholder }
           role="listbox"
           className="absolute z-20 mt-1 max-h-80 w-full overflow-auto rounded-lg border border-border bg-surface shadow-xl"
         >
-          {items.map((it, i) => (
-            <li
-              key={it.symbol}
-              role="option"
-              aria-selected={i === active}
-              onMouseDown={(e) => {
-                // mousedown (not click) so it fires before the input blurs.
-                e.preventDefault();
-                commit(it.symbol);
-              }}
-              onMouseEnter={() => setActive(i)}
-              className={`flex cursor-pointer items-center justify-between gap-3 px-4 py-2.5 text-sm ${
-                i === active ? "bg-surface-2" : ""
-              }`}
-            >
-              <span className="flex min-w-0 items-baseline gap-2">
-                <span className="font-mono font-semibold text-accent">{it.symbol}</span>
-                <span className="truncate text-muted">{it.name}</span>
-              </span>
-              <span className="shrink-0 text-xs text-muted">
-                {[it.type, it.exchange].filter(Boolean).join(" · ")}
-              </span>
-            </li>
-          ))}
+          {items.map((it, i) =>
+            variant === "rich" ? (
+              <li
+                key={it.symbol}
+                role="option"
+                aria-selected={i === active}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  commit(it.symbol);
+                }}
+                onMouseEnter={() => setActive(i)}
+                className={`flex cursor-pointer flex-col gap-0.5 px-4 py-2.5 text-sm ${
+                  i === active ? "bg-surface-2" : ""
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <span className="shrink-0 text-base leading-none" aria-hidden="true">
+                    {it.country?.flag ?? "🌐"}
+                  </span>
+                  <span className="truncate font-medium text-foreground">{it.name}</span>
+                </span>
+                <span className="pl-6 text-xs text-muted">
+                  <span className="font-mono font-semibold text-accent">{it.symbol}</span>
+                  {(it.exchange ?? it.type) && (
+                    <>
+                      <span className="mx-1.5">·</span>
+                      {it.exchange ?? it.type}
+                    </>
+                  )}
+                </span>
+              </li>
+            ) : (
+              <li
+                key={it.symbol}
+                role="option"
+                aria-selected={i === active}
+                onMouseDown={(e) => {
+                  // mousedown (not click) so it fires before the input blurs.
+                  e.preventDefault();
+                  commit(it.symbol);
+                }}
+                onMouseEnter={() => setActive(i)}
+                className={`flex cursor-pointer items-center justify-between gap-3 px-4 py-2.5 text-sm ${
+                  i === active ? "bg-surface-2" : ""
+                }`}
+              >
+                <span className="flex min-w-0 items-baseline gap-2">
+                  <span className="font-mono font-semibold text-accent">{it.symbol}</span>
+                  <span className="truncate text-muted">{it.name}</span>
+                </span>
+                <span className="shrink-0 text-xs text-muted">
+                  {[it.type, it.exchange].filter(Boolean).join(" · ")}
+                </span>
+              </li>
+            ),
+          )}
         </ul>
       ) : null}
       {loading ? (
         <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted">
-          <svg
-            className="h-4 w-4 animate-spin"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-          >
-            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-          </svg>
+          <LoadingMark size={16} label="Searching" />
         </span>
       ) : null}
     </div>

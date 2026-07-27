@@ -1,12 +1,20 @@
 import { NextResponse } from "next/server";
-import { getFundamentals } from "@/lib/fundamentals";
+import { getFundamentals, MODULES } from "@/lib/fundamentals";
 import { getFinancialStatements, getFinancialStatementsYahoo } from "@/lib/statements";
-import { getHistory, getQuote } from "@/lib/yahoo";
+import { getHistory, getQuote, getQuoteMeta, getQuoteSummaryMeta } from "@/lib/yahoo";
 import { computeMomentum, computeScore, assessRisks } from "@/lib/scoring";
 import { compareStocks } from "@/lib/ai-compare";
 import { normalizeSymbol } from "@/lib/market";
 import { buildOpportunityProfile, type OpportunityProfile } from "@/lib/opportunity-engine";
+import { computeEntryBenchmarks, peerGroupOf, loadBenchmarkUniverse, type PeerBenchmark } from "@/lib/compare/benchmarks";
+import type { EntryFreshness } from "@/lib/compare/types";
 import type { FinancialStatements, FundamentalsSnapshot, AnalystConsensus, ScoreResult, MomentumSignal, Quote, RiskItem } from "@/lib/types";
+
+/** Which registry metric key each equity CompareEntry field corresponds to, for sector-benchmark lookup. Only fields with a like-for-like registry equivalent are included — the rest (analyst counts, the bespoke scoring.ts composite/bucket scores) have no universe-wide counterpart to benchmark against honestly. */
+const BENCHMARK_METRICS = [
+  "forwardPE", "pegRatio", "fcfYield", "roe", "grossMargin", "operatingMargin",
+  "debtToEquity", "dividendYield", "revenueGrowthYoY", "oneYearReturn", "distanceFrom52WkHigh",
+] as const;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,6 +35,8 @@ export interface CompareEntry {
   netDebtToEbitda?: number | null;
   risks?: RiskItem[];
   opportunity?: OpportunityProfile;
+  benchmarks?: Record<string, PeerBenchmark>;
+  freshness?: EntryFreshness;
 }
 
 /** Pull a bucket's percentage-of-max from a ScoreResult — reuses the same bucket shape the Compare page already renders. */
@@ -60,13 +70,21 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "At least one symbol is required" }, { status: 400 });
   }
 
+  // Loaded once and shared across every symbol — sector peers for a benchmark
+  // come from the same 1000-name universe the Screener uses, not a re-fetch
+  // per compared stock. Best-effort with a short timeout: a cold universe
+  // build must never make this lightweight compare request hang.
+  const equityUniverse = await loadBenchmarkUniverse("equity");
+
   const entries: CompareEntry[] = await Promise.all(
     symbols.map(async (symbol): Promise<CompareEntry> => {
       try {
-        const [parts, quote, history] = await Promise.all([
+        const [parts, quote, history, quoteMeta, fundamentalsMeta] = await Promise.all([
           getFundamentals(symbol),
           getQuote(symbol),
           getHistory(symbol, 420),
+          getQuoteMeta(symbol),
+          getQuoteSummaryMeta(symbol, MODULES),
         ]);
         // Try Yahoo Finance first (works for all markets, more consistent).
         // Fall back to SEC EDGAR for deeper history when Yahoo returns < 3 FYs.
@@ -75,6 +93,7 @@ export async function GET(request: Request) {
           ? await getFinancialStatements(symbol).catch(() => null)
           : null;
         // Prefer whichever has more fiscal years.
+        const usedEdgar = edgarStatements != null && (!yahooStatements || edgarStatements.fiscalYears.length > yahooStatements.fiscalYears.length);
         const statements: FinancialStatements | null = (() => {
           if (!yahooStatements && !edgarStatements) return null;
           if (!yahooStatements) return edgarStatements;
@@ -118,7 +137,34 @@ export async function GET(request: Request) {
           riskItems: risks,
         });
 
-        return { symbol, name: quote.name, quote, snapshot: parts.snapshot, statements, analyst: parts.analyst, score, momentum, oneYearReturn, fcfYieldPct, netDebtToEbitda, risks, opportunity };
+        const peerGroup = peerGroupOf("equity", { sector: parts.snapshot.sector });
+        const benchmarkValues: Record<string, number | null> = {
+          forwardPE: parts.snapshot.forwardPE,
+          pegRatio: parts.snapshot.pegRatio,
+          fcfYield: fcfYieldPct,
+          roe: parts.snapshot.returnOnEquity != null ? parts.snapshot.returnOnEquity * 100 : null,
+          grossMargin: parts.snapshot.grossMargins != null ? parts.snapshot.grossMargins * 100 : null,
+          operatingMargin: parts.snapshot.operatingMargins != null ? parts.snapshot.operatingMargins * 100 : null,
+          debtToEquity: parts.snapshot.debtToEquity,
+          dividendYield: parts.snapshot.dividendYield != null ? parts.snapshot.dividendYield * 100 : null,
+          revenueGrowthYoY: parts.snapshot.revenueGrowth != null ? parts.snapshot.revenueGrowth * 100 : null,
+          oneYearReturn,
+          distanceFrom52WkHigh: momentum?.pctFrom52WkHigh ?? null,
+        };
+        const benchmarks = computeEntryBenchmarks(
+          "equity", [...BENCHMARK_METRICS], symbol, benchmarkValues, peerGroup, equityUniverse,
+        );
+
+        const latestFiscalYear = statements?.fiscalYears.length ? statements.fiscalYears[statements.fiscalYears.length - 1] : null;
+        const freshness: EntryFreshness = {
+          price: { asOf: quoteMeta.fetchedAt, source: "yahoo" },
+          fundamentals: { asOf: fundamentalsMeta.fetchedAt, source: "yahoo" },
+          statements: latestFiscalYear != null
+            ? { asOf: `${latestFiscalYear}-12-31`, source: usedEdgar ? "sec_edgar" : "yahoo", fiscalYear: latestFiscalYear }
+            : null,
+        };
+
+        return { symbol, name: quote.name, quote, snapshot: parts.snapshot, statements, analyst: parts.analyst, score, momentum, oneYearReturn, fcfYieldPct, netDebtToEbitda, risks, opportunity, benchmarks, freshness };
       } catch (err) {
         return { symbol, name: symbol, error: err instanceof Error ? err.message : "Failed to load" };
       }
