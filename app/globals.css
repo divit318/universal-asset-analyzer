@@ -22,6 +22,7 @@
   --color-surface-3: var(--surface-3);
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
+  --color-hairline: var(--hairline);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-faint: var(--faint);
@@ -107,6 +108,22 @@
   --shadow-glow-brand: 0 0 0 1px rgba(56, 189, 248, 0.16), 0 8px 24px -8px rgba(56, 189, 248, 0.25);
 
   --grid-line: rgba(255, 255, 255, 0.04);
+
+  /* ── Machined Instrument — material, light & edge system ──────────────
+     Cards are solid matte panels (graphite/obsidian), not translucent glass.
+     Each panel is a vertical material gradient (lit top → shadowed base)
+     under one overhead light, with a specular top rim and a grounded shadow.
+     Colour comes only from data; the chrome stays monochrome. */
+  --panel-top: #17191f;          /* the lit upper face of the panel */
+  --panel-bottom: #0f1116;       /* the shadowed base */
+  --panel-hover-top: #1c1f26;    /* material catches more light on hover */
+  --edge-top: rgba(255, 255, 255, 0.10);   /* specular rim where light hits the top edge */
+  --edge-hairline: rgba(255, 255, 255, 0.055);
+  --depth-1: 0 1px 2px rgba(0, 0, 0, 0.55), 0 18px 40px -26px rgba(0, 0, 0, 0.85);
+  --depth-2: 0 1px 2px rgba(0, 0, 0, 0.6), 0 30px 64px -30px rgba(0, 0, 0, 0.95);
+  --overhead-light: rgba(255, 255, 255, 0.05);  /* the single ambient light source */
+  --panel-sheen: rgba(255, 255, 255, 0.06);     /* the light's catch on a panel's upper face */
+  --hairline: rgba(255, 255, 255, 0.06);         /* border-hairline utility (kept) */
 }
 
 /* ── LIGHT ─────────────────────────────────────────────────────────────── */
@@ -147,6 +164,19 @@
   --shadow-glow-brand: 0 0 0 1px rgba(2, 132, 199, 0.18), 0 8px 24px -8px rgba(2, 132, 199, 0.22);
 
   --grid-line: rgba(16, 23, 34, 0.04);
+
+  /* Machined Instrument — light theme. Panels are near-white ceramic with a
+     bright top rim and a soft, cool grounding shadow. */
+  --panel-top: #ffffff;
+  --panel-bottom: #f4f6f9;
+  --panel-hover-top: #ffffff;
+  --edge-top: rgba(255, 255, 255, 1);
+  --edge-hairline: rgba(16, 23, 34, 0.08);
+  --depth-1: 0 1px 2px rgba(16, 23, 34, 0.06), 0 14px 30px -22px rgba(16, 23, 34, 0.20);
+  --depth-2: 0 1px 2px rgba(16, 23, 34, 0.08), 0 26px 56px -28px rgba(16, 23, 34, 0.26);
+  --overhead-light: rgba(16, 23, 34, 0.022);
+  --panel-sheen: rgba(255, 255, 255, 0.7);
+  --hairline: rgba(16, 23, 34, 0.07);
 }
 
 html {
@@ -157,11 +187,35 @@ html {
 }
 
 body {
-  background: var(--background);
+  /* Transparent so the fixed overhead-light layer (body::before, z-index:-1)
+     shows through. The base canvas colour lives on <html> above; a `background`
+     here would occlude the light (body content paints after negative-z
+     descendants). [machined-instrument] */
+  background-color: transparent;
+  background-image: none;
   color: var(--foreground);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
   /* Smooth the theme switch without animating layout-affecting properties */
-  transition: background-color 200ms var(--ease-out), color 200ms var(--ease-out);
+  transition: color 200ms var(--ease-out);
+}
+
+/* The single overhead light. Not colour — luminance. One soft source high and
+   centred, falling off quickly, so the page reads as *illuminated* rather than
+   painted. This is what replaced the Aurora: authority, not atmosphere. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 70% at 50% -12%, var(--overhead-light), transparent 55%),
+    radial-gradient(140% 100% at 50% 120%, rgba(0, 0, 0, 0.28), transparent 60%);
+}
+[data-theme="light"] body::before {
+  background:
+    radial-gradient(120% 70% at 50% -12%, var(--overhead-light), transparent 55%),
+    radial-gradient(140% 100% at 50% 120%, rgba(16, 23, 34, 0.04), transparent 60%);
 }
 
 /* Brand text selection */
@@ -569,6 +623,134 @@ body {
   }
 }
 
+/* ============================================================================
+   Machined Instrument — the UAA material, light & edge system
+
+   One idea: the app is a machined obsidian instrument under a single overhead
+   light. Cards are solid matte panels — a lit top face falling to a shadowed
+   base, a specular top rim, a grounded shadow — not glass. Colour comes only
+   from data; the chrome stays monochrome. Edges respond to attention and
+   focus; nothing emits or glows. Presentation only; degrades to the calm base
+   under prefers-reduced-motion.
+   ========================================================================== */
+
+/* The panel. A machined matte surface: the vertical gradient is the overhead
+   light falling across a physical face, the inset top line is the specular rim
+   where that light catches the top edge, and ::before is the light's soft pool
+   on the upper face (isolated behind the panel's own content). */
+.uaa-card {
+  position: relative;
+  isolation: isolate;
+  background: linear-gradient(180deg, var(--panel-top), var(--panel-bottom));
+  border: 1px solid var(--edge-hairline);
+  border-radius: var(--radius-card);
+  box-shadow: inset 0 1px 0 0 var(--edge-top), var(--depth-1);
+  transition:
+    transform 240ms var(--ease-out),
+    box-shadow 240ms var(--ease-out),
+    border-color 240ms var(--ease-out);
+}
+.uaa-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(115% 75% at 50% -30%, var(--panel-sheen), transparent 58%);
+  opacity: 0.7;
+}
+
+/* Adaptive edge lighting. On hover the panel lifts a hair, catches more light,
+   and its top rim + border take a restrained interaction-blue — the card
+   reacting to attention, not glowing. */
+.uaa-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in oklab, var(--brand) 24%, var(--edge-hairline));
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklab, var(--brand) 22%, var(--edge-top)),
+    var(--depth-2);
+}
+
+/* The hero — the one signature slab. Same material, machined a grade finer: a
+   panel radius, a brighter upper face, the deepest grounding. Its top accent
+   line is set by data in the component (gain / loss / neutral). */
+.uaa-hero {
+  position: relative;
+  isolation: isolate;
+  background: linear-gradient(180deg, var(--panel-hover-top), var(--panel-bottom));
+  border: 1px solid var(--edge-hairline);
+  border-radius: var(--radius-panel);
+  box-shadow: inset 0 1px 0 0 var(--edge-top), var(--depth-2);
+}
+.uaa-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(120% 90% at 50% -25%, var(--panel-sheen), transparent 62%);
+}
+
+/* A hairline accent seated on the very top edge — the one place page chrome
+   borrows a data colour, set via --accent-line by the caller. */
+.uaa-topline::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 14px;
+  right: 14px;
+  height: 1px;
+  border-radius: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent-line, transparent) 16%, var(--accent-line, transparent) 84%, transparent);
+  opacity: 0.85;
+}
+
+/* Entrance. Quiet and engineered — a short rise and fade, continuously
+   staggered down the page. No scale, no bounce. */
+@keyframes reveal-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.uaa-reveal {
+  animation: reveal-up 520ms var(--ease-out) both;
+  animation-delay: calc(var(--reveal-i, 0) * 42ms);
+}
+
+/* A small live-state dot — a restrained breathing pulse; colour set by caller. */
+@keyframes uaa-breathe {
+  0%, 100% { opacity: 0.5; transform: scale(0.88); }
+  50%      { opacity: 1; transform: scale(1); }
+}
+.uaa-breathe { animation: uaa-breathe 3.4s ease-in-out infinite; }
+
+/* Neural Flow — relationship highlighting. When a linked element is hovered,
+   the page marks the root [data-linkdim] and every linkable element that isn't
+   part of the matched thread recedes, while matched ones lift. A symbol shown
+   across several modules reads as one connected thread, not repeated noise. */
+.uaa-linkable {
+  transition: opacity 220ms var(--ease-out), background-color 220ms var(--ease-out), box-shadow 220ms var(--ease-out);
+}
+[data-linkdim="true"] .uaa-linkable:not(.uaa-linkmatch) { opacity: 0.3; }
+.uaa-linkmatch {
+  background-color: color-mix(in oklab, var(--brand) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--brand) 34%, transparent);
+  border-radius: var(--radius-control);
+}
+
+/* Attention Queue card exit — a short slide + fade before the row leaves and
+   the list reflows (§15). Opacity-only under reduced-motion via the block
+   below, which zeroes the duration. */
+@keyframes uaa-queue-exit {
+  from { opacity: 1; transform: translateX(0); }
+  to   { opacity: 0; transform: translateX(12px); }
+}
+.uaa-queue-exit {
+  animation: uaa-queue-exit 180ms var(--ease-out) forwards;
+  pointer-events: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -578,4 +760,5 @@ body {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+  .uaa-card:hover { transform: none; }
 }

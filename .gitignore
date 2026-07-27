@@ -69,3 +69,6 @@ __pycache__/
 
 # one-off local scratch scripts
 /.scratch-capture.mjs
+
+# Playwright MCP browser debug session artifacts (console logs, traces)
+/.playwright-mcp/

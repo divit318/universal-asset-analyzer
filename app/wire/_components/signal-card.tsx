@@ -120,10 +120,10 @@ export function SignalCard({ signal, priority }: { signal: EventSignal; priority
         </div>
         <div className="flex gap-1.5">
           <Link
-            href={`/intelligence?view=timeline&scope=symbol&id=${encodeURIComponent(signal.ticker)}`}
+            href={`/journal?symbol=${encodeURIComponent(signal.ticker)}`}
             className="rounded-md border border-border px-3 py-1 text-xs text-muted transition-colors hover:border-accent/40 hover:bg-surface-2 hover:text-accent"
           >
-            Timeline
+            Journal
           </Link>
           <Link
             href={researchHref}

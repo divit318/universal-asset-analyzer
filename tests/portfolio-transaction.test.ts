@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { normalizeHoldings } from "@/lib/portfolio/model/holding";
 import { evaluate } from "@/lib/portfolio/engines/simulate";
-import { buildLotWrites, cashBalancingLot, previewTrades, type TradeToExecute } from "@/lib/portfolio/engines/transaction";
+import { buildLotWrites, cashBalancingLot, previewTrades, buildCashDepositLots, type TradeToExecute, type CashDepositItem } from "@/lib/portfolio/engines/transaction";
 import type { MarketContext, RawHolding } from "@/lib/portfolio/model/types";
 
 /* -------------------------------------------------------------------------- */
@@ -163,6 +163,71 @@ describe("buildLotWrites", () => {
       recommendationId: "gap:no_bonds",
       snapshotId: "snap-1",
     });
+  });
+});
+
+describe("buildCashDepositLots", () => {
+  it("always writes the deposit lot first, sized at the full requested amount", () => {
+    const c = ctx();
+    const { lots, skipped } = buildCashDepositLots(c, 50_000, []);
+    expect(lots).toHaveLength(1);
+    expect(lots[0]).toMatchObject({ symbol: "CASH-USD", kind: "buy", price: 1, shares: 50_000, assetClass: "cash" });
+    expect(skipped).toHaveLength(0);
+  });
+
+  it("prices each item off the live quote — never a client-supplied price", () => {
+    const c = ctx();
+    const items: CashDepositItem[] = [{ symbol: "AAPL", name: "Apple", assetClass: "equity", dollarAmount: 4000, reason: "test" }];
+    const { lots } = buildCashDepositLots(c, 10_000, items);
+    expect(lots).toHaveLength(2); // deposit + the buy
+    const buy = lots.find((l) => l.symbol === "AAPL")!;
+    expect(buy.kind).toBe("buy");
+    expect(buy.price).toBe(200); // AAPL's quoted price in the fixture
+    expect(buy.shares).toBeCloseTo(4000 / 200, 6);
+  });
+
+  it("can open a BRAND-NEW position never held before — the case buildLotWrites can't express", () => {
+    const c = ctx();
+    // IEF is a live quote in the fixture but the portfolio holds none of it yet —
+    // there is no existing holdingId to look up, unlike a rebalance trade.
+    const items: CashDepositItem[] = [{ symbol: "IEF", name: "7-10y Treasury", assetClass: "bond", dollarAmount: 2000, reason: "new position" }];
+    const { lots, skipped } = buildCashDepositLots(c, 5000, items);
+    expect(skipped).toHaveLength(0);
+    const buy = lots.find((l) => l.symbol === "IEF")!;
+    expect(buy).toBeDefined();
+    expect(buy.price).toBe(95);
+  });
+
+  it("skips (never fabricates a price for) a symbol with no live quote", () => {
+    const c = ctx();
+    const items: CashDepositItem[] = [{ symbol: "NOQUOTE", name: "No Quote Corp", assetClass: "equity", dollarAmount: 1000, reason: "test" }];
+    const { lots, skipped } = buildCashDepositLots(c, 5000, items);
+    expect(lots.find((l) => l.symbol === "NOQUOTE")).toBeUndefined();
+    expect(skipped).toEqual([{ symbol: "NOQUOTE", reason: "No live price available" }]);
+  });
+
+  it("skips an item with no symbol rather than crashing", () => {
+    const c = ctx();
+    const items: CashDepositItem[] = [{ symbol: null, name: "Cash itself", assetClass: "cash", dollarAmount: 1000, reason: "test" }];
+    const { lots, skipped } = buildCashDepositLots(c, 5000, items);
+    expect(lots).toHaveLength(1); // only the deposit lot
+    expect(skipped).toEqual([{ symbol: null, reason: "No ticker to record the trade against" }]);
+  });
+
+  it("the deposit lot plus every buy sums to the requested amount deployed", () => {
+    const c = ctx();
+    const items: CashDepositItem[] = [
+      { symbol: "AAPL", name: "Apple", assetClass: "equity", dollarAmount: 3000, reason: "a" },
+      { symbol: "IEF", name: "Treasury", assetClass: "bond", dollarAmount: 2000, reason: "b" },
+    ];
+    const { lots } = buildCashDepositLots(c, 10_000, items);
+    const deposit = lots.find((l) => l.symbol === "CASH-USD")!;
+    const buys = lots.filter((l) => l.symbol !== "CASH-USD");
+    const buysValue = buys.reduce((s, l) => s + l.shares * l.price, 0);
+    // Deposit (10000) funds the buys (5000); the rest (5000) simply remains in the
+    // deposited cash lot — no separate "held as cash" write needed.
+    expect(deposit.shares).toBe(10_000);
+    expect(buysValue).toBeCloseTo(5000, 4);
   });
 });
 

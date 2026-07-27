@@ -85,7 +85,7 @@ export function GraphPreviewCard({ symbol }: { symbol: string }) {
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-medium">Related Entities</h3>
         <Link
-          href={`/intelligence?view=graph&scope=symbol&id=${encodeURIComponent(symbol)}`}
+          href={`/knowledge-graph?scope=symbol&id=${encodeURIComponent(symbol)}`}
           className="text-xs text-accent hover:underline"
         >
           Explore full graph →

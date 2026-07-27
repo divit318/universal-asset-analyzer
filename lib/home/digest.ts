@@ -31,11 +31,34 @@ import { getHistory, getQuote, getQuotes } from "../yahoo";
 import { portfolioPerformance } from "../portfolio-performance";
 import { buildMarketIntelligence } from "./market-intel";
 import { buildPortfolioPulse } from "./pulse";
+import { buildThreats } from "./threats";
+import { buildAttribution } from "./attribution";
+import { buildTimelineFeeds } from "./timeline";
 import { buildWatchlistIntelligence } from "./watchlist-intel";
 import { buildRecentActivity } from "./activity";
 import { buildRecommendedActions } from "./actions";
 import { deterministicBriefing, toBriefPortfolio } from "./brief";
-import { MIN_DAYS_TO_ANNUALIZE, type HomeDigest, type PortfolioPerformanceSummary } from "./contracts";
+import {
+  buildAttentionQueue,
+  seedsFromActions,
+  seedsFromThreats,
+  seedsFromAlerts,
+  seedsFromEvents,
+  seedsFromSignals,
+  type WeightBySymbol,
+} from "./attention";
+import { listActiveDismissals, getHomeFingerprint, putHomeFingerprint } from "../db";
+import { estimateMarketStatus } from "../market-hours";
+import {
+  buildChangeFeed,
+  captureFingerprint,
+  parseFingerprint,
+  shouldPromoteBaseline,
+  type FingerprintSource,
+  type HomeFingerprint,
+} from "./changes";
+import { buildSymbolContext } from "./symbol-context";
+import { MIN_DAYS_TO_ANNUALIZE, type ChangeFeed, type HomeDigest, type PortfolioPerformanceSummary } from "./contracts";
 import type { PortfolioLot, WatchlistItem } from "../types";
 
 const BENCHMARK = "SPY";
@@ -187,21 +210,72 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
     ? await buildCalibration(ctx.report).catch(() => ({ status: "empty" as const, trackRecord: null, eligible: false }))
     : { status: "empty" as const, trackRecord: null, eligible: false };
 
-  return {
+  const activity = buildRecentActivity();
+  const { timeline, intelligence } = buildTimelineFeeds({
+    activity: activity.entries,
+    notifications,
+    watchlistAlerts,
+    upcomingEvents: upcoming,
+  });
+
+  // The retired modules' engines now feed the Attention Queue instead of owning
+  // cards. These are the *same* already-computed slices the digest was building;
+  // the feeders are pure transforms of them, so the queue costs no extra fetch.
+  const recommendedActions = buildRecommendedActions(report, watchlistAlerts, notifications);
+  const threats = buildThreats(report);
+
+  // symbol → portfolio weight (0–1), for portfolio-weighted impact on
+  // threats/alerts/events. `Holding.weight` is a percentage.
+  const weightBySymbol: WeightBySymbol = new Map();
+  if (report) {
+    for (const h of report.holdings) {
+      if (h.symbol) weightBySymbol.set(h.symbol.toUpperCase(), h.weight / 100);
+    }
+  }
+
+  const now = Date.now();
+  const marketOpen = estimateMarketStatus("US", new Date(now)) === "open";
+  const dismissals = listActiveDismissals(now);
+
+  const attention = buildAttentionQueue({
+    feeders: [
+      { id: "actions", run: () => seedsFromActions(recommendedActions.actions) },
+      { id: "threats", run: () => seedsFromThreats(threats.threats) },
+      { id: "alerts", run: () => seedsFromAlerts(watchlistAlerts, weightBySymbol) },
+      { id: "events", run: () => seedsFromEvents(upcoming, weightBySymbol, now, marketOpen) },
+      { id: "signals", run: () => seedsFromSignals(opportunity.opportunities) },
+    ],
+    dismissals,
+    now,
+  });
+
+  const core: Omit<HomeDigest, "changes" | "symbolContext"> = {
     generatedAt: new Date().toISOString(),
+
+    attention,
 
     marketIntelligence:
       market ?? { status: "degraded", groups: [], breadthPct: null, sentiment: null, regime: null, sectorAttention: [] },
 
     portfolioPulse: buildPortfolioPulse(report),
 
-    recommendedActions: buildRecommendedActions(report, watchlistAlerts, notifications),
+    recommendedActions,
+
+    threats,
+
+    attribution: buildAttribution(
+      report,
+      performance?.benchmark ? { symbol: performance.benchmark.symbol, excessPct: performance.benchmark.excessPct } : null,
+    ),
 
     opportunityFeed: {
       status: opportunity.status,
       opportunities: opportunity.opportunities,
       scannerFreshness: opportunity.scannerFreshness,
     },
+
+    timeline,
+    intelligence,
 
     watchlistIntelligence: buildWatchlistIntelligence(watchlist, watchlistAlerts, upcoming),
 
@@ -210,7 +284,7 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
     performance:
       performance ?? { status: "degraded", xirrPct: null, holdingDays: 0, totalReturnPct: 0, totalReturnDollar: 0, benchmark: null },
 
-    activity: buildRecentActivity(),
+    activity,
 
     calibration,
 
@@ -222,4 +296,72 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
       ? deterministicBriefing(ctx, toBriefPortfolio(report), notifications.filter((n) => !n.read).length)
       : "No market or portfolio data available yet.",
   };
+
+  // The unified-intelligence join: every symbol the page is about to render,
+  // looked up once against the book / watchlist / visit log the digest already
+  // loaded. Pure join — no extra I/O, cannot slow the first paint.
+  const contextSymbols = [
+    ...core.attention.items.map((i) => i.symbol),
+    ...core.opportunityFeed.opportunities.map((o) => o.symbol),
+    ...core.watchlistIntelligence.buckets.flatMap((b) => b.symbols),
+    core.portfolioPulse.bestPerformer?.symbol,
+    core.portfolioPulse.worstPerformer?.symbol,
+  ].filter((s): s is string => !!s);
+
+  const heldWeightsPct = new Map<string, number>();
+  if (report) {
+    for (const h of report.holdings) {
+      if (h.symbol) heldWeightsPct.set(h.symbol.toUpperCase(), h.weight);
+    }
+  }
+
+  const symbolContext = buildSymbolContext(contextSymbols, {
+    heldWeights: heldWeightsPct,
+    watchlist,
+    activity: activity.entries,
+  });
+
+  return { ...core, changes: detectChanges(core, now), symbolContext };
+}
+
+/* ------------------------------------------------------------------ */
+/* Change detection glue — the only stateful step in the build         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Capture the fresh state, promote the previous session's last state to
+ * baseline when a new visit has started (see VISIT_GAP_MS), persist, and diff.
+ *
+ * Failure here must never cost the page: a broken fingerprint read degrades
+ * the change feed alone, and the rest of the digest ships untouched.
+ */
+function detectChanges(core: FingerprintSource, now: number): ChangeFeed {
+  try {
+    const current = captureFingerprint(core, new Date(now).toISOString());
+
+    const storedCurrent = getHomeFingerprint("current");
+    const storedBaseline = getHomeFingerprint("baseline");
+
+    let baseline: HomeFingerprint | null = storedBaseline
+      ? parseFingerprint(JSON.parse(storedBaseline.data))
+      : null;
+
+    // A gap since the last build means the user left and came back: what they
+    // were last looking at becomes the thing we diff against. Refreshes within
+    // a sitting keep the existing baseline, so "since your last visit" doesn't
+    // reset every 60 seconds.
+    if (storedCurrent && shouldPromoteBaseline(storedCurrent.takenAt, now)) {
+      const promoted = parseFingerprint(JSON.parse(storedCurrent.data));
+      if (promoted) {
+        baseline = promoted;
+        putHomeFingerprint("baseline", storedCurrent.data, storedCurrent.takenAt);
+      }
+    }
+
+    putHomeFingerprint("current", JSON.stringify(current), now);
+
+    return buildChangeFeed(baseline, current);
+  } catch {
+    return { status: "degraded", baselineAt: null, firstVisit: false, changes: [] };
+  }
 }

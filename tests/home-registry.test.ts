@@ -10,9 +10,27 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { validateRegistry, listHomeModules, homeModuleIds, getHomeModule } from "@/lib/home/registry";
+import { readdirSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { validateRegistry, validateNavTargets, listHomeModules, homeModuleIds, getHomeModule } from "@/lib/home/registry";
 import { HOME_LAYOUT, validateHomeComposition, resolveSlot, resolveLayout } from "@/lib/home/layout";
 import type { HomeModuleId } from "@/lib/home/types";
+
+/** Discover the app's real route pathnames from the filesystem (dirs with a
+ *  page.tsx), skipping private (_), group ((…)), and api segments. Dynamic
+ *  segments like [symbol] are kept verbatim. Mirrors Next.js App Router. */
+function discoverRoutes(dir: string, base = ""): string[] {
+  const routes: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith("_") || entry.name.startsWith("(") || entry.name === "api") continue;
+    const full = join(dir, entry.name);
+    const routePath = `${base}/${entry.name}`;
+    if (existsSync(join(full, "page.tsx"))) routes.push(routePath);
+    routes.push(...discoverRoutes(full, routePath));
+  }
+  return routes;
+}
 
 // Mirrors app/_home/module-map.ts. Duplicated deliberately: importing the real
 // map would pull React components (and the whole client tree) into a Node test.
@@ -20,15 +38,12 @@ import type { HomeModuleId } from "@/lib/home/types";
 // "registered but has no component" check below.
 const COMPONENT_IDS: HomeModuleId[] = [
   "todays-brief",
-  "ai-investment-brief",
-  "recommended-actions",
-  "portfolio-pulse",
+  "book",
+  "whats-changed",
+  "attention-queue",
+  "radar",
   "market-intelligence",
-  "opportunity-feed",
-  "watchlist-intelligence",
-  "upcoming-events",
-  "portfolio-performance",
-  "continue",
+  "ai-investment-brief",
 ];
 
 describe("home module registry", () => {
@@ -58,6 +73,18 @@ describe("home module registry", () => {
       if (m.ai) expect(m.cache.via).not.toBe("digest");
     }
   });
+
+  it("points every navTarget at a route that actually exists (§19 Phase B — no dead links)", () => {
+    const routes = new Set(["/", ...discoverRoutes(join(process.cwd(), "app"))]);
+    expect(validateNavTargets(routes)).toEqual([]);
+  });
+
+  it("flags a navTarget whose route is missing", () => {
+    // With only "/" known, the real /portfolio and /scanner targets must be flagged.
+    const problems = validateNavTargets(new Set(["/"]));
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems.some((p) => p.includes("dead route"))).toBe(true);
+  });
 });
 
 describe("home layout", () => {
@@ -83,13 +110,13 @@ describe("home layout", () => {
   });
 
   it("clamps a slot that asks for less than the module's minimum", () => {
-    // portfolio-pulse declares minSize.lg = 6. A layout asking for 3 must get 6.
-    const { resolvedSpan } = resolveSlot({ moduleId: "portfolio-pulse", span: { lg: 3 } });
+    // attention-queue declares minSize.lg = 6. A layout asking for 3 must get 6.
+    const { resolvedSpan } = resolveSlot({ moduleId: "attention-queue", span: { lg: 3 } });
     expect(resolvedSpan.lg).toBe(6);
   });
 
   it("honours a widening override", () => {
-    const { resolvedSpan } = resolveSlot({ moduleId: "opportunity-feed", span: { lg: 12 } });
+    const { resolvedSpan } = resolveSlot({ moduleId: "attention-queue", span: { lg: 12 } });
     expect(resolvedSpan.lg).toBe(12);
   });
 
@@ -101,13 +128,13 @@ describe("home layout", () => {
           id: "g1",
           columns: { sm: 12, md: 12, lg: 12, xl: 12 },
           gap: "gap-4",
-          slots: [{ moduleId: "continue", visible: false }],
+          slots: [{ moduleId: "book", visible: false }],
         },
         {
           id: "g2",
           columns: { sm: 12, md: 12, lg: 12, xl: 12 },
           gap: "gap-4",
-          slots: [{ moduleId: "upcoming-events" }],
+          slots: [{ moduleId: "radar" }],
         },
       ],
     });
@@ -122,7 +149,7 @@ describe("home layout", () => {
           id: "dupe",
           columns: { sm: 12, md: 12, lg: 12, xl: 12 },
           gap: "gap-4",
-          slots: [{ moduleId: "continue" }, { moduleId: "continue" }],
+          slots: [{ moduleId: "radar" }, { moduleId: "radar" }],
         },
       ],
     });
@@ -137,7 +164,7 @@ describe("home layout", () => {
           id: "bad",
           columns: { sm: 12, md: 12, lg: 12, xl: 12 },
           gap: "gap-4",
-          slots: [{ moduleId: "continue", defaultCollapsed: true }],
+          slots: [{ moduleId: "radar", defaultCollapsed: true }],
         },
       ],
     });

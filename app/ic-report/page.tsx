@@ -9,6 +9,7 @@ import { SymbolSearch } from "@/app/_components/symbol-search";
 import { PageShell } from "@/app/_components/ui";
 import { GroundingBadge } from "@/app/_components/grounding-badge";
 import { useTaskSplash } from "@/app/_components/boot-context";
+import { useFocusSafe } from "@/lib/focus-context";
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -457,6 +458,7 @@ function ProgressTracker({
 /* -------------------------------------------------------------------------- */
 
 export default function ICReportPage() {
+  const focus = useFocusSafe();
   const [symbol, setSymbol] = useState("");
   const [exchange, setExchange] = useState<"US" | "IN">("US");
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
@@ -487,6 +489,7 @@ export default function ICReportPage() {
     if (urlSymbol) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setSymbol(urlSymbol.toUpperCase());
+      focus?.recordFocus(urlSymbol);
       // Detect Indian exchange by suffix
       if (urlSymbol.toUpperCase().endsWith(".NS") || urlSymbol.toUpperCase().endsWith(".BO")) {
 
@@ -506,7 +509,7 @@ export default function ICReportPage() {
         }
       }
     } catch { /* ignore */ }
-
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Fires the auto-run queued above exactly once, as soon as `symbol` has
@@ -521,6 +524,21 @@ export default function ICReportPage() {
     // function recreated each render (not memoized); depending on it here
     // would re-fire on every render instead of once when symbol lands.
   }, [symbol]);
+
+  // Prefill the symbol input from the focus spine when the page opens without a
+  // symbol of its own (§4.4). Seeds the input only — the report is still run
+  // manually; a URL param or this page's own restored report wins.
+  const prefilledRef = useRef(false);
+  useEffect(() => {
+    if (prefilledRef.current || !focus?.mostRecent) return;
+    if (new URLSearchParams(window.location.search).get("symbol") || symbol) {
+      prefilledRef.current = true;
+      return;
+    }
+    prefilledRef.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSymbol(focus.mostRecent);
+  }, [focus?.mostRecent, symbol]);
 
   // Dynamic page title
   useEffect(() => {
@@ -549,6 +567,7 @@ export default function ICReportPage() {
 
   async function run() {
     if (!symbol.trim()) return;
+    focus?.recordFocus(symbol);
     abortRef.current?.abort();
     abortRef.current = new AbortController();
 

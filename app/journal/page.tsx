@@ -6,9 +6,10 @@ import { useSearchParams } from "next/navigation";
 import { PageShell, PageHeader, StatTile, Button, Field, Input, Card, SectionHeader } from "@/app/_components/ui";
 import { SymbolSearch } from "@/app/_components/symbol-search";
 import { useToast } from "@/app/_components/toast";
-import type { Decision, DecisionAction } from "@/lib/types";
+import type { Decision, DecisionAction, ThesisEvolution } from "@/lib/types";
 import type { DecisionOutcome, TrackRecord, GroupStat } from "@/lib/decision-journal";
 import { formatCurrency } from "@/lib/format";
+import { ThesisEvolutionPanel } from "./_components/thesis-evolution-panel";
 
 const ACTIONS: DecisionAction[] = ["buy", "watch", "hold", "avoid", "sell"];
 const ACTION_TONE: Record<DecisionAction, string> = {
@@ -87,7 +88,10 @@ function JournalPageInner() {
   const [name, setName] = useState<string | null>(null);
   const [action, setAction] = useState<DecisionAction>("buy");
   const [conviction, setConviction] = useState(3);
-  const [thesis, setThesis] = useState("");
+  // Seed the thesis from a `?note=` param — how a pipeline stage-change prompt
+  // deep-links here with the transition already written (§4.5).
+  const [thesis, setThesis] = useState(params.get("note") ?? "");
+  const [evolution, setEvolution] = useState<ThesisEvolution | null>(null);
   const [priceAt, setPriceAt] = useState<number | null>(null);
   const [currency, setCurrency] = useState<string | null>(null);
   const [targetPrice, setTargetPrice] = useState("");
@@ -144,6 +148,27 @@ function JournalPageInner() {
       }
     }
     void prefill();
+    return () => {
+      alive = false;
+    };
+  }, [symbol]);
+
+  // Thesis evolution for the selected symbol — migrated here from the retired
+  // timeline (§4.5). Reads the existing timeline feed; no new engine.
+  useEffect(() => {
+    if (!symbol) return;
+    let alive = true;
+    async function loadEvolution() {
+      try {
+        const r = await fetch(`/api/timeline?scope=symbol&id=${encodeURIComponent(symbol)}`);
+        if (!r.ok || !alive) return;
+        const feed = (await r.json()) as { thesisEvolution?: ThesisEvolution | null };
+        if (alive) setEvolution(feed.thesisEvolution ?? null);
+      } catch {
+        /* non-fatal — the panel just doesn't render */
+      }
+    }
+    void loadEvolution();
     return () => {
       alive = false;
     };
@@ -301,6 +326,9 @@ function JournalPageInner() {
           </Button>
         </div>
       </Card>
+
+      {/* Thesis evolution for the selected symbol (migrated from the timeline). */}
+      {symbol && evolution && evolution.points.length > 0 ? <ThesisEvolutionPanel evolution={evolution} /> : null}
 
       {/* Decision list */}
       <div className="flex flex-col gap-2">

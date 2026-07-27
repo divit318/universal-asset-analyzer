@@ -38,18 +38,20 @@ import { OptimizePanel } from "./_components/universal/optimize-panel";
 import { CashPanel } from "./_components/universal/cash-panel";
 import { AddHoldingDialog } from "./_components/universal/add-holding-dialog";
 import { PortfolioThesisBanner } from "./_components/universal/portfolio-thesis";
+import { PipelineBoard } from "./_components/pipeline-board";
 import { ArrivalHighlight, useArrivalTarget } from "@/app/_components/arrival-highlight";
 import { useBootReady } from "@/app/_components/boot-context";
 import { Reveal } from "@/app/_components/reveal";
 import { CountUp } from "@/app/_components/count-up";
 import { LoadingMark } from "@/app/_components/loading-mark";
 
-type Tab = "dashboard" | "decisions" | "holdings" | "risk" | "optimize";
+type Tab = "dashboard" | "decisions" | "holdings" | "pipeline" | "risk" | "optimize";
 
 const TABS: TabItem<Tab>[] = [
   { id: "dashboard", label: "Dashboard" },
   { id: "decisions", label: "Decisions" },
   { id: "holdings",  label: "Holdings"  },
+  { id: "pipeline",  label: "Pipeline"  },
   { id: "risk",      label: "Risk Lab"  },
   { id: "optimize",  label: "Optimize"  },
 ];
@@ -262,7 +264,12 @@ function PortfolioPageInner() {
                 risk={report.risk}
                 annualIncome={report.annualIncome}
               />
-              <CashPanel />
+              <CashPanel
+                onExecuted={() => {
+                  refresh();
+                  setThesisRefreshSignal((n) => n + 1);
+                }}
+              />
             </div>
           )}
 
@@ -273,6 +280,8 @@ function PortfolioPageInner() {
               onChanged={() => { refresh(); setThesisRefreshSignal((n) => n + 1); }}
             />
           )}
+
+          {tab === "pipeline" && <PipelineBoard />}
 
           {tab === "risk" && <RiskLab risk={report.risk} scenarios={report.scenarios} />}
 

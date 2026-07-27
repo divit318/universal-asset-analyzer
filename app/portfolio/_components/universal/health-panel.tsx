@@ -1,7 +1,7 @@
 "use client";
 
 import { Card, Badge } from "@/app/_components/ui";
-import type { HealthScore } from "@/lib/portfolio/engines/health";
+import type { HealthScore, ScoreTrend } from "@/lib/portfolio/engines/health";
 
 /**
  * The Universal Portfolio Health Score.
@@ -22,6 +22,25 @@ const GRADE_TONE: Record<string, string> = {
   C: "text-foreground",
   D: "text-warning",
   F: "text-negative",
+};
+
+/**
+ * Bar tone per dimension, keyed off the engine's own `trend` classification
+ * (health.ts's trendOf()) rather than a second score-band guess in the UI.
+ *
+ * This replaces a previous local band (`score >= 45 ? "bg-brand" : …`) that
+ * colored the 45-69 range brand-blue — an accent color with no severity
+ * meaning, so a middling dimension (e.g. Holding Quality at 69) rendered in a
+ * color unrelated to the red-to-green scale every other bar used, reading as a
+ * distinct, unexplained category rather than "fair." "neutral" now renders in
+ * the same true-neutral gray the health grade's own "C" band already uses.
+ */
+const TREND_TONE: Record<ScoreTrend, string> = {
+  strong: "bg-positive",
+  good: "bg-positive",
+  neutral: "bg-muted",
+  weak: "bg-warning",
+  poor: "bg-negative",
 };
 
 export function HealthPanel({ health }: { health: HealthScore }) {
@@ -50,8 +69,7 @@ export function HealthPanel({ health }: { health: HealthScore }) {
       <ul className="flex flex-col gap-2">
         {scored.map((d) => {
           const score = d.score!;
-          const tone =
-            score >= 70 ? "bg-positive" : score >= 45 ? "bg-brand" : score >= 30 ? "bg-warning" : "bg-negative";
+          const tone = TREND_TONE[d.trend!];
 
           return (
             <li key={d.name} className="flex flex-col gap-1">

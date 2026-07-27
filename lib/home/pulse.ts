@@ -13,7 +13,8 @@
  */
 
 import type { UniversalPortfolioReport } from "../portfolio/report";
-import type { PortfolioPulse, PulseMover } from "./contracts";
+import type { HealthScore } from "../portfolio/engines/health";
+import type { HealthFactor, HealthRadarAxis, PortfolioPulse, PulseMover } from "./contracts";
 
 /** An empty portfolio has no pulse. It says so, rather than rendering zeros. */
 const EMPTY: PortfolioPulse = {
@@ -31,7 +32,112 @@ const EMPTY: PortfolioPulse = {
   diversificationScore: null,
   largestDrift: null,
   marketPricedPct: 0,
+  radar: [],
+  biggestStrength: null,
+  biggestWeakness: null,
+  healthCoveragePct: null,
+  healthFactors: [],
 };
+
+/**
+ * Short axis labels for the radar. Keyed by the health engine's own dimension
+ * names — so if a dimension is renamed there, the radar loses a label rather
+ * than silently drawing a mislabelled spoke.
+ */
+const RADAR_SHORT: Record<string, string> = {
+  "Diversification": "Divers.",
+  "Expected Drawdown": "Risk",
+  "Holding Quality": "Quality",
+  "Income": "Income",
+  "Liquidity": "Liquidity",
+  "Asset Allocation": "Allocation",
+  "Correlation": "Correl.",
+  "Inflation Protection": "Inflation",
+  "Currency Diversification": "Currency",
+  "Geographic Diversification": "Geography",
+  "Cash Management": "Cash",
+};
+
+/**
+ * The dimensions the radar draws, in a fixed order so a portfolio's shape is
+ * comparable to itself over time. Up to six are shown — a hexagon reads cleanly;
+ * eleven spokes are a hairball. The rest still count toward strength/weakness.
+ */
+const RADAR_AXES = [
+  "Diversification",
+  "Expected Drawdown",
+  "Holding Quality",
+  "Income",
+  "Liquidity",
+  "Asset Allocation",
+] as const;
+
+/**
+ * Projects the health engine's dimensions onto radar spokes. Reads scores
+ * verbatim; a spoke's value IS the dimension's score. Abstained/missing
+ * dimensions are drawn faded (`covered: false`) at their fallback so the shape
+ * stays a closed polygon rather than collapsing to the centre.
+ */
+export function buildHealthRadar(health: HealthScore): HealthRadarAxis[] {
+  const dimensions = health.dimensions ?? [];
+  const byName = new Map(dimensions.map((d) => [d.name, d]));
+  const axes: HealthRadarAxis[] = [];
+
+  for (const name of RADAR_AXES) {
+    const dim = byName.get(name);
+    if (!dim) continue;
+    const covered = dim.score != null && dim.coverage > 0;
+    axes.push({
+      axis: name,
+      shortLabel: RADAR_SHORT[name] ?? name,
+      score: dim.score ?? 45,
+      covered,
+    });
+  }
+
+  // A radar needs at least three spokes to be a shape. If the canonical set is
+  // too thin (an unusual, single-asset-class book), fall back to whatever
+  // covered dimensions exist, best-first.
+  if (axes.length < 3) {
+    return dimensions
+      .filter((d) => d.score != null)
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+      .slice(0, 6)
+      .map((d) => ({
+        axis: d.name,
+        shortLabel: RADAR_SHORT[d.name] ?? d.name,
+        score: d.score as number,
+        covered: d.coverage > 0,
+      }));
+  }
+
+  return axes;
+}
+
+/**
+ * Projects the health engine's dimensions onto explanation rows, reading the
+ * engine's OWN arithmetic verbatim: `effectiveWeight` (weight × coverage,
+ * renormalized) and `scoreExact × effectiveWeight` are exactly the terms
+ * `computeHealth` summed to produce `totalExact` — so the rows genuinely add
+ * up to the number on screen, rather than approximating it.
+ */
+export function buildHealthFactors(health: HealthScore): HealthFactor[] {
+  return (health.dimensions ?? [])
+    .map<HealthFactor>((d) => {
+      const scored = d.score != null;
+      return {
+        label: d.name,
+        score: d.score,
+        weightShare: scored ? d.effectiveWeight : null,
+        contributionPts: scored ? Math.round((d.scoreExact ?? 0) * d.effectiveWeight * 10) / 10 : null,
+        covered: scored && d.coverage > 0,
+        coveragePct: Math.round(d.coverage * 100),
+      };
+    })
+    // Biggest contributors first; abstained dimensions sink to the bottom
+    // (they still render, faded — an abstention is information).
+    .sort((a, b) => (b.contributionPts ?? -1) - (a.contributionPts ?? -1));
+}
 
 /**
  * HHI (0-10000) → a 0-100 "diversification" score, so the homepage doesn't have
@@ -79,6 +185,18 @@ export function buildPortfolioPulse(report: UniversalPortfolioReport | null): Po
   const drift = [...report.optimization.classTargets]
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))[0];
 
+  // Strength/weakness are the best/worst *covered* dimensions — an abstained
+  // dimension has no opinion and must not be presented as a weakness.
+  const scoredDims = (report.health.dimensions ?? [])
+    .filter((d) => d.score != null && d.coverage > 0)
+    .sort((a, b) => (a.score as number) - (b.score as number));
+  const biggestWeakness = scoredDims[0]
+    ? { label: scoredDims[0].name, score: scoredDims[0].score as number }
+    : null;
+  const biggestStrength = scoredDims.length > 1
+    ? { label: scoredDims[scoredDims.length - 1].name, score: scoredDims[scoredDims.length - 1].score as number }
+    : null;
+
   return {
     status: "ok",
     healthScore: report.health.total,
@@ -95,5 +213,10 @@ export function buildPortfolioPulse(report: UniversalPortfolioReport | null): Po
     // A sub-1pp drift is noise, not a finding worth a line on the homepage.
     largestDrift: drift && Math.abs(drift.delta) >= 1 ? { label: drift.label, driftPct: drift.delta } : null,
     marketPricedPct: report.marketPricedPct,
+    radar: buildHealthRadar(report.health),
+    biggestStrength,
+    biggestWeakness,
+    healthCoveragePct: report.health.coveragePct ?? null,
+    healthFactors: buildHealthFactors(report.health),
   };
 }

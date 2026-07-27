@@ -1,180 +1,332 @@
 "use client";
 
 /**
- * Module 5 — Market Intelligence.
+ * Market Pulse — a full-width strip of compact instrument cards.
  *
- * The cross-asset tape plus regime, breadth, and the sentiment gauge.
+ * Replaces the old dense tape with the curated set an investor actually scans at
+ * open: regime, breadth, sentiment, and the six cross-asset bellwethers (VIX,
+ * 10Y, dollar, oil, gold, BTC). Each card carries a value, its move, a sparkline
+ * (for the curated series lib/home/market-intel.ts fetches), and a one-line
+ * implication derived from the level — not a fabricated headline.
  *
- * The gauge is labelled "UAA Sentiment", not "Fear & Greed", and its tooltip
- * names the three components that produced it. CNN's index has no free API;
- * borrowing its name for a number computed from different inputs would be a
- * fabrication, and this project does not ship those. The label is the honesty.
+ * The sentiment gauge stays labelled "UAA Sentiment", never CNN's Fear & Greed:
+ * borrowing that name for a number computed from different inputs would be a lie.
  */
 
+import { useState } from "react";
+import { ChevronDown } from "lucide-react";
+import { explainSentiment, type ScoreExplanation } from "@/lib/home/explain";
 import { getHomeModule } from "@/lib/home/registry";
-import { toneClass } from "@/lib/format";
-import type { MarketGroup, MarketTicker, SentimentGauge } from "@/lib/home/contracts";
+import type { MarketGroup, MarketTicker, MarketIntelligence } from "@/lib/home/contracts";
+import { Sparkline } from "../_viz/sparkline";
+import { ExplainableValue } from "../_atmosphere/explain-popover";
 import { ModuleShell } from "../module-shell";
 import { useHome, useHomeSlice } from "../home-provider";
 
 const definition = getHomeModule("market-intelligence");
 
-const REGIME_TONE: Record<string, string> = {
-  "risk-on": "text-positive",
-  "risk-off": "text-negative",
-  neutral: "text-muted",
-};
+/** Finds a ticker anywhere on the tape by symbol. */
+function findTicker(groups: MarketGroup[], symbol: string): MarketTicker | null {
+  for (const g of groups) {
+    const t = g.tickers.find((x) => x.symbol.toUpperCase() === symbol.toUpperCase());
+    if (t) return t;
+  }
+  return null;
+}
 
-const SENTIMENT_TONE: Record<SentimentGauge["label"], string> = {
-  "Extreme Fear": "text-negative",
-  Fear: "text-negative",
-  Neutral: "text-muted",
-  Greed: "text-positive",
-  "Extreme Greed": "text-positive",
-};
+interface PulseCardModel {
+  key: string;
+  label: string;
+  value: string;
+  changePct: number | null;
+  series: number[] | null;
+  implication: string;
+  /** Force a tone regardless of direction (e.g. VIX up = bad, so neutral spark). */
+  toneOverride?: "positive" | "negative" | "neutral";
+  /** When present, the card's value is click-to-decompose (no black boxes). */
+  explanation?: ScoreExplanation | null;
+}
 
-/** Rates and the VIX are quoted as levels; everything else as a price. */
-function priceOf(t: MarketTicker): string {
-  if (t.price == null) return "—";
+function PulseCard({ m }: { m: PulseCardModel }) {
+  const changeTone = m.changePct == null ? "text-muted" : m.changePct >= 0 ? "text-positive" : "text-negative";
+  return (
+    <div className="flex flex-col gap-1.5 rounded-control border border-border/60 bg-surface-2/30 p-2.5 transition-colors hover:border-border">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">{m.label}</span>
+        {m.changePct != null ? (
+          <span className={`font-mono text-[10px] tabular-nums ${changeTone}`}>
+            {m.changePct >= 0 ? "+" : "−"}
+            {Math.abs(m.changePct).toFixed(2)}%
+          </span>
+        ) : null}
+      </div>
+      <div className="flex items-end justify-between gap-1">
+        {m.explanation ? (
+          <ExplainableValue explanation={m.explanation}>
+            <span className="font-mono text-base font-semibold tabular-nums text-foreground">{m.value}</span>
+          </ExplainableValue>
+        ) : (
+          <span className="font-mono text-base font-semibold tabular-nums text-foreground">{m.value}</span>
+        )}
+        {m.series ? <Sparkline data={m.series} tone={m.toneOverride} width={64} height={22} /> : null}
+      </div>
+      <p className="line-clamp-2 text-[10px] leading-tight text-muted">{m.implication}</p>
+    </div>
+  );
+}
+
+function fmtLevel(t: MarketTicker | null): string {
+  if (!t || t.price == null) return "—";
   return t.price >= 1000 ? t.price.toLocaleString(undefined, { maximumFractionDigits: 0 }) : t.price.toFixed(2);
 }
 
-function TickerCell({ t }: { t: MarketTicker }) {
+/* ------------------------------------------------------------------ */
+/* The collapsed tape row — the seven bellwethers, one compact line    */
+/* ------------------------------------------------------------------ */
+
+interface TapeRowItem {
+  key: string;
+  label: string;
+  value: string;
+  changePct: number | null;
+}
+
+/** The §9 wireframe row: SPX · NDX · VIX · 10Y · WTI · DXY · BTC. */
+const TAPE_ROW: { key: string; label: string; symbol: string; fmt: (t: MarketTicker) => string }[] = [
+  { key: "spx", label: "SPX", symbol: "^GSPC", fmt: (t) => fmtLevel(t) },
+  { key: "ndx", label: "NDX", symbol: "^IXIC", fmt: (t) => fmtLevel(t) },
+  { key: "vix", label: "VIX", symbol: "^VIX", fmt: (t) => fmtLevel(t) },
+  { key: "tnx", label: "10Y", symbol: "^TNX", fmt: (t) => `${fmtLevel(t)}%` },
+  { key: "wti", label: "WTI", symbol: "CL=F", fmt: (t) => `$${fmtLevel(t)}` },
+  { key: "dxy", label: "DXY", symbol: "DX-Y.NYB", fmt: (t) => fmtLevel(t) },
+  { key: "btc", label: "BTC", symbol: "BTC-USD", fmt: (t) => (t.price != null ? `$${Math.round(t.price).toLocaleString()}` : "—") },
+];
+
+function buildTapeRow(d: MarketIntelligence): TapeRowItem[] {
+  const out: TapeRowItem[] = [];
+  for (const spec of TAPE_ROW) {
+    const t = findTicker(d.groups, spec.symbol);
+    if (!t) continue;
+    out.push({ key: spec.key, label: spec.label, value: spec.fmt(t), changePct: t.changePct });
+  }
+  return out;
+}
+
+/** One instrument on the collapsed row: label · mono value · signed move. */
+function TapeItem({ item }: { item: TapeRowItem }) {
+  const tone = item.changePct == null ? "text-muted" : item.changePct >= 0 ? "text-positive" : "text-negative";
   return (
-    <div className="flex flex-col gap-0.5">
-      <span className="truncate text-xs text-muted">{t.label}</span>
-      <span className="font-mono text-sm font-semibold tabular-nums text-foreground">{priceOf(t)}</span>
-      <span className={`font-mono text-xs tabular-nums ${toneClass(t.changePct)}`}>
-        {t.changePct == null ? "—" : `${t.changePct >= 0 ? "+" : ""}${t.changePct.toFixed(2)}%`}
-      </span>
-    </div>
+    <span className="inline-flex shrink-0 items-baseline gap-1.5 border-l border-border/40 pl-3 first:border-l-0 first:pl-0">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">{item.label}</span>
+      <span className="font-mono text-sm font-semibold tabular-nums text-foreground">{item.value}</span>
+      {item.changePct != null ? (
+        <span className={`font-mono text-[11px] tabular-nums ${tone}`}>
+          {item.changePct >= 0 ? "+" : "−"}
+          {Math.abs(item.changePct).toFixed(2)}%
+        </span>
+      ) : null}
+    </span>
   );
 }
 
-function Group({ group }: { group: MarketGroup }) {
-  return (
-    <div className="flex flex-col gap-2">
-      <h3 className="text-micro font-semibold uppercase tracking-wide text-muted">{group.label}</h3>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {group.tickers.map((t) => (
-          <TickerCell key={t.symbol} t={t} />
-        ))}
-      </div>
-    </div>
-  );
+function vixImplication(level: number | null): string {
+  if (level == null) return "Volatility data unavailable.";
+  if (level < 14) return "Calm tape — low hedging demand.";
+  if (level < 20) return "Normal volatility regime.";
+  if (level < 30) return "Elevated stress — hedges bid.";
+  return "Fear regime — sharp risk-off.";
 }
 
-function Gauge({ s }: { s: SentimentGauge }) {
-  const components = s.components
-    .filter((c) => c.value != null)
-    .map((c) => c.name)
-    .join(", ");
+function directional(change: number | null, up: string, down: string, flat: string): string {
+  if (change == null) return flat;
+  if (change > 0.05) return up;
+  if (change < -0.05) return down;
+  return flat;
+}
 
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-baseline gap-2">
-        <span className="text-micro font-semibold uppercase tracking-wide text-muted">UAA Sentiment</span>
-        {s.confidence !== "high" ? (
-          <span className="text-micro text-warning">{s.confidence} confidence</span>
-        ) : null}
-      </div>
+function buildCards(d: MarketIntelligence): PulseCardModel[] {
+  const g = d.groups;
+  const vix = findTicker(g, "^VIX");
+  const tnx = findTicker(g, "^TNX");
+  const dxy = findTicker(g, "DX-Y.NYB");
+  const oil = findTicker(g, "CL=F");
+  const gold = findTicker(g, "GC=F");
+  const btc = findTicker(g, "BTC-USD");
 
-      <div className="flex items-baseline gap-2">
-        <span className="font-mono text-2xl font-semibold tabular-nums text-foreground">{s.score}</span>
-        <span className={`text-sm font-semibold ${SENTIMENT_TONE[s.label]}`}>{s.label}</span>
-      </div>
+  const cards: PulseCardModel[] = [];
 
-      {/* The track is the scale; the marker is the score. */}
-      <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-surface-3">
-        <div
-          className="absolute top-0 h-full w-1 rounded-full bg-foreground"
-          style={{ left: `calc(${Math.max(0, Math.min(100, s.score))}% - 2px)` }}
-        />
-      </div>
+  if (d.regime) {
+    cards.push({
+      key: "regime",
+      label: "Regime",
+      value: d.regime.trend.replace("-", " "),
+      changePct: null,
+      series: null,
+      implication: d.regime.summary,
+    });
+  }
+  if (d.breadthPct != null) {
+    cards.push({
+      key: "breadth",
+      label: "Breadth",
+      value: `${d.breadthPct}%`,
+      changePct: null,
+      series: null,
+      implication:
+        d.breadthPct >= 55 ? "Broad participation — healthy tape." : d.breadthPct < 45 ? "Narrow — few names leading." : "Mixed participation.",
+    });
+  }
+  if (d.sentiment) {
+    cards.push({
+      key: "sentiment",
+      label: "UAA Sentiment",
+      value: String(d.sentiment.score),
+      changePct: null,
+      series: null,
+      implication: `${d.sentiment.label} — our gauge, not CNN's (${d.sentiment.confidence} confidence).`,
+      explanation: explainSentiment(d.sentiment),
+    });
+  }
+  if (vix) {
+    cards.push({
+      key: "vix",
+      label: "Volatility",
+      value: fmtLevel(vix),
+      changePct: vix.changePct,
+      series: vix.series ?? null,
+      implication: vixImplication(vix.price),
+      toneOverride: "neutral",
+    });
+  }
+  if (tnx) {
+    cards.push({
+      key: "tnx",
+      label: "Rates 10Y",
+      value: `${fmtLevel(tnx)}%`,
+      changePct: tnx.changePct,
+      series: tnx.series ?? null,
+      implication: directional(tnx.changePct, "Yields rising — duration under pressure.", "Yields easing — tailwind for bonds.", "Rates steady."),
+      toneOverride: "neutral",
+    });
+  }
+  if (dxy) {
+    cards.push({
+      key: "dxy",
+      label: "Dollar (DXY)",
+      value: fmtLevel(dxy),
+      changePct: dxy.changePct,
+      series: dxy.series ?? null,
+      implication: directional(dxy.changePct, "Dollar firmer — headwind for EM & exporters.", "Dollar softer — supports commodities.", "Dollar steady."),
+    });
+  }
+  if (oil) {
+    cards.push({
+      key: "oil",
+      label: "Oil (WTI)",
+      value: `$${fmtLevel(oil)}`,
+      changePct: oil.changePct,
+      series: oil.series ?? null,
+      implication: directional(oil.changePct, "Crude bid — inflationary at the margin.", "Crude softer — disinflationary.", "Crude flat."),
+    });
+  }
+  if (gold) {
+    cards.push({
+      key: "gold",
+      label: "Gold",
+      value: `$${fmtLevel(gold)}`,
+      changePct: gold.changePct,
+      series: gold.series ?? null,
+      implication: directional(gold.changePct, "Gold bid — haven demand.", "Gold offered — risk appetite firm.", "Gold flat."),
+    });
+  }
+  if (btc) {
+    cards.push({
+      key: "btc",
+      label: "Bitcoin",
+      value: `$${btc.price != null ? Math.round(btc.price).toLocaleString() : "—"}`,
+      changePct: btc.changePct,
+      series: btc.series ?? null,
+      implication: directional(btc.changePct, "Risk appetite firm.", "Risk appetite fading.", "Crypto flat."),
+    });
+  }
 
-      <p className="text-xs leading-5 text-muted">
-        Our own gauge — not CNN&apos;s Fear &amp; Greed Index. Computed from {components || "no available inputs"}.
-      </p>
-    </div>
-  );
+  return cards;
 }
 
 export function MarketIntelligenceModule() {
   const state = useHomeSlice("marketIntelligence");
   const { refreshDigest } = useHome();
+  // The tape rides slim by default (§4.1): one instrument row, with the fuller
+  // detail one disclosure away. Session-local, presentation-only — no data path.
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <ModuleShell
       definition={definition}
       state={state}
-      minHeight={220}
+      minHeight={64}
       onRefresh={refreshDigest}
-      isEmpty={(d) => d.groups.length === 0}
+      isEmpty={(d) => d.groups.length === 0 && !d.regime}
       emptyMessage="Market data is unavailable right now."
     >
-      {(d) => (
-        <div className="flex flex-col gap-5">
-          {(d.regime || d.sentiment || d.breadthPct != null) && (
-            <div className="grid gap-5 border-b border-border pb-5 sm:grid-cols-3">
-              {d.regime ? (
-                <div className="flex flex-col gap-1">
-                  <span className="text-micro font-semibold uppercase tracking-wide text-muted">Regime</span>
-                  <span className={`text-sm font-semibold capitalize ${REGIME_TONE[d.regime.trend] ?? "text-muted"}`}>
-                    {d.regime.trend.replace("-", " ")}
-                  </span>
-                  <p className="text-xs leading-5 text-muted">{d.regime.summary}</p>
+      {(d) => {
+        const row = buildTapeRow(d);
+        const cards = buildCards(d);
+        return (
+          <div className="flex flex-col gap-3">
+            {/* Collapsed instrument row — scrolls within itself at narrow widths
+                (§9 mobile note), never pushing the page into horizontal overflow. */}
+            <div className="flex items-center gap-3">
+              <div className="min-w-0 flex-1 overflow-x-auto">
+                <div className="flex w-max items-baseline gap-3">
+                  {row.length > 0 ? (
+                    row.map((item) => <TapeItem key={item.key} item={item} />)
+                  ) : (
+                    <span className="text-xs text-muted">Live instruments unavailable.</span>
+                  )}
                 </div>
-              ) : null}
-
-              {d.breadthPct != null ? (
-                <div className="flex flex-col gap-1">
-                  <span className="text-micro font-semibold uppercase tracking-wide text-muted">Breadth</span>
-                  <span className="font-mono text-2xl font-semibold tabular-nums text-foreground">{d.breadthPct}%</span>
-                  <p className="text-xs text-muted">of sectors advancing</p>
-                </div>
-              ) : null}
-
-              {d.sentiment ? <Gauge s={d.sentiment} /> : null}
+              </div>
+              <button
+                type="button"
+                onClick={() => setExpanded((e) => !e)}
+                aria-expanded={expanded}
+                aria-label={expanded ? "Hide market detail" : "Show market detail"}
+                className="shrink-0 rounded-control p-1.5 text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
+              >
+                <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`} strokeWidth={2} />
+              </button>
             </div>
-          )}
 
-          <div className="flex flex-col gap-5">
-            {d.groups.map((g) => (
-              <Group key={g.id} group={g} />
-            ))}
-          </div>
+            {/* Expanded detail — the full instrument grid + rotation. */}
+            {expanded ? (
+              <div className="flex flex-col gap-3 border-t border-border/50 pt-3">
+                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-8">
+                  {cards.map((m) => (
+                    <PulseCard key={m.key} m={m} />
+                  ))}
+                </div>
 
-          {/* Rotation you're actually exposed to. A leadership change in a sector
-              you don't hold is trivia; one you do hold is a reason to look. */}
-          {d.sectorAttention.length > 0 && (
-            <div className="flex flex-col gap-2 border-t border-border pt-4">
-              <h3 className="text-micro font-semibold uppercase tracking-wide text-muted">
-                Rotation in sectors you hold
-              </h3>
-              <ul className="flex flex-col gap-1.5">
-                {d.sectorAttention.map((c) => {
-                  const improved = c.toRank < c.fromRank;
-                  return (
-                    <li key={c.sector} className="flex items-center justify-between gap-3 text-xs">
-                      <span className="truncate text-foreground/85">{c.sector}</span>
-                      <span className="flex shrink-0 items-center gap-2">
-                        {c.portfolioWeightPct != null ? (
-                          <span className="font-mono tabular-nums text-muted">
-                            {c.portfolioWeightPct.toFixed(0)}% of book
+                {d.sectorAttention.length > 0 ? (
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border/50 pt-2.5">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">Rotation you hold</span>
+                    {d.sectorAttention.slice(0, 4).map((c) => {
+                      const improved = c.toRank < c.fromRank;
+                      return (
+                        <span key={c.sector} className="inline-flex items-center gap-1.5 text-[11px]">
+                          <span className="text-foreground/85">{c.sector}</span>
+                          <span className={`font-mono tabular-nums ${improved ? "text-positive" : "text-negative"}`}>
+                            #{c.fromRank}→#{c.toRank}
                           </span>
-                        ) : null}
-                        <span className={`font-mono tabular-nums ${improved ? "text-positive" : "text-negative"}`}>
-                          #{c.fromRank} → #{c.toRank}
                         </span>
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        );
+      }}
     </ModuleShell>
   );
 }

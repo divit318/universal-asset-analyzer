@@ -115,12 +115,17 @@ describe("buildPortfolioPulse", () => {
 
 const decision = (id: string, score: number, priority: number) =>
   ({
-    recommendation: { id, action: "ADD", symbol: "BND", title: `Add ${id}`, rationale: "No bond exposure." },
+    recommendation: {
+      id, action: "ADD", symbol: "BND", title: `Add ${id}`, rationale: "No bond exposure.",
+      impact: { healthDelta: 3.2, riskDelta: -0.5, diversificationDelta: -150, incomeDelta: 200, liquidityDelta: 0 },
+    },
     decisionScore: score,
     decisionPriority: priority,
     confidence: 80,
     expectedBenefit: "+6 health points",
     expectedReturnImpact: "+0.4% expected return",
+    why: { why: "w", whyNow: "n", whyThisAmount: "a", whyNotAlternative: "alt", whyNotNothing: "z" },
+    alternativesEvaluated: 7,
   }) as unknown as UniversalPortfolioReport["decisions"][number];
 
 describe("buildRecommendedActions", () => {
@@ -135,6 +140,10 @@ describe("buildRecommendedActions", () => {
     expect(r.actions[0].decisionScore).toBe(90);
     // Engine states confidence 0-100; the contract is 0-1.
     expect(r.actions[0].confidence).toBe(0.8);
+    // The IC memo and the simulated before → after are carried through, not flattened.
+    expect(r.actions[0].why?.whyNow).toBe("n");
+    expect(r.actions[0].alternativesEvaluated).toBe(7);
+    expect(r.actions[0].impact?.healthDelta).toBe(3.2);
   });
 
   it("derives severity from the decision score", () => {

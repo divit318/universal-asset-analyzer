@@ -8,6 +8,7 @@ import { ToastProvider } from "./_components/toast";
 import { THEME_INIT_SCRIPT } from "./_components/theme";
 import { AppShell } from "./_components/app-shell";
 import { IOSProvider } from "@/lib/ios-context";
+import { FocusProvider } from "@/lib/focus-context";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -52,21 +53,23 @@ export default function RootLayout({
           Skip to main content
         </a>
         <IOSProvider>
-          <ToastProvider>
-            <AppShell>
-              <SiteHeader />
-              <CommandPalette />
-              {/* useSearchParams() (for page-context awareness) requires a
-                  Suspense boundary — same reason app/{watchlist,research,portfolio}
-                  wrap themselves for useArrivalTarget(). */}
-              <Suspense fallback={null}>
-                <AppAssistant />
-              </Suspense>
-              <main id="main-content" className="flex flex-1 flex-col">
-                {children}
-              </main>
-            </AppShell>
-          </ToastProvider>
+          <FocusProvider>
+            <ToastProvider>
+              <AppShell>
+                <SiteHeader />
+                <CommandPalette />
+                {/* useSearchParams() (for page-context awareness) requires a
+                    Suspense boundary — same reason app/{watchlist,research,portfolio}
+                    wrap themselves for useArrivalTarget(). */}
+                <Suspense fallback={null}>
+                  <AppAssistant />
+                </Suspense>
+                <main id="main-content" className="flex flex-1 flex-col">
+                  {children}
+                </main>
+              </AppShell>
+            </ToastProvider>
+          </FocusProvider>
         </IOSProvider>
       </body>
     </html>

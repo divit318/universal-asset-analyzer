@@ -94,7 +94,7 @@ function sectorNode(entry: SectorRotationEntry | null, name: string): GraphNode 
     metrics: entry
       ? { rank: entry.rank, classification: entry.classification, relativeStrength: entry.relativeStrength }
       : {},
-    href: `/intelligence?view=timeline&scope=sector&id=${encodeURIComponent(name)}`,
+    href: `/knowledge-graph?scope=sector&id=${encodeURIComponent(name)}`,
   };
 }
 
@@ -107,7 +107,7 @@ function timelineEventNode(event: TimelineEvent): GraphNode {
     importance: event.importanceScore,
     confidence: event.confidenceScore,
     metrics: { category: event.category, impact: event.impact, date: event.timestamp.slice(0, 10) },
-    href: `/intelligence?view=timeline&scope=symbol&id=${encodeURIComponent(event.symbol)}`,
+    href: `/knowledge-graph?scope=symbol&id=${encodeURIComponent(event.symbol)}`,
   };
 }
 

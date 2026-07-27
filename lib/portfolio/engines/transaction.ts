@@ -210,6 +210,81 @@ export function buildLotWrites(
   return { lots, manualAssetIdsToDelete, skipped };
 }
 
+/* -------------------------------------------------------------------------- */
+/* Cash allocation — depositing new money, then buying against it             */
+/* -------------------------------------------------------------------------- */
+
+export interface CashDepositItem {
+  symbol: string | null;
+  name: string;
+  assetClass: PortfolioAssetClass;
+  dollarAmount: number;
+  reason: string;
+}
+
+/**
+ * Pure conversion: a Capital Allocation plan -> real ledger writes. Split out
+ * from the route the same way buildLotWrites() is split from executeTrades() —
+ * this is the part with actual decision logic (price resolution, skip reasons)
+ * and is unit-testable without touching the database.
+ *
+ * Deliberately NOT built on buildLotWrites()/TradeToExecute: those assume every
+ * trade targets an EXISTING holding already in `evaluation.holdings` (true for a
+ * rebalance, which only ever resizes what's already held). Cash allocation is
+ * always additive and can open a brand-new position never held before — the
+ * same case app/api/portfolio/buy/route.ts already handles by resolving a live
+ * quote directly rather than looking up an existing holding.
+ */
+export function buildCashDepositLots(
+  ctx: MarketContext,
+  amount: number,
+  items: CashDepositItem[],
+): { lots: LotWriteInstruction[]; skipped: { symbol: string | null; reason: string }[] } {
+  const base = (ctx.baseCurrency || "USD").toUpperCase();
+  const lots: LotWriteInstruction[] = [
+    {
+      symbol: `CASH-${base}`,
+      name: `${base} Cash`,
+      shares: amount,
+      price: 1,
+      kind: "buy",
+      assetClass: "cash",
+      currency: base,
+      meta: { source: "cash_allocation_deposit" },
+    },
+  ];
+  const skipped: { symbol: string | null; reason: string }[] = [];
+
+  for (const item of items) {
+    if (!item.symbol) {
+      skipped.push({ symbol: null, reason: "No ticker to record the trade against" });
+      continue;
+    }
+    const price = ctx.quotes.get(item.symbol.toUpperCase())?.price ?? null;
+    if (price == null || !Number.isFinite(price) || price <= 0) {
+      skipped.push({ symbol: item.symbol, reason: "No live price available" });
+      continue;
+    }
+    const shares = item.dollarAmount / price;
+    if (!Number.isFinite(shares) || shares <= 0) {
+      skipped.push({ symbol: item.symbol, reason: "Computed trade size was zero" });
+      continue;
+    }
+    lots.push({
+      symbol: item.symbol,
+      name: item.name,
+      shares,
+      price,
+      kind: "buy",
+      assetClass: item.assetClass,
+      currency: base,
+      meta: { reason: item.reason, source: "cash_allocation" },
+    });
+  }
+
+  return { lots, skipped };
+}
+
 /**
  * The cash-balancing entry that makes a batch conserve total portfolio value.
  *
@@ -320,5 +395,5 @@ export function listPortfolioSnapshots(limit?: number): PortfolioSnapshot[] {
 }
 
 /** A single trade lot, exposed for callers that need to build one directly (e.g. tests). */
-export { addUniversalLot };
+export { addUniversalLot, executeTradeBatch };
 export type { PortfolioSnapshot, PortfolioSnapshotSummary };

@@ -24,6 +24,7 @@ import type { AssetClassId } from "@/lib/assets/types";
 import type { ClassCompareEntry } from "@/lib/compare/types";
 import type { RankedAsset } from "@/lib/ai-compare";
 import type { PeerBenchmark } from "@/lib/compare/benchmarks";
+import { useFocusSafe } from "@/lib/focus-context";
 
 // Recharts is heavy; load the chart chunks only once the user has ≥2 stocks to
 // compare rather than shipping them in the initial /compare bundle.
@@ -302,6 +303,7 @@ function computeCategoryWinners(sections: SectionDef[], entries: CompareEntry[],
 }
 
 export default function ComparePage() {
+  const focus = useFocusSafe();
   const [symbols, setSymbols] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [entries, setEntries] = useState<CompareEntry[]>([]);
@@ -352,6 +354,7 @@ export default function ComparePage() {
     if (urlSyms.length > 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setSymbols(urlSyms);
+      for (const s of urlSyms) focus?.recordFocus(s);
     } else {
       // No URL params — restore from session (cleared on tab close)
       try {
@@ -365,7 +368,24 @@ export default function ComparePage() {
         }
       } catch { /* ignore corrupt storage */ }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Prefill the add-symbol box from the focus spine when Compare opens empty
+  // (§4.4). Seeds the input only — the user still adds it; a URL param or an
+  // existing/restored comparison wins.
+  const prefilledRef = useRef(false);
+  useEffect(() => {
+    if (prefilledRef.current || !focus?.mostRecent) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("symbols") || params.get("a") || symbols.length > 0 || input) {
+      prefilledRef.current = true;
+      return;
+    }
+    prefilledRef.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setInput(focus.mostRecent);
+  }, [focus?.mostRecent, symbols.length, input]);
 
   // Save to session immediately when comparison data loads (survives navigation and reload)
   useEffect(() => {
@@ -484,6 +504,7 @@ export default function ComparePage() {
     if (!upper || symbols.length >= MAX) return;
     if (symbols.includes(upper)) return;
     setSymbols((prev) => [...prev, upper]);
+    focus?.recordFocus(upper);
     setInput("");
     setAiResult(null);
   }
@@ -1017,10 +1038,10 @@ function StockCard({ entry, color, colorBg }: { entry: CompareEntry; color: stri
           </Link>
           <p className="mt-0.5 truncate text-xs text-muted" title={entry.name}>{entry.name}</p>
           <Link
-            href={`/intelligence?view=timeline&scope=symbol&id=${encodeURIComponent(entry.symbol)}`}
+            href={`/journal?symbol=${encodeURIComponent(entry.symbol)}`}
             className="mt-1 inline-block text-label text-muted underline-offset-2 hover:text-brand hover:underline"
           >
-            View timeline →
+            Open in Journal →
           </Link>
         </div>
         {analyst?.recommendationKey && (

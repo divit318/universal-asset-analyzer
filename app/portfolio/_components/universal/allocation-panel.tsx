@@ -12,29 +12,40 @@ import type { AllocationView, PortfolioAllocation } from "@/lib/portfolio/engine
  * which are the three facts that dominate most real portfolio decisions.
  */
 
-const CLASS_COLOR: Record<string, string> = {
-  equity: "bg-brand",
-  etf: "bg-sky-400",
-  reit: "bg-teal-400",
-  bond: "bg-emerald-400",
-  crypto: "bg-amber-400",
-  commodity: "bg-yellow-500",
-  forex: "bg-cyan-400",
-  cash: "bg-zinc-400",
-  real_estate: "bg-orange-400",
-  private_market: "bg-purple-400",
-  alternative: "bg-pink-400",
-  structured_product: "bg-indigo-400",
-};
-
-const FALLBACK = [
-  "bg-brand", "bg-sky-400", "bg-emerald-400", "bg-amber-400", "bg-purple-400",
-  "bg-teal-400", "bg-pink-400", "bg-orange-400", "bg-cyan-400", "bg-zinc-400",
+/**
+ * Categorical palette — 8 hues, fixed order, validated against this app's dark
+ * card surface (bg-surface-2, #1a1d23) with the dataviz skill's validator: passes
+ * the lightness band, chroma floor, CVD-adjacent separation (worst pair ΔE 8.4,
+ * the legal floor for a categorical set carrying a legend as secondary encoding),
+ * the normal-vision floor (worst pair ΔE 19.3, well above the 15 minimum), and
+ * 3:1+ contrast against the surface for every slot.
+ *
+ * Assigned POSITIONALLY (slice order — every AllocationView is pre-sorted by
+ * weight descending) and NEVER cycled: slot i always means "the i-th largest
+ * slice in THIS breakdown," so two adjacent segments in the same bar are never
+ * within a few degrees of hue of each other. Capped at 8 — the same cap the
+ * legend below already applies — because re-cycling the 8 hues for a 9th+ slice
+ * would silently reintroduce the near-duplicate colors this palette exists to
+ * eliminate; the overflow instead folds into one neutral "+N more" segment that
+ * matches the legend's own rollup row exactly.
+ */
+const CATEGORICAL_HEX = [
+  "#3987e5", // blue
+  "#008300", // green
+  "#d55181", // magenta
+  "#c98500", // yellow
+  "#199e70", // aqua
+  "#d95926", // orange
+  "#9085e9", // violet
+  "#e66767", // red
 ];
 
-function colorFor(view: AllocationView, key: string, i: number): string {
-  if (view.dimension === "assetClass") return CLASS_COLOR[key] ?? FALLBACK[i % FALLBACK.length];
-  return FALLBACK[i % FALLBACK.length];
+/** Slices beyond this fold into one neutral segment/row — kept in one place so the bar and the legend below it can never disagree about where the cutoff is. */
+const VISIBLE_SLICES = 8;
+
+/** Hex for slot `i`, or `null` past the cap (render with the neutral "more" tone instead). */
+function colorFor(i: number): string | null {
+  return i < CATEGORICAL_HEX.length ? CATEGORICAL_HEX[i] : null;
 }
 
 /** A horizontal stacked bar — reads better than a pie for comparing weights. */
@@ -48,6 +59,19 @@ function AllocationBar({ view, title, hint }: { view: AllocationView; title: str
     );
   }
 
+  // Show every slice up to the shared cap; beyond it, roll the remainder into
+  // one honest "+N more" segment/row rather than silently dropping it — with 12
+  // asset classes a fixed 6-row cutoff hid half the portfolio's classes with no
+  // indication anything was missing. The bar and the legend slice the SAME array
+  // at the SAME cap, so a segment in the bar always has exactly one matching row
+  // below it — previously the bar rendered every slice while the legend capped
+  // at 8, so a portfolio with 9+ categories had bar segments with no legend entry.
+  const shown = view.slices.slice(0, VISIBLE_SLICES);
+  const rest = view.slices.slice(VISIBLE_SLICES);
+  const restWeight = rest.reduce((s, x) => s + x.weight, 0);
+  const restValue = rest.reduce((s, x) => s + x.value, 0);
+  const restCount = rest.reduce((s, x) => s + x.count, 0);
+
   return (
     <div className="flex flex-col gap-2.5">
       <div className="flex items-baseline justify-between">
@@ -59,54 +83,46 @@ function AllocationBar({ view, title, hint }: { view: AllocationView; title: str
       </div>
 
       <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-surface-2">
-        {view.slices.map((s, i) => (
+        {shown.map((s, i) => (
           <div
             key={s.key}
-            className={colorFor(view, s.key, i)}
-            style={{ width: `${s.weight}%` }}
+            style={{ width: `${s.weight}%`, backgroundColor: colorFor(i)! }}
             title={`${s.label}: ${s.weight.toFixed(1)}%`}
           />
         ))}
+        {restWeight > 0 && (
+          <div
+            className="bg-muted/40"
+            style={{ width: `${restWeight}%` }}
+            title={`${rest.length} more: ${restWeight.toFixed(1)}%`}
+          />
+        )}
       </div>
 
       <ul className="flex flex-col gap-1">
-        {(() => {
-          // Show every slice up to a generous cap; beyond it, roll the remainder
-          // into one honest "+N more" line rather than silently dropping rows —
-          // with 12 asset classes a fixed 6-row cutoff hid half the portfolio's
-          // classes with no indication anything was missing.
-          const VISIBLE = 8;
-          const shown = view.slices.slice(0, VISIBLE);
-          const rest = view.slices.slice(VISIBLE);
-          const restWeight = rest.reduce((s, x) => s + x.weight, 0);
-          const restValue = rest.reduce((s, x) => s + x.value, 0);
-          const restCount = rest.reduce((s, x) => s + x.count, 0);
-
-          return (
-            <>
-              {shown.map((s, i) => (
-                <li key={s.key} className="flex items-center justify-between gap-2 text-xs">
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <span aria-hidden className={`h-2 w-2 shrink-0 rounded-sm ${colorFor(view, s.key, i)}`} />
-                    <span className="truncate text-foreground">{s.label}</span>
-                    <span className="shrink-0 text-muted/60">({s.count})</span>
-                  </span>
-                  <span className="shrink-0 font-mono tabular-nums text-muted">
-                    {s.weight.toFixed(1)}% · {formatCurrency(s.value)}
-                  </span>
-                </li>
-              ))}
-              {rest.length > 0 && (
-                <li className="flex items-center justify-between gap-2 text-xs text-muted/70">
-                  <span>+{rest.length} more ({restCount} holdings)</span>
-                  <span className="shrink-0 font-mono tabular-nums">
-                    {restWeight.toFixed(1)}% · {formatCurrency(restValue)}
-                  </span>
-                </li>
-              )}
-            </>
-          );
-        })()}
+        {shown.map((s, i) => (
+          <li key={s.key} className="flex items-center justify-between gap-2 text-xs">
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span aria-hidden className="h-2 w-2 shrink-0 rounded-sm" style={{ backgroundColor: colorFor(i)! }} />
+              <span className="truncate text-foreground">{s.label}</span>
+              <span className="shrink-0 text-muted/60">({s.count})</span>
+            </span>
+            <span className="shrink-0 font-mono tabular-nums text-muted">
+              {s.weight.toFixed(1)}% · {formatCurrency(s.value)}
+            </span>
+          </li>
+        ))}
+        {rest.length > 0 && (
+          <li className="flex items-center justify-between gap-2 text-xs text-muted/70">
+            <span className="flex items-center gap-1.5">
+              <span aria-hidden className="h-2 w-2 shrink-0 rounded-sm bg-muted/40" />
+              +{rest.length} more ({restCount} holdings)
+            </span>
+            <span className="shrink-0 font-mono tabular-nums">
+              {restWeight.toFixed(1)}% · {formatCurrency(restValue)}
+            </span>
+          </li>
+        )}
       </ul>
 
       {/* We say when a breakdown is incomplete rather than lumping the remainder

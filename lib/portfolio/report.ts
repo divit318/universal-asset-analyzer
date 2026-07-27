@@ -42,13 +42,14 @@ export interface BuiltEvaluation {
  */
 export async function buildEvaluation(opts: ReportOptions = {}): Promise<BuiltEvaluation> {
   const raws = listRawHoldings();
+  const extra = opts.extraCandidateSymbols ?? [];
 
-  let ctx = await buildMarketContext(raws, { baseCurrency: opts.baseCurrency });
+  let ctx = await buildMarketContext(raws, { baseCurrency: opts.baseCurrency, candidateSymbols: extra });
   let { holdings, totalCost, marketPricedPct, stalePct } = normalizeHoldings(raws, ctx);
   let evaluation: PortfolioEvaluation = evaluate(holdings, ctx);
 
-  const neededCandidates = getRelevantCandidateSymbols(evaluation);
-  if (neededCandidates.length > 0) {
+  const neededCandidates = [...new Set([...extra, ...getRelevantCandidateSymbols(evaluation)])];
+  if (neededCandidates.length > extra.length) {
     ctx = await buildMarketContext(raws, { baseCurrency: opts.baseCurrency, candidateSymbols: neededCandidates });
     ({ holdings, totalCost, marketPricedPct, stalePct } = normalizeHoldings(raws, ctx));
     evaluation = evaluate(holdings, ctx);
@@ -107,6 +108,12 @@ export interface UniversalPortfolioReport {
 export interface ReportOptions {
   baseCurrency?: string;
   objective?: Objective;
+  /**
+   * Additional symbols to fetch alongside the portfolio's own gap-fill
+   * candidates — e.g. a Watchlist symbol under consideration that isn't held
+   * and isn't a recommendation-engine candidate. Merged into both fetch passes.
+   */
+  extraCandidateSymbols?: string[];
 }
 
 /**

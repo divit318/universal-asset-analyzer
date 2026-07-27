@@ -13,7 +13,7 @@ import { useToast } from "@/app/_components/toast";
 import { useIOSSafe } from "@/lib/ios-context";
 import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
 import { WatchlistAlerts } from "./_components/watchlist-alerts";
-import { BuyModal } from "./_components/buy-modal";
+import { AddToPortfolioModal } from "@/app/_components/portfolio/add-to-portfolio-modal";
 import { ArrivalHighlight, useArrivalTarget } from "@/app/_components/arrival-highlight";
 import { PageShell } from "@/app/_components/ui";
 
@@ -444,13 +444,13 @@ function WatchlistPageInner() {
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
           <Link
-            href="/intelligence?view=timeline&scope=watchlist&id=watchlist"
+            href="/"
             className="flex items-center rounded-lg border border-border px-4 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
           >
-            Timeline
+            The Desk
           </Link>
           <Link
-            href="/intelligence?view=graph&scope=watchlist&id=watchlist"
+            href="/knowledge-graph?scope=watchlist&id=watchlist"
             className="flex items-center rounded-lg border border-border px-4 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
           >
             Graph
@@ -772,8 +772,9 @@ function WatchlistPageInner() {
       ) : null}
 
       {buyingItem ? (
-        <BuyModal
+        <AddToPortfolioModal
           item={buyingItem}
+          fit={fitScores.get(buyingItem.symbol)}
           onClose={() => setBuyingItem(null)}
           onSuccess={(result) => {
             setOwnedSymbols((prev) => new Set(prev).add(result.symbol));

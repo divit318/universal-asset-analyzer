@@ -103,13 +103,13 @@ export function InvestmentThesisPanel({
         </div>
         <div className="ml-auto flex gap-1.5">
           <Link
-            href={`/intelligence?view=timeline&scope=symbol&id=${encodeURIComponent(ticker)}`}
+            href={`/journal?symbol=${encodeURIComponent(ticker)}`}
             className="rounded-md border border-border px-2.5 py-1 text-xs text-muted hover:border-accent/40 hover:text-accent transition-colors"
           >
-            Timeline
+            Journal
           </Link>
           <Link
-            href={`/intelligence?view=graph&scope=symbol&id=${encodeURIComponent(ticker)}`}
+            href={`/knowledge-graph?scope=symbol&id=${encodeURIComponent(ticker)}`}
             className="rounded-md border border-border px-2.5 py-1 text-xs text-muted hover:border-accent/40 hover:text-accent transition-colors"
           >
             Graph

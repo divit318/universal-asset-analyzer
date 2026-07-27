@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { DcfPrefill } from "../api/dcf/route";
 import { downloadBlob } from "@/lib/download";
 import { formatCurrency, formatCompact } from "@/lib/format";
 import { SymbolSearch } from "@/app/_components/symbol-search";
 import { useIOSSafe } from "@/lib/ios-context";
+import { useFocusSafe } from "@/lib/focus-context";
 import { PageShell } from "@/app/_components/ui";
 import { useBootReady } from "@/app/_components/boot-context";
 
@@ -120,6 +121,7 @@ interface SavedInputs { fcf: string; shares: string; netDebt: string; growthRate
 
 export default function DcfPage() {
   const ios = useIOSSafe();
+  const focus = useFocusSafe();
   const [symbol, setSymbol] = useState("");
   const [input, setInput] = useState("");
   const [prefill, setPrefill] = useState<DcfPrefill | null>(null);
@@ -187,12 +189,16 @@ export default function DcfPage() {
       if (!res.ok) throw new Error(json.error ?? "Lookup failed");
       setPrefill(json);
       setSymbol(json.symbol);
+      focus?.recordFocus(json.symbol);
       applyPrefill(json);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Lookup failed");
     } finally {
       setLoading(false);
     }
+    // `focus.recordFocus` is stable; adding `focus` (whose identity changes on
+    // each record) would re-create lookup and re-fetch in a loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applyPrefill]);
 
   useEffect(() => {
@@ -200,6 +206,22 @@ export default function DcfPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (sym) { setInput(sym); void lookup(sym); }
   }, [lookup]);
+
+  // Prefill the input from the focus spine when the page opens without a symbol
+  // of its own (§4.4). Seeds the box only — no fetch — and an explicit URL param
+  // or this page's own restored symbol always wins. Runs once, when the spine
+  // has hydrated (it populates after mount).
+  const prefilledRef = useRef(false);
+  useEffect(() => {
+    if (prefilledRef.current || !focus?.mostRecent) return;
+    if (new URLSearchParams(window.location.search).get("symbol") || input) {
+      prefilledRef.current = true;
+      return;
+    }
+    prefilledRef.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setInput(focus.mostRecent);
+  }, [focus?.mostRecent, input]);
 
   useEffect(() => {
     document.title = symbol ? `${symbol} DCF · UAA` : "DCF Calculator · UAA";

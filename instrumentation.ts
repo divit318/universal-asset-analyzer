@@ -4,4 +4,7 @@ export async function register() {
   // lib/db.ts (node:sqlite), which must never be bundled for the edge runtime.
   const { startMonitorScheduler } = await import("@/lib/monitor");
   startMonitorScheduler();
+
+  const { startScannerScheduler } = await import("@/lib/scanner/scheduler");
+  startScannerScheduler();
 }

@@ -34,6 +34,8 @@ export type Objective =
   | "maximize_diversification"
   | "inflation_protection"
   | "preserve_capital"
+  | "balanced"
+  | "growth"
   | "target_allocation";
 
 export interface ObjectiveConfig {
@@ -94,6 +96,18 @@ export const OBJECTIVES: Record<Objective, ObjectiveConfig> = {
     icon: "◈",
     target: { bond: 45, cash: 30, equity: 12, etf: 8, commodity: 5 },
   },
+  balanced: {
+    label: "Balanced",
+    description: "A classic 60/40-style split — growth and ballast in roughly equal measure.",
+    icon: "⚖",
+    target: { equity: 35, etf: 20, bond: 30, reit: 5, commodity: 5, cash: 5 },
+  },
+  growth: {
+    label: "Growth",
+    description: "Equity-tilted for long-horizon appreciation, with less concentration than Maximize Return.",
+    icon: "▲",
+    target: { equity: 45, etf: 25, bond: 10, reit: 5, commodity: 5, crypto: 3, cash: 7 },
+  },
   target_allocation: {
     label: "Custom Target",
     description: "Your own strategic allocation.",
@@ -106,6 +120,8 @@ export interface Constraints {
   maxHoldingPct: number;
   maxAssetClassPct: number;
   maxSectorPct: number;
+  /** Cap on any single country/geography's combined target weight. */
+  maxCountryPct: number;
   minCashPct: number;
   /** Cap on holdings that cannot be sold within days. */
   maxIlliquidPct: number;
@@ -120,6 +136,11 @@ export const DEFAULT_CONSTRAINTS: Constraints = {
   maxHoldingPct: MAX_SINGLE_HOLDING_PCT,
   maxAssetClassPct: 70,
   maxSectorPct: 40,
+  // Generous by design: most real portfolios are heavily home-country-biased
+  // (allocation.ts's own concentration checker only flags single-currency at
+  // ≥90% as "medium", not "high") — this is a genuine backstop, not a rule
+  // that fires on every US-based retail portfolio by default.
+  maxCountryPct: 90,
   minCashPct: 2,
   maxIlliquidPct: 30,
   maxDuration: null,
@@ -239,8 +260,52 @@ function distributeWithinClass(
   return out;
 }
 
-/** Renormalize a target map to sum to 100. */
-function normalize(target: Partial<Record<PortfolioAssetClass, number>>): Map<PortfolioAssetClass, number> {
+/**
+ * Cap any sector or geography group's combined target weight at the constraint,
+ * scaling every tradeable holding in an over-cap group down proportionally. The
+ * freed budget is not redistributed into other groups — like a per-class cap, it
+ * simply isn't placed here, and flows to cash via the residual invariant computed
+ * right after this runs. Same "excess doesn't evaporate, it becomes cash"
+ * discipline the per-class cap already relies on for maxAssetClassPct.
+ */
+function capByAttribute(
+  holdings: Holding[],
+  targetWeights: Map<string, number>,
+  attrOf: (h: Holding) => string | null,
+  maxPct: number,
+  isFrozen: (h: Holding) => boolean,
+  isExcluded: (h: Holding) => boolean,
+  label: string,
+  warnings: string[],
+): void {
+  const groups = new Map<string, Holding[]>();
+  for (const h of holdings) {
+    if (isFrozen(h) || isExcluded(h) || h.assetClass === "cash") continue;
+    const key = attrOf(h);
+    if (key == null) continue;
+    const list = groups.get(key) ?? [];
+    list.push(h);
+    groups.set(key, list);
+  }
+
+  for (const [key, hs] of groups) {
+    const sum = hs.reduce((s, h) => s + (targetWeights.get(h.id) ?? 0), 0);
+    if (sum > maxPct + 1e-9) {
+      const factor = maxPct / sum;
+      for (const h of hs) targetWeights.set(h.id, (targetWeights.get(h.id) ?? 0) * factor);
+      warnings.push(
+        `${label} "${key}" would be ${sum.toFixed(0)}% of the portfolio, above the ${maxPct}% cap — scaled down to fit; the freed budget routes to cash.`,
+      );
+    }
+  }
+}
+
+/**
+ * Renormalize a target map to sum to 100. Exported so the Capital Allocation
+ * Engine (cash.ts) can measure "distance to the same strategic target" using the
+ * exact same objective definitions this file owns — one table, two consumers.
+ */
+export function normalize(target: Partial<Record<PortfolioAssetClass, number>>): Map<PortfolioAssetClass, number> {
   const entries = Object.entries(target) as [PortfolioAssetClass, number][];
   const sum = entries.reduce((s, [, v]) => s + v, 0);
   const out = new Map<PortfolioAssetClass, number>();
@@ -339,6 +404,12 @@ export function optimize(
     const dist = distributeWithinClass(tradeableInClass, budgetForTradeable, constraints.maxHoldingPct);
     for (const [id, w] of dist) targetWeights.set(id, w);
   }
+
+  // Sector/geography caps run AFTER per-class placement, BEFORE the cash residual
+  // is computed, so any excess they scale off correctly flows to cash below rather
+  // than silently vanishing.
+  capByAttribute(holdings, targetWeights, (h) => h.attributes.sector ?? null, constraints.maxSectorPct, isFrozen, isExcluded, "Sector", warnings);
+  capByAttribute(holdings, targetWeights, (h) => h.attributes.geography ?? null, constraints.maxCountryPct, isFrozen, isExcluded, "Geography", warnings);
 
   // Cash target = whatever the non-cash targets left unplaced.
   const nonCashSum = () =>

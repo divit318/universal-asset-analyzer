@@ -32,6 +32,8 @@ export async function GET(request: Request) {
     targetPrice: null,
     alertPctDrop: null,
     notes: null,
+    stage: "surfaced",
+    stageChangedAt: null,
   };
 
   const alerts = await gatherWatchlistAlerts(undefined, { items: [item] });

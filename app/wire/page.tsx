@@ -382,10 +382,10 @@ export default function ScannerPage() {
             )}
           </div>
           <Link
-            href="/intelligence#opportunities"
+            href="/"
             className="rounded-lg border border-border px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
           >
-            Mission Control →
+            The Desk →
           </Link>
         </div>
         <p className="text-sm text-muted">

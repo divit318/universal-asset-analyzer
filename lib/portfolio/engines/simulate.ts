@@ -254,7 +254,10 @@ export function estimateImpact(
   const inflAfter = after.risk.inflationSensitivity;
 
   return {
-    healthDelta: after.health.total - before.health.total,
+    // Unrounded on both sides: differencing the DISPLAYED integers made every
+    // realistic single-position change measure as exactly 0, which in turn made
+    // the sizing loop fall back entirely on its secondary asset-class signal.
+    healthDelta: after.health.totalExact - before.health.totalExact,
     riskDelta:
       volBefore != null && volAfter != null
         ? Math.round((volAfter - volBefore) * 10) / 10

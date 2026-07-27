@@ -4,7 +4,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { TrendingUp, TrendingDown, Clock3, Network, Link2, Bookmark } from "lucide-react";
+import { TrendingUp, TrendingDown, Clock3, Network, Link2, Bookmark, Wallet } from "lucide-react";
 import type {
   Filing,
   FundamentalsData,
@@ -26,6 +26,7 @@ import type { ScreenerInCompany, ScreenerInPeer } from "@/lib/screener-in";
 import { detectMarket, MARKET_BADGE, MARKET_LABEL, type MarketRegion } from "@/lib/market";
 import { detectAssetClass } from "@/lib/asset-class";
 import { useResearchBundle } from "@/lib/platform/client/use-research-bundle";
+import { useFocusSafe } from "@/lib/focus-context";
 import { useDataset, useDatasetValue } from "@/lib/platform/client/use-dataset";
 import { useRecordActivity } from "@/app/_home/use-record-activity";
 import {
@@ -63,6 +64,7 @@ import { ArrivalHighlight, useArrivalTarget } from "@/app/_components/arrival-hi
 import { TimelinePreviewCard } from "./_components/timeline-preview-card";
 import { GraphPreviewCard } from "./_components/graph-preview-card";
 import { RelatedOpportunitiesCard } from "./_components/related-opportunities-card";
+import { AddToPortfolioModal } from "@/app/_components/portfolio/add-to-portfolio-modal";
 
 // Fundamentals sub-components (US / global equity)
 import { ScoreCard } from "./_components/score-card";
@@ -314,6 +316,8 @@ function ResearchWorkspace({
   onCopyLink: () => void;
 }) {
   const { quote, history, filings, edgarError, benchmarks, news } = data;
+  const toast = useToast();
+  const [buyingOpen, setBuyingOpen] = useState(false);
   const market: MarketRegion = detectMarket(quote);
   const isEquity = !quote.assetType || quote.assetType === "EQUITY";
   const isIndia = market === "IN";
@@ -667,13 +671,13 @@ function ResearchWorkspace({
           {/* Action row */}
           <div className="flex flex-wrap items-center gap-1.5">
             <Link
-              href={`/intelligence?view=timeline&scope=symbol&id=${encodeURIComponent(quote.symbol)}`}
+              href={`/journal?symbol=${encodeURIComponent(quote.symbol)}`}
               className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-2 text-sm text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
             >
-              <Clock3 className="h-4 w-4" strokeWidth={1.75} /> Timeline
+              <Clock3 className="h-4 w-4" strokeWidth={1.75} /> Journal
             </Link>
             <Link
-              href={`/intelligence?view=graph&scope=symbol&id=${encodeURIComponent(quote.symbol)}`}
+              href={`/knowledge-graph?scope=symbol&id=${encodeURIComponent(quote.symbol)}`}
               className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-2 text-sm text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
             >
               <Network className="h-4 w-4" strokeWidth={1.75} /> Graph
@@ -702,6 +706,13 @@ function ResearchWorkspace({
             >
               <Bookmark className="h-4 w-4" strokeWidth={1.75} fill={saved ? "currentColor" : "none"} />
               {saved ? "Saved" : "Watchlist"}
+            </button>
+            <button
+              onClick={() => setBuyingOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-control border border-brand/40 bg-brand-muted px-3 py-2 text-sm font-medium text-brand outline-none transition-colors hover:bg-brand/20 focus-visible:ring-2 focus-visible:ring-brand/40"
+            >
+              <Wallet className="h-4 w-4" strokeWidth={1.75} />
+              Add to Portfolio
             </button>
           </div>
         </div>
@@ -784,6 +795,18 @@ function ResearchWorkspace({
           />
           {portfolioRecommendation && <PortfolioDecisionCard recommendation={portfolioRecommendation} />}
         </div>
+      )}
+
+      {buyingOpen && (
+        <AddToPortfolioModal
+          item={{ symbol: quote.symbol, name: quote.name }}
+          fit={portfolioFit ?? undefined}
+          onClose={() => setBuyingOpen(false)}
+          onSuccess={(result) => {
+            toast(`Bought ${result.symbol} — added to Portfolio`, "success");
+            ios?.refreshReport();
+          }}
+        />
       )}
 
       {/* ── 4b. Sector Intelligence — this company's sector rank/rotation ── */}
@@ -1480,6 +1503,7 @@ export default function ResearchPage() {
 
 function ResearchPageInner() {
   const router = useRouter();
+  const focus = useFocusSafe();
   const [symbol, setSymbol] = useState("");
   /** The symbol currently being researched. Changing it cancels the previous plan. */
   const [activeSymbol, setActiveSymbol] = useState<string | null>(null);
@@ -1583,14 +1607,33 @@ function ResearchPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Prefill the search box from the focus spine when the Hub opens without a
+  // symbol of its own (§4.4). Seeds the box only — no fetch, no submit — so the
+  // user still chooses to run it; URL param and this page's own restore win.
+  const prefilledRef = useRef(false);
+  useEffect(() => {
+    if (prefilledRef.current || !focus?.mostRecent) return;
+    const param = new URLSearchParams(window.location.search).get("symbol");
+    if (param || sessionStorage.getItem("uaa_research_symbol") || symbol) {
+      prefilledRef.current = true;
+      return;
+    }
+    prefilledRef.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSymbol(focus.mostRecent);
+  }, [focus?.mostRecent, symbol]);
+
   useEffect(() => {
     if (!activeSymbol) return;
+    // A researched symbol is the strongest "acted on" signal — record it in the
+    // focus spine so other tools carry the working name (§4.4).
+    focus?.recordFocus(activeSymbol);
     try {
       sessionStorage.setItem("uaa_research_symbol", activeSymbol);
     } catch {
       /* private browsing / quota — non-fatal */
     }
-  }, [activeSymbol]);
+  }, [activeSymbol, focus]);
 
   // Update tab title
   useEffect(() => {

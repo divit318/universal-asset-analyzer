@@ -1,9 +1,11 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import type { ChartDrawingRecord, PortfolioPosition, PortfolioLot, ResearchNote, StockFundamentals, WatchlistItem, SectorRotationEntry, TimelineEvent, Notification, Decision, DecisionAction, DecisionHorizon, ManualAsset, ManualAssetCategory } from "./types";
+import type { ChartDrawingRecord, PortfolioPosition, PortfolioLot, ResearchNote, StockFundamentals, WatchlistItem, IdeaStage, SectorRotationEntry, TimelineEvent, Notification, Decision, DecisionAction, DecisionHorizon, ManualAsset, ManualAssetCategory } from "./types";
 import { aggregateOpenPositions } from "./portfolio-lots";
+import { isIdeaStage, autoStageForTrade } from "./idea-stage";
 import type { AlertEvent } from "./alerts";
+import type { AttentionDismissal } from "./home/contracts";
 
 let db: DatabaseSync | null = null;
 
@@ -215,9 +217,37 @@ function getDb(): DatabaseSync {
       PRIMARY KEY (kind, ref)
     );
     CREATE INDEX IF NOT EXISTS idx_activity_at ON activity (at DESC);
+
+    -- Attention Queue dismissals (§13). One row per dismissed story identity
+    -- (dedupe_key). A dismissal suppresses the story until expires_at, after
+    -- which the same story is allowed back into the queue; a *materially worse*
+    -- version has a different dedupe_key and so is never suppressed by this row.
+    CREATE TABLE IF NOT EXISTS attention_dismissal (
+      dedupe_key   TEXT PRIMARY KEY,
+      dismissed_at INTEGER NOT NULL,
+      expires_at   INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_attention_dismissal_expires ON attention_dismissal (expires_at);
+
+    -- Change detection (lib/home/changes.ts). Exactly two slots: 'current' is
+    -- the state of the most recent digest build; 'baseline' is the state at the
+    -- end of the previous visit, promoted from 'current' when a new visit
+    -- starts (a VISIT_GAP_MS pause between builds). The diff shown on the
+    -- dashboard is always baseline vs the fresh build.
+    CREATE TABLE IF NOT EXISTS home_fingerprint (
+      slot     TEXT PRIMARY KEY CHECK (slot IN ('current', 'baseline')),
+      data     TEXT NOT NULL,
+      taken_at INTEGER NOT NULL
+    );
   `);
   // Migrate existing watchlist rows: add new columns if the DB predates them
   for (const col of ["target_price REAL", "alert_pct_drop REAL", "notes TEXT"]) {
+    try { db.exec(`ALTER TABLE watchlist ADD COLUMN ${col}`); } catch { /* already exists */ }
+  }
+  // Idea lifecycle (§4.5): every tracked symbol carries a stage. Safe on an
+  // existing populated table — ADD COLUMN with a NOT NULL DEFAULT backfills
+  // every prior row to 'surfaced', and the guard makes the migration idempotent.
+  for (const col of ["stage TEXT NOT NULL DEFAULT 'surfaced'", "stage_changed_at INTEGER"]) {
     try { db.exec(`ALTER TABLE watchlist ADD COLUMN ${col}`); } catch { /* already exists */ }
   }
   // Universal Portfolio: a lot used to be implicitly "shares of a US equity, in
@@ -263,38 +293,122 @@ interface WatchlistRow {
   target_price: number | null;
   alert_pct_drop: number | null;
   notes: string | null;
+  stage: string | null;
+  stage_changed_at: number | null;
 }
 
-export function listWatchlist(): WatchlistItem[] {
-  const rows = getDb()
-    .prepare("SELECT symbol, name, added_at, target_price, alert_pct_drop, notes FROM watchlist ORDER BY added_at DESC")
-    .all() as unknown as WatchlistRow[];
-  return rows.map((r) => ({
+function rowToWatchlistItem(r: WatchlistRow): WatchlistItem {
+  return {
     symbol: r.symbol,
     name: r.name,
     addedAt: r.added_at,
     targetPrice: r.target_price ?? null,
     alertPctDrop: r.alert_pct_drop ?? null,
     notes: r.notes ?? null,
-  }));
+    stage: isIdeaStage(r.stage) ? r.stage : "surfaced",
+    stageChangedAt: r.stage_changed_at ?? null,
+  };
+}
+
+export function listWatchlist(): WatchlistItem[] {
+  const rows = getDb()
+    .prepare("SELECT symbol, name, added_at, target_price, alert_pct_drop, notes, stage, stage_changed_at FROM watchlist ORDER BY added_at DESC")
+    .all() as unknown as WatchlistRow[];
+  return rows.map(rowToWatchlistItem);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Idea lifecycle — stage reads/writes (§4.5)                                  */
+/* -------------------------------------------------------------------------- */
+
+export function getIdeaStage(symbol: string): IdeaStage | null {
+  const row = getDb()
+    .prepare("SELECT stage FROM watchlist WHERE symbol = ?")
+    .get(symbol.toUpperCase()) as { stage: string | null } | undefined;
+  if (!row) return null;
+  return isIdeaStage(row.stage) ? row.stage : "surfaced";
+}
+
+/**
+ * Set a symbol's lifecycle stage. Returns whether the stage actually changed
+ * and what it was before — the caller uses that to raise a Journal prompt
+ * exactly once per real transition (§4.5). `stage_changed_at` is only bumped on
+ * a real change, so "days in stage" stays honest.
+ *
+ * `createIfMissing` adds the symbol to the pipeline at the given stage when it
+ * isn't tracked yet — how a buy of an untracked name becomes an `owned` idea
+ * (one pipeline, one object; §4.5 / P11). Without it, a no-op on an untracked
+ * symbol (a partial sell of a name never watched).
+ */
+export function setIdeaStage(
+  symbol: string,
+  stage: IdeaStage,
+  opts: { createIfMissing?: boolean; name?: string } = {},
+): { changed: boolean; from: IdeaStage | null } {
+  const db = getDb();
+  const sym = symbol.toUpperCase();
+  const from = getIdeaStage(sym);
+  const now = Date.now();
+
+  if (from === null) {
+    if (!opts.createIfMissing) return { changed: false, from: null };
+    db.prepare(
+      `INSERT INTO watchlist (symbol, name, added_at, stage, stage_changed_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(symbol) DO UPDATE SET stage = excluded.stage, stage_changed_at = excluded.stage_changed_at`,
+    ).run(sym, opts.name ?? sym, new Date(now).toISOString(), stage, now);
+    return { changed: true, from: null };
+  }
+
+  if (from === stage) return { changed: false, from };
+  db.prepare("UPDATE watchlist SET stage = ?, stage_changed_at = ? WHERE symbol = ?").run(stage, now, sym);
+  return { changed: true, from };
+}
+
+/**
+ * Auto-transition a symbol's stage after a ledger write (§4.5). Buy → owned
+ * (adding the name to the pipeline if untracked); a sell that fully closes the
+ * position → exited (only for names already tracked). Called from the two
+ * ledger write primitives so every buy/sell path reconciles the pipeline
+ * without each route wiring it. Descriptive only — never blocks the write.
+ */
+function reconcileStageForLedgerWrite(symbol: string, name: string, kind: "buy" | "sell", assetClass: string): void {
+  const stillHeld =
+    kind === "sell"
+      ? aggregateOpenPositions(listLots(symbol.toUpperCase())).some(
+          (p) => p.symbol.toUpperCase() === symbol.toUpperCase() && p.shares > 1e-9,
+        )
+      : true;
+  const next = autoStageForTrade({ kind, assetClass, symbol, stillHeld });
+  if (!next) return;
+  try {
+    setIdeaStage(symbol, next, { createIfMissing: next === "owned", name });
+  } catch {
+    /* stage reconciliation must never break a trade write */
+  }
 }
 
 export function addToWatchlist(symbol: string, name: string): WatchlistItem {
-  const item: WatchlistItem = {
-    symbol: symbol.toUpperCase(),
-    name,
-    addedAt: new Date().toISOString(),
-    targetPrice: null,
-    alertPctDrop: null,
-    notes: null,
-  };
+  const sym = symbol.toUpperCase();
+  const addedAt = new Date().toISOString();
   getDb()
     .prepare(
       `INSERT INTO watchlist (symbol, name, added_at) VALUES (?, ?, ?)
        ON CONFLICT(symbol) DO UPDATE SET name = excluded.name`,
     )
-    .run(item.symbol, item.name, item.addedAt);
-  return item;
+    .run(sym, name, addedAt);
+  return {
+    symbol: sym,
+    name,
+    addedAt,
+    targetPrice: null,
+    alertPctDrop: null,
+    notes: null,
+    // A brand-new row defaults to 'surfaced'; an existing one keeps its stage
+    // (the insert leaves stage untouched on conflict).
+    stage: getIdeaStage(sym) ?? "surfaced",
+    stageChangedAt: null,
+  };
 }
 
 export function updateWatchlistItem(
@@ -772,6 +886,7 @@ export function addUniversalLot(input: {
       input.unit ?? "shares",
       input.meta ? JSON.stringify(input.meta) : null,
     );
+  reconcileStageForLedgerWrite(input.symbol, input.name, input.kind, input.assetClass);
 }
 
 export interface LotWrite {
@@ -827,6 +942,11 @@ export function executeTradeBatch(lots: LotWrite[], manualAssetIdsToDelete: stri
   } catch (err) {
     database.exec("ROLLBACK");
     throw err;
+  }
+  // Reconcile pipeline stages AFTER the batch commits, so a rebalance that fully
+  // exits a position marks it `exited` and any buy marks its symbol `owned`.
+  for (const lot of lots) {
+    reconcileStageForLedgerWrite(lot.symbol, lot.name, lot.kind, lot.assetClass);
   }
 }
 
@@ -1727,4 +1847,67 @@ export function listActivity(limit = 6): ActivityRow[] {
   return getDb()
     .prepare("SELECT kind, ref, label, href, at FROM activity ORDER BY at DESC LIMIT ?")
     .all(limit) as unknown as ActivityRow[];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Attention Queue dismissals (§13)                                            */
+/* -------------------------------------------------------------------------- */
+
+interface AttentionDismissalRow {
+  dedupe_key: string;
+  dismissed_at: number;
+  expires_at: number;
+}
+
+/** Persist (or refresh) a dismissal of a story identity until `expiresAt`. */
+export function dismissAttention(dedupeKey: string, dismissedAt: number, expiresAt: number): void {
+  getDb()
+    .prepare(
+      `INSERT INTO attention_dismissal (dedupe_key, dismissed_at, expires_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(dedupe_key) DO UPDATE SET dismissed_at = excluded.dismissed_at, expires_at = excluded.expires_at`,
+    )
+    .run(dedupeKey, dismissedAt, expiresAt);
+}
+
+/** Remove a dismissal — the Undo path (§14). */
+export function undismissAttention(dedupeKey: string): void {
+  getDb().prepare("DELETE FROM attention_dismissal WHERE dedupe_key = ?").run(dedupeKey);
+}
+
+/**
+ * Active (unexpired) dismissals, pruning lapsed rows opportunistically on read
+ * (§12 — the queue never accumulates dead dismissal rows). The digest joins
+ * this into its build server-side (§18).
+ */
+export function listActiveDismissals(now: number = Date.now()): AttentionDismissal[] {
+  const db = getDb();
+  db.prepare("DELETE FROM attention_dismissal WHERE expires_at <= ?").run(now);
+  const rows = db
+    .prepare("SELECT dedupe_key, dismissed_at, expires_at FROM attention_dismissal")
+    .all() as unknown as AttentionDismissalRow[];
+  return rows.map((r) => ({ dedupeKey: r.dedupe_key, dismissedAt: r.dismissed_at, expiresAt: r.expires_at }));
+}
+
+/* -------------------------------------------------------------------------- */
+/* Home change-detection fingerprints (lib/home/changes.ts)                    */
+/* -------------------------------------------------------------------------- */
+
+export type HomeFingerprintSlot = "current" | "baseline";
+
+/** The stored blob is opaque JSON here; lib/home/changes.ts owns its shape. */
+export function getHomeFingerprint(slot: HomeFingerprintSlot): { data: string; takenAt: number } | null {
+  const row = getDb()
+    .prepare("SELECT data, taken_at FROM home_fingerprint WHERE slot = ?")
+    .get(slot) as { data: string; taken_at: number } | undefined;
+  return row ? { data: row.data, takenAt: row.taken_at } : null;
+}
+
+export function putHomeFingerprint(slot: HomeFingerprintSlot, data: string, takenAt: number): void {
+  getDb()
+    .prepare(
+      `INSERT INTO home_fingerprint (slot, data, taken_at) VALUES (?, ?, ?)
+       ON CONFLICT(slot) DO UPDATE SET data = excluded.data, taken_at = excluded.taken_at`,
+    )
+    .run(slot, data, takenAt);
 }
