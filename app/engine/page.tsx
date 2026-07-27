@@ -1216,7 +1216,7 @@ export default function EnginePage() {
   }, {});
 
   return (
-    <PageShell py="py-10 pb-24">
+    <PageShell py="py-10 pb-24" width="wide">
 
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">

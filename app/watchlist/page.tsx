@@ -11,11 +11,16 @@ import { formatCurrency, formatDate, formatPercent } from "@/lib/format";
 import { Dialog, ConfirmDialog } from "@/app/_components/dialog";
 import { useToast } from "@/app/_components/toast";
 import { useIOSSafe } from "@/lib/ios-context";
-import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
 import { WatchlistAlerts } from "./_components/watchlist-alerts";
 import { AddToPortfolioModal } from "@/app/_components/portfolio/add-to-portfolio-modal";
 import { ArrivalHighlight, useArrivalTarget } from "@/app/_components/arrival-highlight";
-import { PageShell } from "@/app/_components/ui";
+import {
+  PageShell,
+  DataTable,
+  DataTableAction,
+  ScoreChip,
+  type DataTableColumn,
+} from "@/app/_components/ui";
 
 function WatchlistDigestPanel({ digest, loading }: { digest: WatchlistDigest | null; loading: boolean }) {
   if (loading) {
@@ -351,8 +356,6 @@ function WatchlistPageInner() {
   }
 
   // IOS — portfolio fit per watchlist item
-  const [fitSort, setFitSort] = useState(false);
-
   // Fetch full research inputs for every symbol. Keyed on the symbol set so
   // adding/removing a stock re-enriches (server-side cache makes repeats cheap).
   const symbolsKey = items.map((i) => i.symbol).join(",");
@@ -400,24 +403,191 @@ function WatchlistPageInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ios?.profile.builtAt, ios?.profileReady, items.length, quoteKeys, fitDataKey]);
 
-  const filteredItems = [...items]
-    .filter((i) =>
-      !filter ||
-      i.symbol.toLowerCase().includes(filter.toLowerCase()) ||
-      i.name.toLowerCase().includes(filter.toLowerCase()),
-    )
-    .sort((a, b) => {
-      // When fit sort is active, rank by fit score first
-      if (fitSort && fitScores.size > 0) {
-        const af = fitScores.get(a.symbol)?.fitScore ?? 0;
-        const bf = fitScores.get(b.symbol)?.fitScore ?? 0;
-        if (bf !== af) return bf - af;
-      }
-      const aAlerts = checkAlerts(a, quotes[a.symbol]).length;
-      const bAlerts = checkAlerts(b, quotes[b.symbol]).length;
-      if (bAlerts !== aAlerts) return bAlerts - aAlerts;
-      return Date.parse(b.addedAt) - Date.parse(a.addedAt);
-    });
+  /* Filtering only. Ordering is the table's job now, because "which of my 57
+     names is furthest from its target" is a sort, not a preset — and the two
+     presets this page used to offer ("Recent", "Portfolio Fit") could not express
+     it. Alerts still win by default via the `alert` row tone plus the default
+     sort below. */
+  const filteredItems = items.filter((i) =>
+    !filter ||
+    i.symbol.toLowerCase().includes(filter.toLowerCase()) ||
+    i.name.toLowerCase().includes(filter.toLowerCase()),
+  );
+
+  /**
+   * The columns. Every one of them is sortable, which is the whole point: a
+   * watchlist exists to be ranked, and this one previously could not be.
+   *
+   * `toTarget` is the column that did not exist before and is arguably the single
+   * most useful thing a watchlist can show — how far each name is from the price
+   * you said you cared about.
+   */
+  const watchlistColumns: DataTableColumn<WatchlistItem>[] = [
+    {
+      key: "symbol",
+      label: "Symbol",
+      sortValue: (i) => i.symbol,
+      render: (i) => (
+        <span className="flex flex-col gap-0.5">
+          <span className="flex items-center gap-1.5">
+            <Link
+              href={`/research?symbol=${i.symbol}`}
+              onClick={(e) => e.stopPropagation()}
+              className="font-mono text-sm font-semibold text-brand hover:underline"
+            >
+              {i.symbol}
+            </Link>
+            {ownedSymbols.has(i.symbol) && (
+              <span className="rounded-full border border-positive/30 bg-positive/10 px-1 py-0 text-[9px] font-bold uppercase tracking-wide text-positive">
+                Owned
+              </span>
+            )}
+            {checkAlerts(i, quotes[i.symbol]).length > 0 && (
+              <span className="rounded-full bg-negative/15 px-1 py-0 text-[9px] font-bold uppercase tracking-wide text-negative">
+                Alert
+              </span>
+            )}
+          </span>
+          <span className="truncate text-[11px] text-muted">{i.name}</span>
+        </span>
+      ),
+    },
+    {
+      key: "price",
+      label: "Price",
+      numeric: true,
+      sortValue: (i) => quotes[i.symbol]?.price ?? null,
+      render: (i) => {
+        const q = quotes[i.symbol];
+        return q ? formatCurrency(q.price, q.currency) : "—";
+      },
+    },
+    {
+      key: "change",
+      label: "Today",
+      numeric: true,
+      sortValue: (i) => quotes[i.symbol]?.changePercent ?? null,
+      render: (i) => {
+        const q = quotes[i.symbol];
+        if (!q) return "—";
+        return (
+          <span className={q.changePercent >= 0 ? "text-positive" : "text-negative"}>
+            {formatPercent(q.changePercent)}
+          </span>
+        );
+      },
+    },
+    {
+      key: "target",
+      label: "Target",
+      numeric: true,
+      help: "Your price target for this name.",
+      sortValue: (i) => i.targetPrice ?? null,
+      render: (i) => (i.targetPrice != null ? formatCurrency(i.targetPrice) : "—"),
+      hideBelow: "sm",
+    },
+    {
+      key: "toTarget",
+      label: "To target",
+      numeric: true,
+      help: "How far today's price is from your target. Negative means it has already reached it.",
+      sortValue: (i) => {
+        const q = quotes[i.symbol];
+        if (!q || i.targetPrice == null) return null;
+        return ((q.price - i.targetPrice) / i.targetPrice) * 100;
+      },
+      render: (i) => {
+        const q = quotes[i.symbol];
+        if (!q || i.targetPrice == null) return "—";
+        const pct = ((q.price - i.targetPrice) / i.targetPrice) * 100;
+        return (
+          <span className={pct <= 0 ? "text-positive" : "text-muted"}>{formatPercent(pct)}</span>
+        );
+      },
+    },
+    {
+      key: "fit",
+      label: "Portfolio fit",
+      numeric: true,
+      help: "Does this belong in YOUR book? Not a view on the asset itself.",
+      sortValue: (i) => fitScores.get(i.symbol)?.fitScore ?? null,
+      render: (i) => (
+        <ScoreChip kind="fit" score={fitScores.get(i.symbol)?.fitScore ?? null} size="sm" showLabel={false} />
+      ),
+      hideBelow: "md",
+    },
+    {
+      key: "added",
+      label: "Added",
+      numeric: true,
+      sortValue: (i) => Date.parse(i.addedAt),
+      render: (i) => <span title={formatDate(i.addedAt)}>{formatDaysAgo(i.addedAt)}</span>,
+      hideBelow: "lg",
+    },
+    {
+      key: "notes",
+      label: "Note",
+      sortValue: (i) => i.notes ?? null,
+      render: (i) =>
+        i.notes ? (
+          <span className="line-clamp-1 max-w-56 text-[11px] italic text-muted/80">{i.notes}</span>
+        ) : (
+          <span className="text-muted/40">—</span>
+        ),
+      hideBelow: "xl",
+    },
+  ];
+
+  /**
+   * Expanded row: the per-name detail that used to be printed on every card.
+   *
+   * Moving it behind a click is what makes the list scannable. The old layout put
+   * notes, both alert settings, four cross-links and four action buttons on all 57
+   * rows at once — several hundred controls, of which a user needs the ones on
+   * exactly one row at a time.
+   */
+  function WatchlistRowDetail({ item, alerts }: { item: WatchlistItem; alerts: { type: string; message: string }[] }) {
+    return (
+      <div className="flex flex-col gap-2.5 px-3 py-3">
+        {alerts.map((a) => (
+          <p key={a.type} className="text-xs text-negative">
+            <span className="font-semibold">Alert: </span>
+            {a.message}
+          </p>
+        ))}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted">
+          <span title={formatDate(item.addedAt)}>Added {formatDaysAgo(item.addedAt)}</span>
+          {item.targetPrice != null && <span>Target {formatCurrency(item.targetPrice)}</span>}
+          {item.alertPctDrop != null && (
+            <span title="Fires when today's session decline exceeds this percentage">
+              Drop alert −{item.alertPctDrop}%
+            </span>
+          )}
+          {item.alertPctDrop == null && item.targetPrice == null && (
+            <span className="text-muted/60">No target or alert set</span>
+          )}
+        </div>
+        {item.notes && <p className="text-xs italic leading-relaxed text-muted/90">“{item.notes}”</p>}
+        <div className="flex flex-wrap gap-3 text-[11px]">
+          {[
+            { href: `/research?symbol=${item.symbol}`, label: "Research" },
+            { href: `/dcf?symbol=${item.symbol}`, label: "DCF" },
+            { href: `/ic-report?symbol=${item.symbol}`, label: "IC Report" },
+            { href: `/compare?symbols=${item.symbol}`, label: "Compare" },
+          ].map((l) => (
+            <Link
+              key={l.href}
+              href={l.href}
+              onClick={(e) => e.stopPropagation()}
+              className="text-muted underline-offset-2 hover:text-brand hover:underline"
+            >
+              {l.label} ↗
+            </Link>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   const alertCount = items.reduce((n, item) => n + checkAlerts(item, quotes[item.symbol]).length, 0);
 
@@ -426,7 +596,7 @@ function WatchlistPageInner() {
   const hasQuotes = Object.keys(quotes).length > 0;
 
   return (
-    <PageShell py="py-10">
+    <PageShell py="py-10" width="wide">
       <ArrivalHighlight targetId={highlightTarget} />
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
@@ -528,37 +698,6 @@ function WatchlistPageInner() {
             placeholder="Filter by ticker or name…"
             className="flex-1 rounded-lg border border-border bg-surface px-4 py-2.5 text-sm outline-none placeholder:text-muted focus:border-brand"
           />
-          {ios?.profileReady && ios.profile.hasPortfolio && (
-            <div
-              role="group"
-              aria-label="Sort watchlist"
-              className="flex items-center gap-1 rounded-lg border border-border bg-surface p-0.5 text-xs font-medium"
-            >
-              <span className="pl-2 pr-1 text-muted select-none">Sort</span>
-              <button
-                type="button"
-                onClick={() => setFitSort(false)}
-                aria-pressed={!fitSort}
-                title="Order by active alerts first, then most recently added"
-                className={`rounded-md px-3 py-1.5 transition-colors ${
-                  !fitSort ? "bg-brand/10 text-brand" : "text-muted hover:text-brand"
-                }`}
-              >
-                Recent
-              </button>
-              <button
-                type="button"
-                onClick={() => setFitSort(true)}
-                aria-pressed={fitSort}
-                title="Order by Portfolio Fit score, best fit first"
-                className={`flex items-center gap-1 rounded-md px-3 py-1.5 transition-colors ${
-                  fitSort ? "bg-brand/10 text-brand" : "text-muted hover:text-brand"
-                }`}
-              >
-                ✦ Portfolio Fit
-              </button>
-            </div>
-          )}
         </div>
       )}
 
@@ -593,158 +732,33 @@ function WatchlistPageInner() {
       ) : filteredItems.length === 0 ? (
         <p className="text-sm text-muted">No items match &ldquo;{filter}&rdquo;</p>
       ) : (
-        <ul className="flex flex-col divide-y divide-border overflow-hidden rounded-xl border border-border">
-          {filteredItems.map((item) => {
-            const q = quotes[item.symbol];
-            const positive = q ? q.changePercent >= 0 : true;
-            const alerts = checkAlerts(item, q);
-            const hasAlert = alerts.length > 0;
-
-            return (
-              <li
-                key={item.symbol}
-                data-arrival-target={item.symbol}
-                className={`flex flex-col bg-surface transition-colors ${hasAlert ? "border-l-4 border-l-negative" : ""}`}
-              >
-                {/* Alert banners */}
-                {alerts.map((a) => (
-                  <div
-                    key={a.type}
-                    className="flex items-center gap-2 border-b border-negative/20 bg-negative/8 px-4 py-1.5"
-                  >
-                    <span className="text-xs font-semibold text-negative">Alert:</span>
-                    <span className="text-xs text-negative">{a.message}</span>
-                  </div>
-                ))}
-
-                <div className="flex items-start justify-between gap-4 px-4 py-4">
-                  {/* Symbol + meta */}
-                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <Link
-                        href={`/research?symbol=${item.symbol}`}
-                        className="font-mono text-sm font-semibold text-brand hover:underline"
-                      >
-                        {item.symbol}
-                      </Link>
-                      {ios?.profileReady && ios.profile.hasPortfolio && fitScores.has(item.symbol) && (() => {
-                        const fit = fitScores.get(item.symbol)!;
-                        return <PortfolioFitBadge score={fit.fitScore} tier={fit.fitTier} showScore={true} />;
-                      })()}
-                      {hasAlert && (
-                        <span className="rounded-full bg-negative/15 px-1.5 py-0.5 text-[0.6rem] font-bold uppercase tracking-wide text-negative">
-                          Alert
-                        </span>
-                      )}
-                      {ownedSymbols.has(item.symbol) && (
-                        <span className="rounded-full border border-positive/30 bg-positive/10 px-1.5 py-0.5 text-[0.6rem] font-bold uppercase tracking-wide text-positive">
-                          ✓ Owned
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-sm text-muted">{item.name}</p>
-
-                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted">
-                      <span title={formatDate(item.addedAt)}>Added {formatDaysAgo(item.addedAt)}</span>
-                      {item.targetPrice != null ? (
-                        <span className="rounded-full border border-brand/30 bg-brand/5 px-1.5 py-0.5 text-brand">
-                          Target {formatCurrency(item.targetPrice)}
-                        </span>
-                      ) : null}
-                      {item.alertPctDrop != null ? (
-                        <span
-                          className="rounded-full border border-border bg-surface-2 px-1.5 py-0.5"
-                          title="Fires when today's session decline exceeds this percentage"
-                        >
-                          Drop alert −{item.alertPctDrop}%
-                        </span>
-                      ) : null}
-                    </div>
-
-                    {item.notes ? (
-                      <p className="mt-1.5 line-clamp-2 text-xs italic text-muted/80">
-                        &ldquo;{item.notes}&rdquo;
-                      </p>
-                    ) : null}
-
-                    {/* Cross-page quick links — visible size */}
-                    <div className="mt-2.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
-                      <Link
-                        href={`/dcf?symbol=${item.symbol}`}
-                        className="text-muted underline-offset-2 hover:text-brand hover:underline"
-                      >
-                        DCF ↗
-                      </Link>
-                      <Link
-                        href={`/ic-report?symbol=${item.symbol}`}
-                        className="text-muted underline-offset-2 hover:text-brand hover:underline"
-                      >
-                        IC Report ↗
-                      </Link>
-                      <Link
-                        href={`/compare?symbols=${item.symbol}`}
-                        className="text-muted underline-offset-2 hover:text-brand hover:underline"
-                      >
-                        Compare ↗
-                      </Link>
-                      <Link
-                        href={`/stocks/${item.symbol}`}
-                        className="text-muted underline-offset-2 hover:text-brand hover:underline"
-                      >
-                        Deep view ↗
-                      </Link>
-                    </div>
-                  </div>
-
-                  {/* Price */}
-                  <div className="shrink-0 text-right">
-                    {q ? (
-                      <>
-                        <div className="font-mono text-sm font-medium">{formatCurrency(q.price, q.currency)}</div>
-                        <div className={`text-xs ${positive ? "text-positive" : "text-negative"}`}>
-                          {formatPercent(q.changePercent)} today
-                        </div>
-                      </>
-                    ) : (
-                      <span className="text-xs text-muted">—</span>
-                    )}
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex shrink-0 flex-col items-end gap-1.5">
-                    <button
-                      onClick={() => setBuyingItem(item)}
-                      disabled={!q}
-                      title={!q ? "Waiting for a live price" : `Buy ${item.symbol}`}
-                      className="rounded-md bg-brand-strong px-3 py-1.5 text-xs font-semibold text-background transition-opacity hover:opacity-90 disabled:opacity-50"
-                    >
-                      Buy
-                    </button>
-                    <button
-                      onClick={() => setEditingAlerts(item)}
-                      className="rounded-md border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-brand hover:text-brand"
-                    >
-                      Set alerts
-                    </button>
-                    <button
-                      onClick={() => setEditingNotes(item)}
-                      className="rounded-md border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-brand hover:text-brand"
-                    >
-                      Notes
-                    </button>
-                    <button
-                      onClick={() => setConfirmDelete(item)}
-                      className="rounded-md px-2.5 py-1 text-xs text-muted transition-colors hover:bg-negative/10 hover:text-negative"
-                      aria-label={`Remove ${item.symbol} from watchlist`}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+        <DataTable
+          rows={filteredItems}
+          rowKey={(i) => i.symbol}
+          defaultSortKey={ios?.profileReady && ios.profile.hasPortfolio ? "fit" : "added"}
+          rowTone={(i) => (checkAlerts(i, quotes[i.symbol]).length > 0 ? "alert" : "default")}
+          toolbar={
+            <span>
+              {filteredItems.length} of {items.length} · click a row for notes, targets and alerts
+            </span>
+          }
+          columns={watchlistColumns}
+          actions={(item) => (
+            <>
+              <DataTableAction onClick={() => setBuyingItem(item)}>Buy…</DataTableAction>
+              <DataTableAction onClick={() => setEditingAlerts(item)}>Set alerts…</DataTableAction>
+              <DataTableAction onClick={() => setEditingNotes(item)}>Notes…</DataTableAction>
+              <DataTableAction href={`/research?symbol=${item.symbol}`}>Research</DataTableAction>
+              <DataTableAction href={`/dcf?symbol=${item.symbol}`}>DCF</DataTableAction>
+              <DataTableAction href={`/ic-report?symbol=${item.symbol}`}>IC Report</DataTableAction>
+              <DataTableAction href={`/compare?symbols=${item.symbol}`}>Compare</DataTableAction>
+              <DataTableAction tone="danger" onClick={() => setConfirmDelete(item)}>
+                Remove
+              </DataTableAction>
+            </>
+          )}
+          renderDetail={(item) => <WatchlistRowDetail item={item} alerts={checkAlerts(item, quotes[item.symbol])} />}
+        />
       )}
 
       {editingAlerts ? (

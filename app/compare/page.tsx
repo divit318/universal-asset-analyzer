@@ -479,7 +479,7 @@ export default function ComparePage() {
   }, [ios?.profile.builtAt, ios?.profileReady, validEntries.length]);
 
   return (
-    <PageShell py="py-10">
+    <PageShell py="py-10" width="wide">
       {/* Page header */}
       <div className="flex items-end justify-between gap-4">
         <div className="flex flex-col gap-1.5">

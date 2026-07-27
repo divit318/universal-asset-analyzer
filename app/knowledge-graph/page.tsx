@@ -41,7 +41,7 @@ function KnowledgeGraphInner() {
   );
 
   return (
-    <PageShell>
+    <PageShell width="wide">
       <PageHeader title="Knowledge Graph" description="How your names connect — companies, sectors, events, and theses." />
       <IntelligenceProvider initialView="graph" initialFocus={initialFocus} onStateChange={handleStateChange}>
         <GraphView />

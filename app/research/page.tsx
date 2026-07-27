@@ -1702,9 +1702,21 @@ function ResearchPageInner() {
   return (
     <PageShell gap="gap-6" py="py-10">
       <ArrivalHighlight targetId={highlightTarget} />
+      {/* The description is an ONBOARDING affordance, so it is shown only while
+          there is nothing to research yet.
+        
+          It is a 300-character feature list, and it used to sit above the company
+          header on every load — pushing NVDA's price, market cap and ranges below
+          y=220 on a 1000px viewport so that ~170px of the most valuable space on
+          the page was occupied by prose the user had already read. Once a symbol is
+          loaded, the instrument is the headline. */}
       <PageHeader
         title="Research Hub"
-        description="Universal investment research — equities, funds, crypto, commodities, forex, and macro across US, India, Japan, Europe & more via ticker search, plus derivatives, real estate, private markets, alternatives, and structured products."
+        description={
+          data
+            ? undefined
+            : "Equities, funds, crypto, commodities, forex and macro across US, India, Japan and Europe by ticker — plus derivatives, real estate, private markets and structured products."
+        }
       />
 
       {/* Search bar */}

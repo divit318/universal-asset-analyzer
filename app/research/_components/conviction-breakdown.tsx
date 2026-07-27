@@ -180,7 +180,16 @@ export function ConvictionBreakdown({ score, loading, verdict, risks, onViewRisk
           <span className="text-[10px] text-muted/50">Confidence based on available data</span>
         </div>
 
-        <div className="flex flex-col gap-2">
+        {/* A grid, not a stack.
+        
+            These six buckets carry ~18 numbers between them. As full-width rows
+            they occupied ~450px of vertical space with the entire middle of every
+            row empty — 900px of horizontal run for one label, one score and three
+            short chips. In two or three columns the same information reads in a
+            third of the height, and — more importantly — the six scores can be
+            compared against each other at a glance, which is the only reason to
+            show them together. */}
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {score.buckets.map((bucket) => {
             const pct = Math.round((bucket.points / bucket.max) * 100);
             const conf = confidenceLabel(pct);
@@ -188,31 +197,34 @@ export function ConvictionBreakdown({ score, loading, verdict, risks, onViewRisk
             return (
               <div
                 key={bucket.name}
-                className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-4"
+                className="flex flex-col gap-1.5 rounded-card border border-border bg-surface p-3"
               >
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-medium text-foreground">{bucket.name}</span>
-                  <div className="flex items-center gap-3">
-                    <span className={`text-xs font-semibold ${conf.cls}`}>{conf.text}</span>
-                    <span className="font-mono text-xs tabular-nums text-muted">
-                      {bucket.points}<span className="text-muted/40">/{bucket.max}</span>
-                    </span>
-                  </div>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="truncate text-xs font-medium text-foreground">{bucket.name}</span>
+                  <span className="shrink-0 font-mono text-xs tabular-nums text-muted">
+                    {bucket.points}<span className="text-muted/40">/{bucket.max}</span>
+                  </span>
                 </div>
 
                 {/* Confidence bar */}
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
+                <div className="h-1 w-full overflow-hidden rounded-full bg-surface-2">
                   <div
                     className={`h-full rounded-full transition-all duration-700 ${barColor(pct)}`}
                     style={{ width: `${pct}%` }}
                   />
                 </div>
 
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className={`text-[10px] font-semibold ${conf.cls}`}>{conf.text}</span>
+                </div>
+
                 {/* Factor details */}
                 {visibleFactors.length > 0 && (
-                  <div className="flex flex-wrap gap-x-4 gap-y-0.5 pt-0.5">
+                  <div className="flex flex-col gap-0.5">
                     {visibleFactors.map((f) => (
-                      <span key={f.label} className="text-[11px] text-muted/70">{f.detail}</span>
+                      <span key={f.label} className="truncate text-[11px] text-muted/70" title={f.detail}>
+                        {f.detail}
+                      </span>
                     ))}
                   </div>
                 )}

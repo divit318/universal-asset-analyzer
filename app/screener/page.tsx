@@ -488,7 +488,7 @@ export default function ScreenerPage() {
           : { kind: "no-matches", activeFilterCount: activeCount };
 
   return (
-    <PageShell py="py-10">
+    <PageShell py="py-10" width="wide">
       <div className="flex flex-col gap-3">
         <PageHeader
           title="Universal Screener"
