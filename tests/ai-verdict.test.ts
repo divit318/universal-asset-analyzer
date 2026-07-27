@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assembleVerdict, offlineVerdict, type VerdictPlan } from "@/lib/ai/verdict";
+import { assembleVerdict, offlineVerdict, parseVerdictFields, type VerdictPlan } from "@/lib/ai/verdict";
 
 /**
  * The verdict assembler is the shared "finish" step for BOTH the blocking
@@ -147,5 +147,41 @@ describe("offlineVerdict", () => {
     const v = offlineVerdict(PLAN);
     expect(v.catalysts.length).toBeGreaterThan(0);
     expect(Array.isArray(v.keyMetrics)).toBe(true);
+  });
+});
+
+/**
+ * Regression: the blocking path used `extractJsonObject(raw, {})`, which copies
+ * only the keys present in the `defaults` argument. With `{}` that is no keys,
+ * so a complete, valid verdict was reduced to `{}` and then re-expanded into
+ * `defaultFields` — /api/ai/verdict returned an empty thesis, no catalysts, no
+ * risks and confidence "low" for every symbol, discarding ~80s of inference.
+ * The Excel/PDF exporters read that route, so exports shipped blank verdicts.
+ */
+describe("parseVerdictFields", () => {
+  it("preserves every field the model emitted", () => {
+    const parsed = parseVerdictFields(JSON.stringify(COMPLETE));
+    expect(parsed).toEqual(COMPLETE);
+  });
+
+  it("survives the round trip through assembleVerdict", () => {
+    const v = assembleVerdict(PLAN, parseVerdictFields(JSON.stringify(COMPLETE)), "ollama");
+    expect(v.verdict).toBe("bullish");
+    expect(v.thesis).toBe(COMPLETE.thesis);
+    expect(v.catalysts).toEqual(COMPLETE.catalysts);
+    expect(v.risks).toEqual(COMPLETE.risks);
+    expect(v.confidence).toBe("high");
+    expect(v.keyMetrics).toHaveLength(1);
+  });
+
+  it("unwraps markdown-fenced and preamble-wrapped output", () => {
+    const raw = "Here is the analysis:\n```json\n" + JSON.stringify(COMPLETE) + "\n```";
+    expect(parseVerdictFields(raw).verdict).toBe("bullish");
+  });
+
+  it("degrades to an empty bag on unparseable output, so assembly defaults", () => {
+    expect(parseVerdictFields("the model refused to answer")).toEqual({});
+    expect(parseVerdictFields("[1,2,3]")).toEqual({});
+    expect(assembleVerdict(PLAN, parseVerdictFields("garbage"), "ollama").confidence).toBe("low");
   });
 });

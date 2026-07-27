@@ -34,7 +34,7 @@ import { runPrompt } from "../ai";
 import { getDataset, peekDataset } from "../platform/data-layer";
 import { writeCache } from "../platform/cache";
 import { cacheKey } from "../platform/registry";
-import { extractJsonObject } from "../json-extract";
+import { extractJson } from "../json-extract";
 import { detectAssetClass } from "../asset-class";
 import { formatCurrency, formatMarketCap } from "../format";
 import { getFundProfile, getHistory, getMacroSummary } from "../yahoo";
@@ -213,6 +213,25 @@ function coerceFields(plan: VerdictPlan, raw: Record<string, unknown>): VerdictF
 }
 
 /**
+ * Parse the model's raw output into the loose field bag {@link coerceFields}
+ * narrows. Returns `{}` when there is no parseable JSON object.
+ *
+ * Deliberately NOT `extractJsonObject`: that helper only copies keys that exist
+ * in the `defaults` object it is handed, so calling it with `{}` returned `{}`
+ * for every input — silently discarding a complete, valid verdict after ~80s of
+ * local inference. Defaulting is `coerceFields`'s job; this only parses.
+ */
+export function parseVerdictFields(raw: string): Record<string, unknown> {
+  try {
+    const parsed = extractJson<unknown>(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Generate a verdict without streaming — the blocking path.
  *
  * Never throws: an inference failure degrades to {@link offlineVerdict} so the
@@ -225,7 +244,7 @@ export async function generateVerdict(
   try {
     const raw = await runPrompt(plan.task, plan.prompt, { json: true, maxTokens: 800 });
     if (opts.signal?.aborted) return offlineVerdict(plan);
-    return assembleVerdict(plan, extractJsonObject<Record<string, unknown>>(raw, {}), "ollama");
+    return assembleVerdict(plan, parseVerdictFields(raw), "ollama");
   } catch {
     return offlineVerdict(plan);
   }
