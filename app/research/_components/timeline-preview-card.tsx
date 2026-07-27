@@ -63,10 +63,10 @@ export function TimelinePreviewCard({
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-medium">Investment Timeline</h3>
         <Link
-          href={`/intelligence?view=timeline&scope=symbol&id=${encodeURIComponent(symbol)}`}
+          href={`/journal?symbol=${encodeURIComponent(symbol)}`}
           className="text-xs text-accent hover:underline"
         >
-          View full timeline →
+          Open in Journal →
         </Link>
       </div>
       <ul className="flex flex-col gap-2.5">

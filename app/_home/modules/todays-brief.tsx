@@ -19,11 +19,13 @@
 
 import { useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
-import { Sparkles, ArrowRight, ExternalLink, X, Clock, Trophy, TrendingDown } from "lucide-react";
+import { Sparkles, ArrowRight, ExternalLink, X, Clock, Trophy, TrendingDown, GitCompareArrows } from "lucide-react";
+import { explainHealth } from "@/lib/home/explain";
 import { getHomeModule } from "@/lib/home/registry";
 import { fmtSignedPct, fmtMoney } from "../_viz/format";
 import { useCountUp } from "../_atmosphere/use-count-up";
 import { SymbolTag } from "../_atmosphere/symbol-link";
+import { ExplainableValue } from "../_atmosphere/explain-popover";
 import { useHome, useHomeSlice } from "../home-provider";
 
 const definition = getHomeModule("todays-brief");
@@ -84,7 +86,25 @@ export function TodaysBriefModule() {
   const actions = useHomeSlice("recommendedActions");
   const market = useHomeSlice("marketIntelligence");
   const activity = useHomeSlice("activity");
+  const changes = useHomeSlice("changes");
   const [dismissed, setDismissed] = useState(false);
+
+  // The hero's change line: counts only, worst tone first — the full ranked
+  // list lives in the change band this line scrolls to.
+  const changeSummary = useMemo(() => {
+    const feed = changes.data;
+    if (!feed || feed.firstVisit || feed.changes.length === 0) return null;
+    const worsened = feed.changes.filter((c) => c.tone === "worsened").length;
+    const fresh = feed.changes.filter((c) => c.tone === "new").length;
+    const parts: string[] = [];
+    if (worsened > 0) parts.push(`${worsened} worsened`);
+    if (fresh > 0) parts.push(`${fresh} new`);
+    return {
+      count: feed.changes.length,
+      note: parts.length > 0 ? parts.join(" · ") : "all informational",
+      hasWorsened: worsened > 0,
+    };
+  }, [changes.data]);
 
   // Resume chip — the retired `continue` module's job, folded into the brief's
   // footer (§4.1). The most recent place the user was working.
@@ -181,6 +201,22 @@ export function TodaysBriefModule() {
           </p>
         )}
 
+        {/* Change line — deltas first: what moved since the last visit. */}
+        {changeSummary ? (
+          <button
+            type="button"
+            onClick={() => document.getElementById("whats-changed")?.scrollIntoView({ behavior: "smooth", block: "center" })}
+            className={`inline-flex w-fit items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand/40 ${
+              changeSummary.hasWorsened
+                ? "border-negative/30 bg-negative/8 text-negative hover:border-negative/60"
+                : "border-brand/30 bg-brand/8 text-brand hover:border-brand/60"
+            }`}
+          >
+            <GitCompareArrows className="h-3.5 w-3.5" strokeWidth={2} />
+            {changeSummary.count} change{changeSummary.count === 1 ? "" : "s"} since your last visit — {changeSummary.note}
+          </button>
+        ) : null}
+
         {/* Contributor / detractor line — read straight from the pulse. */}
         {p && (p.bestPerformer || p.worstPerformer) ? (
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
@@ -218,7 +254,9 @@ export function TodaysBriefModule() {
                 tone={p!.todayChangePct >= 0 ? "text-positive" : "text-negative"}
               />
               {p!.healthGrade ? (
-                <Stat label="Grade" value={`${p!.healthGrade} · ${p!.healthScore ?? "—"}`} />
+                <ExplainableValue explanation={explainHealth(p!)}>
+                  <Stat label="Grade" value={`${p!.healthGrade} · ${p!.healthScore ?? "—"}`} />
+                </ExplainableValue>
               ) : null}
             </>
           ) : null}

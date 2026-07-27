@@ -39,6 +39,7 @@ function discoverRoutes(dir: string, base = ""): string[] {
 const COMPONENT_IDS: HomeModuleId[] = [
   "todays-brief",
   "book",
+  "whats-changed",
   "attention-queue",
   "radar",
   "market-intelligence",

@@ -14,7 +14,7 @@
 
 import type { UniversalPortfolioReport } from "../portfolio/report";
 import type { HealthScore } from "../portfolio/engines/health";
-import type { HealthRadarAxis, PortfolioPulse, PulseMover } from "./contracts";
+import type { HealthFactor, HealthRadarAxis, PortfolioPulse, PulseMover } from "./contracts";
 
 /** An empty portfolio has no pulse. It says so, rather than rendering zeros. */
 const EMPTY: PortfolioPulse = {
@@ -36,6 +36,7 @@ const EMPTY: PortfolioPulse = {
   biggestStrength: null,
   biggestWeakness: null,
   healthCoveragePct: null,
+  healthFactors: [],
 };
 
 /**
@@ -111,6 +112,31 @@ export function buildHealthRadar(health: HealthScore): HealthRadarAxis[] {
   }
 
   return axes;
+}
+
+/**
+ * Projects the health engine's dimensions onto explanation rows, reading the
+ * engine's OWN arithmetic verbatim: `effectiveWeight` (weight × coverage,
+ * renormalized) and `scoreExact × effectiveWeight` are exactly the terms
+ * `computeHealth` summed to produce `totalExact` — so the rows genuinely add
+ * up to the number on screen, rather than approximating it.
+ */
+export function buildHealthFactors(health: HealthScore): HealthFactor[] {
+  return (health.dimensions ?? [])
+    .map<HealthFactor>((d) => {
+      const scored = d.score != null;
+      return {
+        label: d.name,
+        score: d.score,
+        weightShare: scored ? d.effectiveWeight : null,
+        contributionPts: scored ? Math.round((d.scoreExact ?? 0) * d.effectiveWeight * 10) / 10 : null,
+        covered: scored && d.coverage > 0,
+        coveragePct: Math.round(d.coverage * 100),
+      };
+    })
+    // Biggest contributors first; abstained dimensions sink to the bottom
+    // (they still render, faded — an abstention is information).
+    .sort((a, b) => (b.contributionPts ?? -1) - (a.contributionPts ?? -1));
 }
 
 /**
@@ -191,5 +217,6 @@ export function buildPortfolioPulse(report: UniversalPortfolioReport | null): Po
     biggestStrength,
     biggestWeakness,
     healthCoveragePct: report.health.coveragePct ?? null,
+    healthFactors: buildHealthFactors(report.health),
   };
 }

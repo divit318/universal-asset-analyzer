@@ -251,6 +251,7 @@ describe("feeders", () => {
         id: "d1", symbol: "MSFT", action: "REDUCE", title: "Trim MSFT", reason: "conviction fell",
         decisionScore: 76, priority: 1, confidence: 0.7, expectedImpact: null, expectedImprovement: null,
         severity: "high", href: "/research?symbol=MSFT", source: "decision",
+        why: null, impact: null, alternativesEvaluated: null,
       },
     ];
     const [s] = seedsFromActions(actions);
@@ -265,7 +266,7 @@ describe("feeders", () => {
     const base: RecommendedAction = {
       id: "d1", symbol: "MSFT", action: "REDUCE", title: "Trim", reason: "x", decisionScore: 76,
       priority: 1, confidence: 0.7, expectedImpact: null, expectedImprovement: null, severity: "high",
-      href: "/x", source: "decision",
+      href: "/x", source: "decision", why: null, impact: null, alternativesEvaluated: null,
     };
     const before = seedsFromActions([base])[0].dedupeKey;
     const after = seedsFromActions([{ ...base, decisionScore: 64 }])[0].dedupeKey;

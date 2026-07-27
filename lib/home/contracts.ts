@@ -15,8 +15,8 @@
 import type { CardStatus, ActionQueueItem, OpportunitySnapshotItem, UpcomingEventLite, SectorAttentionChange } from "../mission-control";
 import type { Freshness } from "../provenance";
 import type { TrackRecord } from "../decision-journal";
-import type { DecisionCard } from "../portfolio/engines/decision";
-import type { WatchlistAlert } from "../types";
+import type { DecisionCard, WhyExplanation } from "../portfolio/engines/decision";
+import type { IdeaStage, WatchlistAlert } from "../types";
 
 export type { CardStatus, ActionQueueItem, OpportunitySnapshotItem, UpcomingEventLite, SectorAttentionChange };
 
@@ -104,6 +104,24 @@ export interface HealthRadarAxis {
   covered: boolean;
 }
 
+/**
+ * One dimension of the health score, carried with enough of the engine's own
+ * arithmetic (weight × coverage, renormalized) that the client can show exactly
+ * how the total was produced. Never recomputed client-side beyond display math.
+ */
+export interface HealthFactor {
+  label: string;
+  /** The dimension's own 0-100 score; null = the engine abstained. */
+  score: number | null;
+  /** Share of the renormalized effective weight, 0-1. Null when abstained. */
+  weightShare: number | null;
+  /** weightShare × score — this dimension's points inside the total. */
+  contributionPts: number | null;
+  covered: boolean;
+  /** How much of this dimension's evidence was actually available, 0-100. */
+  coveragePct: number;
+}
+
 export interface PortfolioPulse {
   status: CardStatus;
   healthScore: number | null;
@@ -129,6 +147,13 @@ export interface PortfolioPulse {
   biggestWeakness: { label: string; score: number } | null;
   /** Coverage-adjusted share of health weight that was actually scoreable, 0-100. */
   healthCoveragePct: number | null;
+  /**
+   * The full dimension decomposition behind `healthScore`, for the
+   * click-to-explain UI. Read from the health engine's own dimensions —
+   * the homepage adds no arithmetic of its own beyond the renormalization
+   * the engine itself performs.
+   */
+  healthFactors: HealthFactor[];
 }
 
 /* ------------------------------------------------------------------ */
@@ -321,6 +346,24 @@ export interface AttentionQueue {
  * lighter `ActionQueueItem` (alerts, watchlist triggers, notifications) when it
  * doesn't. No ranking math is done here — both sources arrive pre-ranked.
  */
+/**
+ * The measured "current state → proposed action → resulting state" delta of a
+ * decision, read verbatim from the engine's `ImpactEstimate` (which was itself
+ * produced by *simulating* the trade, not estimating it). `healthAfter` is
+ * `healthBefore + healthDelta` on the engine's exact (unrounded) total.
+ */
+export interface ActionImpact {
+  healthBefore: number;
+  healthAfter: number;
+  healthDelta: number;
+  /** pp change in annualized volatility. Negative = less risky. Null = unmeasurable. */
+  riskDeltaPp: number | null;
+  /** Change in measured annual income (dividends, coupons, rent), in dollars. */
+  incomeDeltaAnnual: number;
+  /** Change in allocation HHI. Negative = better diversified. */
+  diversificationDelta: number;
+}
+
 export interface RecommendedAction {
   id: string;
   symbol: string | null;
@@ -338,6 +381,16 @@ export interface RecommendedAction {
   severity: "high" | "medium" | "low";
   href: string;
   source: "decision" | "queue";
+  /**
+   * The engine's full IC memo (why / why now / why this amount / why not the
+   * alternatives / why not nothing). Null for queue-sourced items, which were
+   * never argued for — only flagged.
+   */
+  why: WhyExplanation | null;
+  /** The simulated before → after portfolio state. Null for queue items. */
+  impact: ActionImpact | null;
+  /** Real count of simulate() runs behind this pick. Null for queue items. */
+  alternativesEvaluated: number | null;
 }
 
 export interface RecommendedActions {
@@ -470,6 +523,80 @@ export type HomeBriefChunk =
   | { type: "error"; message: string };
 
 /* ------------------------------------------------------------------ */
+/* Change detection — what moved since the last visit                  */
+/* ------------------------------------------------------------------ */
+
+export type HomeChangeKind =
+  | "health"
+  | "regime"
+  | "sentiment"
+  | "attention-new"
+  | "attention-resolved"
+  | "opportunity-new"
+  | "opportunity-score"
+  | "threat-new"
+  | "threat-escalated"
+  | "watchlist-move"
+  | "drift";
+
+/**
+ * The tone drives colour and ordering, not the copy: `worsened` and `new`
+ * threats surface first because they are the ones that can cost money by being
+ * missed. `improved` is real information too (a cleared queue, a healthier
+ * book) — it is ranked, not hidden.
+ */
+export type HomeChangeTone = "improved" | "worsened" | "new" | "neutral";
+
+export interface HomeChange {
+  id: string;
+  kind: HomeChangeKind;
+  tone: HomeChangeTone;
+  /** ≤ 70 chars — reads as a headline chip. */
+  headline: string;
+  /** One sentence, always stating the before → after so the delta is auditable. */
+  detail: string;
+  symbol: string | null;
+  href: string | null;
+  /** Ranking weight, computed by the diff engine from measured magnitudes. */
+  magnitude: number;
+}
+
+/**
+ * "Since your last visit". The baseline is the state at the end of the user's
+ * previous session (promoted after a 45-minute gap between digest builds), so
+ * refreshing within a session never resets what counts as "new".
+ */
+export interface ChangeFeed {
+  status: CardStatus;
+  /** ISO timestamp of the baseline being compared against. Null on first visit. */
+  baselineAt: string | null;
+  /** True the very first time the dashboard is ever built — nothing to diff yet. */
+  firstVisit: boolean;
+  /** Ranked, capped by the UI. Empty + !firstVisit = "nothing material changed". */
+  changes: HomeChange[];
+}
+
+/* ------------------------------------------------------------------ */
+/* Symbol context — the unified-intelligence join                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What the platform already knows about a symbol, joined once server-side and
+ * shared by every module that renders that symbol. This is what makes the
+ * dashboard feel like one brain: the queue, the radar, and the brief all see
+ * the same research history, pipeline stage, and book exposure.
+ */
+export interface SymbolContext {
+  symbol: string;
+  /** % of portfolio value, when held. Null = not in the book. */
+  heldWeightPct: number | null;
+  /** Idea-pipeline stage, when tracked on the watchlist. Null = not tracked. */
+  watchlistStage: IdeaStage | null;
+  /** ISO timestamp of the most recent research session on this symbol. */
+  lastResearchedAt: string | null;
+}
+
+/* ------------------------------------------------------------------ */
 /* The digest                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -480,6 +607,13 @@ export type HomeBriefChunk =
  */
 export interface HomeDigest {
   generatedAt: string;
+  /** What changed since the last visit — the diff against the session baseline. */
+  changes: ChangeFeed;
+  /**
+   * symbol (upper) → what the platform knows about it. One join, shared by
+   * every module; modules look symbols up here rather than fetching.
+   */
+  symbolContext: Record<string, SymbolContext>;
   /**
    * The Attention Queue — the page's centerpiece. One ranked, dismissible
    * stream merging the action/threat/alert/event/signal feeders. Rides the

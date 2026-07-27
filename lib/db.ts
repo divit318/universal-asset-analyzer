@@ -228,6 +228,17 @@ function getDb(): DatabaseSync {
       expires_at   INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_attention_dismissal_expires ON attention_dismissal (expires_at);
+
+    -- Change detection (lib/home/changes.ts). Exactly two slots: 'current' is
+    -- the state of the most recent digest build; 'baseline' is the state at the
+    -- end of the previous visit, promoted from 'current' when a new visit
+    -- starts (a VISIT_GAP_MS pause between builds). The diff shown on the
+    -- dashboard is always baseline vs the fresh build.
+    CREATE TABLE IF NOT EXISTS home_fingerprint (
+      slot     TEXT PRIMARY KEY CHECK (slot IN ('current', 'baseline')),
+      data     TEXT NOT NULL,
+      taken_at INTEGER NOT NULL
+    );
   `);
   // Migrate existing watchlist rows: add new columns if the DB predates them
   for (const col of ["target_price REAL", "alert_pct_drop REAL", "notes TEXT"]) {
@@ -1876,4 +1887,27 @@ export function listActiveDismissals(now: number = Date.now()): AttentionDismiss
     .prepare("SELECT dedupe_key, dismissed_at, expires_at FROM attention_dismissal")
     .all() as unknown as AttentionDismissalRow[];
   return rows.map((r) => ({ dedupeKey: r.dedupe_key, dismissedAt: r.dismissed_at, expiresAt: r.expires_at }));
+}
+
+/* -------------------------------------------------------------------------- */
+/* Home change-detection fingerprints (lib/home/changes.ts)                    */
+/* -------------------------------------------------------------------------- */
+
+export type HomeFingerprintSlot = "current" | "baseline";
+
+/** The stored blob is opaque JSON here; lib/home/changes.ts owns its shape. */
+export function getHomeFingerprint(slot: HomeFingerprintSlot): { data: string; takenAt: number } | null {
+  const row = getDb()
+    .prepare("SELECT data, taken_at FROM home_fingerprint WHERE slot = ?")
+    .get(slot) as { data: string; taken_at: number } | undefined;
+  return row ? { data: row.data, takenAt: row.taken_at } : null;
+}
+
+export function putHomeFingerprint(slot: HomeFingerprintSlot, data: string, takenAt: number): void {
+  getDb()
+    .prepare(
+      `INSERT INTO home_fingerprint (slot, data, taken_at) VALUES (?, ?, ?)
+       ON CONFLICT(slot) DO UPDATE SET data = excluded.data, taken_at = excluded.taken_at`,
+    )
+    .run(slot, data, takenAt);
 }

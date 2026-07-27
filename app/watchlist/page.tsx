@@ -444,10 +444,10 @@ function WatchlistPageInner() {
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
           <Link
-            href="/intelligence?view=timeline&scope=watchlist&id=watchlist"
+            href="/"
             className="flex items-center rounded-lg border border-border px-4 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
           >
-            Timeline
+            The Desk
           </Link>
           <Link
             href="/knowledge-graph?scope=watchlist&id=watchlist"

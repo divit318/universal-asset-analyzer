@@ -77,6 +77,15 @@ export const HOME_LAYOUT: HomeLayoutConfig = {
         { moduleId: "book" },
       ],
     },
+    // Change band: the diff against the last visit, ranked and material-only.
+    // Sits between "where do I stand" and "what needs me" because the first
+    // question a returning user actually asks is "what moved while I was gone".
+    {
+      id: "changes",
+      columns: GRID,
+      gap: "gap-4",
+      slots: [{ moduleId: "whats-changed" }],
+    },
     // Attention row: the ranked queue (the page's centerpiece) beside the
     // Radar. "What needs a decision now, and what's worth a look next."
     {

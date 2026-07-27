@@ -44,6 +44,12 @@ export function buildRecommendedActions(
   const hasPortfolio = (report?.holdingCount ?? 0) > 0;
 
   if (decisions.length > 0) {
+    // Before → after is stated on the engine's exact (unrounded) health total —
+    // differencing the rounded display total quantizes small deltas to zero,
+    // the exact bug HealthDimension.scoreExact exists to prevent.
+    const healthBefore = report?.health?.total ?? 0;
+    const healthExact = report?.health?.totalExact ?? healthBefore;
+
     const actions: RecommendedAction[] = [...decisions]
       // The engine already assigned decisionPriority (1 = "if you make one
       // change, make this one"). Respect it.
@@ -66,6 +72,19 @@ export function buildRecommendedActions(
           ? `/research?symbol=${encodeURIComponent(d.recommendation.symbol)}`
           : "/portfolio?tab=decisions",
         source: "decision",
+        // Carry the engine's full memo through — the dashboard's decision
+        // spotlight renders it verbatim; flattening it here is what previously
+        // reduced an IC memo to a one-line "reason".
+        why: d.why,
+        impact: {
+          healthBefore,
+          healthAfter: Math.round((healthExact + d.recommendation.impact.healthDelta) * 10) / 10,
+          healthDelta: d.recommendation.impact.healthDelta,
+          riskDeltaPp: d.recommendation.impact.riskDelta,
+          incomeDeltaAnnual: d.recommendation.impact.incomeDelta,
+          diversificationDelta: d.recommendation.impact.diversificationDelta,
+        },
+        alternativesEvaluated: d.alternativesEvaluated,
       }));
 
     return { status: "ok", actions, fromDecisionEngine: true, hasPortfolio };
@@ -94,6 +113,11 @@ export function buildRecommendedActions(
     severity: item.severity,
     href: item.href,
     source: "queue",
+    // Queue items were flagged, never argued for or simulated — saying so
+    // honestly (nulls) beats fabricating a memo for them.
+    why: null,
+    impact: null,
+    alternativesEvaluated: null,
   }));
 
   return {

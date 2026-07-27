@@ -75,6 +75,32 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     navTarget: { href: "/portfolio", label: "Open portfolio" },
   },
 
+  /* ---------------- Change band ---------------- */
+
+  "whats-changed": {
+    id: "whats-changed",
+    title: "Since Last Visit",
+    description: "What moved while you were away — ranked, material changes only.",
+    loading: "eager",
+    refresh: "on-focus",
+    refreshIntervalMs: null,
+    // Pure digest slice: the diff is computed server-side during the digest
+    // build, against the previous session's persisted baseline. No AI, no
+    // extra fetch — it paints with the first deterministic pass.
+    cache: { via: "digest", datasets: [] },
+    priority: 3,
+    defaultSize: SIZE.full,
+    minSize: SIZE.full,
+    preferredLayout: "full",
+    screens: [...BREAKPOINTS],
+    requires: [],
+    dataSources: ["portfolio-engine", "scanner", "watchlist", "sector-rotation"],
+    dependencies: [],
+    ai: null,
+    // Terminal by design — each change chip carries its own deep link.
+    navTarget: null,
+  },
+
   /* ---------------- Attention row ---------------- */
 
   "attention-queue": {
@@ -87,7 +113,7 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     // Rides the digest (deterministic, no AI in its paint path). The dismissal
     // state joins in the digest build server-side; the queue never fetches.
     cache: { via: "digest", datasets: ["quotes.batch", "fundamentals"] },
-    priority: 3,
+    priority: 4,
     // The centerpiece: two-thirds of the attention row, survives at half.
     defaultSize: SIZE.wide,
     minSize: SIZE.half,
@@ -110,7 +136,7 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     refresh: "on-focus",
     refreshIntervalMs: null,
     cache: { via: "digest", datasets: [] },
-    priority: 4,
+    priority: 5,
     // The attention row's one-third rail beside the queue.
     defaultSize: SIZE.rail,
     minSize: SIZE.rail,
@@ -136,7 +162,7 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     refresh: "interval",
     refreshIntervalMs: 60 * 1000,
     cache: { via: "digest", datasets: ["quotes.batch", "sectorRotation"] },
-    priority: 5,
+    priority: 6,
     defaultSize: SIZE.full,
     minSize: SIZE.full,
     preferredLayout: "full",
@@ -159,7 +185,7 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     refreshIntervalMs: null,
     // Same stream as Today's Brief — one model call feeds both. See HomeBrief.
     cache: { via: "stream", datasets: [] },
-    priority: 6,
+    priority: 7,
     // Full-width by default (it's a long read), but it survives at half — the
     // section headings stack and the prose reflows.
     defaultSize: SIZE.full,

@@ -33,6 +33,7 @@ import type { TaskType } from "../ai/task-registry";
 export type HomeModuleId =
   | "todays-brief"
   | "book"
+  | "whats-changed"
   | "attention-queue"
   | "radar"
   | "market-intelligence"

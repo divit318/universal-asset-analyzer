@@ -839,10 +839,10 @@ function StockCard({ entry, color, colorBg }: { entry: CompareEntry; color: stri
           </Link>
           <p className="mt-0.5 truncate text-xs text-muted" title={entry.name}>{entry.name}</p>
           <Link
-            href={`/intelligence?view=timeline&scope=symbol&id=${encodeURIComponent(entry.symbol)}`}
+            href={`/journal?symbol=${encodeURIComponent(entry.symbol)}`}
             className="mt-1 inline-block text-label text-muted underline-offset-2 hover:text-brand hover:underline"
           >
-            View timeline →
+            Open in Journal →
           </Link>
         </div>
         {analyst?.recommendationKey && (

@@ -16,8 +16,9 @@ import Link from "next/link";
 import { Plus, Check } from "lucide-react";
 import { Badge } from "@/app/_components/ui";
 import { useToast } from "@/app/_components/toast";
-import type { OpportunitySnapshotItem } from "@/lib/home/contracts";
+import type { OpportunitySnapshotItem, SymbolContext } from "@/lib/home/contracts";
 import { getHomeModule } from "@/lib/home/registry";
+import { STAGE_LABEL } from "@/lib/idea-stage";
 import { SymbolTag } from "../_atmosphere/symbol-link";
 import { ModuleShell } from "../module-shell";
 import { useHome, useHomeSlice } from "../home-provider";
@@ -67,16 +68,32 @@ function AddButton({ symbol }: { symbol: string }) {
   );
 }
 
-function RadarRow({ o }: { o: OpportunitySnapshotItem }) {
+function radarDaysAgo(iso: string): string {
+  const days = Math.floor((Date.now() - Date.parse(iso)) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "1d ago";
+  return `${days}d ago`;
+}
+
+function RadarRow({ o, ctx, isNew }: { o: OpportunitySnapshotItem; ctx: SymbolContext | undefined; isNew: boolean }) {
   return (
     <li className="uaa-linkable flex items-center gap-2.5 rounded-control border border-border bg-surface-2/40 p-2.5">
       <SymbolTag symbol={o.symbol} className="font-mono text-sm font-semibold text-foreground">
         {o.symbol}
       </SymbolTag>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="flex items-center gap-1.5">
+        <span className="flex flex-wrap items-center gap-1.5">
           <Badge variant={TIER[o.fitTier] ?? "neutral"}>{o.fitTier} fit</Badge>
           <span className="font-mono text-[11px] tabular-nums text-muted">{Math.round(o.combinedScore)}</span>
+          {isNew ? (
+            <span className="rounded-full bg-brand/12 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-brand">New</span>
+          ) : null}
+          {ctx?.lastResearchedAt ? (
+            <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">researched {radarDaysAgo(ctx.lastResearchedAt)}</span>
+          ) : null}
+          {ctx?.watchlistStage && ctx.watchlistStage !== "surfaced" ? (
+            <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">{STAGE_LABEL[ctx.watchlistStage]}</span>
+          ) : null}
         </span>
         <span className="truncate text-[11px] text-muted">{o.fitSummary}</span>
       </span>
@@ -88,7 +105,14 @@ function RadarRow({ o }: { o: OpportunitySnapshotItem }) {
 export function RadarModule() {
   const state = useHomeSlice("opportunityFeed");
   const watchlist = useHomeSlice("watchlistIntelligence");
+  const symbolContext = useHomeSlice("symbolContext");
+  const changes = useHomeSlice("changes");
   const { refreshDigest } = useHome();
+
+  // Ideas the change engine marked as new since the last visit.
+  const newSymbols = new Set(
+    (changes.data?.changes ?? []).filter((c) => c.kind === "opportunity-new" && c.symbol).map((c) => c.symbol as string),
+  );
 
   const buyCount =
     watchlist.data?.buckets.find((b) => b.id === "buy")?.symbols.length ?? 0;
@@ -112,7 +136,12 @@ export function RadarModule() {
 
           <ul className="flex flex-col gap-2">
             {d.opportunities.slice(0, 5).map((o) => (
-              <RadarRow key={o.symbol} o={o} />
+              <RadarRow
+                key={o.symbol}
+                o={o}
+                ctx={symbolContext.data?.[o.symbol.toUpperCase()]}
+                isNew={newSymbols.has(o.symbol.toUpperCase())}
+              />
             ))}
           </ul>
 

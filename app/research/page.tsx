@@ -669,10 +669,10 @@ function ResearchWorkspace({
           {/* Action row */}
           <div className="flex flex-wrap items-center gap-1.5">
             <Link
-              href={`/intelligence?view=timeline&scope=symbol&id=${encodeURIComponent(quote.symbol)}`}
+              href={`/journal?symbol=${encodeURIComponent(quote.symbol)}`}
               className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-2 text-sm text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
             >
-              <Clock3 className="h-4 w-4" strokeWidth={1.75} /> Timeline
+              <Clock3 className="h-4 w-4" strokeWidth={1.75} /> Journal
             </Link>
             <Link
               href={`/knowledge-graph?scope=symbol&id=${encodeURIComponent(quote.symbol)}`}

@@ -14,6 +14,7 @@ import type { HomeModuleId } from "@/lib/home/types";
 
 import { TodaysBriefModule } from "./modules/todays-brief";
 import { BookModule } from "./modules/book";
+import { WhatsChangedModule } from "./modules/whats-changed";
 import { AttentionQueueModule } from "./modules/attention-queue";
 import { RadarModule } from "./modules/radar";
 import { MarketIntelligenceModule } from "./modules/market-intelligence";
@@ -32,6 +33,7 @@ export interface HomeModuleProps {
 export const HOME_MODULES: Record<HomeModuleId, ComponentType<HomeModuleProps>> = {
   "todays-brief": TodaysBriefModule,
   "book": BookModule,
+  "whats-changed": WhatsChangedModule,
   "attention-queue": AttentionQueueModule,
   "radar": RadarModule,
   "market-intelligence": MarketIntelligenceModule,

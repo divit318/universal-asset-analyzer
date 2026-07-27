@@ -13,9 +13,13 @@
  * borrowing that name for a number computed from different inputs would be a lie.
  */
 
+import { useState } from "react";
+import { ChevronDown } from "lucide-react";
+import { explainSentiment, type ScoreExplanation } from "@/lib/home/explain";
 import { getHomeModule } from "@/lib/home/registry";
 import type { MarketGroup, MarketTicker, MarketIntelligence } from "@/lib/home/contracts";
 import { Sparkline } from "../_viz/sparkline";
+import { ExplainableValue } from "../_atmosphere/explain-popover";
 import { ModuleShell } from "../module-shell";
 import { useHome, useHomeSlice } from "../home-provider";
 
@@ -39,6 +43,8 @@ interface PulseCardModel {
   implication: string;
   /** Force a tone regardless of direction (e.g. VIX up = bad, so neutral spark). */
   toneOverride?: "positive" | "negative" | "neutral";
+  /** When present, the card's value is click-to-decompose (no black boxes). */
+  explanation?: ScoreExplanation | null;
 }
 
 function PulseCard({ m }: { m: PulseCardModel }) {
@@ -55,7 +61,13 @@ function PulseCard({ m }: { m: PulseCardModel }) {
         ) : null}
       </div>
       <div className="flex items-end justify-between gap-1">
-        <span className="font-mono text-base font-semibold tabular-nums text-foreground">{m.value}</span>
+        {m.explanation ? (
+          <ExplainableValue explanation={m.explanation}>
+            <span className="font-mono text-base font-semibold tabular-nums text-foreground">{m.value}</span>
+          </ExplainableValue>
+        ) : (
+          <span className="font-mono text-base font-semibold tabular-nums text-foreground">{m.value}</span>
+        )}
         {m.series ? <Sparkline data={m.series} tone={m.toneOverride} width={64} height={22} /> : null}
       </div>
       <p className="line-clamp-2 text-[10px] leading-tight text-muted">{m.implication}</p>
@@ -66,6 +78,55 @@ function PulseCard({ m }: { m: PulseCardModel }) {
 function fmtLevel(t: MarketTicker | null): string {
   if (!t || t.price == null) return "—";
   return t.price >= 1000 ? t.price.toLocaleString(undefined, { maximumFractionDigits: 0 }) : t.price.toFixed(2);
+}
+
+/* ------------------------------------------------------------------ */
+/* The collapsed tape row — the seven bellwethers, one compact line    */
+/* ------------------------------------------------------------------ */
+
+interface TapeRowItem {
+  key: string;
+  label: string;
+  value: string;
+  changePct: number | null;
+}
+
+/** The §9 wireframe row: SPX · NDX · VIX · 10Y · WTI · DXY · BTC. */
+const TAPE_ROW: { key: string; label: string; symbol: string; fmt: (t: MarketTicker) => string }[] = [
+  { key: "spx", label: "SPX", symbol: "^GSPC", fmt: (t) => fmtLevel(t) },
+  { key: "ndx", label: "NDX", symbol: "^IXIC", fmt: (t) => fmtLevel(t) },
+  { key: "vix", label: "VIX", symbol: "^VIX", fmt: (t) => fmtLevel(t) },
+  { key: "tnx", label: "10Y", symbol: "^TNX", fmt: (t) => `${fmtLevel(t)}%` },
+  { key: "wti", label: "WTI", symbol: "CL=F", fmt: (t) => `$${fmtLevel(t)}` },
+  { key: "dxy", label: "DXY", symbol: "DX-Y.NYB", fmt: (t) => fmtLevel(t) },
+  { key: "btc", label: "BTC", symbol: "BTC-USD", fmt: (t) => (t.price != null ? `$${Math.round(t.price).toLocaleString()}` : "—") },
+];
+
+function buildTapeRow(d: MarketIntelligence): TapeRowItem[] {
+  const out: TapeRowItem[] = [];
+  for (const spec of TAPE_ROW) {
+    const t = findTicker(d.groups, spec.symbol);
+    if (!t) continue;
+    out.push({ key: spec.key, label: spec.label, value: spec.fmt(t), changePct: t.changePct });
+  }
+  return out;
+}
+
+/** One instrument on the collapsed row: label · mono value · signed move. */
+function TapeItem({ item }: { item: TapeRowItem }) {
+  const tone = item.changePct == null ? "text-muted" : item.changePct >= 0 ? "text-positive" : "text-negative";
+  return (
+    <span className="inline-flex shrink-0 items-baseline gap-1.5 border-l border-border/40 pl-3 first:border-l-0 first:pl-0">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">{item.label}</span>
+      <span className="font-mono text-sm font-semibold tabular-nums text-foreground">{item.value}</span>
+      {item.changePct != null ? (
+        <span className={`font-mono text-[11px] tabular-nums ${tone}`}>
+          {item.changePct >= 0 ? "+" : "−"}
+          {Math.abs(item.changePct).toFixed(2)}%
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 function vixImplication(level: number | null): string {
@@ -123,6 +184,7 @@ function buildCards(d: MarketIntelligence): PulseCardModel[] {
       changePct: null,
       series: null,
       implication: `${d.sentiment.label} — our gauge, not CNN's (${d.sentiment.confidence} confidence).`,
+      explanation: explainSentiment(d.sentiment),
     });
   }
   if (vix) {
@@ -194,40 +256,72 @@ function buildCards(d: MarketIntelligence): PulseCardModel[] {
 export function MarketIntelligenceModule() {
   const state = useHomeSlice("marketIntelligence");
   const { refreshDigest } = useHome();
+  // The tape rides slim by default (§4.1): one instrument row, with the fuller
+  // detail one disclosure away. Session-local, presentation-only — no data path.
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <ModuleShell
       definition={definition}
       state={state}
-      minHeight={160}
+      minHeight={64}
       onRefresh={refreshDigest}
       isEmpty={(d) => d.groups.length === 0 && !d.regime}
       emptyMessage="Market data is unavailable right now."
     >
       {(d) => {
+        const row = buildTapeRow(d);
         const cards = buildCards(d);
         return (
           <div className="flex flex-col gap-3">
-            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-8">
-              {cards.map((m) => (
-                <PulseCard key={m.key} m={m} />
-              ))}
+            {/* Collapsed instrument row — scrolls within itself at narrow widths
+                (§9 mobile note), never pushing the page into horizontal overflow. */}
+            <div className="flex items-center gap-3">
+              <div className="min-w-0 flex-1 overflow-x-auto">
+                <div className="flex w-max items-baseline gap-3">
+                  {row.length > 0 ? (
+                    row.map((item) => <TapeItem key={item.key} item={item} />)
+                  ) : (
+                    <span className="text-xs text-muted">Live instruments unavailable.</span>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setExpanded((e) => !e)}
+                aria-expanded={expanded}
+                aria-label={expanded ? "Hide market detail" : "Show market detail"}
+                className="shrink-0 rounded-control p-1.5 text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
+              >
+                <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`} strokeWidth={2} />
+              </button>
             </div>
 
-            {d.sectorAttention.length > 0 ? (
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border/50 pt-2.5">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">Rotation you hold</span>
-                {d.sectorAttention.slice(0, 4).map((c) => {
-                  const improved = c.toRank < c.fromRank;
-                  return (
-                    <span key={c.sector} className="inline-flex items-center gap-1.5 text-[11px]">
-                      <span className="text-foreground/85">{c.sector}</span>
-                      <span className={`font-mono tabular-nums ${improved ? "text-positive" : "text-negative"}`}>
-                        #{c.fromRank}→#{c.toRank}
-                      </span>
-                    </span>
-                  );
-                })}
+            {/* Expanded detail — the full instrument grid + rotation. */}
+            {expanded ? (
+              <div className="flex flex-col gap-3 border-t border-border/50 pt-3">
+                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-8">
+                  {cards.map((m) => (
+                    <PulseCard key={m.key} m={m} />
+                  ))}
+                </div>
+
+                {d.sectorAttention.length > 0 ? (
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border/50 pt-2.5">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">Rotation you hold</span>
+                    {d.sectorAttention.slice(0, 4).map((c) => {
+                      const improved = c.toRank < c.fromRank;
+                      return (
+                        <span key={c.sector} className="inline-flex items-center gap-1.5 text-[11px]">
+                          <span className="text-foreground/85">{c.sector}</span>
+                          <span className={`font-mono tabular-nums ${improved ? "text-positive" : "text-negative"}`}>
+                            #{c.fromRank}→#{c.toRank}
+                          </span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>

@@ -60,3 +60,6 @@ __pycache__/
 
 # graphify knowledge-graph tool cache (regenerate with `graphify update .`)
 /graphify-out/
+
+# Playwright MCP browser debug session artifacts (console logs, traces)
+/.playwright-mcp/

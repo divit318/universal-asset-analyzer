@@ -47,9 +47,18 @@ import {
   seedsFromSignals,
   type WeightBySymbol,
 } from "./attention";
-import { listActiveDismissals } from "../db";
+import { listActiveDismissals, getHomeFingerprint, putHomeFingerprint } from "../db";
 import { estimateMarketStatus } from "../market-hours";
-import { MIN_DAYS_TO_ANNUALIZE, type HomeDigest, type PortfolioPerformanceSummary } from "./contracts";
+import {
+  buildChangeFeed,
+  captureFingerprint,
+  parseFingerprint,
+  shouldPromoteBaseline,
+  type FingerprintSource,
+  type HomeFingerprint,
+} from "./changes";
+import { buildSymbolContext } from "./symbol-context";
+import { MIN_DAYS_TO_ANNUALIZE, type ChangeFeed, type HomeDigest, type PortfolioPerformanceSummary } from "./contracts";
 import type { PortfolioLot, WatchlistItem } from "../types";
 
 const BENCHMARK = "SPY";
@@ -240,7 +249,7 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
     now,
   });
 
-  return {
+  const core: Omit<HomeDigest, "changes" | "symbolContext"> = {
     generatedAt: new Date().toISOString(),
 
     attention,
@@ -287,4 +296,72 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
       ? deterministicBriefing(ctx, toBriefPortfolio(report), notifications.filter((n) => !n.read).length)
       : "No market or portfolio data available yet.",
   };
+
+  // The unified-intelligence join: every symbol the page is about to render,
+  // looked up once against the book / watchlist / visit log the digest already
+  // loaded. Pure join — no extra I/O, cannot slow the first paint.
+  const contextSymbols = [
+    ...core.attention.items.map((i) => i.symbol),
+    ...core.opportunityFeed.opportunities.map((o) => o.symbol),
+    ...core.watchlistIntelligence.buckets.flatMap((b) => b.symbols),
+    core.portfolioPulse.bestPerformer?.symbol,
+    core.portfolioPulse.worstPerformer?.symbol,
+  ].filter((s): s is string => !!s);
+
+  const heldWeightsPct = new Map<string, number>();
+  if (report) {
+    for (const h of report.holdings) {
+      if (h.symbol) heldWeightsPct.set(h.symbol.toUpperCase(), h.weight);
+    }
+  }
+
+  const symbolContext = buildSymbolContext(contextSymbols, {
+    heldWeights: heldWeightsPct,
+    watchlist,
+    activity: activity.entries,
+  });
+
+  return { ...core, changes: detectChanges(core, now), symbolContext };
+}
+
+/* ------------------------------------------------------------------ */
+/* Change detection glue — the only stateful step in the build         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Capture the fresh state, promote the previous session's last state to
+ * baseline when a new visit has started (see VISIT_GAP_MS), persist, and diff.
+ *
+ * Failure here must never cost the page: a broken fingerprint read degrades
+ * the change feed alone, and the rest of the digest ships untouched.
+ */
+function detectChanges(core: FingerprintSource, now: number): ChangeFeed {
+  try {
+    const current = captureFingerprint(core, new Date(now).toISOString());
+
+    const storedCurrent = getHomeFingerprint("current");
+    const storedBaseline = getHomeFingerprint("baseline");
+
+    let baseline: HomeFingerprint | null = storedBaseline
+      ? parseFingerprint(JSON.parse(storedBaseline.data))
+      : null;
+
+    // A gap since the last build means the user left and came back: what they
+    // were last looking at becomes the thing we diff against. Refreshes within
+    // a sitting keep the existing baseline, so "since your last visit" doesn't
+    // reset every 60 seconds.
+    if (storedCurrent && shouldPromoteBaseline(storedCurrent.takenAt, now)) {
+      const promoted = parseFingerprint(JSON.parse(storedCurrent.data));
+      if (promoted) {
+        baseline = promoted;
+        putHomeFingerprint("baseline", storedCurrent.data, storedCurrent.takenAt);
+      }
+    }
+
+    putHomeFingerprint("current", JSON.stringify(current), now);
+
+    return buildChangeFeed(baseline, current);
+  } catch {
+    return { status: "degraded", baselineAt: null, firstVisit: false, changes: [] };
+  }
 }

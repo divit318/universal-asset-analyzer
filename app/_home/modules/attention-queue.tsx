@@ -20,10 +20,13 @@
 import { useCallback, useMemo, useRef, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { X, Check, ChevronDown, SlidersHorizontal } from "lucide-react";
+import { X, Check, ChevronDown, ChevronRight, SlidersHorizontal, ArrowRight } from "lucide-react";
 import { useToast } from "@/app/_components/toast";
-import type { AttentionItem, AttentionKind } from "@/lib/home/contracts";
+import type { AttentionItem, AttentionKind, RecommendedAction, SymbolContext } from "@/lib/home/contracts";
+import { explainAttentionScore, explainDecision } from "@/lib/home/explain";
+import { STAGE_LABEL } from "@/lib/idea-stage";
 import { SymbolTag } from "../_atmosphere/symbol-link";
+import { ExplainableValue } from "../_atmosphere/explain-popover";
 import { useHome, useHomeSlice } from "../home-provider";
 
 const MAX_VISIBLE = 8;
@@ -56,6 +59,190 @@ function chipClass(kind: AttentionKind, score: number): string {
 }
 
 /* ------------------------------------------------------------------ */
+/* Context chips — what the platform already knows about this symbol   */
+/* ------------------------------------------------------------------ */
+
+function daysAgo(iso: string): string {
+  const days = Math.floor((Date.now() - Date.parse(iso)) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  return `${days}d ago`;
+}
+
+/**
+ * The unified-intelligence join, rendered: held weight, pipeline stage, and
+ * research recency for the row's symbol. Absence renders nothing — an item
+ * the platform has no history with simply has no chips.
+ */
+function ContextChips({ ctx }: { ctx: SymbolContext | undefined }) {
+  if (!ctx) return null;
+  const chips: string[] = [];
+  if (ctx.heldWeightPct != null) chips.push(`${ctx.heldWeightPct.toFixed(1)}% of book`);
+  if (ctx.watchlistStage && ctx.heldWeightPct == null) chips.push(STAGE_LABEL[ctx.watchlistStage] ?? ctx.watchlistStage);
+  if (ctx.lastResearchedAt) chips.push(`researched ${daysAgo(ctx.lastResearchedAt)}`);
+  if (chips.length === 0) return null;
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      {chips.map((c) => (
+        <span key={c} className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-muted">
+          {c}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Spotlight — the queue's #1 item, promoted to "next best step"       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The decision dashboard's answer to "if I do one thing, what is it?". The
+ * top-ranked item renders large: full rationale, explainable score, the
+ * symbol's context, and — when the item is a decision the engine actually
+ * simulated — the measured before → after portfolio state and the full WHY
+ * memo. Everything shown is data the digest already carried; promotion is
+ * presentation, not re-ranking.
+ */
+function SpotlightCard({
+  item,
+  decision,
+  ctx,
+  active,
+  exiting,
+  onFocus,
+  onDismiss,
+  registerRef,
+}: RowProps & { decision: RecommendedAction | null; ctx: SymbolContext | undefined }) {
+  const [showWhy, setShowWhy] = useState(false);
+  const impact = decision?.impact ?? null;
+  // Each number explains ITSELF: the ranking score decomposes into the
+  // attention formula; the simulated deltas decompose into the decision memo.
+  // Wiring the decision explanation onto the attention number showed a popover
+  // whose headline value disagreed with the trigger — worse than no popover.
+  const decisionExplanation = decision ? explainDecision(decision) : null;
+
+  return (
+    <li
+      ref={registerRef}
+      role="listitem"
+      tabIndex={active ? 0 : -1}
+      onFocus={onFocus}
+      className={`group relative flex flex-col gap-2.5 overflow-hidden rounded-card border border-brand/25 bg-gradient-to-br from-brand/[0.07] to-transparent px-4 py-3.5 outline-none transition-colors focus-visible:border-brand/50 focus-visible:ring-2 focus-visible:ring-brand/30 ${
+        exiting ? "uaa-queue-exit" : ""
+      }`}
+    >
+      {/* Eyebrow row */}
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-brand">Next best step</span>
+        <span className={`rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${chipClass(item.kind, item.score)}`}>
+          {KIND_LABEL[item.kind]}
+        </span>
+        <span className="min-w-0 flex-1" />
+        <ExplainableValue explanation={explainAttentionScore(item)} align="end">
+          <span className="font-mono text-sm font-bold tabular-nums text-foreground" aria-label={`score ${Math.round(item.score)} of 100`}>
+            {Math.round(item.score)}
+          </span>
+        </ExplainableValue>
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label={`Dismiss: ${item.headline}`}
+          tabIndex={-1}
+          className="shrink-0 rounded-control p-1 text-muted outline-none transition-colors hover:bg-surface-3 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
+        >
+          <X className="h-3.5 w-3.5" strokeWidth={2} />
+        </button>
+      </div>
+
+      {/* Headline + full rationale */}
+      <div className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-center gap-2">
+          {item.symbol ? (
+            <SymbolTag symbol={item.symbol} className="font-mono text-base font-bold text-foreground">
+              {item.symbol}
+            </SymbolTag>
+          ) : null}
+          <span className="text-[15px] font-semibold leading-snug text-foreground">{item.headline}</span>
+          <ContextChips ctx={ctx} />
+        </div>
+        <p className="text-xs leading-relaxed text-muted">{item.rationale}</p>
+      </div>
+
+      {/* Measured before → after, when the engine simulated this decision */}
+      {impact ? (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-control border border-border/70 bg-surface/70 px-3 py-2">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-faint">If executed</span>
+          <ExplainableValue explanation={decisionExplanation}>
+            <span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums">
+              <span className="text-muted">Health {impact.healthBefore}</span>
+              <ArrowRight className="h-3 w-3 text-faint" strokeWidth={2} />
+              <span className={impact.healthDelta >= 0 ? "font-semibold text-positive" : "font-semibold text-negative"}>
+                {impact.healthAfter}
+              </span>
+              <span className="text-faint">({impact.healthDelta >= 0 ? "+" : ""}{impact.healthDelta.toFixed(1)})</span>
+            </span>
+          </ExplainableValue>
+          {impact.riskDeltaPp != null ? (
+            <span className="font-mono text-xs tabular-nums text-muted">
+              vol {impact.riskDeltaPp > 0 ? "+" : "−"}{Math.abs(impact.riskDeltaPp).toFixed(1)}pp
+            </span>
+          ) : null}
+          {Math.abs(impact.incomeDeltaAnnual) >= 1 ? (
+            <span className="font-mono text-xs tabular-nums text-muted">
+              income {impact.incomeDeltaAnnual >= 0 ? "+" : "−"}${Math.abs(Math.round(impact.incomeDeltaAnnual)).toLocaleString()}/yr
+            </span>
+          ) : null}
+          {decision?.alternativesEvaluated ? (
+            <span className="text-[10px] text-faint">{decision.alternativesEvaluated} alternatives simulated</span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* The WHY memo, verbatim from the engine */}
+      {decision?.why ? (
+        <div className="flex flex-col gap-1.5">
+          <button
+            type="button"
+            onClick={() => setShowWhy((s) => !s)}
+            aria-expanded={showWhy}
+            tabIndex={-1}
+            className="inline-flex w-fit items-center gap-1 rounded-control text-[11px] font-semibold text-brand outline-none transition-colors hover:underline focus-visible:ring-2 focus-visible:ring-brand/40"
+          >
+            <ChevronRight className={`h-3.5 w-3.5 transition-transform ${showWhy ? "rotate-90" : ""}`} strokeWidth={2} />
+            Why this, why now
+          </button>
+          {showWhy ? (
+            <dl className="flex flex-col gap-1.5 border-l-2 border-brand/20 pl-3 text-[11px] leading-relaxed text-muted">
+              <div><dt className="inline font-semibold text-foreground/80">Why now: </dt><dd className="inline">{decision.why.whyNow}</dd></div>
+              <div><dt className="inline font-semibold text-foreground/80">Sizing: </dt><dd className="inline">{decision.why.whyThisAmount}</dd></div>
+              <div><dt className="inline font-semibold text-foreground/80">Vs. alternatives: </dt><dd className="inline">{decision.why.whyNotAlternative}</dd></div>
+              <div><dt className="inline font-semibold text-foreground/80">Vs. doing nothing: </dt><dd className="inline">{decision.why.whyNotNothing}</dd></div>
+            </dl>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Primary action */}
+      <div className="flex items-center gap-2">
+        <Link
+          href={item.primaryAction.href}
+          tabIndex={-1}
+          className="inline-flex items-center gap-1.5 rounded-control bg-brand px-3 py-1.5 text-xs font-semibold text-white shadow-sm outline-none transition-colors hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
+        >
+          {item.primaryAction.label} <ArrowRight className="h-3.5 w-3.5" strokeWidth={2.5} />
+        </Link>
+        {item.mergedHrefs?.map((m) => (
+          <Link key={m.href} href={m.href} tabIndex={-1} className="text-[11px] font-medium text-muted outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40">
+            {m.label} →
+          </Link>
+        ))}
+      </div>
+    </li>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Row                                                                 */
 /* ------------------------------------------------------------------ */
 
@@ -69,7 +256,7 @@ interface RowProps {
   registerRef: (el: HTMLLIElement | null) => void;
 }
 
-function QueueCard({ item, active, exiting, onFocus, onDismiss, registerRef }: RowProps) {
+function QueueCard({ item, active, exiting, onFocus, onDismiss, registerRef, ctx }: RowProps & { ctx: SymbolContext | undefined }) {
   return (
     <li
       ref={registerRef}
@@ -91,12 +278,14 @@ function QueueCard({ item, active, exiting, onFocus, onDismiss, registerRef }: R
           </SymbolTag>
         ) : null}
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground/90">{item.headline}</span>
-        <span
-          className="shrink-0 font-mono text-xs tabular-nums text-muted"
-          aria-label={`attention score ${Math.round(item.score)} of 100`}
-        >
-          {Math.round(item.score)}
-        </span>
+        <ExplainableValue explanation={explainAttentionScore(item)} align="end" className="shrink-0">
+          <span
+            className="font-mono text-xs tabular-nums text-muted"
+            aria-label={`attention score ${Math.round(item.score)} of 100`}
+          >
+            {Math.round(item.score)}
+          </span>
+        </ExplainableValue>
         <button
           type="button"
           onClick={onDismiss}
@@ -108,9 +297,10 @@ function QueueCard({ item, active, exiting, onFocus, onDismiss, registerRef }: R
         </button>
       </div>
 
-      {/* Row 2 — rationale · primary action */}
+      {/* Row 2 — rationale · context · primary action */}
       <div className="flex items-center justify-between gap-3 pl-0.5">
         <span className="min-w-0 flex-1 truncate text-[11px] text-muted">{item.rationale}</span>
+        <ContextChips ctx={ctx} />
         <Link
           href={item.primaryAction.href}
           tabIndex={-1}
@@ -130,6 +320,8 @@ function QueueCard({ item, active, exiting, onFocus, onDismiss, registerRef }: R
 export function AttentionQueueModule() {
   const state = useHomeSlice("attention");
   const pulse = useHomeSlice("portfolioPulse");
+  const recommended = useHomeSlice("recommendedActions");
+  const symbolContext = useHomeSlice("symbolContext");
   const { refreshDigest } = useHome();
   const toast = useToast();
   const router = useRouter();
@@ -160,6 +352,23 @@ export function AttentionQueueModule() {
   const visible = expanded ? filtered : filtered.slice(0, MAX_VISIBLE);
   const openCount = liveItems.length;
   const degraded = data?.degradedFeeders ?? [];
+
+  // Join back to the decision engine's full memo: the actions feeder ids its
+  // seeds `action:<recommendation.id>`, so the spotlight can recover the WHY
+  // and the simulated before → after without the queue re-carrying them per row.
+  const decisionById = useMemo(() => {
+    const map = new Map<string, RecommendedAction>();
+    for (const a of recommended.data?.actions ?? []) {
+      if (a.source === "decision") map.set(`action:${a.id}`, a);
+    }
+    return map;
+  }, [recommended.data]);
+
+  const ctxFor = useCallback(
+    (symbol: string | null): SymbolContext | undefined =>
+      symbol ? symbolContext.data?.[symbol.toUpperCase()] : undefined,
+    [symbolContext.data],
+  );
 
   // The roving-tabindex cursor, clamped in range at render (never via an effect)
   // so a shrinking list can't leave it pointing past the end.
@@ -283,7 +492,11 @@ export function AttentionQueueModule() {
   /* -------------------- render -------------------- */
 
   return (
-    <div className="uaa-card uaa-topline flex h-full flex-col p-4" style={{ "--accent-line": accentLine } as CSSProperties}>
+    <div
+      id="action-center"
+      className="uaa-card uaa-topline scroll-mt-20 flex h-full flex-col p-4"
+      style={{ "--accent-line": accentLine } as CSSProperties}
+    >
       {/* Header */}
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-0.5">
@@ -341,21 +554,39 @@ export function AttentionQueueModule() {
         </div>
       ) : visible.length > 0 ? (
         <>
-          <ul role="list" aria-label="Attention queue" onKeyDown={onKeyDown} className="flex flex-col gap-1 divide-y divide-hairline">
-            {visible.map((item, i) => (
-              <QueueCard
-                key={item.dedupeKey}
-                item={item}
-                index={i}
-                active={i === safeActive}
-                exiting={exiting.has(item.dedupeKey)}
-                onFocus={() => setActiveIndex(i)}
-                onDismiss={() => dismiss(item)}
-                registerRef={(el) => {
-                  rowRefs.current[i] = el;
-                }}
-              />
-            ))}
+          <ul role="list" aria-label="Attention queue" onKeyDown={onKeyDown} className="flex flex-col gap-1.5">
+            {visible.map((item, i) =>
+              i === 0 ? (
+                <SpotlightCard
+                  key={item.dedupeKey}
+                  item={item}
+                  index={i}
+                  decision={decisionById.get(item.id) ?? null}
+                  ctx={ctxFor(item.symbol)}
+                  active={i === safeActive}
+                  exiting={exiting.has(item.dedupeKey)}
+                  onFocus={() => setActiveIndex(i)}
+                  onDismiss={() => dismiss(item)}
+                  registerRef={(el) => {
+                    rowRefs.current[i] = el;
+                  }}
+                />
+              ) : (
+                <QueueCard
+                  key={item.dedupeKey}
+                  item={item}
+                  index={i}
+                  ctx={ctxFor(item.symbol)}
+                  active={i === safeActive}
+                  exiting={exiting.has(item.dedupeKey)}
+                  onFocus={() => setActiveIndex(i)}
+                  onDismiss={() => dismiss(item)}
+                  registerRef={(el) => {
+                    rowRefs.current[i] = el;
+                  }}
+                />
+              ),
+            )}
           </ul>
 
           {filtered.length > MAX_VISIBLE ? (
