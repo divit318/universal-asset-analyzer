@@ -31,6 +31,7 @@ const EMPTY: PortfolioPulse = {
   cashPct: null,
   diversificationScore: null,
   largestDrift: null,
+  totalReturnOnCostPct: null,
   marketPricedPct: 0,
   radar: [],
   biggestStrength: null,
@@ -212,6 +213,9 @@ export function buildPortfolioPulse(report: UniversalPortfolioReport | null): Po
     diversificationScore: diversificationFromHhi(report.allocation.byAssetClass.hhi),
     // A sub-1pp drift is noise, not a finding worth a line on the homepage.
     largestDrift: drift && Math.abs(drift.delta) >= 1 ? { label: drift.label, driftPct: drift.delta } : null,
+    // Same field the /portfolio "Total return" tile renders, so the two
+    // surfaces are structurally incapable of disagreeing.
+    totalReturnOnCostPct: report.totalReturn,
     marketPricedPct: report.marketPricedPct,
     radar: buildHealthRadar(report.health),
     biggestStrength,

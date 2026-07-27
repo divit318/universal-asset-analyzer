@@ -270,6 +270,15 @@ body::before {
   from { opacity: 0; transform: translateY(-4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+/* Indeterminate progress: work whose completion fraction is genuinely unknown.
+   A sweep is honest about that where a growing bar would imply a target the
+   caller does not actually have. Used by <TaskProgress> when `pct` is omitted. */
+@keyframes indeterminate {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(400%); }
+}
+.animate-indeterminate { animation: indeterminate 1.6s var(--ease-out) infinite; }
+
 .animate-fade-rise { animation: fade-rise var(--duration-base, 200ms) var(--ease-out) both; }
 .animate-popover-in { animation: popover-in var(--duration-fast, 120ms) var(--ease-out) both; }
 .animate-icon-swap { animation: icon-swap var(--duration-base, 200ms) var(--ease-spring) both; }

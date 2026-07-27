@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MovementDriver, MovementExplanation } from "@/lib/types";
 
 const PERSISTENCE_LABEL: Record<MovementExplanation["persistence"], string> = {
@@ -54,11 +54,18 @@ export function MovementExplainerCard({
   symbol,
   sector,
   autoLoad = false,
+  ready = true,
   onLoaded,
 }: {
   symbol: string;
   sector?: string | null;
   autoLoad?: boolean;
+  /**
+   * Hold the auto-load until every input is final. Pass `false` while `sector`
+   * is still resolving — generating an explanation without the sector costs the
+   * same inference as generating it with, and is immediately superseded.
+   */
+  ready?: boolean;
   /** Lets a parent (e.g. WhyNowCard) reuse the top driver without a second fetch. */
   onLoaded?: (explanation: MovementExplanation | null) => void;
 }) {
@@ -75,28 +82,60 @@ export function MovementExplainerCard({
     setOpened(autoLoad);
   }
 
+  /**
+   * Auto-load, exactly once per (symbol, sector) pair.
+   *
+   * `ready` exists because `sector` arrives late: the research page passes
+   * `fundamentals?.snapshot?.sector`, which is `undefined` on first render and
+   * `"Technology"` a second later. Without a gate this effect fired twice, and
+   * because the old cleanup only flipped a `cancelled` flag — it never aborted
+   * the request — the superseded call still ran a full local inference to
+   * completion on a backend that serializes them. The verdict generation then
+   * queued behind work whose result had already been thrown away.
+   */
+  const requestKey = `${symbol}|${sector ?? ""}`;
+  const loadedKeyRef = useRef<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
   useEffect(() => {
-    if (!autoLoad) return;
-    let cancelled = false;
-    /* eslint-disable react-hooks/set-state-in-effect */
+    if (!autoLoad || !ready) return;
+    if (loadedKeyRef.current === requestKey) return;
+    loadedKeyRef.current = requestKey;
+
+    // Supersede the previous key's request, if any.
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
     setExplanation(null);
-    /* eslint-enable react-hooks/set-state-in-effect */
+
     const params = new URLSearchParams({ kind: "symbol", subject: symbol });
     if (sector) params.set("sector", sector);
-    void fetch(`/api/movement?${params.toString()}`)
+
+    void fetch(`/api/movement?${params.toString()}`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
-        if (cancelled) return;
         const exp = data?.explanation ?? null;
         setExplanation(exp);
         onLoaded?.(exp);
       })
-      .catch(() => { if (!cancelled) { setExplanation(null); onLoaded?.(null); } })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        setExplanation(null);
+        onLoaded?.(null);
+        void err;
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+
+    // No cleanup-abort: StrictMode's mount→cleanup→mount would abort this
+    // request and then hit the `loadedKeyRef` guard on the second pass, leaving
+    // the card stuck loading forever. Unmount is handled below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, sector, autoLoad]);
+  }, [requestKey, autoLoad, ready]);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   async function load() {
     setOpened(true);

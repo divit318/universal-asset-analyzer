@@ -61,33 +61,100 @@ const METRIC_LABEL: Record<string, string> = {
   barrier: "Barrier",
 };
 
-const PERCENT_KEYS = new Set([
-  "returnOnEquity", "revenueGrowth", "operatingMargins", "dividendYield", "yield",
-  "expenseRatio", "volatility", "capRate", "cashOnCash", "rentalYield", "appreciation",
-  "annualizedReturn", "cagr", "distanceToBarrier", "ownershipPercent", "couponRate",
-  "barrier", "worstOfLevel",
-]);
-const CURRENCY_KEYS = new Set(["marketCap", "noi", "debtService", "impliedOwnershipValue"]);
-const YEAR_KEYS = new Set(["duration", "maturity", "yearsToMaturity"]);
-const MULTIPLE_KEYS = new Set(["peRatio", "priceToBook", "priceToFFO", "moic"]);
+/**
+ * The unit every metric arrives in — DECLARED, never inferred.
+ *
+ * This used to be inferred from magnitude: `Math.abs(value) <= 1 ? value * 100 :
+ * value`. That heuristic is correct for the common case and silently wrong by a
+ * factor of 100 for exactly the values an analyst most wants to see:
+ *
+ *   - AAPL `returnOnEquity` 1.4147 rendered as "1.41%" instead of "141%"
+ *   - ORLA `revenueGrowth`  1.693  rendered as "1.69%" instead of "+169%"
+ *
+ * A hypergrowth or buyback-heavy compounder appearing 100x weaker than a slow
+ * industrial is not a rounding problem, it is a credibility problem — an analyst
+ * who sees Apple at 1.41% ROE beside J&J at 25.74% stops trusting every other
+ * number on the screen. Magnitude can never distinguish "0.85 = 85%" from
+ * "1.85 = 1.85%", so the only correct fix is to stop guessing.
+ *
+ * `ratio` means the provider hands back a fraction (0.2574 = 25.74%).
+ * `percent` means the value is already in percent units (27.2 = 27.2%) — those
+ * keys are named `...Percent` at their source in lib/portfolio/classes/*.
+ */
+type MetricUnit = "ratio" | "percent" | "currency" | "years" | "multiple" | "count";
 
-function formatMetric(key: string, value: number | null): string {
+const METRIC_UNITS: Record<string, MetricUnit> = {
+  // Provider fractions (Yahoo `quoteSummary` conventions).
+  returnOnEquity: "ratio",
+  revenueGrowth: "ratio",
+  operatingMargins: "ratio",
+  dividendYield: "ratio",
+
+  // Already percent at the source — see lib/portfolio/classes/*.ts, where these
+  // are read from fields explicitly suffixed `...Percent`. `yield` is normalized
+  // to percent in bond.ts so it matches cash's APY.
+  yield: "percent",
+  expenseRatio: "percent",
+  volatility: "percent",
+  capRate: "percent",
+  cashOnCash: "percent",
+  rentalYield: "percent",
+  appreciation: "percent",
+  annualizedReturn: "percent",
+  cagr: "percent",
+  distanceToBarrier: "percent",
+  ownershipPercent: "percent",
+  couponRate: "percent",
+  barrier: "percent",
+  worstOfLevel: "percent",
+
+  marketCap: "currency",
+  noi: "currency",
+  debtService: "currency",
+  impliedOwnershipValue: "currency",
+
+  duration: "years",
+  maturity: "years",
+  yearsToMaturity: "years",
+
+  peRatio: "multiple",
+  priceToBook: "multiple",
+  priceToFFO: "multiple",
+  moic: "multiple",
+
+  debtToEquity: "count",
+};
+
+/** Percent digits: keep 2 for readable values, drop to 0 once the integer part dominates. */
+function percentDigits(pct: number): number {
+  return Math.abs(pct) >= 100 ? 0 : 2;
+}
+
+export function formatMetric(key: string, value: number | null): string {
   // An unavailable metric shows an em-dash. It never shows 0, and it never shows a
   // fabricated midpoint — the two ways the old engine hid a data gap.
   if (value == null || !Number.isFinite(value)) return "—";
 
-  if (CURRENCY_KEYS.has(key)) return formatCurrency(value);
-  if (YEAR_KEYS.has(key)) return `${value.toFixed(1)}y`;
-  if (MULTIPLE_KEYS.has(key)) return `${value.toFixed(1)}×`;
-  if (PERCENT_KEYS.has(key)) {
-    // Yahoo hands back fractions for some fields and percentages for others.
-    const pct = Math.abs(value) <= 1 && !["capRate", "cashOnCash", "distanceToBarrier", "ownershipPercent", "expenseRatio", "volatility", "worstOfLevel", "barrier"].includes(key)
-      ? value * 100
-      : value;
-    return `${pct.toFixed(pct >= 100 ? 0 : 2)}%`;
+  switch (METRIC_UNITS[key]) {
+    case "currency":
+      return formatCurrency(value);
+    case "years":
+      return `${value.toFixed(1)}y`;
+    case "multiple":
+      return `${value.toFixed(1)}×`;
+    case "ratio": {
+      const pct = value * 100;
+      return `${pct.toFixed(percentDigits(pct))}%`;
+    }
+    case "percent":
+      return `${value.toFixed(percentDigits(value))}%`;
+    case "count":
+      return value.toFixed(0);
+    default:
+      // An undeclared metric is a number, not a guessed percentage. Adding a new
+      // metric to the model means adding it to METRIC_UNITS above.
+      return value.toFixed(2);
   }
-  if (key === "debtToEquity") return value.toFixed(0);
-  return value.toFixed(2);
 }
 
 function ScoreChip({ holding }: { holding: Holding }) {
@@ -104,12 +171,17 @@ function ScoreChip({ holding }: { holding: Holding }) {
   const { score, confidence } = holding.score;
   const tone = score >= 65 ? "text-positive" : score >= 40 ? "text-foreground" : "text-negative";
 
+  /* Confidence is shown next to every score — a 70 at 20% confidence must not
+     look like a 70 at 90%. It is rendered as a labelled suffix rather than as
+     "/{confidence}%", which produced strings like "68/80%" that read
+     unambiguously as a fraction ("68 out of 80") in a column headed SCORE. */
   return (
-    <span className="flex items-baseline justify-end gap-1" title={holding.score.why.join(". ")}>
+    <span
+      className="flex items-baseline justify-end gap-1.5"
+      title={`Score ${score}/100 · ${confidence}% data confidence. ${holding.score.why.join(". ")}`}
+    >
       <span className={`font-mono text-sm font-semibold tabular-nums ${tone}`}>{score}</span>
-      {/* Confidence is shown next to every score. A 70 at 20% confidence must not
-          look like a 70 at 90%. */}
-      <span className="font-mono text-[10px] tabular-nums text-muted/60">/{confidence}%</span>
+      <span className="font-mono text-[10px] tabular-nums text-muted/60">{confidence}% conf</span>
     </span>
   );
 }

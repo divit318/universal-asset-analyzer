@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FinancialStatements, FundamentalsSnapshot, ScoreResult } from "@/lib/types";
 
 /**
@@ -23,7 +23,11 @@ export function FinancialInsightCard({ symbol, snapshot, statements, score }: Pr
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function generate() {
+  const abortRef = useRef<AbortController | null>(null);
+  /** Symbol whose auto-generation has already been started. */
+  const generatedForRef = useRef<string | null>(null);
+
+  async function generate(signal?: AbortSignal) {
     setLoading(true);
     setError(null);
     try {
@@ -31,23 +35,48 @@ export function FinancialInsightCard({ symbol, snapshot, statements, score }: Pr
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbol, snapshot, statements, score }),
+        signal,
       });
       const json = await res.json() as { insight?: string; model?: string; error?: string };
       if (!res.ok) throw new Error(json.error ?? "AI analysis failed");
       setInsight(json.insight ?? null);
       setModel(json.model ?? null);
     } catch (err) {
+      if (signal?.aborted) return;
       setError(err instanceof Error ? err.message : "AI failed");
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }
 
+  /**
+   * Auto-generate once per symbol.
+   *
+   * The ref guard is what makes this one inference instead of two: StrictMode
+   * runs this effect twice on mount in dev, and each run was a full local
+   * generation competing with the verdict for the same single-threaded Ollama.
+   * (Deliberately no cleanup-abort — see the movement explainer card for why
+   * that combination would cancel the only request that ever starts.)
+   */
   useEffect(() => {
-    /* eslint-disable-next-line react-hooks/set-state-in-effect */
-    void generate();
+    if (generatedForRef.current === symbol) return;
+    generatedForRef.current = symbol;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    void generate(controller.signal);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol]);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  /** Manual refresh: supersedes any in-flight generation for this symbol. */
+  function regenerate() {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    return generate(controller.signal);
+  }
 
   if (insight) {
     return (
@@ -60,7 +89,7 @@ export function FinancialInsightCard({ symbol, snapshot, statements, score }: Pr
             AI Insight — Financial Trend Interpretation
           </span>
           <button
-            onClick={generate}
+            onClick={() => void regenerate()}
             disabled={loading}
             className="text-[10px] text-muted hover:text-foreground disabled:opacity-40"
           >
@@ -80,7 +109,7 @@ export function FinancialInsightCard({ symbol, snapshot, statements, score }: Pr
       </span>
       {!loading ? (
         <button
-          onClick={generate}
+          onClick={() => void regenerate()}
           className="shrink-0 rounded-lg border border-border bg-surface px-3 py-1.5 text-[11px] font-medium transition-colors hover:border-accent/40 hover:text-accent"
         >
           {error ? "Retry" : "Generate AI Insight"}

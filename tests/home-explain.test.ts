@@ -37,6 +37,7 @@ function pulse(overrides: Partial<PortfolioPulse> = {}): PortfolioPulse {
     cashPct: 5,
     diversificationScore: 60,
     largestDrift: null,
+    totalReturnOnCostPct: 3.1,
     marketPricedPct: 100,
     radar: [],
     biggestStrength: null,

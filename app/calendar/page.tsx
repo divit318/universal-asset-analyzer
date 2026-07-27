@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { CalendarEvent, CalendarResponse } from "@/app/api/calendar/route";
-import { formatCompact } from "@/lib/format";
+import { formatCompactCurrency, formatPerShare } from "@/lib/format";
 import { EventDrawer } from "./_components/event-drawer";
 import { PageShell } from "@/app/_components/ui";
 
@@ -188,11 +188,13 @@ function EarningsRow({ ev, onClick, isPortfolio, isWatchlist }: {
           {/* Meta row */}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted">
             {ev.quarter && <span>{ev.quarter}</span>}
+            {/* Estimates render in their OWN reporting currency. A hardcoded "$"
+                turned SK hynix's ₩84.1T revenue estimate into "$84.12T". */}
             {ev.epsEstimate != null && (
-              <span>EPS est. <span className="text-foreground">${ev.epsEstimate.toFixed(2)}</span></span>
+              <span>EPS est. <span className="text-foreground">{formatPerShare(ev.epsEstimate, ev.estimateCurrency)}</span></span>
             )}
             {ev.revenueEstimate != null && (
-              <span>Rev. est. <span className="text-foreground">${formatCompact(ev.revenueEstimate)}</span></span>
+              <span>Rev. est. <span className="text-foreground">{formatCompactCurrency(ev.revenueEstimate, ev.estimateCurrency)}</span></span>
             )}
           </div>
         </div>

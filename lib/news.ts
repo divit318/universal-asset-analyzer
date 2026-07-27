@@ -35,6 +35,50 @@ function safeIso(dateStr: string): string {
   }
 }
 
+const HTML_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+  ndash: "–",
+  mdash: "—",
+  rsquo: "\u2019",
+  lsquo: "\u2018",
+  rdquo: "\u201d",
+  ldquo: "\u201c",
+  hellip: "…",
+};
+
+/**
+ * Normalize one text node from a feed into something safe to display.
+ *
+ * Every feed field goes through this, because the CDATA-aware regexes below
+ * only match *well-formed* `<title><![CDATA[…]]></title>`. Real feeds are not
+ * reliably well-formed, and when the strict pattern missed, the permissive
+ * fallback captured the wrapper itself — putting the literal string
+ * `<![CDATA[US Stoc…` on screen as a Knowledge Graph node label.
+ *
+ * Order matters: unwrap CDATA, then strip tags, then decode entities, then
+ * collapse whitespace. Decoding before stripping would let an encoded `&lt;b&gt;`
+ * become a real tag after the stripper had already run.
+ */
+export function cleanFeedText(raw: string): string {
+  return raw
+    // Unwrap complete CDATA sections, then any stray opener/closer left by a
+    // truncated or malformed one.
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/<!\[CDATA\[/g, "")
+    .replace(/\]\]>/g, "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&([a-z]+);/gi, (match, name: string) => HTML_ENTITIES[name.toLowerCase()] ?? match)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /** Very minimal RSS/Atom parser — extracts <item> blocks without a dependency. */
 function parseRssItems(xml: string): { title: string; link: string; pubDate: string; description: string }[] {
   const items: { title: string; link: string; pubDate: string; description: string }[] = [];
@@ -52,12 +96,14 @@ function parseRssItems(xml: string): { title: string; link: string; pubDate: str
     const description = block.match(/<description[^>]*><!\[CDATA\[([\s\S]*?)\]\]><\/description>/i)?.[1]
       ?? block.match(/<description[^>]*>([\s\S]*?)<\/description>/i)?.[1]
       ?? "";
-    if (title.trim()) {
+
+    const cleanTitle = cleanFeedText(title);
+    if (cleanTitle) {
       items.push({
-        title: title.trim(),
-        link: link.trim(),
+        title: cleanTitle,
+        link: cleanFeedText(link),
         pubDate: pubDate.trim(),
-        description: description.replace(/<[^>]+>/g, "").trim(),
+        description: cleanFeedText(description),
       });
     }
   }
@@ -88,7 +134,7 @@ function mapRawNews(raw: RawNews): NewsItem | null {
   const publishedAt =
     ts != null ? new Date(typeof ts === "number" ? ts * 1000 : ts).toISOString() : isoNow();
   return {
-    headline: raw.title,
+    headline: cleanFeedText(raw.title),
     source: raw.publisher ?? "Yahoo Finance",
     url: raw.link,
     publishedAt,
@@ -142,7 +188,7 @@ export async function fetchYahooNews(query?: string, limit = 20): Promise<NewsIt
             : new Date(typeof t === "number" ? t * 1000 : t).toISOString();
         }
         return {
-          headline: n.title!,
+          headline: cleanFeedText(n.title!),
           source: n.publisher ?? "Yahoo Finance",
           url: n.link ?? "",
           publishedAt,
@@ -239,7 +285,7 @@ async function fetchNseAnnouncements(limit = 20): Promise<NewsItem[]> {
     if (!res.ok) return [];
     const raw = (await res.json()) as RawNseAnnouncement[];
     return raw.slice(0, limit).map((a) => ({
-      headline: `[${a.symbol ?? "NSE"}] ${a.subject ?? a.bm_desc ?? "Corporate announcement"}`,
+      headline: cleanFeedText(`[${a.symbol ?? "NSE"}] ${a.subject ?? a.bm_desc ?? "Corporate announcement"}`),
       source: "NSE India",
       url: "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
       publishedAt: a.exchdisstime ? new Date(a.exchdisstime).toISOString() : isoNow(),
@@ -281,7 +327,7 @@ async function fetchNewsApi(query: string, limit = 20): Promise<NewsItem[]> {
     return (data.articles ?? [])
       .filter((a) => a.title && a.title !== "[Removed]")
       .map((a) => ({
-        headline: a.title!,
+        headline: cleanFeedText(a.title!),
         source: a.source?.name ?? "NewsAPI",
         url: a.url ?? "",
         publishedAt: a.publishedAt ?? isoNow(),

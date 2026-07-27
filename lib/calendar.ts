@@ -30,6 +30,13 @@ export interface CalendarEvent {
   quarter?: string;
   epsEstimate?: number | null;
   revenueEstimate?: number | null;
+  /**
+   * Currency the EPS/revenue estimates are denominated in (Yahoo's
+   * `financialCurrency`). Travels WITH the numbers so no renderer has to assume
+   * USD — a non-US listing reports in its own currency and the magnitudes differ
+   * by orders of magnitude.
+   */
+  estimateCurrency?: string;
   timing?: "BMO" | "AMC" | "TNS";
 
   // Dividend
@@ -267,6 +274,10 @@ export async function getCalendarEvents(): Promise<CalendarResponse> {
         "price",
         "earningsTrend",
         "summaryDetail",
+        // `financialData` carries `financialCurrency` — the currency the EPS and
+        // revenue estimates are actually denominated in. Without it the UI was
+        // printing SK hynix's ₩84.1T estimate as "$84.12T".
+        "financialData",
       ]) as Record<string, unknown>;
       return { sym, raw };
     }),
@@ -300,6 +311,18 @@ export async function getCalendarEvents(): Promise<CalendarResponse> {
       ? (trendData.trend as Record<string, unknown>[])
       : [];
     const currentQ = trends.find((t) => t.period === "0q") ?? trends[0] ?? {};
+
+    /* The currency the EPS/revenue estimates are reported in. Yahoo denominates
+       them in the company's *financial* currency, which for a non-US listing is
+       not USD — SK hynix reports in KRW, so its revenue estimate is ~84e12.
+       Rendering that under a hardcoded "$" produced "$84.12T", a number three
+       orders of magnitude wrong and instantly discrediting. Falls back to the
+       quote's own currency, then USD. */
+    const fin = (raw.financialData ?? {}) as Record<string, unknown>;
+    const estimateCurrency =
+      (fin.financialCurrency as string | undefined) ??
+      (pr.currency as string | undefined) ??
+      "USD";
 
     // ── Earnings ─────────────────────────────────────────────────────────
     const earningsDates = (earningsCal.earningsDate ?? []) as unknown[];
@@ -335,6 +358,7 @@ export async function getCalendarEvents(): Promise<CalendarResponse> {
           quarter: quarter || undefined,
           epsEstimate: epsEst,
           revenueEstimate: revEst,
+          estimateCurrency,
         });
       }
     }

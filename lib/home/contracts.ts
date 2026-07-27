@@ -137,6 +137,20 @@ export interface PortfolioPulse {
   diversificationScore: number | null;
   /** Positive = overweight vs. target. Only the worst offender. */
   largestDrift: { label: string; driftPct: number } | null;
+  /**
+   * Cumulative return on cost across the WHOLE book, in percent — the same
+   * `report.totalReturn` the /portfolio page shows in its "Total return" tile.
+   *
+   * This exists so the two surfaces cannot disagree. The homepage previously
+   * showed the lot-ledger return here (`PortfolioPerformanceSummary.totalReturnPct`),
+   * which is computed over only the positions that have a transaction history —
+   * a different population from the full report. The result was Home reading
+   * "−7.3% since inception" while /portfolio read "−0.1% total return" for the
+   * same book at the same moment, with nothing on either screen to explain it.
+   * The money-weighted (XIRR) figure is still shown, but explicitly labelled as
+   * such rather than as an unqualified "return".
+   */
+  totalReturnOnCostPct: number | null;
   /** Share of value that is marked to market rather than self-reported. */
   marketPricedPct: number;
   /** The health engine's dimensions, projected onto radar spokes. */

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { CalendarEvent } from "@/app/api/calendar/route";
-import { formatCompact } from "@/lib/format";
+import { formatCompactCurrency, formatPerShare } from "@/lib/format";
 import { Drawer } from "@/app/_components/dialog";
 
 // ─── Style maps ────────────────────────────────────────────────────────────
@@ -141,11 +141,11 @@ export function EventDrawer({ event, onClose }: EventDrawerProps) {
               {event.quarter && <Row label="Quarter" value={event.quarter} />}
               <Row
                 label="EPS Estimate"
-                value={event.epsEstimate != null ? `$${event.epsEstimate.toFixed(2)}` : "—"}
+                value={formatPerShare(event.epsEstimate, event.estimateCurrency)}
               />
               <Row
                 label="Revenue Estimate"
-                value={event.revenueEstimate != null ? `$${formatCompact(event.revenueEstimate)}` : "—"}
+                value={formatCompactCurrency(event.revenueEstimate, event.estimateCurrency)}
               />
               <Row label="Date Status" value={event.isEstimate ? "Estimated window" : "Confirmed date"} />
               {event.dateEnd && event.dateEnd !== event.date && (
