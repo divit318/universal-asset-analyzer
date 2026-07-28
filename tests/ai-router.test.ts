@@ -355,3 +355,78 @@ describe("pickModel", () => {
     expect(model).toBe("mistral:latest");
   });
 });
+
+/**
+ * A blown deadline is a fact about the HOST, not about the model.
+ *
+ * `route()` treated it like any other model failure and tried the remaining
+ * candidates, so one 45s budget became a 2m15s wait across three models — and
+ * every one of those attempts was doomed for the same reason the first was.
+ * A caller abort is worse still: nobody is waiting for the answer, yet the chain
+ * kept occupying Ollama, which serializes generations and so delays every other
+ * queued request.
+ */
+describe("route: deliberate aborts stop the fallback chain", () => {
+  const twoModels: ProviderModelInfo[] = [
+    { id: "qwen3:14b", sizeGb: 9.3 },
+    { id: "mistral:latest", sizeGb: 4.4 },
+  ];
+
+  it("does NOT try the next candidate after a deadline expires", async () => {
+    const provider = new FakeProvider(twoModels, {
+      "qwen3:14b": new DOMException("timed out", "TimeoutError"),
+      "mistral:latest": { content: "should never be reached", reasoning: "" },
+    });
+    await expect(
+      route("explain-movement", { messages: [{ role: "user", content: "hi" }] }, { providers: [provider] }),
+    ).rejects.toThrow(/timed out/);
+    expect(provider.calls).toEqual(["qwen3:14b"]);
+  });
+
+  it("does NOT try the next candidate after the caller aborts", async () => {
+    const provider = new FakeProvider(twoModels, {
+      "qwen3:14b": new DOMException("aborted", "AbortError"),
+      "mistral:latest": { content: "should never be reached", reasoning: "" },
+    });
+    await expect(
+      route("explain-movement", { messages: [{ role: "user", content: "hi" }] }, { providers: [provider] }),
+    ).rejects.toThrow(/aborted/);
+    expect(provider.calls).toEqual(["qwen3:14b"]);
+  });
+
+  it("still falls back on an ordinary model failure", async () => {
+    const provider = new FakeProvider(twoModels, {
+      "qwen3:14b": new Error("model exploded"),
+      "mistral:latest": { content: "fallback answer", reasoning: "" },
+    });
+    const res = await route(
+      "explain-movement",
+      { messages: [{ role: "user", content: "hi" }] },
+      { providers: [provider] },
+    );
+    expect(res.content).toBe("fallback answer");
+    expect(provider.calls).toEqual(["qwen3:14b", "mistral:latest"]);
+  });
+});
+
+/**
+ * Cold load, not generation, is what makes a local model feel broken: 69.6s to
+ * load a 4.4GB model vs 0.4s to answer, measured. At Ollama's 5-minute default
+ * an occasional user pays that load almost every time.
+ */
+describe("route: keepAlive", () => {
+  const installed: ProviderModelInfo[] = [{ id: "mistral:latest", sizeGb: 4.4 }];
+  const ok = { "mistral:latest": { content: "{}", reasoning: "" } };
+
+  it("holds the model for tasks a human is waiting on", async () => {
+    const provider = new FakeProvider(installed, ok);
+    await route("app-assistant", { messages: [{ role: "user", content: "hi" }] }, { providers: [provider] });
+    expect(provider.requests[0].keepAlive).toBe("30m");
+  });
+
+  it("does not pin memory for background work", async () => {
+    const provider = new FakeProvider(installed, ok);
+    await route("investment-thesis", { messages: [{ role: "user", content: "hi" }] }, { providers: [provider] });
+    expect(provider.requests[0].keepAlive).toBeUndefined();
+  });
+});

@@ -28,6 +28,7 @@
 import { disabledModels, pinnedModels } from "./config";
 import { isHealthy, markFailure, markSuccess } from "./health";
 import { fitsInMemory, specForInstalled, type ModelCapability, type ModelSpec } from "./models";
+import { isDeliberateAbort } from "./ollama";
 import { OllamaProvider } from "./providers/ollama-provider";
 import type { AIProvider, ProviderChatTurn, ProviderModelInfo } from "./provider";
 import { normalizeResponse, type AIResponse } from "./response";
@@ -240,7 +241,25 @@ function settingsFor(task: TaskConfig, model: string, request: RouteRequest) {
     // unnecessary 32k context is real RAM taken from the weights.
     numCtx: task.contextTokens ? Math.min(task.contextTokens, spec.contextWindow) : undefined,
     thinking: resolveThinking(task, spec, json),
+    keepAlive: keepAliveFor(task),
   };
+}
+
+/**
+ * How long to keep the model resident after answering.
+ *
+ * Cold load, not generation, is what makes a local model feel broken: measured
+ * on this host, a 4.4GB model took 69.6s to load and 0.4s to answer. Ollama
+ * evicts after five idle minutes by default, so a task the user reaches
+ * occasionally pays that load almost every time — and an `interactive` task,
+ * whose entire budget is 45s, then cannot finish however small the question.
+ *
+ * So the tasks a human is actively waiting on hold the model; `background` work
+ * accepts its own eviction rather than pinning ~10GB for a scheduled job that
+ * runs once an hour. This is the reason a warm assistant answers in ~1s.
+ */
+function keepAliveFor(task: TaskConfig): string | undefined {
+  return task.latency === "interactive" ? "30m" : undefined;
 }
 
 /**
@@ -300,6 +319,16 @@ export async function route(
     } catch (err) {
       markFailure(model);
       attemptErrors.push(`${model}: ${err instanceof Error ? err.message : String(err)}`);
+      // Fall back on a model that FAILED, never on one that ran out of time.
+      //
+      // A deadline expiring says something about the host, not the model: if
+      // this machine could not load and run candidate A inside the budget, it
+      // will not do better with B, so trying the rest only multiplies the wait
+      // the user already gave up on — 45s became 2m15s across three candidates.
+      // A caller abort is even clearer: nobody is waiting for the answer, so
+      // continuing to walk the chain just occupies Ollama, which serializes
+      // generations and so delays everyone else's queue.
+      if (isDeliberateAbort(err)) throw err;
     }
   }
 
@@ -357,6 +386,9 @@ export async function* routeStream(
       // model. Retrying another would append a second model's answer to the
       // first one's. Fail honestly instead.
       if (started) throw new AllModelsFailedError(taskType, attemptErrors);
+      // Same reasoning as the non-streamed path: a blown deadline or an aborted
+      // caller must not be retried against the remaining candidates.
+      if (isDeliberateAbort(err)) throw err;
     }
   }
 

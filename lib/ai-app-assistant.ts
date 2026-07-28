@@ -328,10 +328,32 @@ export async function runAppAssistant(
     if (!answer) throw new Error("empty answer");
 
     return { answer, suggestions: sanitizeSuggestions(parsed.suggestions), action, model };
-  } catch {
-    return {
-      answer: "I couldn't reach the local model just now. Start Ollama with `ollama serve` and try again, or use ⌘K to jump straight to a tool.",
-      model: "unavailable",
-    };
+  } catch (err) {
+    return { answer: failureAnswer(err), model: "unavailable" };
   }
+}
+
+/**
+ * Say what actually went wrong.
+ *
+ * Every failure here used to report "I couldn't reach the local model — start
+ * Ollama with `ollama serve`". That is only one of the things that can go
+ * wrong, and on a memory-tight host it is the *least* likely: the observed case
+ * was Ollama up and answering, just slower than the task's deadline, so the
+ * panel told the user to start a daemon that was already running while the real
+ * cause — the machine paging — went unmentioned. Advice you can't act on is
+ * worse than no advice, because the user "fixes" the wrong thing.
+ */
+export function failureAnswer(err: unknown): string {
+  const name = err instanceof Error ? err.name : "";
+  if (name === "OllamaUnavailableError") {
+    return "I couldn't reach the local model. Start Ollama with `ollama serve` and try again, or use ⌘K to jump straight to a tool.";
+  }
+  if (name === "ModelMissingError") {
+    return `${err instanceof Error ? err.message : "A required model isn't installed."} Then try again, or use ⌘K to jump straight to a tool.`;
+  }
+  if (name === "TimeoutError" || name === "AbortError" || name === "AllModelsFailedError") {
+    return "Ollama is running but took too long to answer — usually the machine is low on free memory, so the model is paging. Close some apps or set `AI_MAX_MODEL_GB` lower in `.env.local` to route to a smaller model. ⌘K still works.";
+  }
+  return "I hit an error generating that answer. Try rephrasing, or use ⌘K to jump straight to a tool.";
 }

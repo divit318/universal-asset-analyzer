@@ -67,6 +67,7 @@ export class OllamaProvider implements AIProvider {
         numCtx: request.numCtx,
         maxTokens: request.maxTokens,
         timeoutMs: request.timeoutMs,
+        keepAlive: request.keepAlive,
       });
       // Native `thinking` field first; fall back to inline <think> tags for
       // models/runtimes that still embed reasoning in the answer text.
@@ -91,6 +92,11 @@ export class OllamaProvider implements AIProvider {
       think: request.thinking,
       numCtx: request.numCtx,
       maxTokens: request.maxTokens,
+      // Same class of bug as `json` above, and the reason a 45s task could run
+      // for minutes: this branch handles every multi-turn request, so any
+      // conversation with history escaped its own declared deadline.
+      timeoutMs: request.timeoutMs,
+      keepAlive: request.keepAlive,
       onThinking: (t) => (reasoning += t),
       signal: request.signal,
     })) {
@@ -120,6 +126,8 @@ export class OllamaProvider implements AIProvider {
       think: request.thinking,
       numCtx: request.numCtx,
       maxTokens: request.maxTokens,
+      timeoutMs: request.timeoutMs,
+      keepAlive: request.keepAlive,
       onThinking: onReasoning,
       signal: request.signal,
     })) {

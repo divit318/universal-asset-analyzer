@@ -262,7 +262,14 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     jsonMode: true,
     temperature: 0.3,
     maxTokens: 500,
-    timeoutMs: 45_000,
+    // 45s could not cover a COLD model load, so on a host where the model had
+    // been evicted the panel could never answer at all — measured here, 69.6s
+    // to load a 4.4GB model and 0.4s to generate. Generation was never the
+    // problem. Two changes make a budget this large safe rather than reckless:
+    // the Router no longer retries the remaining candidates after a timeout (so
+    // this is the total wait, not a third of it), and interactive tasks now hold
+    // the model for 30m, so only the first question of a session pays the load.
+    timeoutMs: 150_000,
   },
 
   /* ---- Reserved ---------------------------------------------------------- */

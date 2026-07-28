@@ -28,6 +28,12 @@ export interface ProviderCompleteRequest {
   thinking?: boolean;
   /** Context window to allocate. Omit to accept the provider's default. */
   numCtx?: number;
+  /**
+   * How long the provider should keep the model resident after answering.
+   * Provider-agnostic hint; Ollama maps it to `keep_alive`. Omit for the
+   * provider's default.
+   */
+  keepAlive?: string;
   signal?: AbortSignal;
 }
 

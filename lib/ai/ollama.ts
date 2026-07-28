@@ -137,6 +137,36 @@ export interface ChatOptions {
    * made streaming a net downgrade rather than a pure latency win.
    */
   json?: boolean;
+  /**
+   * Deadline for the whole request — the streaming counterpart of
+   * {@link GenerateOptions.timeoutMs}.
+   *
+   * Was missing entirely, which made a task's declared `timeoutMs` a
+   * suggestion rather than a bound: {@link generate} honoured it, `streamChat`
+   * had no field to receive it, and `ollama-provider.complete()` routes any
+   * multi-turn request (i.e. any conversation with history) down this path. So
+   * `app-assistant`, which declares 45s, could and did run for minutes — the
+   * Router's per-model fallback then multiplied that by the candidate count.
+   *
+   * Deliberately no blanket default here, unlike {@link generate}'s 120s: a
+   * genuinely streamed generation is *meant* to run long, and a default would
+   * truncate it mid-answer. The Router always resolves a value from the task
+   * and model registries, so in practice one is always supplied.
+   */
+  timeoutMs?: number;
+  /**
+   * How long Ollama keeps the model resident after answering (its `keep_alive`),
+   * e.g. "30m". Omitted → Ollama's own 5-minute default.
+   *
+   * Load time dominates everything else on a modest host: measured here, a
+   * 4.4GB model took **69.6s to load and 0.4s to generate**. At Ollama's
+   * default the model is evicted after five idle minutes, so an occasional
+   * user pays that 69.6s on essentially every visit — and an interactive task
+   * whose whole deadline is 45s could therefore never complete, no matter how
+   * trivial the question. Keeping the interactive model warm is what makes the
+   * declared latency budget achievable rather than aspirational.
+   */
+  keepAlive?: string;
   signal?: AbortSignal;
 }
 
@@ -171,6 +201,7 @@ function buildBody(opts: ChatOptions, stream: boolean) {
     stream,
     ...(opts.json ? { format: "json" } : {}),
     ...(opts.think === undefined ? {} : { think: opts.think }),
+    ...(opts.keepAlive ? { keep_alive: opts.keepAlive } : {}),
     options: {
       temperature: opts.temperature ?? 0.4,
       ...(opts.numCtx ? { num_ctx: opts.numCtx } : {}),
@@ -197,7 +228,7 @@ export async function* streamChat(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,
-      signal: opts.signal,
+      signal: deadlineSignal(opts.signal, opts.timeoutMs),
     }),
   );
 
@@ -266,6 +297,8 @@ export interface GenerateOptions {
   numCtx?: number;
   maxTokens?: number;
   timeoutMs?: number;
+  /** See {@link ChatOptions.keepAlive}. */
+  keepAlive?: string;
 }
 
 export interface GenerateResult {
@@ -313,6 +346,37 @@ export async function generate(
 }
 
 /**
+ * Combine a caller's abort signal with a deadline. Returns whichever of the two
+ * exists, or a signal that fires on the first of them when both do.
+ *
+ * Both matter and neither subsumes the other: the caller's signal carries
+ * client disconnects (so an abandoned request stops occupying Ollama, which
+ * serializes generations and makes one zombie request everyone else's queue),
+ * while the deadline is what stops a memory-starved model running unbounded.
+ */
+export function deadlineSignal(
+  signal: AbortSignal | undefined,
+  timeoutMs: number | undefined,
+): AbortSignal | undefined {
+  if (timeoutMs == null) return signal;
+  const deadline = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, deadline]) : deadline;
+}
+
+/**
+ * Did this rejection come from us cancelling the request, rather than from the
+ * connection failing?
+ *
+ * Covers both ways that happens: a caller aborting ("AbortError") and a
+ * deadline expiring ("TimeoutError"). Retrying either is wrong — the first
+ * because nobody is waiting for the answer any more, the second because the
+ * retry just waits out the same budget again.
+ */
+export function isDeliberateAbort(err: unknown): boolean {
+  return err instanceof DOMException && (err.name === "AbortError" || err.name === "TimeoutError");
+}
+
+/**
  * Retry a fetch that fails to connect, with linear backoff. A failed *fetch*
  * (network/DNS/connection-refused) rejects, which we treat as "daemon down" and
  * retry; an HTTP error response resolves and is returned untouched. After the
@@ -327,7 +391,19 @@ async function withRetry(
       return await fn();
     } catch (err) {
       // An aborted request is intentional — don't retry it.
-      if (err instanceof DOMException && err.name === "AbortError") throw err;
+      //
+      // "Intentional" has to include the DEADLINE, not just a caller abort.
+      // `AbortSignal.timeout()` rejects with a DOMException named
+      // "TimeoutError", not "AbortError", so a guard that only named the latter
+      // silently retried every expiry: each attempt waited out the full
+      // timeout, so a task's declared budget was multiplied by `attempts`, and
+      // then by the Router's candidate count on top. app-assistant declares
+      // 45s and took 6m40s — 45s x 3 attempts x 3 candidate models.
+      //
+      // Worse, exhausting the retries throws OllamaUnavailableError below, so a
+      // model that was merely slow was reported as a daemon that was not
+      // running — which is what the assistant panel told users to fix.
+      if (isDeliberateAbort(err)) throw err;
       if (i < attempts - 1) {
         await new Promise((r) => setTimeout(r, 250 * (i + 1)));
       }
