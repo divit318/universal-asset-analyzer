@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { Fragment, useCallback, useState } from "react";
 import { Card, Badge } from "@/app/_components/ui";
 import { formatCurrency } from "@/lib/format";
 import { useDataset } from "@/lib/platform/client/use-dataset";
@@ -262,9 +262,13 @@ export function OptimizePanel({
                   const checked = selection.isSelected(t.holdingId);
                   const pct = selection.pctOf(t.holdingId);
                   return (
-                    <>
+                    // The key belongs on the element the map RETURNS. A bare
+                    // <> is keyless no matter what its children carry, so React
+                    // saw this whole list as unkeyed and could not match rows
+                    // across renders — which is what the reconciler needs to
+                    // keep the checkbox/slider state attached to the right trade.
+                    <Fragment key={t.holdingId}>
                       <tr
-                        key={t.holdingId}
                         role="row"
                         tabIndex={0}
                         onClick={() => selection.toggle(t.holdingId)}
@@ -316,7 +320,7 @@ export function OptimizePanel({
                         </td>
                       </tr>
                       {checked && (
-                        <tr key={`${t.holdingId}-slider`} className="border-b border-border/50 bg-surface/20">
+                        <tr className="border-b border-border/50 bg-surface/20">
                           <td />
                           <td colSpan={5} className="px-2 py-2">
                             <div className="flex items-center gap-3">
@@ -341,7 +345,7 @@ export function OptimizePanel({
                           </td>
                         </tr>
                       )}
-                    </>
+                    </Fragment>
                   );
                 })}
               </tbody>

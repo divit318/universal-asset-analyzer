@@ -500,7 +500,14 @@ export function optimize(
       currentWeight: Math.round(h.weight * 10) / 10,
       targetWeight: Math.round(target * 10) / 10,
       delta: Math.round(delta * 10) / 10,
-      dollarDelta: Math.round((delta / 100) * totalValue),
+      // NOT rounded. The displayed weights above are rounded because a tenth of a
+      // percent is the resolution a human reads them at, but this figure is the
+      // EXECUTION INSTRUCTION: the transaction engine divides it by the live price
+      // to get units to trade. Rounding it to whole dollars left a full exit
+      // short by up to $0.50 — which came back as a phantom position of 0.0005
+      // GLD worth $0.18 sitting in the Commodities group forever. Callers that
+      // display it already round for presentation via formatCurrency().
+      dollarDelta: (delta / 100) * totalValue,
       action: frozenH
         ? "HOLD"
         : delta > MATERIAL_WEIGHT_DELTA_PCT ? "BUY" : delta < -MATERIAL_WEIGHT_DELTA_PCT ? "SELL" : "HOLD",

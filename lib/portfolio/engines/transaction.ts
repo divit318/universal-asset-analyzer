@@ -142,6 +142,34 @@ export interface BuildLotWritesResult {
   skipped: { holdingId: string; reason: string }[];
 }
 
+/** A leftover worth less than this, in base currency, is not a position. */
+const DUST_VALUE_BASE = 1;
+/** …and it only counts as a rounding leftover if it is this small a slice of the position. */
+const DUST_FRACTION_OF_POSITION = 0.01;
+
+/**
+ * Round a near-total sell up to the whole position.
+ *
+ * A trade arrives here denominated in DOLLARS and has to leave in UNITS, and that
+ * conversion cannot be exact: the optimizer's dollar figure is derived from a
+ * weight, the price is derived from a valuation, and dividing one by the other
+ * lands a hair short of the units actually held. The residue is then a holding —
+ * it has a row, a weight, a P&L and a quality score — despite being worth cents.
+ * That is how the Commodities group came to show 0.0005 GLD at $0.18 after two
+ * rebalances that both intended a full exit.
+ *
+ * Only a sell that already covers ≥99% of the position AND leaves under a dollar
+ * behind is snapped, so a deliberate partial trim is never silently turned into a
+ * liquidation — the residue has to be small in both absolute and relative terms.
+ */
+function closeOutIfDust(shares: number, quantity: number, price: number): number {
+  const residue = quantity - shares;
+  if (residue <= 0) return shares;
+  const isDust =
+    residue * price < DUST_VALUE_BASE && residue < quantity * DUST_FRACTION_OF_POSITION;
+  return isDust ? quantity : shares;
+}
+
 /**
  * Pure conversion: TradeToExecute[] -> real ledger writes. Split out from
  * executeTrades() so this — the part with actual decision logic (sell-cap,
@@ -188,7 +216,9 @@ export function buildLotWrites(
     const rawShares = Math.abs(t.dollarDelta) / price;
     // A sell can never exceed what's actually held — price drift between when
     // the trade was proposed and now could otherwise push a "full exit" negative.
-    const shares = isBuy ? rawShares : Math.min(rawShares, holding.quantity);
+    const shares = isBuy
+      ? rawShares
+      : closeOutIfDust(Math.min(rawShares, holding.quantity), holding.quantity, price);
     if (shares <= 0) {
       skipped.push({ holdingId: t.holdingId, reason: "Computed trade size was zero" });
       continue;
