@@ -5,6 +5,7 @@ export { PageShell, PageHeader, SectionHeader, type ShellWidth } from "./page-sh
 export {
   DataTable,
   DataTableAction,
+  DensityToggle,
   type DataTableColumn,
   type DataTableProps,
   type Density,

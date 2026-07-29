@@ -27,7 +27,9 @@ import { useMemo, useState, type ReactNode } from "react";
  *   and magnitudes are comparable by eye without reading every figure.
  * - **A sticky header**, so the columns are still legible 50 rows down.
  * - **A density toggle.** Compact is the default for data; comfortable exists for
- *   people who want air. Remembered by the caller if it wants to persist it.
+ *   people who want air. Remembered by the caller if it wants to persist it, and
+ *   suppressible so a surface with several grids can own one control for all of
+ *   them rather than repeating it per table.
  * - **One overflow action menu per row** instead of N inline buttons. The
  *   repeated four-link cross-nav (Research / DCF / IC Report / Compare) rendered
  *   on every row of the watchlist AND every calendar event card was hundreds of
@@ -77,6 +79,13 @@ export interface DataTableProps<T> {
   rowTone?: (row: T) => "default" | "alert" | "positive";
   density?: Density;
   onDensityChange?: (d: Density) => void;
+  /**
+   * Set false when the SURFACE owns density and renders one {@link DensityToggle}
+   * for several grids. A page that shows ten tables of one dataset (the Holdings
+   * tab) shares a single density value, so ten toggles were ten controls for one
+   * setting — changing any of them changed all ten, which reads as a bug.
+   */
+  showDensityToggle?: boolean;
   /** Shown in place of the body when there are no rows. */
   empty?: ReactNode;
   /** Caption above the table (count, filters). */
@@ -90,6 +99,58 @@ const CELL_PAD: Record<Density, string> = {
   compact: "px-2.5 py-1.5",
   comfortable: "px-3 py-3",
 };
+
+const DENSITY_LABEL: Record<Density, string> = {
+  compact: "Dense",
+  comfortable: "Roomy",
+};
+
+/**
+ * The row-height control, as a segmented control rather than two loose words.
+ *
+ * The selected option used to be marked with `bg-surface-2` — #1a1d23 sitting on
+ * a #131519 card, a 3% step that is invisible at 10px. So the toggle showed two
+ * equally-dead labels and gave no answer to the only question it is asked
+ * ("which one am I looking at?"). The active segment now carries the same
+ * brand-tinted treatment every other selected control in the app uses.
+ *
+ * Exported so a surface with SEVERAL grids over one dataset can render a single
+ * control for all of them (see {@link DataTableProps.showDensityToggle}).
+ */
+export function DensityToggle({
+  density,
+  onChange,
+  className = "",
+}: {
+  density: Density;
+  onChange: (d: Density) => void;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`flex shrink-0 items-center gap-0.5 rounded-control border border-border bg-surface p-0.5 text-[10px] uppercase tracking-widest ${className}`}
+    >
+      {(["compact", "comfortable"] as const).map((d) => {
+        const active = density === d;
+        return (
+          <button
+            key={d}
+            type="button"
+            onClick={() => onChange(d)}
+            aria-pressed={active}
+            className={`rounded-control px-2 py-1 transition-colors ${
+              active
+                ? "bg-brand/15 font-semibold text-foreground"
+                : "text-muted hover:text-foreground"
+            }`}
+          >
+            {DENSITY_LABEL[d]}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 const HIDE_BELOW: Record<string, string> = {
   sm: "hidden sm:table-cell",
@@ -133,6 +194,7 @@ export function DataTable<T>({
   rowTone,
   density,
   onDensityChange,
+  showDensityToggle = true,
   empty,
   toolbar,
   className = "",
@@ -175,26 +237,14 @@ export function DataTable<T>({
 
   return (
     <div className={`flex flex-col gap-2 ${className}`}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0 text-xs text-muted">{toolbar}</div>
-        <div className="flex shrink-0 items-center gap-1 text-[10px] uppercase tracking-widest text-muted">
-          {(["compact", "comfortable"] as const).map((d) => (
-            <button
-              key={d}
-              type="button"
-              onClick={() => setDensity(d)}
-              aria-pressed={activeDensity === d}
-              className={`rounded-control px-2 py-1 transition-colors ${
-                activeDensity === d
-                  ? "bg-surface-2 text-foreground"
-                  : "text-muted hover:text-foreground"
-              }`}
-            >
-              {d === "compact" ? "Dense" : "Roomy"}
-            </button>
-          ))}
+      {(toolbar || showDensityToggle) && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0 text-xs text-muted">{toolbar}</div>
+          {showDensityToggle && (
+            <DensityToggle density={activeDensity} onChange={setDensity} />
+          )}
         </div>
-      </div>
+      )}
 
       <div className="overflow-x-auto rounded-card border border-border">
         <table className="w-full text-sm">
