@@ -19,6 +19,14 @@ export interface UniverseProvider {
   assetClass: AssetClassId;
   load(): Promise<{ status: UniverseStatus; candidates: ScreenerCandidate[] }>;
   refresh(): UniverseStatus;
+  /**
+   * Non-blocking status snapshot — unlike `load()`, never awaits an in-flight
+   * build. `run()` already streams live progress into `status` via its
+   * `report(ready, total)` callback; this just exposes that snapshot for a
+   * polling UI to read without stalling behind the same build a concurrent
+   * `load()` call may be blocked on.
+   */
+  peekStatus(): UniverseStatus;
 }
 
 interface CacheOptions {
@@ -103,6 +111,11 @@ export function createUniverseCache({ assetClass, ttlMs, build }: CacheOptions):
       candidates = [];
       status = { stage: "empty", total: 0, ready: 0, builtAt: null };
       inFlight = run();
+      return status;
+    },
+
+    peekStatus() {
+      ensureBuild();
       return status;
     },
   };

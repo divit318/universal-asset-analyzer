@@ -2,6 +2,7 @@ import Link from "next/link";
 import { computePositionAction, type PositionAction } from "@/lib/position-action";
 import type { PortfolioFitAnalysis } from "@/lib/ios/types";
 import { formatCurrency } from "@/lib/format";
+import { ValueBar } from "@/app/_components/value-bar";
 
 const KIND_STYLE: Record<PositionAction["kind"], { label: string; tone: string; badge: string }> = {
   initiate: { label: "Initiate", tone: "text-positive", badge: "text-positive border-positive/40 bg-positive/10" },
@@ -73,8 +74,10 @@ export function PositionActionCard({
             <span>Current {action.currentPct.toFixed(1)}%</span>
             <span>Target {action.targetPct.toFixed(1)}%</span>
           </div>
-          <div className="relative h-1.5 overflow-hidden rounded-full bg-surface-2">
-            <div className="absolute inset-y-0 left-0 rounded-full bg-muted/50" style={{ width: `${(action.currentPct / barMax) * 100}%` }} />
+          {/* Current weight grows to its value; the target sits as a fixed marker
+              so the gap the action closes is what moves. */}
+          <div className="relative">
+            <ValueBar value={(action.currentPct / barMax) * 100} barClassName="bg-muted/50" height="h-1.5" />
             <div className="absolute inset-y-0 w-0.5 bg-brand" style={{ left: `${(action.targetPct / barMax) * 100}%` }} />
           </div>
           <p className="text-[10px] text-faint">

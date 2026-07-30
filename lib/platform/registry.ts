@@ -119,6 +119,15 @@ export const DATASETS: Record<DatasetId, CachePolicy> = {
   // new fundamentals invalidate it; a price tick or a news headline does not.
   aiVerdict: { ttlMs: 6 * HOUR, swrMs: 24 * HOUR, persist: true, source: "platform", label: "AI investment verdict" },
   aiSection: { ttlMs: 6 * HOUR, swrMs: 24 * HOUR, persist: true, source: "platform", label: "AI report section" },
+
+  // The most expensive artifact in the app by an order of magnitude: eight
+  // sequential local-model calls, minutes of inference, for one theme. Keyed by
+  // the normalized theme rather than a symbol, persisted, and given a long life
+  // because a theme's dependency chain, bottleneck and policy backdrop do not
+  // move in a day — while re-deriving them costs the user another ten minutes.
+  // The SWR window is deliberately long for the same reason: serving yesterday's
+  // report instantly beats blocking on a fresh one the user did not ask for.
+  thematicReport: { ttlMs: 12 * HOUR, swrMs: 6 * DAY, persist: true, source: "platform", label: "Thematic report" },
 };
 
 export function policyFor(dataset: DatasetId): CachePolicy {

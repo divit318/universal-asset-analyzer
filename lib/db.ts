@@ -4,6 +4,13 @@ import path from "node:path";
 import type { ChartDrawingRecord, PortfolioPosition, PortfolioLot, ResearchNote, StockFundamentals, WatchlistItem, IdeaStage, SectorRotationEntry, TimelineEvent, Notification, Decision, DecisionAction, DecisionHorizon, ManualAsset, ManualAssetCategory } from "./types";
 import { aggregateOpenPositions } from "./portfolio-lots";
 import { isIdeaStage, autoStageForTrade } from "./idea-stage";
+import {
+  coerceAssumptionSet, computeCaseResult, isValuationMethod, DEFAULT_VALUATION_METHOD,
+} from "./valuation/case";
+import type {
+  AssumptionSet, CaseAuthor, CaseEventKind, CaseResult, ValuationCase, ValuationEvent,
+  ValuationMethod,
+} from "./valuation/case";
 import type { AlertEvent } from "./alerts";
 import type { AttentionDismissal } from "./home/contracts";
 
@@ -239,7 +246,74 @@ function getDb(): DatabaseSync {
       data     TEXT NOT NULL,
       taken_at INTEGER NOT NULL
     );
+
+    -- Valuation as a persisted object rather than a page.
+    --
+    -- The valuation_event table is the truth: append-only, one row per version,
+    -- each carrying a FULL assumption snapshot rather than a delta. Storage is
+    -- free and delta reconstruction is a bug farm, so diffing any two versions
+    -- stays a pure function over two rows.
+    --
+    -- valuation_case is a materialized projection of the newest event, rewritten
+    -- inside the same transaction. It exists only so the Research Hub strip and
+    -- the Valuation Register can read one indexed row instead of scanning the
+    -- log. The log is authoritative; if they ever disagree, the projection is
+    -- wrong.
+    --
+    -- price_at is on every event deliberately. Without the price as it stood
+    -- when the case was written, "what margin of safety did you actually believe
+    -- when you committed?" is unanswerable, and assumption-level calibration
+    -- becomes impossible to add without a backfill that cannot be reconstructed.
+    --
+    -- There is deliberately NO stage column: the idea lifecycle already lives on
+    -- watchlist.stage (4.5), and the Register joins it rather than keeping a
+    -- second copy that can drift.
+    CREATE TABLE IF NOT EXISTS valuation_case (
+      symbol               TEXT PRIMARY KEY,
+      currency             TEXT NOT NULL DEFAULT 'USD',
+      method               TEXT NOT NULL DEFAULT 'dcf_fcf',
+      version              INTEGER NOT NULL,
+      author               TEXT NOT NULL,
+      assumptions          TEXT NOT NULL,
+      fair_value           REAL,
+      fair_value_bear      REAL,
+      fair_value_bull      REAL,
+      implied_growth       REAL,
+      margin_of_safety     REAL,
+      terminal_value_share REAL,
+      price_at             REAL,
+      created_at           TEXT NOT NULL,
+      updated_at           TEXT NOT NULL,
+      last_user_event_at   TEXT
+    );
+    -- Both indexes serve the Register: "what have I not looked at" and
+    -- "where is the margin of safety".
+    CREATE INDEX IF NOT EXISTS idx_valuation_case_updated ON valuation_case (updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_valuation_case_mos     ON valuation_case (margin_of_safety DESC);
+
+    CREATE TABLE IF NOT EXISTS valuation_event (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      symbol         TEXT NOT NULL,
+      version        INTEGER NOT NULL,
+      author         TEXT NOT NULL,
+      kind           TEXT NOT NULL,
+      assumptions    TEXT NOT NULL,
+      result         TEXT NOT NULL,
+      price_at       REAL,
+      trigger_source TEXT,
+      note           TEXT,
+      created_at     TEXT NOT NULL,
+      UNIQUE (symbol, version)
+    );
+    CREATE INDEX IF NOT EXISTS idx_valuation_event_symbol
+      ON valuation_event (symbol, version DESC);
   `);
+  // The valuation case names its methodology rather than leaving "DCF" implicit.
+  // ADD COLUMN with a NOT NULL DEFAULT backfills every prior row to the only
+  // method that has ever existed, so the migration is the identity mapping.
+  for (const col of ["method TEXT NOT NULL DEFAULT 'dcf_fcf'"]) {
+    try { db.exec(`ALTER TABLE valuation_case ADD COLUMN ${col}`); } catch { /* already exists */ }
+  }
   // Migrate existing watchlist rows: add new columns if the DB predates them
   for (const col of ["target_price REAL", "alert_pct_drop REAL", "notes TEXT"]) {
     try { db.exec(`ALTER TABLE watchlist ADD COLUMN ${col}`); } catch { /* already exists */ }
@@ -390,25 +464,18 @@ function reconcileStageForLedgerWrite(symbol: string, name: string, kind: "buy" 
 
 export function addToWatchlist(symbol: string, name: string): WatchlistItem {
   const sym = symbol.toUpperCase();
-  const addedAt = new Date().toISOString();
-  getDb()
-    .prepare(
-      `INSERT INTO watchlist (symbol, name, added_at) VALUES (?, ?, ?)
-       ON CONFLICT(symbol) DO UPDATE SET name = excluded.name`,
-    )
-    .run(sym, name, addedAt);
-  return {
-    symbol: sym,
-    name,
-    addedAt,
-    targetPrice: null,
-    alertPctDrop: null,
-    notes: null,
-    // A brand-new row defaults to 'surfaced'; an existing one keeps its stage
-    // (the insert leaves stage untouched on conflict).
-    stage: getIdeaStage(sym) ?? "surfaced",
-    stageChangedAt: null,
-  };
+  const db = getDb();
+  db.prepare(
+    `INSERT INTO watchlist (symbol, name, added_at) VALUES (?, ?, ?)
+     ON CONFLICT(symbol) DO UPDATE SET name = excluded.name`,
+  ).run(sym, name, new Date().toISOString());
+  // Re-adding an already-tracked symbol only touches `name` on conflict — read
+  // the row back rather than fabricating fresh/null fields, so a re-add never
+  // reports a reset addedAt or discards existing target price/alert/notes.
+  const row = db
+    .prepare("SELECT symbol, name, added_at, target_price, alert_pct_drop, notes, stage, stage_changed_at FROM watchlist WHERE symbol = ?")
+    .get(sym) as unknown as WatchlistRow;
+  return rowToWatchlistItem(row);
 }
 
 export function updateWatchlistItem(
@@ -1910,4 +1977,235 @@ export function putHomeFingerprint(slot: HomeFingerprintSlot, data: string, take
        ON CONFLICT(slot) DO UPDATE SET data = excluded.data, taken_at = excluded.taken_at`,
     )
     .run(slot, data, takenAt);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Valuation cases (lib/valuation/case.ts)                                     */
+/* -------------------------------------------------------------------------- */
+
+interface ValuationCaseRow {
+  symbol: string;
+  currency: string;
+  method: string;
+  version: number;
+  author: string;
+  assumptions: string;
+  fair_value: number | null;
+  fair_value_bear: number | null;
+  fair_value_bull: number | null;
+  implied_growth: number | null;
+  margin_of_safety: number | null;
+  terminal_value_share: number | null;
+  price_at: number | null;
+  created_at: string;
+  updated_at: string;
+  last_user_event_at: string | null;
+}
+
+interface ValuationEventRow {
+  id: number;
+  symbol: string;
+  version: number;
+  author: string;
+  kind: string;
+  assumptions: string;
+  result: string;
+  price_at: number | null;
+  trigger_source: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+const CASE_COLUMNS =
+  `symbol, currency, method, version, author, assumptions, fair_value, fair_value_bear,
+   fair_value_bull, implied_growth, margin_of_safety, terminal_value_share,
+   price_at, created_at, updated_at, last_user_event_at`;
+
+/**
+ * Rebuild a case from its projection row. Returns null when the stored
+ * assumptions cannot be parsed, so the caller re-seeds rather than valuing a
+ * half-built model — a wrong fair value is worse than none.
+ *
+ * The result is recomputed from the stored assumptions rather than read out of
+ * the projection columns. Those columns exist for indexed queries (the Register
+ * sorts on margin_of_safety and updated_at); reading them back as the result
+ * meant `invalidReason` and `impliedUpside` had to be fabricated, so every
+ * write response claimed the case was valuable even when the user had just
+ * saved a WACC below terminal growth. Deriving instead makes it impossible for
+ * the returned object to disagree with its own assumptions.
+ */
+function rowToValuationCase(r: ValuationCaseRow): ValuationCase | null {
+  const assumptions = coerceAssumptionSet(JSON.parse(r.assumptions) as unknown);
+  if (!assumptions) return null;
+  return {
+    symbol: r.symbol,
+    currency: r.currency,
+    method: isValuationMethod(r.method) ? r.method : DEFAULT_VALUATION_METHOD,
+    version: r.version,
+    author: r.author as CaseAuthor,
+    assumptions,
+    // Priced at the stored price; callers holding a live quote recompute.
+    result: computeCaseResult(assumptions, r.price_at),
+    priceAt: r.price_at,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    lastUserEventAt: r.last_user_event_at,
+  };
+}
+
+export function getValuationCase(symbol: string): ValuationCase | null {
+  const row = getDb()
+    .prepare(`SELECT ${CASE_COLUMNS} FROM valuation_case WHERE symbol = ?`)
+    .get(symbol.toUpperCase()) as ValuationCaseRow | undefined;
+  return row ? rowToValuationCase(row) : null;
+}
+
+/** Every case, newest activity first. The Valuation Register's read. */
+export function listValuationCases(): ValuationCase[] {
+  const rows = getDb()
+    .prepare(`SELECT ${CASE_COLUMNS} FROM valuation_case ORDER BY updated_at DESC`)
+    .all() as unknown as ValuationCaseRow[];
+  return rows.map(rowToValuationCase).filter((c): c is ValuationCase => c !== null);
+}
+
+export interface ValuationEventWrite {
+  symbol: string;
+  currency: string;
+  /** Defaults to the only method that exists today. */
+  method?: ValuationMethod;
+  author: CaseAuthor;
+  kind: CaseEventKind;
+  assumptions: AssumptionSet;
+  result: CaseResult;
+  priceAt: number | null;
+  triggerSource?: string | null;
+  note?: string | null;
+}
+
+/**
+ * Append one version to a symbol's case.
+ *
+ * The event insert and the projection rewrite happen in a single transaction, so
+ * the projection can never describe a version the log does not contain. Version
+ * numbers are allocated from the log (not the projection) because the log is the
+ * authority, and the UNIQUE(symbol, version) constraint makes a lost update loud
+ * rather than silent.
+ */
+export function appendValuationEvent(write: ValuationEventWrite): ValuationCase {
+  const database = getDb();
+  const symbol = write.symbol.toUpperCase();
+  const now = new Date().toISOString();
+  const assumptionsJson = JSON.stringify(write.assumptions);
+  const resultJson = JSON.stringify(write.result);
+
+  database.exec("BEGIN");
+  try {
+    const prior = database
+      .prepare("SELECT MAX(version) AS v FROM valuation_event WHERE symbol = ?")
+      .get(symbol) as { v: number | null } | undefined;
+    const version = (prior?.v ?? 0) + 1;
+
+    database
+      .prepare(
+        `INSERT INTO valuation_event
+           (symbol, version, author, kind, assumptions, result, price_at, trigger_source, note, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        symbol, version, write.author, write.kind, assumptionsJson, resultJson,
+        write.priceAt, write.triggerSource ?? null, write.note ?? null, now,
+      );
+
+    // A user event stamps last_user_event_at; anything else preserves whatever
+    // was there, so "you have not looked at this in eight months" stays true.
+    const userStamp = write.author === "user" ? now : null;
+    database
+      .prepare(
+        `INSERT INTO valuation_case
+           (symbol, currency, method, version, author, assumptions, fair_value, fair_value_bear,
+            fair_value_bull, implied_growth, margin_of_safety, terminal_value_share,
+            price_at, created_at, updated_at, last_user_event_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(symbol) DO UPDATE SET
+           currency             = excluded.currency,
+           method               = excluded.method,
+           version              = excluded.version,
+           author               = excluded.author,
+           assumptions          = excluded.assumptions,
+           fair_value           = excluded.fair_value,
+           fair_value_bear      = excluded.fair_value_bear,
+           fair_value_bull      = excluded.fair_value_bull,
+           implied_growth       = excluded.implied_growth,
+           margin_of_safety     = excluded.margin_of_safety,
+           terminal_value_share = excluded.terminal_value_share,
+           price_at             = excluded.price_at,
+           updated_at           = excluded.updated_at,
+           last_user_event_at   = COALESCE(excluded.last_user_event_at, valuation_case.last_user_event_at)`,
+      )
+      .run(
+        symbol, write.currency, write.method ?? DEFAULT_VALUATION_METHOD,
+        version, write.author, assumptionsJson,
+        write.result.fairValue, write.result.fairValueBear, write.result.fairValueBull,
+        write.result.impliedGrowth, write.result.marginOfSafety,
+        write.result.terminalValueShare, write.priceAt, now, now, userStamp,
+      );
+
+    database.exec("COMMIT");
+  } catch (err) {
+    database.exec("ROLLBACK");
+    throw err;
+  }
+
+  const saved = getValuationCase(symbol);
+  if (!saved) throw new Error(`Valuation case for ${symbol} could not be read back after write`);
+  return saved;
+}
+
+/** A symbol's version history, newest first. */
+export function listValuationEvents(symbol: string, limit = 50): ValuationEvent[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT id, symbol, version, author, kind, assumptions, result, price_at,
+              trigger_source, note, created_at
+       FROM valuation_event WHERE symbol = ? ORDER BY version DESC LIMIT ?`,
+    )
+    .all(symbol.toUpperCase(), limit) as unknown as ValuationEventRow[];
+
+  return rows.flatMap((r) => {
+    const assumptions = coerceAssumptionSet(JSON.parse(r.assumptions) as unknown);
+    if (!assumptions) return [];
+    return [{
+      id: r.id,
+      symbol: r.symbol,
+      version: r.version,
+      author: r.author as CaseAuthor,
+      kind: r.kind as CaseEventKind,
+      assumptions,
+      result: JSON.parse(r.result) as CaseResult,
+      priceAt: r.price_at,
+      trigger: r.trigger_source,
+      note: r.note,
+      createdAt: r.created_at,
+    }];
+  });
+}
+
+/**
+ * Destructive: erases a symbol's case *and its entire history*. Exists for
+ * "start this valuation over" and for test isolation; deliberately not exposed
+ * through the API in Phase 2, because discarding an audit trail should be a
+ * considered act rather than a stray click.
+ */
+export function resetValuationCase(symbol: string): void {
+  const database = getDb();
+  const sym = symbol.toUpperCase();
+  database.exec("BEGIN");
+  try {
+    database.prepare("DELETE FROM valuation_event WHERE symbol = ?").run(sym);
+    database.prepare("DELETE FROM valuation_case WHERE symbol = ?").run(sym);
+    database.exec("COMMIT");
+  } catch (err) {
+    database.exec("ROLLBACK");
+    throw err;
+  }
 }

@@ -50,6 +50,19 @@ interface RawFundDetail {
 }
 
 export interface FundDetail {
+  /**
+   * False when Yahoo told us nothing at all for this fund — either the request
+   * failed after retries, or the response carried neither `fundProfile` nor
+   * `topHoldings`.
+   *
+   * This distinction is load-bearing for asset-class purity. Every field below
+   * degrades to `null` in both cases, so "we asked and the fund holds no bonds"
+   * and "we never found out" used to be indistinguishable — and the ETF
+   * universe's bond-fund exclusion read the second as the first, silently
+   * admitting bond funds (NXUS, an aggregate bond ETF) into the equity ETF
+   * class whenever a single enrichment call happened to time out.
+   */
+  available: boolean;
   category: string | null;
   expenseRatio: number | null; // %
   /** Combined weight of the ten largest holdings, %. */
@@ -63,6 +76,8 @@ export interface FundDetail {
   topSector: string | null;
   equityWeight: number | null; // %
   bondWeight: number | null; // %
+  /** Cash / money-market weight, %. Where a money-market fund's assets actually sit. */
+  cashWeight: number | null; // %
   // Bond-fund fields (null for equity ETFs).
   duration: number | null; // years
   maturity: number | null; // years
@@ -122,6 +137,7 @@ function parseDetail(raw: RawFundDetail): FundDetail {
     : null;
 
   return {
+    available: raw.fundProfile != null || raw.topHoldings != null,
     category: profile.categoryName ?? null,
     expenseRatio: pct(profile.feesExpensesInvestment?.annualReportExpenseRatio),
     // Zero holdings reported means "Yahoo didn't tell us", not "the fund holds
@@ -133,6 +149,7 @@ function parseDetail(raw: RawFundDetail): FundDetail {
     topSector: top ? (SECTOR_LABEL[top[0]] ?? top[0]) : null,
     equityWeight: pct(holdings.stockPosition),
     bondWeight: pct(holdings.bondPosition),
+    cashWeight: pct(holdings.cashPosition),
     duration: holdings.bondHoldings?.duration ?? null,
     maturity: holdings.bondHoldings?.maturity ?? null,
     ratings,

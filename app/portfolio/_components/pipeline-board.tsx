@@ -21,6 +21,7 @@ import { SymbolLinkRoot, SymbolTag } from "@/app/_home/_atmosphere/symbol-link";
 import { PIPELINE_STAGES, TERMINAL_STAGES, STAGE_LABEL } from "@/lib/idea-stage";
 import type { IdeaStage } from "@/lib/types";
 import type { PipelineRow } from "@/app/api/pipeline/route";
+import { Skeleton } from "@/app/_components/ui";
 
 async function fetchPipeline(signal: AbortSignal): Promise<{ rows: PipelineRow[] }> {
   const res = await fetch("/api/pipeline", { signal });
@@ -129,7 +130,7 @@ export function PipelineBoard() {
     return (
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {PIPELINE_STAGES.map((s) => (
-          <div key={s} className="h-48 animate-pulse rounded-card border border-border bg-surface" />
+          <Skeleton key={s} height="h-48" radius="rounded-card" className="border border-border" />
         ))}
       </div>
     );

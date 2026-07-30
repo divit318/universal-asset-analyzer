@@ -53,7 +53,7 @@ export function ResearchNotes({ symbol }: { symbol: string }) {
       </div>
       <ul className="flex flex-col gap-2">
         {notes.map((note) => (
-          <li key={note.id} className="group relative rounded-xl border border-border bg-surface p-4">
+          <li key={note.id} className="card-lift group relative rounded-xl border border-border bg-surface p-4">
             <p className="whitespace-pre-wrap text-sm leading-relaxed">{note.content}</p>
             <div className="mt-2 flex items-center justify-between gap-2">
               <span className="text-xs text-muted">{timeAgo(note.createdAt)}</span>

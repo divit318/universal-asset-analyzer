@@ -17,8 +17,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PageShell, PageHeader, Button, Card, Badge } from "@/app/_components/ui";
+import { Reveal } from "@/app/_components/reveal";
 import { downloadBlob } from "@/lib/download";
-import { getAssetClass, isAssetClassId, listAssetClasses } from "@/lib/assets/registry";
+import { getAssetClass, getMetric, isAssetClassId, listAssetClasses } from "@/lib/assets/registry";
 import type { AssetClassId } from "@/lib/assets/types";
 import { PENDING_SCREEN_KEY, type PendingScreenHandoff } from "@/app/_components/screener-handoff";
 import type { RankedCandidate, ScreenerResponse, UniverseStatus } from "@/lib/screener/types";
@@ -85,6 +86,17 @@ export default function ScreenerPage() {
   const [assetClass, setAssetClass] = useState<AssetClassId>("equity");
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
+  /**
+   * The filter set the *visible rows* were produced with, as opposed to the
+   * draft the user is editing. Filters only take effect on "Run screen", so
+   * these two diverge the moment anything is typed — and reporting the draft's
+   * count next to the results made the table claim "1,541 stocks · 1 filter"
+   * while showing the completely unfiltered universe.
+   */
+  const [applied, setApplied] = useState<{ draft: Draft; templateId: string | null }>({
+    draft: emptyDraft(),
+    templateId: null,
+  });
   const [sortKey, setSortKey] = useState("rankScore");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
@@ -121,8 +133,26 @@ export default function ScreenerPage() {
   /** The last screen we ran, so the poll below can re-run exactly it. */
   const lastRunRef = useRef<RunOptions | null>(null);
 
+  /**
+   * Monotonic id of the most recently *requested* screen.
+   *
+   * Screens are fired on every class switch, template pick, sort and page turn,
+   * and they do not come back in the order they were sent — the equity universe
+   * is 1,500 names with a live price layer, so its response routinely lands
+   * seconds after a subsequent ETF one. Without this guard the slower, older
+   * response wins the `setRows` race and the table renders another asset class's
+   * rows under the current class's columns: select ETFs, get equities, with the
+   * count reading "1,545 funds". (Reproduced live before this was added.)
+   *
+   * Anything that isn't the newest request is therefore dropped outright rather
+   * than merged, including its `loading`/`error`/`status` side effects.
+   */
+  const runSeqRef = useRef(0);
+
   const run = useCallback(async (opts: RunOptions) => {
     lastRunRef.current = opts;
+    const seq = ++runSeqRef.current;
+    const isCurrent = () => seq === runSeqRef.current;
     setLoading(true);
     setError(null);
 
@@ -142,17 +172,25 @@ export default function ScreenerPage() {
       });
 
       const json = (await res.json()) as ScreenerResponse & { error?: string };
+      if (!isCurrent()) return;
       if (!res.ok || json.error) throw new Error(json.error ?? "Screen failed");
+      // Belt and braces: a response that isn't for the class we asked about can
+      // never be rendered, whatever the sequencing above concluded.
+      if (json.assetClass !== opts.assetClass) return;
 
       setRows(json.rows);
       setTotal(json.total);
       setOffset(json.offset);
       setStatus(json.status);
+      // The filters the visible rows were actually produced with — see
+      // `pendingFilterChanges` below for why the draft alone isn't enough.
+      setApplied({ draft: opts.draft, templateId: opts.templateId });
     } catch (err) {
+      if (!isCurrent()) return;
       setError(err instanceof Error ? err.message : "Something went wrong");
       setRows([]);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, []);
 
@@ -205,10 +243,19 @@ export default function ScreenerPage() {
     setAssetClass(id);
     setTemplateId(null);
     setDraft(fresh);
+    // Cleared alongside the draft so the results header never describes the
+    // previous class's filters while the new class's screen is in flight.
+    setApplied({ draft: fresh, templateId: null });
     setSortKey(next.defaultSort.key);
     setSortDir(next.defaultSort.dir);
     setSummary(null);
     setRows(null);
+    // Also zeroed: the count is rendered with the *new* class's noun, so a
+    // leftover total read "456 bond funds" while the bond universe was still
+    // building — a number that described the ETFs the user just navigated away
+    // from.
+    setTotal(0);
+    setOffset(0);
     setError(null);
 
     void run({
@@ -332,8 +379,19 @@ export default function ScreenerPage() {
     });
   };
 
+  /**
+   * Sort by a column, toggling direction on repeat clicks.
+   *
+   * The *first* click follows the metric's own `better` direction rather than
+   * always sorting descending: clicking "Fwd P/E" or "Expense Ratio" used to
+   * put the most expensive names on top, which is the opposite of what someone
+   * clicking a cheapness column is asking for. Registry-driven, so it's right
+   * for every metric on every class without a per-column list.
+   */
   const toggleSort = (key: string) => {
-    const dir: "asc" | "desc" = sortKey === key && sortDir === "desc" ? "asc" : "desc";
+    const preferred: "asc" | "desc" = getMetric(assetClass, key)?.better === "lower" ? "asc" : "desc";
+    const dir: "asc" | "desc" =
+      sortKey === key ? (sortDir === "desc" ? "asc" : "desc") : preferred;
     setSortKey(key);
     setSortDir(dir);
     rerun({ sortKey: key, sortDir: dir });
@@ -343,7 +401,17 @@ export default function ScreenerPage() {
     setTemplateId(null);
     setDraft(emptyDraft());
     setSummary(null);
-    rerun({ templateId: null, draft: emptyDraft() });
+    // Picking a template can change the sort, so clearing one has to put the
+    // sort back too — otherwise "Clear all" left the table ordered by a
+    // template's column with nothing on screen explaining why.
+    setSortKey(def.defaultSort.key);
+    setSortDir(def.defaultSort.dir);
+    rerun({
+      templateId: null,
+      draft: emptyDraft(),
+      sortKey: def.defaultSort.key,
+      sortDir: def.defaultSort.dir,
+    });
   };
 
   const refresh = async () => {
@@ -464,11 +532,26 @@ export default function ScreenerPage() {
 
   /* ---------------------------------------------------------------------- */
 
-  const activeCount = countActive(draft);
+  const draftCount = countActive(draft);
+  const appliedCount = countActive(applied.draft);
+  /** Has the user edited filters since the visible results were produced? */
+  const pendingFilterChanges =
+    JSON.stringify(toFilterValues(assetClass, draft)) !==
+    JSON.stringify(toFilterValues(assetClass, applied.draft));
 
+  /*
+   * Revealed at section granularity — the four blocks a user actually perceives
+   * (identity, templates, filters, results), not the table rows.
+   *
+   * Staggering 50 result rows was the obvious move and the wrong one: a screen
+   * is re-run constantly, so every filter change would re-animate the whole
+   * table, and a ranked list rippling in draws the eye down the page when the
+   * information is at the top. The panels arrive; the data inside them is
+   * simply there.
+   */
   return (
     <PageShell py="py-10">
-      <div className="flex flex-col gap-3">
+      <Reveal index={0} className="flex flex-col gap-3">
         <PageHeader
           title="Universal Screener"
           description="One screener across seven asset classes. Pick a class, start from a template or build your own filters, and every result comes back ranked with an explanation of why it matched."
@@ -495,13 +578,13 @@ export default function ScreenerPage() {
 
         <p className="text-sm text-muted">{def.description}</p>
         <UniverseBar status={status} loading={loading} onRefresh={refresh} />
-      </div>
+      </Reveal>
 
       {/* 2. Templates. */}
-      <section className="flex flex-col gap-2">
+      <Reveal index={1} as="section" className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium">Templates</h2>
-          {templateId || activeCount > 0 ? (
+          {templateId || draftCount > 0 ? (
             <button
               type="button"
               onClick={clearAll}
@@ -530,17 +613,23 @@ export default function ScreenerPage() {
             </button>
           ))}
         </div>
-      </section>
+      </Reveal>
 
       <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
         {/* 3. Filters — entirely registry-driven. */}
-        <aside className="flex flex-col gap-3">
+        <Reveal index={2} as="aside" className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-medium">Filters</h2>
             <Button onClick={() => rerun({})} disabled={loading} className="px-3 py-1.5 text-xs">
-              {loading ? "Running…" : "Run screen"}
+              {loading ? "Running…" : pendingFilterChanges ? "Run screen •" : "Run screen"}
             </Button>
           </div>
+
+          {pendingFilterChanges && !loading ? (
+            <p className="text-xs text-warning" role="status">
+              Filter changes aren&apos;t applied yet — run the screen to update the results.
+            </p>
+          ) : null}
 
           <FilterPanel assetClass={assetClass} draft={draft} onChange={changeFilter} />
 
@@ -552,23 +641,27 @@ export default function ScreenerPage() {
             onLoad={loadScreen}
             onDelete={removeScreen}
           />
-        </aside>
+        </Reveal>
 
         {/* 4-5. Ranked results + explanations. */}
-        <section className="flex min-w-0 flex-col gap-3">
+        <Reveal index={3} as="section" className="flex min-w-0 flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium">
                 {total.toLocaleString()} {def.noun}
               </span>
-              {activeCount > 0 ? (
+              {/* Both badges describe the *applied* screen, not the draft. */}
+              {appliedCount > 0 ? (
                 <Badge variant="neutral">
-                  {activeCount} filter{activeCount === 1 ? "" : "s"}
+                  {appliedCount} filter{appliedCount === 1 ? "" : "s"}
                 </Badge>
               ) : null}
-              {templateId ? (
-                <Badge variant="brand">{def.templates.find((t) => t.id === templateId)?.name}</Badge>
+              {applied.templateId ? (
+                <Badge variant="brand">
+                  {def.templates.find((t) => t.id === applied.templateId)?.name}
+                </Badge>
               ) : null}
+              {pendingFilterChanges ? <Badge variant="warning">Filters not applied</Badge> : null}
             </div>
 
             <div className="flex items-center gap-2">
@@ -650,7 +743,7 @@ export default function ScreenerPage() {
               ) : null}
             </>
           )}
-        </section>
+        </Reveal>
       </div>
     </PageShell>
   );

@@ -10,11 +10,13 @@
  * and cached, so a stock is fully researched the moment it enters the list.
  */
 
-import { computeScores } from "./composite";
+import { computeScores, momentumScore, type ScorableMetrics } from "./composite";
 import { getFreshFundamentals, putFundamentals } from "./db";
 import { enrichSymbol } from "./enrich";
 import { detectMarket } from "./market";
 import { getQuotes, getRichQuotes } from "./yahoo";
+import { getScreenerInCompany, getRatio, type ScreenerInCompany } from "./screener-in";
+import { computeIndiaSnapshot } from "./india-snapshot";
 import type { CompositeScores, StockFundamentals } from "./types";
 
 /** Everything the client needs to pass into `getPortfolioFit`. */
@@ -83,6 +85,25 @@ export async function enrichForFit(
   const richBy = new Map(rich.map((q) => [q.symbol.toUpperCase(), q]));
   const quoteBy = new Map(quotes.map((q) => [q.symbol.toUpperCase(), q]));
 
+  // 3b. Indian (NSE/BSE) names are scored from screener.in via the same
+  // computeIndiaSnapshot() Research Hub uses, never the Yahoo composite —
+  // Yahoo's NSE/BSE fundamentals coverage is frequently incomplete or stale
+  // (see lib/india-snapshot.ts), which is exactly why the same stock could
+  // otherwise show two disagreeing scores depending on which page you're on.
+  const indiaCompanyBy = new Map<string, ScreenerInCompany>();
+  await mapPool(symbols, async (sym) => {
+    const q = quoteBy.get(sym);
+    if (!q) return;
+    const geo = detectMarket({ symbol: sym, currency: q.currency, exchange: q.exchange, assetType: q.assetType });
+    if (geo !== "IN") return;
+    try {
+      const company = await getScreenerInCompany(sym);
+      if (company) indiaCompanyBy.set(sym, company);
+    } catch {
+      /* leave unmapped — falls back to the Yahoo composite below */
+    }
+  });
+
   // 4. Assemble metrics + score.
   return items.map((item) => {
     const sym = item.symbol.toUpperCase();
@@ -94,6 +115,42 @@ export async function enrichForFit(
     const geography = q
       ? detectMarket({ symbol: sym, currency: q.currency, exchange: q.exchange, assetType: q.assetType })
       : null;
+
+    const indiaCompany = geography === "IN" ? indiaCompanyBy.get(sym) : undefined;
+    if (indiaCompany) {
+      const snapshot = computeIndiaSnapshot(indiaCompany, {
+        debtToEquity: getRatio(indiaCompany, "Debt to Equity"),
+        interestCoverage: getRatio(indiaCompany, "Interest Coverage"),
+        evToEbitda: getRatio(indiaCompany, "EV / EBITDA"),
+        priceToBook: getRatio(indiaCompany, "Price to Book"),
+      });
+      // momentumScore only reads oneYearReturn/distanceFrom52WkHigh — both
+      // come from the rich quote (live price data), not the Yahoo
+      // fundamentals snapshot this branch deliberately avoids for India.
+      const momentum = momentumScore({
+        oneYearReturn: rq?.oneYearReturn ?? null,
+        distanceFrom52WkHigh: rq?.distanceFrom52WkHigh ?? null,
+      } as ScorableMetrics);
+      return {
+        symbol: sym,
+        sector: f?.sector ?? null,
+        marketCap,
+        compositeScores: {
+          value: snapshot.valuation,
+          growth: snapshot.growth,
+          quality: snapshot.quality,
+          // Nearest available match — India's model has no separate
+          // financial-health dimension; capital allocation discipline is
+          // the closest proxy this scorer has for it.
+          financialHealth: snapshot.capitalAllocation,
+          momentum,
+          overall: snapshot.composite,
+        },
+        dividendYield: f?.dividendYield ?? null,
+        beta: f?.beta ?? null,
+        geography,
+      } satisfies FitEnrichment;
+    }
 
     if (!f) {
       // Fundamentals genuinely unavailable — return a minimal record. Sector may

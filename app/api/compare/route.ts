@@ -4,7 +4,7 @@ import { getFinancialStatements, getFinancialStatementsYahoo } from "@/lib/state
 import { getHistory, getQuote, getQuoteMeta, getQuoteSummaryMeta } from "@/lib/yahoo";
 import { computeMomentum, computeScore, assessRisks } from "@/lib/scoring";
 import { compareStocks } from "@/lib/ai-compare";
-import { normalizeSymbol } from "@/lib/market";
+import { normalizeSymbol, detectMarket } from "@/lib/market";
 import { buildOpportunityProfile, type OpportunityProfile } from "@/lib/opportunity-engine";
 import { computeEntryBenchmarks, peerGroupOf, loadBenchmarkUniverse, type PeerBenchmark } from "@/lib/compare/benchmarks";
 import type { EntryFreshness } from "@/lib/compare/types";
@@ -103,7 +103,11 @@ export async function GET(request: Request) {
         })();
 
         const momentum = computeMomentum(history);
-        const score = computeScore(parts.snapshot, statements, parts.analyst, momentum);
+        // market activates lib/scoring.ts's own MARKET_SIGNAL_WEIGHTS.IN reweight
+        // (lean on fundamentals, discount sparse analyst coverage) — the signal
+        // blend was already built with India in mind, just never wired up here.
+        const market = detectMarket(quote);
+        const score = computeScore(parts.snapshot, statements, parts.analyst, momentum, undefined, market);
         const oneYearReturn = computeOneYearReturn(history);
 
         const fcfYieldPct =
@@ -194,8 +198,8 @@ export async function POST(request: Request) {
       ? body.symbols
       : [body.symbolA, body.symbolB].filter((s): s is string => Boolean(s))
   )
-    .map((s) => s.trim().toUpperCase())
-    .filter(Boolean);
+    .map((s) => normalizeSymbol(s))
+    .filter((s): s is string => s !== null);
   const unique = [...new Set(symbols)];
 
   if (unique.length < 2) {

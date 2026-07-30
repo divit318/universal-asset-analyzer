@@ -94,6 +94,10 @@ export interface ResearchData {
   };
   /** Recent company news for the "What Changed" / Latest Intelligence section. */
   news?: NewsItem[];
+  /** When the quote/filings store entries last resolved — feeds the masthead's
+   * and the SEC Filings section's <DataProvenance> freshness badges. */
+  quoteUpdatedAt: number | null;
+  filingsUpdatedAt: number | null;
 }
 
 export interface AiAnalysis {

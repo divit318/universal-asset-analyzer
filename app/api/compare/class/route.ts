@@ -51,9 +51,40 @@ async function loadClassEntries(
   symbols: string[],
 ): Promise<{ entries: ClassCompareEntry[]; universeAsOf: string | null }> {
   const provider = getUniverseProvider(assetClass);
-  const { candidates, status } = await provider.load();
+  let { candidates, status } = await provider.load();
+
+  // REIT and equity (lib/dataset.ts's createEnrichedDataset) return an empty
+  // snapshot immediately on a cold cache rather than blocking on the
+  // in-flight build — the right call for the Screener's progressive-fill UI,
+  // wrong here: a user who typed 2-5 specific symbols gets "not found" for
+  // real, well-covered names that are seconds away from loading. Poll the
+  // still-building universe briefly rather than accept a misleading empty
+  // result; bounded well under this route's 60s maxDuration so POST's
+  // downstream AI call still has room.
+  const POLL_MS = 2000;
+  const MAX_WAIT_MS = 20000;
+  let waited = 0;
+  while (candidates.length === 0 && status.stage === "building" && waited < MAX_WAIT_MS) {
+    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    waited += POLL_MS;
+    ({ candidates, status } = await provider.load());
+  }
+
   const universeAsOf = status.builtAt;
   const bySymbol = new Map(candidates.map((c) => [c.symbol.toUpperCase(), c]));
+
+  // A universe with zero candidates that never reached "ready" (a hard error,
+  // e.g. the cache module treats an empty build as a failure — see
+  // universe-cache.ts — or it's still building after the poll above gave up)
+  // means every symbol would otherwise come back "not found," which reads as
+  // "this symbol isn't covered" when the real problem is that the data
+  // provider is temporarily unavailable or still warming up.
+  const universeUnavailable = candidates.length === 0 && status.stage !== "ready";
+  const notFoundError = universeUnavailable
+    ? status.error
+      ? `The ${assetClass} universe is temporarily unavailable (${status.error}) — try again shortly`
+      : `The ${assetClass} universe is still loading — try again in a moment`
+    : `Not found in the ${assetClass} universe`;
 
   const entries: ClassCompareEntry[] = await Promise.all(
     symbols.map(async (symbol): Promise<ClassCompareEntry> => {
@@ -68,7 +99,7 @@ async function loadClassEntries(
           metrics: {},
           attributes: {},
           scores: { axes: [], overall: null },
-          error: `Not found in the ${assetClass} universe`,
+          error: notFoundError,
         };
       }
 

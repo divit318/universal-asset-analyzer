@@ -77,6 +77,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "`customTarget` is required for the target_allocation objective" }, { status: 400 });
   }
 
+  // `constraints` is spread over DEFAULT_CONSTRAINTS below with no shape check —
+  // an out-of-range or non-numeric value (e.g. maxHoldingPct: -10, or a NaN)
+  // would silently degrade a cap into "always passes" deep inside optimize.ts.
+  const PCT_FIELDS = ["maxHoldingPct", "maxAssetClassPct", "maxSectorPct", "maxCountryPct", "minCashPct", "maxIlliquidPct"] as const;
+  if (body.constraints) {
+    for (const field of PCT_FIELDS) {
+      const v = body.constraints[field];
+      if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 100)) {
+        return NextResponse.json({ error: `\`constraints.${field}\` must be a number between 0 and 100` }, { status: 400 });
+      }
+    }
+    if (body.constraints.maxDuration !== undefined && body.constraints.maxDuration !== null
+      && (typeof body.constraints.maxDuration !== "number" || !Number.isFinite(body.constraints.maxDuration) || body.constraints.maxDuration < 0)) {
+      return NextResponse.json({ error: "`constraints.maxDuration` must be a non-negative number or null" }, { status: 400 });
+    }
+  }
+
   try {
     const raws = listRawHoldings();
     // This endpoint is the deliberate "explore everything" path — the user

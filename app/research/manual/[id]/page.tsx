@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { PageShell, PageHeader, Button, Card, Badge } from "@/app/_components/ui";
+import { PageShell, PageHeader, Button, Card, Badge, Skeleton } from "@/app/_components/ui";
 import { ConfirmDialog } from "@/app/_components/dialog";
 import { RealEstateMetricsCard } from "../_components/real-estate-metrics-card";
 import { PrivateMarketMetricsCard } from "../_components/private-market-metrics-card";
@@ -60,8 +60,8 @@ function ManualAssetDetail() {
   if (loading) {
     return (
       <PageShell gap="gap-6" py="py-10">
-        <div className="h-16 animate-pulse rounded-xl bg-surface" />
-        <div className="h-64 animate-pulse rounded-xl bg-surface" />
+        <Skeleton height="h-16" radius="rounded-xl" />
+        <Skeleton height="h-64" radius="rounded-xl" />
       </PageShell>
     );
   }

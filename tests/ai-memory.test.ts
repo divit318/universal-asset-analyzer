@@ -45,7 +45,12 @@ describe("suggestFollowUps", () => {
     expect(suggestFollowUps([], action)).toEqual(action?.followUps);
   });
   it("derives follow-ups from intent when no action", () => {
-    expect(suggestFollowUps(["valuation"], null)).toContain("What is the intrinsic value?");
+    // The valuation follow-up deliberately asks what the price *implies* rather
+    // than "what is the intrinsic value?": intrinsic value belongs to the
+    // ValuationCase, and a copilot answer would be a second, unfalsifiable one.
+    expect(suggestFollowUps(["valuation"], null)).toContain(
+      "What growth does the current price imply?",
+    );
   });
   it("always returns something for general intent", () => {
     expect(suggestFollowUps(["general"], null).length).toBeGreaterThan(0);

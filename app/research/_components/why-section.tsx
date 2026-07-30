@@ -3,6 +3,8 @@
 import type { InvestmentVerdict } from "@/app/api/ai/verdict/route";
 import type { NewsItem, RiskItem } from "@/lib/types";
 import { formatDate } from "@/lib/format";
+import { LoadingPanel } from "@/app/_components/loading-panel";
+import { Reveal } from "@/app/_components/reveal";
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
@@ -31,20 +33,7 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }
 /* -------------------------------------------------------------------------- */
 
 function Skeleton() {
-  return (
-    <div className="flex flex-col gap-6">
-      {[1, 2, 3].map((i) => (
-        <div key={i} className="flex flex-col gap-3">
-          <div className="h-3 w-32 animate-pulse rounded bg-surface-2" />
-          <div className="space-y-2">
-            {[90, 80, 70].map((w) => (
-              <div key={w} className="h-2.5 animate-pulse rounded bg-surface-2" style={{ width: `${w}%` }} />
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
+  return <LoadingPanel height="h-52" message="Assembling the case for and against…" />;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -74,10 +63,10 @@ export function WhySection({ verdict, verdictLoading, risks, news }: Props) {
             </p>
             <ul className="space-y-2">
               {verdict.catalysts.map((c, i) => (
-                <li key={i} className="flex gap-2.5 text-sm leading-5 text-foreground/85">
+                <Reveal key={i} as="li" index={i} className="flex gap-2.5 text-sm leading-5 text-foreground/85">
                   <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-positive/60" />
                   {c}
-                </li>
+                </Reveal>
               ))}
             </ul>
           </div>
@@ -89,10 +78,10 @@ export function WhySection({ verdict, verdictLoading, risks, news }: Props) {
             </p>
             <ul className="space-y-2">
               {verdict.risks.map((r, i) => (
-                <li key={i} className="flex gap-2.5 text-sm leading-5 text-foreground/85">
+                <Reveal key={i} as="li" index={i} className="flex gap-2.5 text-sm leading-5 text-foreground/85">
                   <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-negative/60" />
                   {r}
-                </li>
+                </Reveal>
               ))}
             </ul>
           </div>
@@ -110,9 +99,10 @@ export function WhySection({ verdict, verdictLoading, risks, news }: Props) {
                 return order[a.level] - order[b.level];
               })
               .slice(0, 6)
-              .map((risk) => (
-                <div
+              .map((risk, i) => (
+                <Reveal
                   key={`${risk.category}-${risk.level}`}
+                  index={i}
                   className="flex items-start gap-3 rounded-lg border border-border bg-surface px-4 py-3"
                 >
                   <span className={`mt-0.5 shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${RISK_BADGE[risk.level]}`}>
@@ -122,7 +112,7 @@ export function WhySection({ verdict, verdictLoading, risks, news }: Props) {
                     <p className="text-sm font-medium text-foreground">{risk.category}</p>
                     <p className="text-xs leading-5 text-muted">{risk.reason}</p>
                   </div>
-                </div>
+                </Reveal>
               ))}
           </div>
         </div>
@@ -134,7 +124,7 @@ export function WhySection({ verdict, verdictLoading, risks, news }: Props) {
           <SectionHeader title="Latest Intelligence" subtitle="Recent news and developments" />
           <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">
             {news.slice(0, 5).map((item, i) => (
-              <li key={i} className="flex items-start justify-between gap-4 bg-surface px-4 py-3">
+              <Reveal key={i} as="li" index={i} className="flex items-start justify-between gap-4 bg-surface px-4 py-3">
                 <div className="min-w-0">
                   {item.url ? (
                     <a
@@ -155,7 +145,7 @@ export function WhySection({ verdict, verdictLoading, risks, news }: Props) {
                 <span className="shrink-0 text-[11px] tabular-nums text-muted">
                   {formatDate(item.publishedAt)}
                 </span>
-              </li>
+              </Reveal>
             ))}
           </ul>
         </div>

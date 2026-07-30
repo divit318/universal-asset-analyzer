@@ -79,11 +79,10 @@ you want those integrations live.
 | DCF | `/dcf` | Intrinsic value calculator with sensitivity analysis |
 | Calendar | `/calendar` | Earnings calendar with pre/post event performance |
 | IC Report | `/ic-report` | Multi-agent institutional research (business, industry, competition, valuation, risk, …) |
-| Backtest | `/backtest` | Signal backtesting |
 | Journal | `/journal` | Decision journal and calibration track record |
 | Intelligence | `/intelligence` | Knowledge graph, opportunity map, and timeline in one focus view |
 | Thematic | `/thematic` | Thematic analysis: supply chains, commodities, geopolitics, company tiers |
-| Engine | `/engine` | Quant scorecard from the Python/DuckDB pipeline (`engine/daily_run.py`), read-only, optional |
+| Quant Engine | `/engine` | Systematic desk over the Python/DuckDB pipeline (`engine/daily_run.py`): market regime, adaptive factor weights, conviction book with probability bands and Kelly sizing, market breadth, model health, and on-demand model validation (the former `/backtest`) |
 
 Asset-class coverage (equities/crypto/forex/commodities/funds/derivatives/real
 estate/private markets) is centered on `lib/assets/` (the platform-wide asset

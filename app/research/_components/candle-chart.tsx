@@ -18,6 +18,7 @@ import type { HistoryPoint, NewsItem } from "@/lib/types";
 import { buildTechnicalSummary, calcSma, type CandlePattern } from "@/lib/indicators";
 import { buildTechnicalSignals, type TechnicalSignal } from "@/lib/pattern-signals";
 import { useChartTheme, type ChartTheme } from "@/app/_components/chart-theme";
+import { usePlotDrawOnce } from "@/app/_components/use-in-view-once";
 import { PatternAnalysisPanel, type AskAIPayload } from "./pattern-analysis-panel";
 
 /* -------------------------------------------------------------------------- */
@@ -495,6 +496,8 @@ export function CandleChart({
   // same pattern at different dates are each meaningful and kept.
   const keySignals = useMemo(() => visibleSignals.slice(0, 8), [visibleSignals]);
 
+  const [plotRef, drawPlot] = usePlotDrawOnce<HTMLDivElement>();
+
   function handleSignalClick(sig: TechnicalSignal) {
     setFocusedSignal((prev) =>
       prev && prev.name === sig.name && prev.date === sig.date ? null : sig,
@@ -510,7 +513,7 @@ export function CandleChart({
   }
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div ref={plotRef} className="flex flex-col gap-1.5">
       {/* ── Overlay / indicator toggles ─────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-1.5 px-1">
         <span className="text-xs text-muted mr-1">Overlays</span>
@@ -615,6 +618,11 @@ export function CandleChart({
              * The shape function uses those pixel values plus yMin/yMax (closure) to
              * derive pixel positions for open, high, and low and draws the full candle.
              * fillOpacity/strokeOpacity=0 hides the default bar rect — only our SVG shows.
+             *
+             * Recharts can't animate a custom `shape`, so the first draw is a CSS
+             * sweep across the whole candle layer instead (.animate-plot-draw),
+             * gated on the same one-shot in-view flag the price chart uses — so a
+             * period or overlay change never redraws candles already on screen.
              */}
             <Bar
               dataKey="close"
@@ -622,6 +630,7 @@ export function CandleChart({
               strokeOpacity={0}
               isAnimationActive={false}
               shape={candleShape}
+              className={drawPlot ? "animate-plot-draw" : undefined}
             />
 
             {/* SMA overlays */}

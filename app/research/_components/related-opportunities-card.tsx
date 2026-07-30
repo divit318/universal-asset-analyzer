@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { LoadingPanel } from "@/app/_components/loading-panel";
 
 /**
  * Opportunity Map, scoped to this company's theme cluster — reuses
@@ -49,7 +50,7 @@ export function RelatedOpportunitiesCard({ symbol }: { symbol: string }) {
     return () => { cancelled = true; };
   }, [symbol]);
 
-  if (loading) return <div className="h-24 w-full animate-pulse rounded-xl bg-surface-2" />;
+  if (loading) return <LoadingPanel height="h-24" markSize={18} />;
 
   const thisNode = nodes.find((n) => n.symbol === symbol.toUpperCase());
   if (!thisNode) return null; // not in the last scan — nothing to relate it to
@@ -67,7 +68,7 @@ export function RelatedOpportunitiesCard({ symbol }: { symbol: string }) {
   if (siblings.length === 0) return null;
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
+    <div className="card-lift flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
       <div className="flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-medium">Related Opportunities</h3>
@@ -78,11 +79,12 @@ export function RelatedOpportunitiesCard({ symbol }: { symbol: string }) {
         </Link>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
-        {siblings.map((n) => (
+        {siblings.map((n, i) => (
           <Link
             key={n.id}
             href={`/research?symbol=${encodeURIComponent(n.symbol)}`}
-            className="flex items-center justify-between gap-2 rounded-lg border border-border bg-surface-2/40 px-3 py-2 transition-colors hover:border-accent/40"
+            className="card-lift animate-fade-rise flex items-center justify-between gap-2 rounded-lg border border-border bg-surface-2/40 px-3 py-2 transition-colors hover:border-accent/40"
+            style={{ animationDelay: `${i * 60}ms` }}
           >
             <div className="min-w-0">
               <p className="truncate text-xs font-medium text-foreground">{n.symbol}</p>

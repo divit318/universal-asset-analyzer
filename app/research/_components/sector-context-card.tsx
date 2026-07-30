@@ -1,6 +1,9 @@
 "use client";
 
 import type { SectorRotationEntry } from "@/lib/types";
+import { CountUp } from "@/app/_components/count-up";
+import { LoadingPanel } from "@/app/_components/loading-panel";
+import { Reveal } from "@/app/_components/reveal";
 
 /**
  * Sector Intelligence for the researched company's specific sector — rank,
@@ -24,26 +27,28 @@ const WINDOWS: { key: "1w" | "1m" | "3m" | "6m"; label: string }[] = [
   { key: "6m", label: "6M" },
 ];
 
-function ReturnChip({ label, value }: { label: string; value: number | null }) {
+function ReturnChip({ label, value, index }: { label: string; value: number | null; index: number }) {
   const cls = value == null ? "text-muted" : value >= 0 ? "text-positive" : "text-negative";
   return (
-    <div className="flex flex-col items-center gap-0.5 rounded-lg border border-border bg-surface px-2.5 py-1.5">
+    <Reveal index={index} className="flex flex-col items-center gap-0.5 rounded-lg border border-border bg-surface px-2.5 py-1.5">
       <span className="text-[9px] uppercase tracking-wide text-muted">{label}</span>
       <span className={`font-mono text-xs font-semibold tabular-nums ${cls}`}>
-        {value != null ? `${value >= 0 ? "+" : ""}${value.toFixed(1)}%` : "—"}
+        {value != null
+          ? <CountUp value={value} format={(v) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`} />
+          : "—"}
       </span>
-    </div>
+    </Reveal>
   );
 }
 
 export function SectorContextCard({ entry, loading }: { entry: SectorRotationEntry | null; loading?: boolean }) {
-  if (loading) return <div className="h-24 w-full animate-pulse rounded-xl bg-surface-2" />;
+  if (loading) return <LoadingPanel height="h-24" markSize={18} />;
   if (!entry) return null;
 
   const style = CLASS_STYLE[entry.classification];
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
+    <div className="card-lift flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
           <span className="text-sm font-semibold text-foreground">{entry.sector}</span>
@@ -61,8 +66,8 @@ export function SectorContextCard({ entry, loading }: { entry: SectorRotationEnt
         </div>
       </div>
       <div className="grid grid-cols-4 gap-2">
-        {WINDOWS.map((w) => (
-          <ReturnChip key={w.key} label={w.label} value={entry.returns[w.key]} />
+        {WINDOWS.map((w, i) => (
+          <ReturnChip key={w.key} label={w.label} value={entry.returns[w.key]} index={i} />
         ))}
       </div>
       <p className="text-[10px] text-muted/70">

@@ -4,12 +4,14 @@
  * Streams Server-Sent Events as each stage of the 10-stage
  * Industries & Commodities Discovery Framework completes.
  *
- * Request body: { theme: string }
+ * Request body: { theme: string, refresh?: boolean }
  * Each SSE event: data: <JSON>\n\n
  * Final event: data: {"stage":"done","report":{...}}\n\n
  */
 
-import { runThematicEngine, type ThematicProgressEvent } from "@/lib/thematic-engine";
+import { readCache, writeCache, cacheKey } from "@/lib/platform/cache";
+import { runThematicEngine, type ThematicProgressEvent, type ThematicReport } from "@/lib/thematic-engine";
+import { normalizeTheme, themeCacheKey, MAX_THEME_LENGTH } from "@/lib/thematic-theme";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,44 +20,114 @@ export const dynamic = "force-dynamic";
 // 120s was far short of that and would have silently truncated the response.
 export const maxDuration = 300;
 
+/**
+ * In-flight runs, keyed by normalized theme.
+ *
+ * The pipeline is minutes long and Ollama serves one request at a time, so a
+ * double-click on Analyse (or two tabs on the same theme) used to launch a
+ * second full run that queued behind the first — doubling the wait for both and
+ * for anything else in the app that needs the model. A repeat request now joins
+ * the run already happening instead of starting a rival one.
+ */
+const inFlight = new Map<string, Promise<ThematicReport>>();
+
 export async function POST(req: Request) {
-  let body: { theme?: string };
+  let body: unknown;
   try {
-    body = (await req.json()) as { theme?: string };
+    body = await req.json();
   } catch {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const theme = body.theme?.trim();
+  const raw = (body as { theme?: unknown })?.theme;
+  // Explicit typeof check: `body.theme?.trim()` threw a TypeError on any
+  // non-string (a numeric theme returned a bodyless 500 rather than a 400).
+  if (typeof raw !== "string") {
+    return Response.json({ error: "theme must be a string" }, { status: 400 });
+  }
+  const theme = normalizeTheme(raw);
   if (!theme) {
     return Response.json({ error: "theme is required" }, { status: 400 });
   }
+  if (theme.length < 2) {
+    return Response.json({ error: "theme is too short to research" }, { status: 400 });
+  }
+  if (raw.trim().length > MAX_THEME_LENGTH) {
+    return Response.json(
+      { error: `theme must be ${MAX_THEME_LENGTH} characters or fewer` },
+      { status: 400 },
+    );
+  }
+
+  const refresh = (body as { refresh?: unknown })?.refresh === true;
+  const key = cacheKey("thematicReport", { theme: themeCacheKey(theme) });
 
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
     async start(controller) {
-      function send(event: ThematicProgressEvent & { report?: unknown }) {
-        const data = `data: ${JSON.stringify(event)}\n\n`;
-        controller.enqueue(encoder.encode(data));
+      // The client can disconnect at any point in a multi-minute stream;
+      // enqueueing onto a closed controller throws and would surface as an
+      // unhandled rejection in the server log.
+      let closed = false;
+      function send(event: ThematicProgressEvent & { report?: unknown; cached?: boolean }) {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        } catch {
+          closed = true;
+        }
       }
 
+      // A run this expensive is aborted on client disconnect, not left to
+      // finish into a void — Cancel and a closed tab both free the model.
+      const abort = new AbortController();
+      const onClientGone = () => abort.abort();
+      req.signal.addEventListener("abort", onClientGone);
+
       try {
+        if (!refresh) {
+          const hit = readCache<ThematicReport>(key);
+          if (hit) {
+            send({
+              stage: "done",
+              message: `Loaded the saved report for "${theme}" — generated ${new Date(hit.value.generatedAt).toLocaleString()}.`,
+              report: hit.value,
+              cached: true,
+            });
+            return;
+          }
+        }
+
         send({ stage: "init", message: `Starting thematic analysis for "${theme}"…` });
 
-        const report = await runThematicEngine(
-          { theme },
-          (event) => send(event),
-        );
+        // Only the *originating* request streams stage progress; a joiner gets
+        // the finished report. Streaming one run's events into two response
+        // bodies would need a fan-out buffer for very little user benefit.
+        const existing = inFlight.get(key);
+        const run = existing ?? runThematicEngine({ theme, signal: abort.signal }, send);
+        if (!existing) {
+          inFlight.set(key, run);
+          run.finally(() => inFlight.delete(key)).catch(() => {});
+        } else {
+          send({ stage: "init", message: `Joining the analysis already running for "${theme}"…` });
+        }
+
+        const report = await run;
+        if (!existing) writeCache("thematicReport", key, report);
 
         send({ stage: "done", message: "Thematic report complete", report });
       } catch (err) {
-        send({
-          stage: "error",
-          message: err instanceof Error ? err.message : "Unexpected error",
-        });
+        if (!abort.signal.aborted) {
+          send({
+            stage: "error",
+            message: err instanceof Error ? err.message : "Unexpected error",
+          });
+        }
       } finally {
-        controller.close();
+        req.signal.removeEventListener("abort", onClientGone);
+        closed = true;
+        try { controller.close(); } catch { /* already closed by the disconnect */ }
       }
     },
   });

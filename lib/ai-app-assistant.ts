@@ -91,7 +91,7 @@ const PAGE_DESCRIPTIONS: [prefix: string, description: string][] = [
   ["/compare", "Compare — multi-asset comparison across equities, ETFs, crypto, and other asset classes."],
   ["/portfolio", "Portfolio — holdings, P&L, risk metrics, position fit."],
   ["/watchlist", "Watchlist — tracked tickers with alerts and notes."],
-  ["/dcf", "DCF — intrinsic value calculator with sensitivity analysis."],
+  ["/valuation", "Valuation — your living valuation case per company: priced-in growth, editable assumptions, versioned history."],
   ["/calendar", "Calendar — earnings and ex-dividend dates."],
   ["/ic-report", "IC Report — institutional research via a multi-agent pipeline."],
   ["/engine", "Engine — the Python quant scorecard."],
@@ -117,7 +117,7 @@ function describePageContext(ctx?: AppAssistantPageContext): string {
 type DestinationId =
   | "research"
   | "compare"
-  | "dcf"
+  | "valuation"
   | "ic-report"
   | "portfolio"
   | "watchlist"
@@ -141,7 +141,7 @@ interface DestinationDef {
 const DESTINATIONS: Record<DestinationId, DestinationDef> = {
   research: { label: "Research", minSymbols: 1, maxSymbols: 1, href: ([s]) => `/research?symbol=${encodeURIComponent(s)}` },
   compare: { label: "Asset Comparison", minSymbols: 2, maxSymbols: 5, href: (s) => `/compare?symbols=${s.map(encodeURIComponent).join(",")}` },
-  dcf: { label: "DCF Valuation", minSymbols: 1, maxSymbols: 1, href: ([s]) => `/dcf?symbol=${encodeURIComponent(s)}` },
+  valuation: { label: "Valuation", minSymbols: 1, maxSymbols: 1, href: ([s]) => `/valuation?symbol=${encodeURIComponent(s)}` },
   // Always appended with autorun=1: unlike the other symbol-scoped
   // destinations, there's no scenario where "open the IC report for X"
   // *doesn't* mean "generate it" — the page has nothing else to show for a
@@ -217,7 +217,7 @@ Return ONLY valid JSON, no markdown fences, no preamble:
   "answer": "<1-4 sentences>",
   "suggestions": ["...", "..."] (optional),
   "action": {
-    "destination": "research" | "compare" | "dcf" | "ic-report" | "portfolio" | "watchlist" | "screener" | "calendar" | "engine" | "thematic" | "journal" | "wire",
+    "destination": "research" | "compare" | "valuation" | "ic-report" | "portfolio" | "watchlist" | "screener" | "calendar" | "engine" | "thematic" | "journal" | "wire",
     "symbols": ["..."] (only if the destination needs them),
     "screenerQuery": "..." (screener only, omit if no specific criteria),
     "assetClassHint": "equity" | "etf" | "reit" | "crypto" | "commodity" | "bond" | "forex" (screener only),

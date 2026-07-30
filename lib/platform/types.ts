@@ -42,7 +42,8 @@ export type DatasetId =
   // Derived context + AI
   | "companyContext"
   | "aiVerdict"
-  | "aiSection";
+  | "aiSection"
+  | "thematicReport";
 
 /** How a dataset is allowed to age, and what it depends on. */
 export interface CachePolicy {

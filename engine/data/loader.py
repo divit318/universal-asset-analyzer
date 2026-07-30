@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +19,13 @@ SQLITE_PATH = Path(__file__).parents[2] / "data" / "app.db"
 # All API reads go here — zero DuckDB lock contention.
 SCORECARD_SNAPSHOT = Path(__file__).parents[2] / "data" / "scorecard_snapshot.parquet"
 DETAIL_SNAPSHOT_DIR = Path(__file__).parents[2] / "data" / "detail_snapshots"
+# The Monte Carlo intrinsic-value prior for every scored symbol, in one small
+# JSON map. The TypeScript side reads this file directly (see
+# lib/valuation/engine-prior.ts) instead of spawning a Python reader per symbol:
+# the per-symbol Parquet snapshots need polars to open, so serving one valuation
+# prior used to cost a whole interpreter start-up. One flat map, read once and
+# cached in memory, serves the Research Hub strip and the whole Register.
+VALUATION_PRIORS = Path(__file__).parents[2] / "data" / "valuation_priors.json"
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS price_daily (
@@ -137,6 +146,22 @@ CREATE TABLE IF NOT EXISTS scorecard_daily (
     signal          VARCHAR,
     confidence      DOUBLE,
     PRIMARY KEY (symbol, date)
+);
+
+-- IC-derived factor weights, one row per run date. Lets the UI show that the
+-- model's factor weighting adapts over time (not hardcoded), and chart the
+-- historical evolution of which factor has been carrying the most signal.
+CREATE TABLE IF NOT EXISTS ic_weights_daily (
+    date        DATE NOT NULL,
+    universe    VARCHAR NOT NULL,
+    momentum    DOUBLE,
+    quality     DOUBLE,
+    value       DOUBLE,
+    low_vol     DOUBLE,
+    revision    DOUBLE,
+    regime      DOUBLE,
+    mc_upside   DOUBLE,
+    PRIMARY KEY (date, universe)
 );
 """
 
@@ -385,22 +410,26 @@ def fetch_ohlcv(
     """)
     conn.unregister("_price_tmp")
 
-    # Fetch shares_outstanding + market_cap and upsert into fundamentals
-    for sym in symbols:
+    # Fetch shares_outstanding + market_cap and upsert into fundamentals.
+    # Network I/O per symbol — threaded since yfinance's HTTP calls release
+    # the GIL while waiting, so this parallelizes for real.
+    def _fetch_fast_info(sym: str) -> tuple[str, float | None, float | None]:
         try:
             fi = yf.Ticker(sym).fast_info
             shares = getattr(fi, "shares", None)
             mktcap = getattr(fi, "market_cap", None)
+            return sym, (float(shares) if shares else None), (float(mktcap) if mktcap else None)
+        except Exception:
+            return sym, None, None
+
+    with ThreadPoolExecutor(max_workers=min(16, max(1, len(symbols)))) as ex:
+        for sym, shares, mktcap in ex.map(_fetch_fast_info, symbols):
             if shares or mktcap:
                 conn.execute("""
                     UPDATE fundamentals
                     SET shares_outstanding = ?, market_cap = ?
                     WHERE symbol = ?
-                """, [float(shares) if shares else None,
-                      float(mktcap) if mktcap else None,
-                      sym])
-        except Exception:
-            pass
+                """, [shares, mktcap, sym])
 
     conn.close()
     return len(rows)
@@ -486,14 +515,14 @@ def _compute_roic_safe(ticker, info: dict) -> float | None:
         return None
 
 
-def fetch_fundamentals(symbols: list[str]) -> int:
+def _fetch_one_fundamental(sym: str) -> tuple[str, list] | None:
     """
-    Fetch fundamentals from yfinance Ticker.info for each symbol and upsert
-    into the fundamentals table. Covers all symbols — US and Indian (.NS).
-    Returns number of rows upserted.
+    Fetch + compute one symbol's fundamentals row (all network I/O; no DB
+    access). Split out of fetch_fundamentals so the network-bound part can
+    run on a thread pool — yf.Ticker(...).info / .balance_sheet are blocking
+    HTTP calls that release the GIL while waiting, so this parallelizes for
+    real even under CPython's GIL.
     """
-    conn = get_db()
-
     def _sf(v) -> float | None:
         try:
             f = float(v)
@@ -501,49 +530,89 @@ def fetch_fundamentals(symbols: list[str]) -> int:
         except (TypeError, ValueError):
             return None
 
+    try:
+        ticker = yf.Ticker(sym)
+        info = ticker.info
+        if not info or info.get("quoteType") not in ("EQUITY", "ETF", "MUTUALFUND", None):
+            # quoteType missing on some tickers — try anyway
+            if not info:
+                return None
+
+        # Revenue growth: yfinance gives revenueGrowth as a fraction (0.125 = 12.5%)
+        rev_growth = _sf(info.get("revenueGrowth"))
+        rev_growth_pct = rev_growth * 100.0 if rev_growth is not None else None
+
+        # Margins: yfinance gives as fractions — convert to %
+        def _pct(key):
+            v = _sf(info.get(key))
+            return v * 100.0 if v is not None else None
+
+        # ROE/ROA are fractions in yfinance
+        roe = _sf(info.get("returnOnEquity"))
+        roe_pct = roe * 100.0 if roe is not None else None
+
+        # ROIC: use NOPAT / Invested Capital from balance sheet when available.
+        # Falls back to ROA-based approximation for financials and missing data.
+        roic = _compute_roic_safe(ticker, info)
+
+        # FCF margin: freeCashflow / totalRevenue
+        fcf = _sf(info.get("freeCashflow"))
+        rev = _sf(info.get("totalRevenue"))
+        fcf_margin = (fcf / rev * 100.0) if (fcf is not None and rev and rev > 0) else None
+
+        # EPS growth YoY: (forwardEps - trailingEps) / |trailingEps|
+        fwd_eps = _sf(info.get("forwardEps"))
+        trail_eps = _sf(info.get("trailingEps"))
+        if fwd_eps and trail_eps and abs(trail_eps) > 1e-6:
+            eps_growth = (fwd_eps - trail_eps) / abs(trail_eps) * 100.0
+        else:
+            eps_growth = None
+
+        # Dividend yield: yfinance gives as fraction
+        div_yield = _sf(info.get("dividendYield"))
+        div_yield_pct = div_yield * 100.0 if div_yield is not None else None
+
+        return sym, [
+            sym,
+            info.get("longName") or info.get("shortName"),
+            info.get("sector"),
+            info.get("industry"),
+            _sf(info.get("forwardPE")),
+            _sf(info.get("enterpriseToEbitda")),
+            rev_growth_pct,
+            eps_growth,
+            roic,
+            roe_pct,
+            _pct("grossMargins"),
+            _pct("operatingMargins"),
+            _sf(info.get("debtToEquity")),
+            _sf(info.get("currentRatio")),
+            fcf_margin,
+            div_yield_pct,
+            _sf(info.get("ebitda")),
+            fcf,
+            _sf(info.get("sharesOutstanding")),
+            _sf(info.get("marketCap")),
+        ]
+    except Exception:
+        return None
+
+
+def fetch_fundamentals(symbols: list[str], max_workers: int = 8) -> int:
+    """
+    Fetch fundamentals from yfinance Ticker.info for each symbol and upsert
+    into the fundamentals table. Covers all symbols — US and Indian (.NS).
+    Network fetch is parallelized across a thread pool; DB writes stay
+    sequential on the caller's connection. Returns number of rows upserted.
+    """
+    conn = get_db()
     upserted = 0
-    for sym in symbols:
-        try:
-            info = yf.Ticker(sym).info
-            if not info or info.get("quoteType") not in ("EQUITY", "ETF", "MUTUALFUND", None):
-                # quoteType missing on some tickers — try anyway
-                if not info:
-                    continue
 
-            # Revenue growth: yfinance gives revenueGrowth as a fraction (0.125 = 12.5%)
-            rev_growth = _sf(info.get("revenueGrowth"))
-            rev_growth_pct = rev_growth * 100.0 if rev_growth is not None else None
-
-            # Margins: yfinance gives as fractions — convert to %
-            def _pct(key):
-                v = _sf(info.get(key))
-                return v * 100.0 if v is not None else None
-
-            # ROE/ROA are fractions in yfinance
-            roe = _sf(info.get("returnOnEquity"))
-            roe_pct = roe * 100.0 if roe is not None else None
-
-            # ROIC: use NOPAT / Invested Capital from balance sheet when available.
-            # Falls back to ROA-based approximation for financials and missing data.
-            roic = _compute_roic_safe(yf.Ticker(sym), info)
-
-            # FCF margin: freeCashflow / totalRevenue
-            fcf = _sf(info.get("freeCashflow"))
-            rev = _sf(info.get("totalRevenue"))
-            fcf_margin = (fcf / rev * 100.0) if (fcf is not None and rev and rev > 0) else None
-
-            # EPS growth YoY: (forwardEps - trailingEps) / |trailingEps|
-            fwd_eps = _sf(info.get("forwardEps"))
-            trail_eps = _sf(info.get("trailingEps"))
-            if fwd_eps and trail_eps and abs(trail_eps) > 1e-6:
-                eps_growth = (fwd_eps - trail_eps) / abs(trail_eps) * 100.0
-            else:
-                eps_growth = None
-
-            # Dividend yield: yfinance gives as fraction
-            div_yield = _sf(info.get("dividendYield"))
-            div_yield_pct = div_yield * 100.0 if div_yield is not None else None
-
+    with ThreadPoolExecutor(max_workers=min(max_workers, max(1, len(symbols)))) as ex:
+        for result in ex.map(_fetch_one_fundamental, symbols):
+            if result is None:
+                continue
+            _sym, values = result
             conn.execute("""
                 INSERT OR REPLACE INTO fundamentals (
                     symbol, name, sector, industry,
@@ -559,31 +628,8 @@ def fetch_fundamentals(symbols: list[str]) -> int:
                     shares_outstanding, market_cap,
                     updated_at
                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,now())
-            """, [
-                sym,
-                info.get("longName") or info.get("shortName"),
-                info.get("sector"),
-                info.get("industry"),
-                _sf(info.get("forwardPE")),
-                _sf(info.get("enterpriseToEbitda")),
-                rev_growth_pct,
-                eps_growth,
-                roic,
-                roe_pct,
-                _pct("grossMargins"),
-                _pct("operatingMargins"),
-                _sf(info.get("debtToEquity")),
-                _sf(info.get("currentRatio")),
-                fcf_margin,
-                div_yield_pct,
-                _sf(info.get("ebitda")),
-                fcf,
-                _sf(info.get("sharesOutstanding")),
-                _sf(info.get("marketCap")),
-            ])
+            """, values)
             upserted += 1
-        except Exception:
-            pass
 
     conn.close()
     return upserted
@@ -637,6 +683,30 @@ def get_symbols_with_prices(min_days: int = 252) -> list[str]:
     return [r[0] for r in rows]
 
 
+def save_ic_weights(
+    conn: duckdb.DuckDBPyConnection,
+    run_date,
+    weights: dict[str, float],
+    universe: str = "default",
+) -> None:
+    """
+    Persist this run's IC-derived factor weights so the UI can show that the
+    composite isn't a fixed formula — it's re-weighted from realized
+    predictive power every run — and chart how factor leadership rotates
+    over time.
+    """
+    conn.execute("""
+        INSERT OR REPLACE INTO ic_weights_daily
+            (date, universe, momentum, quality, value, low_vol, revision, regime, mc_upside)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, [
+        run_date, universe,
+        weights.get("momentum", 0.0), weights.get("quality", 0.0), weights.get("value", 0.0),
+        weights.get("low_vol", 0.0), weights.get("revision", 0.0),
+        weights.get("regime", 0.0), weights.get("mc_upside", 0.0),
+    ])
+
+
 def export_scorecard_snapshot(
     conn: duckdb.DuckDBPyConnection,
     scored_df: "pl.DataFrame",
@@ -663,6 +733,53 @@ def export_scorecard_snapshot(
     tmp = SCORECARD_SNAPSHOT.with_suffix(".parquet.tmp")
     df.write_parquet(str(tmp))
     tmp.rename(SCORECARD_SNAPSHOT)
+
+
+def export_valuation_priors(conn: duckdb.DuckDBPyConnection) -> None:
+    """
+    Write the Monte Carlo intrinsic-value prior for every symbol to one JSON map.
+
+    Consumed by lib/valuation/engine-prior.ts, which reads it with plain fs and
+    caches it against the file's mtime — so in steady state a valuation prior
+    costs no subprocess at all. Written atomically via a temp file so a reader
+    never observes a half-written map.
+    """
+    try:
+        rows = conn.execute(
+            """
+            SELECT m.symbol, m.date, m.intrinsic_p10, m.intrinsic_p25, m.intrinsic_p50,
+                   m.intrinsic_p75, m.intrinsic_p90, m.wacc, m.terminal_growth
+            FROM mc_valuation m
+            JOIN (SELECT symbol, MAX(date) AS d FROM mc_valuation GROUP BY symbol) latest
+              ON m.symbol = latest.symbol AND m.date = latest.d
+            """
+        ).fetchall()
+    except Exception:
+        return
+
+    priors: dict[str, dict] = {}
+    run_date = None
+    for (sym, date, p10, p25, p50, p75, p90, wacc, tg) in rows:
+        if p50 is None:
+            continue
+        run_date = run_date or (str(date) if date is not None else None)
+        priors[str(sym)] = {
+            "p10": p10, "p25": p25, "p50": p50, "p75": p75, "p90": p90,
+            "wacc": wacc, "terminalGrowth": tg,
+            "asOf": str(date) if date is not None else None,
+        }
+
+    payload = {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "runDate": run_date,
+        "count": len(priors),
+        "priors": priors,
+    }
+
+    VALUATION_PRIORS.parent.mkdir(parents=True, exist_ok=True)
+    tmp = VALUATION_PRIORS.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, default=str))
+    tmp.rename(VALUATION_PRIORS)
 
 
 def export_detail_snapshots(conn: duckdb.DuckDBPyConnection, symbols: list[str]) -> None:

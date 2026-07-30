@@ -35,6 +35,19 @@ function safeIso(dateStr: string): string {
   }
 }
 
+/**
+ * Unwrap a CDATA section left behind by the tag-specific regexes below.
+ *
+ * Those only match `<title><![CDATA[…]]></title>` with no whitespace between
+ * the tag and the CDATA marker. Economic Times (and other feeds) put a newline
+ * there, so the plain-text fallback matched instead and every headline arrived
+ * as the literal string `<![CDATA[Global Market: …]]>` — visible in the UI and,
+ * worse, fed verbatim into AI prompts as news context.
+ */
+function unwrapCdata(value: string): string {
+  return value.replace(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/, "$1").trim();
+}
+
 /** Very minimal RSS/Atom parser — extracts <item> blocks without a dependency. */
 function parseRssItems(xml: string): { title: string; link: string; pubDate: string; description: string }[] {
   const items: { title: string; link: string; pubDate: string; description: string }[] = [];
@@ -52,12 +65,13 @@ function parseRssItems(xml: string): { title: string; link: string; pubDate: str
     const description = block.match(/<description[^>]*><!\[CDATA\[([\s\S]*?)\]\]><\/description>/i)?.[1]
       ?? block.match(/<description[^>]*>([\s\S]*?)<\/description>/i)?.[1]
       ?? "";
-    if (title.trim()) {
+    const cleanTitle = unwrapCdata(title);
+    if (cleanTitle) {
       items.push({
-        title: title.trim(),
-        link: link.trim(),
+        title: cleanTitle,
+        link: unwrapCdata(link),
         pubDate: pubDate.trim(),
-        description: description.replace(/<[^>]+>/g, "").trim(),
+        description: unwrapCdata(description).replace(/<[^>]+>/g, "").trim(),
       });
     }
   }

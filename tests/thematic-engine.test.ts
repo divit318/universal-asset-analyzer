@@ -4,10 +4,19 @@ import type { StockFundamentals } from "@/lib/types";
 const runPromptMock = vi.fn();
 vi.mock("@/lib/ai", () => ({ runPrompt: (...args: unknown[]) => runPromptMock(...args) }));
 vi.mock("@/lib/ai/router", () => ({ pickModel: vi.fn().mockResolvedValue("test-model") }));
+// A realistic row: the universe shortlist matches on the Yahoo industry string,
+// so the fixture has to look like one for the company-mapping stage to run.
 vi.mock("@/lib/db", () => ({
   getFreshFundamentals: () => ({
-    rows: [{ symbol: "ACME", name: "Acme Corp", sector: "Tech", industry: "Software" } as unknown as StockFundamentals],
+    rows: [
+      { symbol: "ACME", name: "Acme Semiconductor", sector: "Technology", industry: "Semiconductors", roic: 20, grossMargin: 55, operatingMargin: 30, fcfMargin: 20, roe: 25, debtToEquity: 0.4, currentRatio: 2.2 } as unknown as StockFundamentals,
+      { symbol: "ZZBANK", name: "Zed Regional Bank", sector: "Financial Services", industry: "Banks - Regional" } as unknown as StockFundamentals,
+    ],
   }),
+}));
+vi.mock("@/lib/yahoo", () => ({
+  getQuotes: vi.fn().mockResolvedValue([]),
+  getHistory: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("@/lib/news", () => ({ fetchMarketNews: vi.fn().mockResolvedValue([]) }));
 vi.mock("yahoo-finance2", () => ({
@@ -22,7 +31,14 @@ const {
   pctChange,
   computeOpportunityScore,
   runThematicEngine,
+  shortlistUniverse,
+  normalizeTheme,
+  themeCacheKey,
+  MAX_THEME_LENGTH,
 } = await import("@/lib/thematic-engine");
+
+const fund = (symbol: string, industry: string, sector = "Industrials") =>
+  ({ symbol, name: `${symbol} Inc`, sector, industry } as unknown as StockFundamentals);
 
 function futureStateJson() {
   return JSON.stringify({ inevitabilityScore: 8, timeHorizon: "5-10 years", drivingForces: ["a", "b"], rationale: "r" });
@@ -55,14 +71,17 @@ function companyMappingJson() {
 
 /** Route a mocked runPrompt call to the right canned response based on distinguishing prompt text. */
 function routeByPrompt(prompt: string): string {
+  // Order matters: the company-mapping prompt also mentions "dependency chain",
+  // so its own marker has to be tested first.
+  if (prompt.includes("belong to which tier")) return companyMappingJson();
   if (prompt.includes("inevitability")) return futureStateJson();
-  if (prompt.includes("dependency chain")) return chainJson();
+  if (prompt.includes("map the full dependency chain") || prompt.includes("DEPENDENCY CHAIN HAS")) return chainJson();
+  if (prompt.includes("Map the full dependency chain")) return chainJson();
   if (prompt.includes("bottleneck in the")) return bottleneckJson();
   if (prompt.includes("supply-demand balance")) return supplyDemandJson();
   if (prompt.includes("commodity intensity")) return commodityJson();
   if (prompt.includes("government policy support")) return policyJson();
   if (prompt.includes("structural advantages across")) return structuralJson();
-  if (prompt.includes("belong to which tier")) return companyMappingJson();
   throw new Error(`unrecognised prompt in test: ${prompt.slice(0, 60)}`);
 }
 
@@ -73,12 +92,25 @@ describe("pickCommodityProxies", () => {
     expect(result.some((p) => p.ticker === "SMH")).toBe(true);
   });
 
-  it("falls back to default commodities when no keyword matches", () => {
-    const result = pickCommodityProxies("Something Totally Unrelated To Any Keyword");
-    expect(result).toEqual([
-      { ticker: "GLD", name: "Gold (GLD ETF)" },
-      { ticker: "USO", name: "Crude Oil (USO ETF)" },
-    ]);
+  it("returns nothing rather than an irrelevant default when no keyword matches", () => {
+    // The old default handed back Gold + Crude Oil for ANY unmatched theme and
+    // fed those series to the supply/demand model as evidence.
+    expect(pickCommodityProxies("Something Totally Unrelated To Any Keyword")).toEqual([]);
+  });
+
+  it("matches keywords on word boundaries, not substrings", () => {
+    // "Supply Chain" contains the letters "ai" (ch-AI-n), which used to pull in
+    // the AI theme's semiconductor proxies.
+    const tickers = pickCommodityProxies("Global Supply Chain Resilience").map((p) => p.ticker);
+    expect(tickers).not.toContain("SMH");
+    expect(tickers).not.toContain("NVDA");
+    // ...while a genuine AI theme still resolves.
+    expect(pickCommodityProxies("AI Compute").map((p) => p.ticker)).toContain("SMH");
+  });
+
+  it("resolves aliases to the same proxies as the canonical keyword", () => {
+    expect(pickCommodityProxies("Small Modular Reactor rollout").map((p) => p.ticker)).toContain("URA");
+    expect(pickCommodityProxies("Electric Vehicles").map((p) => p.ticker)).toContain("CPER");
   });
 
   it("deduplicates tickers shared across matched keywords", () => {
@@ -144,7 +176,7 @@ describe("runThematicEngine — failure tracking", () => {
     runPromptMock.mockReset();
     runPromptMock.mockImplementation(async (_task: string, prompt: string) => routeByPrompt(prompt));
 
-    const report = await runThematicEngine({ theme: "AI Compute" });
+    const report = await runThematicEngine({ theme: "AI Compute Semiconductors" });
 
     expect(report.stageFailures).toEqual([]);
     expect(runPromptMock).toHaveBeenCalledTimes(8); // was 9 before removing the wasted duplicate supply/demand call
@@ -184,7 +216,7 @@ describe("runThematicEngine — failure tracking", () => {
       return routeByPrompt(prompt);
     });
 
-    const report = await runThematicEngine({ theme: "AI Compute" });
+    const report = await runThematicEngine({ theme: "AI Compute Semiconductors" });
 
     expect(report.stageFailures).toEqual([]); // valid parse, not a tracked failure
     expect(report.bottleneck.score).toBe(7); // real data preserved
@@ -216,5 +248,169 @@ describe("runThematicEngine — failure tracking", () => {
     expect(report.stageFailures).toHaveLength(1);
     expect(report.stageFailures[0].stage).toBe("Bottleneck");
     expect(report.bottleneck.score).toBe(5); // neutral default
+  });
+});
+
+describe("normalizeTheme", () => {
+  it("collapses whitespace, strips control characters, and bounds length", () => {
+    expect(normalizeTheme("  AI   Compute \n ")).toBe("AI Compute");
+    expect(normalizeTheme("AI\u0000\u001fCompute")).toBe("AI Compute");
+    expect(normalizeTheme("x".repeat(500))).toHaveLength(MAX_THEME_LENGTH);
+  });
+
+  it("gives casing and spacing variants one cache identity", () => {
+    expect(themeCacheKey("  Nuclear   ENERGY ")).toBe(themeCacheKey("nuclear energy"));
+  });
+});
+
+describe("shortlistUniverse", () => {
+  const universe = [
+    fund("CCJ", "Uranium", "Energy"),
+    fund("NUE", "Steel", "Basic Materials"),
+    fund("JPM", "Banks - Diversified", "Financial Services"),
+    fund("NVDA", "Semiconductors", "Technology"),
+    fund("AMAT", "Semiconductor Equipment & Materials", "Technology"),
+  ];
+
+  it("reaches the theme's companies wherever they sit in the row order", () => {
+    // The old slice(0, 300) took an arbitrary, unordered window of ~1,960 rows,
+    // so a Uranium run could return zero companies with CCJ sitting in the DB.
+    const symbols = shortlistUniverse("Uranium", universe).companies.map((c) => c.symbol);
+    expect(symbols[0]).toBe("CCJ");
+  });
+
+  it("keeps a hint's whole industry family, not just an exact string match", () => {
+    const symbols = shortlistUniverse("Semiconductors", universe).companies.map((c) => c.symbol);
+    expect(symbols).toContain("NVDA");
+    expect(symbols).toContain("AMAT");
+  });
+
+  it("excludes companies with no plausible link rather than padding the list", () => {
+    expect(shortlistUniverse("Uranium", universe).companies.map((c) => c.symbol)).not.toContain("JPM");
+  });
+
+  it("is stable across runs for the same theme", () => {
+    const once = shortlistUniverse("Nuclear Energy", universe).companies.map((c) => c.symbol);
+    const twice = shortlistUniverse("Nuclear Energy", [...universe].reverse()).companies.map((c) => c.symbol);
+    expect(once).toEqual(twice);
+  });
+
+  it("flags a free-text theme that matches no lexicon industry", () => {
+    expect(shortlistUniverse("Shrinkflation", universe).usedTextFallback).toBe(true);
+    expect(shortlistUniverse("Uranium", universe).usedTextFallback).toBe(false);
+  });
+});
+
+describe("score clamping", () => {
+  it("rescales a 0-100 answer to the 0-10 scale it asked for", async () => {
+    runPromptMock.mockReset();
+    runPromptMock.mockImplementation(async (_task: string, prompt: string) => {
+      if (prompt.includes("inevitability")) {
+        // A 3B model answering on the wrong scale used to render "85/10", draw
+        // an 850%-wide bar, and push the weighted score past 100.
+        return JSON.stringify({ inevitabilityScore: 85, timeHorizon: "5y", drivingForces: [], rationale: "" });
+      }
+      return routeByPrompt(prompt);
+    });
+
+    const report = await runThematicEngine({ theme: "AI Compute Semiconductors" });
+    expect(report.futureState.inevitabilityScore).toBe(8.5);
+    expect(report.opportunity.themeScore).toBeLessThanOrEqual(100);
+  });
+
+  it("hard-clamps a nonsense score and an out-of-range tier", async () => {
+    runPromptMock.mockReset();
+    runPromptMock.mockImplementation(async (_task: string, prompt: string) => {
+      if (prompt.includes("bottleneck in the")) {
+        return JSON.stringify({ score: 9999, bottleneckTier: 42, bottleneckDescription: "d", scarceFactors: [], substituteRisk: "low", substituteRationale: "", expansionDifficulty: "" });
+      }
+      return routeByPrompt(prompt);
+    });
+
+    const report = await runThematicEngine({ theme: "AI Compute Semiconductors" });
+    expect(report.bottleneck.score).toBe(10);
+    expect(report.bottleneck.bottleneckTier).toBe(4); // the neutral default tier
+  });
+});
+
+describe("silent-failure tracking", () => {
+  it("records an empty dependency chain as a failure instead of shipping a blank tab as success", async () => {
+    runPromptMock.mockReset();
+    runPromptMock.mockImplementation(async (_task: string, prompt: string) => {
+      if (prompt.includes("belong to which tier")) return companyMappingJson();
+      // Valid, parseable JSON that contains no usable tiers — exactly what a
+      // small local model produces, and previously recorded as a success.
+      if (prompt.includes("dependency chain")) return "[]";
+      return routeByPrompt(prompt);
+    });
+
+    const report = await runThematicEngine({ theme: "AI Compute Semiconductors" });
+    expect(report.dependencyChain).toEqual([]);
+    expect(report.stageFailures.map((f) => f.stage)).toContain("Dependency Chain");
+    expect(report.integrity.caveats.length).toBeGreaterThan(0);
+  });
+
+  it("records a company mapping that matched nothing, and still labels tiers", async () => {
+    runPromptMock.mockReset();
+    runPromptMock.mockImplementation(async (_task: string, prompt: string) => {
+      if (prompt.includes("belong to which tier")) return "[]";
+      return routeByPrompt(prompt);
+    });
+
+    const report = await runThematicEngine({ theme: "AI Compute Semiconductors" });
+    expect(report.tierCompanies).toEqual([]);
+    expect(report.stageFailures.map((f) => f.stage)).toContain("Company Mapping");
+    // A stage carrying no score weight must still lower the headline stage count —
+    // otherwise the badge read "100% evidenced" above two empty tabs.
+    expect(report.integrity.stagesEvidenced).toBeLessThan(report.integrity.stagesTotal);
+  });
+
+  it("reports evidence coverage as the score weight that came from a real answer", async () => {
+    runPromptMock.mockReset();
+    runPromptMock.mockImplementation(async (_task: string, prompt: string) => {
+      if (prompt.includes("inevitability")) throw new Error("timeout");
+      return routeByPrompt(prompt);
+    });
+
+    const report = await runThematicEngine({ theme: "AI Compute Semiconductors" });
+    // Inevitability carries 20% of the weight.
+    expect(report.integrity.evidenceScore).toBe(80);
+    expect(report.integrity.stagesEvidenced).toBe(7);
+    expect(report.integrity.stagesTotal).toBe(8);
+    expect(report.opportunity.factors.find((f) => f.key === "inevitability")?.evidenced).toBe(false);
+  });
+});
+
+describe("verdict reconciliation", () => {
+  const base = {
+    futureState: { inevitabilityScore: 10, timeHorizon: "x", drivingForces: [], rationale: "" },
+    bottleneck: { score: 10, bottleneckTier: 1 as const, bottleneckDescription: "", scarceFactors: [], substituteRisk: "low" as const, substituteRationale: "", expansionDifficulty: "" },
+    commodity: { score: 10, primaryCommodities: [], demandCatalysts: [], supplyRisks: [], substitutionRisk: "low" as const, recyclingEconomics: "", reserveConcentration: "" },
+    policy: { score: 10, relevantPolicies: [], capitalFlowDirection: "", geopoliticalFactors: [], indiaSpecificPolicies: [] },
+    structural: { score: 10, currentLeader: "US", fastestImproving: "India", regions: [], longTermImplications: "" },
+  };
+
+  it("caps the verdict one notch when the capital cycle says avoid", () => {
+    // Shipping "EXCEPTIONAL" next to "Entry signal: avoid" is the contradiction
+    // that costs a research tool its credibility.
+    const supplyDemand = { score: 10, demandTrajectory: "accelerating" as const, supplyTrajectory: "constrained" as const, capitalCyclePhase: "late" as const, commodityProxies: [], demandDrivers: [], supplyConstraints: [], investmentSignal: "avoid" as const };
+    const result = computeOpportunityScore(base.futureState, base.bottleneck, supplyDemand, base.commodity, base.policy, base.structural, []);
+    expect(result.themeScore).toBe(100);
+    expect(result.verdict).toBe("strong");
+    expect(result.verdictCaveat).toContain("timing");
+  });
+
+  it("leaves the verdict alone when the cycle agrees", () => {
+    const supplyDemand = { score: 10, demandTrajectory: "accelerating" as const, supplyTrajectory: "constrained" as const, capitalCyclePhase: "early" as const, commodityProxies: [], demandDrivers: [], supplyConstraints: [], investmentSignal: "strong" as const };
+    const result = computeOpportunityScore(base.futureState, base.bottleneck, supplyDemand, base.commodity, base.policy, base.structural, []);
+    expect(result.verdict).toBe("exceptional");
+    expect(result.verdictCaveat).toBeNull();
+  });
+
+  it("names the risks that qualify a high score", () => {
+    const supplyDemand = { score: 8, demandTrajectory: "stable" as const, supplyTrajectory: "oversupplied" as const, capitalCyclePhase: "downturn" as const, commodityProxies: [], demandDrivers: [], supplyConstraints: [], investmentSignal: "weak" as const };
+    const flags = computeOpportunityScore(base.futureState, base.bottleneck, supplyDemand, base.commodity, base.policy, base.structural, []).riskFlags;
+    expect(flags.map((f) => f.label)).toContain("Late capital cycle");
+    expect(flags[0].severity).toBe("high"); // highest severity sorts first
   });
 });

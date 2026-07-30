@@ -22,7 +22,8 @@ import { MacroDashboard } from "./_components/macro-dashboard";
 import { NewsTimeline } from "./_components/news-timeline";
 import { SectionNav, type WireSection } from "./_components/section-nav";
 import { useIOSSafe } from "@/lib/ios-context";
-import { PageShell } from "@/app/_components/ui";
+import { PageShell, Skeleton } from "@/app/_components/ui";
+import { Reveal } from "@/app/_components/reveal";
 
 const CACHE_KEY = "uaa_scanner_v3";
 
@@ -123,7 +124,7 @@ function buildCategoryGroups(opps: ScannerOpportunity[]): Map<OpportunityCategor
 /** Placeholder for a section whose data hasn't streamed in yet — keeps the
  *  page's structure visible from the first paint instead of a blank gap. */
 function SectionSkeleton({ height = "h-40" }: { height?: string }) {
-  return <div className={`${height} animate-pulse rounded-xl border border-border bg-surface`} />;
+  return <Skeleton height={height} radius="rounded-xl" className="border border-border" />;
 }
 
 const CACHE_TTL = 15 * 60 * 1000; // 15 minutes — matches server cache
@@ -359,7 +360,7 @@ export default function ScannerPage() {
     <PageShell py="py-10">
 
       {/* ── Hero ── */}
-      <div id="hero" className="flex flex-col gap-1.5">
+      <Reveal index={0} id="hero" className="flex flex-col gap-1.5">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-2">
@@ -391,9 +392,10 @@ export default function ScannerPage() {
         <p className="text-sm text-muted">
           A live tape across markets, sectors, and your portfolio — discovers investment opportunities from market events, not just headlines.
         </p>
-      </div>
+      </Reveal>
 
       {/* ── Search controls ── */}
+      <Reveal index={1} as="section">
       <form onSubmit={runScan} className="flex flex-col gap-3">
         <div className="flex gap-2">
           <div className="relative flex-1">
@@ -435,6 +437,7 @@ export default function ScannerPage() {
           ))}
         </div>
       </form>
+      </Reveal>
 
       {/* Floating scroll-spy nav — once a scan is underway or done, so it's
           available to jump between sections as they stream in, not just
@@ -445,9 +448,9 @@ export default function ScannerPage() {
           It fetches independently of the AI pipeline (its own streaming route,
           own loading state) so it's real content the moment the page loads,
           not gated behind the slow scan. */}
-      <div id="portfolio-watch">
+      <Reveal index={2} id="portfolio-watch">
         <PortfolioWatch />
-      </div>
+      </Reveal>
 
       {/* ── Error ── */}
       {error && (

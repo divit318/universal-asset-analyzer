@@ -6,6 +6,7 @@ import type { ICReport, ICProgressEvent, ICReportStage } from "@/lib/ic-report";
 import type { AgentFinding } from "@/lib/ic-agents";
 import type { DetectedSignal } from "@/lib/ic-signals";
 import { SymbolSearch } from "@/app/_components/symbol-search";
+import { Reveal } from "@/app/_components/reveal";
 import { PageShell } from "@/app/_components/ui";
 import { GroundingBadge } from "@/app/_components/grounding-badge";
 import { useTaskSplash } from "@/app/_components/boot-context";
@@ -698,7 +699,7 @@ export default function ICReportPage() {
   return (
     <PageShell py="py-10">
       {/* Header */}
-      <header className="flex flex-col gap-1.5">
+      <Reveal index={0} as="header" className="flex flex-col gap-1.5">
         <div className="flex items-center gap-2">
           <h1 className="text-2xl font-semibold tracking-tight">IC Report</h1>
           <span className="rounded-full border border-brand/30 bg-brand/10 px-2.5 py-0.5 text-label font-semibold uppercase tracking-widest text-brand">
@@ -708,10 +709,10 @@ export default function ICReportPage() {
         <p className="max-w-3xl text-sm text-muted">
           Signal detection → question generation → 9-agent investigation → thesis → valuation → exportable IC report. Fully local.
         </p>
-      </header>
+      </Reveal>
 
       {/* Input */}
-      <div className="flex flex-wrap gap-3">
+      <Reveal index={1} className="flex flex-wrap gap-3">
         <div className="w-80">
           <SymbolSearch
             value={symbol}
@@ -781,7 +782,7 @@ export default function ICReportPage() {
             )}
           </div>
         )}
-      </div>
+      </Reveal>
 
       {error && (
         <div className="rounded-lg border border-negative/40 bg-negative/10 px-4 py-3 text-sm text-negative">
@@ -974,7 +975,7 @@ export default function ICReportPage() {
 
       {/* Landing state */}
       {!running && !report && events.length === 0 && (
-        <div className="flex flex-col gap-6">
+        <Reveal index={2} className="flex flex-col gap-6">
           <div className="flex flex-col items-center gap-5 rounded-xl border border-border bg-surface py-14 text-center">
             <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border bg-surface-2 text-muted">
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -1009,7 +1010,7 @@ export default function ICReportPage() {
               </Card>
             ))}
           </div>
-        </div>
+        </Reveal>
       )}
     </PageShell>
   );

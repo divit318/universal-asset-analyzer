@@ -7,13 +7,18 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeSymbol } from "@/lib/market";
-import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";
-import { enginePython } from "@/lib/engine-python";
+import { EngineTimeoutError, runEnginePython } from "@/lib/engine-python";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/** The snapshot path reads a small per-symbol Parquet and is quick. The DuckDB
+ *  fallback below is not, so both are bounded — a symbol with no snapshot must
+ *  fail fast and visibly instead of pinning an expanded row open on a spinner. */
+const SNAPSHOT_TIMEOUT_MS = 15_000;
+const LIVE_QUERY_TIMEOUT_MS = 25_000;
 
 const DETAIL_DIR = path.join(process.cwd(), "data", "detail_snapshots");
 const DUCKDB_PATH = path.join(process.cwd(), "data", "engine.duckdb");
@@ -97,31 +102,31 @@ export async function GET(req: NextRequest) {
   // Prefer snapshot (no lock), fall back to live DuckDB query if snapshot missing
   const snapshotExists = fs.existsSync(detailSnapshotPath(symbol));
   const script = snapshotExists ? READ_SNAPSHOT_SCRIPT(symbol) : LIVE_QUERY_SCRIPT(symbol);
+  const timeoutMs = snapshotExists ? SNAPSHOT_TIMEOUT_MS : LIVE_QUERY_TIMEOUT_MS;
 
-  return new Promise<NextResponse>((resolve) => {
-    const py = spawn(enginePython(), ["-c", script]);
-    let out = ""; let err = "";
-    py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
-    py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
-    py.on("close", (code) => {
-      if (code !== 0) {
-        resolve(NextResponse.json({ error: err || "Query failed" }, { status: 500 }));
-        return;
-      }
-      try {
-        const data = JSON.parse(out.trim()) as Record<string, unknown>;
-        // Snapshot says no data yet — return empty shell rather than 404
-        if (data.error === "no_snapshot") {
-          resolve(NextResponse.json({
-            symbol, scorecard: null, regime_history: [], forecasts: [],
-            mc: null, fundamentals: null, features: [], factor_history: [], prices: [],
-          }));
-          return;
-        }
-        resolve(NextResponse.json(data));
-      } catch {
-        resolve(NextResponse.json({ error: "Failed to parse detail JSON" }, { status: 500 }));
-      }
-    });
-  });
+  const emptyShell = {
+    symbol, scorecard: null, regime_history: [], forecasts: [],
+    mc: null, fundamentals: null, features: [], factor_history: [], prices: [],
+  };
+
+  try {
+    const out = await runEnginePython(["-c", script], { timeoutMs });
+    const data = JSON.parse(out.trim()) as Record<string, unknown>;
+    // Snapshot says no data yet — return empty shell rather than 404
+    if (data.error === "no_snapshot") return NextResponse.json(emptyShell);
+    return NextResponse.json(data);
+  } catch (err) {
+    if (err instanceof EngineTimeoutError) {
+      // The row stays open and says why, rather than spinning: this symbol has no
+      // detail snapshot and the live DuckDB fallback couldn't finish in budget.
+      return NextResponse.json(
+        { ...emptyShell, error: `No detail snapshot for ${symbol} yet, and the live query timed out. Re-run the engine to publish one.` },
+        { status: 504 },
+      );
+    }
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Query failed" },
+      { status: 500 },
+    );
+  }
 }

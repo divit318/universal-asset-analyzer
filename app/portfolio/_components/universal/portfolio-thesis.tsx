@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import { useDataset } from "@/lib/platform/client/use-dataset";
-import { Card, Badge } from "@/app/_components/ui";
+import { Badge, Card, Skeleton } from "@/app/_components/ui";
 import type { PortfolioThesis as Thesis } from "@/lib/portfolio/thesis";
 
 /**
@@ -80,9 +80,9 @@ export function PortfolioThesisBanner({
   if (isInitialLoading || !data) {
     return (
       <Card className="flex flex-col gap-2 p-5">
-        <div className="h-3 w-24 animate-pulse rounded bg-surface-2" />
-        <div className="h-4 w-full animate-pulse rounded bg-surface-2" />
-        <div className="h-4 w-3/4 animate-pulse rounded bg-surface-2" />
+        <Skeleton height="h-3" width="w-24" />
+        <Skeleton height="h-4" />
+        <Skeleton height="h-4" width="w-3/4" />
       </Card>
     );
   }

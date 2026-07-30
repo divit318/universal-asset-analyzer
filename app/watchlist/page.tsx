@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { downloadBlob } from "@/lib/download";
 import type { Quote, WatchlistItem } from "@/lib/types";
@@ -15,34 +15,74 @@ import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
 import { WatchlistAlerts } from "./_components/watchlist-alerts";
 import { AddToPortfolioModal } from "@/app/_components/portfolio/add-to-portfolio-modal";
 import { ArrivalHighlight, useArrivalTarget } from "@/app/_components/arrival-highlight";
-import { PageShell } from "@/app/_components/ui";
+import { PageShell, Skeleton } from "@/app/_components/ui";
+import { Reveal } from "@/app/_components/reveal";
+import { LoadingMark } from "@/app/_components/loading-mark";
 
-function WatchlistDigestPanel({ digest, loading }: { digest: WatchlistDigest | null; loading: boolean }) {
+function WatchlistDigestPanel({
+  digest,
+  loading,
+  error,
+  onGenerate,
+}: {
+  digest: WatchlistDigest | null;
+  loading: boolean;
+  error: string | null;
+  onGenerate: () => void;
+}) {
   if (loading) {
     return (
       <div className="rounded-xl border border-brand/20 bg-brand/5 p-5">
         <div className="flex items-center gap-3 mb-3">
-          <div className="h-5 w-40 animate-pulse rounded bg-surface-2" />
-          <div className="ml-auto h-4 w-16 animate-pulse rounded-full bg-surface-2" />
+          <LoadingMark size={18} label="AI is analyzing your watchlist" />
+          <p className="text-sm font-medium text-foreground/90">AI is analyzing your watchlist…</p>
         </div>
         <div className="space-y-2">
           {[90, 75, 60].map((w) => (
-            <div key={w} className="h-3 animate-pulse rounded bg-surface-2" style={{ width: `${w}%` }} />
+            <Skeleton key={w} height="h-3" width="" style={{ width: `${w}%` }} />
           ))}
         </div>
-        <p className="mt-3 text-[11px] text-muted animate-pulse">AI is analyzing your watchlist…</p>
       </div>
     );
   }
-  if (!digest) return null;
+
+  if (!digest) {
+    return (
+      <div className="rounded-xl border border-brand/20 bg-brand/5 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-col gap-1">
+            <p className="text-label font-semibold uppercase tracking-widest text-brand/70">AI Watchlist Intelligence</p>
+            <p className="max-w-md text-sm leading-6 text-foreground/80">
+              {error ?? "Get an AI-generated summary, top picks, concerns, and action items across everything you're watching — runs fully offline via Ollama, takes about 20–30s."}
+            </p>
+          </div>
+          <button
+            onClick={onGenerate}
+            className="shrink-0 rounded-lg bg-brand-strong px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+          >
+            {error ? "Retry" : "Generate insights"}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-xl border border-brand/20 bg-brand/5 p-5">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
         <p className="text-label font-semibold uppercase tracking-widest text-brand/70">AI Watchlist Intelligence</p>
-        <span className="rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-label font-semibold uppercase tracking-widest text-brand">
-          Local AI
-        </span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onGenerate}
+            title="Regenerate — reflects the current watchlist"
+            className="rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-label font-semibold uppercase tracking-widest text-brand transition-opacity hover:opacity-80"
+          >
+            ↻ Regenerate
+          </button>
+          <span className="rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-label font-semibold uppercase tracking-widest text-brand">
+            Local AI
+          </span>
+        </div>
       </div>
       <p className="text-sm leading-6 text-foreground/90 mb-4">{digest.summary}</p>
       {(digest.topPicks.length > 0 || digest.topConcerns.length > 0) && (
@@ -122,15 +162,22 @@ function AlertModal({ item, onSave, onCancel }: {
   const [targetPrice, setTargetPrice] = useState(item.targetPrice != null ? String(item.targetPrice) : "");
   const [alertPctDrop, setAlertPctDrop] = useState(item.alertPctDrop != null ? String(item.alertPctDrop) : "");
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
-    await onSave({
-      targetPrice: targetPrice ? parseFloat(targetPrice) : null,
-      alertPctDrop: alertPctDrop ? parseFloat(alertPctDrop) : null,
-    });
-    setSaving(false);
+    setError(null);
+    try {
+      await onSave({
+        targetPrice: targetPrice ? parseFloat(targetPrice) : null,
+        alertPctDrop: alertPctDrop ? parseFloat(alertPctDrop) : null,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save alerts");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -139,6 +186,7 @@ function AlertModal({ item, onSave, onCancel }: {
         Alerts are checked each time you open the watchlist.
       </p>
       <form onSubmit={(e) => void save(e)} className="flex flex-col gap-4">
+        {error && <p className="text-xs text-negative">{error}</p>}
         <label className="flex flex-col gap-1">
           <span className="text-xs font-medium text-muted">Price target</span>
           <span className="text-xs text-muted/70">Alert when price reaches or exceeds this level</span>
@@ -190,18 +238,26 @@ function NotesModal({ item, onSave, onCancel }: {
 }) {
   const [notes, setNotes] = useState(item.notes ?? "");
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
-    await onSave(notes.trim() || null);
-    setSaving(false);
+    setError(null);
+    try {
+      await onSave(notes.trim() || null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save notes");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
     <Dialog open title={`${item.symbol} — Research Notes`} onClose={onCancel} className="max-w-md">
       <p className="mb-4 text-xs text-muted">Your thesis, price levels to watch, catalyst timeline…</p>
       <form onSubmit={(e) => void save(e)} className="flex flex-col gap-4">
+        {error && <p className="text-xs text-negative">{error}</p>}
         <textarea
           value={notes} onChange={(e) => setNotes(e.target.value)} rows={5}
           placeholder="Why you're watching this, key levels, upcoming catalysts…"
@@ -248,7 +304,7 @@ function WatchlistPageInner() {
   const [filter, setFilter] = useState("");
   const [digest, setDigest] = useState<WatchlistDigest | null>(null);
   const [digestLoading, setDigestLoading] = useState(false);
-  const digestFetched = useRef(false);
+  const [digestError, setDigestError] = useState<string | null>(null);
   // Full research inputs (composite scores, sector, beta, geography) per symbol,
   // fetched on demand so every watchlist stock — including newly-added ones —
   // gets an accurate, differentiated fit score instead of a data-poor neutral.
@@ -306,12 +362,16 @@ function WatchlistPageInner() {
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [load]);
 
-  // Auto-fetch AI watchlist digest once items are loaded.
-  // Passes portfolio context so the digest can warn about actual holdings concentration.
-  useEffect(() => {
-    if (items.length === 0 || digestFetched.current) return;
-    digestFetched.current = true;
+  // AI watchlist digest is opt-in — the user triggers it explicitly (button in
+  // WatchlistDigestPanel's idle state) rather than it auto-firing on every
+  // load, and the same control re-runs it on demand afterward ("Regenerate"),
+  // since the digest otherwise has no way to reflect symbols added/removed
+  // since it was generated. Passes portfolio context so the digest can warn
+  // about actual holdings concentration.
+  async function runDigest() {
+    if (digestLoading) return;
     setDigestLoading(true);
+    setDigestError(null);
     const portfolioContext = ios?.profile.hasPortfolio
       ? {
           objective: ios.profile.objective,
@@ -321,19 +381,21 @@ function WatchlistPageInner() {
           overweightSectors: ios.profile.overweightSectors,
         }
       : undefined;
-    fetch("/api/ai/watchlist", {
-      method: "POST",
-      headers: portfolioContext ? { "Content-Type": "application/json" } : {},
-      body: portfolioContext ? JSON.stringify({ portfolioContext }) : undefined,
-    })
-      .then(async (r) => {
-        const json = await r.json() as WatchlistDigest & { error?: string };
-        if (r.ok && !json.error) setDigest(json);
-      })
-      .catch(() => { /* silent — Ollama offline */ })
-      .finally(() => setDigestLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items.length]);
+    try {
+      const r = await fetch("/api/ai/watchlist", {
+        method: "POST",
+        headers: portfolioContext ? { "Content-Type": "application/json" } : {},
+        body: portfolioContext ? JSON.stringify({ portfolioContext }) : undefined,
+      });
+      const json = await r.json() as WatchlistDigest & { error?: string };
+      if (!r.ok || json.error) throw new Error(json.error ?? "AI digest unavailable");
+      setDigest(json);
+    } catch (err) {
+      setDigestError(err instanceof Error ? err.message : "AI digest unavailable — check that Ollama is running.");
+    } finally {
+      setDigestLoading(false);
+    }
+  }
 
   async function remove(symbol: string) {
     setItems((prev) => prev.filter((i) => i.symbol !== symbol));
@@ -342,11 +404,15 @@ function WatchlistPageInner() {
   }
 
   async function patchItem(symbol: string, patch: { targetPrice?: number | null; alertPctDrop?: number | null; notes?: string | null }) {
-    await fetch("/api/watchlist", {
+    const res = await fetch("/api/watchlist", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ symbol, ...patch }),
     });
+    if (!res.ok) {
+      const json = await res.json().catch(() => null);
+      throw new Error(json?.error ?? "Failed to save");
+    }
     setItems((prev) => prev.map((i) => i.symbol === symbol ? { ...i, ...patch } : i));
   }
 
@@ -421,14 +487,18 @@ function WatchlistPageInner() {
 
   const alertCount = items.reduce((n, item) => n + checkAlerts(item, quotes[item.symbol]).length, 0);
 
-  const gainers = Object.values(quotes).filter((q) => q.changePercent > 0).length;
-  const losers  = Object.values(quotes).filter((q) => q.changePercent < 0).length;
-  const hasQuotes = Object.keys(quotes).length > 0;
+  // Scoped to current `items`, not all of `quotes` — removing a symbol doesn't
+  // prune its stale quote from state, so counting every cached quote would
+  // keep a removed stock's gain/loss in the summary strip until next reload.
+  const trackedQuotes = items.map((i) => quotes[i.symbol]).filter((q): q is Quote => q != null);
+  const gainers = trackedQuotes.filter((q) => q.changePercent > 0).length;
+  const losers  = trackedQuotes.filter((q) => q.changePercent < 0).length;
+  const hasQuotes = trackedQuotes.length > 0;
 
   return (
     <PageShell py="py-10">
       <ArrivalHighlight targetId={highlightTarget} />
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <Reveal index={0} className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-semibold tracking-tight">Watchlist</h1>
@@ -472,11 +542,11 @@ function WatchlistPageInner() {
             ↓ Export
           </button>
         </div>
-      </div>
+      </Reveal>
 
       {/* Summary strip */}
       {!loading && items.length > 0 && hasQuotes && (
-        <div className="flex flex-wrap items-center gap-4 rounded-xl border border-border bg-surface px-5 py-3">
+        <Reveal index={1} className="flex flex-wrap items-center gap-4 rounded-xl border border-border bg-surface px-5 py-3">
           <div className="flex flex-col gap-0.5">
             <span className="text-label font-semibold uppercase tracking-widest text-muted/60">Watching</span>
             <span className="font-mono text-sm font-semibold">{items.length}</span>
@@ -498,17 +568,26 @@ function WatchlistPageInner() {
               </div>
             </>
           )}
-        </div>
+        </Reveal>
       )}
 
-      {/* AI Watchlist Intelligence — auto-generated on load */}
-      {!loading && items.length > 0 && (digestLoading || digest) && (
-        <WatchlistDigestPanel digest={digest} loading={digestLoading} />
+      {/* AI Watchlist Intelligence — opt-in; user triggers generation and can regenerate on demand */}
+      {!loading && items.length > 0 && (
+        <Reveal index={2}>
+          <WatchlistDigestPanel
+            digest={digest}
+            loading={digestLoading}
+            error={digestError}
+            onGenerate={() => void runDigest()}
+          />
+        </Reveal>
       )}
 
       {/* Structured, deterministic per-asset alerts — new opportunities, deterioration, breakouts, sector leadership, valuation */}
       {!loading && digest && digest.alerts.length > 0 && (
-        <WatchlistAlerts alerts={digest.alerts} />
+        <Reveal index={3}>
+          <WatchlistAlerts alerts={digest.alerts} />
+        </Reveal>
       )}
 
       {exportErr && <p className="text-xs text-negative">{exportErr}</p>}
@@ -565,7 +644,7 @@ function WatchlistPageInner() {
       {loading ? (
         <div className="flex flex-col gap-3">
           {[1, 2, 3].map((n) => (
-            <div key={n} className="h-24 animate-pulse rounded-xl border border-border bg-surface" />
+            <Skeleton key={n} height="h-24" radius="rounded-xl" className="border border-border" />
           ))}
         </div>
       ) : filteredItems.length === 0 && items.length === 0 ? (
@@ -662,7 +741,7 @@ function WatchlistPageInner() {
                     </div>
 
                     {item.notes ? (
-                      <p className="mt-1.5 line-clamp-2 text-xs italic text-muted/80">
+                      <p className="mt-1.5 line-clamp-2 text-xs italic text-muted/80" title={item.notes}>
                         &ldquo;{item.notes}&rdquo;
                       </p>
                     ) : null}
@@ -670,7 +749,7 @@ function WatchlistPageInner() {
                     {/* Cross-page quick links — visible size */}
                     <div className="mt-2.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
                       <Link
-                        href={`/dcf?symbol=${item.symbol}`}
+                        href={`/valuation?symbol=${item.symbol}`}
                         className="text-muted underline-offset-2 hover:text-brand hover:underline"
                       >
                         DCF ↗

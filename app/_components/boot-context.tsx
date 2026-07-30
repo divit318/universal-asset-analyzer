@@ -29,6 +29,23 @@ interface BootState {
   showBootSplash: boolean;
   bootContext: BootContext;
   bootReady: boolean;
+  /**
+   * Has any page actually claimed the boot by calling `useBootReady`?
+   *
+   * This exists because the opt-in contract failed *closed*. Only 7 of 15 pages
+   * report readiness; on the other 8 (screener, watchlist, calendar, journal,
+   * ic-report, thematic, knowledge-graph, landing) `bootReady` stayed false
+   * forever and the splash covered a fully-rendered page until the 20-second
+   * safety timeout fired. Measured: 21.4s on /screener against 1.3s on
+   * /portfolio, which reports.
+   *
+   * So the splash no longer waits on a promise nobody made. If nothing has
+   * claimed the boot shortly after mount, there is nothing to wait for and it
+   * resolves; a page that *does* claim it is still waited on exactly as before.
+   * Forgetting to opt in now costs a slightly early splash instead of twenty
+   * seconds of blank screen.
+   */
+  bootClaimed: boolean;
   /** Non-null while an explicit long-running task (IC Report) has opted into
    * the same full-screen treatment outside the first-load flow. */
   taskSplash: TaskSplashState | null;
@@ -57,9 +74,11 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
   }, []);
   const [bootContext, setBootContext] = useState<BootContext>("generic");
   const [bootReady, setBootReady] = useState(false);
+  const [bootClaimed, setBootClaimed] = useState(false);
   const [taskSplash, setTaskSplash] = useState<TaskSplashState | null>(null);
 
   const reportBootReady = useCallback((ready: boolean, context: BootContext) => {
+    setBootClaimed(true);
     setBootContext(context);
     setBootReady(ready);
   }, []);
@@ -76,13 +95,13 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<BootApi>(
     () => ({
-      state: { showBootSplash, bootContext, bootReady, taskSplash },
+      state: { showBootSplash, bootContext, bootReady, bootClaimed, taskSplash },
       reportBootReady,
       showTask,
       reportTaskReady,
       hideTask,
     }),
-    [showBootSplash, bootContext, bootReady, taskSplash, reportBootReady, showTask, reportTaskReady, hideTask],
+    [showBootSplash, bootContext, bootReady, bootClaimed, taskSplash, reportBootReady, showTask, reportTaskReady, hideTask],
   );
 
   return <BootCtx.Provider value={value}>{children}</BootCtx.Provider>;

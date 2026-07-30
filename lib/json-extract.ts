@@ -128,3 +128,58 @@ export function extractJsonArray<T>(
   }
   return out;
 }
+
+/**
+ * Salvage every complete JSON object out of a possibly-truncated array.
+ *
+ * A small local model asked for a 20-item array of objects routinely runs out
+ * of output budget mid-string, and one unterminated value at position 7716
+ * makes `JSON.parse` reject the 12 perfectly good objects that came before it.
+ * Discarding a whole stage's work over its last, incomplete entry is the wrong
+ * trade — this walks the text with a brace-depth counter (string- and
+ * escape-aware, so a `{` inside a rationale doesn't confuse it) and parses each
+ * balanced `{…}` it closes, ignoring the trailing fragment.
+ *
+ * Strictly a fallback: callers should try `extractJsonArray` first, because a
+ * well-formed response should be parsed as the single document it is.
+ */
+export function extractJsonObjectsLoose<T>(
+  raw: string,
+  sanitizeItem: (item: unknown) => T | null,
+): T[] {
+  const out: T[] = [];
+  let depth = 0;
+  let startIndex = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === "{") {
+      if (depth === 0) startIndex = i;
+      depth++;
+      continue;
+    }
+    if (ch === "}") {
+      if (depth === 0) continue;   // a stray closer before any opener
+      depth--;
+      if (depth === 0 && startIndex !== -1) {
+        try {
+          const value = sanitizeItem(JSON.parse(raw.slice(startIndex, i + 1)));
+          if (value !== null) out.push(value);
+        } catch {
+          // One malformed object doesn't invalidate its siblings.
+        }
+        startIndex = -1;
+      }
+    }
+  }
+  return out;
+}

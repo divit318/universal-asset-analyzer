@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import type { ScreenerInPeer } from "@/lib/screener-in";
+import { Reveal } from "@/app/_components/reveal";
+import { ValueBar } from "@/app/_components/value-bar";
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                     */
@@ -96,7 +98,9 @@ function MetricBar({
   allValues: number[];
   higherIsBetter: boolean;
 }) {
-  if (value == null || allValues.length === 0) return <div className="h-1 w-full rounded-full bg-surface-3" />;
+  if (value == null || allValues.length === 0) {
+    return <ValueBar value={null} trackClassName="bg-surface-3" />;
+  }
 
   const min = Math.min(...allValues);
   const max = Math.max(...allValues);
@@ -105,12 +109,12 @@ function MetricBar({
     ? ((value - min) / range) * 100
     : ((max - value) / range) * 100;
 
-  const color = pct >= 66 ? "bg-positive" : pct >= 33 ? "bg-warning" : "bg-negative";
-
   return (
-    <div className="h-1 w-full overflow-hidden rounded-full bg-surface-3">
-      <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
-    </div>
+    <ValueBar
+      value={pct}
+      trackClassName="bg-surface-3"
+      barClassName={pct >= 66 ? "bg-positive" : pct >= 33 ? "bg-warning" : "bg-negative"}
+    />
   );
 }
 
@@ -174,7 +178,7 @@ function CompetitivePositionSummary({
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2 px-4 py-3">
       <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Competitive Position</span>
       {points.map((p, i) => (
-        <p key={i} className="text-xs leading-5 text-muted">{p}</p>
+        <Reveal key={i} as="p" index={i} className="text-xs leading-5 text-muted">{p}</Reveal>
       ))}
       <div className="mt-1 flex flex-wrap gap-3 text-xs">
         {peRank != null && <span className="text-muted">P/E rank: <span className="font-mono text-foreground">#{peRank}/{total}</span></span>}
@@ -243,7 +247,7 @@ export function RankedPeers({
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {peers.map((p) => {
+            {peers.map((p, rowIndex) => {
               const slug = p.url?.match(/company\/([^/]+)/)?.[1] ?? "";
               const isCurrent = slug.toUpperCase() === currentSymbol.toUpperCase();
               const peerKey = p.url ?? p.name;
@@ -251,8 +255,10 @@ export function RankedPeers({
               const roceVal = parseNum(p.roce);
 
               return (
-                <tr
+                <Reveal
+                  as="tr"
                   key={peerKey}
+                  index={rowIndex}
                   className={`group bg-surface hover:bg-surface-2 ${isCurrent ? "ring-1 ring-inset ring-accent/20" : ""}`}
                 >
                   <td className="px-3 py-3">
@@ -304,7 +310,7 @@ export function RankedPeers({
                       <StandingBadge rank={divRanks.get(peerKey)} total={total} />
                     </div>
                   </td>
-                </tr>
+                </Reveal>
               );
             })}
           </tbody>

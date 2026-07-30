@@ -7,6 +7,7 @@ import type { ClassCompareEntry } from "@/lib/compare/types";
 import type { ClassComparisonResult } from "@/lib/compare/class-ai-compare";
 import type { RankedAsset } from "@/lib/ai-compare";
 import { useHoverHandlers, useSymbolEmphasis, emphasisClassName } from "./hover-symbol-context";
+import { Skeleton } from "@/app/_components/ui";
 
 /** One ranking card — part of cross-component focus mode, mirrors app/compare/page.tsx's RankedVerdictRow. */
 function RankedVerdictRow({ r, color }: { r: RankedAsset; color: string | undefined }) {
@@ -135,7 +136,7 @@ export function ClassAiVerdict({
       {loading && (
         <div className="mt-4 flex flex-col gap-2">
           {[80, 60, 90, 50].map((w) => (
-            <div key={w} className="h-2.5 animate-pulse rounded-full bg-surface-2" style={{ width: `${w}%` }} />
+            <Skeleton key={w} height="h-2.5" width="" radius="rounded-full" style={{ width: `${w}%` }} />
           ))}
           <p className="mt-1 text-xs text-muted">Running Ollama analysis — typically ~30s on a local model…</p>
         </div>

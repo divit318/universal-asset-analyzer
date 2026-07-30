@@ -2,6 +2,8 @@
 
 import type { OwnershipData } from "@/lib/types";
 import { describeOwnership } from "@/lib/ownership-insight";
+import { Reveal } from "@/app/_components/reveal";
+import { ValueBar } from "@/app/_components/value-bar";
 
 function pct(v: number | null, decimals = 1): string {
   if (v == null) return "—";
@@ -16,25 +18,14 @@ function compact(v: number | null): string {
   return v.toFixed(0);
 }
 
-function ProgressBar({ value, colorClass = "bg-accent/60" }: { value: number; colorClass?: string }) {
-  const clamped = Math.max(0, Math.min(100, value));
-  return (
-    <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
-      <div
-        className={`h-full rounded-full ${colorClass} transition-all`}
-        style={{ width: `${clamped}%` }}
-      />
-    </div>
-  );
-}
-
 function MetricBox({
   label,
   value,
   sub,
   barValue,
-  barColorClass,
+  barColorClass = "bg-accent/60",
   highlight,
+  index,
 }: {
   label: string;
   value: string;
@@ -42,6 +33,7 @@ function MetricBox({
   barValue?: number;
   barColorClass?: string;
   highlight?: "positive" | "negative" | "neutral";
+  index: number;
 }) {
   const valueClass =
     highlight === "positive"
@@ -51,12 +43,12 @@ function MetricBox({
         : "text-foreground";
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2/40 p-3">
+    <Reveal index={index} className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2/40 p-3">
       <span className="text-xs uppercase tracking-wide text-muted">{label}</span>
       <span className={`font-mono text-xl font-semibold ${valueClass}`}>{value}</span>
-      {barValue != null && <ProgressBar value={barValue} colorClass={barColorClass} />}
+      {barValue != null && <ValueBar value={barValue} barClassName={barColorClass} height="h-1.5" />}
       {sub && <span className="text-xs text-muted">{sub}</span>}
-    </div>
+    </Reveal>
   );
 }
 
@@ -76,7 +68,7 @@ function OwnershipInsight({ ownership }: { ownership: OwnershipData }) {
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2 px-4 py-3">
       <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Ownership Analysis</span>
       {insights.map((ins, i) => (
-        <p key={i} className="text-xs leading-5 text-muted">{ins}</p>
+        <Reveal key={i} as="p" index={i} className="text-xs leading-5 text-muted">{ins}</Reveal>
       ))}
     </div>
   );
@@ -98,7 +90,7 @@ export function OwnershipCard({ ownership }: { ownership: OwnershipData }) {
     shortPct == null ? "neutral" : shortPct > 10 ? "negative" : shortPct > 5 ? "neutral" : "positive";
 
   return (
-    <div className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-4">
+    <div className="card-lift flex flex-col gap-4 rounded-xl border border-border bg-surface p-4">
       <div>
         <h3 className="text-sm font-medium">Ownership &amp; Short Interest</h3>
         <p className="text-xs text-muted">Institutional holdings, insider stake, short sellers</p>
@@ -107,6 +99,7 @@ export function OwnershipCard({ ownership }: { ownership: OwnershipData }) {
       {/* Key metrics row */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <MetricBox
+          index={0}
           label="Institutional"
           value={pct(institutionsPctHeld)}
           barValue={institutionsPctHeld != null ? institutionsPctHeld * 100 : undefined}
@@ -114,6 +107,7 @@ export function OwnershipCard({ ownership }: { ownership: OwnershipData }) {
           sub={institutionsCount != null ? `${institutionsCount.toLocaleString()} holders` : undefined}
         />
         <MetricBox
+          index={1}
           label="Insiders"
           value={pct(insidersPctHeld)}
           barValue={insidersPctHeld != null ? insidersPctHeld * 100 : undefined}
@@ -121,6 +115,7 @@ export function OwnershipCard({ ownership }: { ownership: OwnershipData }) {
           sub="officers & directors"
         />
         <MetricBox
+          index={2}
           label="Short % Float"
           value={pct(shortPctOfFloat)}
           barValue={shortPct != null ? Math.min(shortPct * 2, 100) : undefined}
@@ -135,6 +130,7 @@ export function OwnershipCard({ ownership }: { ownership: OwnershipData }) {
           sub={sharesShort != null ? `${compact(sharesShort)} shares short` : undefined}
         />
         <MetricBox
+          index={3}
           label="Days to Cover"
           value={shortRatio != null ? `${shortRatio.toFixed(1)}d` : "—"}
           sub="short interest ratio"
@@ -169,7 +165,7 @@ export function OwnershipCard({ ownership }: { ownership: OwnershipData }) {
               </thead>
               <tbody className="divide-y divide-border">
                 {topHolders.map((h, i) => (
-                  <tr key={i} className="bg-surface transition-colors hover:bg-surface-2/40">
+                  <Reveal key={i} as="tr" index={i} className="bg-surface transition-colors hover:bg-surface-2/40">
                     <td className="px-3 py-2 font-medium">{h.name}</td>
                     <td className="px-3 py-2 text-right font-mono">
                       {h.pctHeld != null ? pct(h.pctHeld, 2) : "—"}
@@ -180,7 +176,7 @@ export function OwnershipCard({ ownership }: { ownership: OwnershipData }) {
                     <td className="hidden px-3 py-2 text-right font-mono text-muted sm:table-cell">
                       {h.value != null ? `$${compact(h.value)}` : "—"}
                     </td>
-                  </tr>
+                  </Reveal>
                 ))}
               </tbody>
             </table>

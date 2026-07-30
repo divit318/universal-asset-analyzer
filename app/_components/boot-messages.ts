@@ -5,7 +5,8 @@ export type BootContext =
   | "wire"
   | "portfolio"
   | "ic-report"
-  | "dcf"
+  | "valuation"
+  | "engine"
   | "generic";
 
 /** Status lines shown under the boot splash mark, ordered from "just started"
@@ -61,10 +62,17 @@ export const BOOT_MESSAGES: Record<BootContext, string[]> = {
     "Generating institutional report",
     "Synthesizing viewpoints",
   ],
-  dcf: [
-    "Loading assumptions",
-    "Projecting cash flows",
-    "Estimating intrinsic value",
+  valuation: [
+    "Opening your valuation case",
+    "Solving what the price implies",
+    "Discounting cash flows",
     "Running sensitivity analysis",
+  ],
+  // Market-wide rather than per-company, matching what the desk actually does.
+  engine: [
+    "Reading the market brief",
+    "Detecting market regime",
+    "Weighting factors by predictive power",
+    "Ranking conviction",
   ],
 };

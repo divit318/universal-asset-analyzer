@@ -55,7 +55,7 @@ function getLinks(ev: CalendarEvent): { label: string; href: string }[] {
   const sym = ev.symbol;
   const links: { label: string; href: string }[] = [
     { label: "Research", href: `/research?symbol=${sym}` },
-    { label: "DCF", href: `/dcf?symbol=${sym}` },
+    { label: "DCF", href: `/valuation?symbol=${sym}` },
     { label: "IC Report", href: `/ic-report?symbol=${sym}` },
     { label: "Compare", href: `/compare?symbols=${sym}` },
   ];

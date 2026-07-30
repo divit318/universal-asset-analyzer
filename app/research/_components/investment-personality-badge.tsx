@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { InvestmentPersonality, InvestmentPersonalityTag } from "@/lib/types";
+import { LoadingMark } from "@/app/_components/loading-mark";
 
 const TAG_STYLE: Record<InvestmentPersonalityTag, string> = {
   Compounder:    "text-emerald-400 border-emerald-400/30 bg-emerald-400/8",
@@ -24,7 +25,12 @@ export function InvestmentPersonalityBadge({ personality, loading }: Props) {
   const [expanded, setExpanded] = useState(false);
 
   if (loading) {
-    return <div className="h-7 w-32 animate-pulse rounded-lg bg-surface-2" />;
+    return (
+      <div className="inline-flex h-7 items-center gap-2 rounded-lg border border-border bg-surface-2 px-3">
+        <LoadingMark size={13} label="Classifying investment personality" />
+        <span className="text-micro uppercase tracking-widest text-muted">Classifying</span>
+      </div>
+    );
   }
   if (!personality) return null;
 
@@ -35,13 +41,13 @@ export function InvestmentPersonalityBadge({ personality, loading }: Props) {
       <button
         type="button"
         onClick={() => setExpanded((e) => !e)}
-        className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-semibold tracking-wide ${cls}`}
+        className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-semibold tracking-wide transition-transform active:scale-[0.97] ${cls}`}
       >
         {personality.tag}
         <span className="text-[10px] opacity-60">ⓘ</span>
       </button>
       {expanded && (
-        <div className="absolute left-0 top-full z-10 mt-1.5 w-72 rounded-lg border border-border bg-surface p-3 text-[11px] leading-5 text-muted shadow-lg">
+        <div className="animate-fade-rise absolute left-0 top-full z-10 mt-1.5 w-72 rounded-lg border border-border bg-surface p-3 text-[11px] leading-5 text-muted shadow-lg">
           {personality.explanation}
         </div>
       )}

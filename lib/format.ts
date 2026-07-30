@@ -57,6 +57,27 @@ export function formatMarketCap(value: number | null | undefined): string {
   return `$${formatCompact(value)}`;
 }
 
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  USD: "$", INR: "₹", EUR: "€", GBP: "£", JPY: "¥", CNY: "¥", KRW: "₩",
+  HKD: "HK$", AUD: "A$", CAD: "C$", SGD: "S$", BRL: "R$", CHF: "CHF ",
+};
+
+/** Display symbol for an ISO 4217 code, falling back to the code itself. */
+export function currencySymbol(currency: string | null | undefined): string {
+  const code = (currency ?? "USD").toUpperCase();
+  return CURRENCY_SYMBOLS[code] ?? `${code} `;
+}
+
+/** Compact large amounts with the right currency mark: -$1.23B, ₹4.50T. */
+export function formatCompactCurrency(
+  value: number | null | undefined,
+  currency = "USD",
+): string {
+  if (value == null || Number.isNaN(value)) return "—";
+  const sign = value < 0 ? "-" : "";
+  return `${sign}${currencySymbol(currency)}${formatCompact(Math.abs(value))}`;
+}
+
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);

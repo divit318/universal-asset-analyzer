@@ -19,14 +19,25 @@ function stubReportFetch(report: unknown) {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(report), { status: 200 })));
 }
 
+/**
+ * Shaped as `UniversalPortfolioReport` (lib/portfolio/report.ts).
+ *
+ * This fixture used to use the pre-Universal-Portfolio field names
+ * (`positions`, `positionCount`, `sectorAllocation`, `gaps`), which no longer
+ * exist. `holdingCount` being absent meant the route's `=== 0` guard passed and
+ * it then crashed reading `report.holdings`, so all four cases failed for the
+ * same reason: the fixture, not the route.
+ */
 function baseReport() {
   return {
-    positions: [{ symbol: "AAPL", sector: "Technology", weight: 100 }],
-    sectorAllocation: [{ sector: "Technology", weight: 100 }],
-    gaps: { missing: [], overweight: [] },
+    holdingCount: 1,
+    holdings: [
+      { symbol: "AAPL", weight: 100, attributes: { sector: "Technology" } },
+    ],
+    allocation: { bySector: { slices: [{ label: "Technology", weight: 100 }] } },
+    concentration: [],
     health: { total: 70, dimensions: [] },
     totalValue: 10_000,
-    positionCount: 1,
   };
 }
 

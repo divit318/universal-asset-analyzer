@@ -22,6 +22,8 @@ import { CandleChart } from "./candle-chart";
 import type { AskAIPayload } from "./pattern-analysis-panel";
 import { ChartWorkspace } from "./chart-workspace/chart-workspace";
 import { CHART_SERIES, useChartTheme } from "@/app/_components/chart-theme";
+import { usePlotDrawOnce } from "@/app/_components/use-in-view-once";
+import { PLOT_DRAW_MS } from "@/app/_components/motion";
 
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                  */
@@ -294,6 +296,16 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
 
   const hasVolume = priceData.some((d) => d.volume > 0);
 
+  /* Recharts animates the *series* only — axes, grid and tooltip are up
+     immediately — so handing it the one-shot flag draws the price in without
+     ever making the chart feel like it's still loading. */
+  const [plotRef, drawPlot] = usePlotDrawOnce<HTMLDivElement>();
+  const drawProps = {
+    isAnimationActive: drawPlot,
+    animationDuration: PLOT_DRAW_MS,
+    animationEasing: "ease-out" as const,
+  };
+
   const periodLabel = sliced.length >= 2
     ? (() => {
         const change = ((sliced[sliced.length - 1].close - sliced[0].close) / sliced[0].close) * 100;
@@ -310,7 +322,7 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
+    <div ref={plotRef} className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
       {/* ── Controls ─────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         {/* Period selector */}
@@ -457,6 +469,7 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
                     style={TOOLTIP_STYLE}
                   />
                 }
+                cursor={{ stroke: ct.cursorFill, strokeWidth: 1, strokeDasharray: "3 3" }}
               />
               <Area
                 type="monotone"
@@ -465,8 +478,9 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
                 strokeWidth={1.75}
                 fill="url(#priceAreaGrad)"
                 dot={false}
-                activeDot={{ r: 4, strokeWidth: 0, fill: lineColor }}
+                activeDot={{ r: 4.5, strokeWidth: 2, stroke: lineColor, fill: "var(--background)", className: "uaa-chart-active-dot" }}
                 connectNulls
+                {...drawProps}
               />
               {showSma50 && (
                 <Line
@@ -477,6 +491,7 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
                   dot={false}
                   activeDot={false}
                   connectNulls
+                  {...drawProps}
                 />
               )}
               {showSma200 && (
@@ -489,6 +504,7 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
                   dot={false}
                   activeDot={false}
                   connectNulls
+                  {...drawProps}
                 />
               )}
             </ComposedChart>
@@ -527,6 +543,7 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
                   fillOpacity={0.45}
                   radius={[1, 1, 0, 0]}
                   maxBarSize={8}
+                  {...drawProps}
                 />
               </BarChart>
             </ResponsiveContainer>
@@ -589,6 +606,7 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
               dot={false}
               activeDot={{ r: 4, strokeWidth: 0 }}
               connectNulls
+              {...drawProps}
             />
             <Line
               type="monotone"
@@ -599,6 +617,7 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
               dot={false}
               activeDot={{ r: 3, strokeWidth: 0 }}
               connectNulls
+              {...drawProps}
             />
             {benchmarks.sectorEtf && (
               <Line
@@ -610,6 +629,7 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
                 dot={false}
                 activeDot={{ r: 3, strokeWidth: 0 }}
                 connectNulls
+                {...drawProps}
               />
             )}
           </ComposedChart>

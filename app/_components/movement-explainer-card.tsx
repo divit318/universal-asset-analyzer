@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { MovementDriver, MovementExplanation } from "@/lib/types";
+import { Skeleton, SkeletonText } from "./ui/skeleton";
 
 const PERSISTENCE_LABEL: Record<MovementExplanation["persistence"], string> = {
   transient: "Likely transient",
@@ -133,9 +134,8 @@ export function MovementExplainerCard({
   if (loading) {
     return (
       <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-4">
-        <div className="h-3 w-1/3 animate-pulse rounded bg-surface-2" />
-        <div className="h-2.5 w-full animate-pulse rounded bg-surface-2" />
-        <div className="h-2.5 w-4/5 animate-pulse rounded bg-surface-2" />
+        <Skeleton height="h-3" width="w-1/3" />
+        <SkeletonText lines={2} />
       </div>
     );
   }

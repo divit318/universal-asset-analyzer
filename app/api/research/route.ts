@@ -49,6 +49,8 @@ export async function GET(request: Request) {
     signal: request.signal,
   });
 
+  // A fresh, non-cached response — "now" is the honest updatedAt for both.
+  const now = Date.now();
   const payload: ResearchData = {
     quote: bundle.quote,
     history: bundle.history,
@@ -56,6 +58,8 @@ export async function GET(request: Request) {
     edgarError: bundle.edgarError,
     benchmarks: bundle.benchmarks,
     news: bundle.news,
+    quoteUpdatedAt: now,
+    filingsUpdatedAt: now,
   };
   return NextResponse.json(payload);
 }

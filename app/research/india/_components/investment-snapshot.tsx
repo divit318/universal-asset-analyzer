@@ -2,6 +2,10 @@
 
 import type { ScreenerInCompany } from "@/lib/screener-in";
 import { computeIndiaSnapshot } from "@/lib/india-snapshot";
+import { CountUp } from "@/app/_components/count-up";
+import { Reveal } from "@/app/_components/reveal";
+import { ScoreRing } from "@/app/_components/score-ring";
+import { ValueBar } from "@/app/_components/value-bar";
 
 /* -------------------------------------------------------------------------- */
 /* Scoring lives in lib/india-snapshot.ts (single source of truth, shared with */
@@ -20,26 +24,27 @@ function toGrade(score: number): { label: string; color: string; bg: string } {
 /* Sub-components                                                              */
 /* -------------------------------------------------------------------------- */
 
-function ScorePill({ label, score }: { label: string; score: number }) {
+function ScorePill({ label, score, index }: { label: string; score: number; index: number }) {
   const grade = toGrade(score);
   return (
-    <div className="flex flex-col gap-2 rounded-lg border bg-surface-2 p-3">
+    <Reveal index={index} className="flex flex-col gap-2 rounded-lg border bg-surface-2 p-3">
       <div className="flex items-center justify-between gap-2">
         <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">{label}</span>
         <span className={`rounded border px-2 py-0.5 text-[10px] font-semibold ${grade.bg} ${grade.color}`}>
           {grade.label}
         </span>
       </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-3">
-        <div
-          className={`h-full rounded-full transition-all duration-500 ${
-            score >= 65 ? "bg-positive" : score >= 45 ? "bg-warning" : "bg-negative"
-          }`}
-          style={{ width: `${score}%` }}
-        />
-      </div>
-      <span className="font-mono text-sm font-semibold tabular-nums">{score}<span className="text-xs text-muted">/100</span></span>
-    </div>
+      <ValueBar
+        value={score}
+        height="h-1.5"
+        trackClassName="bg-surface-3"
+        barClassName={score >= 65 ? "bg-positive" : score >= 45 ? "bg-warning" : "bg-negative"}
+      />
+      <span className="font-mono text-sm font-semibold tabular-nums">
+        <CountUp value={score} format={(v) => String(Math.round(v))} durationMs={800} />
+        <span className="text-xs text-muted">/100</span>
+      </span>
+    </Reveal>
   );
 }
 
@@ -66,7 +71,7 @@ export function InvestmentSnapshot({ company, derived }: InvestmentSnapshotProps
     computeIndiaSnapshot(company, derived);
 
   return (
-    <section className="flex flex-col gap-5 rounded-xl border border-border bg-surface p-5">
+    <section className="card-lift flex flex-col gap-5 rounded-xl border border-border bg-surface p-5">
       {/* Header row */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -75,14 +80,15 @@ export function InvestmentSnapshot({ company, derived }: InvestmentSnapshotProps
         </div>
         <div className="flex items-center gap-3">
           {/* Composite ring */}
-          <div
-            className={`relative flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-full border-2 ${
-              composite >= 65 ? "border-positive" : composite >= 45 ? "border-warning/70" : "border-negative"
-            }`}
-          >
-            <span className="text-xl font-bold leading-none tabular-nums">{composite}</span>
-            <span className="text-[9px] font-medium uppercase tracking-wide text-muted">/100</span>
-          </div>
+          <ScoreRing
+            score={composite}
+            size={64}
+            strokeWidth={4}
+            arcClassName={composite >= 65 ? "text-positive" : composite >= 45 ? "text-warning" : "text-negative"}
+            valueClassName="text-xl font-bold"
+            caption="/100"
+            label={`Composite score ${composite} out of 100`}
+          />
           <div className="flex flex-col gap-1.5">
             <span className={`inline-flex items-center rounded-lg border px-3 py-1 text-sm font-semibold ${verdict.style}`}>
               {verdict.label}
@@ -94,10 +100,10 @@ export function InvestmentSnapshot({ company, derived }: InvestmentSnapshotProps
 
       {/* Score grid */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <ScorePill label="Quality" score={quality} />
-        <ScorePill label="Valuation" score={valuation} />
-        <ScorePill label="Growth" score={growth} />
-        <ScorePill label="Capital Allocation" score={capAlloc} />
+        <ScorePill index={0} label="Quality" score={quality} />
+        <ScorePill index={1} label="Valuation" score={valuation} />
+        <ScorePill index={2} label="Growth" score={growth} />
+        <ScorePill index={3} label="Capital Allocation" score={capAlloc} />
       </div>
 
       {/* Strengths & Risks */}
@@ -110,10 +116,10 @@ export function InvestmentSnapshot({ company, derived }: InvestmentSnapshotProps
               </span>
               <ul className="flex flex-col gap-1.5">
                 {strengths.map((s, i) => (
-                  <li key={i} className="flex items-start gap-2 text-xs text-muted">
+                  <Reveal key={i} as="li" index={i} className="flex items-start gap-2 text-xs text-muted">
                     <span className="mt-0.5 shrink-0 text-positive">+</span>
                     {s}
-                  </li>
+                  </Reveal>
                 ))}
               </ul>
             </div>
@@ -125,10 +131,10 @@ export function InvestmentSnapshot({ company, derived }: InvestmentSnapshotProps
               </span>
               <ul className="flex flex-col gap-1.5">
                 {risks.map((r, i) => (
-                  <li key={i} className="flex items-start gap-2 text-xs text-muted">
+                  <Reveal key={i} as="li" index={i} className="flex items-start gap-2 text-xs text-muted">
                     <span className="mt-0.5 shrink-0 text-negative">−</span>
                     {r}
-                  </li>
+                  </Reveal>
                 ))}
               </ul>
             </div>

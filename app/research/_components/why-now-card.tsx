@@ -2,11 +2,17 @@
 
 import type { InvestmentVerdict } from "@/app/api/ai/verdict/route";
 import type { SectorRotationEntry } from "@/lib/types";
+import { Reveal } from "@/app/_components/reveal";
 
 /**
  * "Why Now?" — pure client-side composition of data already fetched
  * elsewhere on the page (verdict catalysts, sector rotation, nearest
  * timeline milestone). No new backend call of its own.
+ *
+ * Hover/focus turns the card over (`.uaa-flip-scene`, app/globals.css) to a
+ * reverse face carrying the supporting detail behind the front's bullets —
+ * the full AI thesis, plus one counterbalancing risk — rather than a tooltip
+ * or an expand/collapse that pushes the page around.
  */
 
 interface Props {
@@ -34,17 +40,49 @@ export function WhyNowCard({ verdict, sectorEntry, nearestTimelineHeadline, topM
 
   if (points.length === 0) return null;
 
-  return (
+  const thesis = verdict?.thesis || null;
+  const counterpoint = verdict?.risks?.[0] || null;
+  const hasBack = Boolean(thesis || counterpoint);
+
+  const front = (
     <div className="flex flex-col gap-2.5 rounded-xl border border-accent/20 bg-accent/5 p-4">
-      <span className="text-[10px] font-semibold uppercase tracking-widest text-accent/80">Why Now?</span>
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-accent/80">Why Now?</span>
+        {hasBack && (
+          <span className="text-[9px] font-medium uppercase tracking-wide text-accent/50">Hover for thesis</span>
+        )}
+      </div>
       <ul className="space-y-1.5">
         {points.slice(0, 4).map((p, i) => (
-          <li key={i} className="flex gap-2 text-xs leading-5 text-foreground/85">
+          <Reveal key={i} as="li" index={i} className="flex gap-2 text-xs leading-5 text-foreground/85">
             <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent/50" />
             {p}
-          </li>
+          </Reveal>
         ))}
       </ul>
+    </div>
+  );
+
+  if (!hasBack) return front;
+
+  return (
+    <div className="uaa-flip-scene">
+      <div className="uaa-flip-card">
+        <div className="uaa-flip-face">{front}</div>
+        <div className="uaa-flip-face uaa-flip-face-back flex flex-col gap-2.5 rounded-xl border border-accent/20 bg-accent/5 p-4">
+          <span className="text-[10px] font-semibold uppercase tracking-widest text-accent/80">The Thesis</span>
+          {thesis && <p className="text-xs leading-5 text-foreground/85">{thesis}</p>}
+          {counterpoint && (
+            <div className="mt-auto flex gap-2 border-t border-accent/10 pt-2 text-xs leading-5 text-foreground/70">
+              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-warning/60" />
+              <span>
+                <span className="font-medium text-warning/80">Counterpoint: </span>
+                {counterpoint}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

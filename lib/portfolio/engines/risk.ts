@@ -252,10 +252,39 @@ export function computeRisk(
   let cvar95Pct: number | null = null;
 
   if (observed.length > 0) {
+    // Renormalization for the coverage gap (observed + proxied < 100%).
+    //
+    // Without this, `w = weight / 100` below uses each observed holding's RAW
+    // portfolio weight, so any gap (a market-priced holding with too little
+    // history for `observed`, and no class in PROXY_VOLATILITY to fall into
+    // `proxied` either) simply never appears in the sum — which is
+    // mathematically identical to asserting the gap returns exactly 0% every
+    // day, i.e. treating unmeasured risk as riskless. That is the understatement
+    // this file's own header warns about, just for a case beyond the illiquid
+    // classes it already handles.
+    //
+    // The fix extrapolates from what IS measured rather than fabricating a new
+    // number: observed weights are scaled up to fill exactly the gap (proxied
+    // keeps its own real weight, added separately below, so this never double-
+    // counts it). When there is no gap, observedWeightSum + proxiedWeightSum ≈
+    // 100, the scale factor is 1, and this is byte-identical to before.
+    //
+    // Bounded at 3x so a tiny observed sample (e.g. one small measured holding
+    // sitting next to a large gap) doesn't get extrapolated into a wild,
+    // overconfident number — the same caution this codebase already applies to
+    // measuredBeta()'s R² gate. Above that bound the gap is real and stays
+    // visible via `coverage`, which the UI must surface rather than this engine
+    // papering over it with an extrapolation nobody could stand behind.
+    const observedWeightSum = observed.reduce((s, o) => s + o.weight, 0);
+    const proxiedWeightSum = proxied.reduce((s, p) => s + p.weight, 0);
+    const scaleFactor = observedWeightSum > 0
+      ? Math.min(3, Math.max(0, 100 - proxiedWeightSum) / observedWeightSum)
+      : 1;
+
     const minLen = Math.min(...observed.map((o) => o.returns.length));
     const portReturns: number[] = new Array(minLen).fill(0);
     for (const { weight, returns } of observed) {
-      const w = weight / 100;
+      const w = (weight * scaleFactor) / 100;
       const tail = returns.slice(-minLen);
       for (let i = 0; i < minLen; i++) portReturns[i] += w * tail[i];
     }

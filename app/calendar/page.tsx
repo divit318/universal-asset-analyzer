@@ -5,7 +5,8 @@ import Link from "next/link";
 import type { CalendarEvent, CalendarResponse } from "@/app/api/calendar/route";
 import { formatCompact } from "@/lib/format";
 import { EventDrawer } from "./_components/event-drawer";
-import { PageShell } from "@/app/_components/ui";
+import { PageShell, Skeleton } from "@/app/_components/ui";
+import { Reveal } from "@/app/_components/reveal";
 
 // ─── Style constants ────────────────────────────────────────────────────────
 
@@ -211,7 +212,7 @@ function EarningsRow({ ev, onClick, isPortfolio, isWatchlist }: {
         {ev.symbol && (
           <>
             <Link href={`/research?symbol=${ev.symbol}`} className="text-muted transition-colors hover:text-brand" onClick={(e) => e.stopPropagation()}>Research ↗</Link>
-            <Link href={`/dcf?symbol=${ev.symbol}`} className="text-muted transition-colors hover:text-brand" onClick={(e) => e.stopPropagation()}>DCF ↗</Link>
+            <Link href={`/valuation?symbol=${ev.symbol}`} className="text-muted transition-colors hover:text-brand" onClick={(e) => e.stopPropagation()}>DCF ↗</Link>
             <Link href={`/ic-report?symbol=${ev.symbol}`} className="text-muted transition-colors hover:text-brand" onClick={(e) => e.stopPropagation()}>IC Report ↗</Link>
             <Link href={`/compare?symbols=${ev.symbol}`} className="text-muted transition-colors hover:text-brand" onClick={(e) => e.stopPropagation()}>Compare ↗</Link>
           </>
@@ -622,7 +623,7 @@ export default function CalendarPage() {
     <PageShell py="py-10">
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <Reveal index={0} className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-col gap-1.5">
           <h1 className="text-2xl font-semibold tracking-tight">Market Events & Catalyst Calendar</h1>
           <p className="text-sm text-muted">
@@ -660,16 +661,20 @@ export default function CalendarPage() {
             ↻ Refresh
           </button>
         </div>
-      </div>
+      </Reveal>
 
       {/* ── Summary strip ───────────────────────────────────────────────────── */}
       {!loading && events.length > 0 && (
-        <SummaryStrip events={events} portfolioSymbols={portfolioSymbols} watchlistSymbols={watchlistSymbols} />
+        <Reveal index={1}>
+          <SummaryStrip events={events} portfolioSymbols={portfolioSymbols} watchlistSymbols={watchlistSymbols} />
+        </Reveal>
       )}
 
       {/* ── AI Weekly Brief — auto-generated on data load, shown before filters ── */}
       {!loading && events.length > 0 && (
-        <AiBriefSection events={events} autoGenerate />
+        <Reveal index={2}>
+          <AiBriefSection events={events} autoGenerate />
+        </Reveal>
       )}
 
       {/* ── Error ──────────────────────────────────────────────────────────── */}
@@ -687,7 +692,7 @@ export default function CalendarPage() {
 
       {/* ── Filters ─────────────────────────────────────────────────────────── */}
       {!loading && events.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
+        <Reveal index={3} className="flex flex-wrap items-center gap-2">
           {/* Search */}
           <div className="relative min-w-[180px]">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted">
@@ -759,14 +764,14 @@ export default function CalendarPage() {
               ✕ Clear filters
             </button>
           )}
-        </div>
+        </Reveal>
       )}
 
       {/* ── Loading skeleton ─────────────────────────────────────────────────── */}
       {loading && (
         <div className="flex flex-col gap-3">
           {[1, 2, 3, 4, 5].map((n) => (
-            <div key={n} className="h-24 animate-pulse rounded-xl border border-border bg-surface" />
+            <Skeleton key={n} height="h-24" radius="rounded-xl" className="border border-border" />
           ))}
         </div>
       )}

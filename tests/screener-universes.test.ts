@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { computeFdv, toCandidate as cryptoCandidate } from "@/lib/screener/universes/crypto";
 import { creditProfile, issuerType, riskLevel } from "@/lib/screener/universes/bond";
 import { curveSlope, datedContracts } from "@/lib/screener/universes/commodity";
-import { categoryFocus, categoryRegion, categoryStyle } from "@/lib/screener/universes/etf";
+import { categoryFocus, categoryRegion, categoryStyle, isNonEquityFund } from "@/lib/screener/universes/etf";
+import type { FundDetail } from "@/lib/screener/universes/fund-shared";
 import { toCandidate as reitCandidate } from "@/lib/screener/universes/reit";
 import { toCandidate as equityCandidate } from "@/lib/screener/universes/equity";
 import { seasonality, trendScore } from "@/lib/screener/metrics-util";
@@ -308,6 +309,116 @@ describe("etf: category mapping", () => {
     expect(categoryStyle("Miscellaneous Sector")).toBe("Thematic");
     expect(categoryStyle("Technology")).toBe("Sector");
     expect(categoryStyle("Equity Income")).toBe("Income");
+  });
+});
+
+/**
+ * Asset-class purity for the ETF universe.
+ *
+ * Every fixture below is a real, verified `topHoldings`/`fundProfile` payload
+ * (the stock/bond/cash weights are quoted from live responses), because the
+ * whole difficulty here is that the intuitive rules are wrong: 0% equity is
+ * normal for a commodity ETF, and a 67% cash position is normal for a
+ * futures-backed one.
+ */
+describe("etf: is this fund actually an ETF for this class?", () => {
+  const detail = (over: Partial<FundDetail>): FundDetail => ({
+    available: true,
+    category: null,
+    expenseRatio: null,
+    top10Concentration: null,
+    topHoldings: null,
+    topSectorWeight: null,
+    topSector: null,
+    equityWeight: null,
+    bondWeight: null,
+    cashWeight: null,
+    duration: null,
+    maturity: null,
+    ratings: null,
+    ...over,
+  });
+
+  it("keeps plain equity funds", () => {
+    expect(isNonEquityFund(detail({ category: "Large Blend", equityWeight: 99.31, bondWeight: 0, cashWeight: 0.54 }), "Vanguard Total Stock Market ETF")).toBe(false);
+    expect(isNonEquityFund(detail({ category: "Japan Stock", equityWeight: 99.59, bondWeight: 0, cashWeight: 0.41 }), "iShares MSCI Japan ETF")).toBe(false);
+    expect(isNonEquityFund(detail({ category: "Derivative Income", equityWeight: 85.57, bondWeight: 0, cashWeight: 0.7 }), "JPMorgan Equity Premium Income ETF")).toBe(false);
+  });
+
+  /**
+   * The trap that makes an equity-weight threshold unusable: GLD, SLV and BITO
+   * all report `stockPosition: 0`, and USO/BITO hold most of their assets in
+   * cash because that is how a futures-backed fund posts collateral. Excluding
+   * on either signal alone would delete the entire commodity and crypto shelf.
+   */
+  it("keeps commodity and crypto funds that hold no stocks and lots of cash", () => {
+    expect(isNonEquityFund(detail({ category: "Commodities Focused", equityWeight: 0, bondWeight: 0, cashWeight: 0 }), "SPDR Gold Shares")).toBe(false);
+    // USO: 57.3% cash, verified.
+    expect(isNonEquityFund(detail({ category: "Commodities Focused", equityWeight: 0, bondWeight: 0, cashWeight: 57.26 }), "United States Oil Fund")).toBe(false);
+    // BITO: 67.5% cash, verified.
+    expect(isNonEquityFund(detail({ category: "Digital Assets", equityWeight: 0, bondWeight: 0, cashWeight: 67.53 }), "ProShares Bitcoin Strategy ETF")).toBe(false);
+    // TQQQ: 34.5% cash collateral against a leveraged equity book.
+    expect(isNonEquityFund(detail({ category: "Trading--Leveraged Equity", equityWeight: 61.98, bondWeight: 2.54, cashWeight: 34.5 }), "ProShares UltraPro QQQ")).toBe(false);
+  });
+
+  it("drops bond funds, whatever their category says", () => {
+    expect(isNonEquityFund(detail({ category: "Intermediate Core Bond", equityWeight: 0, bondWeight: 99.28, cashWeight: 0.73 }), "iShares Core U.S. Aggregate Bond ETF")).toBe(true);
+    expect(isNonEquityFund(detail({ category: "Long Government", equityWeight: 0, bondWeight: 99.63, cashWeight: 0.37 }), "iShares 20+ Year Treasury Bond ETF")).toBe(true);
+    expect(isNonEquityFund(detail({ category: "Muni National Interm", equityWeight: 0, bondWeight: 99.82, cashWeight: 0.58 }), "Fidelity Intermediate Municipal Income Fund ETF")).toBe(true);
+  });
+
+  /**
+   * Regression: these three were the top three results of the "Low Volatility"
+   * ETF template. A money-market fund at 0.26% annualised volatility wins a
+   * volatility-weighted ranking by construction, and none of them is remotely
+   * what someone screening low-volatility ETFs is asking for. Neither category
+   * appears in BOND_CATEGORIES, and neither fund reports ≥70% bonds — the two
+   * conditions the old filter tested.
+   */
+  it("drops money-market funds and maturity-dated bond ladders", () => {
+    // SBIL: 31.2% bonds + 68.8% cash.
+    expect(isNonEquityFund(detail({ category: "Money Market-Taxable", equityWeight: 0, bondWeight: 31.18, cashWeight: 68.82 }), "Simplify Government Money Market ETF")).toBe(true);
+    // BSCQ / IBDR: 48% bonds + 52% cash, category "Target Maturity".
+    expect(isNonEquityFund(detail({ category: "Target Maturity", equityWeight: 0, bondWeight: 47.99, cashWeight: 52 }), "Invesco BulletShares 2026 Corporate Bond ETF")).toBe(true);
+    // BIL: 100% cash, no bond position reported at all.
+    expect(isNonEquityFund(detail({ category: "Ultrashort Bond", equityWeight: 0, bondWeight: 0, cashWeight: 100 }), "SPDR Bloomberg 1-3 Month T-Bill ETF")).toBe(true);
+  });
+
+  it("drops a convertible-bond fund, and keeps preferred stock", () => {
+    // ICVT is literally named "iShares Convertible Bond ETF": 0.1% stocks, 16%
+    // bonds, the rest convertible paper. Neither weight trips a composition
+    // rule, so the category is what catches it.
+    expect(isNonEquityFund(detail({ category: "Convertibles", equityWeight: 0.14, bondWeight: 16.05, cashWeight: 2.03 }), "iShares Convertible Bond ETF")).toBe(true);
+    // PFF/VRP stay: the registry already models preferred funds as the Income
+    // style, and they have no other class to live in. Their bond-like volatility
+    // is handled by the low-volatility template's equity floor instead.
+    expect(isNonEquityFund(detail({ category: "Preferred Stock", equityWeight: 5.44, bondWeight: 0.01, cashWeight: 1.48 }), "iShares Preferred & Income Securities ETF")).toBe(false);
+  });
+
+  it("drops an allocation fund whose bond sleeve dominates it", () => {
+    // FREI: 61.6% bonds against 22% equity, filed as "Miscellaneous Allocation".
+    expect(isNonEquityFund(detail({ category: "Miscellaneous Allocation", equityWeight: 22, bondWeight: 61.55, cashWeight: 5.34 }), "Fidelity Real Estate Income Fund ETF")).toBe(true);
+    // AOR is majority equity (60.9/38.5) and stays — it has nowhere else to live.
+    expect(isNonEquityFund(detail({ category: "Global Moderate Allocation", equityWeight: 60.86, bondWeight: 38.54, cashWeight: 0.57 }), "iShares Core Growth Allocation ETF")).toBe(false);
+  });
+
+  /**
+   * The failure mode that let a bond ETF into the equity universe: enrichment
+   * is one HTTP call per fund and it sometimes times out, which produced an
+   * all-null detail indistinguishable from "this fund holds no bonds". NXUS
+   * (Nuveen International Aggregate Bond ETF) rode that ambiguity in.
+   */
+  it("falls back to the fund name when Yahoo returned nothing", () => {
+    const unknown = detail({ available: false });
+    expect(isNonEquityFund(unknown, "Nuveen International Aggregate Bond ETF")).toBe(true);
+    expect(isNonEquityFund(unknown, "ProShares GENIUS Money Market ETF")).toBe(true);
+    expect(isNonEquityFund(unknown, "Fidelity Intermediate Municipal Income Fund ETF")).toBe(true);
+    // …but an unenriched equity fund is still an equity fund.
+    expect(isNonEquityFund(unknown, "DFA US Micro Cap Portfolio ETF")).toBe(false);
+    expect(isNonEquityFund(unknown, "MicroSectors FANG+ Index 3X Leveraged ETN")).toBe(false);
+    // A missing detail entirely is treated the same way.
+    expect(isNonEquityFund(undefined, "iShares Core U.S. Aggregate Bond ETF")).toBe(true);
+    expect(isNonEquityFund(undefined, "Vanguard Total Stock Market ETF")).toBe(false);
   });
 });
 

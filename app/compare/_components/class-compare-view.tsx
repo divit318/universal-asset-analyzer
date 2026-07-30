@@ -23,7 +23,7 @@ import { BenchmarkSection } from "./class-benchmark-section";
 import { HoldingsOverlapSection } from "./class-holdings-overlap";
 import { RiskFlagsSection } from "./class-risk-flags";
 import { ClassAiVerdict } from "./class-ai-verdict";
-import { useInViewOnce } from "./use-in-view-once";
+import { useInViewOnce } from "@/app/_components/use-in-view-once";
 import { Collapsible } from "./collapsible-section";
 import { CountUp } from "@/app/_components/count-up";
 import {

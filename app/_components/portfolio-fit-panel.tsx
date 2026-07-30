@@ -8,9 +8,13 @@
  * wants to show detailed personalized context for an asset.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { ChevronDown } from "lucide-react";
 import type { PortfolioFitAnalysis, FitTier, FitDimension } from "@/lib/ios/types";
+import { ScoreRing } from "./score-ring";
+import { ValueBar } from "./value-bar";
+import { CountUp } from "./count-up";
 
 /* -------------------------------------------------------------------------- */
 /* Color palette by tier                                                       */
@@ -66,7 +70,6 @@ const IMPACT_TEXT: Record<FitDimension["impact"], string> = {
 /* -------------------------------------------------------------------------- */
 
 function DimensionRow({ dim }: { dim: FitDimension }) {
-  const barWidth = `${dim.score}%`;
   const barColor =
     dim.score >= 65 ? "bg-positive" : dim.score >= 45 ? "bg-warning" : "bg-negative";
 
@@ -78,43 +81,22 @@ function DimensionRow({ dim }: { dim: FitDimension }) {
           {IMPACT_ICON[dim.impact]} {dim.score}
         </span>
       </div>
-      <div className="h-1 bg-surface-2 rounded-full overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all ${barColor}`}
-          style={{ width: barWidth }}
-        />
-      </div>
+      <ValueBar value={dim.score} barClassName={barColor} />
     </div>
   );
 }
 
 function FitScoreRing({ score, tier }: { score: number; tier: FitTier }) {
   const colors = TIER_COLORS[tier];
-  const circumference = 2 * Math.PI * 22;
-  const offset = circumference * (1 - score / 100);
-
   return (
-    <div className="relative inline-flex items-center justify-center">
-      <svg width="56" height="56" className="-rotate-90">
-        <circle cx="28" cy="28" r="22" fill="none" stroke="currentColor" strokeWidth="3" className="text-surface-2" />
-        <circle
-          cx="28"
-          cy="28"
-          r="22"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="3"
-          strokeLinecap="round"
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          className={`${colors.ring} transition-all duration-700`}
-        />
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className={`text-sm font-bold font-mono leading-none ${colors.ring}`}>{score}</span>
-        <span className="text-[8px] text-muted leading-tight">/100</span>
-      </div>
-    </div>
+    <ScoreRing
+      score={score}
+      size={56}
+      arcClassName={colors.ring}
+      valueClassName={`text-sm font-bold font-mono ${colors.ring}`}
+      caption="/100"
+      label={`Portfolio fit ${score} out of 100`}
+    />
   );
 }
 
@@ -153,6 +135,21 @@ interface Props {
 
 export function PortfolioFitPanel({ fit, collapsible = false, headline, className = "" }: Props) {
   const [expanded, setExpanded] = useState(!collapsible);
+  /** One frame behind `expanded` on the first open, so the 0fr→1fr grid
+   *  transition has a starting frame to animate from (same mechanism as
+   *  CollapsibleSection). */
+  const [open, setOpen] = useState(!collapsible);
+
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- deferring the class by a frame is the mechanism */
+    if (!expanded) {
+      setOpen(false);
+      return;
+    }
+    const handle = requestAnimationFrame(() => setOpen(true));
+    return () => cancelAnimationFrame(handle);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [expanded]);
 
   if (fit.isGeneric) return <NoPortfolio />;
 
@@ -183,8 +180,12 @@ export function PortfolioFitPanel({ fit, collapsible = false, headline, classNam
           <FitScoreRing score={fit.fitScore} tier={fit.fitTier} />
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 mb-1">
-              <span className={`inline-flex items-center rounded border px-2 py-0.5 text-[10px] font-semibold ${colors.badge}`}>
-                {colors.label}
+              <span
+                className={`uaa-swap inline-flex items-center rounded border px-2 py-0.5 text-[10px] font-semibold ${colors.badge}`}
+                title={`${fit.fitScore}/100 fit score`}
+              >
+                <span className="uaa-swap-base">{colors.label}</span>
+                <span className="uaa-swap-alt font-mono">{fit.fitScore}/100 fit score</span>
               </span>
               {fit.confidence < 60 && (
                 <span
@@ -201,12 +202,15 @@ export function PortfolioFitPanel({ fit, collapsible = false, headline, classNam
           </div>
         </div>
         {collapsible && (
-          <span className="text-muted text-sm shrink-0">{expanded ? "▲" : "▼"}</span>
+          <ChevronDown
+            className={`h-4 w-4 shrink-0 text-muted transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+            strokeWidth={2}
+          />
         )}
       </div>
 
-      {expanded && (
-        <>
+      <div className={`collapse-grid ${open ? "is-open" : ""}`} aria-hidden={!expanded}>
+        <div className="min-h-0 overflow-hidden">
           {/* Dimension breakdown */}
           <div className="px-4 pb-3 space-y-2.5 border-t border-border pt-3">
             <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">Fit Breakdown</p>
@@ -254,7 +258,10 @@ export function PortfolioFitPanel({ fit, collapsible = false, headline, classNam
                 <div>
                   <p className="text-[10px] font-semibold text-muted uppercase tracking-wider mb-0.5">Suggested Allocation</p>
                   <p className="text-base font-bold font-mono">
-                    {fit.suggestedAllocationPct.toFixed(1)}%
+                    <CountUp
+                      value={fit.suggestedAllocationPct}
+                      format={(v) => `${v.toFixed(1)}%`}
+                    />
                     {fit.suggestedAmount > 0 && (
                       <span className="text-xs font-normal text-muted ml-2">
                         ≈ ${fit.suggestedAmount.toLocaleString()}
@@ -270,8 +277,8 @@ export function PortfolioFitPanel({ fit, collapsible = false, headline, classNam
               </div>
             </div>
           )}
-        </>
-      )}
+        </div>
+      </div>
     </div>
   );
 }

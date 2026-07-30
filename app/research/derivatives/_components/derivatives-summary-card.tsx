@@ -20,7 +20,7 @@ function GreeksRow({ label, greeks }: { label: string; greeks: DerivativesSummar
 
 export function DerivativesSummaryCard({ summary }: { summary: DerivativesSummary }) {
   return (
-    <section className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-5">
+    <section className="card-lift flex flex-col gap-4 rounded-xl border border-border bg-surface p-5">
       <div className="flex items-baseline justify-between gap-2">
         <h3 className="text-sm font-semibold">Options Chain</h3>
         <span className="text-xs text-muted">

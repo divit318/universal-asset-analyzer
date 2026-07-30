@@ -111,7 +111,7 @@ export function EarningsCard({ earnings }: { earnings: EarningsData }) {
   const hasHistory = chartData.length > 0;
 
   return (
-    <div className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-4">
+    <div className="card-lift flex flex-col gap-4 rounded-xl border border-border bg-surface p-4">
       {/* Header row */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>

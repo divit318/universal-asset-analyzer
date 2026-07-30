@@ -155,4 +155,8 @@ export const reitUniverse: UniverseProvider = {
   refresh() {
     return toStatus(reitDataset.refresh());
   },
+
+  peekStatus() {
+    return toStatus(reitDataset.getStatus());
+  },
 };

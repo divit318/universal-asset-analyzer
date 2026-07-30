@@ -249,57 +249,62 @@ function PortfolioPageInner() {
             <Tabs tabs={TABS} active={tab} onChange={setTab} layoutId="portfolio-universal-tabs" />
           </Reveal>
 
-          {tab === "dashboard" && (
-            <div className="flex flex-col gap-4">
-              <AllocationPanel allocation={report.allocation} />
-              <HealthPanel health={report.health} />
-            </div>
-          )}
+          {/* `key={tab}` remounts on every switch so the fade-rise animation
+              replays — the same stagger primitive the page-load treatment
+              above uses, not a separate transition system. */}
+          <Reveal key={tab} index={0}>
+            {tab === "dashboard" && (
+              <div className="flex flex-col gap-4">
+                <AllocationPanel allocation={report.allocation} />
+                <HealthPanel health={report.health} />
+              </div>
+            )}
 
-          {tab === "decisions" && (
-            <div className="flex flex-col gap-5">
-              <DecisionCenter
-                decisions={report.decisions}
-                health={report.health}
-                risk={report.risk}
-                annualIncome={report.annualIncome}
+            {tab === "decisions" && (
+              <div className="flex flex-col gap-5">
+                <DecisionCenter
+                  decisions={report.decisions}
+                  health={report.health}
+                  risk={report.risk}
+                  annualIncome={report.annualIncome}
+                />
+                <CashPanel
+                  onExecuted={() => {
+                    refresh();
+                    setThesisRefreshSignal((n) => n + 1);
+                  }}
+                />
+              </div>
+            )}
+
+            {tab === "holdings" && (
+              <HoldingsPanel
+                holdings={report.holdings}
+                totalValue={report.totalValue}
+                onChanged={() => { refresh(); setThesisRefreshSignal((n) => n + 1); }}
               />
-              <CashPanel
+            )}
+
+            {tab === "pipeline" && <PipelineBoard />}
+
+            {tab === "risk" && <RiskLab risk={report.risk} scenarios={report.scenarios} />}
+
+            {tab === "optimize" && (
+              <OptimizePanel
+                optimization={report.optimization}
+                objective={objective}
+                onObjectiveChange={setObjective}
+                objectives={OBJECTIVES}
+                loading={loading}
+                totalPortfolioValue={report.totalValue}
+                atEquilibrium={report.atEquilibrium}
                 onExecuted={() => {
                   refresh();
                   setThesisRefreshSignal((n) => n + 1);
                 }}
               />
-            </div>
-          )}
-
-          {tab === "holdings" && (
-            <HoldingsPanel
-              holdings={report.holdings}
-              totalValue={report.totalValue}
-              onChanged={() => { refresh(); setThesisRefreshSignal((n) => n + 1); }}
-            />
-          )}
-
-          {tab === "pipeline" && <PipelineBoard />}
-
-          {tab === "risk" && <RiskLab risk={report.risk} scenarios={report.scenarios} />}
-
-          {tab === "optimize" && (
-            <OptimizePanel
-              optimization={report.optimization}
-              objective={objective}
-              onObjectiveChange={setObjective}
-              objectives={OBJECTIVES}
-              loading={loading}
-              totalPortfolioValue={report.totalValue}
-              atEquilibrium={report.atEquilibrium}
-              onExecuted={() => {
-                refresh();
-                setThesisRefreshSignal((n) => n + 1);
-              }}
-            />
-          )}
+            )}
+          </Reveal>
         </div>
       )}
 

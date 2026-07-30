@@ -1,25 +1,39 @@
 import ExcelJS from "exceljs";
+import { currencySymbol } from "@/lib/format";
+import {
+  type DcfAssumptions,
+  buildScenarios,
+  buildSensitivity,
+  dcfInvalidReason,
+  describeScenario,
+  impliedUpside,
+  marginOfSafety,
+  runDcf,
+} from "@/lib/valuation/dcf";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/**
+ * A bare model export: one assumption set, no case behind it.
+ *
+ * Superseded for normal use by /api/export/valuation, which exports the persisted
+ * ValuationCase — provenance, reasoning, AI objections and version history — and
+ * is what the workspace's "Export case" button calls. This route survives for the
+ * one thing that cannot do: exporting an ad-hoc assumption set that was never
+ * saved as a case. It shares the same engine (lib/valuation/dcf.ts), so the two
+ * workbooks can never disagree on the arithmetic.
+ *
+ * Only the assumptions are accepted; projections, scenarios and sensitivity are
+ * recomputed here. This route used to carry its own copy of the DCF math and its
+ * own scenario multipliers, which could and did drift from the UI's.
+ */
 interface DcfExportPayload {
   symbol: string;
   companyName: string;
   currentPrice: number | null;
-  inputs: {
-    baseFcf: number;
-    growthRate1: number;
-    growthRate2: number;
-    terminalGrowth: number;
-    discountRate: number;
-    sharesOutstanding: number;
-    netDebt: number;
-  };
-  scenarios: { bear: number; base: number; bull: number };
-  sensitivity: number[][];
-  waccRange: number[];
-  tgRange: number[];
+  currency?: string;
+  inputs: DcfAssumptions;
 }
 
 const NAVY: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
@@ -30,31 +44,6 @@ const AMBER_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: {
 const RED_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEE2E2" } };
 const GRAY_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF1F5F9" } };
 
-function compact(v: number): string {
-  const abs = Math.abs(v);
-  if (abs >= 1e12) return `$${(v / 1e12).toFixed(2)}T`;
-  if (abs >= 1e9) return `$${(v / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
-  return `$${v.toFixed(0)}`;
-}
-
-function runDcf(inp: DcfExportPayload["inputs"]): number[][] {
-  const wacc = inp.discountRate / 100;
-  const g1 = inp.growthRate1 / 100;
-  const g2 = inp.growthRate2 / 100;
-  const rows: number[][] = [];
-  let fcf = inp.baseFcf;
-  let cumPv = 0;
-  for (let yr = 1; yr <= 10; yr++) {
-    const growth = yr <= 5 ? g1 : g1 + ((g2 - g1) * (yr - 5)) / 5;
-    fcf = fcf * (1 + growth);
-    const pv = fcf / Math.pow(1 + wacc, yr);
-    cumPv += pv;
-    rows.push([yr, fcf, growth * 100, pv, cumPv]);
-  }
-  return rows;
-}
-
 /** POST /api/export/dcf — body: DcfExportPayload */
 export async function POST(req: Request): Promise<Response> {
   let payload: DcfExportPayload;
@@ -64,7 +53,34 @@ export async function POST(req: Request): Promise<Response> {
     return new Response("Invalid JSON", { status: 400 });
   }
 
-  const { symbol, companyName, currentPrice, inputs, scenarios, sensitivity, waccRange, tgRange } = payload;
+  const { symbol, companyName, currentPrice, inputs } = payload;
+  const reason = inputs ? dcfInvalidReason(inputs) : "non_finite_inputs";
+  if (reason !== null) {
+    return new Response(`Cannot value these assumptions: ${reason}`, { status: 400 });
+  }
+
+  const cur = currencySymbol(payload.currency);
+  const money = `"${cur}"#,##0.00`;
+  const moneyBn = `"${cur}"#,##0,,,"B"`;
+  const compact = (v: number): string => {
+    const abs = Math.abs(v);
+    if (abs >= 1e12) return `${cur}${(v / 1e12).toFixed(2)}T`;
+    if (abs >= 1e9) return `${cur}${(v / 1e9).toFixed(2)}B`;
+    if (abs >= 1e6) return `${cur}${(v / 1e6).toFixed(2)}M`;
+    return `${cur}${v.toFixed(0)}`;
+  };
+  const perShare = (v: number | null): string => (v == null ? "—" : `${cur}${v.toFixed(2)}`);
+
+  // One engine, one set of numbers.
+  const baseResult = runDcf(inputs);
+  const scen = buildScenarios(inputs);
+  const { waccRange, terminalGrowthRange: tgRange, table: sensitivity } = buildSensitivity(inputs);
+  const scenarios = {
+    bear: scen.bear.fairValuePerShare,
+    base: scen.base.fairValuePerShare,
+    bull: scen.bull.fairValuePerShare,
+  };
+
   const date = new Date().toISOString().slice(0, 10);
 
   const wb = new ExcelJS.Workbook();
@@ -116,7 +132,8 @@ export async function POST(req: Request): Promise<Response> {
   addSubheader(wsInputs, "Company Data");
   addKV(wsInputs, "Symbol", symbol);
   addKV(wsInputs, "Company Name", companyName);
-  addKV(wsInputs, "Current Market Price", currentPrice != null ? `$${currentPrice.toFixed(2)}` : "—");
+  addKV(wsInputs, "Current Market Price", perShare(currentPrice));
+  addKV(wsInputs, "Reporting Currency", (payload.currency ?? "USD").toUpperCase());
   wsInputs.addRow([]);
 
   addSubheader(wsInputs, "Cash Flow Inputs");
@@ -136,23 +153,26 @@ export async function POST(req: Request): Promise<Response> {
   wsInputs.addRow([]);
 
   addSubheader(wsInputs, "Valuation Results");
-  const mos = (currentPrice && scenarios.base > 0)
-    ? ((scenarios.base - currentPrice) / scenarios.base * 100) : null;
-  addKV(wsInputs, "Bear Case Fair Value / Share", `$${scenarios.bear.toFixed(2)}`, "Slower growth, higher discount rate");
-  addKV(wsInputs, "Base Case Fair Value / Share", `$${scenarios.base.toFixed(2)}`, "Your assumptions as entered");
-  addKV(wsInputs, "Bull Case Fair Value / Share", `$${scenarios.bull.toFixed(2)}`, "Faster growth, lower discount rate");
-  addKV(wsInputs, "Current Market Price", currentPrice != null ? `$${currentPrice.toFixed(2)}` : "—");
+  const mos = marginOfSafety(scenarios.base, currentPrice);
+  addKV(wsInputs, "Bear Case Fair Value / Share", perShare(scenarios.bear),
+    describeScenario(inputs, scen.bearAssumptions));
+  addKV(wsInputs, "Base Case Fair Value / Share", perShare(scenarios.base), "Your assumptions as entered");
+  addKV(wsInputs, "Bull Case Fair Value / Share", perShare(scenarios.bull),
+    describeScenario(inputs, scen.bullAssumptions));
+  addKV(wsInputs, "Current Market Price", perShare(currentPrice));
   addKV(wsInputs, "Margin of Safety (Base)", mos != null ? `${mos >= 0 ? "+" : ""}${mos.toFixed(1)}%` : "—",
     "% by which base fair value exceeds current price");
+  addKV(wsInputs, "Terminal Value Share of EV", `${(baseResult.terminalValueShare * 100).toFixed(1)}%`,
+    "How much of the valuation rests on the perpetuity rather than the forecast period");
 
   /* ── Sheet 2: Year-by-Year Projections ── */
   const wsProj = wb.addWorksheet("Projections");
   wsProj.columns = [
     { header: "Year", key: "yr", width: 8 },
-    { header: "FCF ($)", key: "fcf", width: 18 },
+    { header: `FCF (${cur.trim()})`, key: "fcf", width: 18 },
     { header: "Growth Applied (%)", key: "gr", width: 20 },
-    { header: "Present Value ($)", key: "pv", width: 18 },
-    { header: "Cumulative PV ($)", key: "cpv", width: 18 },
+    { header: `Present Value (${cur.trim()})`, key: "pv", width: 18 },
+    { header: `Cumulative PV (${cur.trim()})`, key: "cpv", width: 18 },
   ];
 
   wsProj.addRow(["DCF Year-by-Year Free Cash Flow Projections", "", "", "", ""]);
@@ -171,32 +191,26 @@ export async function POST(req: Request): Promise<Response> {
   });
   projHeader.height = 20;
 
-  const projRows = runDcf(inputs);
-  const wacc = inputs.discountRate / 100;
-  const g = inputs.terminalGrowth / 100;
-  const lastFcf = projRows[projRows.length - 1][1];
-  const tv = (lastFcf * (1 + g)) / (wacc - g);
-  const pvTv = tv / Math.pow(1 + wacc, 10);
-  const totalPv = projRows[projRows.length - 1][4] + pvTv;
-  const equityValue = totalPv - inputs.netDebt;
-  const fairValuePerShare = inputs.sharesOutstanding > 0 ? equityValue / inputs.sharesOutstanding : 0;
+  const pvTv = baseResult.pvTerminalValue;
+  const totalPv = baseResult.enterpriseValue;
+  const fairValuePerShare = baseResult.fairValuePerShare ?? 0;
 
-  projRows.forEach(([yr, fcf, gr, pv, cpv], i) => {
+  baseResult.projection.forEach((row, i) => {
     const r = wsProj.addRow([
-      `Year ${yr}`,
-      fcf,
-      gr / 100,
-      pv,
-      cpv,
+      `Year ${row.year}`,
+      row.fcf,
+      row.growthApplied / 100,
+      row.pv,
+      row.cumulativePv,
     ]);
     const fill: ExcelJS.Fill = i % 2 === 0
       ? { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFFFF" } }
       : { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
     r.eachCell((cell) => { cell.fill = fill; cell.font = { size: 9 }; });
-    r.getCell(2).numFmt = '$#,##0,,,"B"';
+    r.getCell(2).numFmt = moneyBn;
     r.getCell(3).numFmt = "+0.0%;-0.0%";
-    r.getCell(4).numFmt = '$#,##0,,,"B"';
-    r.getCell(5).numFmt = '$#,##0,,,"B"';
+    r.getCell(4).numFmt = moneyBn;
+    r.getCell(5).numFmt = moneyBn;
     r.eachCell((cell, col) => {
       if (col > 1) cell.alignment = { horizontal: "right" };
     });
@@ -207,7 +221,7 @@ export async function POST(req: Request): Promise<Response> {
   wsProj.addRow([]);
   const tvRow = wsProj.addRow(["Terminal Value (PV)", pvTv, "", "", ""]);
   tvRow.getCell(1).font = { bold: true, size: 9 };
-  tvRow.getCell(2).numFmt = '$#,##0,,,"B"';
+  tvRow.getCell(2).numFmt = moneyBn;
   tvRow.getCell(2).font = { bold: true, size: 9 };
   tvRow.getCell(2).alignment = { horizontal: "right" };
   tvRow.getCell(1).fill = GRAY_FILL;
@@ -215,21 +229,21 @@ export async function POST(req: Request): Promise<Response> {
 
   const totalRow = wsProj.addRow(["Total Enterprise Value (PV)", totalPv, "", "", ""]);
   totalRow.getCell(1).font = { bold: true, size: 9 };
-  totalRow.getCell(2).numFmt = '$#,##0,,,"B"';
+  totalRow.getCell(2).numFmt = moneyBn;
   totalRow.getCell(2).font = { bold: true, size: 9 };
   totalRow.getCell(2).alignment = { horizontal: "right" };
   totalRow.getCell(1).fill = GRAY_FILL;
   totalRow.getCell(2).fill = GRAY_FILL;
 
   wsProj.addRow(["Less: Net Debt", inputs.netDebt, "", "", ""]);
-  wsProj.lastRow!.getCell(2).numFmt = '$#,##0,,,"B"';
+  wsProj.lastRow!.getCell(2).numFmt = moneyBn;
   wsProj.lastRow!.getCell(2).alignment = { horizontal: "right" };
   wsProj.lastRow!.getCell(1).fill = GRAY_FILL;
   wsProj.lastRow!.getCell(2).fill = GRAY_FILL;
 
   const fvRow = wsProj.addRow(["→ Fair Value Per Share", fairValuePerShare, "", "", ""]);
   fvRow.getCell(1).font = { bold: true, size: 10, color: { argb: "FF1D4ED8" } };
-  fvRow.getCell(2).numFmt = '$#,##0.00';
+  fvRow.getCell(2).numFmt = money;
   fvRow.getCell(2).font = { bold: true, size: 10, color: { argb: "FF1D4ED8" } };
   fvRow.getCell(2).alignment = { horizontal: "right" };
   fvRow.eachCell((cell) => {
@@ -259,8 +273,12 @@ export async function POST(req: Request): Promise<Response> {
   });
   scenHdr.height = 22;
 
-  const bearInputs = { ...inputs, growthRate1: inputs.growthRate1 * 0.5, growthRate2: inputs.growthRate2 * 0.5, discountRate: inputs.discountRate + 2 };
-  const bullInputs = { ...inputs, growthRate1: inputs.growthRate1 * 1.5, growthRate2: inputs.growthRate2 * 1.5, discountRate: inputs.discountRate - 1 };
+  const bearInputs = scen.bearAssumptions;
+  const bullInputs = scen.bullAssumptions;
+  const upside = (v: number | null): string => {
+    const u = impliedUpside(v, currentPrice);
+    return u == null ? "—" : `${u >= 0 ? "+" : ""}${u.toFixed(1)}%`;
+  };
 
   const scenRows: Array<[string, string | number, string | number, string | number]> = [
     ["FCF Growth Y1–5 (%)", `${bearInputs.growthRate1.toFixed(1)}%`, `${inputs.growthRate1.toFixed(1)}%`, `${bullInputs.growthRate1.toFixed(1)}%`],
@@ -268,10 +286,10 @@ export async function POST(req: Request): Promise<Response> {
     ["WACC (%)", `${bearInputs.discountRate.toFixed(1)}%`, `${inputs.discountRate.toFixed(1)}%`, `${bullInputs.discountRate.toFixed(1)}%`],
     ["Terminal Growth (%)", `${inputs.terminalGrowth.toFixed(1)}%`, `${inputs.terminalGrowth.toFixed(1)}%`, `${inputs.terminalGrowth.toFixed(1)}%`],
     ["", "", "", ""],
-    ["Fair Value / Share", `$${scenarios.bear.toFixed(2)}`, `$${scenarios.base.toFixed(2)}`, `$${scenarios.bull.toFixed(2)}`],
+    ["Fair Value / Share", perShare(scenarios.bear), perShare(scenarios.base), perShare(scenarios.bull)],
     ...(currentPrice != null ? [
-      ["Current Price", `$${currentPrice.toFixed(2)}`, `$${currentPrice.toFixed(2)}`, `$${currentPrice.toFixed(2)}`] as [string, string, string, string],
-      ["Upside / (Downside)", `${((scenarios.bear - currentPrice) / currentPrice * 100).toFixed(1)}%`, `${((scenarios.base - currentPrice) / currentPrice * 100).toFixed(1)}%`, `${((scenarios.bull - currentPrice) / currentPrice * 100).toFixed(1)}%`] as [string, string, string, string],
+      ["Current Price", perShare(currentPrice), perShare(currentPrice), perShare(currentPrice)] as [string, string, string, string],
+      ["Upside / (Downside)", upside(scenarios.bear), upside(scenarios.base), upside(scenarios.bull)] as [string, string, string, string],
     ] : []),
   ];
 
@@ -313,8 +331,15 @@ export async function POST(req: Request): Promise<Response> {
   wsSens.getColumn(1).width = 22;
   tgRange.forEach((_, i) => { wsSens.getColumn(i + 2).width = 12; });
 
+  // Highlight the cell matching the base case. Computed once, not per cell.
+  const baseWaccIdx = waccRange.reduce((bi, w, i) =>
+    Math.abs(w - inputs.discountRate) < Math.abs(waccRange[bi] - inputs.discountRate) ? i : bi, 0);
+  const baseTgIdx = tgRange.reduce((bi, t, i) =>
+    Math.abs(t - inputs.terminalGrowth) < Math.abs(tgRange[bi] - inputs.terminalGrowth) ? i : bi, 0);
+
   waccRange.forEach((wacc, ri) => {
-    const r = wsSens.addRow([`${wacc}%`, ...sensitivity[ri].map((v) => v)]);
+    // A null cell is a WACC/terminal-growth pair the model cannot value.
+    const r = wsSens.addRow([`${wacc}%`, ...sensitivity[ri].map((v) => v ?? "—")]);
     r.getCell(1).font = { bold: true, size: 9 };
     r.getCell(1).fill = BLUE;
     r.getCell(1).font = { bold: true, color: { argb: "FFFFFFFF" }, size: 9 };
@@ -322,8 +347,13 @@ export async function POST(req: Request): Promise<Response> {
 
     sensitivity[ri].forEach((val, ci) => {
       const cell = r.getCell(ci + 2);
-      cell.numFmt = '$#,##0.00';
       cell.alignment = { horizontal: "center" };
+      if (val == null) {
+        cell.fill = GRAY_FILL;
+        cell.font = { size: 9, italic: true, color: { argb: "FF6B7280" } };
+        return;
+      }
+      cell.numFmt = money;
       let fill: ExcelJS.Fill;
       if (currentPrice && val > currentPrice * 1.3) fill = GREEN_FILL;
       else if (currentPrice && val > currentPrice) fill = AMBER_FILL;
@@ -336,11 +366,6 @@ export async function POST(req: Request): Promise<Response> {
           ? val > currentPrice * 1.3 ? "FF065F46" : val > currentPrice ? "FF92400E" : "FF991B1B"
           : "FF111827" },
       };
-      // Highlight base case cell (closest WACC and base TG)
-      const baseWaccIdx = waccRange.reduce((bi, w, i2) =>
-        Math.abs(w - inputs.discountRate) < Math.abs(waccRange[bi] - inputs.discountRate) ? i2 : bi, 0);
-      const baseTgIdx = tgRange.reduce((bi, t, i2) =>
-        Math.abs(t - inputs.terminalGrowth) < Math.abs(tgRange[bi] - inputs.terminalGrowth) ? i2 : bi, 0);
       if (ri === baseWaccIdx && ci === baseTgIdx) {
         cell.border = { top: { style: "medium", color: { argb: "FF1D4ED8" } }, bottom: { style: "medium", color: { argb: "FF1D4ED8" } }, left: { style: "medium", color: { argb: "FF1D4ED8" } }, right: { style: "medium", color: { argb: "FF1D4ED8" } } };
       }

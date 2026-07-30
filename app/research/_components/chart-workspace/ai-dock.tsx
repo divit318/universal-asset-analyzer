@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Bot, ChevronDown } from "lucide-react";
 import type { ChartQAReasoning, ChartQARelatedTarget, ChartQAResult } from "@/lib/ai-chart-qa";
 import type { ChartQAContext, ChartQASelection } from "@/lib/types";
+import { LoadingMark } from "@/app/_components/loading-mark";
 import { DRAWING_TOOL_LABEL } from "./drawing-categories";
 import type { DrawingToolId } from "./types";
 import type { AskAIPayload } from "../pattern-analysis-panel";
@@ -170,7 +171,7 @@ export function AIDock({ selection, buildContext, onNavigate, nudge, onDismissNu
             )}
           </div>
           {loading ? (
-            <span className="h-3.5 w-3.5 shrink-0 animate-pulse rounded-full bg-brand/50" title="Thinking…" />
+            <LoadingMark size={14} className="shrink-0" label="Thinking" />
           ) : (
             <kbd className="shrink-0 rounded border border-border-strong bg-surface-3 px-1.5 py-0.5 text-micro text-faint">↵</kbd>
           )}

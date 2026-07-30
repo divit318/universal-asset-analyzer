@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { PageShell, PageHeader, Button, Card, Badge } from "@/app/_components/ui";
+import { PageShell, PageHeader, Button, Card, Badge, Skeleton } from "@/app/_components/ui";
 import { Dialog } from "@/app/_components/dialog";
 import { AddManualAssetForm } from "./_components/add-manual-asset-form";
 import { formatCurrency, formatDate, formatPercent } from "@/lib/format";
@@ -76,7 +76,7 @@ export default function ManualAssetsPage() {
       />
 
       {loading ? (
-        <div className="h-40 animate-pulse rounded-xl bg-surface" />
+        <Skeleton height="h-40" radius="rounded-xl" />
       ) : assets.length === 0 ? (
         <Card padding="lg" className="flex flex-col items-center gap-2 py-16 text-center">
           <p className="text-sm font-medium">No manual assets yet</p>

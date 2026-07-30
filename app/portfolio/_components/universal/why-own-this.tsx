@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { HoldingExplanation } from "@/lib/portfolio/holding-explain";
+import { SkeletonText } from "@/app/_components/ui";
 
 /**
  * "Why do I own this?" — click-to-reveal, on-demand per holding.
@@ -50,8 +51,7 @@ export function WhyOwnThis({ holdingId }: { holdingId: string }) {
   if (loading) {
     return (
       <div className="flex flex-col gap-1.5">
-        <div className="h-2.5 w-full animate-pulse rounded bg-surface-2" />
-        <div className="h-2.5 w-4/5 animate-pulse rounded bg-surface-2" />
+        <SkeletonText lines={2} />
       </div>
     );
   }

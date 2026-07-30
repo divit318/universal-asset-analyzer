@@ -187,9 +187,72 @@ Phase 0 audit found 3 of 7 requested "new" systems already existed (Portfolio De
 **Status**: Stable foundation; ongoing optimization for signal accuracy.
 
 **Next Steps**:
-- Validate new signals in backtest
+- Validate new signals via the desk's Model Validation section
 - Tune factor weights per regime
 - Document signal performance per asset class
+
+---
+
+### Quant Engine → Systematic Desk (2026-07 — ✅ Complete)
+
+Rebuilt `/engine` from first principles around a different question than its
+neighbours: *"what opportunities is the market creating today, and why?"* rather than
+Research Hub's "what about this company". See `ARCHITECTURE.md` → "Quant Engine — the
+systematic desk" for the full design and module-boundary rationale.
+
+**Surfaced what the engine already computed but never showed**: market regime with
+confidence, the reason for it, and its implied annualised return; the five-state HMM
+posterior with each state's μ; adaptive IC-derived factor weights plus their rotation
+history; P10/P50/P90 probability bands and P(up) per name; Kelly position sizing;
+upgrades/downgrades and signals opened/closed since the previous run; sector signal
+tilt; and continuous live-IC self-monitoring that says "signal degraded" in plain
+language when IC goes negative.
+
+**Deduplicated against other modules**: the old page embedded a complete batch
+IC-report runner *and* a full `ICReportView` — a copy of `/ic-report`. Removed in
+favour of a link. The standalone `/backtest` page and `/api/backtest` were deleted and
+folded in as the desk's on-demand **Model validation** section; `lib/backtest.ts` is
+reused unchanged. Signal-tier tones/labels, previously duplicated across both pages,
+now live once in `lib/engine-desk.ts`.
+
+**Performance — the highest-priority item, and the root cause was not the UI.** Read
+paths spawned Python with *no timeout*: `/api/engine` paid a fresh interpreter +
+polars import (~1.8s) on every single load and on every 3s poll during a run, and a
+cold `engine.duckdb` open was measured at **over two minutes** despite the queries
+themselves running in ~0ms. That unbounded spawn is what made the page "appear to
+hang". Fixed by (a) precomputing the market brief to `data/engine_dashboard.json`
+during the run and serving it as a file, (b) memoising the parsed Parquet on
+mtime+size (~1.8s → ~15ms), (c) routing every read spawn through a bounded
+`runEnginePython()` that SIGKILLs at its deadline, and (d) returning an explicit
+`degraded` state instead of a pending request. Measured after: first paint 718ms,
+regime resolved 970ms.
+
+**Progressive by section**: three independent `useDataset` datasets, each rendering
+the moment it lands; the heavy 124-row scorecard is code-split; validation never runs
+on load. A failed section renders its own error and retry and leaves its siblings
+untouched. The engine publishes a partial snapshot at every run stage, so the desk
+fills in *during* a run instead of after it.
+
+**Also fixed**: `/engine` never called `useBootReady`, so the full-screen boot splash
+sat over it until the 20s safety timeout fired — the page was unreachable for 20
+seconds on first load. Now reports ready as soon as the brief lands, with its own
+market-wide boot messages.
+
+**Verified**: typecheck clean, lint clean on all touched files, 1377/1377 tests
+passing (8 new in `tests/engine-desk.test.ts`), and manually validated live in a
+browser — all 8 sections, the section rail's active tracking and jump behaviour, the
+conviction book's side switch and factor attribution, scorecard filtering and the
+detail panel, and a real Model Validation run (3.1s, cached, correctly reporting no
+edge over the window).
+
+**Two real bugs found only through live browser testing**: (1) the section rail's
+`IntersectionObserver` was keyed on a fixed section list, so it never observed the
+five sections that mount after the brief arrives and stayed pinned to "Regime" — the
+rail now derives its list from the sections actually rendered. (2) An intersection
+band cannot identify the current section on this page at all, because the scorecard is
+tall enough to span the entire viewport and keeps intersecting while the reader is well
+past it; replaced with a probe-line comparison against section tops, plus deep trailing
+padding so the last sections can physically reach the top of the viewport.
 
 ---
 

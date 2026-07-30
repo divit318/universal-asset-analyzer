@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { LoadingPanel } from "@/app/_components/loading-panel";
+import { Reveal } from "@/app/_components/reveal";
 
 /**
  * Knowledge Graph, embedded as a compact related-entities list rather than
@@ -64,7 +66,7 @@ export function GraphPreviewCard({ symbol }: { symbol: string }) {
     return () => { cancelled = true; };
   }, [symbol]);
 
-  if (loading) return <div className="h-32 w-full animate-pulse rounded-xl bg-surface-2" />;
+  if (loading) return <LoadingPanel height="h-32" markSize={18} />;
 
   const companyId = `company:${symbol.toUpperCase()}`;
   const related = nodes
@@ -81,7 +83,7 @@ export function GraphPreviewCard({ symbol }: { symbol: string }) {
   if (related.length === 0) return null;
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
+    <div className="card-lift flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-medium">Related Entities</h3>
         <Link
@@ -92,14 +94,14 @@ export function GraphPreviewCard({ symbol }: { symbol: string }) {
         </Link>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
-        {related.map(({ node, relationship }) => (
-          <div key={node.id} className="flex items-start gap-2 rounded-lg border border-border bg-surface-2/40 px-3 py-2">
+        {related.map(({ node, relationship }, i) => (
+          <Reveal key={node.id} index={i} className="flex items-start gap-2 rounded-lg border border-border bg-surface-2/40 px-3 py-2">
             <span className="mt-0.5 shrink-0 text-sm text-muted">{TYPE_ICON[node.type] ?? "•"}</span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-xs font-medium text-foreground">{node.label}</p>
               <p className="truncate text-[10px] text-muted">{relationship ?? node.type.replace("_", " ")}</p>
             </div>
-          </div>
+          </Reveal>
         ))}
       </div>
     </div>

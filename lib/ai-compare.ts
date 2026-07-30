@@ -71,6 +71,10 @@ export interface ComparisonResult {
    *  table it was given. Absent when the AI was unavailable. */
   grounding?: GroundingReport;
   freshness: Record<string, EntryFreshness>;
+  /** Symbols that were requested but couldn't be loaded for this analysis —
+   *  the comparison still runs on whoever's left, rather than failing
+   *  outright over one bad symbol. Absent when every requested symbol loaded. */
+  droppedSymbols?: { symbol: string; reason: string }[];
 }
 
 export interface CompareMetricRow {
@@ -407,9 +411,26 @@ export async function compareStocks(symbols: string[]): Promise<ComparisonResult
     Promise.allSettled(upper.map((s) => loadStock(s))),
     loadBenchmarkUniverse("equity"),
   ]);
-  const firstFailure = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
-  if (firstFailure) throw firstFailure.reason as Error;
-  const stocks = settled.map((r) => (r as PromiseFulfilledResult<CompareStock>).value);
+  // One bad symbol (transient rate limit, a bad ticker) used to fail the
+  // entire ranked verdict even when the rest loaded fine — the same partial-
+  // tolerance class-ai-compare.ts already applies. Drop failures and proceed
+  // with whoever's left; only give up if fewer than two remain to compare.
+  // `settled` is index-aligned with `upper` by construction (Promise.allSettled
+  // over upper.map(...)), so a rejection at index i belongs to upper[i].
+  const stocks: CompareStock[] = [];
+  const droppedSymbols: { symbol: string; reason: string }[] = [];
+  settled.forEach((r, i) => {
+    if (r.status === "fulfilled") stocks.push(r.value);
+    else droppedSymbols.push({ symbol: upper[i], reason: r.reason instanceof Error ? r.reason.message : "Failed to load" });
+  });
+  if (stocks.length < 2) {
+    const reason = droppedSymbols[0]?.reason ?? "Failed to load symbols";
+    throw new Error(
+      stocks.length === 0
+        ? reason
+        : `Only ${stocks.length} of ${upper.length} symbols loaded (${droppedSymbols.map((d) => d.symbol).join(", ")} failed) — at least two are required.`,
+    );
+  }
 
   const benchmarksBySymbol = new Map<string, Record<string, PeerBenchmark>>();
   for (const s of stocks) {
@@ -493,5 +514,6 @@ export async function compareStocks(symbols: string[]): Promise<ComparisonResult
     metricTable: buildMetricTable(stocks, benchmarksBySymbol),
     grounding,
     freshness,
+    droppedSymbols: droppedSymbols.length ? droppedSymbols : undefined,
   };
 }

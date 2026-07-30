@@ -66,12 +66,30 @@ export async function PATCH(request: Request) {
   }
   const symbol = body.symbol?.trim();
   if (!symbol) return NextResponse.json({ error: "`symbol` is required" }, { status: 400 });
+
+  if ("targetPrice" in body && body.targetPrice != null) {
+    if (typeof body.targetPrice !== "number" || !Number.isFinite(body.targetPrice) || body.targetPrice <= 0) {
+      return NextResponse.json({ error: "`targetPrice` must be a positive number" }, { status: 400 });
+    }
+  }
+  if ("alertPctDrop" in body && body.alertPctDrop != null) {
+    if (typeof body.alertPctDrop !== "number" || !Number.isFinite(body.alertPctDrop) || body.alertPctDrop <= 0 || body.alertPctDrop > 100) {
+      return NextResponse.json({ error: "`alertPctDrop` must be a number between 0 and 100" }, { status: 400 });
+    }
+  }
+
+  // Build the patch with only the keys the caller actually sent — an object
+  // literal like `{ targetPrice: undefined }` still has an own `targetPrice`
+  // key, which previously made updateWatchlistItem's `"key" in patch` check
+  // always true and silently nulled out any field the caller didn't include
+  // (e.g. saving a price alert wiped the research note, and vice versa).
+  const patch: { targetPrice?: number | null; alertPctDrop?: number | null; notes?: string | null } = {};
+  if ("targetPrice" in body) patch.targetPrice = body.targetPrice;
+  if ("alertPctDrop" in body) patch.alertPctDrop = body.alertPctDrop;
+  if ("notes" in body) patch.notes = body.notes;
+
   try {
-    updateWatchlistItem(symbol, {
-      targetPrice: "targetPrice" in body ? body.targetPrice : undefined,
-      alertPctDrop: "alertPctDrop" in body ? body.alertPctDrop : undefined,
-      notes: "notes" in body ? body.notes : undefined,
-    });
+    updateWatchlistItem(symbol, patch);
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Failed" }, { status: 500 });

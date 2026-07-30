@@ -1,9 +1,15 @@
+"use client";
+
 import type { MomentumSignal, ScoreResult } from "@/lib/types";
 import {
+  RECOMMENDATION_ARC as ARC_COLOR,
   RECOMMENDATION_LABEL as REC_LABEL,
   RECOMMENDATION_TONE as REC_STYLE,
-  RECOMMENDATION_RING as RING_COLOR,
 } from "@/lib/recommendation";
+import { CountUp } from "@/app/_components/count-up";
+import { Reveal } from "@/app/_components/reveal";
+import { ScoreRing } from "@/app/_components/score-ring";
+import { ValueBar } from "@/app/_components/value-bar";
 
 /** Track bar color based on a 0-100 value */
 function barColor(v: number | null) {
@@ -36,20 +42,18 @@ export function ScoreCard({
   ];
 
   return (
-    <section className="flex flex-col gap-6 rounded-xl border border-border bg-surface p-6">
+    <section className="card-lift flex flex-col gap-6 rounded-xl border border-border bg-surface p-6">
       {/* Header row: ring + label + confidence */}
       <div className="flex flex-wrap items-center gap-5">
-        {/* Composite score ring */}
-        <div
-          className={`relative flex h-[72px] w-[72px] shrink-0 flex-col items-center justify-center rounded-full border-2 ${RING_COLOR[score.recommendation]}`}
-        >
-          <span className="text-[1.6rem] font-bold leading-none tabular-nums">
-            {score.composite}
-          </span>
-          <span className="mt-0.5 text-micro font-medium uppercase tracking-wide text-muted">
-            / 100
-          </span>
-        </div>
+        {/* Composite score ring — arc draws to the score as the number counts up */}
+        <ScoreRing
+          score={score.composite}
+          size={72}
+          strokeWidth={4}
+          arcClassName={ARC_COLOR[score.recommendation]}
+          valueClassName="text-[1.6rem] font-bold"
+          label={`Composite score ${score.composite} out of 100`}
+        />
 
         {/* Recommendation + confidence */}
         <div className="flex flex-col gap-2">
@@ -59,61 +63,54 @@ export function ScoreCard({
             {REC_LABEL[score.recommendation]}
           </span>
           <div className="flex items-center gap-2">
-            <div className="h-1 w-20 overflow-hidden rounded-full bg-surface-2">
-              <div
-                className="h-full rounded-full bg-brand/60"
-                style={{ width: `${score.confidence}%` }}
-              />
+            <div className="w-20">
+              <ValueBar value={score.confidence} barClassName="bg-brand/60" />
             </div>
-            <span className="text-xs text-muted">{score.confidence}% confidence</span>
+            <span className="text-xs text-muted">
+              <CountUp value={score.confidence} format={(v) => String(Math.round(v))} durationMs={800} />% confidence
+            </span>
           </div>
         </div>
       </div>
 
       {/* Three independent signal scores */}
       <div className="grid gap-3 sm:grid-cols-3">
-        {signalRows.map(([label, value, detail]) => (
-          <div
+        {signalRows.map(([label, value, detail], i) => (
+          <Reveal
             key={label}
-            className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2 p-3.5"
+            index={i}
+            className="card-lift flex flex-col gap-2 rounded-lg border border-border bg-surface-2 p-3.5"
           >
             <div className="flex items-baseline justify-between gap-2">
               <span className="text-caption font-medium uppercase tracking-wider text-muted">
                 {label}
               </span>
               <span className="font-mono text-sm font-medium tabular-nums">
-                {value != null ? value : "—"}
+                {value != null
+                  ? <CountUp value={value} format={(v) => String(Math.round(v))} durationMs={800} />
+                  : "—"}
               </span>
             </div>
-            <div className="h-1 w-full overflow-hidden rounded-full bg-surface-3">
-              <div
-                className={`h-full rounded-full transition-all duration-500 ${barColor(value)}`}
-                style={{ width: `${value ?? 0}%` }}
-              />
-            </div>
+            <ValueBar value={value} barClassName={barColor(value)} trackClassName="bg-surface-3" />
             <span className="text-caption leading-4 text-muted/80">{detail}</span>
-          </div>
+          </Reveal>
         ))}
       </div>
 
       {/* Fundamental factor buckets */}
       <div className="flex flex-col gap-3.5">
-        {score.buckets.map((b) => {
+        {score.buckets.map((b, i) => {
           const pct = (b.points / b.max) * 100;
           return (
-            <div key={b.name} className="flex flex-col gap-1.5">
+            <Reveal key={b.name} index={i} className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between text-sm">
                 <span className="font-medium text-foreground">{b.name}</span>
                 <span className="font-mono text-xs text-muted tabular-nums">
-                  {b.points}<span className="text-muted/50">/{b.max}</span>
+                  <CountUp value={b.points} format={(v) => String(Math.round(v))} durationMs={800} />
+                  <span className="text-muted/50">/{b.max}</span>
                 </span>
               </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
-                <div
-                  className={`h-full rounded-full transition-all duration-500 ${pct >= 60 ? "bg-positive" : pct >= 42 ? "bg-warning" : "bg-negative"}`}
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
+              <ValueBar value={pct} barClassName={barColor(pct)} height="h-1.5" />
               {b.factors.some((f) => f.detail !== "n/a") ? (
                 <div className="flex flex-wrap gap-x-3 gap-y-0.5">
                   {b.factors.map((f) =>
@@ -125,7 +122,7 @@ export function ScoreCard({
                   )}
                 </div>
               ) : null}
-            </div>
+            </Reveal>
           );
         })}
       </div>

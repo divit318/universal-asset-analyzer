@@ -27,6 +27,7 @@ import { useCountUp } from "../_atmosphere/use-count-up";
 import { SymbolTag } from "../_atmosphere/symbol-link";
 import { ExplainableValue } from "../_atmosphere/explain-popover";
 import { useHome, useHomeSlice } from "../home-provider";
+import { Skeleton } from "@/app/_components/ui";
 
 const definition = getHomeModule("todays-brief");
 
@@ -191,9 +192,9 @@ export function TodaysBriefModule() {
         {/* The headline — the moment. */}
         {loading ? (
           <div className="flex flex-1 flex-col gap-2.5 py-2">
-            <div className="h-6 w-3/4 animate-pulse rounded bg-surface-2" />
-            <div className="h-6 w-full animate-pulse rounded bg-surface-2" />
-            <div className="h-6 w-1/2 animate-pulse rounded bg-surface-2" />
+            <Skeleton height="h-6" width="w-3/4" />
+            <Skeleton height="h-6" />
+            <Skeleton height="h-6" width="w-1/2" />
           </div>
         ) : (
           <p className="max-w-[46ch] text-balance text-[26px] font-semibold leading-[1.16] tracking-[-0.022em] text-foreground sm:text-[31px] sm:leading-[1.12]">

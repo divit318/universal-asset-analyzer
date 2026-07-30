@@ -28,11 +28,19 @@ export async function analyzeAsset(input: AnalysisInput): Promise<AiAnalysis> {
 export async function runPrompt(
   taskType: TaskType,
   prompt: string,
-  opts: { maxTokens?: number; json?: boolean; model?: string; timeoutMs?: number } = {},
+  opts: { maxTokens?: number; json?: boolean; model?: string; timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<string> {
   // maxTokens is accepted for call-site compatibility but not forwarded:
   // capping num_predict mid-generation truncates JSON output from small models.
-  return runTaskText(taskType, prompt, { json: opts.json, model: opts.model, timeoutMs: opts.timeoutMs });
+  return runTaskText(taskType, prompt, {
+    json: opts.json,
+    model: opts.model,
+    timeoutMs: opts.timeoutMs,
+    // Forwarded so a caller that abandons a long multi-stage pipeline (the
+    // thematic engine's Cancel button) actually stops the generation instead
+    // of leaving the local model grinding through work nobody will read.
+    signal: opts.signal,
+  });
 }
 
 /**

@@ -1,5 +1,3 @@
-"use client";
-
 import { Card, Badge } from "@/app/_components/ui";
 import type { HealthScore, ScoreTrend } from "@/lib/portfolio/engines/health";
 

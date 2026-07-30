@@ -15,7 +15,9 @@ import { runPrompt } from "@/lib/ai";
 import { AllModelsFailedError } from "@/lib/ai/router";
 import { extractJsonArray } from "@/lib/json-extract";
 import { gatherWatchlistAlerts, type WatchlistPortfolioContext } from "@/lib/ai-watchlist";
-import type { PortfolioObjective, PortfolioConstraints, NewPositionRecommendation, PortfolioReport } from "@/lib/portfolio-analytics";
+import type { PortfolioObjective, PortfolioConstraints, NewPositionRecommendation } from "@/lib/portfolio-analytics";
+import type { UniversalPortfolioReport } from "@/lib/portfolio/report";
+import { GICS_SECTORS } from "@/lib/gics-sectors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,17 +27,30 @@ interface RequestBody {
   constraints?: Partial<PortfolioConstraints>;
 }
 
-async function getReport(): Promise<PortfolioReport | null> {
+async function getReport(): Promise<UniversalPortfolioReport | null> {
   try {
     const host = process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000";
     const res = await fetch(`${host}/api/portfolio/report`, {
       signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) return null;
-    return (await res.json()) as PortfolioReport;
+    return (await res.json()) as UniversalPortfolioReport;
   } catch {
     return null;
   }
+}
+
+/** GICS sectors the portfolio holds ~0% of — a plain coverage diff, not a fabricated ranking. */
+function missingSectorsOf(report: UniversalPortfolioReport): string[] {
+  const held = new Set(
+    report.allocation.bySector.slices.filter((s) => s.weight >= 1).map((s) => s.label),
+  );
+  return GICS_SECTORS.filter((s) => !held.has(s));
+}
+
+/** Reuses the report's own (already-computed, already-tested) concentration findings — no separate threshold invented here. */
+function overweightSectorsOf(report: UniversalPortfolioReport): string[] {
+  return report.concentration.filter((c) => c.type === "sector").map((c) => c.label);
 }
 
 function objectivePromptClause(obj: PortfolioObjective): string {
@@ -52,18 +67,23 @@ function objectivePromptClause(obj: PortfolioObjective): string {
 }
 
 function buildRecommendationPrompt(
-  report: PortfolioReport,
+  report: UniversalPortfolioReport,
   objective: PortfolioObjective,
   constraints: Partial<PortfolioConstraints>,
   watchlistSymbols: string[],
   autoQualifiedSymbols: string[] = [],
 ): string {
-  const positions = report.positions.map((p) => `${p.symbol} (${p.sector}, ${p.weight.toFixed(1)}%)`).join(", ");
-  const sectors   = report.sectorAllocation.map((s) => `${s.sector}: ${s.weight.toFixed(1)}%`).join(", ");
-  const missingExposures = (report.gaps?.missing ?? []).map((m) => `${m.name} (${m.priority} priority)`).join(", ") || "none identified";
-  const overweight = (report.gaps?.overweight ?? []).map((o) => o.sector).join(", ") || "none";
+  const positions = report.holdings
+    .filter((h) => h.symbol)
+    .map((h) => `${h.symbol} (${h.attributes.sector ?? "Unknown"}, ${h.weight.toFixed(1)}%)`)
+    .join(", ");
+  const sectors = report.allocation.bySector.slices.map((s) => `${s.label}: ${s.weight.toFixed(1)}%`).join(", ");
+  const missingExposures = missingSectorsOf(report).join(", ") || "none identified";
+  const overweight = overweightSectorsOf(report).join(", ") || "none";
   const healthScore = report.health.total;
-  const healthDims = report.health.dimensions.map((d) => `${d.name}: ${d.score}/100`).join(", ");
+  const healthDims = report.health.dimensions
+    .map((d) => `${d.name}: ${d.score != null ? `${d.score}/100` : "n/a (abstained — insufficient basis)"}`)
+    .join(", ");
   const watchlistNote = watchlistSymbols.length > 0
     ? `The user's watchlist includes: ${watchlistSymbols.join(", ")}. Prefer recommending watchlist stocks when they fit the objective.`
     : "";
@@ -182,12 +202,12 @@ export async function POST(request: Request) {
   const constraints: Partial<PortfolioConstraints> = body.constraints ?? {};
 
   const report = await getReport();
-  if (!report || report.positionCount === 0) {
+  if (!report || report.holdingCount === 0) {
     return NextResponse.json({ error: "No portfolio data available" }, { status: 404 });
   }
 
   const watchlist = listWatchlist();
-  const currentSymbols = new Set(report.positions.map((p) => p.symbol));
+  const currentSymbols = new Set(report.holdings.map((h) => h.symbol).filter((s): s is string => !!s));
   const eligibleWatchlist = watchlist.filter((w) => !currentSymbols.has(w.symbol));
   const watchlistSymbols = eligibleWatchlist.map((w) => w.symbol);
 
@@ -197,9 +217,9 @@ export async function POST(request: Request) {
   const watchlistContext: WatchlistPortfolioContext = {
     objective,
     holdingSymbols: [...currentSymbols],
-    sectorWeights: report.sectorAllocation.map((s) => ({ sector: s.sector, weight: s.weight })),
-    missingSectors: (report.gaps?.missing ?? []).map((m) => m.name),
-    overweightSectors: (report.gaps?.overweight ?? []).map((o) => o.sector),
+    sectorWeights: report.allocation.bySector.slices.map((s) => ({ sector: s.label, weight: s.weight })),
+    missingSectors: missingSectorsOf(report),
+    overweightSectors: overweightSectorsOf(report),
   };
   const autoQualifiedSymbols = (
     await gatherWatchlistAlerts(watchlistContext, { items: eligibleWatchlist })

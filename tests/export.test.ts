@@ -174,6 +174,43 @@ describe("POST /api/export/dcf", () => {
     expect(buf.length).toBeGreaterThan(1000);
     expect(isXlsxMagic(buf)).toBe(true);
   });
+
+  it("rejects assumptions the valuation engine cannot value", async () => {
+    const { POST } = await import("@/app/api/export/dcf/route");
+
+    const res = await POST(makeRequest({
+      symbol: "MSFT",
+      companyName: "Microsoft Corporation",
+      currentPrice: 420,
+      inputs: {
+        baseFcf: 70e9, growthRate1: 15, growthRate2: 10,
+        // Terminal growth at or above WACC makes the Gordon model diverge.
+        terminalGrowth: 12, discountRate: 10,
+        sharesOutstanding: 7.44e9, netDebt: -20e9,
+      },
+    }));
+
+    expect(res.status).toBe(400);
+  });
+
+  it("renders the reporting currency rather than assuming dollars", async () => {
+    const { POST } = await import("@/app/api/export/dcf/route");
+
+    const res = await POST(makeRequest({
+      symbol: "RELIANCE.NS",
+      companyName: "Reliance Industries",
+      currentPrice: 2850,
+      currency: "INR",
+      inputs: {
+        baseFcf: 500e9, growthRate1: 12, growthRate2: 8,
+        terminalGrowth: 4, discountRate: 11,
+        sharesOutstanding: 6.7e9, netDebt: 1.5e12,
+      },
+    }));
+
+    expect(res.status).toBe(200);
+    expect(isXlsxMagic(await responseToUint8(res))).toBe(true);
+  });
 });
 
 /* -------------------------------------------------------------------------- */
