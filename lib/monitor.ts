@@ -3,9 +3,13 @@ import {
   listPortfolio,
   createNotifications,
   unreadNotificationCount,
+  backfillTargetDirection,
+  getPriceAlertStates,
+  putPriceAlertStates,
 } from "@/lib/db";
 import { getQuotes } from "@/lib/yahoo";
 import { evaluateAlerts, type QuoteLite } from "@/lib/alerts";
+import { resolveTargetDirection } from "@/lib/watchlist-metrics";
 
 export interface MonitorRunResult {
   created: number;
@@ -32,18 +36,69 @@ export async function runMonitor(): Promise<MonitorRunResult> {
     quotes.map((q) => [q.symbol.toUpperCase(), { price: q.price, changePercent: q.changePercent, currency: q.currency }]),
   );
 
-  const events = evaluateAlerts({
+  /**
+   * Backfill the trigger direction for targets that predate the column.
+   *
+   * The inference itself is only sound at one moment — "the direction the price
+   * would have to travel to reach a target it has not reached yet" — so it has to
+   * be *recorded* rather than re-derived. Left unrecorded, a target that later
+   * crosses looks retroactively like a target in the other direction and silently
+   * stops firing. This is the one place in the app that holds both live prices and
+   * the database, so it is where the backfill belongs. Idempotent: after the first
+   * pass there is nothing left to write.
+   */
+  for (const w of watchlist) {
+    if (w.targetPrice == null || w.targetDirection != null) continue;
+    const q = quoteMap.get(w.symbol.toUpperCase());
+    if (!q) continue;
+    try {
+      // The low-level writer, NOT updateWatchlistItem: this is the system filling
+      // in a column that was never populated, not a person changing their mind,
+      // so it must not log a target revision or re-arm crossing detection.
+      backfillTargetDirection(w.symbol, resolveTargetDirection(null, w.targetPrice, q.price));
+    } catch {
+      /* a failed backfill just retries on the next tick */
+    }
+  }
+
+  /* The previous observation per symbol — the other half of every crossing test.
+     Read before evaluation, written after, so a crossing that happened while
+     this process was down is still detected against the older observation. */
+  const previous = getPriceAlertStates(watchlist.map((w) => w.symbol));
+
+  const { events, observations } = evaluateAlerts({
     watchlist: watchlist.map((w) => ({
       symbol: w.symbol,
       name: w.name,
       targetPrice: w.targetPrice,
+      targetDirection:
+        w.targetDirection ??
+        resolveTargetDirection(
+          null,
+          w.targetPrice,
+          // Prefer the previously-observed price: inferring a legacy row's
+          // direction from today's price flips it the moment it crosses.
+          previous.get(w.symbol.toUpperCase())?.lastPrice ?? quoteMap.get(w.symbol.toUpperCase())?.price ?? null,
+        ),
       alertPctDrop: w.alertPctDrop,
     })),
     positions: positions.map((p) => ({ symbol: p.symbol, name: p.name })),
     quotes: quoteMap,
+    previous: new Map(
+      [...previous].map(([sym, s]) => [sym, { lastPrice: s.lastPrice, lastChangePercent: s.lastChangePercent }]),
+    ),
   });
 
   const created = createNotifications(events);
+
+  // Persist last, and unconditionally: skipping the write on a tick that fired
+  // nothing would leave the baseline stale and re-report the same crossing.
+  try {
+    putPriceAlertStates(observations);
+  } catch {
+    /* a failed write just means the next tick compares against an older price */
+  }
+
   return { created, unread: unreadNotificationCount(), checked: symbols.length };
 }
 

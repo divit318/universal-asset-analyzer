@@ -185,7 +185,7 @@ describe("GET /api/export/watchlist", () => {
     const { GET } = await import("@/app/api/export/watchlist/route");
 
     // Watchlist reads from DB — it may be empty, that's fine; we just check format
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/export/watchlist"));
 
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("text/csv");
@@ -197,6 +197,46 @@ describe("GET /api/export/watchlist", () => {
     // Should have the CSV header row
     expect(text).toContain("Symbol");
     expect(text).toContain("Company Name");
+  });
+
+  it("keeps the user's target and the analyst consensus in separate columns", async () => {
+    // The two must never collapse into one "Target" column: one is the user's own
+    // number, the other is the street's.
+    const { GET } = await import("@/app/api/export/watchlist/route");
+    const text = await (await GET(new Request("http://localhost/api/export/watchlist"))).text();
+    expect(text).toContain("My Price Target");
+    expect(text).toContain("Analyst Consensus Target");
+    expect(text).toContain("Consensus Upside (%)");
+  });
+
+  it("emits a well-formed row for every record — no unescaped commas", async () => {
+    /* Regression guard: the Added column used to emit a localized "Jul 26, 2026"
+       raw, which split into two fields and shifted the last three columns of
+       every row. Field counts are the only way to catch that class of bug. */
+    const { GET } = await import("@/app/api/export/watchlist/route");
+    const text = await (await GET(new Request("http://localhost/api/export/watchlist"))).text();
+    const lines = text.split("\r\n").filter((l) => l && !l.startsWith("#"));
+    const countFields = (line: string) => {
+      let n = 1;
+      let quoted = false;
+      for (const ch of line) {
+        if (ch === '"') quoted = !quoted;
+        else if (ch === "," && !quoted) n++;
+      }
+      return n;
+    };
+    const header = countFields(lines[0]);
+    for (const line of lines.slice(1)) expect(countFields(line)).toBe(header);
+  });
+
+  it("scopes to a named list when `group` is supplied", async () => {
+    const { GET } = await import("@/app/api/export/watchlist/route");
+    // A group that cannot exist yields a header-only file rather than an error or
+    // a silent fallback to "everything".
+    const res = await GET(new Request("http://localhost/api/export/watchlist?group=999999"));
+    expect(res.status).toBe(200);
+    const lines = (await res.text()).split("\r\n").filter((l) => l && !l.startsWith("#"));
+    expect(lines).toHaveLength(1); // header only
   });
 });
 

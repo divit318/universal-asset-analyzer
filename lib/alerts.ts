@@ -12,6 +12,15 @@
  * Pure and deterministic — no DB, no network.
  */
 
+import { resolveTargetDirection } from "./watchlist-metrics";
+import {
+  crossingDedupKey,
+  detectCrossing,
+  detectDropBreach,
+  dropDedupKey,
+} from "./price-crossing";
+import type { TargetDirection } from "./types";
+
 export type AlertKind = "price_target" | "drop_alert" | "big_move";
 export type AlertSeverity = "info" | "warning";
 
@@ -33,10 +42,41 @@ export interface QuoteLite {
   currency?: string | null;
 }
 
+/**
+ * What was observed last time, per symbol — the second half of every transition
+ * test. Absent means "not armed yet", which is never an event.
+ *
+ * Supplied by the caller (`runMonitor` reads it from `price_alert_state`) rather
+ * than looked up here, so this module stays pure and testable.
+ */
+export interface PriceObservation {
+  lastPrice: number | null;
+  lastChangePercent?: number | null;
+}
+
+/** Symbols whose observation should be written back after evaluation. */
+export interface AlertEvaluation {
+  events: AlertEvent[];
+  /** Every symbol that produced a usable quote, with the value to persist. */
+  observations: { symbol: string; price: number; changePercent: number | null }[];
+}
+
 export interface WatchlistAlertInput {
   symbol: string;
   name: string;
   targetPrice: number | null;
+  /**
+   * Which way the price must move for the target to count as reached. Null for
+   * rows saved before the column existed, and resolved from the live price at
+   * evaluation time — see {@link resolveTargetDirection}.
+   *
+   * Before this field existed, this evaluator fired on `price <= target` (a buy
+   * limit) while the Watchlist page and the CSV export fired on `price >= target`
+   * (a valuation target). For any target a user actually set, one of the two was
+   * therefore firing permanently. The direction is now recorded rather than
+   * assumed, and both surfaces call {@link isTargetReached}.
+   */
+  targetDirection?: TargetDirection | null;
   alertPctDrop: number | null;
 }
 
@@ -50,43 +90,90 @@ const money = (v: number, ccy?: string | null) =>
 
 const signed = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
 
-/** Watchlist alerts: buy-target reached, or a defined daily drop breached. */
+/**
+ * Watchlist alerts — fired on a *transition*, not on a state.
+ *
+ * A target that has been satisfied for a month is not news, and the previous
+ * implementation announced it daily (a 24h dedup window was the only thing
+ * throttling it) while simultaneously suppressing a genuine second crossing on
+ * the same day. Both are fixed by comparing against the last observed price:
+ * see `lib/price-crossing.ts`.
+ *
+ * Returns the observations to persist alongside the events, so the caller writes
+ * back exactly what this evaluation compared against.
+ */
 export function evaluateWatchlistAlerts(
   items: WatchlistAlertInput[],
   quotes: Map<string, QuoteLite>,
-): AlertEvent[] {
+  previous: Map<string, PriceObservation> = new Map(),
+  now: number = Date.now(),
+): AlertEvaluation {
   const out: AlertEvent[] = [];
+  const observations: AlertEvaluation["observations"] = [];
+
   for (const it of items) {
-    const q = quotes.get(it.symbol.toUpperCase());
+    const key = it.symbol.toUpperCase();
+    const q = quotes.get(key);
     if (!q) continue;
 
-    // Buy target: the price has fallen to (or below) the level the user is waiting for.
-    if (it.targetPrice != null && q.price <= it.targetPrice) {
+    const prev = previous.get(key);
+    const prevPrice = prev?.lastPrice ?? null;
+
+    if (Number.isFinite(q.price) && q.price > 0) {
+      observations.push({
+        symbol: key,
+        price: q.price,
+        changePercent: Number.isFinite(q.changePercent) ? q.changePercent : null,
+      });
+    }
+
+    // Price target: `above` is a valuation/exit level, `below` a buy limit.
+    // Resolved against the PREVIOUS price where one exists — resolving against
+    // today's price would flip the direction of a legacy target the instant it
+    // crossed, which is the bug the direction column exists to prevent.
+    const direction = resolveTargetDirection(it.targetDirection, it.targetPrice, prevPrice ?? q.price);
+    const crossing = detectCrossing({
+      previousPrice: prevPrice,
+      currentPrice: q.price,
+      threshold: it.targetPrice,
+      direction,
+    });
+
+    if (crossing.kind === "crossed" && it.targetPrice != null) {
+      const verb = direction === "above" ? "rose to" : "fell to";
       out.push({
-        dedupKey: `wt:${it.symbol}:target`,
+        dedupKey: crossingDedupKey(it.symbol, it.targetPrice, direction, now),
         symbol: it.symbol,
         name: it.name,
         kind: "price_target",
         severity: "info",
-        title: `${it.symbol} hit your target`,
-        body: `${it.name} is ${money(q.price, q.currency)}, at or below your ${money(it.targetPrice, q.currency)} target.`,
+        title: `${it.symbol} crossed your target`,
+        body: `${it.name} ${verb} ${money(crossing.to, q.currency)} from ${money(crossing.from, q.currency)}, ${
+          direction === "above" ? "reaching" : "dropping to"
+        } your ${money(it.targetPrice, q.currency)} target.`,
       });
     }
 
-    // Drop alert: today's move is down by at least the user's threshold.
-    if (it.alertPctDrop != null && q.changePercent <= -Math.abs(it.alertPctDrop)) {
+    // Drop alert: today's decline crossed the threshold for the first time today.
+    if (
+      detectDropBreach({
+        previousChangePercent: prev?.lastChangePercent ?? null,
+        currentChangePercent: q.changePercent,
+        thresholdPct: it.alertPctDrop,
+      })
+    ) {
       out.push({
-        dedupKey: `wt:${it.symbol}:drop`,
+        dedupKey: dropDedupKey(it.symbol, now),
         symbol: it.symbol,
         name: it.name,
         kind: "drop_alert",
         severity: "warning",
         title: `${it.symbol} dropped ${signed(q.changePercent)}`,
-        body: `${it.name} is down ${signed(q.changePercent)} today to ${money(q.price, q.currency)} — past your ${Math.abs(it.alertPctDrop)}% drop alert.`,
+        body: `${it.name} is down ${signed(q.changePercent)} today to ${money(q.price, q.currency)} — past your ${Math.abs(it.alertPctDrop!)}% drop alert.`,
       });
     }
   }
-  return out;
+  return { events: out, observations };
 }
 
 /** Portfolio alerts: any holding making a large move today (default ≥7%). */
@@ -116,15 +203,22 @@ export function evaluatePortfolioAlerts(
   return out;
 }
 
-/** Evaluate every alert source at once. */
+/** Evaluate every alert source at once, returning the observations to persist. */
 export function evaluateAlerts(input: {
   watchlist: WatchlistAlertInput[];
   positions: PositionAlertInput[];
   quotes: Map<string, QuoteLite>;
+  /** Last observed price/change per symbol; omit on a cold start. */
+  previous?: Map<string, PriceObservation>;
   bigMovePct?: number;
-}): AlertEvent[] {
-  return [
-    ...evaluateWatchlistAlerts(input.watchlist, input.quotes),
-    ...evaluatePortfolioAlerts(input.positions, input.quotes, { bigMovePct: input.bigMovePct }),
-  ];
+  now?: number;
+}): AlertEvaluation {
+  const watch = evaluateWatchlistAlerts(input.watchlist, input.quotes, input.previous, input.now);
+  return {
+    events: [
+      ...watch.events,
+      ...evaluatePortfolioAlerts(input.positions, input.quotes, { bigMovePct: input.bigMovePct }),
+    ],
+    observations: watch.observations,
+  };
 }

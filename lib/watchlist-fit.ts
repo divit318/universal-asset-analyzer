@@ -26,6 +26,20 @@ export interface FitEnrichment {
   dividendYield: number | null; // %
   beta: number | null;
   geography: "US" | "IN" | "JP" | "HK" | "AU" | "EU" | "CRYPTO" | null;
+  /**
+   * Analyst consensus target, dispersion and coverage — the street's view, as
+   * opposed to the user's own `watchlist.target_price`.
+   *
+   * Ships on this payload because the fundamentals fetch behind it already
+   * receives these fields from Yahoo's `financialData` module (see
+   * `lib/enrich.ts`), so the watchlist gets consensus for all 57 names without a
+   * single extra request. The values are cached with the rest of the
+   * fundamentals row, hence the 7-day TTL below applies to them too.
+   */
+  analystTargetMean: number | null;
+  analystTargetHigh: number | null;
+  analystTargetLow: number | null;
+  analystOpinions: number | null;
 }
 
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // fundamentals change slowly
@@ -58,8 +72,17 @@ export async function enrichForFit(
     rows.filter((r) => symbols.includes(r.symbol)).map((r) => [r.symbol, r]),
   );
 
-  // 2. Fetch fundamentals for anything not cached, then persist in one batch.
-  const missing = items.filter((i) => !fundamentals.has(i.symbol.toUpperCase()));
+  /* 2. Fetch fundamentals for anything not cached — or cached by a build that
+        predates the analyst-consensus fields, which is a schema gap rather than
+        a TTL one and would otherwise leave consensus blank for a full week.
+        `analystOpinions` is the sentinel: the mapper always writes the key (as
+        null when there is no coverage), so an ABSENT key means "this row was
+        written before the field existed", which is exactly the distinction a
+        `?? null` read would erase. */
+  const missing = items.filter((i) => {
+    const cached = fundamentals.get(i.symbol.toUpperCase());
+    return !cached || !("analystOpinions" in cached);
+  });
   const fetched: StockFundamentals[] = [];
   await mapPool(missing, async (item) => {
     try {
@@ -107,6 +130,10 @@ export async function enrichForFit(
         dividendYield: null,
         beta: null,
         geography,
+        analystTargetMean: null,
+        analystTargetHigh: null,
+        analystTargetLow: null,
+        analystOpinions: null,
       } satisfies FitEnrichment;
     }
 
@@ -156,6 +183,13 @@ export async function enrichForFit(
       dividendYield: f.dividendYield,
       beta: f.beta,
       geography,
+      // `?? null` rather than a bare read: rows cached before these fields
+      // existed deserialize without them, and `undefined` would not survive the
+      // JSON round-trip to the client as an explicit "unknown".
+      analystTargetMean: f.analystTargetMean ?? null,
+      analystTargetHigh: f.analystTargetHigh ?? null,
+      analystTargetLow: f.analystTargetLow ?? null,
+      analystOpinions: f.analystOpinions ?? null,
     } satisfies FitEnrichment;
   });
 }

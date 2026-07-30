@@ -56,6 +56,12 @@ interface RawFinancialData {
   totalCash?: number;
   debtToEquity?: number;
   currentRatio?: number;
+  /* Analyst consensus. Already present in every response this module fetches —
+   * `financialData` is in MODULES — so reading it costs nothing extra. */
+  targetMeanPrice?: number;
+  targetHighPrice?: number;
+  targetLowPrice?: number;
+  numberOfAnalystOpinions?: number;
 }
 interface RawSummary {
   assetProfile?: RawProfile;
@@ -221,6 +227,17 @@ export function mapFundamentals(
     // Market beta (best-effort). Bounded to a sane band; ADR/thin names can
     // report garbage. Feeds risk-oriented objectives in the fit scorer.
     beta: sane(num(sd.beta) ?? num(raw.defaultKeyStatistics?.beta), -1, 5),
+
+    // Analyst consensus, straight out of the response already in hand. Not
+    // sanity-banded against price here: the watchlist compares it to a live
+    // quote and can judge plausibility with both numbers in view, whereas a
+    // band applied blind would silently drop legitimate targets on volatile
+    // names. Only opinion-backed targets are kept — a "consensus" of zero
+    // analysts is Yahoo echoing a stale field, not a view.
+    analystTargetMean: (fd.numberOfAnalystOpinions ?? 0) > 0 ? num(fd.targetMeanPrice) : null,
+    analystTargetHigh: (fd.numberOfAnalystOpinions ?? 0) > 0 ? num(fd.targetHighPrice) : null,
+    analystTargetLow: (fd.numberOfAnalystOpinions ?? 0) > 0 ? num(fd.targetLowPrice) : null,
+    analystOpinions: num(fd.numberOfAnalystOpinions),
   };
 }
 

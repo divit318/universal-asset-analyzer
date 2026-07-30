@@ -30,10 +30,15 @@ export async function GET(request: Request) {
     name: symbol,
     addedAt: new Date().toISOString(),
     targetPrice: null,
+    targetDirection: null,
     alertPctDrop: null,
     notes: null,
     stage: "surfaced",
     stageChangedAt: null,
+    // A synthetic item for a symbol that may not be tracked at all: it has no
+    // origin, and "not recorded" is the truthful value for one.
+    source: null,
+    sourceDetail: null,
   };
 
   const alerts = await gatherWatchlistAlerts(undefined, { items: [item] });
