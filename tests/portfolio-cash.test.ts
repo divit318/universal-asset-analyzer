@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { normalizeHoldings } from "@/lib/portfolio/model/holding";
 import { evaluate } from "@/lib/portfolio/engines/simulate";
-import { computeCashAllocation, DEFAULT_TRANCHES } from "@/lib/portfolio/engines/cash";
+import { computeCashAllocation, allocateToExactTotal, DEFAULT_TRANCHES } from "@/lib/portfolio/engines/cash";
 import { DEFAULT_CONSTRAINTS, type Objective } from "@/lib/portfolio/engines/optimize";
 import type { MarketContext, RawHolding } from "@/lib/portfolio/model/types";
 
@@ -89,6 +89,11 @@ function concentrated(c: MarketContext) {
   return evaluate(holdings, c);
 }
 
+/** Whole cents. Dollar figures are compared here rather than in dollars, because
+ * `1388900 / 100` is 138.88999999999999 in a double — the invariant is "exact to
+ * the cent", which is a statement about cents. */
+const cents = (v: number) => Math.round(v * 100);
+
 const OBJECTIVES_UNDER_TEST: Objective[] = [
   "maximize_return",
   "minimize_volatility",
@@ -128,8 +133,11 @@ describe("computeCashAllocation — determinism and value conservation", () => {
     const plan = computeCashAllocation(evaluation, 50_000, objective, c);
 
     const deployed = plan.items.reduce((s, i) => s + i.dollarAmount, 0) + plan.heldAsCash;
-    // The plan's own rounded dollar amounts sum to (very nearly) the requested cash.
-    expect(deployed).toBeCloseTo(50_000, -1);
+    // EXACTLY the requested cash, to the cent — not "very nearly". This assertion
+    // used to allow ±5 (toBeCloseTo(…, -1)), which is precisely the slack a
+    // per-item Math.round() needs to propose spending $3,001 of a $3,000 deposit.
+    // Compared in cents because `n/100` is not exactly representable in binary.
+    expect(cents(deployed)).toBe(cents(50_000));
     // `after` is the exact fully-evaluated state the tranche loop actually built —
     // no reconstruction, so this checks real conservation, not a re-derivation of it.
     expect(plan.after.totalValue).toBeCloseTo(evaluation.totalValue + 50_000, 0);
@@ -153,6 +161,127 @@ describe("computeCashAllocation — determinism and value conservation", () => {
     for (const item of plan.items) {
       expect(item.resultingWeight).toBeLessThanOrEqual(DEFAULT_CONSTRAINTS.maxHoldingPct + 1);
     }
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Share sizing — the plan may never propose spending more than it was given   */
+/* -------------------------------------------------------------------------- */
+
+describe("allocateToExactTotal", () => {
+  it("sums to the total exactly, to the cent", () => {
+    // The reported case: $3,000 over 18 tranches is $166.67 each, won 1 / 1 / 16
+    // times. Rounding each independently gave $167 + $167 + $2,667 = $3,001.
+    const tranche = 3000 / 18;
+    const out = allocateToExactTotal([tranche, tranche, tranche * 16, 0], 3000);
+    expect(out.reduce((s, v) => s + v, 0)).toBe(3000);
+  });
+
+  it.each([
+    [3000, 18],
+    [1000, 18],
+    [7, 18],
+    [12_345.67, 18],
+    [50_000, 7],
+    [999.99, 3],
+  ])("sums to $%s exactly across %s buckets, whatever the tranche fraction", (total, buckets) => {
+    const tranche = total / buckets;
+    const raw = Array.from({ length: buckets }, () => tranche);
+    const out = allocateToExactTotal(raw, total);
+    expect(out.reduce((s, v) => s + v, 0)).toBeCloseTo(total, 10);
+    // Never over-allocates a single bucket by more than the rounding unit, and
+    // never hands one a negative amount.
+    for (const [i, v] of out.entries()) {
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThanOrEqual(raw[i] + 0.01);
+    }
+  });
+
+  it("is deterministic — equal remainders break by index, not by iteration order", () => {
+    const raw = [1 / 3, 1 / 3, 1 / 3];
+    expect(allocateToExactTotal(raw, 1)).toEqual(allocateToExactTotal(raw, 1));
+  });
+
+  it("never returns a negative bucket even when the raw amounts exceed the total", () => {
+    const out = allocateToExactTotal([600, 600], 1000);
+    expect(out.every((v) => v >= 0)).toBe(true);
+    expect(out.reduce((s, v) => s + v, 0)).toBe(1000);
+  });
+});
+
+describe("computeCashAllocation — never proposes spending more than it was given", () => {
+  // $3,000 was the reported case: three positions summing to $3,001, a modal
+  // reading "Remaining as cash: -$1.00", and a footer claiming $3,000 of $3,000
+  // deployed — three different answers to one question. The executor deposits
+  // exactly `cashAmount` and then buys Σ dollarAmount, so the overshoot was real
+  // money, not a display artifact.
+  // $3,000 / 18 tranches = $166.67, the exact case reported. The rest cover other
+  // ways the tranche size lands off a cent boundary.
+  it.each([3000, 1000, 2500, 999, 100_000, 12_345.67, 7])(
+    "Σ items + heldAsCash === $%s exactly, and remaining cash is never negative",
+    (amount) => {
+      const c = ctx();
+      const plan = computeCashAllocation(concentrated(c), amount, "maximize_sharpe", c);
+      const deployed = plan.items.reduce((s, i) => s + i.dollarAmount, 0);
+
+      expect(cents(deployed) + cents(plan.heldAsCash)).toBe(cents(amount));
+      expect(cents(deployed)).toBeLessThanOrEqual(cents(amount));
+      expect(plan.heldAsCash).toBeGreaterThanOrEqual(0);
+      // Every figure is a whole number of cents — no $166.66666666666666 reaching
+      // the executor, which writes `dollarAmount / price` shares straight to the ledger.
+      for (const item of plan.items) {
+        expect(Math.abs(item.dollarAmount * 100 - cents(item.dollarAmount))).toBeLessThan(1e-6);
+      }
+    },
+  );
+
+  it.each(OBJECTIVES_UNDER_TEST)("holds the invariant for %s on the reported $3,000 deployment", (objective) => {
+    const c = ctx();
+    const plan = computeCashAllocation(concentrated(c), 3000, objective, c);
+    const deployed = plan.items.reduce((s, i) => s + i.dollarAmount, 0);
+    expect(cents(deployed) + cents(plan.heldAsCash)).toBe(cents(3000));
+    expect(cents(deployed)).toBeLessThanOrEqual(cents(3000));
+  }, 20_000);
+
+  it("quantity × price reconciles with the dollar amount beside it", () => {
+    const c = ctx();
+    const plan = computeCashAllocation(concentrated(c), 3000, "maximize_sharpe", c);
+    for (const item of plan.items) {
+      if (item.quantity == null || !item.symbol) continue;
+      const price = c.quotes.get(item.symbol)!.price;
+      expect(item.quantity * price).toBeCloseTo(item.dollarAmount, 6);
+    }
+  });
+
+  it("keeps the invariant when constraints stop the tranche loop early", () => {
+    // A 3% single-holding cap on a small portfolio blocks every option well before
+    // the 18th tranche. The unplaced tranches are money that was never deployed —
+    // it has to show up as held cash rather than vanishing from the accounting.
+    const c = ctx();
+    const tight = { ...DEFAULT_CONSTRAINTS, maxHoldingPct: 3, maxAssetClassPct: 5 };
+    const plan = computeCashAllocation(concentrated(c), 500_000, "maximize_diversification", c, tight);
+
+    const deployed = plan.items.reduce((s, i) => s + i.dollarAmount, 0);
+    expect(cents(deployed) + cents(plan.heldAsCash)).toBe(cents(500_000));
+    expect(cents(deployed)).toBeLessThanOrEqual(cents(500_000));
+  });
+
+  it("the marginal-benefit curve ends at the amount actually entered", () => {
+    const c = ctx();
+    const plan = computeCashAllocation(concentrated(c), 3000, "maximize_sharpe", c);
+    const last = plan.marginalBenefit[plan.marginalBenefit.length - 1];
+    // The x-axis' final tick is the deployment, not a rounded approximation of it.
+    expect(last.cumulativeAmount).toBeLessThanOrEqual(3000);
+    expect(last.cumulativeAmount).toBeCloseTo(3000, 2);
+  });
+
+  it("states the same deployed figure in the summary as the items sum to", () => {
+    const c = ctx();
+    const plan = computeCashAllocation(concentrated(c), 3000, "maximize_sharpe", c);
+    const deployed = plan.items.reduce((s, i) => s + i.dollarAmount, 0);
+    expect(plan.summary).toContain(
+      deployed.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+    );
   });
 });
 

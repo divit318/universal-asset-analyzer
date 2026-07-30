@@ -24,7 +24,8 @@ export interface RiskComparisonSide {
   maxDrawdown: number | null;
   var95Pct: number | null;
   cvar95Pct: number | null;
-  hhi: number;
+  /** Asset-class HHI. Named by denominator so it can never be paired with a position-level figure. */
+  assetClassHhi: number;
   topHoldingWeight: number;
   topSectorWeight: number;
   illiquidPct: number;

@@ -35,7 +35,7 @@ function riskComparisonOf(before: PortfolioEvaluation, after: PortfolioEvaluatio
     maxDrawdown: e.risk.maxDrawdown,
     var95Pct: e.risk.var95Pct,
     cvar95Pct: e.risk.cvar95Pct,
-    hhi: e.allocation.byAssetClass.hhi,
+    assetClassHhi: e.allocation.byAssetClass.hhi,
     topHoldingWeight: e.risk.topHoldingWeight,
     topSectorWeight: e.risk.topSectorWeight,
     illiquidPct: e.risk.illiquidPct,

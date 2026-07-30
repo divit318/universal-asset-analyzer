@@ -34,10 +34,12 @@
 import { CANDIDATES, candidateToRaw } from "./candidates";
 import { applyChange, evaluate, simulate, type PortfolioEvaluation, type PortfolioChange } from "./simulate";
 import { normalizeHoldings } from "../model/holding";
-import type { Holding, MarketContext, RawHolding, PortfolioAssetClass } from "../model/types";
+import { getClassAdapter } from "../classes";
+import type { Holding, HoldingUnit, MarketContext, RawHolding, PortfolioAssetClass } from "../model/types";
 import { PORTFOLIO_CLASS_LABEL } from "../model/types";
 import { OBJECTIVES, normalize, DEFAULT_CONSTRAINTS, type Objective, type Constraints } from "./optimize";
 import { pearson } from "../../portfolio-analytics";
+import { assessConfidence } from "./confidence";
 
 export const DEFAULT_TRANCHES = 18;
 const ELIGIBLE_SCORE_MIN = 55;
@@ -70,8 +72,39 @@ export interface CashAllocationItem {
   name: string;
   assetClass: PortfolioAssetClass;
   assetClassLabel: string;
+  /**
+   * What this position will be bought with, to the cent.
+   *
+   * NOT independently rounded. Σ items + `heldAsCash` === `cashAmount` EXACTLY —
+   * see allocateToExactTotal(). This used to be `Math.round(amount)` per item,
+   * which is how a $3,000 deployment came to propose $167 + $167 + $2,667 =
+   * $3,001: the tranche size ($166.67) is not a whole number of dollars, so three
+   * independent roundings added a dollar that the user never had. The executor
+   * consumes this field and the deposit lot is only `cashAmount`, so the overshoot
+   * was not cosmetic — it spent money that was never deposited.
+   */
   dollarAmount: number;
-  shareCount: number | null;
+  /**
+   * The quantity execution will actually record — `dollarAmount / price`, NOT
+   * floored.
+   *
+   * This used to be `Math.floor(amount / price)`, which made the preview
+   * disagree with the write. buildCashDepositLots() records
+   * `dollarAmount / price` in full precision (the ledger stores REAL shares and
+   * lib/portfolio-lots.ts deliberately preserves fractional precision), so the
+   * floor was a display-only truncation with two visible consequences:
+   *
+   *   • Irreconcilable arithmetic. A $1,000 allocation to a $301 stock read
+   *     "$1,000 · 3 sh" — $903 — while the ledger recorded 3.3223 shares.
+   *   • A zero. A $1,000 allocation to BTC at $60,000 read "0 sh", i.e. the plan
+   *     appeared to recommend buying nothing while it in fact bought 0.0167 BTC.
+   *
+   * A preview that computes its numbers differently from the executor guarantees
+   * divergence, so the preview now reports exactly what will be written.
+   */
+  quantity: number | null;
+  /** Unit `quantity` is denominated in — coins, shares, units — for display. */
+  unit: HoldingUnit;
   /** Weight this position will have AFTER the cash is deployed. */
   resultingWeight: number;
   /** What this vehicle is / why it exists as a candidate — static context, not a measured claim. */
@@ -86,8 +119,21 @@ export interface CashAllocationItem {
   diversificationDelta: number;
   /** Change in expected annual income ($), summed across winning rounds. */
   incomeDelta: number;
-  /** Confidence of the resulting holding's score, where one exists. Never fabricated when absent. */
-  confidence: number | null;
+  /**
+   * 0-100, the SAME confidence definition the Decision Center uses — how much of
+   * the evidence behind this item's numbers was actually observed. See
+   * engines/confidence.ts.
+   *
+   * Was `resulting?.score?.confidence ?? null`, i.e. the confidence of the
+   * holding's own quality score, and null for every candidate the portfolio did
+   * not already own — so the one number on this panel labelled "confidence"
+   * appeared on some rows and not others, and meant something different from the
+   * "confidence" on a Decision Center card. It is now present for every item and
+   * comparable with every other confidence in the module.
+   */
+  confidence: number;
+  /** Why the confidence is what it is, one deterministic sentence per factor. */
+  confidenceBasis: string[];
   /** 1 = strongest measured contribution to this plan. */
   rank: number;
   alternatives: AlternativeConsidered[];
@@ -112,7 +158,15 @@ export interface CashAllocationPlan {
   cashAmount: number;
   objective: Objective;
   items: CashAllocationItem[];
-  /** Amount deliberately left in cash. */
+  /**
+   * Amount left in cash — deliberately (cash outscored every alternative) or
+   * because a tranche found nowhere eligible to go.
+   *
+   * INVARIANT: `Σ items.dollarAmount + heldAsCash === cashAmount`, exactly, to
+   * the cent. Every "deployed vs. remaining" figure in the UI is derived from
+   * these two numbers, so this is the assertion that keeps them agreeing —
+   * tests/portfolio-cash.test.ts checks it as an equality, not an approximation.
+   */
   heldAsCash: number;
   heldAsCashReason: HeldCashReason;
   /** Total measured health improvement from the whole plan. */
@@ -330,6 +384,47 @@ function relativeScorePct(altScore: number, winnerBest: number): number {
 }
 
 /**
+ * Round a set of raw dollar amounts to whole cents so that they sum to `total`
+ * EXACTLY — largest-remainder (Hare–Niemeyer) apportionment.
+ *
+ * A plan that proposes spending more than the user has is not a display glitch:
+ * the executor deposits exactly `cashAmount` and then buys Σ dollarAmount, so an
+ * overshoot writes a ledger that spends money it never received. Rounding each
+ * position independently cannot be made safe by choosing a finer unit either —
+ * cents overshoot by cents instead of by dollars — so the residual has to be
+ * apportioned rather than ignored: floor everything, then hand the leftover cents
+ * out one at a time, largest fractional part first. That is deterministic (equal
+ * remainders break by index), never negative, and exact by construction.
+ */
+export function allocateToExactTotal(raw: number[], total: number): number[] {
+  const targetCents = Math.round(total * 100);
+  const cents = raw.map((r) => Math.floor(Math.max(0, r) * 100));
+  const placed = cents.reduce((s, c) => s + c, 0);
+  let leftover = targetCents - placed;
+
+  if (leftover > 0) {
+    const order = raw
+      .map((r, i) => ({ i, frac: Math.max(0, r) * 100 - Math.floor(Math.max(0, r) * 100) }))
+      .sort((a, b) => b.frac - a.frac || a.i - b.i);
+    for (let k = 0; k < order.length && leftover > 0; k++, leftover--) cents[order[k].i]++;
+    // Σ raw is the deployable total by construction, so the leftover cannot exceed
+    // one cent per bucket. If a caller ever breaks that, the remainder goes to the
+    // largest bucket rather than silently disappearing from the total.
+    if (leftover > 0 && cents.length > 0) {
+      const largest = cents.reduce((best, c, i) => (c > cents[best] ? i : best), 0);
+      cents[largest] += leftover;
+    }
+  } else if (leftover < 0) {
+    // Σ raw exceeded the total (only reachable if a caller passes inconsistent
+    // inputs). Take the excess off the largest bucket so the invariant still holds.
+    const largest = cents.reduce((best, c, i) => (c > cents[best] ? i : best), 0);
+    cents[largest] = Math.max(0, cents[largest] + leftover);
+  }
+
+  return cents.map((c) => c / 100);
+}
+
+/**
  * Deploy `cashAmount` under `objective`, subject to `constraints`. Deterministic
  * and idempotent: identical inputs always produce identical output, and applying
  * the plan then re-running this function on the result proposes no further
@@ -390,7 +485,8 @@ export function computeCashAllocation(
 
   let cashRoundsBeatRealAlternative = 0;
   let cashRoundsBelowThreshold = 0;
-  let cashRoundsNoRealAlternative = 0;
+  /** Tranches the loop actually placed. Fewer than `tranches` when every option was constraint-blocked. */
+  let tranchesPlaced = 0;
 
   for (let t = 0; t < tranches; t++) {
     const roundEntries: {
@@ -440,10 +536,11 @@ export function computeCashAllocation(
     const winner = eligible[0];
 
     if (winner.option.key === "cash") {
+      // No runner-up at all means nothing was even eligible to compete, which is
+      // the "no_opportunity" default heldAsCashReason starts from.
       const runnerUp = eligible[1];
-      if (!runnerUp) cashRoundsNoRealAlternative++;
-      else if (runnerUp.score < NEGLIGIBLE_SCORE_THRESHOLD) cashRoundsBelowThreshold++;
-      else cashRoundsBeatRealAlternative++;
+      if (runnerUp && runnerUp.score < NEGLIGIBLE_SCORE_THRESHOLD) cashRoundsBelowThreshold++;
+      else if (runnerUp) cashRoundsBeatRealAlternative++;
     }
 
     const runnerUps = eligible.slice(1, 4);
@@ -470,25 +567,40 @@ export function computeCashAllocation(
 
     totalDelta += winner.healthDelta;
     current = winner.after;
+    tranchesPlaced = t + 1;
     marginalBenefit.push({
-      cumulativeAmount: Math.round((t + 1) * trancheSize),
+      cumulativeAmount: Math.round((t + 1) * trancheSize * 100) / 100,
       healthDelta: Math.round(totalDelta * 10) / 10,
     });
   }
 
   const finalTotal = current.totalValue;
   const items: CashAllocationItem[] = [];
-  let heldAsCash = 0;
 
-  for (const { option, amount, healthDelta, alignmentDelta, riskDeltaSum, riskDeltaCount, diversificationDelta, incomeDelta } of wonBy.values()) {
-    if (option.key === "cash") {
-      heldAsCash = Math.round(amount);
-      continue;
-    }
+  // ── One apportionment, not N independent roundings ─────────────────────────
+  // The buckets are every position the tranche loop bought, plus cash last. Cash
+  // absorbs both the tranches cash itself won AND any tranche the loop never
+  // placed (it breaks early when every option is constraint-blocked): that money
+  // is undeployed, which IS held cash, and attributing it anywhere else is how
+  // "deployed + remaining" stops adding up to what the user entered.
+  const wins = [...wonBy.values()].filter((w) => w.option.key !== "cash");
+  const unplaced = Math.max(0, cashAmount - tranchesPlaced * trancheSize);
+  const dollars = allocateToExactTotal(
+    [...wins.map((w) => w.amount), (wonBy.get("cash")?.amount ?? 0) + unplaced],
+    cashAmount,
+  );
+  const heldAsCash = dollars[dollars.length - 1];
+
+  for (const [i, { option, healthDelta, alignmentDelta, riskDeltaSum, riskDeltaCount, diversificationDelta, incomeDelta }] of wins.entries()) {
+    const dollarAmount = dollars[i];
     const price = option.symbol ? ctx.quotes.get(option.symbol.toUpperCase())?.price ?? null : null;
     const resulting = current.holdings.find(
       (h) => h.symbol === option.symbol || h.id === option.key.replace(/^add:/, ""),
     );
+
+    // Same definition, same inputs as the Decision Center: judged on the evidence
+    // for the asset being bought, against the pre-deployment baseline.
+    const assessed = assessConfidence(evaluation, resulting ?? null, { riskMeasured: riskDeltaCount > 0 });
 
     const winnerBest = bestScoreSeen.get(option.key) ?? 0;
     const alternatives: AlternativeConsidered[] = [...(closeAlternatives.get(option.key)?.values() ?? [])]
@@ -507,18 +619,25 @@ export function computeCashAllocation(
       name: option.label,
       assetClass: option.assetClass,
       assetClassLabel: PORTFOLIO_CLASS_LABEL[option.assetClass] ?? option.assetClass,
-      dollarAmount: Math.round(amount),
-      shareCount: price != null && price > 0 ? Math.floor(amount / price) : null,
+      dollarAmount,
+      // Exactly what buildCashDepositLots() will write — derived from the same
+      // apportioned figure the executor consumes, so quantity × price reconciles
+      // with the dollar amount beside it and Σ items can never exceed the deposit.
+      quantity: price != null && price > 0 ? dollarAmount / price : null,
+      // The class adapter already declares its canonical unit, so this cannot
+      // drift from what the ledger stores.
+      unit: getClassAdapter(option.assetClass).unit,
       resultingWeight: resulting
         ? Math.round((resulting.valuation.valueBase / Math.max(finalTotal, 1)) * 1000) / 10
-        : Math.round((amount / Math.max(finalTotal, 1)) * 1000) / 10,
+        : Math.round((dollarAmount / Math.max(finalTotal, 1)) * 1000) / 10,
       reason: option.reason,
       healthDelta: Math.round(healthDelta * 10) / 10,
       objectiveAlignmentDelta: Math.round(alignmentDelta * 10) / 10,
       riskDelta: riskDeltaCount > 0 ? Math.round(riskDeltaSum * 10) / 10 : null,
       diversificationDelta: Math.round(diversificationDelta),
       incomeDelta: Math.round(incomeDelta),
-      confidence: resulting?.score?.confidence ?? null,
+      confidence: assessed.score,
+      confidenceBasis: assessed.basis,
       rank: 0,
       alternatives,
     });
@@ -542,18 +661,22 @@ export function computeCashAllocation(
     });
   }
 
-  let heldAsCashReason: HeldCashReason = "cash_optimal";
-  if (heldAsCash > 0) {
-    if (cashRoundsBeatRealAlternative > 0) heldAsCashReason = "cash_optimal";
-    else if (cashRoundsBelowThreshold > 0) heldAsCashReason = "below_threshold";
-    else if (cashRoundsNoRealAlternative > 0) heldAsCashReason = "no_opportunity";
-  }
+  // Cash that no tranche ever competed for (the loop broke early, or an
+  // apportionment remainder) had no opportunity presented to it — which is the
+  // one of these three reasons that is literally true.
+  let heldAsCashReason: HeldCashReason = "no_opportunity";
+  if (cashRoundsBeatRealAlternative > 0) heldAsCashReason = "cash_optimal";
+  else if (cashRoundsBelowThreshold > 0) heldAsCashReason = "below_threshold";
 
+  // Stated from the same apportioned figures the items carry, so the summary, the
+  // per-item rows, the footer total and the confirmation modal cannot disagree.
+  const deployed = items.reduce((s, it) => s + it.dollarAmount, 0);
+  const money = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const summary =
     items.length === 0
-      ? `The portfolio is already well-aligned with the ${OBJECTIVES[objective].label} objective. Holding the full $${cashAmount.toLocaleString()} in cash is the honest recommendation — no available exposure measurably improves it.`
-      : `Deploying $${(cashAmount - heldAsCash).toLocaleString()} across ${items.length} ${items.length === 1 ? "position" : "positions"} under the ${OBJECTIVES[objective].label} objective` +
-        (heldAsCash > 0 ? `, holding $${heldAsCash.toLocaleString()} in cash` : "") +
+      ? `The portfolio is already well-aligned with the ${OBJECTIVES[objective].label} objective. Holding the full $${money(cashAmount)} in cash is the honest recommendation — no available exposure measurably improves it.`
+      : `Deploying $${money(deployed)} across ${items.length} ${items.length === 1 ? "position" : "positions"} under the ${OBJECTIVES[objective].label} objective` +
+        (heldAsCash > 0 ? `, holding $${money(heldAsCash)} in cash` : "") +
         `. Projected health improvement: ${totalDelta >= 0 ? "+" : ""}${totalDelta.toFixed(1)} points.`;
 
   return {

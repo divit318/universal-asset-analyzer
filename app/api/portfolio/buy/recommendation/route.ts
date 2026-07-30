@@ -8,7 +8,7 @@
  *
  *   - lib/portfolio/report.ts's buildEvaluation() for the real portfolio state
  *     (same two-pass MarketContext build every portfolio route uses)
- *   - lib/portfolio/model/types.ts's detectPortfolioAssetClass() for the asset
+ *   - risk-models.ts's assetClassFromQuoteType() for the asset
  *     class — the user is never asked to classify the asset
  *   - lib/portfolio/engines/position-size.ts for the recommended size, the
  *     marginal-benefit curve, and alternative-size scenarios
@@ -25,8 +25,10 @@ import { getQuotes } from "@/lib/yahoo";
 import { buildEvaluation } from "@/lib/portfolio/report";
 import { computePositionSizing, computePositionSizingAtAmount } from "@/lib/portfolio/engines/position-size";
 import { computeRecommendations } from "@/lib/portfolio/engines/recommend";
+import { isIndivisibleHolding } from "@/lib/portfolio/engines/transaction";
 import { OBJECTIVES, DEFAULT_CONSTRAINTS, type Objective, type Constraints } from "@/lib/portfolio/engines/optimize";
-import { detectPortfolioAssetClass, type PortfolioAssetClass } from "@/lib/portfolio/model/types";
+import { type PortfolioAssetClass } from "@/lib/portfolio/model/types";
+import { assetClassFromQuoteType } from "@/lib/portfolio/classes/reference/risk-models";
 import { buildAiExplanation, buildPositionSizingWhy, buildSummary } from "@/lib/portfolio/engines/position-size-explain";
 
 export const runtime = "nodejs";
@@ -84,7 +86,7 @@ export async function POST(request: Request) {
     if (!quote || !Number.isFinite(quote.price) || quote.price <= 0) {
       return NextResponse.json({ error: `No live price available for ${symbol}` }, { status: 502 });
     }
-    const assetClass = detectPortfolioAssetClass(quote.assetType);
+    const assetClass = assetClassFromQuoteType(symbol, quote.name ?? symbol, quote.assetType);
     const name = body.name?.trim() || quote.name || symbol;
 
     const { ctx, evaluation } = await buildEvaluation({ objective, extraCandidateSymbols: [symbol] });
@@ -113,6 +115,16 @@ export async function POST(request: Request) {
       for (const r of recs) {
         if (remaining <= 0) break;
         if (r.change.kind !== "sell") continue;
+        // Funding offers a DOLLAR AMOUNT of a holding, so it may only ever offer
+        // holdings the ledger can sell in part. The Decision Center is right to
+        // say "your home is 40% of the portfolio" — that trim recommendation is
+        // real advice — but a manually-valued asset has no share ledger, so
+        // "$40,000 of the home" is a trade that does not exist, and offering it
+        // here put a specific dollar figure beside the asset's own name under
+        // "no review needed". Filtered at the funding boundary rather than in
+        // recommend.ts, so the advice is unchanged and only the automated
+        // execution path is constrained.
+        if (isIndivisibleHolding(r.change.holdingId)) continue;
         const amount = Math.min(r.amount, remaining);
         if (amount <= 0) continue;
         sellSuggestions.push({ holdingId: r.change.holdingId, symbol: r.symbol, name: r.subject, amount: Math.round(amount), rationale: r.rationale });

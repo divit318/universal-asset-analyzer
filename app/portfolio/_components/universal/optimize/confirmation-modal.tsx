@@ -36,14 +36,31 @@ export function ConfirmationModal({
           <span className="text-muted">Trades selected</span>
           <span className="text-right font-mono font-semibold text-foreground">{summary.count}</span>
           <span className="text-muted">Capital deployed (buys)</span>
-          <span className="text-right font-mono font-semibold text-positive">{formatCurrency(summary.netBuys)}</span>
+          <span className="text-right font-mono font-semibold text-positive">{formatCurrency(summary.buys)}</span>
           <span className="text-muted">Capital received (sells)</span>
-          <span className="text-right font-mono font-semibold text-negative">{formatCurrency(summary.netSells)}</span>
+          <span className="text-right font-mono font-semibold text-negative">{formatCurrency(summary.sells)}</span>
           <span className="text-muted">Net exposure</span>
           <span className="text-right font-mono font-semibold text-foreground">
             {summary.netCash > 0 ? "+" : ""}{formatCurrency(summary.netCash)}
           </span>
+          {/* The last thing shown before the irreversible button is where the
+              money comes from. A selection whose buys exceed its sells is funded
+              out of the cash balance, and one that exceeds THAT too cannot be
+              executed as shown — the executor caps its cash draw at what exists
+              and the excess buys would inflate tracked value out of nothing. */}
+          <span className="text-muted">Cash after settlement</span>
+          <span className={`text-right font-mono font-semibold ${summary.shortfall > 0 ? "text-negative" : "text-foreground"}`}>
+            {formatCurrency(summary.cashAfter)}
+          </span>
         </div>
+
+        {summary.shortfall > 0 && (
+          <p className="rounded-lg border border-negative/30 bg-negative/[0.06] px-3 py-2 text-[11px] leading-relaxed text-negative">
+            This selection buys {formatCurrency(summary.shortfall)} more than its sells plus your{" "}
+            {formatCurrency(summary.cashAvailable)} cash balance can fund. Deselect some buys, or add
+            cash, before implementing.
+          </p>
+        )}
 
         {preview && (
           <div className="flex flex-col divide-y divide-border/40 rounded-lg border border-border/60 bg-surface/40 px-3 py-1">

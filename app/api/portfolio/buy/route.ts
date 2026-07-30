@@ -14,10 +14,11 @@
 import { NextResponse } from "next/server";
 import { isValidSymbol } from "@/lib/market";
 import { getQuotes } from "@/lib/yahoo";
-import { addUniversalLot, executeTrades, type TradeToExecute } from "@/lib/portfolio/engines/transaction";
+import { addUniversalLot, executeTrades, isIndivisibleHolding, type TradeToExecute } from "@/lib/portfolio/engines/transaction";
 import { buildEvaluation } from "@/lib/portfolio/report";
 import { listRawHoldings } from "@/lib/portfolio/store";
-import { TICKER_PRICED_ASSET_CLASSES, detectPortfolioAssetClass, type PortfolioAssetClass } from "@/lib/portfolio/model/types";
+import { TICKER_PRICED_ASSET_CLASSES, type PortfolioAssetClass } from "@/lib/portfolio/model/types";
+import { assetClassFromQuoteType } from "@/lib/portfolio/classes/reference/risk-models";
 import type { Objective } from "@/lib/portfolio/engines/optimize";
 
 export const runtime = "nodejs";
@@ -93,6 +94,23 @@ export async function POST(request: Request) {
     if (!Array.isArray(body.sellFirst) || body.sellFirst.some((s) => !s.holdingId || !Number.isFinite(s.amount) || s.amount <= 0)) {
       return NextResponse.json({ error: "`sellFirst` must be an array of { holdingId, amount }" }, { status: 400 });
     }
+    // Funding raises a DOLLAR AMOUNT, which is a partial sell by construction —
+    // and a manually-valued asset has no share ledger to sell part of. Left
+    // unchecked, `{ holdingId: "manual:home", amount: 40_000 }` reached
+    // buildLotWrites(), which deleted the whole $800k home and credited its full
+    // value to cash: total portfolio value unchanged, so nothing on screen moved.
+    // The engine now refuses this, but it is refused HERE too, before the quote
+    // fetch, so the caller gets a specific error instead of a purchase that
+    // quietly went unfunded.
+    const indivisible = body.sellFirst.filter((s) => isIndivisibleHolding(s.holdingId));
+    if (indivisible.length > 0) {
+      return NextResponse.json(
+        {
+          error: `Cannot raise cash from ${indivisible.map((s) => s.holdingId.slice("manual:".length)).join(", ")}: manually-valued assets have no share ledger and cannot be partially sold. Fund this purchase from cash or from a market-priced holding.`,
+        },
+        { status: 400 },
+      );
+    }
   }
 
   // Price is ALWAYS the live server-fetched quote — never trust a client-supplied
@@ -139,7 +157,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Computed share quantity was zero or invalid" }, { status: 400 });
   }
 
-  const resolvedClass = assetClass ?? detectPortfolioAssetClass(quote.assetType);
+  // One classification authority, at booking time too — see risk-models.ts. Whatever
+  // is booked here is superseded at read time by the same resolver once fund data
+  // exists, so this cannot pin a wrong class into the ledger.
+  const resolvedClass = assetClass ?? assetClassFromQuoteType(symbol, quote.name ?? symbol, quote.assetType);
 
   const name = body.name?.trim() || quote.name || symbol;
 

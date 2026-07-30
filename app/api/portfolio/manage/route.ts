@@ -11,7 +11,7 @@
  */
 import { NextResponse } from "next/server";
 import { buildEvaluation } from "@/lib/portfolio/report";
-import { executeTrades, summaryOf, type TradeToExecute } from "@/lib/portfolio/engines/transaction";
+import { executeTrades, isIndivisibleHolding, summaryOf, type TradeToExecute } from "@/lib/portfolio/engines/transaction";
 import type { Objective } from "@/lib/portfolio/engines/optimize";
 import { formatCurrency } from "@/lib/format";
 
@@ -52,11 +52,11 @@ export async function POST(request: Request) {
   }
 
   // Manual-asset classes (real estate, private markets, alternatives,
-  // structured products) have no lot ledger and no partial-quantity concept
-  // — buildLotWrites treats ANY trade against one as a full exit regardless
-  // of sign, so a "buy more" here would silently delete the asset instead.
-  // Only an explicit, confirmed full sell is allowed.
-  const isManual = holding.id.startsWith("manual:");
+  // structured products) have no lot ledger and no partial-quantity concept, so
+  // only an explicit, confirmed full sell is allowed. buildLotWrites() now
+  // enforces this itself for every caller; this stays as the earlier, friendlier
+  // refusal that can name the right place to edit the asset instead.
+  const isManual = isIndivisibleHolding(holding.id);
   if (isManual && !(body.action === "sell" && body.full)) {
     return NextResponse.json(
       {

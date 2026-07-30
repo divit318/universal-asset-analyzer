@@ -14,6 +14,8 @@ import { MarginalBenefitChart } from "./cash/marginal-benefit-chart";
 import { AnalysisPanel } from "./cash/analysis-panel";
 import { CashConfirmationModal } from "./cash/cash-confirmation-modal";
 import { SnapshotHistory } from "./optimize/snapshot-history";
+import { deployBlockedReason } from "./cash/deploy-guard";
+import type { CashPlanResponse } from "./cash/types";
 
 /**
  * The Capital Allocation Engine — "How should I deploy new cash?"
@@ -52,8 +54,13 @@ export function CashPanel({ onExecuted }: { onExecuted?: () => void }) {
   const selection = useCashSelection(plan?.items ?? []);
   const objectiveEntries = Object.entries(OBJECTIVES) as [Objective, ObjectiveConfig][];
 
+  /** The exact plan object already written to the ledger — see deployBlockedReason(). */
+  const [executedPlan, setExecutedPlan] = useState<CashPlanResponse | null>(null);
+  const blocked = deployBlockedReason(plan, executedPlan, loading);
+  const alreadyExecuted = blocked === "already-executed";
+
   async function handleConfirmedExecute() {
-    if (!plan) return;
+    if (!plan || blocked) return;
     setSubmitting(true);
     try {
       const res = await fetch("/api/portfolio/allocate-cash/execute", {
@@ -69,6 +76,9 @@ export function CashPanel({ onExecuted }: { onExecuted?: () => void }) {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Failed to deploy cash");
 
+      // Before onExecuted(), so the plan is marked spent even if the parent's
+      // refresh throws — the guard must not depend on a refetch succeeding.
+      setExecutedPlan(plan);
       setShowConfirm(false);
       setSnapshotRefreshSignal((n) => n + 1);
       onExecuted?.();
@@ -88,6 +98,10 @@ export function CashPanel({ onExecuted }: { onExecuted?: () => void }) {
                   body: JSON.stringify({ snapshotId }),
                 });
                 if (!undoRes.ok) throw new Error("Undo failed");
+                // The write has been reverted, so this plan is no longer spent
+                // and may legitimately be deployed again. Leaving it flagged as
+                // executed would be a different lie than the one this guard fixes.
+                setExecutedPlan(null);
                 setSnapshotRefreshSignal((n) => n + 1);
                 onExecuted?.();
                 toast("Deployment reverted.", "info");
@@ -272,17 +286,33 @@ export function CashPanel({ onExecuted }: { onExecuted?: () => void }) {
 
           <SnapshotHistory refreshSignal={snapshotRefreshSignal} />
 
+          {/* The footer states what this plan IS, and the button is live only
+              while the plan is both current and unspent. It used to keep reading
+              "$X of $X deployed" beside an enabled button after the deployment
+              had already been written — the one piece of UI that could double-
+              spend the ledger on a single stray click. */}
           <div className="sticky bottom-4 z-20 flex items-center justify-between gap-3 rounded-lg border border-border bg-surface/95 p-3 shadow-2xl backdrop-blur">
             <div className="flex flex-col">
               <span className="text-xs font-semibold text-foreground">
-                {selection.selectedItems.length} position{selection.selectedItems.length === 1 ? "" : "s"} selected
+                {alreadyExecuted
+                  ? `Deployed — ${formatCurrency(selection.totalSelected)} across ${selection.selectedItems.length} position${selection.selectedItems.length === 1 ? "" : "s"}`
+                  : `${selection.selectedItems.length} position${selection.selectedItems.length === 1 ? "" : "s"} selected`}
               </span>
               <span className="text-[11px] text-muted">
-                {formatCurrency(selection.totalSelected)} of {formatCurrency(plan.cashAmount)} deployed
+                {alreadyExecuted
+                  ? "This plan has been executed. Change the amount or objective to plan another deployment."
+                  : blocked === "recomputing"
+                    ? "Recomputing for the new inputs — the plan below is the previous one."
+                    : `${formatCurrency(selection.totalSelected)} of ${formatCurrency(plan.cashAmount)} to deploy`}
               </span>
             </div>
-            <Button variant="primary" size="sm" onClick={() => setShowConfirm(true)}>
-              Deploy Cash
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setShowConfirm(true)}
+              disabled={blocked != null}
+            >
+              {alreadyExecuted ? "Deployed" : blocked === "recomputing" ? "Recomputing…" : "Deploy Cash"}
             </Button>
           </div>
 

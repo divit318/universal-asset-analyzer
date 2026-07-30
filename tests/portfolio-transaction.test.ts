@@ -96,14 +96,71 @@ describe("buildLotWrites", () => {
     expect(lots[0].shares).toBeCloseTo(holding.quantity, 6);
   });
 
-  it("treats any trade against a manual-asset holding as a full delete, never a lot write", () => {
+  /* The GLD bug: two rebalances that both meant "close this position" left
+     0.0005 shares worth $0.18 behind, because the sell was denominated in
+     dollars rounded to the nearest dollar and converted back to units at
+     execution. The residue then rendered as a holding in the Commodities group,
+     with a weight, a P&L and a quality score. */
+  it("snaps a near-total SELL to the whole position rather than leaving dust behind", () => {
+    const c = ctx();
+    const { holdings } = normalizeHoldings([raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 1008.405485345523 })], c);
+    const evaluation = evaluate(holdings, c);
+    const holding = evaluation.holdings[0];
+
+    // A full exit whose dollar figure has been rounded down to the nearest dollar
+    // — exactly what the optimizer used to emit.
+    const trades: TradeToExecute[] = [{
+      holdingId: holding.id, symbol: "AAPL", name: "Apple", assetClass: "equity",
+      dollarDelta: -Math.round(holding.valuation.valueBase - 0.5),
+      reason: "full exit",
+    }];
+
+    const { lots } = buildLotWrites(evaluation, trades, { objective: "maximize_sharpe" });
+    expect(lots).toHaveLength(1);
+    expect(lots[0].kind).toBe("sell");
+    expect(lots[0].shares).toBe(holding.quantity);
+  });
+
+  it("leaves a deliberate partial SELL partial — the snap is for rounding dust only", () => {
     const c = ctx();
     const { holdings } = normalizeHoldings([raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 100 })], c);
+    const evaluation = evaluate(holdings, c);
+    const holding = evaluation.holdings[0];
+    const price = holding.valuation.valueBase / holding.quantity;
+
+    // 95% of the position: the leftover is worth far more than a dollar, so it is
+    // a position the user asked to keep, not a rounding artifact.
+    const trades: TradeToExecute[] = [{
+      holdingId: holding.id, symbol: "AAPL", name: "Apple", assetClass: "equity",
+      dollarDelta: -holding.valuation.valueBase * 0.95, reason: "trim",
+    }];
+
+    const { lots } = buildLotWrites(evaluation, trades, { objective: "maximize_sharpe" });
+    expect(lots[0].shares).toBeCloseTo(95, 6);
+    expect(lots[0].shares).toBeLessThan(holding.quantity);
+    expect((holding.quantity - lots[0].shares) * price).toBeGreaterThan(1);
+  });
+
+  it("turns a FULL disposal of a manual-asset holding into a delete, never a lot write", () => {
+    // This test previously asserted that ANY trade against a `manual:` id deletes
+    // the asset — including a −$20,000 trade against a position worth far more.
+    // That was the bug: the id prefix alone triggered the delete. Fullness is now
+    // derived from the trade's own numbers, so the case is stated with a real
+    // holding and a delta that genuinely covers it. The partial and buy cases are
+    // pinned in tests/portfolio-manual-asset-disposal.test.ts.
+    const c = ctx();
+    const { holdings } = normalizeHoldings([
+      raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 100 }),
+      raw({
+        id: "manual:abc-123", assetClass: "structured_product", name: "MSFT Barrier Reverse Convertible",
+        costBasis: 20_000, manualValue: 20_000, manualValueAsOf: new Date().toISOString(), meta: { details: {} },
+      }),
+    ], c);
     const evaluation = evaluate(holdings, c);
 
     const trades: TradeToExecute[] = [{
       holdingId: "manual:abc-123", symbol: null, name: "MSFT Barrier Reverse Convertible",
-      assetClass: "structured_product", dollarDelta: -20000, reason: "above target",
+      assetClass: "structured_product", dollarDelta: -20_000, reason: "above target",
     }];
 
     const { lots, manualAssetIdsToDelete, skipped } = buildLotWrites(evaluation, trades, { objective: "maximize_return" });

@@ -6,10 +6,20 @@ import { formatCurrency } from "@/lib/format";
 import { useChartTheme } from "@/app/_components/chart-theme";
 import type { MarginalBenefitPoint } from "@/lib/portfolio/engines/cash";
 
-/** Compact axis label for a dollar amount — "$50k" rather than "$50,000.00". */
-function compactCurrency(v: number): string {
-  if (Math.abs(v) >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
-  if (Math.abs(v) >= 1000) return `$${Math.round(v / 1000)}k`;
+/**
+ * Compact axis label for a dollar amount, at a precision that can still tell
+ * adjacent ticks apart.
+ *
+ * `Math.round(v / 1000)` alone cannot: an 18-tranche $3,000 plan ticks at $167
+ * intervals, so 1,000 / 1,167 / 1,333 all render "$1k" and the axis reads
+ * "$1k $1k $1k $2k $2k $2k $2k" — labels that are not merely ugly but actively
+ * wrong, since they assert three different amounts are the same one. The decimal
+ * count therefore comes from the axis SPAN, not from the individual value.
+ */
+function compactCurrency(v: number, span: number): string {
+  const abs = Math.abs(v);
+  if (abs >= 1_000_000) return `$${(v / 1_000_000).toFixed(span < 10_000_000 ? 2 : 1)}M`;
+  if (abs >= 1000) return `$${(v / 1000).toFixed(span < 10_000 ? 1 : 0)}k`;
   return `$${Math.round(v)}`;
 }
 
@@ -24,6 +34,7 @@ export function MarginalBenefitChart({ points }: { points: MarginalBenefitPoint[
   if (points.length < 2) return null;
 
   const data = points.map((p) => ({ amount: p.cumulativeAmount, health: p.healthDelta }));
+  const span = data[data.length - 1].amount - data[0].amount;
 
   return (
     <Card className="flex flex-col gap-1 p-4">
@@ -35,7 +46,21 @@ export function MarginalBenefitChart({ points }: { points: MarginalBenefitPoint[
       <ResponsiveContainer width="100%" height={200}>
         <LineChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
           <CartesianGrid stroke={ct.grid} vertical={false} />
-          <XAxis dataKey="amount" stroke={ct.axis} tick={ct.axisTick} tickFormatter={compactCurrency} />
+          {/* A real numeric axis, not one category per tranche. As a category axis
+              it printed a label for every one of the 18 tranche boundaries — which
+              is what put three "$1k"s in a row — and it also spaced irregular
+              dollar amounts evenly, so the curve's x-position was not proportional
+              to the money deployed. Recharts now picks a handful of round ticks and
+              drops any that would overlap. */}
+          <XAxis
+            dataKey="amount"
+            type="number"
+            domain={[data[0].amount, data[data.length - 1].amount]}
+            stroke={ct.axis}
+            tick={ct.axisTick}
+            tickFormatter={(v: number) => compactCurrency(v, span)}
+            minTickGap={24}
+          />
           <YAxis stroke={ct.axis} tick={ct.axisTick} tickFormatter={(v: number) => `+${v}`} />
           <Tooltip
             contentStyle={ct.tooltip}

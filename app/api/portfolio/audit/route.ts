@@ -45,7 +45,7 @@ export async function POST(request: Request) {
   const recLines    = recs.slice(0, 6).map((r) => `- ${r.symbol}: ${r.action}${r.composite != null ? ` (score ${r.composite}/100)` : ""} — ${r.reasoning.split(".")[0]}`).join("\n") || "- None";
   const gapList     = (gaps?.missing ?? []).slice(0, 5).map((m) => `${m.name} (${m.priority})`).join(", ") || "none";
   const riskLine    = risk
-    ? `Beta ${risk.beta?.toFixed(2) ?? "—"}, Sharpe ${risk.sharpeRatio?.toFixed(2) ?? "—"}, MaxDD ${risk.maxDrawdown?.toFixed(1) ?? "—"}%, HHI ${risk.hhi ?? "—"} (${risk.concentrationRisk ?? "—"} concentration)`
+    ? `Beta ${risk.beta?.toFixed(2) ?? "—"}, Sharpe ${risk.sharpeRatio?.toFixed(2) ?? "—"}, MaxDD ${risk.maxDrawdown?.toFixed(1) ?? "—"}%, position HHI ${risk.hhi ?? "—"} (${risk.concentrationRisk ?? "—"} concentration)`
     : "not available";
 
   const evidence = await gatherPortfolioManagerEvidence(3);

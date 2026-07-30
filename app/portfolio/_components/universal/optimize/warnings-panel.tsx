@@ -63,10 +63,19 @@ export function WarningsPanel({
     });
   }
 
-  if (summary.netCash > 0) {
+  // "Net NEW cash" was wrong whenever the portfolio held enough cash to settle
+  // the difference, which is the ordinary case — the money comes out of the
+  // existing balance, and calling that "new cash" sent the user looking for a
+  // deposit they didn't need to make. Only a genuine shortfall requires new money.
+  if (summary.shortfall > 0) {
     warnings.push({
       label: "Cash required",
-      message: `Requires ${formatCurrency(summary.netCash)} of net new cash — the sells in this selection don't fully fund the buys.`,
+      message: `Needs ${formatCurrency(summary.shortfall)} of NEW cash: the buys exceed this selection's sells plus the whole ${formatCurrency(summary.cashAvailable)} cash balance.`,
+    });
+  } else if (summary.netCash > 0) {
+    warnings.push({
+      label: "Cash drawn",
+      message: `Draws ${formatCurrency(summary.netCash)} from the cash balance — the sells in this selection don't fully fund the buys. ${formatCurrency(summary.cashAfter)} would remain.`,
     });
   }
 

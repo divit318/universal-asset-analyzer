@@ -13,6 +13,7 @@ import { usePreview } from "./optimize/use-preview";
 import { LivePreviewPanel } from "./optimize/live-preview-panel";
 import { PortfolioDiffChart } from "./optimize/portfolio-diff-chart";
 import { WarningsPanel } from "./optimize/warnings-panel";
+import { FundingSummary } from "./optimize/funding-summary";
 import { ImplementationBar } from "./optimize/implementation-bar";
 import { ConfirmationModal } from "./optimize/confirmation-modal";
 import { SnapshotHistory } from "./optimize/snapshot-history";
@@ -43,6 +44,7 @@ export function OptimizePanel({
   objectives,
   loading,
   totalPortfolioValue,
+  baseCurrency,
   atEquilibrium,
   onExecuted,
 }: {
@@ -52,6 +54,7 @@ export function OptimizePanel({
   objectives: Record<Objective, ObjectiveConfig>;
   loading: boolean;
   totalPortfolioValue: number;
+  baseCurrency: string;
   /** True when BOTH engines agree nothing is left to do (no trades AND no recommendations). */
   atEquilibrium: boolean;
   /** Called after a successful implementation so the parent can refresh the report + thesis. */
@@ -75,7 +78,12 @@ export function OptimizePanel({
   );
   const { data: impacts, refresh: refreshImpacts } = useDataset<Map<string, ImpactEstimate>>("optimizeTradeImpacts", objective, impactsFetcher);
 
-  const selection = useTradeSelection(optimization.trades, totalPortfolioValue, impacts ?? null);
+  const selection = useTradeSelection(
+    optimization.trades,
+    totalPortfolioValue,
+    impacts ?? null,
+    optimization.funding.cashAvailable,
+  );
   const { preview, loading: previewLoading, error: previewError } = usePreview(selection.selectedTrades, objective);
 
   async function handleConfirmedExecute() {
@@ -97,6 +105,18 @@ export function OptimizePanel({
       onExecuted();
       refreshImpacts();
       setSnapshotRefreshSignal((n) => n + 1);
+
+      // The executor never fabricates negative cash: if the batch bought more
+      // than its sells plus the cash balance could cover, it drew what existed and
+      // the rest landed as tracked value out of nothing. Rare, and impossible to
+      // notice later — so it is said out loud, not folded into a success message.
+      const unfunded = typeof json.unfunded === "number" ? json.unfunded : 0;
+      if (unfunded > 0) {
+        toast(
+          `${formatCurrency(unfunded, baseCurrency)} of these buys could not be funded from sells or cash. Portfolio value now overstates the book by that amount — undo, or record a deposit.`,
+          "error",
+        );
+      }
 
       const snapshotId = json.snapshotId as string;
       toast(`${json.executedCount} trade${json.executedCount === 1 ? "" : "s"} implemented successfully.`, "success", {
@@ -180,7 +200,14 @@ export function OptimizePanel({
 
         <ul className="flex flex-col gap-2">
           {optimization.classTargets.map((t) => {
-            const moving = Math.abs(t.delta) > 1;
+            // ANY nonzero change, not `> 1`. `t.delta` is already rounded to a
+            // tenth by the engine, so `!== 0` means "there is a real change at the
+            // resolution being displayed" — while the old 1pp threshold silently
+            // dropped the annotation on Forex (0.1% → 0.0%, −0.1) and on Cash
+            // (13.5% → 13.0%, −0.5), leaving rows that visibly changed with no
+            // delta beside them, identical in treatment to rows that genuinely did
+            // not change at all (Alternatives, Private Markets, Real Estate).
+            const moving = t.delta !== 0;
             return (
               <li key={t.assetClass} className="flex flex-col gap-1">
                 <div className="flex items-baseline justify-between gap-2 text-xs">
@@ -225,6 +252,12 @@ export function OptimizePanel({
               {optimization.trades.length} {optimization.trades.length === 1 ? "trade" : "trades"}
             </span>
           </div>
+
+          {/* Funding FIRST, before the selection tools: whether the plan pays for
+              itself is the question a reader has about the whole list, and it is
+              not answerable by adding up the Amount column (the sub-materiality
+              rows and the cash residual are deliberately not in it). */}
+          <FundingSummary funding={optimization.funding} baseCurrency={baseCurrency} />
 
           <SelectionToolbar state={selection} totalTrades={optimization.trades.length} impactsLoaded={impacts != null} />
 

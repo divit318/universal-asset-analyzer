@@ -239,8 +239,10 @@ export function computeConcentration(
     }
   }
 
+  // (`slices.length > 0` used to be ANDed in here — vacuously true, since we are
+  // iterating those very slices.)
   for (const s of allocation.byAssetClass.slices) {
-    if (s.weight >= 80 && allocation.byAssetClass.slices.length > 0) {
+    if (s.weight >= 80) {
       out.push({
         type: "assetClass",
         label: s.label,
@@ -264,14 +266,30 @@ export function computeConcentration(
   }
 
   // Home-currency bias: invisible to the old model, which had no currency concept.
+  //
+  // The `slices.length === 1` guard used to make this fire at EXACTLY 100% only —
+  // currency is never unclassified, so a single slice always weighs 100. A book
+  // that was 96% USD and 4% EUR therefore got no warning at all, despite having
+  // essentially the same single-currency exposure as one at 100%. The threshold
+  // is the number that matters; the slice count is not.
   for (const s of allocation.byCurrency.slices) {
-    if (s.weight >= 90 && allocation.byCurrency.slices.length === 1) {
+    if (s.weight >= 90) {
+      const rest = 100 - s.weight;
+      // Phrasing follows the ROUNDED figures, so the sentence can never read
+      // "100% X exposure. The remaining 0% is too small…" — which is what a
+      // 99.9%/0.1% split produced when the two numbers were rounded
+      // independently. If the remainder does not survive rounding, there is
+      // effectively no second currency and we say only that.
+      const restRounded = Number(rest.toFixed(1));
       out.push({
         type: "currency",
         label: s.label,
         pct: s.weight,
         severity: "medium",
-        message: `100% ${s.label} exposure. The portfolio has no currency diversification — a sustained dollar decline hits everything at once.`,
+        message:
+          restRounded < 0.1
+            ? `Effectively 100% ${s.label} exposure. The portfolio has no currency diversification — a sustained ${s.label} decline hits everything at once.`
+            : `${s.weight.toFixed(1)}% ${s.label} exposure. The remaining ${restRounded.toFixed(1)}% is too small to diversify currency risk — a sustained ${s.label} decline hits nearly everything at once.`,
       });
     }
   }

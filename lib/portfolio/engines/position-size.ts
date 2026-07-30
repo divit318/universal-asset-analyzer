@@ -25,6 +25,7 @@
  */
 
 import { simulate, estimateImpact, type PortfolioEvaluation, type ImpactEstimate, type PortfolioChange } from "./simulate";
+import { assessConfidence } from "./confidence";
 import { normalizeHoldings } from "../model/holding";
 import { OBJECTIVES, normalize, DEFAULT_CONSTRAINTS, type Objective, type Constraints } from "./optimize";
 import { classDistance, type MarginalBenefitPoint } from "./cash";
@@ -206,25 +207,17 @@ function violatesConstraints(
 }
 
 /**
- * Confidence blends the asset's own scoring evidence quality with the size of the
- * measured effect — mirrors recommend.ts's confidenceFor() exactly in spirit (base
- * + effect size + portfolio data-quality adjustment), swapping "gap severity" for
- * the asset's own HoldingScore confidence, since there is no portfolio "gap" a
- * single-symbol buy is filling by construction.
+ * The same Confidence every other recommendation in the app reports — see
+ * engines/confidence.ts.
+ *
+ * This used to mirror recommend.ts's old blended formula ("base + effect size +
+ * data-quality adjustment"). Both have been replaced by one definition, because a
+ * percentage that means "well-evidenced" on the Decisions tab and "well-evidenced
+ * AND high-impact" on the buy modal is not a scale a user can carry between the
+ * two screens. Effect size is reported separately, as it always was, in `impact`.
  */
 function confidenceFor(impact: ImpactEstimate, holding: Holding | null, evaluation: PortfolioEvaluation): number {
-  const base = holding?.score?.confidence ?? 50;
-  const effect = Math.min(Math.abs(impact.healthDelta) * 4, 20);
-
-  const dataQuality = evaluation.holdings.length > 0
-    ? evaluation.holdings.reduce(
-        (s, h) => s + (h.valuation.mode === "market" && !h.valuation.stale ? h.valuation.valueBase : 0),
-        0,
-      ) / Math.max(evaluation.totalValue, 1)
-    : 0.5;
-  const qualityAdj = (dataQuality - 0.5) * 10;
-
-  return Math.round(Math.max(5, Math.min(97, base * 0.6 + effect + qualityAdj + 20)));
+  return assessConfidence(evaluation, holding, { riskMeasured: impact.riskDelta != null }).score;
 }
 
 function reasonsFor(before: PortfolioEvaluation, after: PortfolioEvaluation, target: { assetClass: PortfolioAssetClass }): string[] {

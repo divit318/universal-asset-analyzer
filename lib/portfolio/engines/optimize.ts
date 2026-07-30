@@ -23,8 +23,9 @@
 
 import { evaluate, estimateImpact, applyTargetPlanConserving, type PortfolioEvaluation, type ImpactEstimate, type TargetWeightChange } from "./simulate";
 import type { Holding, MarketContext, PortfolioAssetClass } from "../model/types";
-import { PORTFOLIO_CLASS_LABEL } from "../model/types";
+import { PORTFOLIO_CLASS_LABEL, describeIlliquidWeight, isIlliquid } from "../model/types";
 import { MAX_SINGLE_HOLDING_PCT, MATERIAL_WEIGHT_DELTA_PCT } from "../policy";
+import { formatCurrency } from "../../format";
 
 export type Objective =
   | "maximize_return"
@@ -179,7 +180,120 @@ export interface OptimizationResult {
   trades: TargetWeight[];
   /** Measured impact of executing the whole plan. */
   impact: ReturnType<typeof estimateImpact>;
+  /**
+   * Where the money for `trades` comes from. The full trade list rarely nets to
+   * zero (see PlanFundingDisclosure) and a plan whose funding is not stated is a
+   * plan the user cannot check.
+   */
+  funding: PlanFundingDisclosure;
   warnings: string[];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Funding — can this plan actually be paid for?                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A cash imbalance smaller than this is not one. Shared with the executor's
+ * cash-balancing lot so "self-funded" means exactly "the executor writes no cash
+ * plug" — not two thresholds that agree most of the time.
+ */
+export const CASH_SETTLEMENT_TOLERANCE = 0.5;
+
+export interface PlanFunding {
+  /** Dollars of buying. */
+  buys: number;
+  /** Dollars of selling. */
+  sells: number;
+  /** buys + sells — gross dollars traded, the turnover numerator. */
+  gross: number;
+  /** buys − sells. Positive = the plan consumes cash; negative = it releases cash. */
+  netCash: number;
+  /** Base-currency cash the plan can draw on. */
+  cashAvailable: number;
+  /** Cash left once the plan settles. */
+  cashAfter: number;
+  /** True when the sells alone pay for the buys. */
+  selfFunded: boolean;
+  /**
+   * Dollars the plan needs beyond BOTH its own sell proceeds and the cash
+   * balance. Anything above zero cannot be executed as shown — the executor caps
+   * its cash draw at what exists, so the excess buys would land unfunded.
+   */
+  shortfall: number;
+}
+
+export interface PlanFundingDisclosure extends PlanFunding {
+  /**
+   * How many target changes are real but too small to list as trades (under
+   * MATERIAL_WEIGHT_DELTA_PCT). Their dollars are still part of why buys and
+   * sells don't tie out, so the count has to be visible.
+   */
+  unlistedTrades: number;
+  /**
+   * Net dollars of everything the trade list does NOT show: the sub-materiality
+   * target changes above, plus the cash holding's own target change. Because the
+   * optimizer's governing invariant is that target changes sum to zero across
+   * EVERY holding, this is exactly `-netCash` — which is the proof that the
+   * apparent buy/sell gap is disclosure, not arithmetic.
+   */
+  unlistedNetCash: number;
+}
+
+/**
+ * Base-currency cash a rebalance can draw on.
+ *
+ * Shared with the executor's cashBalancingLot() so the number the UI promises is
+ * the number the executor will actually find. It SUMS every base-currency cash
+ * holding rather than taking the first: a book that has both a checking lot and a
+ * money-market lot in USD has two, and funding a plan from only one of them
+ * understates available cash and silently under-funds the buys.
+ */
+export function availableBaseCash(holdings: readonly Holding[], baseCurrency: string): number {
+  const base = (baseCurrency || "USD").toUpperCase();
+  return holdings
+    .filter((h) => h.assetClass === "cash" && h.currency.toUpperCase() === base)
+    .reduce((s, h) => s + h.valuation.valueBase, 0);
+}
+
+/**
+ * Can this set of trades be paid for?
+ *
+ * A rebalancing plan's buys and sells are NOT expected to tie out, and that is the
+ * single most confusing thing about a trade list. Two entirely legitimate reasons:
+ *
+ *   1. The objective may want more or less invested than the portfolio currently
+ *      is, so the difference is a genuine cash draw or a genuine cash build.
+ *   2. The list is filtered to material trades (MATERIAL_WEIGHT_DELTA_PCT). The
+ *      sub-threshold moves the optimizer counted on are not shown, so the visible
+ *      buys can exceed the visible sells by their sum.
+ *
+ * Neither is an error, but both are invisible unless stated — and the difference
+ * between them and a genuinely unfundable plan is exactly what a user needs to
+ * know before pressing Implement. `dollarDelta` is signed (positive = buy) and is
+ * expected to already be scaled by any partial-implementation percentage.
+ */
+export function computePlanFunding(
+  trades: readonly { dollarDelta: number }[],
+  cashAvailable: number,
+): PlanFunding {
+  let buys = 0;
+  let sells = 0;
+  for (const t of trades) {
+    if (t.dollarDelta > 0) buys += t.dollarDelta;
+    else sells += -t.dollarDelta;
+  }
+  const netCash = buys - sells;
+  return {
+    buys,
+    sells,
+    gross: buys + sells,
+    netCash,
+    cashAvailable,
+    cashAfter: cashAvailable - netCash,
+    selfFunded: netCash <= CASH_SETTLEMENT_TOLERANCE,
+    shortfall: Math.max(0, netCash - cashAvailable),
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -334,8 +448,14 @@ export function optimize(
 
   const heldClasses = new Set(holdings.map((h) => h.assetClass));
 
+  // isIlliquid() — not a local `liquidity === "illiquid"` test. That local test
+  // excluded `t2` ("weeks to sell": structured products), so the Risk Lab counted
+  // such a holding as illiquid, the Holdings tab gave it an ILLIQUID badge, and
+  // this optimizer cheerfully proposed selling it in a same-day rebalance. The
+  // shared predicate is documented as the one answer to "is this available for a
+  // rebalance", which is precisely the question being asked here.
   const isFrozen = (h: Holding) =>
-    h.liquidity === "illiquid" || constraints.lockedHoldingIds.includes(h.id);
+    isIlliquid(h.liquidity) || constraints.lockedHoldingIds.includes(h.id);
   const isExcluded = (h: Holding) => constraints.excludedSymbols.includes(h.symbol ?? "");
 
   // Illiquid/locked holdings cannot be traded to a target. Pretending otherwise
@@ -343,9 +463,25 @@ export function optimize(
   // current weight and allocate the remaining budget around them.
   const frozen = holdings.filter(isFrozen);
   const frozenWeight = frozen.reduce((s, h) => s + h.weight, 0);
-  if (frozenWeight > 0) {
+  const lockedOnly = frozen.filter((h) => !isIlliquid(h.liquidity));
+  if (frozen.length > 0) {
+    // Weight AND count, in the Risk Lab's own words. `${frozenWeight.toFixed(0)}%`
+    // rendered "0% of the portfolio is illiquid or locked and cannot be
+    // rebalanced" for a book with three genuinely untradeable holdings — a
+    // sentence that argues against its own existence, and that contradicted the
+    // Risk Lab's Illiquid card describing the identical fact. Both now read from
+    // computeRisk()'s illiquidPct/illiquidHoldings through describeIlliquidWeight(),
+    // so neither can be re-worded without the other.
+    const illiquidCount = evaluation.risk.illiquidHoldings;
+    const illiquid = describeIlliquidWeight(evaluation.risk.illiquidPct, illiquidCount);
+    const parts = [
+      illiquidCount > 0 ? illiquid.sentence : null,
+      lockedOnly.length > 0
+        ? `${illiquidCount > 0 ? "A further " : ""}${lockedOnly.length} ${lockedOnly.length === 1 ? "holding is" : "holdings are"} locked.`
+        : null,
+    ].filter(Boolean);
     warnings.push(
-      `${frozenWeight.toFixed(0)}% of the portfolio is illiquid or locked and cannot be rebalanced. Targets below apply to the tradeable ${(100 - frozenWeight).toFixed(0)}%.`,
+      `${parts.join(" ")} Those cannot be rebalanced, so the targets below apply to the tradeable ${(100 - frozenWeight).toFixed(1)}%.`,
     );
   }
 
@@ -487,10 +623,34 @@ export function optimize(
 
   /* ---- Build the trade list ---- */
 
+  /**
+   * How far this holding's CLASS is from its target — needed because a trade's
+   * reason must name the driver that actually applies to it.
+   *
+   * A plan can legitimately sell one holding and buy another in the SAME class:
+   * the class is at its target while the weight inside it is being spread out. But
+   * the reason string used to attribute every trade to the class being off-target,
+   * so such a plan read "SELL VCLT — above Bonds target" directly above "BUY SHY —
+   * below Bonds target". Two opposite claims about one class is exactly the kind of
+   * self-contradiction that makes a user distrust the whole plan, and it was a
+   * labelling defect, not a trade defect: the trades were right.
+   */
+  const classDeltaOf = (cls: PortfolioAssetClass): number => {
+    const current = allocation.byAssetClass.slices.find((s) => s.key === cls)?.weight ?? 0;
+    return (realizedByClass.get(cls) ?? 0) - current;
+  };
+
   const targets: TargetWeight[] = holdings.map((h) => {
     const target = targetWeights.get(h.id) ?? h.weight;
     const delta = target - h.weight;
     const frozenH = isFrozen(h);
+    // Does the class move the same way this holding does? If so the class target IS
+    // the driver; if not, the driver is this holding's own weight within the class.
+    const classDelta = classDeltaOf(h.assetClass);
+    const classDrivesIt =
+      (delta > 0 && classDelta > MATERIAL_WEIGHT_DELTA_PCT) ||
+      (delta < 0 && classDelta < -MATERIAL_WEIGHT_DELTA_PCT);
+    const label = PORTFOLIO_CLASS_LABEL[h.assetClass];
 
     return {
       holdingId: h.id,
@@ -514,9 +674,13 @@ export function optimize(
       reason: frozenH
         ? `${h.liquidity === "illiquid" ? "Illiquid" : "Locked"} — held at current weight.`
         : delta > MATERIAL_WEIGHT_DELTA_PCT
-          ? `Below ${PORTFOLIO_CLASS_LABEL[h.assetClass]} target for the ${OBJECTIVES[objective].label} objective.`
+          ? classDrivesIt
+            ? `Below ${label} target for the ${OBJECTIVES[objective].label} objective.`
+            : `Below its own target weight within ${label} — topped up from the other ${label} holdings.`
           : delta < -MATERIAL_WEIGHT_DELTA_PCT
-            ? `Above ${PORTFOLIO_CLASS_LABEL[h.assetClass]} target for the ${OBJECTIVES[objective].label} objective.`
+            ? classDrivesIt
+              ? `Above ${label} target for the ${OBJECTIVES[objective].label} objective.`
+              : `Above its own target weight within ${label} — trimmed into the other ${label} holdings.`
             : "At target.",
       constrained: frozenH,
     };
@@ -540,6 +704,32 @@ export function optimize(
     : evaluation;
   const impact = estimateImpact(evaluation, after);
 
+  /* ---- Funding: state where the money comes from ---------------------------
+   *
+   * The trade list is a FILTERED view of a plan whose target changes sum to zero
+   * across every holding. Two kinds of row are deliberately absent — the cash
+   * residual, and any move under MATERIAL_WEIGHT_DELTA_PCT — so the visible buys
+   * and sells generally do NOT tie out. On a real $9.2M book under Maximize
+   * Sharpe the sixteen listed trades bought $1.95M and sold $1.71M: a $242k gap
+   * that looks exactly like a sizing error and is in fact four sub-1pp trims plus
+   * the cash row. Computed and surfaced rather than left for the user to add up
+   * and mistrust. */
+
+  const tradeIds = new Set(trades.map((t) => t.holdingId));
+  const unlisted = targets.filter((t) => !tradeIds.has(t.holdingId) && t.dollarDelta !== 0);
+  const funding: PlanFundingDisclosure = {
+    ...computePlanFunding(trades, availableBaseCash(holdings, ctx?.baseCurrency ?? "USD")),
+    unlistedTrades: unlisted.filter((t) => t.assetClass !== "cash" && !t.constrained).length,
+    unlistedNetCash: unlisted.reduce((s, t) => s + t.dollarDelta, 0),
+  };
+
+  if (funding.shortfall > CASH_SETTLEMENT_TOLERANCE) {
+    const money = (v: number) => formatCurrency(v, ctx?.baseCurrency ?? "USD");
+    warnings.push(
+      `These trades buy ${money(funding.buys)} and sell ${money(funding.sells)} — ${money(funding.shortfall)} more than the sell proceeds plus the ${money(funding.cashAvailable)} cash balance can cover. Implementing all of them would leave that much unfunded; deselect some buys, or add cash first.`,
+    );
+  }
+
   if (constraints.maxDuration != null && evaluation.risk.duration != null
       && evaluation.risk.duration > constraints.maxDuration) {
     warnings.push(
@@ -547,7 +737,7 @@ export function optimize(
     );
   }
 
-  return { objective, classTargets: classTargetList, holdings: targets, trades, impact, warnings };
+  return { objective, classTargets: classTargetList, holdings: targets, trades, impact, funding, warnings };
 }
 
 /**

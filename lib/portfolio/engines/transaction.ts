@@ -40,6 +40,7 @@ import {
 import { applyTargetPlanConserving, evaluate, estimateImpact, type PortfolioEvaluation, type ImpactEstimate } from "./simulate";
 import { computeRecommendations } from "./recommend";
 import { buildDecisionCards, type DecisionCard } from "./decision";
+import { availableBaseCash, CASH_SETTLEMENT_TOLERANCE } from "./optimize";
 import type { PortfolioAssetClass, MarketContext } from "../model/types";
 import type { Objective } from "./optimize";
 
@@ -110,6 +111,12 @@ export interface ExecuteResult {
   executedCount: number;
   /** Trades that couldn't be executed (holding vanished, zero/invalid price, etc.) — never silently dropped. */
   skipped: { holdingId: string; reason: string }[];
+  /**
+   * Dollars of buying this batch could not pay for from sell proceeds plus the
+   * cash balance. Zero in every normal case; nonzero means tracked value grew by
+   * that much out of nothing and the caller must say so. See unfundedAmount().
+   */
+  unfunded: number;
 }
 
 export function summaryOf(evaluation: PortfolioEvaluation): PortfolioSnapshotSummary {
@@ -146,6 +153,49 @@ export interface BuildLotWritesResult {
 const DUST_VALUE_BASE = 1;
 /** …and it only counts as a rounding leftover if it is this small a slice of the position. */
 const DUST_FRACTION_OF_POSITION = 0.01;
+
+/**
+ * True for a holding the ledger can only ever dispose of WHOLE.
+ *
+ * Manual assets (real estate, private markets, alternatives, structured products)
+ * live in `manual_asset`, not in `portfolio_lot`. They have no share ledger and no
+ * partial-quantity concept, so the only trade the ledger can represent against one
+ * is a full disposal — which is a row deletion, not a lot.
+ *
+ * Exported because this is the ONE definition of "indivisible", and every write
+ * path that offers or accepts a sell has to agree with the engine that enforces
+ * it. Three routes previously each decided for themselves: `manage` guarded
+ * correctly, `buy`'s funding step did not, and `optimize/execute` validated
+ * against the wrong list. A rule that lives in one route's comment is a rule the
+ * sibling routes break.
+ */
+export function isIndivisibleHolding(holdingId: string): boolean {
+  return holdingId.startsWith("manual:");
+}
+
+/**
+ * Does this trade dispose of the WHOLE position?
+ *
+ * Derived from the numbers, never assumed from the holding's type. The bug this
+ * replaces assumed it: `buildLotWrites()` treated the `manual:` id prefix ALONE as
+ * a deletion trigger, so a trade's direction and size were never consulted. A
+ * "sell $40,000 of an $800,000 home" — which the buy flow's funding step generates
+ * verbatim from a REDUCE recommendation — deleted the home and credited its full
+ * $800,000 to cash. Total portfolio value was conserved, so no figure on screen
+ * moved, while the asset's row, cost basis and acquisition date were simply gone.
+ *
+ * Uses the same two-part test closeOutIfDust() applies to share quantities, in
+ * value terms: the sell must leave under a dollar behind AND under 1% of the
+ * position. Both, so a deliberate partial trim can never be widened into a
+ * liquidation, while the rounding a real full exit carries (recommend.ts sizes an
+ * exit as `Math.round(valueBase)`, up to $0.50 short) still reads as full.
+ */
+function isFullDisposal(dollarDelta: number, valueBase: number): boolean {
+  if (dollarDelta >= 0) return false; // a buy is never a disposal
+  const residue = valueBase + dollarDelta; // dollarDelta is negative
+  if (residue <= 0) return true; // covers the position, or more
+  return residue < DUST_VALUE_BASE && residue < valueBase * DUST_FRACTION_OF_POSITION;
+}
 
 /**
  * Round a near-total sell up to the whole position.
@@ -186,15 +236,32 @@ export function buildLotWrites(
   const skipped: { holdingId: string; reason: string }[] = [];
 
   for (const t of trades) {
-    // Manual assets (real estate, private markets, alternatives, structured
-    // products) have no lot ledger and no partial-quantity concept — a stake
-    // is a single indivisible unit, so any trade against one is a full exit.
-    if (t.holdingId.startsWith("manual:")) {
+    const holding = evaluation.holdings.find((h) => h.id === t.holdingId);
+
+    // Manual assets have no lot ledger, so the only trade the ledger can record
+    // against one is a FULL disposal. That is checked against the trade's own
+    // numbers — see isFullDisposal(). Anything else is refused through `skipped`
+    // rather than silently widened into a deletion: refusing a trade the ledger
+    // cannot express is recoverable, deleting a $800k asset the user asked to trim
+    // by $40k is not.
+    if (isIndivisibleHolding(t.holdingId)) {
+      if (!holding || holding.valuation.valueBase <= 0) {
+        skipped.push({ holdingId: t.holdingId, reason: "Holding not found or has no value" });
+        continue;
+      }
+      if (!isFullDisposal(t.dollarDelta, holding.valuation.valueBase)) {
+        skipped.push({
+          holdingId: t.holdingId,
+          reason: t.dollarDelta >= 0
+            ? `${holding.name} is a manually-valued asset with no share ledger — it cannot be bought into in increments. Update its valuation instead.`
+            : `${holding.name} is a manually-valued asset with no share ledger — it cannot be partially sold. Sell the whole position, or update its valuation instead.`,
+        });
+        continue;
+      }
       manualAssetIdsToDelete.push(t.holdingId.slice("manual:".length));
       continue;
     }
 
-    const holding = evaluation.holdings.find((h) => h.id === t.holdingId);
     if (!holding || holding.valuation.valueBase <= 0 || holding.quantity <= 0) {
       skipped.push({ holdingId: t.holdingId, reason: "Holding not found or has no value" });
       continue;
@@ -316,6 +383,27 @@ export function buildCashDepositLots(
 }
 
 /**
+ * Signed net cash flow of a batch of ledger writes: a buy consumes cash (+), a
+ * sell releases it (−), and exiting a manual asset releases its whole value.
+ *
+ * Extracted so cashBalancingLot() and unfundedAmount() cannot disagree about what
+ * a batch costs — two copies of this loop is exactly how a funding check ends up
+ * validating a different number from the one that gets written.
+ */
+function netCashFlow(evaluation: PortfolioEvaluation, built: BuildLotWritesResult): number {
+  let net = 0;
+  for (const lot of built.lots) {
+    if (lot.assetClass === "cash") continue; // cash is never itself an actionable trade
+    net += (lot.kind === "buy" ? 1 : -1) * lot.shares * lot.price;
+  }
+  for (const id of built.manualAssetIdsToDelete) {
+    const h = evaluation.holdings.find((x) => x.id === `manual:${id}`);
+    if (h) net -= h.valuation.valueBase;
+  }
+  return net;
+}
+
+/**
  * The cash-balancing entry that makes a batch conserve total portfolio value.
  *
  * A rebalance is not new money: selling one holding to buy another must not change
@@ -339,19 +427,8 @@ export function cashBalancingLot(
   baseCurrency: string,
 ): LotWriteInstruction | null {
   const base = (baseCurrency || "USD").toUpperCase();
-
-  let net = 0; // signed cash flow: a buy consumes cash (+), a sell releases it (−)
-  for (const lot of built.lots) {
-    if (lot.assetClass === "cash") continue; // cash is never itself an actionable trade
-    net += (lot.kind === "buy" ? 1 : -1) * lot.shares * lot.price;
-  }
-  for (const id of built.manualAssetIdsToDelete) {
-    const h = evaluation.holdings.find((x) => x.id === `manual:${id}`);
-    if (h) net -= h.valuation.valueBase; // exiting a manual asset releases its full value
-  }
-
-  const plug = -net; // >0 → park proceeds (buy cash); <0 → draw cash to fund buys (sell cash)
-  if (Math.abs(plug) < 0.5) return null;
+  const plug = -netCashFlow(evaluation, built); // >0 → park proceeds (buy cash); <0 → draw cash to fund buys (sell cash)
+  if (Math.abs(plug) < CASH_SETTLEMENT_TOLERANCE) return null;
 
   const cashLot = (shares: number, kind: "buy" | "sell", reason: string): LotWriteInstruction => ({
     symbol: `CASH-${base}`,
@@ -368,12 +445,30 @@ export function cashBalancingLot(
   if (plug > 0) return cashLot(plug, "buy", "Rebalance proceeds parked in cash");
 
   // Net buy: draw the shortfall from existing base-currency cash, never below zero.
-  const available =
-    evaluation.holdings.find((h) => h.assetClass === "cash" && h.currency.toUpperCase() === base)
-      ?.valuation.valueBase ?? 0;
-  const draw = Math.min(-plug, available);
-  if (draw < 0.5) return null; // no cash to draw on — the buys stay (partly) unfunded
+  const draw = Math.min(-plug, availableBaseCash(evaluation.holdings, base));
+  if (draw < CASH_SETTLEMENT_TOLERANCE) return null; // no cash to draw on — see unfundedAmount()
   return cashLot(draw, "sell", "Cash drawn to fund rebalance buys");
+}
+
+/**
+ * Dollars of buying this batch cannot pay for — sell proceeds exhausted AND the
+ * cash balance exhausted.
+ *
+ * cashBalancingLot() caps its draw at the cash that exists, which is correct (it
+ * must never fabricate negative cash) but was also SILENT: the excess buys were
+ * still written to the ledger, so tracked portfolio value grew out of nothing and
+ * nothing anywhere reported it. Callers must surface this. Normally zero — the
+ * Optimize tab now blocks on optimize()'s matching `funding.shortfall` before a
+ * user can get here — but execution re-prices against live data, so the check has
+ * to exist on this side of the wire too.
+ */
+export function unfundedAmount(
+  evaluation: PortfolioEvaluation,
+  built: BuildLotWritesResult,
+  baseCurrency: string,
+): number {
+  const base = (baseCurrency || "USD").toUpperCase();
+  return Math.max(0, netCashFlow(evaluation, built) - availableBaseCash(evaluation.holdings, base));
 }
 
 /**
@@ -403,6 +498,7 @@ export function executeTrades(
     snapshotId,
     executedCount: built.lots.length + built.manualAssetIdsToDelete.length,
     skipped: built.skipped,
+    unfunded: unfundedAmount(evaluation, built, baseCurrency),
   };
 }
 

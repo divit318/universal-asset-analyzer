@@ -62,7 +62,11 @@ export function LivePreviewPanel({
               suffix="%"
               higherIsBetter={false}
             />
-            <StateRow label="Concentration (HHI)" before={preview.before.risk.hhi} after={preview.after.risk.hhi} decimals={0} higherIsBetter={false} />
+            {/* Position HHI on BOTH sides — two evaluations of the same statistic,
+                so this subtraction is sound. Labelled by its denominator per the
+                rule in risk-lab.tsx: a bare "HHI" is ambiguous on a page that also
+                shows asset-class HHI, and reads as a contradiction. */}
+            <StateRow label="Position HHI" before={preview.before.risk.positionHhi} after={preview.after.risk.positionHhi} decimals={0} higherIsBetter={false} />
             <StateRow
               label="Illiquid share"
               before={preview.before.risk.illiquidPct}

@@ -24,7 +24,7 @@ export function ImplementationBar({
         <span className="text-xs font-semibold text-foreground">
           {summary.count} trade{summary.count === 1 ? "" : "s"} selected
         </span>
-        <span className="text-[11px] text-muted">{formatCurrency(summary.totalTradeValue)} of changes</span>
+        <span className="text-[11px] text-muted">{formatCurrency(summary.gross)} of changes</span>
       </div>
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="sm" onClick={selection.clearAll}>Clear</Button>

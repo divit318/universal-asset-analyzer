@@ -43,7 +43,14 @@ export async function POST(request: Request) {
   try {
     const before = await buildEvaluation({ objective });
     const optimization = optimize(before.evaluation, objective, DEFAULT_CONSTRAINTS, undefined, before.ctx);
-    const byId = new Map(optimization.holdings.map((t) => [t.holdingId, t]));
+    // `trades`, not `holdings`. `holdings` is every target row the optimizer
+    // produced — including the cash residual, the frozen illiquid/locked rows, and
+    // every sub-materiality HOLD. Keying the lookup off it meant a request could
+    // execute a row the UI never offered and the engine never intended as a trade:
+    // a `manual:` id (a full asset deletion), a cash row, or a frozen holding.
+    // `trades` is the list that already passed the materiality, liquidity and
+    // asset-class filters, and is exactly what the UI renders.
+    const byId = new Map(optimization.trades.map((t) => [t.holdingId, t]));
 
     const toExecute: TradeToExecute[] = [];
     const notFound: string[] = [];
@@ -80,6 +87,11 @@ export async function POST(request: Request) {
       snapshotId: result.snapshotId,
       postSnapshotId,
       executedCount: result.executedCount,
+      // Nonzero means the batch bought more than its sells plus the cash balance
+      // could pay for. The executor caps its cash draw at what exists rather than
+      // fabricating negative cash, so the excess landed as tracked value out of
+      // nothing — the client must tell the user, not discover it later as drift.
+      unfunded: result.unfunded,
       skipped: [...notFound.map((holdingId) => ({ holdingId, reason: "No matching live trade" })), ...result.skipped],
       before: summaryOf(before.evaluation),
       after: summaryOf(after.evaluation),

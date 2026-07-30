@@ -3,7 +3,29 @@
 import { useState } from "react";
 import { Badge } from "@/app/_components/ui";
 import { formatCurrency } from "@/lib/format";
+import type { HoldingUnit } from "@/lib/portfolio/model/types";
 import type { NarratedItem } from "./types";
+
+const UNIT_ABBR: Partial<Record<HoldingUnit, string>> = {
+  shares: "sh",
+  units: "units",
+  coins: "coins",
+  contracts: "contracts",
+  face: "face",
+};
+
+/**
+ * A tradeable quantity at a precision that stays honest across four orders of
+ * magnitude of unit price.
+ *
+ * A fixed decimal count cannot serve both 0.0167 BTC and 1,842 shares: two
+ * decimals renders the former "0.02" (a 20% misstatement) and the latter with
+ * pointless noise. Precision therefore scales with magnitude.
+ */
+function formatQuantity(q: number): string {
+  const digits = q >= 100 ? 0 : q >= 1 ? 2 : q >= 0.01 ? 4 : 6;
+  return q.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: digits });
+}
 
 /** One ranked recommendation: rank, sizing, measured deltas, and — expanded —
  * the alternatives actually simulated for the same slot (Step 10). */
@@ -35,9 +57,15 @@ export function RecommendationRow({
                 <span className="font-mono text-[10px] font-semibold text-muted/70">#{item.rank}</span>
                 {item.symbol && <span className="font-mono text-sm font-semibold text-foreground">{item.symbol}</span>}
                 <Badge variant="neutral">{item.assetClassLabel}</Badge>
-                {item.confidence != null && (
-                  <span className="text-[10px] text-muted/70">{item.confidence}% confidence</span>
-                )}
+                {/* Same definition, same wording as the Decision Center — this used
+                    to be the holding's own score confidence, absent entirely for any
+                    candidate the portfolio didn't already own. */}
+                <span
+                  className="cursor-help text-[10px] text-muted/70 underline decoration-dotted decoration-muted/30 underline-offset-2"
+                  title={`Confidence ${item.confidence}% — how much of the evidence behind this item's numbers was observed rather than assumed.\n\n${item.confidenceBasis.map((b) => `• ${b}`).join("\n")}`}
+                >
+                  {item.confidence}% evidenced
+                </span>
               </span>
               <span className="truncate text-[11px] text-muted">{item.name}</span>
             </div>
@@ -45,8 +73,13 @@ export function RecommendationRow({
               <span className="font-mono text-sm font-bold tabular-nums text-foreground">
                 {formatCurrency(item.dollarAmount)}
               </span>
+              {/* The quantity the executor will actually record, at a precision
+                  that keeps quantity × price reconcilable with the dollar amount
+                  beside it. Previously this floored to whole shares while the
+                  ledger wrote the fractional figure, so "$1,000 · 3 sh" described
+                  $903, and a $1,000 allocation to BTC read "0 sh". */}
               <span className="font-mono text-[10px] tabular-nums text-muted">
-                {item.shareCount != null ? `${item.shareCount} sh · ` : ""}
+                {item.quantity != null ? `${formatQuantity(item.quantity)} ${UNIT_ABBR[item.unit] ?? item.unit} · ` : ""}
                 → {item.resultingWeight.toFixed(1)}%
               </span>
             </div>
