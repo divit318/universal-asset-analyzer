@@ -14,7 +14,40 @@
 
 import "../classes";  // side-effect: registers all twelve class adapters
 import { getClassAdapter } from "./adapter";
-import type { Holding, MarketContext, RawHolding } from "./types";
+import { instrumentSignalsFor } from "../classes/market-base";
+import { resolveAssetClass } from "../classes/reference/risk-models";
+import type { Holding, MarketContext, PortfolioAssetClass, RawHolding } from "./types";
+
+/**
+ * THE asset class of a holding, resolved once, here.
+ *
+ * `RawHolding.assetClass` is the ledger's record of how the position was BOOKED —
+ * for a ticker that is Yahoo's quoteType, which knows a wrapper ("ETF") and not an
+ * exposure. `Holding.assetClass` is what the instrument IS, resolved by the same
+ * authority that produces its factor loadings (`resolveAssetClass`). Every engine
+ * downstream reads the resolved value, so Allocation, Health, Optimize, Decisions,
+ * Performance, the Simulator and the Risk Lab cannot disagree about a holding:
+ * VCLT is a bond to all of them or to none.
+ *
+ * ONE SAFETY RULE: re-bucketing may not cross a VALUATION REGIME. The adapter
+ * chosen here also values the holding, and the classes value things in
+ * fundamentally different ways — `cash` treats quantity AS the amount, the manual
+ * classes read a user-stated mark, `market` multiplies quantity by a live price. A
+ * gold bar booked as an `alternative` correctly resolves to the gold RISK MODEL,
+ * but moving it to the `commodity` class would hand it to a market adapter with no
+ * ticker and silently reprice it at cost. So the resolved class is adopted only
+ * when its adapter values holdings the same way the booked one does; otherwise the
+ * booked class stands and only the factor loadings change. Both branches keep a
+ * single authority — this rule decides how much of its answer is safe to apply,
+ * never what the answer is.
+ */
+function canonicalAssetClass(raw: RawHolding, ctx: MarketContext): PortfolioAssetClass {
+  const resolved = resolveAssetClass(instrumentSignalsFor(raw, ctx));
+  if (resolved === raw.assetClass) return raw.assetClass;
+  return getClassAdapter(resolved).valuationMode === getClassAdapter(raw.assetClass).valuationMode
+    ? resolved
+    : raw.assetClass;
+}
 
 /**
  * Normalize one holding. Pure; all I/O already happened in the MarketContext.
@@ -24,8 +57,13 @@ import type { Holding, MarketContext, RawHolding } from "./types";
  * at cost and flagged, rather than throwing — the same "partial results beat total
  * failure" rule the IC report pipeline follows.
  */
-function normalizeOne(raw: RawHolding, ctx: MarketContext): Holding {
-  const adapter = getClassAdapter(raw.assetClass);
+function normalizeOne(rawBooked: RawHolding, ctx: MarketContext): Holding {
+  const assetClass = canonicalAssetClass(rawBooked, ctx);
+  // The adapter sees the resolved class too, so its own classification hint agrees
+  // with the bucket the holding lands in — the resolution is idempotent, so this
+  // cannot oscillate: a bond ETF resolved to `bond` re-resolves to `bond`.
+  const raw: RawHolding = assetClass === rawBooked.assetClass ? rawBooked : { ...rawBooked, assetClass };
+  const adapter = getClassAdapter(assetClass);
 
   const valuation = adapter.value(raw, ctx);
   const income = adapter.income(raw, valuation, ctx);
@@ -45,7 +83,7 @@ function normalizeOne(raw: RawHolding, ctx: MarketContext): Holding {
 
   return {
     id: raw.id,
-    assetClass: raw.assetClass,
+    assetClass,
     symbol: raw.symbol,
     name: raw.name,
     currency: raw.currency,

@@ -6,6 +6,7 @@
  */
 
 import type { OpportunityProfile } from "./opportunity-engine";
+import type { IdeaSource } from "./idea-source";
 
 export type AssetKind = "image" | "text" | "binary" | "unknown";
 
@@ -109,17 +110,76 @@ export interface AiAnalysis {
  */
 export type IdeaStage = "surfaced" | "researching" | "thesis" | "owned" | "passed" | "exited";
 
+/**
+ * Which way the price has to move for a watchlist price target to be "reached".
+ * `above` is a valuation/exit level, `below` is a buy limit. Stored per row
+ * because it is not recoverable from the prices afterwards — see
+ * `lib/watchlist-metrics.ts`.
+ */
+export type TargetDirection = "above" | "below";
+
+/**
+ * A named watchlist.
+ *
+ * Lists are *views* over tracked symbols, not containers of them: membership
+ * lives in `watchlist_member` while each symbol's research state (target, thesis,
+ * stage) is stored once in `watchlist`. So the same symbol can appear in several
+ * lists with one target, and deleting a list never destroys research.
+ *
+ * Declared here rather than in `lib/db.ts` so client components can type against
+ * it without importing a module that reaches `node:sqlite`.
+ */
+export interface WatchlistGroup {
+  id: number;
+  name: string;
+  /** Ticker this list is compared against, e.g. SPY. Null = no benchmark. */
+  benchmark: string | null;
+  sortOrder: number;
+  createdAt: number;
+  /** How many symbols are in this list. */
+  count: number;
+}
+
+/**
+ * One recorded change to a symbol's price target.
+ *
+ * Append-only history, so a target quietly walked from $260 to $180 as a stock
+ * fell stays visible instead of each edit overwriting the last. Declared here so
+ * client components can type against it without importing `lib/db.ts`.
+ */
+export interface TargetRevision {
+  id: number;
+  symbol: string;
+  previousTarget: number | null;
+  newTarget: number | null;
+  previousDirection: TargetDirection | null;
+  newDirection: TargetDirection | null;
+  /** Optional rationale captured at the time of the change. */
+  note: string | null;
+  changedAt: number;
+}
+
 export interface WatchlistItem {
   symbol: string;
   name: string;
   addedAt: string; // ISO timestamp
   targetPrice: number | null;
+  /** Null only for rows saved before the column existed; resolved on read. */
+  targetDirection: TargetDirection | null;
   alertPctDrop: number | null;
   notes: string | null;
   /** Idea lifecycle stage. Defaults to "surfaced" for every row (§4.5). */
   stage: IdeaStage;
   /** Epoch-ms when the stage last changed; null for rows predating the migration. */
   stageChangedAt: number | null;
+  /**
+   * Which surface produced this idea (lib/idea-source.ts). NULL means "origin not
+   * recorded" — every row written before provenance existed — and must render as
+   * that rather than as a default surface.
+   */
+  source: IdeaSource | null;
+  /** What the originating surface knew: a screen name, a signal, a theme. */
+  sourceDetail: string | null;
   /** Joined from fundamentals_cache by /api/watchlist (null if never screened). */
   sector?: string | null;
   dividendYield?: number | null;
@@ -167,6 +227,29 @@ export interface PortfolioLot {
   fees: number; // transaction costs (capitalized into basis on buy; net against realized on sell)
   tradeDate: string; // ISO date the trade occurred (drives time-weighted return later)
   createdAt: string; // ISO timestamp the row was recorded
+  /**
+   * ISO code the `price` is denominated in. Optional; absent means the base
+   * currency.
+   *
+   * Carried on the domain type because a FULLY CLOSED position has no
+   * `RawHolding` — `aggregateOpenPositions()` filters `shares === 0` out of the
+   * holdings list — so the ledger is the only place its currency survives. Without
+   * it the performance engine could not tell a closed CHF position from a closed USD
+   * one and converted its realized P&L at 1.0, reporting francs as dollars.
+   */
+  currency?: string;
+  /**
+   * Provenance written by whoever created the lot.
+   *
+   * Carried on the domain type — not just the DB row — because one flag in here
+   * decides whether a lot represents CAPITAL or BOOKKEEPING. The Transaction
+   * Engine writes `{ balancing: true }` cash lots purely to conserve total value
+   * across a rebalance (see `cashBalancingLot`); they are not deposits and not
+   * trades. Without this field the performance engine could not tell them apart
+   * from real capital, and summed $699,442.65 of internal plumbing into the
+   * denominator of the portfolio's return.
+   */
+  meta?: Record<string, unknown> | null;
 }
 
 /** A logged investment decision — the unit of the decision journal / track
@@ -319,7 +402,29 @@ export type StockFundamentals = Omit<
   | "oneYearReturn"
   | "distanceFrom52WkHigh"
   | "scores"
-> & { ebitda: number | null; freeCashflow: number | null; exchange: string | null; beta: number | null };
+> & {
+  ebitda: number | null;
+  freeCashflow: number | null;
+  exchange: string | null;
+  beta: number | null;
+  /**
+   * Analyst consensus price target and its dispersion, in the listing currency.
+   *
+   * Carried here because `lib/enrich.ts` already requests Yahoo's `financialData`
+   * module, which returns `targetMeanPrice`/`targetHigh`/`targetLow`/
+   * `numberOfAnalystOpinions` in the very same response — so surfacing consensus
+   * on the watchlist costs zero additional network calls. Distinct from the
+   * user's own `watchlist.target_price`: this is what the street thinks, that is
+   * what *you* think, and the UI must never conflate them.
+   *
+   * Optional because rows cached before these fields existed deserialize without
+   * them, and because the composite scorer neither reads nor needs them.
+   */
+  analystTargetMean?: number | null;
+  analystTargetHigh?: number | null;
+  analystTargetLow?: number | null;
+  analystOpinions?: number | null;
+};
 
 /* -------------------------------------------------------------------------- */
 /* Fund fundamentals (ETF / mutual fund / closed-end fund)                     */

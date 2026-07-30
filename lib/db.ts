@@ -1,11 +1,15 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import type { ChartDrawingRecord, PortfolioPosition, PortfolioLot, ResearchNote, StockFundamentals, WatchlistItem, IdeaStage, SectorRotationEntry, TimelineEvent, Notification, Decision, DecisionAction, DecisionHorizon, ManualAsset, ManualAssetCategory } from "./types";
+import type { ChartDrawingRecord, PortfolioPosition, PortfolioLot, ResearchNote, StockFundamentals, WatchlistItem, WatchlistGroup, TargetRevision, IdeaStage, TargetDirection, SectorRotationEntry, TimelineEvent, Notification, Decision, DecisionAction, DecisionHorizon, ManualAsset, ManualAssetCategory } from "./types";
 import { aggregateOpenPositions } from "./portfolio-lots";
-import { isIdeaStage, autoStageForTrade } from "./idea-stage";
+import { isIdeaStage, autoStageForTrade, effectiveStage, isPipelineSymbol } from "./idea-stage";
+import { isIdeaSource, type IdeaSource } from "./idea-source";
+import { isUsablePrice } from "./watchlist-metrics";
 import type { AlertEvent } from "./alerts";
 import type { AttentionDismissal } from "./home/contracts";
+import type { Simulation, SimProfile, SimHolding, SimThesis, SimHeadline } from "./portfolio/simulator/types";
+import { normalizeStoredProfile } from "./portfolio/simulator/profile";
 
 let db: DatabaseSync | null = null;
 
@@ -26,6 +30,60 @@ function getDb(): DatabaseSync {
       target_price    REAL,
       alert_pct_drop  REAL,
       notes           TEXT
+    );
+    /* Named watchlists.
+     *
+     * Deliberately NOT a group_id column on the watchlist table: that table's primary
+     * key is the symbol, and every symbol-keyed API in the app (getIdeaStage,
+     * updateWatchlistItem, notes, targets, alerts) depends on it staying that
+     * way. Membership therefore lives in its own join table, which also means a
+     * symbol can appear in several lists while its research state — target,
+     * thesis, stage — is stored once. Your target for AAPL is your target for
+     * AAPL regardless of which list you are looking at it through. */
+    CREATE TABLE IF NOT EXISTS watchlist_group (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      name       TEXT NOT NULL,
+      /* Ticker compared against, e.g. SPY. Null = no benchmark for this list. */
+      benchmark  TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS watchlist_member (
+      group_id INTEGER NOT NULL,
+      symbol   TEXT NOT NULL,
+      added_at TEXT NOT NULL,
+      PRIMARY KEY (group_id, symbol)
+    );
+    CREATE INDEX IF NOT EXISTS idx_watchlist_member_symbol ON watchlist_member (symbol);
+    /* Every revision of a price target, so a user can review their own changes
+     * of mind. Append-only; nothing here is ever updated. */
+    CREATE TABLE IF NOT EXISTS watchlist_target_history (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      symbol             TEXT NOT NULL,
+      previous_target    REAL,
+      new_target         REAL,
+      previous_direction TEXT,
+      new_direction      TEXT,
+      note               TEXT,
+      changed_at         INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_watchlist_target_history_symbol
+      ON watchlist_target_history (symbol, changed_at DESC);
+    /* The last price the alert evaluator actually observed, per symbol.
+     *
+     * This is what turns a *state* test into a *crossing* test: without a
+     * previous observation there is no way to distinguish "the price just moved
+     * through your level" from "the price has been sitting past your level for a
+     * month", and the latter is not an event. Persisted rather than held in
+     * memory so a crossing that happens while the server is down is still
+     * detected on the next run. */
+    CREATE TABLE IF NOT EXISTS price_alert_state (
+      symbol              TEXT PRIMARY KEY,
+      last_price          REAL NOT NULL,
+      /* Today's % change as last observed. The drop alert is a same-day measure,
+       * so its transition test is against this rather than against a price. */
+      last_change_percent REAL,
+      last_seen_at        INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS fundamentals_cache (
       symbol     TEXT PRIMARY KEY,
@@ -48,6 +106,17 @@ function getDb(): DatabaseSync {
       address_key TEXT PRIMARY KEY,
       data        TEXT NOT NULL,
       updated_at  INTEGER NOT NULL
+    );
+    /* Named portfolios. Every ledger row (portfolio_lot, manual_asset,
+     * portfolio_snapshot) carries a portfolio_id defaulting to 1 — the seeded
+     * "Main Portfolio" — so every pre-existing caller that doesn't name one
+     * keeps reading and writing exactly what it always did. Aggregate surfaces
+     * (Home, Calendar, Knowledge Graph…) deliberately stay on the default
+     * portfolio; only the Portfolio page switches. */
+    CREATE TABLE IF NOT EXISTS portfolios (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      name       TEXT NOT NULL,
+      created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS portfolio (
       symbol   TEXT PRIMARY KEY,
@@ -187,6 +256,25 @@ function getDb(): DatabaseSync {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_portfolio_snapshot_created ON portfolio_snapshot (created_at DESC);
+
+    /* Simulator: AI-generated hypothetical portfolios. A row is a *specification*
+     * (intake profile + hypothetical holdings), never a computed result — all
+     * analytics are recomputed live through the same engines as the real
+     * portfolio. The headline column is the one denormalization (list-view numbers),
+     * refreshed on every evaluation. */
+    CREATE TABLE IF NOT EXISTS simulation (
+      id          TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      status      TEXT NOT NULL DEFAULT 'draft',
+      profile     TEXT NOT NULL,
+      holdings    TEXT NOT NULL DEFAULT '[]',
+      thesis      TEXT,
+      headline    TEXT,
+      promoted_at TEXT,
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_simulation_updated ON simulation (updated_at DESC);
     CREATE TABLE IF NOT EXISTS saved_screen (
       id          TEXT PRIMARY KEY,
       name        TEXT NOT NULL,
@@ -250,6 +338,51 @@ function getDb(): DatabaseSync {
   for (const col of ["stage TEXT NOT NULL DEFAULT 'surfaced'", "stage_changed_at INTEGER"]) {
     try { db.exec(`ALTER TABLE watchlist ADD COLUMN ${col}`); } catch { /* already exists */ }
   }
+  // Price-target direction. Left NULL for pre-existing rows on purpose: NULL
+  // means "not recorded", which lib/watchlist-metrics.ts resolves from the price
+  // at read time. Backfilling a guess here would freeze that guess forever.
+  //
+  // This column is what reconciles two engines that disagreed: lib/alerts.ts
+  // fired a target when price <= target (a buy limit) while the watchlist page
+  // and CSV export fired when price >= target (a valuation target), so for any
+  // target a user set, exactly one of the two was permanently firing.
+  try { db.exec("ALTER TABLE watchlist ADD COLUMN target_direction TEXT"); } catch { /* already exists */ }
+  // Provenance (see lib/idea-source.ts). Deliberately NOT backfilled and
+  // deliberately nullable: every row that predates this column has an origin
+  // nobody recorded, and the honest rendering of that is "origin not recorded".
+  // Defaulting them to 'watchlist' would convert missing history into a false
+  // claim that no later read could distinguish from a real one.
+  for (const col of ["source TEXT", "source_detail TEXT"]) {
+    try { db.exec(`ALTER TABLE watchlist ADD COLUMN ${col}`); } catch { /* already exists */ }
+  }
+  /* Named watchlists — seed the default list and adopt every existing symbol
+   * into it, so a pre-existing user opens the page to exactly what they had.
+   * Both steps are guarded by their own emptiness check rather than a version
+   * flag, which makes the migration idempotent and also self-healing: a symbol
+   * added by an older build that wrote only to `watchlist` gets adopted on the
+   * next boot instead of becoming invisible. */
+  try {
+    const groupCount = db.prepare("SELECT COUNT(*) AS n FROM watchlist_group").get() as { n: number };
+    if (groupCount.n === 0) {
+      db.prepare("INSERT INTO watchlist_group (id, name, benchmark, sort_order, created_at) VALUES (1, ?, ?, 0, ?)")
+        .run(DEFAULT_WATCHLIST_NAME, "SPY", Date.now());
+    }
+    // Adopt orphans into the lowest-ordered list.
+    const fallback = db
+      .prepare("SELECT id FROM watchlist_group ORDER BY sort_order, id LIMIT 1")
+      .get() as { id: number } | undefined;
+    if (fallback) {
+      db.prepare(
+        `INSERT OR IGNORE INTO watchlist_member (group_id, symbol, added_at)
+         SELECT ?, w.symbol, w.added_at FROM watchlist w
+         WHERE NOT EXISTS (SELECT 1 FROM watchlist_member m WHERE m.symbol = w.symbol)`,
+      ).run(fallback.id);
+    }
+  } catch (err) {
+    // A failed list migration must not make the app unbootable; `listWatchlist()`
+    // reads the `watchlist` table directly and is unaffected either way.
+    console.warn("[db] watchlist group migration skipped:", err instanceof Error ? err.message : err);
+  }
   // Universal Portfolio: a lot used to be implicitly "shares of a US equity, in
   // USD". These columns make that explicit so the ledger can also hold a bond
   // fund, 1.4 BTC, or $50k of cash.
@@ -265,6 +398,25 @@ function getDb(): DatabaseSync {
     "meta TEXT",
   ]) {
     try { db.exec(`ALTER TABLE portfolio_lot ADD COLUMN ${col}`); } catch { /* already exists */ }
+  }
+  // Multi-portfolio: every ledger row belongs to a named portfolio. DEFAULT 1
+  // backfills all pre-existing rows into the seeded "Main Portfolio", so this
+  // is the identity migration for a single-portfolio database.
+  for (const [table, col] of [
+    ["portfolio_lot", "portfolio_id INTEGER NOT NULL DEFAULT 1"],
+    ["manual_asset", "portfolio_id INTEGER NOT NULL DEFAULT 1"],
+    ["portfolio_snapshot", "portfolio_id INTEGER NOT NULL DEFAULT 1"],
+  ]) {
+    try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${col}`); } catch { /* already exists */ }
+  }
+  try {
+    const n = (db.prepare("SELECT COUNT(*) AS n FROM portfolios").get() as { n: number }).n;
+    if (n === 0) {
+      db.prepare("INSERT INTO portfolios (id, name, created_at) VALUES (1, ?, ?)")
+        .run("Main Portfolio", new Date().toISOString());
+    }
+  } catch (err) {
+    console.warn("[db] portfolios seed skipped:", err instanceof Error ? err.message : err);
   }
   // One-time: seed the lot ledger from the legacy aggregate `portfolio` table so
   // existing holdings survive the move to a lot-backed model. Each legacy row
@@ -291,10 +443,13 @@ interface WatchlistRow {
   name: string;
   added_at: string;
   target_price: number | null;
+  target_direction: string | null;
   alert_pct_drop: number | null;
   notes: string | null;
   stage: string | null;
   stage_changed_at: number | null;
+  source: string | null;
+  source_detail: string | null;
 }
 
 function rowToWatchlistItem(r: WatchlistRow): WatchlistItem {
@@ -302,19 +457,375 @@ function rowToWatchlistItem(r: WatchlistRow): WatchlistItem {
     symbol: r.symbol,
     name: r.name,
     addedAt: r.added_at,
-    targetPrice: r.target_price ?? null,
+    // A stored 0 or a negative is not a price. Those rows exist because the old
+    // editor accepted "0" (a truthy string), and they divided into the upside
+    // formula as +Infinity%. Normalized away on read so no consumer inherits it.
+    targetPrice: isUsablePrice(r.target_price) ? r.target_price : null,
+    targetDirection: r.target_direction === "above" || r.target_direction === "below" ? r.target_direction : null,
     alertPctDrop: r.alert_pct_drop ?? null,
     notes: r.notes ?? null,
     stage: isIdeaStage(r.stage) ? r.stage : "surfaced",
     stageChangedAt: r.stage_changed_at ?? null,
+    // An unrecognized stored value reads as "not recorded", never as a default
+    // surface: a row written by a future build with a source this build doesn't
+    // know is honestly unknown to us, and so is a legacy NULL.
+    source: isIdeaSource(r.source) ? r.source : null,
+    sourceDetail: r.source_detail ?? null,
   };
 }
 
+const WATCHLIST_COLUMNS =
+  "symbol, name, added_at, target_price, target_direction, alert_pct_drop, notes, stage, stage_changed_at, source, source_detail";
+
+/**
+ * Every tracked symbol, across every named list.
+ *
+ * Signature deliberately unchanged and unparameterized. Ten callers depend on it
+ * — the alert monitor, the timeline, the knowledge graph, the calendar, the home
+ * digest, the pipeline board, the CSV export, the AI digest — and every one of
+ * them means "everything I am tracking", not "one tab of it". Introducing named
+ * lists must not silently narrow any of those. Use {@link listWatchlistByGroup}
+ * when you specifically want one list.
+ */
 export function listWatchlist(): WatchlistItem[] {
   const rows = getDb()
-    .prepare("SELECT symbol, name, added_at, target_price, alert_pct_drop, notes, stage, stage_changed_at FROM watchlist ORDER BY added_at DESC")
+    .prepare(`SELECT ${WATCHLIST_COLUMNS} FROM watchlist ORDER BY added_at DESC`)
     .all() as unknown as WatchlistRow[];
   return rows.map(rowToWatchlistItem);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Named watchlists                                                            */
+/* -------------------------------------------------------------------------- */
+
+export const DEFAULT_WATCHLIST_NAME = "My Watchlist";
+
+interface WatchlistGroupRow {
+  id: number;
+  name: string;
+  benchmark: string | null;
+  sort_order: number;
+  created_at: number;
+  count: number;
+}
+
+export function listWatchlistGroups(): WatchlistGroup[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT g.id, g.name, g.benchmark, g.sort_order, g.created_at,
+              (SELECT COUNT(*) FROM watchlist_member m WHERE m.group_id = g.id) AS count
+       FROM watchlist_group g
+       ORDER BY g.sort_order, g.id`,
+    )
+    .all() as unknown as WatchlistGroupRow[];
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    benchmark: r.benchmark ?? null,
+    sortOrder: r.sort_order,
+    createdAt: r.created_at,
+    count: r.count,
+  }));
+}
+
+/** The list a bare "add to watchlist" lands in — the first by display order. */
+export function defaultWatchlistGroupId(): number {
+  const row = getDb()
+    .prepare("SELECT id FROM watchlist_group ORDER BY sort_order, id LIMIT 1")
+    .get() as { id: number } | undefined;
+  if (row) return row.id;
+  // No lists at all (a DB whose migration was skipped). Create one rather than
+  // failing the write — a symbol must always have somewhere to go.
+  const now = Date.now();
+  getDb()
+    .prepare("INSERT INTO watchlist_group (name, benchmark, sort_order, created_at) VALUES (?, ?, 0, ?)")
+    .run(DEFAULT_WATCHLIST_NAME, "SPY", now);
+  return (getDb().prepare("SELECT last_insert_rowid() AS id").get() as { id: number }).id;
+}
+
+export function createWatchlistGroup(name: string, benchmark: string | null = null): WatchlistGroup {
+  const db = getDb();
+  const next = db.prepare("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM watchlist_group").get() as { n: number };
+  const now = Date.now();
+  db.prepare("INSERT INTO watchlist_group (name, benchmark, sort_order, created_at) VALUES (?, ?, ?, ?)")
+    .run(name, benchmark, next.n, now);
+  const id = (db.prepare("SELECT last_insert_rowid() AS id").get() as { id: number }).id;
+  return { id, name, benchmark, sortOrder: next.n, createdAt: now, count: 0 };
+}
+
+export function updateWatchlistGroup(
+  id: number,
+  patch: { name?: string; benchmark?: string | null },
+): void {
+  const db = getDb();
+  if (patch.name !== undefined) {
+    db.prepare("UPDATE watchlist_group SET name = ? WHERE id = ?").run(patch.name, id);
+  }
+  if ("benchmark" in patch) {
+    db.prepare("UPDATE watchlist_group SET benchmark = ? WHERE id = ?").run(patch.benchmark ?? null, id);
+  }
+}
+
+/**
+ * Delete a list. Refuses to remove the last one — the page has no coherent state
+ * with zero lists, and "delete everything" is not what the button means.
+ *
+ * Symbols that were only in this list keep their research state (target, thesis,
+ * stage) and are moved to the surviving default list rather than destroyed:
+ * deleting a *view* must not silently delete months of notes.
+ */
+export function deleteWatchlistGroup(id: number): { deleted: boolean; reason?: string; movedSymbols: number } {
+  const db = getDb();
+  const total = db.prepare("SELECT COUNT(*) AS n FROM watchlist_group").get() as { n: number };
+  if (total.n <= 1) return { deleted: false, reason: "You need at least one watchlist.", movedSymbols: 0 };
+
+  const survivor = db
+    .prepare("SELECT id FROM watchlist_group WHERE id != ? ORDER BY sort_order, id LIMIT 1")
+    .get(id) as { id: number } | undefined;
+  if (!survivor) return { deleted: false, reason: "No other watchlist to move symbols into.", movedSymbols: 0 };
+
+  const orphans = db
+    .prepare(
+      `SELECT symbol FROM watchlist_member
+       WHERE group_id = ?
+         AND symbol NOT IN (SELECT symbol FROM watchlist_member WHERE group_id != ?)`,
+    )
+    .all(id, id) as unknown as { symbol: string }[];
+
+  const insert = db.prepare("INSERT OR IGNORE INTO watchlist_member (group_id, symbol, added_at) VALUES (?, ?, ?)");
+  const now = new Date().toISOString();
+  for (const o of orphans) insert.run(survivor.id, o.symbol, now);
+
+  db.prepare("DELETE FROM watchlist_member WHERE group_id = ?").run(id);
+  db.prepare("DELETE FROM watchlist_group WHERE id = ?").run(id);
+  return { deleted: true, movedSymbols: orphans.length };
+}
+
+/** Copy a list's membership into a new list. Research state is shared, not cloned. */
+export function duplicateWatchlistGroup(id: number, name: string): WatchlistGroup | null {
+  const db = getDb();
+  const source = db.prepare("SELECT benchmark FROM watchlist_group WHERE id = ?").get(id) as
+    | { benchmark: string | null }
+    | undefined;
+  if (!source) return null;
+  const group = createWatchlistGroup(name, source.benchmark ?? null);
+  db.prepare(
+    `INSERT OR IGNORE INTO watchlist_member (group_id, symbol, added_at)
+     SELECT ?, symbol, added_at FROM watchlist_member WHERE group_id = ?`,
+  ).run(group.id, id);
+  const count = db.prepare("SELECT COUNT(*) AS n FROM watchlist_member WHERE group_id = ?").get(group.id) as { n: number };
+  return { ...group, count: count.n };
+}
+
+/** Persist an explicit display order. Ids not supplied keep their current order. */
+export function reorderWatchlistGroups(orderedIds: number[]): void {
+  const db = getDb();
+  const stmt = db.prepare("UPDATE watchlist_group SET sort_order = ? WHERE id = ?");
+  orderedIds.forEach((id, index) => stmt.run(index, id));
+}
+
+/** One list's symbols, newest membership first. */
+export function listWatchlistByGroup(groupId: number): WatchlistItem[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT ${WATCHLIST_COLUMNS.split(", ").map((c) => `w.${c}`).join(", ")}
+       FROM watchlist w
+       JOIN watchlist_member m ON m.symbol = w.symbol
+       WHERE m.group_id = ?
+       ORDER BY m.added_at DESC`,
+    )
+    .all(groupId) as unknown as WatchlistRow[];
+  return rows.map(rowToWatchlistItem);
+}
+
+/** Which lists a symbol currently appears in. */
+export function groupsForSymbol(symbol: string): number[] {
+  const rows = getDb()
+    .prepare("SELECT group_id FROM watchlist_member WHERE symbol = ? ORDER BY group_id")
+    .all(symbol.toUpperCase()) as unknown as { group_id: number }[];
+  return rows.map((r) => r.group_id);
+}
+
+export function addSymbolToGroup(symbol: string, groupId: number): void {
+  getDb()
+    .prepare("INSERT OR IGNORE INTO watchlist_member (group_id, symbol, added_at) VALUES (?, ?, ?)")
+    .run(groupId, symbol.toUpperCase(), new Date().toISOString());
+}
+
+/**
+ * Remove a symbol from one list. Its research state — and the `watchlist` row —
+ * survive as long as it is still in some other list; only the last removal
+ * deletes the underlying row.
+ */
+export function removeSymbolFromGroup(symbol: string, groupId: number): { removedEntirely: boolean } {
+  const db = getDb();
+  const sym = symbol.toUpperCase();
+  db.prepare("DELETE FROM watchlist_member WHERE group_id = ? AND symbol = ?").run(groupId, sym);
+  const remaining = db.prepare("SELECT COUNT(*) AS n FROM watchlist_member WHERE symbol = ?").get(sym) as { n: number };
+  if (remaining.n === 0) {
+    removeFromWatchlist(sym);
+    return { removedEntirely: true };
+  }
+  return { removedEntirely: false };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Target revision history                                                     */
+/* -------------------------------------------------------------------------- */
+
+interface TargetRevisionRow {
+  id: number;
+  symbol: string;
+  previous_target: number | null;
+  new_target: number | null;
+  previous_direction: string | null;
+  new_direction: string | null;
+  note: string | null;
+  changed_at: number;
+}
+
+const asDirection = (v: string | null): TargetDirection | null =>
+  v === "above" || v === "below" ? v : null;
+
+export function recordTargetRevision(input: {
+  symbol: string;
+  previousTarget: number | null;
+  newTarget: number | null;
+  previousDirection: TargetDirection | null;
+  newDirection: TargetDirection | null;
+  note?: string | null;
+}): void {
+  getDb()
+    .prepare(
+      `INSERT INTO watchlist_target_history
+         (symbol, previous_target, new_target, previous_direction, new_direction, note, changed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      input.symbol.toUpperCase(),
+      input.previousTarget,
+      input.newTarget,
+      input.previousDirection,
+      input.newDirection,
+      input.note?.trim() || null,
+      Date.now(),
+    );
+}
+
+export function listTargetRevisions(symbol: string, limit = 25): TargetRevision[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM watchlist_target_history WHERE symbol = ? ORDER BY changed_at DESC, id DESC LIMIT ?`,
+    )
+    .all(symbol.toUpperCase(), limit) as unknown as TargetRevisionRow[];
+  return rows.map((r) => ({
+    id: r.id,
+    symbol: r.symbol,
+    previousTarget: r.previous_target ?? null,
+    newTarget: r.new_target ?? null,
+    previousDirection: asDirection(r.previous_direction),
+    newDirection: asDirection(r.new_direction),
+    note: r.note ?? null,
+    changedAt: r.changed_at,
+  }));
+}
+
+/** Revision counts for a set of symbols, so the UI can show a badge without N queries. */
+export function targetRevisionCounts(symbols: string[]): Map<string, number> {
+  const out = new Map<string, number>();
+  if (symbols.length === 0) return out;
+  const placeholders = symbols.map(() => "?").join(",");
+  const rows = getDb()
+    .prepare(
+      `SELECT symbol, COUNT(*) AS n FROM watchlist_target_history
+       WHERE symbol IN (${placeholders}) GROUP BY symbol`,
+    )
+    .all(...symbols.map((s) => s.toUpperCase())) as unknown as { symbol: string; n: number }[];
+  for (const r of rows) out.set(r.symbol, r.n);
+  return out;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Crossing detection state                                                    */
+/* -------------------------------------------------------------------------- */
+
+export interface PriceAlertState {
+  symbol: string;
+  lastPrice: number;
+  lastChangePercent: number | null;
+  lastSeenAt: number;
+}
+
+export function getPriceAlertStates(symbols: string[]): Map<string, PriceAlertState> {
+  const out = new Map<string, PriceAlertState>();
+  if (symbols.length === 0) return out;
+  const placeholders = symbols.map(() => "?").join(",");
+  const rows = getDb()
+    .prepare(
+      `SELECT symbol, last_price, last_change_percent, last_seen_at
+       FROM price_alert_state WHERE symbol IN (${placeholders})`,
+    )
+    .all(...symbols.map((s) => s.toUpperCase())) as unknown as {
+    symbol: string;
+    last_price: number;
+    last_change_percent: number | null;
+    last_seen_at: number;
+  }[];
+  for (const r of rows) {
+    out.set(r.symbol, {
+      symbol: r.symbol,
+      lastPrice: r.last_price,
+      lastChangePercent: r.last_change_percent ?? null,
+      lastSeenAt: r.last_seen_at,
+    });
+  }
+  return out;
+}
+
+export function putPriceAlertStates(
+  entries: { symbol: string; price: number; changePercent?: number | null }[],
+  now = Date.now(),
+): void {
+  if (entries.length === 0) return;
+  const stmt = getDb().prepare(
+    `INSERT INTO price_alert_state (symbol, last_price, last_change_percent, last_seen_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(symbol) DO UPDATE SET
+       last_price = excluded.last_price,
+       last_change_percent = excluded.last_change_percent,
+       last_seen_at = excluded.last_seen_at`,
+  );
+  for (const e of entries) {
+    if (!Number.isFinite(e.price) || e.price <= 0) continue;
+    const chg = e.changePercent != null && Number.isFinite(e.changePercent) ? e.changePercent : null;
+    stmt.run(e.symbol.toUpperCase(), e.price, chg, now);
+  }
+}
+
+/**
+ * Record a target's direction without the side effects of a user edit.
+ *
+ * `updateWatchlistItem` deliberately writes a revision row and re-arms crossing
+ * detection whenever a target changes — correct for a person changing their mind,
+ * wrong for the monitor filling in a column that was simply never populated.
+ * Using the user-facing path here would fabricate a "revision" the user never
+ * made and reset the very baseline the backfill exists to make usable.
+ */
+export function backfillTargetDirection(symbol: string, direction: TargetDirection): void {
+  getDb()
+    .prepare("UPDATE watchlist SET target_direction = ? WHERE symbol = ? AND target_direction IS NULL")
+    .run(direction, symbol.toUpperCase());
+}
+
+/**
+ * Forget the observed price for a symbol, so the next evaluation re-arms instead
+ * of comparing against a baseline taken under a different target.
+ *
+ * Called whenever a target changes. Without it, moving a target from $260 to
+ * $150 while the price sat at $190 would make the *next* tick look like a
+ * downward crossing of $150 that never happened.
+ */
+export function resetPriceAlertState(symbol: string): void {
+  getDb().prepare("DELETE FROM price_alert_state WHERE symbol = ?").run(symbol.toUpperCase());
 }
 
 /* -------------------------------------------------------------------------- */
@@ -343,7 +854,7 @@ export function getIdeaStage(symbol: string): IdeaStage | null {
 export function setIdeaStage(
   symbol: string,
   stage: IdeaStage,
-  opts: { createIfMissing?: boolean; name?: string } = {},
+  opts: { createIfMissing?: boolean; name?: string; origin?: { source: IdeaSource; detail?: string | null } } = {},
 ): { changed: boolean; from: IdeaStage | null } {
   const db = getDb();
   const sym = symbol.toUpperCase();
@@ -353,16 +864,58 @@ export function setIdeaStage(
   if (from === null) {
     if (!opts.createIfMissing) return { changed: false, from: null };
     db.prepare(
-      `INSERT INTO watchlist (symbol, name, added_at, stage, stage_changed_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(symbol) DO UPDATE SET stage = excluded.stage, stage_changed_at = excluded.stage_changed_at`,
-    ).run(sym, opts.name ?? sym, new Date(now).toISOString(), stage, now);
+      `INSERT INTO watchlist (symbol, name, added_at, stage, stage_changed_at, source, source_detail)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(symbol) DO UPDATE SET
+         stage = excluded.stage,
+         stage_changed_at = excluded.stage_changed_at,
+         source = COALESCE(watchlist.source, excluded.source),
+         source_detail = COALESCE(watchlist.source_detail, excluded.source_detail)`,
+    ).run(
+      sym,
+      opts.name ?? sym,
+      new Date(now).toISOString(),
+      stage,
+      now,
+      opts.origin?.source ?? null,
+      opts.origin?.detail ?? null,
+    );
     return { changed: true, from: null };
   }
 
   if (from === stage) return { changed: false, from };
   db.prepare("UPDATE watchlist SET stage = ?, stage_changed_at = ? WHERE symbol = ?").run(stage, now, sym);
   return { changed: true, from };
+}
+
+/**
+ * Bring every stored `owned` stage back in line with the ledger.
+ *
+ * {@link reconcileStageForLedgerWrite} only fires on the two INSERT primitives,
+ * so every path that *removes* holdings — removeLot, removePosition, the
+ * replace-the-ledger upserts, restoreSnapshot (Undo) — used to leave `owned`
+ * behind on names the portfolio no longer held. That is how BND and VTI came to
+ * sit in the Pipeline's Owned column, and on the Watchlist's Stage column, for a
+ * portfolio whose ledger contains neither: their buys wrote the stage, the lots
+ * were deleted, and nothing told the stage.
+ *
+ * The Pipeline board derives its columns through `effectiveStage()` and so is
+ * correct either way; this exists so the *stored* value every other surface
+ * reads stops drifting. Returns how many rows it changed.
+ */
+export function reconcileOwnedStages(portfolioId = 1): number {
+  const heldSymbols = new Set(
+    aggregateOpenPositions(listLots(undefined, portfolioId))
+      .filter((p) => p.shares > 1e-9 && isPipelineSymbol(p.symbol))
+      .map((p) => p.symbol.toUpperCase()),
+  );
+
+  let changed = 0;
+  for (const row of listWatchlist()) {
+    const next = effectiveStage(row.stage, heldSymbols.has(row.symbol.toUpperCase()));
+    if (next !== row.stage && setIdeaStage(row.symbol, next).changed) changed++;
+  }
+  return changed;
 }
 
 /**
@@ -382,47 +935,162 @@ function reconcileStageForLedgerWrite(symbol: string, name: string, kind: "buy" 
   const next = autoStageForTrade({ kind, assetClass, symbol, stillHeld });
   if (!next) return;
   try {
-    setIdeaStage(symbol, next, { createIfMissing: next === "owned", name });
+    // A buy of an untracked name is a real, knowable provenance: the idea entered
+    // the pipeline BY being bought, rather than being researched and then bought.
+    setIdeaStage(symbol, next, {
+      createIfMissing: next === "owned",
+      name,
+      origin: { source: "ledger", detail: `${assetClass} position opened` },
+    });
   } catch {
     /* stage reconciliation must never break a trade write */
   }
 }
 
-export function addToWatchlist(symbol: string, name: string): WatchlistItem {
+/**
+ * Track a symbol.
+ *
+ * `origin` records WHICH surface produced the idea (lib/idea-source.ts). It is
+ * optional so no caller breaks, but an omitted origin stores NULL — which reads
+ * as "origin not recorded" rather than as a default — so every add path should
+ * pass one. On conflict the EARLIEST origin is kept: provenance answers where an
+ * idea came from, and re-adding a screened name from Research must not rewrite
+ * its history.
+ */
+export function addToWatchlist(
+  symbol: string,
+  name: string,
+  groupId?: number,
+  origin?: { source: IdeaSource; detail?: string | null },
+): WatchlistItem {
   const sym = symbol.toUpperCase();
   const addedAt = new Date().toISOString();
   getDb()
     .prepare(
-      `INSERT INTO watchlist (symbol, name, added_at) VALUES (?, ?, ?)
-       ON CONFLICT(symbol) DO UPDATE SET name = excluded.name`,
+      `INSERT INTO watchlist (symbol, name, added_at, source, source_detail) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(symbol) DO UPDATE SET
+         name = excluded.name,
+         source = COALESCE(watchlist.source, excluded.source),
+         source_detail = COALESCE(watchlist.source_detail, excluded.source_detail)`,
     )
-    .run(sym, name, addedAt);
+    .run(sym, name, addedAt, origin?.source ?? null, origin?.detail ?? null);
+  // Membership is what makes the symbol visible in a named list. Callers that
+  // predate named lists (Research's "add to watchlist", the command palette)
+  // pass no group and land in the default one.
+  try {
+    addSymbolToGroup(sym, groupId ?? defaultWatchlistGroupId());
+  } catch {
+    /* the settings row is written either way; a missing membership self-heals on boot */
+  }
   return {
     symbol: sym,
     name,
     addedAt,
     targetPrice: null,
+    targetDirection: null,
     alertPctDrop: null,
     notes: null,
     // A brand-new row defaults to 'surfaced'; an existing one keeps its stage
     // (the insert leaves stage untouched on conflict).
     stage: getIdeaStage(sym) ?? "surfaced",
     stageChangedAt: null,
+    // Read back rather than echoed: on conflict the stored (earlier) origin wins,
+    // so returning what this call passed would misreport what is now persisted.
+    source: getIdeaOrigin(sym)?.source ?? null,
+    sourceDetail: getIdeaOrigin(sym)?.detail ?? null,
+  };
+}
+
+/** The persisted origin of a tracked symbol, or null when it isn't tracked. */
+export function getIdeaOrigin(symbol: string): { source: IdeaSource | null; detail: string | null } | null {
+  const row = getDb()
+    .prepare("SELECT source, source_detail FROM watchlist WHERE symbol = ?")
+    .get(symbol.toUpperCase()) as { source: string | null; source_detail: string | null } | undefined;
+  if (!row) return null;
+  return {
+    source: isIdeaSource(row.source) ? row.source : null,
+    detail: row.source_detail ?? null,
   };
 }
 
 export function updateWatchlistItem(
   symbol: string,
-  patch: { targetPrice?: number | null; alertPctDrop?: number | null; notes?: string | null },
+  patch: {
+    targetPrice?: number | null;
+    targetDirection?: TargetDirection | null;
+    alertPctDrop?: number | null;
+    notes?: string | null;
+    /** Optional rationale, stored against the target revision this write creates. */
+    targetNote?: string | null;
+  },
 ): void {
   const db = getDb();
+
+  /* Record the revision BEFORE mutating, while the previous values are still
+     readable, and only when the target actually changed — re-saving the same
+     number should not manufacture a history entry. Also re-arms crossing
+     detection: a baseline captured under the old target would make the next
+     tick look like a crossing of the new one. */
+  const touchesTarget = "targetPrice" in patch || "targetDirection" in patch;
+  if (touchesTarget) {
+    const before = db
+      .prepare("SELECT target_price, target_direction FROM watchlist WHERE symbol = ?")
+      .get(symbol.toUpperCase()) as { target_price: number | null; target_direction: string | null } | undefined;
+    const prevTarget = isUsablePrice(before?.target_price) ? before!.target_price : null;
+    const prevDirection = asDirection(before?.target_direction ?? null);
+    const nextTarget =
+      "targetPrice" in patch ? (isUsablePrice(patch.targetPrice) ? patch.targetPrice! : null) : prevTarget;
+    const nextDirection =
+      "targetDirection" in patch
+        ? patch.targetDirection === "above" || patch.targetDirection === "below"
+          ? patch.targetDirection
+          : null
+        : prevDirection;
+
+    if (prevTarget !== nextTarget || prevDirection !== nextDirection) {
+      try {
+        recordTargetRevision({
+          symbol,
+          previousTarget: prevTarget,
+          newTarget: nextTarget,
+          previousDirection: prevDirection,
+          newDirection: nextDirection,
+          note: patch.targetNote ?? null,
+        });
+      } catch {
+        /* history is an audit trail, never a gate on the write itself */
+      }
+      try {
+        resetPriceAlertState(symbol);
+      } catch {
+        /* re-arm is best-effort; a stale baseline self-corrects on the next tick */
+      }
+    }
+  }
+
   if ("targetPrice" in patch) {
+    // Only a usable price is stored. Clearing the target also clears its
+    // direction, so a later target can never inherit a stale one.
+    const next = isUsablePrice(patch.targetPrice) ? patch.targetPrice : null;
     db.prepare("UPDATE watchlist SET target_price = ? WHERE symbol = ?")
-      .run(patch.targetPrice ?? null, symbol.toUpperCase());
+      .run(next, symbol.toUpperCase());
+    if (next == null) {
+      db.prepare("UPDATE watchlist SET target_direction = NULL WHERE symbol = ?")
+        .run(symbol.toUpperCase());
+    }
+  }
+  if ("targetDirection" in patch) {
+    const dir = patch.targetDirection === "above" || patch.targetDirection === "below" ? patch.targetDirection : null;
+    db.prepare("UPDATE watchlist SET target_direction = ? WHERE symbol = ?")
+      .run(dir, symbol.toUpperCase());
   }
   if ("alertPctDrop" in patch) {
+    // A drop threshold is a magnitude; a stored negative would make the
+    // evaluator's `changePercent <= -threshold` test fire on every up day.
+    const pct = patch.alertPctDrop;
+    const next = typeof pct === "number" && Number.isFinite(pct) && pct > 0 ? Math.abs(pct) : null;
     db.prepare("UPDATE watchlist SET alert_pct_drop = ? WHERE symbol = ?")
-      .run(patch.alertPctDrop ?? null, symbol.toUpperCase());
+      .run(next, symbol.toUpperCase());
   }
   if ("notes" in patch) {
     db.prepare("UPDATE watchlist SET notes = ? WHERE symbol = ?")
@@ -430,10 +1098,29 @@ export function updateWatchlistItem(
   }
 }
 
+/**
+ * Remove a symbol's research state entirely, along with everything keyed to it.
+ *
+ * The associated rows have to go too. Leaving them behind means re-adding the
+ * symbol months later resurrects a "Target history: 3 changes" panel describing
+ * decisions about a position the user has already discarded, and an alert
+ * baseline captured under a target that no longer exists. The UI promises that
+ * removing a name deletes "its target, alerts and thesis" — this is what makes
+ * that promise true.
+ */
 export function removeFromWatchlist(symbol: string): void {
-  getDb()
-    .prepare("DELETE FROM watchlist WHERE symbol = ?")
-    .run(symbol.toUpperCase());
+  const db = getDb();
+  const sym = symbol.toUpperCase();
+  db.prepare("DELETE FROM watchlist WHERE symbol = ?").run(sym);
+  db.prepare("DELETE FROM watchlist_member WHERE symbol = ?").run(sym);
+  for (const sql of [
+    "DELETE FROM watchlist_target_history WHERE symbol = ?",
+    "DELETE FROM price_alert_state WHERE symbol = ?",
+  ]) {
+    // Guarded individually: on a database that predates either table, the
+    // primary deletion above must still succeed.
+    try { db.prepare(sql).run(sym); } catch { /* table absent — nothing to clean */ }
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -671,6 +1358,8 @@ interface PortfolioLotRow {
   fees: number;
   trade_date: string;
   created_at: string;
+  currency: string | null;
+  meta: string | null;
 }
 
 function rowToLot(r: PortfolioLotRow): PortfolioLot {
@@ -684,16 +1373,34 @@ function rowToLot(r: PortfolioLotRow): PortfolioLot {
     fees: r.fees,
     tradeDate: r.trade_date,
     createdAt: r.created_at,
+    // The ledger is the only surviving record of a CLOSED position's currency, so
+    // this has to travel with the lot. Dropping it made a closed foreign position's
+    // realized P&L convert at 1.0.
+    currency: (r.currency ?? undefined) || undefined,
+    // Provenance travels with the lot. The performance engine needs it to tell a
+    // deposit from the Transaction Engine's value-conserving cash plug; dropping
+    // it here is what let internal bookkeeping be counted as invested capital.
+    meta: parseLotMeta(r.meta),
   };
 }
 
+function parseLotMeta(raw: string | null): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw);
+    return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** All lots for a symbol (or the whole ledger when omitted), oldest first. */
-export function listLots(symbol?: string): PortfolioLot[] {
+export function listLots(symbol?: string, portfolioId = 1): PortfolioLot[] {
   const db = getDb();
   const rows = (
     symbol
-      ? db.prepare("SELECT * FROM portfolio_lot WHERE symbol = ? ORDER BY trade_date, id").all(symbol.toUpperCase())
-      : db.prepare("SELECT * FROM portfolio_lot ORDER BY trade_date, id").all()
+      ? db.prepare("SELECT * FROM portfolio_lot WHERE symbol = ? AND portfolio_id = ? ORDER BY trade_date, id").all(symbol.toUpperCase(), portfolioId)
+      : db.prepare("SELECT * FROM portfolio_lot WHERE portfolio_id = ? ORDER BY trade_date, id").all(portfolioId)
   ) as unknown as PortfolioLotRow[];
   return rows.map(rowToLot);
 }
@@ -704,8 +1411,8 @@ export function listLots(symbol?: string): PortfolioLot[] {
  * with the previous single-row-per-symbol model, so all existing consumers are
  * untouched.
  */
-export function listPortfolio(): PortfolioPosition[] {
-  return aggregateOpenPositions(listLots()).map((p) => ({
+export function listPortfolio(portfolioId = 1): PortfolioPosition[] {
+  return aggregateOpenPositions(listLots(undefined, portfolioId)).map((p) => ({
     symbol: p.symbol,
     name: p.name,
     shares: p.shares,
@@ -719,12 +1426,13 @@ export function addLot(
   symbol: string,
   name: string,
   lot: { shares: number; price: number; kind?: "buy" | "sell"; fees?: number; tradeDate?: string },
+  portfolioId = 1,
 ): void {
   const now = new Date().toISOString();
   getDb()
     .prepare(
-      `INSERT INTO portfolio_lot (symbol, name, shares, price, kind, fees, trade_date, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO portfolio_lot (symbol, name, shares, price, kind, fees, trade_date, created_at, portfolio_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       symbol.toUpperCase(),
@@ -735,12 +1443,14 @@ export function addLot(
       lot.fees ?? 0,
       lot.tradeDate ?? now.slice(0, 10),
       now,
+      portfolioId,
     );
 }
 
 /** Remove a single transaction by id (for editing a ledger). */
 export function removeLot(id: number): void {
   getDb().prepare("DELETE FROM portfolio_lot WHERE id = ?").run(id);
+  reconcileOwnedStages();
 }
 
 /**
@@ -754,20 +1464,23 @@ export function upsertPosition(
   name: string,
   shares: number,
   avgCost: number,
+  portfolioId = 1,
 ): PortfolioPosition {
   const sym = symbol.toUpperCase();
   const addedAt = new Date().toISOString();
   const db = getDb();
-  db.prepare("DELETE FROM portfolio_lot WHERE symbol = ?").run(sym);
+  db.prepare("DELETE FROM portfolio_lot WHERE symbol = ? AND portfolio_id = ?").run(sym, portfolioId);
   db.prepare(
-    `INSERT INTO portfolio_lot (symbol, name, shares, price, kind, fees, trade_date, created_at)
-     VALUES (?, ?, ?, ?, 'buy', 0, ?, ?)`,
-  ).run(sym, name, shares, avgCost, addedAt.slice(0, 10), addedAt);
+    `INSERT INTO portfolio_lot (symbol, name, shares, price, kind, fees, trade_date, created_at, portfolio_id)
+     VALUES (?, ?, ?, ?, 'buy', 0, ?, ?, ?)`,
+  ).run(sym, name, shares, avgCost, addedAt.slice(0, 10), addedAt, portfolioId);
+  reconcileOwnedStages(portfolioId);
   return { symbol: sym, name, shares, avgCost, addedAt };
 }
 
-export function removePosition(symbol: string): void {
-  getDb().prepare("DELETE FROM portfolio_lot WHERE symbol = ?").run(symbol.toUpperCase());
+export function removePosition(symbol: string, portfolioId = 1): void {
+  getDb().prepare("DELETE FROM portfolio_lot WHERE symbol = ? AND portfolio_id = ?").run(symbol.toUpperCase(), portfolioId);
+  reconcileOwnedStages(portfolioId);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -795,10 +1508,10 @@ export interface UniversalLotRow {
   meta: string | null;
 }
 
-export function listUniversalLots(): UniversalLotRow[] {
+export function listUniversalLots(portfolioId = 1): UniversalLotRow[] {
   return getDb()
-    .prepare("SELECT * FROM portfolio_lot ORDER BY trade_date, id")
-    .all() as unknown as UniversalLotRow[];
+    .prepare("SELECT * FROM portfolio_lot WHERE portfolio_id = ? ORDER BY trade_date, id")
+    .all(portfolioId) as unknown as UniversalLotRow[];
 }
 
 /**
@@ -815,16 +1528,16 @@ export function upsertUniversalPosition(input: {
   currency?: string;
   unit?: string;
   meta?: Record<string, unknown> | null;
-}): void {
+}, portfolioId = 1): void {
   const sym = input.symbol.toUpperCase();
   const now = new Date().toISOString();
   const db = getDb();
 
-  db.prepare("DELETE FROM portfolio_lot WHERE symbol = ?").run(sym);
+  db.prepare("DELETE FROM portfolio_lot WHERE symbol = ? AND portfolio_id = ?").run(sym, portfolioId);
   db.prepare(
     `INSERT INTO portfolio_lot
-       (symbol, name, shares, price, kind, fees, trade_date, created_at, asset_class, currency, unit, meta)
-     VALUES (?, ?, ?, ?, 'buy', 0, ?, ?, ?, ?, ?, ?)`,
+       (symbol, name, shares, price, kind, fees, trade_date, created_at, asset_class, currency, unit, meta, portfolio_id)
+     VALUES (?, ?, ?, ?, 'buy', 0, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     sym,
     input.name,
@@ -836,7 +1549,11 @@ export function upsertUniversalPosition(input: {
     (input.currency ?? "USD").toUpperCase(),
     input.unit ?? "shares",
     input.meta ? JSON.stringify(input.meta) : null,
+    portfolioId,
   );
+  // This REPLACES the symbol's ledger, so it can close a position as easily as
+  // open one (an edit to 0 shares) — reconcile rather than assume a buy.
+  reconcileOwnedStages(portfolioId);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -864,13 +1581,13 @@ export function addUniversalLot(input: {
   fees?: number;
   tradeDate?: string;
   meta?: Record<string, unknown> | null;
-}): void {
+}, portfolioId = 1): void {
   const now = new Date().toISOString();
   getDb()
     .prepare(
       `INSERT INTO portfolio_lot
-         (symbol, name, shares, price, kind, fees, trade_date, created_at, asset_class, currency, unit, meta)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (symbol, name, shares, price, kind, fees, trade_date, created_at, asset_class, currency, unit, meta, portfolio_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.symbol.toUpperCase(),
@@ -885,6 +1602,7 @@ export function addUniversalLot(input: {
       (input.currency ?? "USD").toUpperCase(),
       input.unit ?? "shares",
       input.meta ? JSON.stringify(input.meta) : null,
+      portfolioId,
     );
   reconcileStageForLedgerWrite(input.symbol, input.name, input.kind, input.assetClass);
 }
@@ -910,13 +1628,13 @@ export interface LotWrite {
  * Follows the exact BEGIN/COMMIT/ROLLBACK shape already used by
  * {@link putFundamentals} and {@link putTimelineEvents}.
  */
-export function executeTradeBatch(lots: LotWrite[], manualAssetIdsToDelete: string[]): void {
+export function executeTradeBatch(lots: LotWrite[], manualAssetIdsToDelete: string[], portfolioId = 1): void {
   if (lots.length === 0 && manualAssetIdsToDelete.length === 0) return;
   const database = getDb();
   const now = new Date().toISOString();
   const lotStmt = database.prepare(
-    `INSERT INTO portfolio_lot (symbol, name, shares, price, kind, fees, trade_date, created_at, asset_class, currency, unit, meta)
-     VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO portfolio_lot (symbol, name, shares, price, kind, fees, trade_date, created_at, asset_class, currency, unit, meta, portfolio_id)
+     VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const manualStmt = database.prepare("DELETE FROM manual_asset WHERE id = ?");
 
@@ -935,6 +1653,7 @@ export function executeTradeBatch(lots: LotWrite[], manualAssetIdsToDelete: stri
         (lot.currency ?? "USD").toUpperCase(),
         lot.unit ?? "shares",
         lot.meta ? JSON.stringify(lot.meta) : null,
+        portfolioId,
       );
     }
     for (const id of manualAssetIdsToDelete) manualStmt.run(id);
@@ -989,17 +1708,18 @@ export function snapshotPortfolio(
   label: string,
   objective: string | null,
   summary: PortfolioSnapshotSummary,
+  portfolioId = 1,
 ): string {
   const id = globalThis.crypto?.randomUUID?.() ?? `snap-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const database = getDb();
-  const lots = database.prepare("SELECT * FROM portfolio_lot").all() as unknown as UniversalLotRow[];
-  const manualAssets = database.prepare("SELECT * FROM manual_asset").all() as unknown as ManualAssetRow[];
+  const lots = database.prepare("SELECT * FROM portfolio_lot WHERE portfolio_id = ?").all(portfolioId) as unknown as UniversalLotRow[];
+  const manualAssets = database.prepare("SELECT * FROM manual_asset WHERE portfolio_id = ?").all(portfolioId) as unknown as ManualAssetRow[];
   const now = new Date().toISOString();
   database
     .prepare(
-      `INSERT INTO portfolio_snapshot (id, label, objective, holdings, summary, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO portfolio_snapshot (id, label, objective, holdings, summary, created_at, portfolio_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(id, label, objective, JSON.stringify({ lots, manualAssets }), JSON.stringify(summary), now);
+    .run(id, label, objective, JSON.stringify({ lots, manualAssets }), JSON.stringify(summary), now, portfolioId);
   return id;
 }
 
@@ -1028,36 +1748,195 @@ export function listSnapshots(limit = 20): PortfolioSnapshot[] {
  * id doesn't exist.
  */
 export function restoreSnapshot(id: string): boolean {
-  const row = getDb().prepare("SELECT holdings FROM portfolio_snapshot WHERE id = ?").get(id) as unknown as { holdings: string } | undefined;
+  const row = getDb().prepare("SELECT holdings, portfolio_id FROM portfolio_snapshot WHERE id = ?").get(id) as unknown as { holdings: string; portfolio_id: number } | undefined;
   if (!row) return false;
   const { lots, manualAssets } = JSON.parse(row.holdings) as { lots: UniversalLotRow[]; manualAssets: ManualAssetRow[] };
+  // Undo is scoped to the snapshot's own portfolio — restoring Main must not
+  // wipe a promoted portfolio's ledger, and vice versa.
+  const portfolioId = row.portfolio_id ?? 1;
 
   const database = getDb();
   const insertLot = database.prepare(
-    `INSERT INTO portfolio_lot (id, symbol, name, shares, price, kind, fees, trade_date, created_at, asset_class, currency, unit, meta)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO portfolio_lot (id, symbol, name, shares, price, kind, fees, trade_date, created_at, asset_class, currency, unit, meta, portfolio_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const insertManual = database.prepare(
-    `INSERT INTO manual_asset (id, category, name, acquisition_date, acquisition_cost, current_value, current_value_as_of, notes, details, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO manual_asset (id, category, name, acquisition_date, acquisition_cost, current_value, current_value_as_of, notes, details, created_at, updated_at, portfolio_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
   database.exec("BEGIN");
   try {
-    database.exec("DELETE FROM portfolio_lot");
-    database.exec("DELETE FROM manual_asset");
+    database.prepare("DELETE FROM portfolio_lot WHERE portfolio_id = ?").run(portfolioId);
+    database.prepare("DELETE FROM manual_asset WHERE portfolio_id = ?").run(portfolioId);
     for (const l of lots) {
-      insertLot.run(l.id, l.symbol, l.name, l.shares, l.price, l.kind, l.fees, l.trade_date, l.created_at, l.asset_class, l.currency, l.unit, l.meta);
+      insertLot.run(l.id, l.symbol, l.name, l.shares, l.price, l.kind, l.fees, l.trade_date, l.created_at, l.asset_class, l.currency, l.unit, l.meta, portfolioId);
     }
     for (const m of manualAssets) {
-      insertManual.run(m.id, m.category, m.name, m.acquisition_date, m.acquisition_cost, m.current_value, m.current_value_as_of, m.notes, m.details, m.created_at, m.updated_at);
+      insertManual.run(m.id, m.category, m.name, m.acquisition_date, m.acquisition_cost, m.current_value, m.current_value_as_of, m.notes, m.details, m.created_at, m.updated_at, portfolioId);
     }
     database.exec("COMMIT");
   } catch (err) {
     database.exec("ROLLBACK");
     throw err;
   }
+  // Undo rewinds the ledger, so it must rewind what the ledger implied: without
+  // this, undoing a rebalance left every name it bought sitting in the Pipeline's
+  // Owned column forever. After the commit — the stage table is not part of the
+  // snapshot and must not be rolled back with it.
+  reconcileOwnedStages(portfolioId);
   return true;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Named portfolios                                                           */
+/* -------------------------------------------------------------------------- */
+
+export interface PortfolioMeta {
+  id: number;
+  name: string;
+  createdAt: string;
+}
+
+export function listPortfolios(): PortfolioMeta[] {
+  const rows = getDb().prepare("SELECT id, name, created_at FROM portfolios ORDER BY id").all() as unknown as {
+    id: number;
+    name: string;
+    created_at: string;
+  }[];
+  return rows.map((r) => ({ id: r.id, name: r.name, createdAt: r.created_at }));
+}
+
+export function getPortfolioMeta(id: number): PortfolioMeta | null {
+  const r = getDb().prepare("SELECT id, name, created_at FROM portfolios WHERE id = ?").get(id) as unknown as
+    | { id: number; name: string; created_at: string }
+    | undefined;
+  return r ? { id: r.id, name: r.name, createdAt: r.created_at } : null;
+}
+
+export function createPortfolio(name: string): PortfolioMeta {
+  const now = new Date().toISOString();
+  const res = getDb().prepare("INSERT INTO portfolios (name, created_at) VALUES (?, ?)").run(name, now);
+  return { id: Number(res.lastInsertRowid), name, createdAt: now };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Simulator — hypothetical portfolios                                        */
+/* -------------------------------------------------------------------------- */
+
+interface SimulationRow {
+  id: string;
+  name: string;
+  status: string;
+  profile: string;
+  holdings: string;
+  thesis: string | null;
+  headline: string | null;
+  promoted_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function rowToSimulation(r: SimulationRow): Simulation {
+  return {
+    id: r.id,
+    name: r.name,
+    status: r.status as Simulation["status"],
+    // Normalized, not just parsed. `JSON.parse` + cast asserts a shape the
+    // stored JSON does not necessarily have: rows written before `preferences`
+    // was added to SimProfile deserialize without it, and generation dereferences
+    // it immediately. This is the one place stored JSON becomes a SimProfile, so
+    // normalizing here is what makes the declared type true for every caller.
+    profile: normalizeStoredProfile(JSON.parse(r.profile)),
+    holdings: JSON.parse(r.holdings),
+    thesis: r.thesis ? JSON.parse(r.thesis) : null,
+    headline: r.headline ? JSON.parse(r.headline) : null,
+    promotedAt: r.promoted_at,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+export function createSimulation(name: string, profile: SimProfile): Simulation {
+  const id = globalThis.crypto?.randomUUID?.() ?? `sim-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO simulation (id, name, status, profile, holdings, created_at, updated_at)
+       VALUES (?, ?, 'draft', ?, '[]', ?, ?)`,
+    )
+    .run(id, name, JSON.stringify(profile), now, now);
+  return getSimulation(id)!;
+}
+
+export function getSimulation(id: string): Simulation | null {
+  const r = getDb().prepare("SELECT * FROM simulation WHERE id = ?").get(id) as unknown as SimulationRow | undefined;
+  return r ? rowToSimulation(r) : null;
+}
+
+export function listSimulations(): Simulation[] {
+  const rows = getDb().prepare("SELECT * FROM simulation ORDER BY updated_at DESC").all() as unknown as SimulationRow[];
+  return rows.map(rowToSimulation);
+}
+
+export interface SimulationPatch {
+  name?: string;
+  status?: Simulation["status"];
+  profile?: SimProfile;
+  holdings?: SimHolding[];
+  thesis?: SimThesis | null;
+  headline?: SimHeadline | null;
+  promotedAt?: string | null;
+}
+
+/** Partial update; only the provided fields change. Returns the fresh row. */
+export function updateSimulation(id: string, patch: SimulationPatch): Simulation | null {
+  const sets: string[] = [];
+  const args: (string | null)[] = [];
+  if (patch.name !== undefined) { sets.push("name = ?"); args.push(patch.name); }
+  if (patch.status !== undefined) { sets.push("status = ?"); args.push(patch.status); }
+  if (patch.profile !== undefined) { sets.push("profile = ?"); args.push(JSON.stringify(patch.profile)); }
+  if (patch.holdings !== undefined) { sets.push("holdings = ?"); args.push(JSON.stringify(patch.holdings)); }
+  if (patch.thesis !== undefined) { sets.push("thesis = ?"); args.push(patch.thesis ? JSON.stringify(patch.thesis) : null); }
+  if (patch.headline !== undefined) { sets.push("headline = ?"); args.push(patch.headline ? JSON.stringify(patch.headline) : null); }
+  if (patch.promotedAt !== undefined) { sets.push("promoted_at = ?"); args.push(patch.promotedAt); }
+  if (sets.length === 0) return getSimulation(id);
+  sets.push("updated_at = ?");
+  args.push(new Date().toISOString());
+  const res = getDb().prepare(`UPDATE simulation SET ${sets.join(", ")} WHERE id = ?`).run(...args, id);
+  return res.changes > 0 ? getSimulation(id) : null;
+}
+
+export function deleteSimulation(id: string): boolean {
+  return getDb().prepare("DELETE FROM simulation WHERE id = ?").run(id).changes > 0;
+}
+
+/** Copy of everything except identity/status — a duplicate is always a fresh
+ * un-promoted draft of the same spec, never a second claim to a promotion. */
+export function duplicateSimulation(id: string): Simulation | null {
+  const src = getSimulation(id);
+  if (!src) return null;
+  const newId = globalThis.crypto?.randomUUID?.() ?? `sim-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const now = new Date().toISOString();
+  // Stay within the same 80-char name cap the API enforces on create/rename.
+  const copyName = `${src.name.slice(0, 73)} (copy)`;
+  getDb()
+    .prepare(
+      `INSERT INTO simulation (id, name, status, profile, holdings, thesis, headline, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      newId,
+      copyName,
+      src.status === "promoted" ? "complete" : src.status,
+      JSON.stringify(src.profile),
+      JSON.stringify(src.holdings),
+      src.thesis ? JSON.stringify(src.thesis) : null,
+      src.headline ? JSON.stringify(src.headline) : null,
+      now,
+      now,
+    );
+  return getSimulation(newId);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1327,10 +2206,10 @@ export function getManualAsset(id: string): ManualAsset | null {
   return r ? rowToManualAsset(r) : null;
 }
 
-export function listManualAssets(category?: ManualAssetCategory): ManualAsset[] {
+export function listManualAssets(category?: ManualAssetCategory, portfolioId = 1): ManualAsset[] {
   const rows = category
-    ? (getDb().prepare("SELECT * FROM manual_asset WHERE category = ? ORDER BY created_at DESC").all(category) as unknown as ManualAssetRow[])
-    : (getDb().prepare("SELECT * FROM manual_asset ORDER BY created_at DESC").all() as unknown as ManualAssetRow[]);
+    ? (getDb().prepare("SELECT * FROM manual_asset WHERE category = ? AND portfolio_id = ? ORDER BY created_at DESC").all(category, portfolioId) as unknown as ManualAssetRow[])
+    : (getDb().prepare("SELECT * FROM manual_asset WHERE portfolio_id = ? ORDER BY created_at DESC").all(portfolioId) as unknown as ManualAssetRow[]);
   return rows.map(rowToManualAsset);
 }
 

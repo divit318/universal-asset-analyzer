@@ -395,6 +395,21 @@ body::before {
 .animate-winner-positive { animation: winner-reveal-positive 300ms var(--ease-out, ease-out) both; }
 .animate-winner-negative { animation: winner-reveal-negative 300ms var(--ease-out, ease-out) both; }
 
+/* Live price tick — a brief tint that RETURNS to transparent, unlike
+   winner-reveal above which settles into a persistent state. A polled price
+   update is a momentary event, so the cell must look identical before and after;
+   a flash that leaves colour behind would slowly paint the whole table. */
+@keyframes price-tick-up {
+  0%   { background-color: color-mix(in srgb, var(--positive) 26%, transparent); }
+  100% { background-color: transparent; }
+}
+@keyframes price-tick-down {
+  0%   { background-color: color-mix(in srgb, var(--negative) 26%, transparent); }
+  100% { background-color: transparent; }
+}
+.animate-tick-up   { animation: price-tick-up   700ms var(--ease-out, ease-out) both; }
+.animate-tick-down { animation: price-tick-down 700ms var(--ease-out, ease-out) both; }
+
 /* Portfolio Fit — a single soft shimmer sweep across the recommended asset's
    border every 8-10s (triggered from JS, not looping CSS), never a pulse. */
 @keyframes border-shimmer-sweep {

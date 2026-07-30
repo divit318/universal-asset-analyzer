@@ -61,6 +61,49 @@ export function useElapsedMs(startedAt: number | null): number {
 export interface TaskProgressStep {
   id: string;
   label: string;
+  /** Optional one-line "what this stage actually does", shown in checklist layout. */
+  detail?: string;
+}
+
+/**
+ * How `steps` is drawn.
+ *
+ * - `strip` (default): a row of thin segments. Right for work whose stages are
+ *   interchangeable to the user — the Scanner's batches are all "more of the
+ *   same", so naming each one buys nothing and costs vertical space.
+ * - `checklist`: a labelled line per stage with its own state. Right when the
+ *   stages are genuinely DIFFERENT pieces of work and the wait is long enough
+ *   that "which part is this?" and "how much is left?" are real questions. A
+ *   single bar reading "Designing the asset-class allocation…" for two minutes
+ *   tells a user nothing about the four stages still to come, so it reads as one
+ *   slow step rather than the first of five.
+ */
+export type TaskProgressStepLayout = "strip" | "checklist";
+
+type StepState = "done" | "active" | "pending";
+
+/** A stage's mark: settled check, live pulse, or an empty slot. */
+function StepMark({ state }: { state: StepState }) {
+  if (state === "done") {
+    return (
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-brand/15 text-[9px] font-bold text-brand">
+        ✓
+      </span>
+    );
+  }
+  if (state === "active") {
+    return (
+      <span className="relative flex h-4 w-4 shrink-0 items-center justify-center">
+        <span className="absolute inline-flex h-2.5 w-2.5 animate-ping rounded-full bg-brand opacity-75" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
+      </span>
+    );
+  }
+  return (
+    <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+      <span className="h-2 w-2 rounded-full border border-border" />
+    </span>
+  );
 }
 
 export interface TaskProgressProps {
@@ -76,10 +119,14 @@ export interface TaskProgressProps {
   elapsedMs?: number;
   /** Estimated ms still to go. Omit when there is no honest basis for an estimate. */
   remainingMs?: number | null;
-  /** Ordered stages, rendered as a segmented strip. */
+  /** Ordered stages. Drawn per `stepLayout`. */
   steps?: TaskProgressStep[];
   /** Which step in `steps` is currently running. */
   activeStepId?: string | null;
+  /** Defaults to `strip` so existing callers are untouched. */
+  stepLayout?: TaskProgressStepLayout;
+  /** Rendered beside the label — a Cancel control, typically. */
+  action?: React.ReactNode;
   className?: string;
 }
 
@@ -92,6 +139,8 @@ export function TaskProgress({
   remainingMs = null,
   steps,
   activeStepId = null,
+  stepLayout = "strip",
+  action,
   className = "",
 }: TaskProgressProps) {
   // The clock ticks whenever there is a live elapsed or remaining figure to keep
@@ -122,9 +171,10 @@ export function TaskProgress({
             {detail && detail !== label && <span className="text-muted"> — {detail}</span>}
           </span>
         </div>
-        {pct != null && (
-          <span className="shrink-0 font-mono text-xs text-muted/60">{Math.round(pct)}%</span>
-        )}
+        <div className="flex shrink-0 items-center gap-2.5">
+          {pct != null && <span className="font-mono text-xs text-muted/60">{Math.round(pct)}%</span>}
+          {action}
+        </div>
       </div>
 
       {/* Determinate bar when we know the fraction; an indeterminate sweep when we
@@ -156,7 +206,7 @@ export function TaskProgress({
         )}
       </div>
 
-      {steps && steps.length > 0 && (
+      {steps && steps.length > 0 && stepLayout === "strip" && (
         <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-6 lg:grid-cols-12">
           {steps.map((step, i) => {
             const done = activeIndex >= 0 && i < activeIndex;
@@ -172,6 +222,54 @@ export function TaskProgress({
             );
           })}
         </div>
+      )}
+
+      {/* Every stage named, with its own state — so the four stages nobody has
+          reached yet are visible as work still to come rather than absent. The
+          list is `aria-live="polite"`: a screen reader is otherwise told only the
+          headline label, which changes wording without saying that a stage
+          finished. */}
+      {steps && steps.length > 0 && stepLayout === "checklist" && (
+        <ol className="flex flex-col gap-1.5" aria-live="polite">
+          {steps.map((step, i) => {
+            // A finished run (pct 100, past the last named stage) has to settle to
+            // all-done; leaving the final stage pulsing forever reads as stuck.
+            const complete = pct != null && pct >= 100;
+            const state: StepState = complete
+              ? "done"
+              : activeIndex >= 0 && i < activeIndex
+                ? "done"
+                : step.id === activeStepId
+                  ? "active"
+                  : "pending";
+            return (
+              <li key={step.id} className="flex items-start gap-2">
+                <span className="mt-px">
+                  <StepMark state={state} />
+                </span>
+                <span className="flex min-w-0 flex-col">
+                  <span
+                    className={`text-[11px] leading-relaxed ${
+                      state === "active"
+                        ? "font-medium text-foreground"
+                        : state === "done"
+                          ? "text-muted"
+                          : "text-muted/50"
+                    }`}
+                  >
+                    {step.label}
+                  </span>
+                  {step.detail && state === "active" && (
+                    <span className="text-[10px] leading-relaxed text-muted/60">{step.detail}</span>
+                  )}
+                </span>
+                <span className="sr-only">
+                  {state === "done" ? "complete" : state === "active" ? "in progress" : "pending"}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
       )}
     </div>
   );

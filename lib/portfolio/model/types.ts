@@ -60,28 +60,21 @@ export const TICKER_PRICED_ASSET_CLASSES: PortfolioAssetClass[] = [
   "forex",
 ];
 
-/**
- * Yahoo's raw quoteType (Quote.assetType) mapped straight to a ticker-priced
- * PortfolioAssetClass. Deliberately separate from lib/asset-class.ts's
- * detectAssetClass() — that maps into a different taxonomy (ETF/MUTUALFUND ->
- * "fund", not "etf") for the research side of the app, and applying it here
- * would silently mis-default every ETF/fund purchase to "equity". Both the
- * buy API route and the buy form's class picker use this one mapping, so
- * they can't drift.
+/*
+ * NOTE — there is deliberately no `quoteType → asset class` table here any more.
+ *
+ * There was one, and it was the second of two answers to "what is this
+ * instrument?": this table said VCLT is an `etf` (Yahoo's quoteType) while the risk
+ * models said it is a long corporate bond fund (what it holds). Allocation, Health
+ * and the optimizer read the first; the Risk Lab read the second; the optimizer
+ * then proposed selling VCLT for being an overweight ETF while buying SHY, TIP and
+ * IEF for being an underweight bond sleeve.
+ *
+ * Classification now has exactly one authority:
+ * `resolveAssetClass()` / `assetClassFromQuoteType()` in
+ * lib/portfolio/classes/reference/risk-models.ts, which is the same resolution that
+ * produces the factor loadings. Import from there.
  */
-const QUOTE_TYPE_TO_PORTFOLIO_CLASS: Partial<Record<string, PortfolioAssetClass>> = {
-  EQUITY: "equity",
-  ETF: "etf",
-  MUTUALFUND: "etf",
-  CLOSEDENDFUND: "etf",
-  CRYPTOCURRENCY: "crypto",
-  CURRENCY: "forex",
-  FUTURE: "commodity",
-};
-
-export function detectPortfolioAssetClass(assetType: string | null | undefined): PortfolioAssetClass {
-  return QUOTE_TYPE_TO_PORTFOLIO_CLASS[(assetType ?? "").toUpperCase()] ?? "equity";
-}
 
 export const PORTFOLIO_CLASS_LABEL: Record<PortfolioAssetClass, string> = {
   equity: "Equities",
@@ -137,6 +130,62 @@ export const LIQUIDITY_LABEL: Record<Liquidity, string> = {
 
 /** Ordered most→least liquid, for bucketing and comparison. */
 export const LIQUIDITY_ORDER: Liquidity[] = ["t0", "t1", "t2", "illiquid"];
+
+/**
+ * "Cannot be sold within days" — the ONE definition of illiquid in the app.
+ *
+ * `t2` counts: a holding that takes weeks to sell is not available for a
+ * rebalance or an emergency, which is the only question this predicate exists to
+ * answer. It lives here because THREE surfaces must agree on it — the Holdings
+ * table's ILLIQUID badge, the Risk Lab's illiquid weight AND count, and the
+ * optimizer's decision about which holdings it may not propose trading — and a
+ * badge on a row that the risk card doesn't count (or that the optimizer happily
+ * sells anyway) is how a user concludes one of them is broken.
+ */
+export function isIlliquid(liquidity: Liquidity): boolean {
+  return liquidity === "illiquid" || liquidity === "t2";
+}
+
+export interface IlliquidDisclosure {
+  /** Share of portfolio VALUE that cannot be sold within days, e.g. "0.0%". */
+  weight: string;
+  /** The context that makes that weight legible, e.g. "3 holdings · cannot sell within days". */
+  context: string;
+  /** Both, as one sentence, for prose surfaces that can't render a value+hint pair. */
+  sentence: string;
+}
+
+/**
+ * The ONE phrasing of "how much of this book cannot be sold within days".
+ *
+ * Weight alone is a lie in exactly the case a real book produces: three
+ * genuinely illiquid positions (a watch, an angel stake, a land parcel) worth
+ * $1,750 out of $9.2M render as "0.0%", and 0% invites the reading "nothing here
+ * is illiquid" — contradicted by the three ILLIQUID badges on the Holdings tab.
+ * So weight is never stated without its count.
+ *
+ * Shared rather than re-worded per surface: the Risk Lab's Illiquid card and the
+ * Optimize tab's "cannot be rebalanced" banner describe the SAME fact, and two
+ * hand-written phrasings of one fact drift the moment either is edited. Both take
+ * their numbers from computeRisk()'s illiquidPct/illiquidHoldings, which in turn
+ * come from isIlliquid() above.
+ */
+export function describeIlliquidWeight(pct: number, count: number): IlliquidDisclosure {
+  const weight = `${pct.toFixed(1)}%`;
+  if (count === 0) {
+    return {
+      weight,
+      context: "Everything can be sold within days",
+      sentence: "Everything in the portfolio can be sold within days.",
+    };
+  }
+  const holdings = `${count} ${count === 1 ? "holding" : "holdings"}`;
+  return {
+    weight,
+    context: `${holdings} · cannot sell within days`,
+    sentence: `${holdings} (${weight} of value) cannot be sold within days.`,
+  };
+}
 
 export interface Valuation {
   mode: ValuationMode;
@@ -406,14 +455,56 @@ export interface MarketContext {
   baseCurrency: string;
   /** currency → units of base per 1 unit of that currency. Always contains base→1. */
   fx: Record<string, number>;
+  /**
+   * Currencies whose rate could NOT be resolved and were therefore carried at 1:1.
+   *
+   * Their holdings are mis-valued by whatever the true rate is, and — because the
+   * only FX indicator in the UI is `fxRate !== 1` — a failed lookup renders exactly
+   * like a genuine base-currency holding. It has to be listed so the page can say
+   * so; a silently plausible wrong total is the worst failure mode this model has.
+   *
+   * Optional — like `historyDates` — so a fixture need not declare it. Absent means
+   * "nothing failed", which is the correct reading for any context not built from a
+   * live FX fetch.
+   */
+  unresolvedCurrencies?: string[];
   /** symbol → latest quote-ish snapshot. */
   quotes: Map<string, ContextQuote>;
   /** symbol → daily closes, ascending. */
   history: Map<string, number[]>;
+  /**
+   * symbol → the YYYY-MM-DD date of each close in `history`, same length and
+   * order. Optional so a fixture can supply bare closes, but ALWAYS populated by
+   * lib/portfolio/context.ts.
+   *
+   * Without these, any statistic combining two holdings has to guess how to line
+   * them up, and a 400-calendar-day window yields ~275 observations for an
+   * equity and ~400 for crypto — so the guess was always wrong for exactly the
+   * cross-asset pairs this portfolio exists to hold. See engines/series.ts.
+   */
+  historyDates?: Map<string, string[]>;
   /** symbol → equity/fund fundamentals, where the provider has them. */
   fundamentals: Map<string, ContextFundamentals>;
   /** Benchmark daily returns (SPY), for beta. */
   benchmarkReturns: number[];
+  /** The date each `benchmarkReturns` entry was realized on. Same length/order. */
+  benchmarkDates?: string[];
+  /**
+   * Daily CHANGES in the US 10-year Treasury yield, in percentage points (^TNX
+   * quotes the yield as its price, so this is a first difference of closes).
+   *
+   * This is what makes a bond fund's rate sensitivity MEASURED rather than
+   * assumed: regressing the fund's own daily returns on these changes yields its
+   * empirical effective duration (see measuredDuration in classes/market-base.ts).
+   * The provider's stated duration cannot be used for this — it reports 3.55 for
+   * TLT and 3.88 for a floating-rate fund.
+   *
+   * Optional so a test fixture need not supply it; absent means every duration
+   * falls back to the curated reference table.
+   */
+  rateChanges?: number[];
+  /** The date each `rateChanges` entry belongs to. Same length/order. */
+  rateChangeDates?: string[];
   asOf: string;
 }
 
@@ -424,6 +515,16 @@ export interface ContextQuote {
   currency: string | null;
   name: string | null;
   marketCap: number | null;
+  /**
+   * Yahoo's raw quoteType (EQUITY / ETF / MUTUALFUND / MONEYMARKET /
+   * CRYPTOCURRENCY / CURRENCY). The most reliable field the provider has — it was
+   * non-null for 61/61 symbols probed — and the only way to tell a money-market
+   * fund from an equity, which is why the risk-model classifier reads it.
+   *
+   * Optional — like `historyDates` — so a fixture need not declare it. Absent
+   * means "type unknown", and the classifier falls back to the stored asset class.
+   */
+  assetType?: string | null;
 }
 
 /**
@@ -437,10 +538,39 @@ export interface ContextFundamentals {
   country: string | null;
   currency: string | null;
   dividendYield: number | null;
-  /** Bond funds (Yahoo topHoldings.bondHoldings) — real, not assumed. */
+  /**
+   * Yahoo's `topHoldings.bondHoldings.duration`.
+   *
+   * ⚠️ NOT effective duration, and NOT a bond-fund detector. Measured against live
+   * data: TLT 3.55 (true ≈ 16), USFR 3.88 (a floating-rate fund, true ≈ 0.02),
+   * VXUS 4.48 (an equity fund), VCLT absent (true ≈ 13). The risk model uses it
+   * only as a last resort — see classes/reference/risk-models.ts.
+   */
   duration: number | null;
   maturity: number | null;
   creditQuality: string | null;
+  /**
+   * Morningstar category (`fundProfile.categoryName`) — e.g. "Long-Term Bond",
+   * "Foreign Large Blend", "Commodities Focused". Present for every fund probed
+   * and the PRIMARY signal for which risk model a fund gets.
+   *
+   * These seven fund-shape fields are optional so a fixture can describe an equity
+   * without declaring that it is not a fund. Absent means "unknown", and the
+   * classifier falls back to the stored asset class — never to a guess.
+   */
+  fundCategory?: string | null;
+  /** Position mix in percent, from `topHoldings`. Corroborates the category. */
+  bondWeight?: number | null;
+  equityWeight?: number | null;
+  cashWeight?: number | null;
+  otherWeight?: number | null;
+  /**
+   * The fund's dominant holdings sector and its weight. Only meaningful when the
+   * fund is majority equity: Yahoo reports "utilities 99.6%" for HYG (a high-yield
+   * bond fund) off a 0.84% cash-sweep line.
+   */
+  topSector?: string | null;
+  topSectorWeight?: number | null;
   expenseRatio: number | null;
   marketCap: number | null;
   peRatio: number | null;
