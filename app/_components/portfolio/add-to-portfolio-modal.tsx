@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Dialog } from "@/app/_components/dialog";
-import { Button, Field, Input, Card } from "@/app/_components/ui";
+import { Button, DateInput, Field, Input, Card } from "@/app/_components/ui";
 import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
 import { useFreshQuote } from "@/app/_components/use-fresh-quote";
 import { formatCurrency } from "@/lib/format";
@@ -582,7 +582,7 @@ export function AddToPortfolioModal({
               {showDetails && (
                 <div className="mt-3 grid grid-cols-2 gap-3">
                   <Field label="Purchase date">
-                    <Input type="date" max={todayStr()} value={tradeDate} onChange={(e) => setTradeDate(e.target.value)} />
+                    <DateInput max={todayStr()} value={tradeDate} onChange={setTradeDate} />
                   </Field>
                   <Field label="Fees ($)"><Input type="number" step="any" min="0" value={fees} onChange={(e) => setFees(e.target.value)} placeholder="0" /></Field>
                   <Field label="Broker"><Input value={broker} onChange={(e) => setBroker(e.target.value)} placeholder="e.g. Fidelity" /></Field>

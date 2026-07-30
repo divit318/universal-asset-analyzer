@@ -14,10 +14,13 @@ import { buildMarketContext } from "./context";
 import { normalizeHoldings } from "./model/holding";
 import { evaluate, type PortfolioEvaluation } from "./engines/simulate";
 import { computeConcentration, type ConcentrationFinding } from "./engines/allocation";
+import { computeAttribution, type ReturnAttribution } from "./engines/attribution";
+import { getPortfolioTrajectory, type PortfolioTrajectory } from "./history";
 import { runAllScenarios, type ScenarioResult } from "./engines/scenario";
 import { computeRecommendations, getRelevantCandidateSymbols, type Recommendation } from "./engines/recommend";
 import { buildDecisionCards, type DecisionCard } from "./engines/decision";
 import { optimize, DEFAULT_CONSTRAINTS, type Objective, type OptimizationResult } from "./engines/optimize";
+import { buildPerformance, isEmptyPerformance, type PerformanceBlock } from "./performance";
 import type { Holding, MarketContext, RawHolding } from "./model/types";
 import type { PortfolioAllocation } from "./engines/allocation";
 import type { UniversalRisk } from "./engines/risk";
@@ -41,7 +44,7 @@ export interface BuiltEvaluation {
  * uses internally, instead of re-fetching or re-deriving anything.
  */
 export async function buildEvaluation(opts: ReportOptions = {}): Promise<BuiltEvaluation> {
-  const raws = listRawHoldings();
+  const raws = listRawHoldings(opts.portfolioId ?? 1);
   const extra = opts.extraCandidateSymbols ?? [];
 
   let ctx = await buildMarketContext(raws, { baseCurrency: opts.baseCurrency, candidateSymbols: extra });
@@ -69,6 +72,26 @@ export interface UniversalPortfolioReport {
   totalReturnDollar: number;
   todayChangeDollar: number;
   todayChangePct: number;
+  /**
+   * COST-WEIGHTED average holding period, in days — "how long has my money
+   * actually been invested?"
+   *
+   * `totalReturn` is a since-inception figure with no period attached, and an
+   * unqualified "+0.2%" is not a rate: it is excellent over a week and dismal over
+   * six years. On a real book it sat next to "Today +0.42%", so the day's move was
+   * double the entire lifetime return and both figures looked broken.
+   *
+   * The period must be COST-WEIGHTED, not the age of the oldest holding. The first
+   * attempt used `min(acquiredAt)` and reported "+0.2% over 6.7y" for a book whose
+   * capital went in 17 days ago — because one manually-valued asset (a property
+   * bought in 2019) is worth 0.006% of the portfolio and set the whole period. That
+   * reads as 0.03%/yr, which is worse than no period at all.
+   *
+   * Weighting each holding's age by its cost basis answers the question the reader
+   * is actually asking, and is the same reasoning that makes money-weighted return
+   * the right rate for a portfolio with irregular contributions.
+   */
+  holdingPeriodDays: number;
 
   /** Annual income across ALL sources — dividends, coupons, rent, interest, staking. */
   annualIncome: number;
@@ -82,9 +105,28 @@ export interface UniversalPortfolioReport {
    */
   marketPricedPct: number;
   stalePct: number;
+  /**
+   * Currencies carried at 1:1 because their FX rate could not be resolved.
+   *
+   * Non-empty means `totalValue` and every percentage derived from it are wrong by
+   * an unknown amount for those holdings — and nothing else in the UI can reveal it,
+   * since a failed lookup produces a rate of exactly 1 and therefore looks like a
+   * base-currency position.
+   */
+  unresolvedCurrencies: string[];
 
   holdings: Holding[];
   allocation: PortfolioAllocation;
+  /**
+   * Where the return actually came from, and how concentrated its sources are.
+   * Null when nothing in the book has a usable cost basis.
+   */
+  attribution: ReturnAttribution | null;
+  /**
+   * Whether the book is improving or deteriorating, and how the user's own
+   * executed changes turned out. Null until at least two snapshots exist.
+   */
+  trajectory: PortfolioTrajectory | null;
   concentration: ConcentrationFinding[];
   risk: UniversalRisk;
   health: HealthScore;
@@ -103,6 +145,18 @@ export interface UniversalPortfolioReport {
    * across the whole page.
    */
   atEquilibrium: boolean;
+
+  /**
+   * Money-weighted return, realized/unrealized split, per-position breakdown and
+   * the benchmark replication — or `{ empty: true }` for a portfolio with no lot
+   * history.
+   *
+   * Carried ON the report rather than fetched separately by the Performance tab.
+   * `performance.total` is the source of `totalReturn`/`totalReturnDollar` above,
+   * so the headline tile and the Performance tab are reading the same number from
+   * the same snapshot — they cannot drift, and they cannot disagree on sign.
+   */
+  performance: PerformanceBlock;
 }
 
 export interface ReportOptions {
@@ -114,6 +168,8 @@ export interface ReportOptions {
    * and isn't a recommendation-engine candidate. Merged into both fetch passes.
    */
   extraCandidateSymbols?: string[];
+  /** Which named portfolio to report on. Defaults to the Main Portfolio. */
+  portfolioId?: number;
 }
 
 /**
@@ -138,12 +194,55 @@ function todayChange(holdings: Holding[], ctx: MarketContext): { dollar: number;
   return { dollar, pct: liveValue > 0 ? (dollar / liveValue) * 100 : 0 };
 }
 
+/**
+ * The page headline's total return, taken from the performance block.
+ *
+ * Falls back to cost-vs-value only when there is no lot ledger at all (a portfolio
+ * of nothing but manually-valued assets), where realized P&L cannot exist and the
+ * two definitions coincide by construction.
+ *
+ * The assertion is deliberate. `performance.total.cost` is built up from the traded
+ * book's cost basis plus each excluded holding's, and `totalCost` is an independent
+ * sum over every normalized holding. They are derived from one snapshot, so a
+ * mismatch means this file's bookkeeping is wrong — and a headline return that is
+ * silently computed over the wrong denominator is exactly the failure this whole
+ * change exists to remove. Loud beats plausible.
+ */
+function totalReturnOf(
+  performance: PerformanceBlock,
+  totalValue: number,
+  totalCost: number,
+): { pnl: number; pct: number } {
+  if (isEmptyPerformance(performance)) {
+    return {
+      pnl: totalValue - totalCost,
+      pct: totalCost > 0 ? ((totalValue - totalCost) / totalCost) * 100 : 0,
+    };
+  }
+
+  if (Math.abs(performance.total.cost - totalCost) > 0.01) {
+    console.warn(
+      `[portfolio/report] total-return denominator disagrees with totalCost by ` +
+        `${(performance.total.cost - totalCost).toFixed(2)} ` +
+        `(performance.total.cost=${performance.total.cost.toFixed(2)}, totalCost=${totalCost.toFixed(2)}). ` +
+        `The Dashboard tile and the Performance tab will not match.`,
+    );
+  }
+
+  return { pnl: performance.total.pnl, pct: performance.total.pct };
+}
+
 /** Build the full report. This is the one entry point the API routes call. */
 export async function buildPortfolioReport(
   opts: ReportOptions = {},
 ): Promise<UniversalPortfolioReport> {
   const { ctx, evaluation, totalCost, marketPricedPct, stalePct } = await buildEvaluation(opts);
   const totalValue = evaluation.totalValue;
+
+  // Performance is derived from THIS evaluation, not re-fetched. One snapshot for
+  // the headline and the Performance tab — see lib/portfolio/performance.ts for the
+  // $2,074.82 gap that two independent fetches produced.
+  const performance = await buildPerformance(evaluation.holdings, ctx.asOf, opts.portfolioId ?? 1, ctx);
 
   const concentration = computeConcentration(evaluation.holdings, evaluation.allocation);
   const scenarios = runAllScenarios(evaluation.holdings, evaluation.totalValue);
@@ -160,6 +259,23 @@ export async function buildPortfolioReport(
   const annualIncome = evaluation.holdings.reduce((s, h) => s + (h.income?.annual ?? 0), 0);
   const change = todayChange(evaluation.holdings, ctx);
 
+  // Cost-weighted average age. A holding contributes its age in proportion to the
+  // capital it consumed, so a $600 collectible bought in 2019 cannot define the
+  // period for a book whose $9M went in last week. Holdings with an unparseable
+  // date or no cost basis are skipped rather than counted as age zero, which would
+  // drag the average toward "brand new".
+  let ageWeightedCost = 0;
+  let ageCostBase = 0;
+  const now = Date.now();
+  for (const h of evaluation.holdings) {
+    const t = Date.parse(h.acquiredAt);
+    if (!Number.isFinite(t) || h.costBasisBase <= 0) continue;
+    const days = Math.max(0, (now - t) / 86_400_000);
+    ageWeightedCost += days * h.costBasisBase;
+    ageCostBase += h.costBasisBase;
+  }
+  const holdingPeriodDays = ageCostBase > 0 ? Math.round(ageWeightedCost / ageCostBase) : 0;
+
   return {
     generatedAt: ctx.asOf,
     baseCurrency: ctx.baseCurrency,
@@ -167,19 +283,37 @@ export async function buildPortfolioReport(
     holdingCount: evaluation.holdings.length,
     totalValue,
     totalCost,
-    totalReturn: totalCost > 0 ? ((totalValue - totalCost) / totalCost) * 100 : 0,
-    totalReturnDollar: totalValue - totalCost,
+
+    // ── Total return: ONE definition, shared with the Performance tab ──────────
+    //
+    // This used to be `(totalValue - totalCost) / totalCost`, which is blind to
+    // realized P&L: a sold position leaves `holdings`, so the −$9,819.50 this book
+    // had banked was invisible here while the Performance tab counted it. The two
+    // tiles disagreed on the SIGN of the portfolio's return (−$396.01 vs
+    // +$5,359.31) with nothing on the page acknowledging it.
+    //
+    // `performance.total` is now the single source: realized + unrealized over
+    // EVERY holding (manual assets included, which the Performance tab used to
+    // omit), over capital at risk. The assertion below is what keeps it honest.
+    totalReturn: totalReturnOf(performance, totalValue, totalCost).pct,
+    totalReturnDollar: totalReturnOf(performance, totalValue, totalCost).pnl,
     todayChangeDollar: change.dollar,
     todayChangePct: change.pct,
+    holdingPeriodDays,
 
     annualIncome,
     incomeYieldPct: totalValue > 0 ? (annualIncome / totalValue) * 100 : 0,
 
     marketPricedPct: Math.round(marketPricedPct),
     stalePct: Math.round(stalePct),
+    unresolvedCurrencies: ctx.unresolvedCurrencies ?? [],
 
     holdings: evaluation.holdings,
     allocation: evaluation.allocation,
+    attribution: computeAttribution(evaluation.holdings),
+    // A local SQLite read, so this costs nothing next to the provider fetches the
+    // rest of the report already made.
+    trajectory: getPortfolioTrajectory(),
     concentration,
     risk: evaluation.risk,
     health: evaluation.health,
@@ -188,6 +322,12 @@ export async function buildPortfolioReport(
     decisions,
     optimization,
     atEquilibrium: optimization.trades.length === 0 && recommendations.length === 0,
+
+    // Money-weighted return, realized/unrealized split, per-position breakdown and
+    // the benchmark replication — from the SAME snapshot as everything above, which
+    // is what lets the Performance tab render the page's own total value rather
+    // than a second one taken seconds later.
+    performance,
   };
 }
 

@@ -32,9 +32,11 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
 
   try {
+    const rawPortfolioId = Number(url.searchParams.get("portfolioId") ?? "1");
     const report = await buildPortfolioReport({
       objective: parseObjective(url.searchParams.get("objective")),
       baseCurrency: url.searchParams.get("currency") ?? "USD",
+      portfolioId: Number.isInteger(rawPortfolioId) && rawPortfolioId > 0 ? rawPortfolioId : 1,
     });
     return NextResponse.json(report);
   } catch (err) {

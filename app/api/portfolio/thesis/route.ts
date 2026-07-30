@@ -20,13 +20,20 @@ export async function GET(request: Request) {
 
   try {
     const report = await buildPortfolioReport({ baseCurrency: url.searchParams.get("currency") ?? "USD" });
-    const thesis = await buildPortfolioThesis({
-      holdings: report.holdings,
-      totalValue: report.totalValue,
-      allocation: report.allocation,
-      risk: report.risk,
-      health: report.health,
-    });
+    const thesis = await buildPortfolioThesis(
+      {
+        holdings: report.holdings,
+        totalValue: report.totalValue,
+        allocation: report.allocation,
+        risk: report.risk,
+        health: report.health,
+      },
+      // Evidence the prompt could not previously see. The report has already
+      // computed both, so passing them through costs nothing and is the difference
+      // between a model that describes the portfolio and one that can reason about
+      // where its return came from and whether the last change helped.
+      { attribution: report.attribution, lastChange: report.trajectory?.changes[0] ?? null },
+    );
     return NextResponse.json(thesis);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to build portfolio thesis";

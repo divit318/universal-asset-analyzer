@@ -26,6 +26,7 @@ import { normalizeHoldings } from "../model/holding";
 import type { Holding, MarketContext } from "../model/types";
 import { PORTFOLIO_CLASS_LABEL } from "../model/types";
 import { TRIM_TRIGGER_PCT, TRIM_TARGET_PCT } from "../policy";
+import { assessConfidence } from "./confidence";
 
 export type RecommendationAction = "ADD" | "INCREASE" | "REDUCE" | "SELL" | "HOLD" | "REALLOCATE";
 
@@ -39,8 +40,16 @@ export interface Recommendation {
   symbol: string | null;
   /** Why — grounded in a specific measured weakness. */
   rationale: string;
-  /** 0-100. Reflects both evidence quality and the size of the measured impact. */
+  /**
+   * 0-100. ONE meaning for every action type: how much of the evidence behind
+   * this card's numbers was actually observed rather than assumed. See
+   * engines/confidence.ts. It says nothing about how large the impact is, how
+   * urgent the gap is, or how big the position is — those are the Impact chips,
+   * `why.whyNow` and the title respectively.
+   */
   confidence: number;
+  /** Why the confidence is what it is, one deterministic sentence per factor. */
+  confidenceBasis: string[];
   /** Dollar size of the proposed trade. */
   amount: number;
   /** MEASURED, by simulating the trade through the real engines. */
@@ -194,29 +203,29 @@ function buildCandidateHolding(
   return holdings[0] ?? null;
 }
 
-/**
- * Confidence blends evidence quality with measured effect size.
+/*
+ * Confidence is NOT computed here any more.
  *
- * A recommendation whose simulated impact is +0.4 health points is not a confident
- * recommendation no matter how clean the data behind it — so effect size is part of
- * the confidence, not just the rationale.
+ * It has one definition for every recommendation type, in engines/confidence.ts,
+ * and it answers exactly one question: how much of the evidence behind this card's
+ * numbers was actually observed. What used to live at this spot blended gap
+ * severity (urgency), |healthDelta| (effect size) and mark quality into a single
+ * percentage, while the trim path used position weight and the exit path used the
+ * holding's score confidence — three incomparable meanings under one label. The
+ * effect-size term also double-counted, since decisionScore is already
+ * `healthDelta × confidence`.
+ *
+ * Severity and effect size did not lose their home; they never belonged here.
+ * Severity still sizes the recommendation (`proposedSize`) and is narrated in
+ * `why.whyNow`; effect size IS the Impact chips and the ranking's first term.
  */
-function confidenceFor(gap: Gap, impact: ImpactEstimate, evaluation: PortfolioEvaluation): number {
-  const base = gap.severity === "high" ? 80 : gap.severity === "medium" ? 65 : 50;
-  const effect = Math.min(Math.abs(impact.healthDelta) * 4, 20);
-
-  // A portfolio whose value is mostly self-reported marks supports weaker
-  // conclusions than one that is fully marked to market. Say so in the confidence
-  // rather than pretending the analysis is equally solid either way.
-  const dataQuality = evaluation.holdings.length > 0
-    ? evaluation.holdings.reduce(
-        (s, h) => s + (h.valuation.mode === "market" && !h.valuation.stale ? h.valuation.valueBase : 0),
-        0,
-      ) / Math.max(evaluation.totalValue, 1)
-    : 0;
-  const qualityAdj = (dataQuality - 0.5) * 20;
-
-  return Math.round(Math.max(20, Math.min(95, base + effect + qualityAdj)));
+function confidenceOf(
+  evaluation: PortfolioEvaluation,
+  subject: Holding | null,
+  impact: ImpactEstimate,
+): { confidence: number; confidenceBasis: string[] } {
+  const assessed = assessConfidence(evaluation, subject, { riskMeasured: impact.riskDelta != null });
+  return { confidence: assessed.score, confidenceBasis: assessed.basis };
 }
 
 function tradeoffsFor(c: Candidate, impact: ImpactEstimate): string[] {
@@ -333,7 +342,10 @@ export function computeRecommendations(
       subject: best.c.exposure,
       symbol: best.c.symbol,
       rationale: `${gap.finding} ${best.c.rationale}`,
-      confidence: confidenceFor(gap, best.impact, evaluation),
+      // Subject = the simulated candidate holding, so the buy is judged on the
+      // evidence available for the asset being bought — exactly as a trim is
+      // judged on the evidence for the asset being trimmed.
+      ...confidenceOf(evaluation, best.change.kind === "buy" ? best.change.holding : null, best.impact),
       amount,
       impact: best.impact,
       tradeoffs: tradeoffsFor(best.c, best.impact),
@@ -376,7 +388,7 @@ export function computeRecommendations(
       symbol: h.symbol,
       rationale:
         `${h.symbol ?? h.name} is ${h.weight.toFixed(1)}% of the portfolio. A single holding this size means the portfolio's outcome is largely this one asset's outcome, regardless of how good it is.${illiquidNote}`,
-      confidence: Math.round(Math.min(90, 60 + h.weight)),
+      ...confidenceOf(evaluation, h, impact),
       amount,
       impact,
       tradeoffs: [
@@ -413,7 +425,7 @@ export function computeRecommendations(
       symbol: h.symbol,
       rationale:
         `${h.symbol ?? h.name} scores ${h.score.score}/100 on ${PORTFOLIO_CLASS_LABEL[h.assetClass].toLowerCase()} metrics at ${h.score.confidence}% confidence. ${h.score.why.join(". ")}.`,
-      confidence: h.score.confidence,
+      ...confidenceOf(evaluation, h, impact),
       amount,
       impact,
       tradeoffs: ["Realizes any loss.", "The thesis may simply need more time."],

@@ -59,8 +59,8 @@ function coerceClass(raw: string | null): PortfolioAssetClass {
 /* Market-priced + cash holdings (the `portfolio_lot` ledger)                   */
 /* -------------------------------------------------------------------------- */
 
-function listLedgerHoldings(): RawHolding[] {
-  const rows = listUniversalLots();
+function listLedgerHoldings(portfolioId: number): RawHolding[] {
+  const rows = listUniversalLots(portfolioId);
 
   // Class/currency/unit/meta are properties of the SYMBOL, not of an individual
   // transaction, so take them from the first lot for that symbol. (A later lot
@@ -120,8 +120,8 @@ function listLedgerHoldings(): RawHolding[] {
 /* Manually-valued holdings (the `manual_asset` ledger)                        */
 /* -------------------------------------------------------------------------- */
 
-function listManualHoldings(): RawHolding[] {
-  return listManualAssets().map((a) => ({
+function listManualHoldings(portfolioId: number): RawHolding[] {
+  return listManualAssets(undefined, portfolioId).map((a) => ({
     id: `manual:${a.id}`,
     assetClass: a.category as PortfolioAssetClass,
     symbol: null,
@@ -144,8 +144,8 @@ function listManualHoldings(): RawHolding[] {
 /* -------------------------------------------------------------------------- */
 
 /** THE portfolio: every asset the user owns, from both ledgers, in one list. */
-export function listRawHoldings(): RawHolding[] {
-  return [...listLedgerHoldings(), ...listManualHoldings()];
+export function listRawHoldings(portfolioId = 1): RawHolding[] {
+  return [...listLedgerHoldings(portfolioId), ...listManualHoldings(portfolioId)];
 }
 
 /** Every symbol the portfolio needs market data for. */

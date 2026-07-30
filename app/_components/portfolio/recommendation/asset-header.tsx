@@ -1,7 +1,8 @@
 import { Card } from "@/app/_components/ui";
 import { formatCurrency, formatPercent } from "@/lib/format";
 import { detectMarket, MARKET_LABEL } from "@/lib/market";
-import { detectPortfolioAssetClass, PORTFOLIO_CLASS_LABEL } from "@/lib/portfolio/model/types";
+import { PORTFOLIO_CLASS_LABEL } from "@/lib/portfolio/model/types";
+import { assetClassFromQuoteType } from "@/lib/portfolio/classes/reference/risk-models";
 import { estimateMarketStatus } from "@/lib/market-hours";
 import type { Quote } from "@/lib/types";
 import type { Holding } from "@/lib/portfolio/model/types";
@@ -9,7 +10,10 @@ import type { Holding } from "@/lib/portfolio/model/types";
 /** Section 1 — everything about the asset itself, auto-detected, never asked of the user. */
 export function AssetHeader({ quote, existingHolding }: { quote: Quote; existingHolding: Holding | null }) {
   const market = detectMarket(quote);
-  const assetClass = detectPortfolioAssetClass(quote.assetType);
+  // The same classification authority the engines use — a label that disagreed with
+  // the bucket the holding lands in is the contradiction this path exists to prevent.
+  const assetClass = existingHolding?.assetClass
+    ?? assetClassFromQuoteType(quote.symbol, quote.name ?? quote.symbol, quote.assetType);
   const status = estimateMarketStatus(market);
   const positive = quote.change >= 0;
 

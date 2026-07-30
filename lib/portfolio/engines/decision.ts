@@ -47,7 +47,13 @@ export interface DecisionCard {
   executionTime: string;
   liquidityImpact: string;
   taxImpact: string;
+  /**
+   * 0-100, one meaning across every action type — see engines/confidence.ts.
+   * Passed straight through from the recommendation; this file adds nothing to it.
+   */
   confidence: number;
+  /** Why the confidence is what it is, one deterministic sentence per factor. */
+  confidenceBasis: string[];
   opportunityCost: OpportunityCost;
   why: WhyExplanation;
   /** alternatives.length + 1 (the implicit "do nothing" baseline every decision is measured against). */
@@ -61,6 +67,13 @@ export interface DecisionCard {
  * is chosen so that a strong, confident recommendation (≈10 health points at ≈90%
  * confidence) lands in the high 70s/80s rather than pinning at 100 for every
  * real-world case — leaving room for genuinely exceptional ones to stand out.
+ *
+ * This composition only became honest once confidence stopped containing effect
+ * size. While ADD's confidence included `|healthDelta| × 4`, this multiplication
+ * squared the effect for buys and left it linear for trims and exits, so two cards
+ * with identical measured impact could not be compared. Now it reads exactly as it
+ * looks: expected impact, discounted by how well-evidenced that impact is. Monotone
+ * in both terms, so for equal impact the better-evidenced card always ranks higher.
  */
 function scoreOf(rec: Recommendation): number {
   const raw = rec.impact.healthDelta * (rec.confidence / 100);
@@ -164,7 +177,16 @@ function whyFor(rec: Recommendation, holding: Holding | null): WhyExplanation {
       : "The measured effect is real but modest — this is a worthwhile improvement, not an urgent one.",
     whyThisAmount: `Sized at $${rec.amount.toLocaleString()} (${holding ? `${((rec.amount / Math.max(holding.valuation.valueBase, 1)) * 100).toFixed(0)}% of this holding's value` : "a deliberately conservative slice of the portfolio, not a full restructuring"}) — large enough to move the measured numbers above, small enough to act on without restructuring the rest of the portfolio.`,
     whyNotAlternative,
-    whyNotNothing: `Simulating "do nothing" is the baseline every number above is measured against: 0 health points, $0 income change, no diversification change. ${opportunityCostFor(rec).description}`,
+    // Deliberately does NOT restate opportunityCost.description. The two answer
+    // different questions — "was the alternative of inaction actually tested?"
+    // versus "what does inaction cost?" — and this field used to end by
+    // interpolating that description verbatim, so the Decision Center printed the
+    // identical sentence in its Cost-of-waiting block and again three lines later
+    // under Why not do nothing. A memo that repeats itself reads as padding and
+    // makes the reader stop looking for new information in later sections.
+    whyNotNothing:
+      `"Do nothing" is not an omission here — it is the baseline every number above is measured against: 0 health points, $0 income change, no diversification change. ` +
+      `A candidate whose simulated difference from that baseline is negligible or negative is discarded rather than shown, so this one appears at all only because its measured difference cleared that bar.`,
   };
 }
 
@@ -205,6 +227,7 @@ export function buildDecisionCards(
       liquidityImpact: liquidityImpactFor(rec),
       taxImpact: taxImpactFor(rec, holding),
       confidence: rec.confidence,
+      confidenceBasis: rec.confidenceBasis,
       opportunityCost: opportunityCostFor(rec),
       why: whyFor(rec, holding),
       alternativesConsidered: rec.alternatives.length + 1,

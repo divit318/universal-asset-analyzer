@@ -3,8 +3,8 @@ import { normalizeHoldings } from "@/lib/portfolio/model/holding";
 import { computeAllocation, computeConcentration } from "@/lib/portfolio/engines/allocation";
 import { computeRisk } from "@/lib/portfolio/engines/risk";
 import { computeHealth } from "@/lib/portfolio/engines/health";
-import { runScenario, getScenario, applyShocks } from "@/lib/portfolio/engines/scenario";
-import { evaluate, applyTargetPlanConserving } from "@/lib/portfolio/engines/simulate";
+import { runScenario, runAllScenarios, getScenario, applyShocks, compareScenarioSets, SCENARIOS } from "@/lib/portfolio/engines/scenario";
+import { evaluate, applyTargetPlanConserving, estimateImpact } from "@/lib/portfolio/engines/simulate";
 import { optimize, DEFAULT_CONSTRAINTS, computeTradeImpacts, type Objective } from "@/lib/portfolio/engines/optimize";
 import { computeRecommendations } from "@/lib/portfolio/engines/recommend";
 import { buildDecisionCards } from "@/lib/portfolio/engines/decision";
@@ -229,6 +229,40 @@ describe("scenario engine — cross-asset correctness", () => {
     expect(applyShocks(aapl, gfc.shocks).impactPct).toBeLessThan(-30);
   });
 
+  // A long position cannot lose more than its value — and it is the COMPOSITION
+  // that has to guarantee that, not a floor applied afterwards. The old engine
+  // summed `sensitivity × shock` as simple returns, which took a beta-2.14 name
+  // past −105% under this scenario and then reported the floor, "−100.0%", as a
+  // confident forecast of a total wipeout. See applyShocks().
+  it("never reports a loss worse than the position's whole value", () => {
+    const hiBeta = { ...holdingOf("equity", "AAPL"), factors: { equityBeta: 3.5 } };
+    const impact = applyShocks(hiBeta, gfc.shocks);
+
+    expect(impact.impactPct).toBeGreaterThan(-100);
+    expect(impact.impactValue).toBeGreaterThan(-hiBeta.valuation.valueBase);
+    // The linear sum this replaces was 3.5 × −50 = −175%, so the result must be a
+    // severe loss rather than a rescaled mild one.
+    expect(impact.impactPct).toBeLessThan(-80);
+  });
+
+  it("does not need a floor: nothing saturates at exactly −100%", () => {
+    // Every holding, every library scenario. A single exact −100.0% would mean the
+    // bound was reached rather than approached, which is what the old clamp did.
+    const h = holdingOf("equity", "AAPL");
+    for (const beta of [0.8, 1.5, 2.14, 3.5, 8]) {
+      for (const s of SCENARIOS) {
+        const impact = applyShocks({ ...h, factors: { equityBeta: beta } }, s.shocks);
+        expect(impact.impactPct, `beta ${beta} in ${s.id}`).toBeGreaterThan(-100);
+      }
+    }
+  });
+
+  it("keeps a beta of 1.0 at exactly the market's move — the fix must not flatter risk", () => {
+    const h = { ...holdingOf("equity", "AAPL"), factors: { equityBeta: 1 } };
+    expect(applyShocks(h, { equityBeta: -50 }).impactPct).toBe(-50);
+    expect(applyShocks(h, { equityBeta: -35 }).impactPct).toBe(-35);
+  });
+
   it("a diversified portfolio loses less than an all-equity one", () => {
     const c = ctx();
     const allEquity = normalizeHoldings(
@@ -252,6 +286,70 @@ describe("scenario engine — cross-asset correctness", () => {
     expect(impact.impactPct).toBeGreaterThanOrEqual(-100);
   });
 
+  /* ── Before/after comparison ───────────────────────────────────────────────
+     The Decisions tab's scenario table printed "Before −8.6% → After −6.6%,
+     Change 0.0pp": the columns and the delta were rounded independently, off
+     values runScenario() had ALREADY quantized to 0.1pp. Both halves of that are
+     regression-tested here — the arithmetic must reconcile with what is on
+     screen, and a real change smaller than the display precision must not be
+     destroyed by it. */
+  it("Change is exactly the subtraction of the Before and After columns as displayed", () => {
+    const c = ctx();
+    const before = normalizeHoldings([raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 100 })], c);
+    const after = normalizeHoldings([
+      raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 100 }),
+      raw({ id: "g", assetClass: "commodity", symbol: "GLD", quantity: 40 }),
+    ], c);
+
+    const { rows, decimals } = compareScenarioSets(
+      runAllScenarios(before.holdings, before.totalValue),
+      runAllScenarios(after.holdings, after.totalValue),
+    );
+
+    expect(rows.length).toBe(SCENARIOS.length);
+    for (const row of rows) {
+      expect(row.beforePct, row.id).not.toBeNull();
+      expect(row.deltaPp, row.id).toBeCloseTo((row.afterPct as number) - (row.beforePct as number), decimals);
+    }
+    // Adding gold to an all-equity book has to move the 2008 scenario materially.
+    const gfcRow = rows.find((r) => r.id === "gfc_2008")!;
+    expect(gfcRow.deltaPp).toBeGreaterThan(1);
+  });
+
+  it("gains a decimal rather than collapsing to 0.0pp when every change is sub-0.1pp", () => {
+    const c = ctx();
+    // ~$95 of gold against a $200,000 equity book — the shape of the real report
+    // that surfaced this ($3,000 into a $9.2M portfolio): a genuine change two
+    // orders of magnitude below the 0.1pp the columns are normally rendered at.
+    // Rounding first reported every scenario as "0.0pp", i.e. as no change at all.
+    const before = normalizeHoldings([raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 1000 })], c);
+    const after = normalizeHoldings([
+      raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 1000 }),
+      raw({ id: "g", assetClass: "commodity", symbol: "GLD", quantity: 0.5 }),
+    ], c);
+
+    const beforeSet = runAllScenarios(before.holdings, before.totalValue);
+    const afterSet = runAllScenarios(after.holdings, after.totalValue);
+    const { rows, decimals } = compareScenarioSets(beforeSet, afterSet);
+
+    expect(decimals).toBe(2);
+    // At one decimal this table would be entirely zeros; at two, the 2008 row is
+    // visibly different from zero and still reconciles with its own columns.
+    const gfcRow = rows.find((r) => r.id === "gfc_2008")!;
+    expect(Math.abs(gfcRow.deltaPp as number)).toBeGreaterThan(0);
+    expect(gfcRow.deltaPp).toBeCloseTo((gfcRow.afterPct as number) - (gfcRow.beforePct as number), 2);
+  });
+
+  it("carries an unrounded portfolioImpactPctExact for anything that differences two runs", () => {
+    const c = ctx();
+    const { holdings, totalValue } = normalizeHoldings(
+      [raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 100 })], c,
+    );
+    const res = runScenario(gfc, holdings, totalValue);
+    expect(res.portfolioImpactPct).toBeCloseTo(res.portfolioImpactPctExact, 1);
+    expect(res.portfolioImpactPct).toBe(Math.round(res.portfolioImpactPctExact * 10) / 10);
+  });
+
   it("reports scenario coverage rather than defaulting unmodelled assets to -20%", () => {
     const c = ctx();
     const { holdings, totalValue } = normalizeHoldings(
@@ -266,6 +364,74 @@ describe("scenario engine — cross-asset correctness", () => {
 });
 
 /* -------------------------------------------------------------------------- */
+
+/* -------------------------------------------------------------------------- */
+/* HHI denominators — an HHI delta may only be added to its OWN baseline        */
+/* -------------------------------------------------------------------------- */
+
+describe("HHI denominators are not interchangeable", () => {
+  /** A book that is spread across many NAMES but concentrated in few CLASSES —
+   *  the shape that makes the two HHIs diverge, and the shape of the real book
+   *  (position HHI 688 over 25 holdings, asset-class HHI 3431 over 10 classes). */
+  function manyNamesFewClasses(c: MarketContext) {
+    const { holdings } = normalizeHoldings([
+      raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 30 }),
+      raw({ id: "b", assetClass: "etf", symbol: "VYM", quantity: 50 }),
+      raw({ id: "c", assetClass: "etf", symbol: "VXUS", quantity: 90 }),
+      raw({ id: "d", assetClass: "etf", symbol: "VEA", quantity: 110 }),
+      raw({ id: "e", assetClass: "etf", symbol: "VNQ", quantity: 60 }),
+    ], c);
+    return evaluate(holdings, c);
+  }
+
+  it("the two HHIs are materially different numbers on the same portfolio", () => {
+    const c = ctx();
+    const e = manyNamesFewClasses(c);
+    // If these ever coincided the test below would prove nothing.
+    expect(Math.abs(e.risk.positionHhi - e.allocation.byAssetClass.hhi)).toBeGreaterThan(500);
+  });
+
+  it("diversificationDelta closes EXACTLY over the asset-class HHI, which is the baseline it must be paired with", () => {
+    const c = ctx();
+    const before = manyNamesFewClasses(c);
+    const { holdings } = normalizeHoldings([raw({ id: "n", assetClass: "bond", symbol: "IEF", quantity: 400 })], c);
+    const after = evaluate([...before.holdings, holdings[0]], c);
+    const impact = estimateImpact(before, after);
+
+    // This is the invariant the Decision Center's "Asset-class HHI" row renders:
+    // baseline + delta === the real post-trade figure. Exact, not approximate.
+    expect(before.allocation.byAssetClass.hhi + impact.diversificationDelta)
+      .toBe(after.allocation.byAssetClass.hhi);
+  });
+
+  it("adding diversificationDelta to the POSITION HHI produces a figure matching neither engine", () => {
+    // The B1 regression. The Decision Center rendered `risk.hhi + diversificationDelta`
+    // and called it "Concentration (HHI)": on the real book 688 + (−160) = 528, which
+    // was neither the post-trade position HHI (664) nor the post-trade asset-class
+    // HHI (3271). This asserts the two are genuinely incompatible so the pairing can
+    // never be "fixed" by relabelling.
+    const c = ctx();
+    const before = manyNamesFewClasses(c);
+    const { holdings } = normalizeHoldings([raw({ id: "n", assetClass: "bond", symbol: "IEF", quantity: 400 })], c);
+    const after = evaluate([...before.holdings, holdings[0]], c);
+    const impact = estimateImpact(before, after);
+
+    const bogus = before.risk.positionHhi + impact.diversificationDelta;
+    expect(bogus).not.toBe(after.risk.positionHhi);
+    expect(bogus).not.toBe(after.allocation.byAssetClass.hhi);
+    // And the error is not a rounding artifact — it is a whole different scale.
+    expect(Math.abs(bogus - after.risk.positionHhi)).toBeGreaterThan(10);
+  });
+
+  it("positionHhi is an HHI over individual holdings, so it tracks name count, not class count", () => {
+    const c = ctx();
+    const oneName = evaluate(normalizeHoldings([raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 100 })], c).holdings, c);
+    const fiveNames = manyNamesFewClasses(c);
+    // A single position is maximally concentrated by definition.
+    expect(oneName.risk.positionHhi).toBe(10_000);
+    expect(fiveNames.risk.positionHhi).toBeLessThan(10_000);
+  });
+});
 
 describe("allocation", () => {
   it("breaks the portfolio down by class, currency and liquidity", () => {

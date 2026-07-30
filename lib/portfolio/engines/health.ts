@@ -183,7 +183,13 @@ function trendOf(score: number): ScoreTrend {
   return "poor";
 }
 
-function gradeOf(score: number): HealthGrade {
+/**
+ * The score → letter mapping, exported because portfolio health is displayed as
+ * "75 B" everywhere in the app and a before/after row has to grade a SIMULATED
+ * total that no HealthScore object exists for. One definition, so a projected
+ * grade can never disagree with a measured one.
+ */
+export function healthGradeOf(score: number): HealthGrade {
   if (score >= 85) return "A";
   if (score >= 70) return "B";
   if (score >= 55) return "C";
@@ -688,7 +694,7 @@ export function computeHealth(
   // then rounding the total again quantized the whole score twice over.
   const totalExact = dimensions.reduce((s, d) => s + (d.scoreExact ?? 0) * d.effectiveWeight, 0);
   const total = Math.round(totalExact);
-  const g = gradeOf(total);
+  const g = healthGradeOf(total);
 
   const best = scoreable.reduce((a, b) => (a.score! > b.score! ? a : b));
   const worst = scoreable.reduce((a, b) => (a.score! < b.score! ? a : b));

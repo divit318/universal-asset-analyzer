@@ -59,7 +59,21 @@ export function ImpactRow({ impact }: { impact: ImpactEstimate }) {
   );
 }
 
-/** One row of a before/after comparison — green improved, red worse, grey unchanged. */
+/**
+ * One row of a before/after comparison — green improved, red worse, grey unchanged.
+ *
+ * ALWAYS renders the before → after transition, including when the two are equal.
+ * An unchanged row used to collapse to a single bare value, which made one row in
+ * a table of transitions look like a different KIND of fact: in the Decision
+ * Center's expected-state block, "Illiquid share 0.0%" sat under "Portfolio health
+ * 75 → 76" and "Annualized volatility 12.1% → 11.7%" and read as a static
+ * property rather than as "this change does not move liquidity". Same shape, muted
+ * tone — "no change" is an answer to the same question, not a different question.
+ *
+ * `format` overrides the default `toFixed(decimals) + suffix` rendering, so a
+ * dollar row goes through the app's currency formatter instead of printing a raw
+ * 91141, and a health row can carry its letter grade.
+ */
 export function StateRow({
   label,
   before,
@@ -67,6 +81,7 @@ export function StateRow({
   suffix = "",
   higherIsBetter = true,
   decimals = 1,
+  format,
 }: {
   label: string;
   before: number | null;
@@ -74,26 +89,29 @@ export function StateRow({
   suffix?: string;
   higherIsBetter?: boolean;
   decimals?: number;
+  format?: (value: number) => string;
 }) {
   if (before == null || after == null) return null;
+  const render = format ?? ((v: number) => `${v.toFixed(decimals)}${suffix}`);
   const delta = after - before;
-  if (Math.abs(delta) < 10 ** -decimals / 2) {
-    return (
-      <div className="flex items-center justify-between gap-3 py-1 text-xs">
-        <span className="text-muted">{label}</span>
-        <span className="font-mono tabular-nums text-foreground">{before.toFixed(decimals)}{suffix}</span>
-      </div>
-    );
-  }
+  const unchanged = Math.abs(delta) < 10 ** -decimals / 2;
   const improved = higherIsBetter ? delta > 0 : delta < 0;
   return (
     <div className="flex items-center justify-between gap-3 py-1 text-xs">
       <span className="text-muted">{label}</span>
       <span className="flex items-center gap-1.5 font-mono tabular-nums">
-        <span className="text-muted/70">{before.toFixed(decimals)}{suffix}</span>
+        <span className="text-muted/70">{render(before)}</span>
         <span className="text-muted/40">→</span>
-        <span className={improved ? "font-semibold text-positive" : "font-semibold text-negative"}>
-          {after.toFixed(decimals)}{suffix}
+        <span
+          className={
+            unchanged
+              ? "text-foreground"
+              : improved
+                ? "font-semibold text-positive"
+                : "font-semibold text-negative"
+          }
+        >
+          {render(after)}
         </span>
       </span>
     </div>

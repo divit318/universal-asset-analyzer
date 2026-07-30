@@ -4,6 +4,7 @@ import { Card, Badge } from "@/app/_components/ui";
 import { CollapsibleSection } from "@/app/_components/collapsible-section";
 import { formatCurrency } from "@/lib/format";
 import { ImpactRow, StateRow } from "./impact-display";
+import { healthGradeOf } from "@/lib/portfolio/engines/health";
 import type { DecisionCard as Decision } from "@/lib/portfolio/engines/decision";
 import type { HealthScore } from "@/lib/portfolio/engines/health";
 import type { UniversalRisk } from "@/lib/portfolio/engines/risk";
@@ -52,11 +53,14 @@ function ExpectedPortfolioState({
   decision,
   health,
   risk,
+  assetClassHhi,
   annualIncome,
 }: {
   decision: Decision;
   health: HealthScore;
   risk: UniversalRisk;
+  /** Asset-class HHI baseline — the denominator `impact.diversificationDelta` is measured on. */
+  assetClassHhi: number;
   annualIncome: number;
 }) {
   const impact = decision.recommendation.impact;
@@ -66,7 +70,13 @@ function ExpectedPortfolioState({
         Expected portfolio state if you make this change
       </span>
       <div className="mt-1 flex flex-col divide-y divide-border/40">
-        <StateRow label="Portfolio health" before={health.total} after={health.total + impact.healthDelta} decimals={0} />
+        <StateRow
+          label="Portfolio health"
+          before={health.total}
+          after={health.total + impact.healthDelta}
+          decimals={0}
+          format={(v) => `${Math.round(v)} ${healthGradeOf(Math.round(v))}`}
+        />
         <StateRow
           label="Annualized volatility"
           before={risk.annualizedVolatility}
@@ -74,10 +84,20 @@ function ExpectedPortfolioState({
           suffix="%"
           higherIsBetter={false}
         />
+        {/* ── One denominator on both sides ────────────────────────────────
+            `impact.diversificationDelta` is measured as
+            `after.allocation.byAssetClass.hhi − before...` (simulate.ts), so its
+            baseline must be the ASSET-CLASS HHI. This row used to add it to
+            `risk.positionHhi` — an HHI over individual holdings — and render the
+            sum: on the real book, 688 + (−160) = 528, a number that was neither
+            the post-trade position HHI (664) nor the post-trade asset-class HHI
+            (3271), and that overstated the improvement 6.7x. Same rule the Risk
+            Lab states for the same statistic: identical labels for different
+            denominators make the tool look like it contradicts itself. */}
         <StateRow
-          label="Concentration (HHI)"
-          before={risk.hhi}
-          after={risk.hhi + impact.diversificationDelta}
+          label="Asset-class HHI"
+          before={assetClassHhi}
+          after={assetClassHhi + impact.diversificationDelta}
           decimals={0}
           higherIsBetter={false}
         />
@@ -88,20 +108,34 @@ function ExpectedPortfolioState({
           suffix="%"
           higherIsBetter={false}
         />
-        <StateRow label="Annual income" before={annualIncome} after={annualIncome + impact.incomeDelta} decimals={0} />
+        {/* A dollar figure, formatted like every other dollar figure in the app.
+            This rendered as a bare "91141" — the one unformatted number on a page
+            of currency, which reads as a count of something rather than money. */}
+        <StateRow
+          label="Annual income"
+          before={annualIncome}
+          after={annualIncome + impact.incomeDelta}
+          decimals={0}
+          format={formatCurrency}
+        />
       </div>
     </div>
   );
 }
 
+/**
+ * The memo, minus "Why this".
+ *
+ * `why.why` IS `recommendation.rationale` — one string, by construction in
+ * decision.ts — and every card already renders it as its own description. Printing
+ * it again as the memo's first row (with the headline card's memo open by default,
+ * three lines below the identical paragraph) was pure duplication, and it trained
+ * the reader to skim the rest of the memo.
+ */
 function WhyMemo({ decision }: { decision: Decision }) {
   const { why } = decision;
   return (
     <dl className="flex flex-col gap-3 text-xs leading-relaxed">
-      <div>
-        <dt className="font-semibold text-foreground">Why this</dt>
-        <dd className="text-muted">{why.why}</dd>
-      </div>
       <div>
         <dt className="font-semibold text-foreground">Why now</dt>
         <dd className="text-muted">{why.whyNow}</dd>
@@ -149,11 +183,13 @@ function DecisionCardView({
   decision,
   health,
   risk,
+  assetClassHhi,
   annualIncome,
 }: {
   decision: Decision;
   health: HealthScore;
   risk: UniversalRisk;
+  assetClassHhi: number;
   annualIncome: number;
 }) {
   const rec = decision.recommendation;
@@ -180,7 +216,15 @@ function DecisionCardView({
           <span className="font-mono text-sm font-bold tabular-nums text-foreground">
             {formatCurrency(rec.amount)}
           </span>
-          <span className="text-[11px] text-muted/70">{rec.confidence}% confidence</span>
+          {/* One meaning across every card: the share of the evidence behind these
+              numbers that was actually observed. The basis is deterministic, so it
+              can be stated rather than hand-waved. */}
+          <span
+            className="cursor-help text-[11px] text-muted/70 underline decoration-dotted decoration-muted/30 underline-offset-2"
+            title={`Confidence ${rec.confidence}% — how much of the evidence behind this card's numbers was observed rather than assumed. It does not measure how large the impact is or how urgent the change is.\n\n${decision.confidenceBasis.map((b) => `• ${b}`).join("\n")}`}
+          >
+            {rec.confidence}% evidenced
+          </span>
         </div>
       </div>
 
@@ -212,7 +256,15 @@ function DecisionCardView({
         </div>
       )}
 
-      <ExpectedPortfolioState decision={decision} health={health} risk={risk} annualIncome={annualIncome} />
+      {/* The quantified cost of inaction, on every card rather than only the
+          headline one — it is the same question ("what does waiting cost?") for
+          the fourth-ranked decision as for the first, and it is now stated only
+          here instead of being duplicated into the Why-not-do-nothing row. */}
+      <div className="rounded-lg border border-border/60 bg-surface/40 px-3 py-2 text-[11px] leading-relaxed text-muted">
+        <strong className="text-foreground">Cost of waiting: </strong>{decision.opportunityCost.description}
+      </div>
+
+      <ExpectedPortfolioState decision={decision} health={health} risk={risk} assetClassHhi={assetClassHhi} annualIncome={annualIncome} />
 
       <div className="flex flex-col gap-2">
         <CollapsibleSection title="Why this decision">
@@ -233,11 +285,18 @@ export function DecisionCenter({
   decisions,
   health,
   risk,
+  assetClassHhi,
   annualIncome,
 }: {
   decisions: Decision[];
   health: HealthScore;
   risk: UniversalRisk;
+  /**
+   * `allocation.byAssetClass.hhi`. Passed in rather than derived from `risk`,
+   * because `risk` carries the POSITION-level HHI and the two are not
+   * interchangeable — see the note on the Asset-class HHI row below.
+   */
+  assetClassHhi: number;
   annualIncome: number;
 }) {
   if (decisions.length === 0) {
@@ -263,15 +322,26 @@ export function DecisionCenter({
           <span className="text-[10px] font-semibold uppercase tracking-widest text-brand">
             Highest-impact change available now — if you only make one change, make this one
           </span>
-          <Badge variant={scoreTone(top.decisionScore)}>Decision score {top.decisionScore}</Badge>
+          <div className="flex shrink-0 items-center gap-2">
+            {/* The headline card showed no confidence at all, so the one change the
+                page tells you to make was the one whose evidence quality you could
+                not see. Same number, same meaning, same tooltip as every other card. */}
+            <span
+              className="cursor-help text-[11px] text-muted/70 underline decoration-dotted decoration-muted/30 underline-offset-2"
+              title={`Confidence ${top.confidence}% — how much of the evidence behind this card's numbers was observed rather than assumed. It does not measure how large the impact is or how urgent the change is.\n\n${top.confidenceBasis.map((b) => `• ${b}`).join("\n")}`}
+            >
+              {top.confidence}% evidenced
+            </span>
+            <Badge variant={scoreTone(top.decisionScore)}>Decision score {top.decisionScore}</Badge>
+          </div>
         </div>
         <p className="text-base font-semibold text-foreground">{top.recommendation.title}</p>
-        <p className="text-xs leading-relaxed text-muted">{top.why.why}</p>
+        <p className="text-xs leading-relaxed text-muted">{top.recommendation.rationale}</p>
         <ImpactRow impact={top.recommendation.impact} />
         <div className="rounded-lg border border-border/60 bg-surface/40 px-3 py-2 text-[11px] leading-relaxed text-muted">
           <strong className="text-foreground">Cost of waiting: </strong>{top.opportunityCost.description}
         </div>
-        <ExpectedPortfolioState decision={top} health={health} risk={risk} annualIncome={annualIncome} />
+        <ExpectedPortfolioState decision={top} health={health} risk={risk} assetClassHhi={assetClassHhi} annualIncome={annualIncome} />
         <div className="flex flex-col gap-2">
           <CollapsibleSection title="Why this decision" defaultOpen>
             <WhyMemo decision={top} />
@@ -291,7 +361,7 @@ export function DecisionCenter({
             Full priority queue ({decisions.length})
           </span>
           {rest.map((d) => (
-            <DecisionCardView key={d.recommendation.id} decision={d} health={health} risk={risk} annualIncome={annualIncome} />
+            <DecisionCardView key={d.recommendation.id} decision={d} health={health} risk={risk} assetClassHhi={assetClassHhi} annualIncome={annualIncome} />
           ))}
         </div>
       )}

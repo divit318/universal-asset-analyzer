@@ -23,6 +23,7 @@
  */
 
 import { runPlan, stepValue } from "../platform";
+import { datedReturns } from "./engines/series";
 import { getQuotes, getHistory, getQuoteSummary } from "../yahoo";
 import { getFundamentals } from "../fundamentals";
 import { getFundDetails } from "../screener/universes/fund-shared";
@@ -35,6 +36,13 @@ import type {
 import { portfolioSymbols } from "./store";
 
 const BENCHMARK = "SPY";
+/**
+ * The US 10-year Treasury yield index. ^TNX quotes the YIELD as its price (4.23 =
+ * 4.23%), so first-differencing its closes gives daily yield changes in percentage
+ * points — the regressor that turns a bond fund's rate sensitivity into a
+ * measurement instead of an assumption. One extra fetch for the whole portfolio.
+ */
+const RATE_INDEX = "^TNX";
 const HISTORY_DAYS = 400;
 
 /** Dominant credit-rating bucket for a bond fund — drives credit-spread sensitivity. */
@@ -61,10 +69,13 @@ function dominantRating(ratings: Record<string, number> | null): string | null {
  * also logged. Getting FX wrong doesn't produce an obviously broken number; it
  * produces a plausible wrong one, which is worse.
  */
-async function fetchFx(currencies: string[], base: string): Promise<Record<string, number>> {
+async function fetchFx(
+  currencies: string[],
+  base: string,
+): Promise<{ fx: Record<string, number>; unresolved: string[] }> {
   const fx: Record<string, number> = { [base.toUpperCase()]: 1 };
   const needed = [...new Set(currencies.map((c) => c.toUpperCase()))].filter((c) => c !== base.toUpperCase());
-  if (needed.length === 0) return fx;
+  if (needed.length === 0) return { fx, unresolved: [] };
 
   const pairs = needed.map((c) => `${c}${base.toUpperCase()}=X`);
   try {
@@ -74,17 +85,31 @@ async function fetchFx(currencies: string[], base: string): Promise<Record<strin
       if (q.price > 0) fx[cur] = q.price;
     }
   } catch {
-    // Non-fatal: leave the missing currencies at 1 rather than failing the whole
-    // portfolio. The UI flags any currency that didn't resolve.
+    // Non-fatal: fall through to the 1:1 fallback below rather than failing the
+    // whole portfolio over one unavailable rate.
   }
 
+  // Which currencies fell back to 1:1, RETURNED rather than only logged.
+  //
+  // This used to be a console.warn and a comment claiming "the UI flags any
+  // currency that didn't resolve". It did not. The only FX check in the UI is
+  // `fxRate !== 1`, so a failed lookup — which sets the rate to exactly 1 — renders
+  // identically to a genuine base-currency holding: no currency badge, no FX row,
+  // no flag anywhere. A EUR position could be carried 10-40% wrong and flow
+  // silently into total value, every weight, allocation, health, risk and
+  // attribution figure on the page.
+  //
+  // Getting FX wrong does not produce an obviously broken number; it produces a
+  // plausible wrong one, which is why it has to be surfaced rather than logged.
+  const unresolved: string[] = [];
   for (const c of needed) {
     if (fx[c] == null) {
       fx[c] = 1;
+      unresolved.push(c);
       console.warn(`[portfolio] No FX rate for ${c}→${base}; treating 1:1. Totals may be wrong.`);
     }
   }
-  return fx;
+  return { fx, unresolved };
 }
 
 interface RawProfile {
@@ -128,7 +153,8 @@ export async function buildMarketContext(
   if (symbols.length === 0) {
     return {
       baseCurrency: base,
-      fx: await fetchFx(currencies, base),
+      fx: (await fetchFx(currencies, base)).fx,
+      unresolvedCurrencies: [],
       quotes: new Map(),
       history: new Map(),
       fundamentals: new Map(),
@@ -151,6 +177,10 @@ export async function buildMarketContext(
     {
       id: "benchmark",
       run: () => getHistory(BENCHMARK, HISTORY_DAYS),
+    },
+    {
+      id: "rateIndex",
+      run: () => getHistory(RATE_INDEX, HISTORY_DAYS),
     },
     {
       id: "fundDetails",
@@ -188,15 +218,31 @@ export async function buildMarketContext(
       currency: q.currency ?? null,
       name: q.name ?? null,
       marketCap: q.marketCap ?? null,
+      // The instrument TYPE, carried through so the risk-model classifier can tell
+      // a money-market fund from a stock without a second provider call.
+      assetType: q.assetType ?? null,
     });
   }
 
+  // Closes and their DATES, kept strictly parallel. Filtering must drop the date
+  // alongside the close it belongs to — a `filter()` on the closes alone silently
+  // shifts every later date by one, which is worse than having no dates at all.
   const history = new Map<string, number[]>();
+  const historyDates = new Map<string, string[]>();
   for (const sym of symbols) {
     const h = stepValue<Awaited<ReturnType<typeof getHistory>>>(result, `history:${sym}`);
-    if (h && h.length > 0) {
-      history.set(sym.toUpperCase(), h.map((p) => p.adjClose ?? p.close).filter((c) => c > 0));
+    if (!h || h.length === 0) continue;
+    const closes: number[] = [];
+    const dates: string[] = [];
+    for (const p of h) {
+      const c = p.adjClose ?? p.close;
+      if (!(c > 0)) continue;
+      closes.push(c);
+      dates.push(p.date.slice(0, 10));
     }
+    if (closes.length === 0) continue;
+    history.set(sym.toUpperCase(), closes);
+    historyDates.set(sym.toUpperCase(), dates);
   }
 
   const fundDetails = stepValue<Awaited<ReturnType<typeof getFundDetails>>>(result, "fundDetails")
@@ -221,10 +267,22 @@ export async function buildMarketContext(
       country: profile?.assetProfile?.country ?? null,
       currency: profile?.price?.currency ?? null,
       dividendYield: snap?.dividendYield ?? null,
-      // Real, from the provider — the numbers that make bond stress-testing correct.
+      // Carried, but DEMOTED: this field is not effective duration (TLT 3.55,
+      // USFR 3.88, VXUS 4.48 — see ContextFundamentals.duration). The risk model
+      // measures duration from returns instead and only falls back to this.
       duration: fund?.duration ?? null,
       maturity: fund?.maturity ?? null,
       creditQuality: dominantRating(fund?.ratings ?? null),
+      // The Morningstar category and the position mix. These decide WHICH RISK
+      // MODEL the holding gets (classes/reference/risk-models.ts) — the fields the
+      // portfolio used to discard while the screener relied on them.
+      fundCategory: fund?.category ?? null,
+      bondWeight: fund?.bondWeight ?? null,
+      equityWeight: fund?.equityWeight ?? null,
+      cashWeight: fund?.cashWeight ?? null,
+      otherWeight: fund?.otherWeight ?? null,
+      topSector: fund?.topSector ?? null,
+      topSectorWeight: fund?.topSectorWeight ?? null,
       expenseRatio: fund?.expenseRatio ?? null,
       // marketCap lives on the Quote, not the fundamentals snapshot.
       marketCap: quotes.get(key)?.marketCap ?? null,
@@ -239,21 +297,51 @@ export async function buildMarketContext(
     });
   }
 
+  const fxResult = stepValue<Awaited<ReturnType<typeof fetchFx>>>(result, "fx");
+
   const benchHistory = stepValue<Awaited<ReturnType<typeof getHistory>>>(result, "benchmark") ?? [];
-  const benchCloses = benchHistory.map((p) => p.adjClose ?? p.close).filter((c) => c > 0);
-  const benchmarkReturns: number[] = [];
-  for (let i = 1; i < benchCloses.length; i++) {
-    const prev = benchCloses[i - 1];
-    if (prev > 0) benchmarkReturns.push((benchCloses[i] - prev) / prev);
+  const benchCloses: number[] = [];
+  const benchCloseDates: string[] = [];
+  for (const p of benchHistory) {
+    const c = p.adjClose ?? p.close;
+    if (!(c > 0)) continue;
+    benchCloses.push(c);
+    benchCloseDates.push(p.date.slice(0, 10));
+  }
+  const bench = datedReturns(benchCloses, benchCloseDates);
+
+  // Daily CHANGES in the 10-year yield, in percentage points. Not returns —
+  // ^TNX's "price" IS the yield, so the first difference is already in the unit
+  // the `rates` factor is shocked in, and dividing by the previous close (what
+  // datedReturns would do) would be meaningless here.
+  const rateHistory = stepValue<Awaited<ReturnType<typeof getHistory>>>(result, "rateIndex") ?? [];
+  const rateChanges: number[] = [];
+  const rateChangeDates: string[] = [];
+  let prevYield: number | null = null;
+  for (const p of rateHistory) {
+    const y = p.adjClose ?? p.close;
+    if (!(y > 0)) continue;
+    if (prevYield != null) {
+      rateChanges.push(y - prevYield);
+      rateChangeDates.push(p.date.slice(0, 10));
+    }
+    prevYield = y;
   }
 
   return {
     baseCurrency: base,
-    fx: stepValue<Record<string, number>>(result, "fx") ?? { [base]: 1 },
+    fx: fxResult?.fx ?? { [base]: 1 },
+    // Surfaced, not just logged: a currency that fell back to 1:1 mis-values its
+    // holdings while looking exactly like a base-currency position.
+    unresolvedCurrencies: fxResult?.unresolved ?? [],
     quotes,
     history,
+    historyDates,
     fundamentals,
-    benchmarkReturns,
+    benchmarkReturns: bench.returns,
+    benchmarkDates: bench.dates,
+    rateChanges,
+    rateChangeDates,
     asOf: new Date().toISOString(),
   };
 }
