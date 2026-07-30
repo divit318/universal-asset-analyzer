@@ -406,6 +406,45 @@ These modules provide deep research and institutional-grade analysis.
 
 These modules track user holdings and provide position-level analysis.
 
+### Simulator (`app/portfolio/_components/simulator/`, `lib/portfolio/simulator/`)
+**Purpose**: AI-generated hypothetical portfolios — describe a mandate, interview via
+AI follow-ups, generate a complete live-priced book, edit it, compare it, promote it
+to real holdings.
+
+**Key files**:
+- `lib/portfolio/simulator/types.ts` — `Simulation` is a *specification* (profile +
+  holdings); all analytics recompute live through the real engines, never persisted.
+- `lib/portfolio/simulator/intake.ts` — Step B interview contract (prompt, response
+  validation, loop guards, 8-question cap).
+- `lib/portfolio/simulator/generate.ts` — allocate → select → size → evaluate →
+  narrate. The AI proposes; validation disposes: every ticker must survive a live
+  quote, sizing conserves the mandate to the cent, every AI stage has a
+  deterministic fallback.
+- `lib/portfolio/simulator/evaluate.ts` — `SimHolding[]` → the ledger's own
+  `RawHolding` shape → `buildMarketContext → normalizeHoldings → evaluate →
+  runAllScenarios`. Zero analytics code of its own, so sim and real portfolio
+  produce identical numbers for identical holdings by construction.
+- `lib/portfolio/simulator/edit.ts` — value-conserving edit transforms (cash sleeve
+  funds buys / absorbs trims) + swap/rationale AI contracts.
+- `lib/portfolio/simulator/universe.ts` — curated instrument menu (the hybrid
+  ticker-selection backbone; AI free-form picks die at quote validation).
+
+**Routes**: `/api/portfolio/simulator` (CRUD), `/intake` (one interview turn),
+`/generate` (staged NDJSON stream), `/evaluate`, `/edit`, `/swap` (measured
+before→after impact previews), `/refresh-narrative`, `/promote`.
+
+**AI**: everything routes through the `portfolio-construction` task
+(JSON mode, interactive latency). Thesis reuses `lib/portfolio/thesis.ts`.
+
+**Multi-portfolio**: `portfolios` table + `portfolio_id` (DEFAULT 1 = seeded
+"Main Portfolio") on `portfolio_lot` / `manual_asset` / `portfolio_snapshot`.
+Un-parameterized db.ts calls read/write Main exactly as before. Promote writes
+BUY lots at live prices via `executeTradeBatch(lots, [], portfolioId)`; merging
+nets overlapping tickers through lot aggregation. Non-default portfolios are
+view-only on the Portfolio page (Dashboard/Risk Lab/Simulator tabs) until the
+write routes are portfolio-aware end to end.
+
+
 ### Portfolio (`app/portfolio/page.tsx`)
 **Purpose**: Holdings management, P&L tracking, position fit analysis.
 
@@ -443,25 +482,113 @@ These modules track user holdings and provide position-level analysis.
 ---
 
 ### Watchlist (`app/watchlist/page.tsx`)
-**Purpose**: Tracked tickers with alerts, notes, bulk monitoring.
+**Purpose**: A ranked, sortable list of tracked names — the level you are waiting
+for on each, whether it belongs in your book, and the thesis behind it.
 
-**Per-Ticker Data:**
-- Target price (optional)
-- Alert threshold (drop % at which to alert)
-- User notes (free-form research notes)
-- Current price, change, date added
+**Columns** (all sortable, nulls sink in both directions): Symbol · Last · Today ·
+My target · Upside · From high · Portfolio fit · Stage · Sector · Added · Thesis.
+Progressive disclosure via `hideBelow` keeps Symbol/Last/Today/My target/Upside/
+Portfolio fit at every breakpoint.
 
-**Workflow:**
-- Add ticker (with optional target + alert)
-- View list with latest prices
-- Edit notes per ticker
-- Remove ticker
+**Vocabulary** (deliberate, and load-bearing):
+- **"My target"** — the *user's own* target (`watchlist.target_price`), never the
+  analyst consensus, which Research labels "Mean target". An unqualified "Target"
+  read as consensus.
+- **"Upside"** — `(target − price) / price`, positive green, identical to the
+  analyst card, `/dcf`, `/compare` and `/ic-report`. Replaced "To target", which
+  computed `(price − target) / target` and coloured negatives green.
 
-**State**: Watchlist items stored in `watchlist` table (SQLite).
+**Shared math** (`lib/watchlist-metrics.ts`, pure + client-safe, tested in
+`tests/watchlist-metrics.test.ts`): `upsidePercent`, `isTargetReached`,
+`resolveTargetDirection`, `distanceToTargetPercent`, `percentFrom52WeekHigh`,
+`rangePosition52Week`, `daysSince`/`formatAge`, `isUsablePrice`. **The page, the
+alert evaluator (`lib/alerts.ts`) and the CSV export all import it** — they
+previously each implemented the target rule themselves, with two of the three
+contradicting each other.
 
-**API Dependency**: `/api/watchlist` (GET list, POST add, DELETE remove).
+**Target direction** (`watchlist.target_direction`, `"above" | "below"`): `above`
+is a valuation/exit level, `below` a buy limit. Stored, not inferred — once the
+price crosses an `above` target it is indistinguishable from an un-hit `below`
+one. `runMonitor` backfills NULL (pre-migration) rows because it is the only
+caller holding both live prices and the database.
 
-**Related**: `lib/db.ts` (CRUD), `lib/ai-watchlist.ts` (AI monitoring suggestions + Watchlist Intelligence structured alerts).
+**Per-Ticker Data**: my target + its trigger direction, single-day drop alert
+threshold, thesis note, idea stage, live price/change/52-week range, portfolio fit.
+
+**Workflow**: add from Research/Screener → set a target (live upside preview and
+quick-fills in the editor) → write a thesis → advance the idea stage → Buy.
+Quick filters (Alerts firing / Owned / No target set / Has thesis) express the
+selections a sort cannot; sort key, direction, density and quick filter persist
+to localStorage. `/` focuses the filter, Escape clears it.
+
+**Explaining Portfolio fit**: the fit column is a `<ScoreChip kind="fit">`
+(confidence shown inline only below 70, where it should change the reading) and
+the expanded row renders the shared `PortfolioFitPanel` — ring, six weighted
+dimensions, reasons, trade-offs, suggested allocation. All pre-existing
+`PortfolioFitAnalysis` output that the page simply never surfaced.
+
+**Named lists** (`watchlist_group` + `watchlist_member`): lists are *views* over
+tracked symbols, not containers. Membership lives in a join table while each
+symbol's research state (target, thesis, stage) is stored once in `watchlist` — so
+one symbol can appear in several lists with one target, and deleting a list moves
+its orphans to a survivor rather than destroying months of notes. `listWatchlist()`
+stays **unparameterized and returns everything**, because ten unrelated consumers
+(alert monitor, timeline, knowledge graph, calendar, home digest, pipeline board,
+CSV export, AI digest) mean "everything I track"; `listWatchlistByGroup(id)` is the
+scoped read. Each list carries its own `benchmark`, which adds a "vs SPY" column
+computed from the same batch quote request. Reorderable; the active list, sort,
+direction, density and quick filter all persist per user.
+
+**Live prices** (`lib/live-quotes.ts` + `app/watchlist/_components/use-live-quotes.ts`):
+polling, because no streaming feed exists in this stack. The engineering is in
+*when not to poll* — a hidden tab does not poll at all, closed markets drop from a
+30s to a 300s cadence (`estimateMarketStatus` per listing region, so one Indian
+name or any crypto keeps a list live), errors back off exponentially to a 10-minute
+cap, one request is ever in flight, and returning to the tab refreshes immediately.
+A failed poll never clears good prices; staleness is stated through an explicit
+"as of" indicator. One batch request per refresh covers all holdings plus the
+benchmark. Changed prices flash via `animate-tick-up/down`.
+
+**Crossing-based alerts** (`lib/price-crossing.ts` + `price_alert_state`): the
+notification bell fires on a *transition*, not a state — see the AGENTS.md rule.
+The table's row badge remains state-based ("this is at/past your level right now")
+while notifications are event-based ("it just crossed"); that split is deliberate.
+Dedup keys carry the level, its direction and the UTC day, so re-targeting is a new
+alert and a level crossed on two days reports twice.
+
+**Analyst consensus**: `analystTargetMean/High/Low` + `analystOpinions` on
+`StockFundamentals`, mapped in `lib/enrich.ts` from Yahoo's `financialData` module
+which that call **already requests** — so consensus for all 57 names costs zero
+extra round-trips. Surfaced as its own `Consensus` / `Cons. upside` columns beside
+the user's own, and as an opt-in "Use consensus as my target" action in the editor.
+Never auto-filled: "My target" means the user's number.
+
+**Target history** (`watchlist_target_history`): append-only revisions written by
+`updateWatchlistItem` when a target or its direction actually changes (a re-save of
+the same value records nothing), with an optional rationale captured in the editor.
+Loaded on demand in the expanded row; the list payload carries only a count.
+`backfillTargetDirection` exists so the monitor can populate a never-set column
+*without* fabricating a revision or re-arming crossing detection.
+
+**Virtualization** (`lib/table-window.ts`): windowed rows past
+`VIRTUALIZE_THRESHOLD` (120) inside a bounded scrollport. Spacer rows carry the
+hidden scroll height; `aria-rowcount`/`aria-rowindex` announce the true size;
+arrow/Home/End/PageUp/PageDown move by index and focus is applied from an effect
+once React has mounted the target. The expanded row stays mounted when scrolled
+away so the content height — and therefore the scrollbar — never jumps.
+
+**State**: `watchlist` (research), `watchlist_group` / `watchlist_member` (lists),
+`watchlist_target_history` (revisions), `price_alert_state` (crossing baselines).
+View preferences in localStorage (`uaa.watchlist.*`).
+
+**API Dependency**: `/api/watchlist` (GET list, POST add, **PATCH** target/
+direction/alert/notes — validating, not coercing; a target of `0` or `-5` is
+rejected rather than stored, DELETE remove), `/api/watchlist/fit` (fit inputs),
+`/api/quote` (live prices, non-fatal), `/api/pipeline` (stage), `/api/ai/watchlist`.
+
+**Related**: `lib/db.ts` (CRUD), `lib/watchlist-metrics.ts` (all arithmetic),
+`lib/idea-stage.ts` (stage labels/order), `lib/ai-watchlist.ts` (digest +
+Watchlist Intelligence structured alerts), `app/_components/ui/data-table.tsx`.
 
 **Used By**: Opportunity tracking, portfolio scouting, watch list management.
 
@@ -494,7 +621,11 @@ These modules track user holdings and provide position-level analysis.
 **Purpose**: All persistent user state (watchlist, portfolio, notes, copilot sessions).
 
 **Tables:**
-- `watchlist` (symbol, name, target_price, alert_pct_drop, notes, added_at)
+- `watchlist` (symbol, name, target_price, `target_direction`, alert_pct_drop, notes, added_at, stage, stage_changed_at) — per-symbol research state, stored once
+- `watchlist_group` (id, name, benchmark, sort_order, created_at) — named lists
+- `watchlist_member` (group_id, symbol, added_at) — list membership; a symbol may be in several
+- `watchlist_target_history` (symbol, previous/new target + direction, note, changed_at) — append-only revisions
+- `price_alert_state` (symbol, last_price, last_change_percent, last_seen_at) — crossing-detection baseline
 - `portfolio` (symbol, shares, avg_cost, added_at)
 - `research_session` (id, symbol, created_at, updated_at) — copilot sessions
 - `research_message` (session_id, role, content, created_at) — copilot messages
