@@ -364,16 +364,71 @@ export function deadlineSignal(
 }
 
 /**
- * Did this rejection come from us cancelling the request, rather than from the
- * connection failing?
+ * Did a DEADLINE expire, as opposed to the caller cancelling?
  *
- * Covers both ways that happens: a caller aborting ("AbortError") and a
- * deadline expiring ("TimeoutError"). Retrying either is wrong — the first
- * because nobody is waiting for the answer any more, the second because the
- * retry just waits out the same budget again.
+ * `AbortSignal.timeout()` rejects with a DOMException named "TimeoutError" —
+ * distinct from a caller's own `AbortController.abort()`, which defaults to
+ * "AbortError". The distinction matters for two different reasons downstream:
+ * a timeout says something about the model/host (worth a health-cooldown
+ * ding, worth logging as `timeout` rather than `cancelled`), while a caller
+ * abort says nothing about the model at all (see {@link isCallerAbort}).
+ */
+export function isTimeout(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "TimeoutError";
+}
+
+/**
+ * Did the CALLER deliberately cancel this request (e.g. the user navigated
+ * away, changed symbols, or re-triggered a re-analysis before the first one
+ * finished)? Nobody is waiting for this answer any more — it must never be
+ * retried, never count against the model's health, and never be reported to
+ * the user as a failure.
+ */
+export function isCallerAbort(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
+}
+
+/**
+ * Did this rejection come from us cancelling the request, rather than from the
+ * connection failing? Covers both {@link isTimeout} and {@link isCallerAbort} —
+ * kept for call sites (like {@link withRetry}) that only need to know "don't
+ * retry this", not which of the two happened. Call sites that need to tell
+ * them apart (the Router's fallback and health-tracking policy, error
+ * classification for the UI) use the two specific predicates instead.
  */
 export function isDeliberateAbort(err: unknown): boolean {
-  return err instanceof DOMException && (err.name === "AbortError" || err.name === "TimeoutError");
+  return isTimeout(err) || isCallerAbort(err);
+}
+
+interface PsResponse {
+  models?: { model?: string; name?: string }[];
+}
+
+/**
+ * Best-effort: is `model` already resident in Ollama, or would running it now
+ * have to cold-load the weights from disk first?
+ *
+ * Load time, not generation, is what makes a local model feel broken —
+ * measured elsewhere in this module at 69.6s to load a 4.4GB model vs 0.4s to
+ * answer, and far worse under memory pressure (a 9.3GB model observed taking
+ * the model's full 300s budget to load alone on a contended host). Knowing
+ * "cold" in advance lets the Router (a) widen the timeout budget for just
+ * this attempt instead of killing a legitimate cold load prematurely, and
+ * (b) tell the UI to say "model warming up" instead of a confusing failure.
+ *
+ * Never throws and never affects correctness — a failed probe is treated as
+ * "unknown", which callers fold into "assume warm" so behavior degrades to
+ * exactly what it was before this existed.
+ */
+export async function isModelResident(model: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${OLLAMA_HOST}/api/ps`, { signal: AbortSignal.timeout(2000) });
+    if (!res.ok) return false;
+    const data = (await res.json()) as PsResponse;
+    return (data.models ?? []).some((m) => (m.model ?? m.name) === model);
+  } catch {
+    return false;
+  }
 }
 
 /**

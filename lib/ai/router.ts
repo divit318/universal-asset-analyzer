@@ -26,9 +26,11 @@
  */
 
 import { disabledModels, pinnedModels } from "./config";
-import { isHealthy, markFailure, markSuccess } from "./health";
+import { classifyAiError } from "./errors";
+import { isHealthy, markFailure, markSuccess, recentSuccessWithinMs } from "./health";
+import { logAiEvent } from "./log";
 import { fitsInMemory, specForInstalled, type ModelCapability, type ModelSpec } from "./models";
-import { isDeliberateAbort } from "./ollama";
+import { isCallerAbort, isTimeout } from "./ollama";
 import { OllamaProvider } from "./providers/ollama-provider";
 import type { AIProvider, ProviderChatTurn, ProviderModelInfo } from "./provider";
 import { normalizeResponse, type AIResponse } from "./response";
@@ -246,6 +248,73 @@ function settingsFor(task: TaskConfig, model: string, request: RouteRequest) {
 }
 
 /**
+ * Cap on how much extra budget a suspected cold load earns an attempt, and
+ * the multiplier applied to the model's own configured timeout to get there.
+ *
+ * Every model's `timeoutMs` in the registry is already sized generously for
+ * an ordinary cold load (300s for qwen3:14b, measured against a healthy
+ * host). What it does NOT budget for is a host under unusual memory
+ * pressure — observed once at exactly 300s: qwen3:14b's cold load alone ate
+ * the entire deadline with zero time left to generate, so the request died
+ * at the worst possible moment (load complete, about to answer) instead of
+ * either failing fast or succeeding. Widening the budget specifically for a
+ * *detected* cold start (never for a warm one — a warm model that's still
+ * slow after this many seconds is a different, more concerning problem) is a
+ * bounded, one-time allowance for exactly that scenario.
+ */
+const COLD_START_MULTIPLIER = 1.5;
+const COLD_START_MAX_MS = 480_000; // 8 minutes — a firm ceiling for any model with no measured value
+
+/**
+ * Prefers a model's own measured `coldStartTimeoutMs` (see lib/ai/models.ts)
+ * when the registry has one; otherwise falls back to a generic multiplier of
+ * the model's base timeout, still capped. The generic path exists so an
+ * unmeasured or unknown model degrades safely rather than getting an
+ * arbitrary hardcoded number — measuring and recording a real value for it
+ * (the way `tokensPerSecond`/`quality` already are) is the intended next step,
+ * not a permanent state.
+ */
+function widenForColdStart(model: string, timeoutMs: number): number {
+  const measured = specForInstalled(model).coldStartTimeoutMs;
+  if (measured != null) return measured;
+  return Math.min(Math.round(timeoutMs * COLD_START_MULTIPLIER), COLD_START_MAX_MS);
+}
+
+/** How recent a local success has to be to override a "cold" probe result — just under Ollama's 5-minute default `keep_alive`, so it can't outlive the window the model is actually likely to still be resident. */
+const RECENT_SUCCESS_WINDOW_MS = 4 * 60_000;
+
+/**
+ * Is `model` already resident? Combines two independent signals rather than
+ * trusting either alone:
+ *
+ *   1. The provider's best-effort probe (Ollama's `/api/ps`) — one HTTP
+ *      round trip at one instant.
+ *   2. Whether THIS process itself completed a call to this exact model
+ *      very recently (see health.ts's `recentSuccessWithinMs`) — free, and
+ *      immune to the probe racing a genuinely concurrent use or lagging
+ *      Ollama's own bookkeeping by a beat.
+ *
+ * "Assume warm" (`true`) whenever there's no real information at all — no
+ * provider capability, or the probe itself failed — which is also what the
+ * FakeProvider used in tests gets by default, so every existing
+ * timeout/timing assertion keeps its original meaning unless a test opts in
+ * by implementing {@link AIProvider.isModelWarm}.
+ */
+async function isWarm(provider: AIProvider, model: string): Promise<boolean> {
+  if (!provider.isModelWarm) return true;
+  let probe: boolean;
+  try {
+    probe = await provider.isModelWarm(model);
+  } catch {
+    return true; // probe unavailable — no signal either way
+  }
+  if (probe) return true;
+  // The probe says cold; a very recent local success is stronger, cheaper
+  // evidence than a second network round trip, so it gets the final say.
+  return recentSuccessWithinMs(model, RECENT_SUCCESS_WINDOW_MS);
+}
+
+/**
  * How long to keep the model resident after answering.
  *
  * Cold load, not generation, is what makes a local model feel broken: measured
@@ -297,15 +366,38 @@ export async function route(
   }
 
   const attemptErrors: string[] = [];
+  // A cold-start timeout earns the chain exactly one extra candidate — not
+  // an unbounded walk. Without a cap, a genuinely overloaded host would cold-
+  // time-out on every candidate in turn and multiply the wait by the full
+  // candidate count, which is precisely the failure mode the original "never
+  // fall back after a timeout" rule existed to prevent. This keeps that
+  // protection while still recovering the one case it was too strict for: a
+  // single unlucky cold load, with a smaller/faster model waiting right behind it.
+  let coldTimeoutFallbacksUsed = 0;
+  const MAX_COLD_TIMEOUT_FALLBACKS = 1;
   for (const model of candidates) {
+    const settings = settingsFor(task, model, request);
+    // Detected once per attempt, right before using it — a model can warm up
+    // or get evicted between candidates within the same route() call.
+    const warm = await isWarm(provider, model);
+    const timeoutMs = warm ? settings.timeoutMs : widenForColdStart(model, settings.timeoutMs);
+    const attemptStartedAt = Date.now();
     try {
       const result = await provider.complete({
         model,
         messages: request.messages,
         signal: request.signal,
-        ...settingsFor(task, model, request),
+        ...settings,
+        timeoutMs,
       });
       markSuccess(model);
+      logAiEvent({
+        category: "success",
+        taskType,
+        model,
+        coldStart: !warm,
+        durationMs: Date.now() - attemptStartedAt,
+      });
       return normalizeResponse({
         content: result.content,
         reasoning: result.reasoning,
@@ -314,21 +406,45 @@ export async function route(
         startedAt,
         tokenUsage: result.tokenUsage,
         fallbackErrors: attemptErrors,
-        metadata: { taskType, candidatesConsidered: candidates.length },
+        metadata: { taskType, candidatesConsidered: candidates.length, coldStart: !warm },
       });
     } catch (err) {
+      const classified = classifyAiError(err);
+      logAiEvent({
+        category: classified.category === "cancelled" ? "cancelled" : classified.category,
+        taskType,
+        model,
+        coldStart: !warm,
+        durationMs: Date.now() - attemptStartedAt,
+        message: err instanceof Error ? err.message : String(err),
+      });
+
+      // A caller abort says nothing about the model — the request was
+      // withdrawn, not refused. It must never count against the model's
+      // health (a cooldown here would penalize a perfectly good model for
+      // the user having changed their mind) and never fall back (nobody is
+      // waiting for any answer any more, and continuing would just occupy
+      // Ollama, which serializes generations and so delays everyone else's
+      // queue behind a zombie request).
+      if (isCallerAbort(err)) throw err;
+
       markFailure(model);
       attemptErrors.push(`${model}: ${err instanceof Error ? err.message : String(err)}`);
-      // Fall back on a model that FAILED, never on one that ran out of time.
-      //
-      // A deadline expiring says something about the host, not the model: if
-      // this machine could not load and run candidate A inside the budget, it
-      // will not do better with B, so trying the rest only multiplies the wait
-      // the user already gave up on — 45s became 2m15s across three candidates.
-      // A caller abort is even clearer: nobody is waiting for the answer, so
-      // continuing to walk the chain just occupies Ollama, which serializes
-      // generations and so delays everyone else's queue.
-      if (isDeliberateAbort(err)) throw err;
+
+      // Fall back on a model that FAILED, never on one that ran out of time
+      // while WARM. A warm model timing out says something about the host's
+      // current load, not about the model, and the next candidate faces the
+      // same host: retrying just multiplies the wait the user already gave up
+      // on — 45s became 2m15s across three candidates, measured. A model that
+      // was COLD, however, already got a widened budget above specifically
+      // for the load phase; if it still timed out, the fallback candidate is
+      // usually smaller/faster to load, so it's worth ONE more try (capped
+      // above) rather than reporting total failure over what was
+      // fundamentally a slow disk read on this one model.
+      if (isTimeout(err)) {
+        if (warm || coldTimeoutFallbacksUsed >= MAX_COLD_TIMEOUT_FALLBACKS) throw err;
+        coldTimeoutFallbacksUsed += 1;
+      }
     }
   }
 
@@ -358,16 +474,23 @@ export async function* routeStream(
   }
 
   const attemptErrors: string[] = [];
+  let coldTimeoutFallbacksUsed = 0;
+  const MAX_COLD_TIMEOUT_FALLBACKS = 1;
 
   for (const model of candidates) {
     let started = false;
+    const settings = settingsFor(task, model, request);
+    const warm = await isWarm(provider, model);
+    const timeoutMs = warm ? settings.timeoutMs : widenForColdStart(model, settings.timeoutMs);
+    const attemptStartedAt = Date.now();
     try {
       const stream = provider.stream(
         {
           model,
           messages: request.messages,
           signal: request.signal,
-          ...settingsFor(task, model, request),
+          ...settings,
+          timeoutMs,
         },
         request.onReasoning,
       );
@@ -378,17 +501,39 @@ export async function* routeStream(
       }
 
       markSuccess(model);
+      logAiEvent({ category: "success", taskType, model, coldStart: !warm, durationMs: Date.now() - attemptStartedAt });
       return model;
     } catch (err) {
+      const classified = classifyAiError(err);
+      logAiEvent({
+        category: classified.category,
+        taskType,
+        model,
+        coldStart: !warm,
+        durationMs: Date.now() - attemptStartedAt,
+        message: err instanceof Error ? err.message : String(err),
+      });
+
+      // A caller abort is withdrawal, not a model failure — see route()'s
+      // identical reasoning. Never health-penalized, never a candidate for
+      // fallback (no fallback is possible for the SAME reason: nobody is
+      // waiting, so starting another model's generation would be pure waste).
+      if (isCallerAbort(err)) throw err;
+
       markFailure(model);
       attemptErrors.push(`${model}: ${err instanceof Error ? err.message : String(err)}`);
+
       // Mid-stream failure: the consumer already has partial output from THIS
       // model. Retrying another would append a second model's answer to the
       // first one's. Fail honestly instead.
       if (started) throw new AllModelsFailedError(taskType, attemptErrors);
-      // Same reasoning as the non-streamed path: a blown deadline or an aborted
-      // caller must not be retried against the remaining candidates.
-      if (isDeliberateAbort(err)) throw err;
+
+      // Same policy as route(): a warm timeout stops the chain; a cold one
+      // earns exactly one more candidate before it does too.
+      if (isTimeout(err)) {
+        if (warm || coldTimeoutFallbacksUsed >= MAX_COLD_TIMEOUT_FALLBACKS) throw err;
+        coldTimeoutFallbacksUsed += 1;
+      }
     }
   }
 

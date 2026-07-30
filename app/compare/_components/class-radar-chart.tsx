@@ -18,6 +18,12 @@ const COLORS = CHART_SERIES;
 
 interface Props {
   entries: ClassCompareEntry[];
+  /** Resolves a symbol's canonical color — its index among ALL requested
+   * symbols, including any that failed to load or lack composite-score axes.
+   * Without this, this component's own `valid` filter (stricter than the
+   * caller's) could assign a different color than the header cards use for
+   * the same symbol. Falls back to positional coloring if omitted. */
+  colorForSymbol?: (symbol: string) => string;
 }
 
 /**
@@ -27,10 +33,11 @@ interface Props {
  * (lib/compare/composite-scores.ts), so this component just plots whatever
  * axes the class computed — same visual language, no per-class branching.
  */
-export function ClassCompareRadar({ entries }: Props) {
+export function ClassCompareRadar({ entries, colorForSymbol }: Props) {
   const ct = useChartTheme();
   const { hovered, setHovered } = useHoverSymbol();
   const valid = entries.filter((e) => !e.error && e.scores.axes.length > 0);
+  const colorOf = colorForSymbol ?? ((symbol: string) => COLORS[valid.findIndex((e) => e.symbol === symbol) % COLORS.length]);
   if (valid.length === 0) return null;
 
   const axisKeys = valid[0].scores.axes.map((a) => a.key);
@@ -52,7 +59,7 @@ export function ClassCompareRadar({ entries }: Props) {
           <PolarGrid stroke={ct.grid} strokeOpacity={0.5} />
           <PolarAngleAxis dataKey="subject" tick={{ fill: ct.axis, fontSize: 11 }} />
           <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
-          {valid.map((e, i) => {
+          {valid.map((e) => {
             const isActive = hovered === e.symbol;
             const isDimmed = hovered != null && !isActive;
             return (
@@ -60,8 +67,8 @@ export function ClassCompareRadar({ entries }: Props) {
                 key={e.symbol}
                 name={e.symbol}
                 dataKey={e.symbol}
-                stroke={COLORS[i % COLORS.length]}
-                fill={COLORS[i % COLORS.length]}
+                stroke={colorOf(e.symbol)}
+                fill={colorOf(e.symbol)}
                 fillOpacity={isActive ? 0.22 : isDimmed ? 0.05 : 0.12}
                 strokeWidth={isActive ? 2.6 : 2}
                 strokeOpacity={isDimmed ? 0.4 : 1}
@@ -74,7 +81,7 @@ export function ClassCompareRadar({ entries }: Props) {
             onMouseEnter={(item) => setHovered(String(item.value))}
             onMouseLeave={() => setHovered(null)}
             formatter={(value) => (
-              <span style={{ color: COLORS[valid.findIndex((e) => e.symbol === value) % COLORS.length], fontSize: 12, fontFamily: "monospace", fontWeight: 600 }}>
+              <span style={{ color: colorOf(String(value)), fontSize: 12, fontFamily: "monospace", fontWeight: 600 }}>
                 {value}
               </span>
             )}

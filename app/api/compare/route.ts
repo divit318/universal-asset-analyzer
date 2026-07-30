@@ -243,9 +243,22 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await compareStocks(unique);
+    // Forward the client's own abort signal: if the browser cancels this
+    // request (user changed symbols, re-triggered analysis, or navigated
+    // away), that cancellation now propagates all the way down to the
+    // in-flight Ollama call instead of running to completion unobserved.
+    // Ollama serializes generations, so a single abandoned request used to
+    // occupy the queue behind every other AI call on the box until it
+    // finished on its own.
+    const result = await compareStocks(unique, { signal: request.signal });
     return NextResponse.json(result);
   } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      // The client is gone; nothing to respond to. Next.js treats a thrown
+      // AbortError from a cancelled request as a non-issue, but return
+      // something well-formed in case a proxy/test harness still reads it.
+      return NextResponse.json({ error: "Cancelled" }, { status: 499 });
+    }
     const message = err instanceof Error ? err.message : "Comparison failed";
     return NextResponse.json({ error: message }, { status: 503 });
   }

@@ -27,6 +27,8 @@ class FakeProvider implements AIProvider {
   constructor(
     private installed: ProviderModelInfo[],
     private behavior: Record<string, ProviderCompleteResult | Error>,
+    /** Which models are "resident" per isModelWarm — defaults to warm (true) for anything not listed, matching a provider that can't tell (the Router's own fallback). */
+    private warm: Record<string, boolean> = {},
   ) {}
 
   async listModels(): Promise<ProviderModelInfo[]> {
@@ -35,6 +37,10 @@ class FakeProvider implements AIProvider {
 
   async healthCheck(): Promise<ProviderHealth> {
     return { reachable: this.installed.length > 0, models: this.installed.map((m) => m.id) };
+  }
+
+  async isModelWarm(model: string): Promise<boolean> {
+    return this.warm[model] ?? true;
   }
 
   async complete(request: ProviderCompleteRequest): Promise<ProviderCompleteResult> {
@@ -406,6 +412,166 @@ describe("route: deliberate aborts stop the fallback chain", () => {
     );
     expect(res.content).toBe("fallback answer");
     expect(provider.calls).toEqual(["qwen3:14b", "mistral:latest"]);
+  });
+});
+
+/**
+ * A COLD model timing out earns the chain exactly one extra candidate — the
+ * exception to "never fall back after a timeout" that a cold load deserves,
+ * since the failure was fundamentally a slow disk read on THIS model, not a
+ * verdict on the host's ability to run any model at all. Observed for real:
+ * qwen3:14b cold-loading under memory pressure consumed its entire 300s
+ * budget with zero time left to answer.
+ */
+describe("route: cold-start timeout recovery", () => {
+  const twoModels: ProviderModelInfo[] = [
+    { id: "qwen3:14b", sizeGb: 9.3 },
+    { id: "mistral:latest", sizeGb: 4.4 },
+  ];
+
+  it("falls back once when the COLD first candidate times out", async () => {
+    const provider = new FakeProvider(
+      twoModels,
+      {
+        "qwen3:14b": new DOMException("timed out", "TimeoutError"),
+        "mistral:latest": { content: "warm fallback answer", reasoning: "" },
+      },
+      { "qwen3:14b": false }, // cold; mistral defaults to warm
+    );
+    const res = await route(
+      "explain-movement",
+      { messages: [{ role: "user", content: "hi" }] },
+      { providers: [provider] },
+    );
+    expect(res.content).toBe("warm fallback answer");
+    expect(res.model).toBe("mistral:latest");
+    expect(provider.calls).toEqual(["qwen3:14b", "mistral:latest"]);
+  });
+
+  it("still gives up after the ONE cold-start fallback is exhausted, rather than walking every candidate", async () => {
+    const threeModels: ProviderModelInfo[] = [
+      { id: "qwen3:14b", sizeGb: 9.3 },
+      { id: "mistral:latest", sizeGb: 4.4 },
+      { id: "qwen2.5-coder:14b", sizeGb: 9.0 },
+    ];
+    const provider = new FakeProvider(
+      threeModels,
+      {
+        "qwen3:14b": new DOMException("timed out", "TimeoutError"),
+        "mistral:latest": new DOMException("timed out", "TimeoutError"),
+        "qwen2.5-coder:14b": { content: "should never be reached", reasoning: "" },
+      },
+      { "qwen3:14b": false, "mistral:latest": false },
+    );
+    // The second timeout throws the raw TimeoutError directly (exactly like
+    // the plain "deadline expires" case above) rather than wrapping it in
+    // AllModelsFailedError — the fallback budget is spent, so this is once
+    // again an ordinary "stop the chain on a timeout" exit.
+    await expect(
+      route("company-research", { messages: [{ role: "user", content: "hi" }] }, { providers: [provider] }),
+    ).rejects.toThrow(/timed out/);
+    // Exactly two attempts: the first cold timeout earns one fallback; the
+    // second timing out (cold or not) stops the chain rather than trying the third.
+    expect(provider.calls).toEqual(["qwen3:14b", "mistral:latest"]);
+  });
+
+  it("widens the timeout budget for a detected cold start", async () => {
+    const provider = new FakeProvider(
+      [{ id: "qwen3:14b", sizeGb: 9.3 }],
+      { "qwen3:14b": { content: "ok", reasoning: "" } },
+      { "qwen3:14b": false },
+    );
+    await route("company-research", { messages: [{ role: "user", content: "hi" }] }, { providers: [provider] });
+    // company-research's model spec timeout is qwen3:14b's registry default
+    // (300_000ms); a cold start should ask for materially more than that.
+    expect(provider.requests[0].timeoutMs).toBeGreaterThan(300_000);
+  });
+
+  it("uses a model's own MEASURED cold-start budget when the registry has one, not the generic multiplier", async () => {
+    const provider = new FakeProvider(
+      [{ id: "qwen3:14b", sizeGb: 9.3 }],
+      { "qwen3:14b": { content: "ok", reasoning: "" } },
+      { "qwen3:14b": false },
+    );
+    await route("company-research", { messages: [{ role: "user", content: "hi" }] }, { providers: [provider] });
+    // qwen3:14b's registry entry declares coldStartTimeoutMs: 480_000 — a real
+    // measured budget, not the 1.5x-of-300_000 (450_000) generic fallback
+    // would give an unmeasured model.
+    expect(provider.requests[0].timeoutMs).toBe(480_000);
+  });
+
+  it("falls back to the generic multiplier for a model with no measured cold-start budget", async () => {
+    const provider = new FakeProvider(
+      [{ id: "qwen2.5-coder:14b", sizeGb: 9.0 }],
+      { "qwen2.5-coder:14b": { content: "ok", reasoning: "" } },
+      { "qwen2.5-coder:14b": false },
+    );
+    await route("coding", { messages: [{ role: "user", content: "hi" }] }, { providers: [provider] });
+    // qwen2.5-coder:14b has no coldStartTimeoutMs in the registry — 1.5x its
+    // 120_000ms base timeout.
+    expect(provider.requests[0].timeoutMs).toBe(180_000);
+  });
+
+  it("trusts a very recent local success over a probe that (now) says cold", async () => {
+    // First call succeeds — records a local "last success" timestamp for
+    // qwen3:14b even though the probe reports it as cold both times (a
+    // provider that can't yet reflect the model it JUST loaded, or is
+    // racing another concurrent completion).
+    const provider = new FakeProvider(
+      [{ id: "qwen3:14b", sizeGb: 9.3 }],
+      { "qwen3:14b": { content: "ok", reasoning: "" } },
+      { "qwen3:14b": false },
+    );
+    await route("company-research", { messages: [{ role: "user", content: "1" }] }, { providers: [provider] });
+    expect(provider.requests[0].timeoutMs).toBeGreaterThan(300_000); // cold: first call, no local success yet
+
+    await route("company-research", { messages: [{ role: "user", content: "2" }] }, { providers: [provider] });
+    // Second call: the probe still says cold, but we just succeeded against
+    // this exact model a moment ago — that overrides the probe.
+    expect(provider.requests[1].timeoutMs).toBe(300_000);
+  });
+
+  it("does not widen the timeout when the model is already warm", async () => {
+    const provider = new FakeProvider(
+      [{ id: "qwen3:14b", sizeGb: 9.3 }],
+      { "qwen3:14b": { content: "ok", reasoning: "" } },
+      { "qwen3:14b": true },
+    );
+    await route("company-research", { messages: [{ role: "user", content: "hi" }] }, { providers: [provider] });
+    expect(provider.requests[0].timeoutMs).toBe(300_000);
+  });
+});
+
+/**
+ * A caller cancelling is withdrawal, not a verdict on the model — it must
+ * never trip the health cooldown that repeated real failures do.
+ */
+describe("route: cancellation does not penalize model health", () => {
+  it("does not mark the model unhealthy when the caller aborts", async () => {
+    const provider = new FakeProvider([{ id: "qwen3:14b", sizeGb: 9.3 }], {
+      "qwen3:14b": new DOMException("aborted", "AbortError"),
+    });
+    for (let i = 0; i < 3; i++) {
+      await expect(
+        route("company-research", { messages: [{ role: "user", content: String(i) }] }, { providers: [provider] }),
+      ).rejects.toThrow(/aborted/);
+    }
+    // Three consecutive "failures" would normally trip the cooldown (see the
+    // "deprioritizes a model" test above, which needs only two) — but these
+    // were all caller aborts, so the model must still be tried FIRST.
+    const provider2 = new FakeProvider(
+      [
+        { id: "qwen3:14b", sizeGb: 9.3 },
+        { id: "mistral:latest", sizeGb: 4.4 },
+      ],
+      { "qwen3:14b": { content: "still first choice", reasoning: "" }, "mistral:latest": { content: "n/a", reasoning: "" } },
+    );
+    const res = await route(
+      "company-research",
+      { messages: [{ role: "user", content: "final" }] },
+      { providers: [provider2] },
+    );
+    expect(res.model).toBe("qwen3:14b");
   });
 });
 

@@ -49,6 +49,7 @@ export type TaskType =
   | "knowledge-graph-explain" // KG node explanation
   | "calendar-brief" // earnings calendar AI brief
   | "nl-screener" // natural-language screener query parsing
+  | "portfolio-construction" // Simulator intake: decide the next follow-up question for a hypothetical-portfolio mandate (JSON)
   | "quick-summary" // short, low-stakes single-field summaries
   | "chart-qa" // one-off interactive Q&A about the fullscreen chart workspace's current context
   | "app-assistant" // global "how do I…" helper: explains the app AND can navigate/preload pages, aware only of the current page — not a research surface
@@ -239,6 +240,24 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     temperature: 0.1,
   },
   "quick-summary": { complexity: "light", latency: "interactive", maxTokens: 400 },
+  // Simulator intake + generation — a human is in a live back-and-forth (or
+  // watching a staged progress bar) with this exact task, so latency is
+  // interactive; but choosing WHICH gap in an investor profile matters next,
+  // spotting contradictions like preserve_capital at risk 9/10, and designing
+  // an allocation is genuine judgment, not query parsing, so complexity stays
+  // standard. maxTokens covers the largest output shape (a ~15-holding
+  // selection with per-pick rationales); intake turns simply stop early. The
+  // 150s budget covers a cold model load (see app-assistant's note); warm
+  // turns are seconds, and the generation route passes a wider explicit
+  // budget per call.
+  "portfolio-construction": {
+    complexity: "standard",
+    latency: "interactive",
+    jsonMode: true,
+    temperature: 0.4,
+    maxTokens: 1600,
+    timeoutMs: 150_000,
+  },
   // Interactive — a human is watching this exact spinner while the fullscreen
   // chart's AI dock is open. Standard complexity (real interpretive judgment
   // about a chart's selection/context, not just parsing a search box like

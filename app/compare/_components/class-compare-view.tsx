@@ -347,6 +347,14 @@ export function ClassCompareView({ assetClass, entries }: { assetClass: AssetCla
   const hasHoldings = validEntries.some((e) => e.topHoldings && e.topHoldings.length > 0);
   const hasRiskFlags = validEntries.some((e) => e.riskFlags && e.riskFlags.length > 0);
 
+  // Canonical color for a symbol — its index among ALL requested symbols,
+  // including any that failed to load. Sections below index `colors` by
+  // position within `validEntries`, so passing this alignment (rather than
+  // the raw COLORS palette) keeps every section's color for a symbol in sync
+  // with its header card whenever another compared symbol errored out.
+  const colorForSymbol = (symbol: string) => COLORS[entries.findIndex((e) => e.symbol === symbol) % COLORS.length];
+  const validColors = validEntries.map((e) => colorForSymbol(e.symbol));
+
   function toggleSection(title: string) {
     setOpenSections((prev) => {
       const next = new Set(prev);
@@ -382,28 +390,28 @@ export function ClassCompareView({ assetClass, entries }: { assetClass: AssetCla
 
       {/* Ranked AI verdict — auto-triggered, same prominence as equity's */}
       {validEntries.length >= 2 && (
-        <ClassAiVerdict assetClass={assetClass} entries={validEntries} colors={COLORS} />
+        <ClassAiVerdict assetClass={assetClass} entries={validEntries} colors={validColors} />
       )}
 
       {/* Deterministic risk flags — the class's own registry warnings, evaluated per compared symbol */}
-      {hasRiskFlags && <RiskFlagsSection entries={validEntries} colors={COLORS} assetClass={assetClass} />}
+      {hasRiskFlags && <RiskFlagsSection entries={validEntries} colors={validColors} assetClass={assetClass} />}
 
       {/* Historical performance — the primary visualization; users compare performance over time first, regardless of asset class */}
       {validEntries.length >= 1 && (
-        <ClassPerformanceChart symbols={validEntries.map((e) => e.symbol)} colors={validEntries.map((_, i) => COLORS[i % COLORS.length])} />
+        <ClassPerformanceChart symbols={validEntries.map((e) => e.symbol)} colors={validColors} />
       )}
 
-      {validEntries.length >= 2 && <ClassCompareRadar entries={validEntries} />}
+      {validEntries.length >= 2 && <ClassCompareRadar entries={validEntries} colorForSymbol={colorForSymbol} />}
 
       {/* Secondary visualization — the class's own trade-off chart (cost/return, yield/leverage, etc.), demoted below the primary performance view */}
       {validEntries.length >= 2 && <SignatureChart assetClass={assetClass} entries={validEntries} />}
 
       {/* ETF-specific depth: is the fund tracking its benchmark, and are two funds actually different exposure? */}
       {assetClass === "etf" && validEntries.length >= 1 && (
-        <BenchmarkSection entries={validEntries} colors={COLORS} />
+        <BenchmarkSection entries={validEntries} colors={validColors} />
       )}
       {hasHoldings && validEntries.length >= 2 && (
-        <HoldingsOverlapSection entries={validEntries} colors={COLORS} />
+        <HoldingsOverlapSection entries={validEntries} colors={validColors} />
       )}
 
       <div className="flex flex-col gap-3">

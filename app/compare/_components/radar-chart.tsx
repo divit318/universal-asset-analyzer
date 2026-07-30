@@ -32,12 +32,20 @@ const AXES = [
 
 interface Props {
   entries: CompareEntry[];
+  /** Resolves a symbol's canonical color — its index among ALL requested
+   * symbols, including any that failed to load. Without this, a symbol's
+   * radar color drifted from its color everywhere else on the page (header
+   * card, chips, chart) whenever another compared symbol errored out, since
+   * this component computes its own filtered `valid` list and used to color
+   * by position within it. Falls back to positional coloring if omitted. */
+  colorForSymbol?: (symbol: string) => string;
 }
 
-export function CompareRadar({ entries }: Props) {
+export function CompareRadar({ entries, colorForSymbol }: Props) {
   const ct = useChartTheme();
   const { hovered, setHovered } = useHoverSymbol();
   const valid = entries.filter((e) => !e.error && e.score);
+  const colorOf = colorForSymbol ?? ((symbol: string) => COLORS[valid.findIndex((e) => e.symbol === symbol) % COLORS.length]);
 
   const data = AXES.map(({ key, label }) => {
     const point: Record<string, number | string> = { subject: label };
@@ -66,7 +74,7 @@ export function CompareRadar({ entries }: Props) {
             tick={{ fill: ct.axis, fontSize: 11 }}
           />
           <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
-          {valid.map((e, i) => {
+          {valid.map((e) => {
             const isActive = hovered === e.symbol;
             const isDimmed = hovered != null && !isActive;
             return (
@@ -74,8 +82,8 @@ export function CompareRadar({ entries }: Props) {
                 key={e.symbol}
                 name={e.symbol}
                 dataKey={e.symbol}
-                stroke={COLORS[i % COLORS.length]}
-                fill={COLORS[i % COLORS.length]}
+                stroke={colorOf(e.symbol)}
+                fill={colorOf(e.symbol)}
                 fillOpacity={isActive ? 0.22 : isDimmed ? 0.05 : 0.12}
                 strokeWidth={isActive ? 2.6 : 2}
                 strokeOpacity={isDimmed ? 0.4 : 1}
@@ -88,7 +96,7 @@ export function CompareRadar({ entries }: Props) {
             onMouseEnter={(item) => setHovered(String(item.value))}
             onMouseLeave={() => setHovered(null)}
             formatter={(value) => (
-              <span style={{ color: COLORS[valid.findIndex((e) => e.symbol === value) % COLORS.length], fontSize: 12, fontFamily: "monospace", fontWeight: 600 }}>
+              <span style={{ color: colorOf(String(value)), fontSize: 12, fontFamily: "monospace", fontWeight: 600 }}>
                 {value}
               </span>
             )}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bestIndex, parseCompareResponse } from "@/lib/ai-compare";
+import { bestIndex, flatFromStreamedFields, parseCompareResponse } from "@/lib/ai-compare";
 
 /**
  * Unit tests for the N-way metric table winner logic in ai-compare — the
@@ -76,5 +76,58 @@ describe("parseCompareResponse", () => {
     expect(flat.overview).toBe("");
     expect(flat.rankings).toEqual([]);
     expect(flat.noClearWinner).toBe(false);
+  });
+});
+
+/**
+ * `flatFromStreamedFields` is the streaming path's counterpart to
+ * `parseCompareResponse` — same defaults, same "sections" guard — so
+ * `finalizeComparison` (shared by both `compareStocks` and
+ * `streamComparisonFields`) never has to special-case which path produced
+ * its `FlatAI`. These mirror the `parseCompareResponse` tests above with
+ * pre-parsed fields (what a `JsonFieldStreamer` actually hands back) instead
+ * of a raw JSON string.
+ */
+describe("flatFromStreamedFields", () => {
+  it("fills omitted fields with the same defaults parseCompareResponse uses", () => {
+    const flat = flatFromStreamedFields({ overview: "AAPL leads on growth.", tradeoffSummary: "AAPL is ahead on growth." });
+    expect(flat.overview).toBe("AAPL leads on growth.");
+    expect(flat.valuation).toBe("");
+    expect(flat.tradeoffSummary).toBe("AAPL is ahead on growth.");
+    expect(flat.rankings).toEqual([]);
+    expect(flat.noClearWinner).toBe(false);
+  });
+
+  it("keeps a well-formed rankings array", () => {
+    const flat = flatFromStreamedFields({
+      rankings: [{ rank: 1, symbol: "AAPL", thesis: "cheap growth", strengths: ["low P/E"], weaknesses: ["slowing margins"], bestFor: "value investors" }],
+    });
+    expect(flat.rankings).toHaveLength(1);
+  });
+
+  it("drops a non-object 'sections' field instead of letting it leak through", () => {
+    const flat = flatFromStreamedFields({ overview: "ok", sections: "not an object" });
+    expect(flat.sections).toBeUndefined();
+  });
+
+  it("returns all-empty defaults when nothing has streamed yet", () => {
+    const flat = flatFromStreamedFields({});
+    expect(flat.overview).toBe("");
+    expect(flat.rankings).toEqual([]);
+    expect(flat.noClearWinner).toBe(false);
+  });
+
+  it("agrees with parseCompareResponse on an equivalent complete payload", () => {
+    const payload = {
+      overview: "ok", valuation: "cheap", quality: "high", growth: "fast",
+      financialHealth: "solid", momentum: "strong", verdict: "buy",
+      capitalAllocation: "disciplined", competitivePositioning: "leader",
+      riskComparison: "low", rankings: [], noClearWinner: false,
+      tradeoffSummary: "none", executiveSummary: "summary",
+      conditionsForChange: "nothing", confidenceScore: 80,
+    };
+    const fromRaw = parseCompareResponse(JSON.stringify(payload));
+    const fromStreamed = flatFromStreamedFields(payload);
+    expect(fromStreamed).toEqual(fromRaw);
   });
 });

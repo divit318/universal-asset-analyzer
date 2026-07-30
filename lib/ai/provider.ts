@@ -66,6 +66,15 @@ export interface AIProvider {
   listModels(): Promise<ProviderModelInfo[]>;
   /** Cheap reachability probe used by the Router to skip a dead provider before trying models. */
   healthCheck(): Promise<ProviderHealth>;
+  /**
+   * Best-effort: is `model` already resident, or would this call have to
+   * cold-load it first? Optional — a provider that can't answer this simply
+   * omits the method, and the Router falls back to assuming every attempt is
+   * warm (today's behavior unchanged). Implemented by {@link OllamaProvider}
+   * via `/api/ps` so the Router can widen the timeout budget specifically for
+   * a suspected cold load instead of killing a legitimate one prematurely.
+   */
+  isModelWarm?(model: string): Promise<boolean>;
   /** Single-shot completion. */
   complete(request: ProviderCompleteRequest): Promise<ProviderCompleteResult>;
   /** Token-streamed completion; yields answer text deltas (reasoning is routed separately). */

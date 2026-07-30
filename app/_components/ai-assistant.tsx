@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -67,9 +67,13 @@ export function AppAssistant() {
   const [loading, setLoading] = useState(false);
   const [insight, setInsight] = useState<ProactiveInsight | null>(null);
   const [insightDismissed, setInsightDismissed] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const navigateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firedActions = useRef<Set<number>>(new Set());
+
+  // useLayoutEffect is client-only — avoids SSR issues with createPortal
+  useLayoutEffect(() => { setMounted(true); }, []);
 
   // What's actually loaded on the current page, not just its route — lets
   // "run a DCF on this" or "add TSLA to this comparison" work without the
@@ -203,7 +207,18 @@ export function AppAssistant() {
     [loading, turns, pathname, pageContext],
   );
 
-  if (typeof document === "undefined") return null;
+  // The marketing site ships its own chrome and must not inherit the
+  // authenticated app's assistant — the same seam SiteHeader applies, kept
+  // deliberately identical so both move together when /landing becomes /.
+  // Without it the assistant's launcher and its "Assistant" heading rendered
+  // on top of the landing page.
+  if (pathname === "/landing" || pathname.startsWith("/landing/")) return null;
+
+  // Gate on `mounted`, not on `typeof document`: the latter is false on the
+  // client's FIRST render too, so the server emitted nothing while hydration
+  // emitted the whole portal — a guaranteed mismatch on every page load, which
+  // React resolves by throwing away and re-rendering the tree.
+  if (!mounted) return null;
 
   return createPortal(
     <>

@@ -9,6 +9,10 @@
  */
 
 import { runPromptWithMeta } from "./ai";
+import { runTaskStream } from "./ai/orchestrator";
+import { classifyAiError, type AiErrorCategory, type ClassifiedAiError } from "./ai/errors";
+import { logAiEvent } from "./ai/log";
+import { JsonFieldStreamer } from "./ai/streaming-json";
 import { getFundamentals, MODULES } from "./fundamentals";
 import { getFinancialStatements } from "./statements";
 import { getHistory, getQuote, getQuoteMeta, getQuoteSummaryMeta } from "./yahoo";
@@ -42,6 +46,13 @@ export interface ComparisonResult {
   model: string;
   /** All compared symbols, in the order they were requested (2-5). */
   symbols: string[];
+  /**
+   * Why the written comparison is degraded or absent — undefined when the AI
+   * answered normally. Lets the Compare page show an accurate, specific
+   * status ("model warming up", "can't reach Ollama") instead of one generic
+   * failure message for every possible cause. See lib/ai/errors.ts.
+   */
+  aiStatus?: AiErrorCategory;
   sections: {
     overview: string;
     valuation: string;
@@ -397,16 +408,43 @@ function benchmarkValuesFor(s: CompareStock): Record<string, number | null> {
   };
 }
 
-/** Compare 2-5 stocks together. Every input symbol must load successfully. */
-export async function compareStocks(symbols: string[]): Promise<ComparisonResult> {
+export interface ComparisonSetup {
+  stocks: CompareStock[];
+  benchmarksBySymbol: Map<string, Record<string, PeerBenchmark>>;
+  prompt: string;
+  evidence: string;
+}
+
+/**
+ * Everything a comparison needs BEFORE the AI call: load every stock, compute
+ * peer benchmarks, and build the prompt. Shared by the blocking path
+ * ({@link compareStocks}) and the streaming path ({@link streamComparisonFields})
+ * so the two can never drift into asking the model two different questions
+ * about the same symbols.
+ */
+export async function prepareComparison(
+  symbols: string[],
+  opts: { signal?: AbortSignal } = {},
+): Promise<ComparisonSetup> {
   const upper = [...new Set(symbols.map((s) => s.toUpperCase()))];
   if (upper.length < 2) throw new Error("At least two distinct symbols are required");
   if (upper.length > 5) throw new Error("At most 5 symbols can be compared at once");
 
+  // KNOWN LIMITATION: loadStock()'s underlying Yahoo/EDGAR fetches (getQuote,
+  // getFundamentals, getHistory, getFinancialStatements — all routed through
+  // the shared Platform Data Layer used by every feature in the app) do not
+  // themselves accept an AbortSignal, so a cancellation here cannot stop
+  // network calls already in flight. What IS honored: once this phase
+  // settles, a caller that already walked away is not made to pay for the
+  // (far more expensive) prompt-building and AI phase that follows — see the
+  // check right after this Promise.all. Threading cancellation through the
+  // data layer itself would touch ~48 call sites shared by Research,
+  // Screener, Portfolio, and Scanner; out of proportion to fix here.
   const [settled, equityUniverse] = await Promise.all([
     Promise.allSettled(upper.map((s) => loadStock(s))),
     loadBenchmarkUniverse("equity"),
   ]);
+  if (opts.signal?.aborted) throw new DOMException("Aborted", "AbortError");
   const firstFailure = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
   if (firstFailure) throw firstFailure.reason as Error;
   const stocks = settled.map((r) => (r as PromiseFulfilledResult<CompareStock>).value);
@@ -421,28 +459,32 @@ export async function compareStocks(symbols: string[]): Promise<ComparisonResult
   }
 
   const { prompt, evidence } = buildComparePrompt(stocks);
-  let model = "unavailable";
+  return { stocks, benchmarksBySymbol, prompt, evidence };
+}
 
-  let flat: FlatAI = {};
-  try {
-    const { text: raw, model: usedModel } = await runPromptWithMeta("comparison", prompt, {
-      maxTokens: 1800,
-      json: true,
-    });
-    model = usedModel;
-    flat = parseCompareResponse(raw);
-  } catch {
-    // AI unavailable — metric table still works
-  }
+/**
+ * Assemble the final {@link ComparisonResult} from whatever the model
+ * returned (or failed to). Used identically by the blocking and streaming
+ * paths so a streamed comparison's final object is byte-for-byte the same
+ * one the blocking route would have produced — streaming only changes WHEN
+ * the pieces arrive, never what they are.
+ */
+export function finalizeComparison(
+  setup: ComparisonSetup,
+  model: string,
+  flat: FlatAI,
+  aiFailure: ClassifiedAiError | undefined,
+): ComparisonResult {
+  const { stocks, benchmarksBySymbol, evidence } = setup;
 
-  // `model` only stays "unavailable" when runPromptWithMeta itself threw
-  // (Ollama down); a connected-but-garbage response still gets a `model` value
-  // and falls through to extractJsonObject's conservative field defaults above.
+  // `model` only stays "unavailable" when the AI call itself failed (Ollama
+  // down, timed out, etc); see `aiFailure` for why. A connected-but-garbage
+  // response still gets a real `model` and falls through to the field
+  // defaults below.
   const aiUnavailable = model === "unavailable";
 
-  // The prompt returns a flat object; normalise into sections shape.
   const sections: ComparisonResult["sections"] = flat.sections ?? {
-    overview: flat.overview ?? (aiUnavailable ? "AI analysis unavailable — run `ollama serve` to enable the written comparison. The metric table below is always computed." : ""),
+    overview: flat.overview ?? (aiFailure ? aiFailure.message : ""),
     valuation: flat.valuation ?? "",
     quality: flat.quality ?? "",
     growth: flat.growth ?? "",
@@ -479,6 +521,7 @@ export async function compareStocks(symbols: string[]): Promise<ComparisonResult
     model,
     symbols: stocks.map((s) => s.symbol),
     sections,
+    aiStatus: aiFailure?.category,
     rankings,
     // Local models occasionally emit "true"/"false" as a string rather than a
     // JSON boolean — coerce leniently rather than let a stringified true read
@@ -494,4 +537,111 @@ export async function compareStocks(symbols: string[]): Promise<ComparisonResult
     grounding,
     freshness,
   };
+}
+
+/** Same field defaults `parseCompareResponse` applies via `extractJsonObject`, for the streaming path's already-parsed fields (each one already syntactically valid JSON, so no coercion is needed — just filling in whatever hasn't arrived yet). */
+const FLAT_AI_DEFAULTS: FlatAI = {
+  overview: "", valuation: "", quality: "", growth: "",
+  financialHealth: "", momentum: "", verdict: "",
+  capitalAllocation: "", competitivePositioning: "", riskComparison: "",
+  rankings: [], noClearWinner: false, tradeoffSummary: "",
+  executiveSummary: "", conditionsForChange: "", confidenceScore: undefined,
+  sections: undefined,
+};
+
+/** Merge whatever fields a {@link JsonFieldStreamer} has parsed so far (or at the end) with the same defaults the blocking path's `parseCompareResponse` guarantees, so `finalizeComparison` never has to special-case "streamed vs blocking". */
+export function flatFromStreamedFields(fields: Record<string, unknown>): FlatAI {
+  const flat: FlatAI = { ...FLAT_AI_DEFAULTS, ...fields };
+  if (flat.sections && (typeof flat.sections !== "object" || Array.isArray(flat.sections))) {
+    flat.sections = undefined;
+  }
+  return flat;
+}
+
+/** Compare 2-5 stocks together. Every input symbol must load successfully. */
+export async function compareStocks(
+  symbols: string[],
+  opts: { signal?: AbortSignal } = {},
+): Promise<ComparisonResult> {
+  const setup = await prepareComparison(symbols, opts);
+  let model = "unavailable";
+
+  let flat: FlatAI = {};
+  // Populated only when the AI call itself failed. Drives both the fallback
+  // narrative text and the machine-readable `aiStatus` the Compare page uses
+  // to show an accurate status ("model warming up" vs "can't reach Ollama")
+  // instead of one generic message for every cause.
+  let aiFailure: ClassifiedAiError | undefined;
+  try {
+    const { text: raw, model: usedModel } = await runPromptWithMeta("comparison", setup.prompt, {
+      maxTokens: 1800,
+      json: true,
+      signal: opts.signal,
+    });
+    model = usedModel;
+    flat = parseCompareResponse(raw);
+  } catch (err) {
+    aiFailure = classifyAiError(err);
+    logAiEvent({
+      category: aiFailure.category,
+      taskType: "comparison",
+      message: err instanceof Error ? err.message : String(err),
+    });
+    // A caller abort means nobody is waiting for this result at all — the
+    // metric table isn't worth assembling either. Every other AI failure
+    // still degrades gracefully (metric table intact, narrative absent).
+    if (aiFailure.category === "cancelled") throw err;
+  }
+
+  return finalizeComparison(setup, model, flat, aiFailure);
+}
+
+/**
+ * Streamed counterpart to {@link compareStocks}: same setup, same prompt,
+ * same model — the only difference is that fields are yielded the instant
+ * each one closes rather than the caller waiting for the whole object.
+ *
+ * Yields `{ key, value }` for every top-level field as the model finishes it
+ * (headline/section-style, e.g. `executiveSummary` typically closes in
+ * seconds while `rankings` closes near the end), then a final event carrying
+ * the fully assembled {@link ComparisonResult} — the exact same object
+ * {@link compareStocks} would have returned for identical input, so a
+ * consumer that only wants the finished thing can ignore every yielded field
+ * and just await the return value.
+ */
+export async function* streamComparisonFields(
+  symbols: string[],
+  opts: { signal?: AbortSignal } = {},
+): AsyncGenerator<{ key: string; value: unknown }, ComparisonResult, unknown> {
+  const setup = await prepareComparison(symbols, opts);
+  const parser = new JsonFieldStreamer();
+  let model = "unavailable";
+  let aiFailure: ClassifiedAiError | undefined;
+
+  try {
+    const generation = runTaskStream("comparison", setup.prompt, {
+      json: true,
+      signal: opts.signal,
+    });
+    for (;;) {
+      const next = await generation.next();
+      if (next.done) {
+        model = next.value ?? model;
+        break;
+      }
+      for (const field of parser.push(next.value)) yield field;
+    }
+    for (const field of parser.end()) yield field;
+  } catch (err) {
+    aiFailure = classifyAiError(err);
+    logAiEvent({
+      category: aiFailure.category,
+      taskType: "comparison",
+      message: err instanceof Error ? err.message : String(err),
+    });
+    if (aiFailure.category === "cancelled") throw err;
+  }
+
+  const flat = flatFromStreamedFields(parser.result());
+  return finalizeComparison(setup, model, flat, aiFailure);
 }

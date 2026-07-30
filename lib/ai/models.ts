@@ -54,6 +54,21 @@ export interface ModelSpec {
   temperature: number;
   /** Default request timeout in ms for tasks that don't override it. */
   timeoutMs: number;
+  /**
+   * Timeout budget for a REQUEST DETECTED AS COLD (see lib/ai/ollama.ts's
+   * `isModelResident` and the Router's `widenForColdStart`) — replaces
+   * `timeoutMs` only for that one attempt, never for a warm one.
+   *
+   * Measured, not guessed, where a value is given: mistral (4.4GB) cold-loads
+   * in ~70s here, so its 120s base timeout already has headroom and needs
+   * only a small bump; qwen3:14b (9.3GB) has been observed consuming its
+   * *entire* 300s budget on load alone under memory pressure, so it needs
+   * real headroom, not a token one. Left undefined for models with no
+   * measurement yet — the Router falls back to a generic multiplier of the
+   * model's own `timeoutMs`, capped, so an unmeasured model still degrades
+   * safely instead of getting an arbitrary hardcoded number.
+   */
+  coldStartTimeoutMs?: number;
   /** What this model is good at — the Router matches these against task requirements. */
   capabilities: ModelCapability[];
   /**
@@ -125,6 +140,11 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     thinking: "hybrid",
     temperature: 0.4,
     timeoutMs: 300_000,
+    // Measured: cold-loading this 9.3GB model has been observed consuming
+    // its ENTIRE 300s base timeout under memory pressure, leaving zero time
+    // to actually generate. 480s is a real, deliberate budget for the load
+    // phase specifically — not a multiplier guess.
+    coldStartTimeoutMs: 480_000,
     capabilities: ["reasoning", "long-context", "structured-json"],
     quality: 8,
     tokensPerSecond: 5.0,
@@ -142,6 +162,10 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     thinking: "none",
     temperature: 0.4,
     timeoutMs: 120_000,
+    // Measured: cold-loads in ~70s on this host — the 120s base timeout
+    // already has real headroom, so cold start only needs a modest bump,
+    // not the same 1.6x this model would get from the generic multiplier.
+    coldStartTimeoutMs: 150_000,
     capabilities: ["fast", "structured-json"],
     quality: 5,
     tokensPerSecond: 10.5,

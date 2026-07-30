@@ -15,6 +15,7 @@
  */
 
 import { getPortfolioForIOS } from "./ios/server";
+import { buildThreats } from "./home/threats";
 import { getCalendarEvents } from "./calendar";
 
 export interface ProactiveInsight {
@@ -34,14 +35,17 @@ function daysUntil(dateStr: string): number {
 
 async function portfolioAlertInsight(): Promise<ProactiveInsight | null> {
   const { report } = await getPortfolioForIOS().catch(() => ({ report: null }));
-  // alerts[] is already sorted high → low severity by computePortfolioReport.
-  const top = report?.alerts?.[0];
+  // The universal report's own threat list, already ranked highest-severity first —
+  // the same list the Home digest and the Portfolio page read. This used to come
+  // from a second engine's `alerts[]`, which ranked a different set of problems
+  // computed from a different (and by then stale) ledger.
+  const top = buildThreats(report).threats[0];
   if (!top) return null;
   return {
-    id: `alert-${top.type}-${top.symbol ?? "portfolio"}`,
+    id: top.id,
     text: top.title,
-    href: top.symbol ? `/research?symbol=${encodeURIComponent(top.symbol)}` : "/portfolio",
-    linkLabel: top.symbol ? `Open ${top.symbol}` : "Open Portfolio",
+    href: top.href,
+    linkLabel: "Open Portfolio",
   };
 }
 

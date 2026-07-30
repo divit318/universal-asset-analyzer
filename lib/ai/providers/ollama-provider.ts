@@ -16,6 +16,7 @@ import {
   checkHealth,
   createThinkingSplitter,
   generate,
+  isModelResident,
   listModelInfo,
   splitThinking,
   streamChat,
@@ -43,6 +44,10 @@ export class OllamaProvider implements AIProvider {
 
   async healthCheck(): Promise<ProviderHealth> {
     return checkHealth();
+  }
+
+  async isModelWarm(model: string): Promise<boolean> {
+    return isModelResident(model);
   }
 
   /**
