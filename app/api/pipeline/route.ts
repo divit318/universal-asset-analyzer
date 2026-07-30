@@ -6,66 +6,60 @@
  * PATCH /api/pipeline {symbol,stage} → move an idea to a stage; returns whether
  *        it actually changed so the client raises a Journal prompt exactly once.
  *
- * Holdings that aren't on the watchlist are merged in as derived `owned` rows so
- * the board reflects the real portfolio without a migration side effect; moving
- * such a row persists it (one pipeline, one object). Stages are descriptive —
- * nothing here gates any action.
+ * The holdings come from `listRawHoldings()` — the same call the Holdings tab
+ * renders — rather than from a second read of the lot ledger, so "Owned" and
+ * "Holdings" cannot answer the same question differently. Which of those
+ * holdings is an idea at all is `isPipelineSymbol()`, and the stage the board
+ * shows is `effectiveStage()`: the ledger decides `owned`, never the stored
+ * stage. Stages are descriptive — nothing here gates any action.
+ *
+ * Always portfolio 1: the Pipeline tab is clamped away for non-main portfolios
+ * (see VIEW_ONLY_TABS in app/portfolio/page.tsx), which are read-only.
  */
 import { NextResponse } from "next/server";
-import { listWatchlist, listLots, setIdeaStage } from "@/lib/db";
-import { aggregateOpenPositions } from "@/lib/portfolio-lots";
-import { isIdeaStage, daysInStage } from "@/lib/idea-stage";
-import type { IdeaStage } from "@/lib/types";
+import { listWatchlist, setIdeaStage } from "@/lib/db";
+import { listRawHoldings } from "@/lib/portfolio/store";
+import { isIdeaStage, isPipelineSymbol, buildPipelineRows } from "@/lib/idea-stage";
+import type { PipelineRow } from "@/lib/idea-stage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export interface PipelineRow {
-  symbol: string;
-  name: string;
-  stage: IdeaStage;
-  daysInStage: number;
-  /** True when persisted on the watchlist; false for a held-but-untracked name. */
-  tracked: boolean;
-  /** True when currently held in the portfolio. */
-  held: boolean;
+export type { PipelineRow };
+
+/**
+ * How much of the portfolio the board is answerable for, so the Owned count can
+ * be reconciled against the Holdings count on the page rather than in someone's
+ * head: the difference is exactly the holdings no market quotes.
+ */
+export interface PipelineCoverage {
+  /** Every holding on the Holdings tab, both ledgers. */
+  holdings: number;
+  /** Those with a quoted symbol — the set the Owned column must equal. */
+  quoted: number;
 }
 
-const isTicker = (s: string) => !s.toUpperCase().startsWith("CASH-") && /^[A-Z0-9][A-Z0-9.\-]{0,9}$/.test(s.toUpperCase());
+export interface PipelineResponse {
+  rows: PipelineRow[];
+  coverage: PipelineCoverage;
+}
 
 export async function GET() {
   try {
-    const watchlist = listWatchlist();
-    const watched = new Set(watchlist.map((w) => w.symbol.toUpperCase()));
+    const holdings = listRawHoldings();
+    const rows = buildPipelineRows({
+      tracked: listWatchlist(),
+      holdings,
+    });
 
-    const open = aggregateOpenPositions(listLots()).filter((p) => p.shares > 1e-9 && isTicker(p.symbol));
-    const heldSet = new Set(open.map((p) => p.symbol.toUpperCase()));
-
-    const rows: PipelineRow[] = watchlist.map((w) => ({
-      symbol: w.symbol.toUpperCase(),
-      name: w.name,
-      stage: w.stage,
-      daysInStage: daysInStage(w.stageChangedAt, w.addedAt),
-      tracked: true,
-      held: heldSet.has(w.symbol.toUpperCase()),
-    }));
-
-    // Held names not yet on the watchlist show as derived `owned` rows — real,
-    // but not persisted until the user moves them.
-    for (const p of open) {
-      if (!watched.has(p.symbol.toUpperCase())) {
-        rows.push({
-          symbol: p.symbol.toUpperCase(),
-          name: p.name,
-          stage: "owned",
-          daysInStage: daysInStage(null, p.firstTradeDate),
-          tracked: false,
-          held: true,
-        });
-      }
-    }
-
-    return NextResponse.json({ rows });
+    const response: PipelineResponse = {
+      rows,
+      coverage: {
+        holdings: holdings.length,
+        quoted: holdings.filter((h) => isPipelineSymbol(h.symbol)).length,
+      },
+    };
+    return NextResponse.json(response);
   } catch (err) {
     console.error("[api/pipeline GET]", err);
     return NextResponse.json({ error: "Failed to build the pipeline" }, { status: 500 });
