@@ -1,6 +1,5 @@
 import { registerClass, coverage, lerpScore, shrinkToConfidence } from "../model/adapter";
-import { marketValuation, yieldIncome } from "./market-base";
-import { CLASS_FACTORS, CREDIT_SPREAD_BETA, mergeFactors } from "./reference/factor-sensitivities";
+import { marketValuation, yieldIncome, riskModelFor } from "./market-base";
 import type { PortfolioClassAdapter } from "../model/adapter";
 
 /**
@@ -13,12 +12,31 @@ import type { PortfolioClassAdapter } from "../model/adapter";
  * is modelled as a slightly worse stock.
  *
  * What's real (per lib/assets/bond.ts): individual CUSIP bonds have no free feed at
- * all, so what we can genuinely hold and analyse is bond *funds*, where Yahoo's
- * `topHoldings` really does return `bondHoldings.duration` / `.maturity` and a full
- * `bondRatings` breakdown. Duration and credit quality are therefore MEASURED, and
- * they drive the two factor sensitivities that matter. Coupon and callability stay
- * `unavailable` — we don't invent them.
+ * all, so what we can genuinely hold and analyse is bond *funds*.
+ *
+ * ⚠️ CORRECTION (2026-07-29). This file used to say that Yahoo's
+ * `topHoldings.bondHoldings` gives a real duration and maturity, and it took them at
+ * face value. It does not: probed against live data it reports 3.55 years for TLT
+ * (true ≈ 16), 3.88 for a floating-rate fund (true ≈ 0.02), 1.30 for TIP (true ≈
+ * 6.5) and nothing at all for VCLT. Duration is now MEASURED from the fund's own
+ * returns against the 10-year Treasury yield, with a curated per-category reference
+ * as the fallback — see classes/reference/risk-models.ts. Coupon and callability
+ * remain `unavailable`; we don't invent them.
  */
+/**
+ * Keep the provider's average maturity only where it is consistent with the fund's
+ * modelled duration. Duration ≤ maturity always holds for a cash bond, and the two
+ * cannot be wildly far apart for a real portfolio; outside that, the field is one of
+ * the demonstrably broken ones (see ContextFundamentals.duration) and reporting it
+ * would put a wrong number next to a right one.
+ */
+function plausibleMaturity(maturity: number | null, duration: number | null): number | null {
+  if (maturity == null || !Number.isFinite(maturity) || maturity <= 0) return null;
+  if (duration == null) return maturity;
+  if (maturity < duration * 0.9) return null;
+  return maturity <= duration * 3 + 2 ? maturity : null;
+}
+
 export const bondAdapter: PortfolioClassAdapter = {
   id: "bond",
   valuationMode: "market",
@@ -34,29 +52,42 @@ export const bondAdapter: PortfolioClassAdapter = {
   value: marketValuation,
   income: (raw, val, ctx) => yieldIncome(raw, val, ctx, "coupon"),
 
+  /**
+   * Three things changed here, all of them corrections:
+   *
+   *  1. DURATION IS MEASURED, NOT READ OFF A FIELD. The provider's
+   *     `bondHoldings.duration` claims 3.55 for TLT (true ≈ 16), 3.88 for a
+   *     floating-rate fund (true ≈ 0.02) and 1.30 for TIP (true ≈ 6.5). Rate
+   *     sensitivity now comes from the fund's own returns regressed on the 10-year
+   *     yield, with the category's curated duration as the fallback.
+   *  2. CREDIT-SPREAD SENSITIVITY SCALES WITH DURATION. Spread duration ≈ effective
+   *     duration, so a 13-year corporate fund loses ~13% per 1pp of widening while
+   *     a 2-year one loses ~2%. A flat number per rating bucket — what this
+   *     replaces — cannot express that, and it under-stated long credit badly.
+   *  3. EQUITY BETA IS USED WHEN IT EXISTS. High-yield and EM funds have a real,
+   *     measurable equity beta (~0.45); the old code pinned every bond fund at 0.1.
+   *
+   * Inflation-linked funds get rates −D and inflation +D, so a scenario where
+   * inflation outruns the policy response makes TIPS GAIN. The old model gave them
+   * inflation −0.8: the wrong sign on the one bond people own for inflation.
+   */
   factors(raw, ctx) {
-    const f = raw.symbol ? ctx.fundamentals.get(raw.symbol.toUpperCase()) : undefined;
-
-    // The real number, straight from the provider. A 7-year duration means a +1pp
-    // rate move is a -7% price move. This is not an estimate.
-    const duration = f?.duration ?? null;
-    const rates = duration != null && Number.isFinite(duration) && duration > 0
-      ? -duration
-      : CLASS_FACTORS.bond.rates!;
-
-    // Credit quality decides the SIGN of credit-spread sensitivity: Treasuries gain
-    // when spreads blow out (flight to quality), junk loses badly.
-    const quality = (f?.creditQuality ?? "").toLowerCase();
-    const creditSpread = CREDIT_SPREAD_BETA[quality] ?? CLASS_FACTORS.bond.creditSpread!;
-
-    return mergeFactors(CLASS_FACTORS.bond, { rates, creditSpread });
+    return riskModelFor(raw, ctx).factors;
   },
 
   metrics(raw, ctx) {
     const f = raw.symbol ? ctx.fundamentals.get(raw.symbol.toUpperCase()) : undefined;
+    // The modelled effective duration — the same number the stress test uses.
+    const duration = riskModelFor(raw, ctx).duration;
     return {
-      duration: f?.duration ?? null,
-      maturity: f?.maturity ?? null,
+      duration,
+      // Average maturity, SUPPRESSED when it cannot be true of a fund with this
+      // duration. The provider reported 9.8 years for a 1-3 year Treasury fund
+      // (SHY), 10.0 for a floating-rate fund (USFR) and 8.0 for a 20-year+ fund
+      // (TLT). A maturity below the duration is impossible for a cash bond, and one
+      // several times the duration is not a portfolio anyone runs — either way it is
+      // a bad number, and "—" is the honest rendering of a bad number.
+      maturity: plausibleMaturity(f?.maturity ?? null, duration),
       // `dividendYield` arrives from the provider as a FRACTION (0.0432), but the
       // portfolio model's `yield` metric is in PERCENT everywhere else — cash
       // reports APY as 4.32, real estate reports capRatePercent, and so on. It is
@@ -75,6 +106,7 @@ export const bondAdapter: PortfolioClassAdapter = {
       creditQuality: f?.creditQuality ?? null,
       geography: f?.country ?? null,
       currency: f?.currency ?? raw.currency,
+      riskModel: riskModelFor(raw, ctx).label,
     };
   },
 
@@ -90,7 +122,9 @@ export const bondAdapter: PortfolioClassAdapter = {
       ? (f.dividendYield > 1 ? f.dividendYield : f.dividendYield * 100)
       : null;
 
-    const inputs = [y, f.duration, f.expenseRatio];
+    // Scored on the SAME duration the stress test uses, not the provider field.
+    const duration = riskModelFor(raw, ctx).duration;
+    const inputs = [y, duration, f.expenseRatio];
     const conf = coverage(inputs);
     if (conf === 0) return null;
 
@@ -104,14 +138,14 @@ export const bondAdapter: PortfolioClassAdapter = {
       used += 0.5;
       if (y >= 4.5) why.push(`Attractive ${y.toFixed(2)}% yield`);
     }
-    if (f.duration != null) {
+    if (duration != null) {
       // Long duration is not "bad" in the abstract — it's rate RISK. Score it as
       // risk: shorter = safer. The optimizer, not the scorer, decides whether the
       // portfolio wants that risk.
-      const s = lerpScore(f.duration, 20, 2);
+      const s = lerpScore(duration, 20, 2);
       weighted += s * 0.3;
       used += 0.3;
-      if (f.duration >= 10) why.push(`High rate sensitivity (${f.duration.toFixed(1)}y duration)`);
+      if (duration >= 10) why.push(`High rate sensitivity (${duration.toFixed(1)}y duration)`);
     }
     if (f.expenseRatio != null) {
       const s = lerpScore(f.expenseRatio, 0.8, 0.03);

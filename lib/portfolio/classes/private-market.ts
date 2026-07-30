@@ -1,5 +1,5 @@
 import { registerClass, manualValuation, lerpScore, coverage, shrinkToConfidence } from "../model/adapter";
-import { CLASS_FACTORS, mergeFactors } from "./reference/factor-sensitivities";
+import { riskModelFor } from "./market-base";
 import { toManualAsset, MANUAL_STALENESS_DAYS } from "./manual-base";
 import { computePrivateMarketMetrics } from "../../manual-asset-analysis";
 import type { PortfolioClassAdapter } from "../model/adapter";
@@ -45,8 +45,10 @@ export const privateMarketAdapter: PortfolioClassAdapter = {
   // Private positions distribute nothing until an exit.
   income: () => null,
 
-  factors() {
-    return mergeFactors(CLASS_FACTORS.private_market);
+  // Same loadings as before — levered equity with no bid in a liquidity event —
+  // resolved through the shared catalogue so every class is auditable in one place.
+  factors(raw, ctx) {
+    return riskModelFor(raw, ctx).factors;
   },
 
   metrics(raw) {
@@ -61,13 +63,14 @@ export const privateMarketAdapter: PortfolioClassAdapter = {
     };
   },
 
-  attributes(raw) {
+  attributes(raw, ctx) {
     const d = raw.meta.details as PrivateMarketDetails | undefined;
     return {
       sector: "Private Markets",
       round: d?.round ?? null,
       geography: null,
       currency: raw.currency,
+      riskModel: riskModelFor(raw, ctx).label,
     };
   },
 

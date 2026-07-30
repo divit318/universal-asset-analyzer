@@ -1,6 +1,5 @@
 import { registerClass } from "../model/adapter";
-import { marketValuation, yieldIncome, measuredBeta, fundamentalScore } from "./market-base";
-import { CLASS_FACTORS, SECTOR_FACTORS, mergeFactors } from "./reference/factor-sensitivities";
+import { marketValuation, yieldIncome, measuredBeta, fundamentalScore, riskModelFor } from "./market-base";
 import type { PortfolioClassAdapter } from "../model/adapter";
 
 export const equityAdapter: PortfolioClassAdapter = {
@@ -14,16 +13,22 @@ export const equityAdapter: PortfolioClassAdapter = {
   value: marketValuation,
   income: (raw, val, ctx) => yieldIncome(raw, val, ctx, "dividend"),
 
+  /**
+   * Measured beta plus the sector's own loadings, as before — and now the currency
+   * exposure a foreign listing actually carries.
+   *
+   * A US-listed ADR is priced in dollars but earns in yen, won or new Taiwan
+   * dollars: its dollar price mechanically absorbs the currency move, which is why
+   * TSM's ADR fell ~62% in 2008 while its Taipei listing fell ~45%. The model had
+   * no `usd` loading for any foreign company, so a book that was 24% non-US
+   * registered zero currency risk in a dollar-rally scenario. See FX_PASS_THROUGH
+   * in reference/risk-models.ts for the coefficients and why they are below 1.0.
+   *
+   * A gold or silver miner additionally gets levered bullion exposure: its margin
+   * moves faster than the metal, and equity beta alone does not see that at all.
+   */
   factors(raw, ctx) {
-    const f = raw.symbol ? ctx.fundamentals.get(raw.symbol.toUpperCase()) : undefined;
-    // Measured beta beats the provider's stated beta, which beats the class default.
-    const beta = measuredBeta(raw.symbol, ctx) ?? f?.beta ?? CLASS_FACTORS.equity.equityBeta!;
-    const sector = f?.sector ?? null;
-    return mergeFactors(
-      CLASS_FACTORS.equity,
-      sector ? SECTOR_FACTORS[sector] : undefined,
-      { equityBeta: beta },
-    );
+    return riskModelFor(raw, ctx).factors;
   },
 
   metrics(raw, ctx) {
@@ -48,6 +53,7 @@ export const equityAdapter: PortfolioClassAdapter = {
       industry: f?.industry ?? null,
       geography: f?.country ?? null,
       currency: f?.currency ?? raw.currency,
+      riskModel: riskModelFor(raw, ctx).label,
     };
   },
 

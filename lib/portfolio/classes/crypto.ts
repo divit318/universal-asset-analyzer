@@ -1,6 +1,5 @@
 import { registerClass, coverage, lerpScore, shrinkToConfidence } from "../model/adapter";
-import { marketValuation, measuredBeta, realizedVol } from "./market-base";
-import { CLASS_FACTORS, mergeFactors } from "./reference/factor-sensitivities";
+import { marketValuation, measuredBeta, realizedVol, riskModelFor } from "./market-base";
 import type { PortfolioClassAdapter } from "../model/adapter";
 
 /**
@@ -31,12 +30,16 @@ export const cryptoAdapter: PortfolioClassAdapter = {
   // surfaces it as an unavailable metric rather than a zero.
   income: () => null,
 
+  /**
+   * `cryptoBeta` is no longer 1.0 for everything in the wallet. BTC IS the
+   * complex, so its beta is 1.0 by definition; ETH and smaller tokens fall harder
+   * than BTC in a drawdown and lose their bid faster (1.35 and a worse liquidity
+   * loading); and a STABLECOIN is not a 70%-drawdown asset at all — modelling USDC
+   * with cryptoBeta 1.0, which is what a single class default did, projected a
+   * $100k dollar-token position losing $70k in a crypto bear market.
+   */
   factors(raw, ctx) {
-    const beta = measuredBeta(raw.symbol, ctx);
-    return mergeFactors(
-      CLASS_FACTORS.crypto,
-      beta != null ? { equityBeta: beta } : undefined,
-    );
+    return riskModelFor(raw, ctx).factors;
   },
 
   metrics(raw, ctx) {
@@ -48,11 +51,12 @@ export const cryptoAdapter: PortfolioClassAdapter = {
     };
   },
 
-  attributes(raw) {
+  attributes(raw, ctx) {
     return {
       sector: "Digital Assets",
       geography: "Global",
       currency: raw.currency,
+      riskModel: riskModelFor(raw, ctx).label,
     };
   },
 

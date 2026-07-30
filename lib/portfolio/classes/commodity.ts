@@ -1,6 +1,6 @@
 import { registerClass, coverage, lerpScore, shrinkToConfidence } from "../model/adapter";
-import { marketValuation, realizedVol, measuredBeta } from "./market-base";
-import { COMMODITY_FACTORS, commodityBucket, mergeFactors } from "./reference/factor-sensitivities";
+import { marketValuation, realizedVol, measuredBeta, riskModelFor } from "./market-base";
+import { COMMODITY_FACTORS, commodityBucket } from "./reference/factor-sensitivities";
 import type { PortfolioClassAdapter } from "../model/adapter";
 
 /**
@@ -28,14 +28,12 @@ export const commodityAdapter: PortfolioClassAdapter = {
   // property of the asset (and a genuine cost of holding it), not missing data.
   income: () => null,
 
+  // The complex still decides the loadings (gold ≠ crude), and it is still resolved
+  // from the symbol/name — but through the shared classifier, so a commodity ETF
+  // stored as `etf` (GLD, SLV, USO, DBC all arrive with quoteType ETF) reaches the
+  // same model instead of being stress-tested as a stock.
   factors(raw, ctx) {
-    const bucket = commodityBucket(raw.symbol, raw.name);
-    const beta = measuredBeta(raw.symbol, ctx);
-    return mergeFactors(
-      COMMODITY_FACTORS[bucket],
-      // Only override the reference beta when we actually measured one.
-      beta != null ? { equityBeta: beta } : undefined,
-    );
+    return riskModelFor(raw, ctx).factors;
   },
 
   metrics(raw, ctx) {
@@ -45,13 +43,14 @@ export const commodityAdapter: PortfolioClassAdapter = {
     };
   },
 
-  attributes(raw) {
+  attributes(raw, ctx) {
     const bucket = commodityBucket(raw.symbol, raw.name);
     return {
       sector: "Commodities",
       complex: bucket,
       geography: "Global",
       currency: raw.currency,
+      riskModel: riskModelFor(raw, ctx).label,
     };
   },
 

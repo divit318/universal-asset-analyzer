@@ -174,6 +174,15 @@ export function commodityBucket(symbol: string | null, name: string): keyof type
  * widening. Junk gets crushed; Treasuries RALLY (flight to quality) — which is
  * why this value is positive for `us_government` and is the single most important
  * thing the old -20%-flat model got backwards.
+ *
+ * ⚠️ SUPERSEDED for portfolio stress testing, and kept only as reference data.
+ *
+ * A flat number per rating cannot express the thing that actually determines the
+ * loss: SPREAD DURATION. A 13-year BBB fund and a 2-year BBB fund share this
+ * bucket and reprice by 6.5× different amounts for the same widening. The risk
+ * models in ./risk-models.ts therefore derive the loading as
+ * `−duration × segment spread beta`, and the rating bucket is used only to place a
+ * fund in the right SEGMENT when its Morningstar category is unavailable.
  */
 export const CREDIT_SPREAD_BETA: Record<string, number> = {
   us_government: 1.2,

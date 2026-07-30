@@ -1,6 +1,5 @@
 import { registerClass } from "../model/adapter";
-import { marketValuation, realizedVol } from "./market-base";
-import { CLASS_FACTORS, mergeFactors } from "./reference/factor-sensitivities";
+import { marketValuation, realizedVol, riskModelFor } from "./market-base";
 import type { PortfolioClassAdapter } from "../model/adapter";
 
 /**
@@ -23,20 +22,28 @@ export const forexAdapter: PortfolioClassAdapter = {
   value: marketValuation,
   income: () => null,
 
-  factors() {
-    // A long non-USD pair is short the dollar, by construction.
-    return mergeFactors(CLASS_FACTORS.forex);
+  /**
+   * The pair's DIRECTION decides the sign, which a flat `usd: -1.0` could not.
+   *
+   * `EURUSD=X` is long EUR against the dollar: usd −1.0, as before. `USDCHF=X` is
+   * long the DOLLAR against the franc — the same holding the old model said would
+   * lose 12% in a dollar rally, when it gains. A cross with no dollar leg
+   * (`EURJPY=X`) asserts no dollar loading at all rather than a fabricated one.
+   */
+  factors(raw, ctx) {
+    return riskModelFor(raw, ctx).factors;
   },
 
   metrics(raw, ctx) {
     return { volatility: realizedVol(raw.symbol, ctx) };
   },
 
-  attributes(raw) {
+  attributes(raw, ctx) {
     return {
       sector: "Currency",
       geography: "Global",
       currency: raw.currency,
+      riskModel: riskModelFor(raw, ctx).label,
     };
   },
 

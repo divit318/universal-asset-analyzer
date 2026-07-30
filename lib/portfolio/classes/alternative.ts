@@ -1,5 +1,5 @@
 import { registerClass, manualValuation, lerpScore, coverage, shrinkToConfidence } from "../model/adapter";
-import { CLASS_FACTORS, mergeFactors } from "./reference/factor-sensitivities";
+import { riskModelFor } from "./market-base";
 import { toManualAsset, MANUAL_STALENESS_DAYS } from "./manual-base";
 import { computeAlternativeMetrics } from "../../manual-asset-analysis";
 import type { PortfolioClassAdapter } from "../model/adapter";
@@ -26,8 +26,16 @@ export const alternativeAdapter: PortfolioClassAdapter = {
 
   income: () => null,
 
-  factors() {
-    return mergeFactors(CLASS_FACTORS.alternative);
+  /**
+   * The subcategory the user already records is a real risk signal and was being
+   * discarded: a Rolex, a case of Bordeaux and a gold bar are not one asset class.
+   * Physical bullion is routed to the GOLD complex (it rises in a crisis; the
+   * generic alternative model said it falls with equities), and watches/art get the
+   * wealth-effect beta and worse liquidity that luxury resale actually has.
+   */
+  factors(raw, ctx) {
+    const d = raw.meta.details as AlternativeDetails | undefined;
+    return riskModelFor(raw, ctx, { signals: { subcategory: d?.subcategory ?? null } }).factors;
   },
 
   metrics(raw) {
@@ -39,13 +47,14 @@ export const alternativeAdapter: PortfolioClassAdapter = {
     };
   },
 
-  attributes(raw) {
+  attributes(raw, ctx) {
     const d = raw.meta.details as AlternativeDetails | undefined;
     return {
       sector: "Alternatives",
       subcategory: d?.subcategory ?? null,
       geography: null,
       currency: raw.currency,
+      riskModel: riskModelFor(raw, ctx, { signals: { subcategory: d?.subcategory ?? null } }).label,
     };
   },
 

@@ -1,6 +1,5 @@
 import { registerClass, coverage, lerpScore, shrinkToConfidence } from "../model/adapter";
-import { marketValuation, yieldIncome, measuredBeta } from "./market-base";
-import { CLASS_FACTORS, mergeFactors } from "./reference/factor-sensitivities";
+import { marketValuation, yieldIncome, measuredBeta, riskModelFor } from "./market-base";
 import type { PortfolioClassAdapter } from "../model/adapter";
 
 /**
@@ -21,19 +20,19 @@ export const etfAdapter: PortfolioClassAdapter = {
   value: marketValuation,
   income: (raw, val, ctx) => yieldIncome(raw, val, ctx, "distribution"),
 
+  /**
+   * "ETF" is a WRAPPER, not a risk model. VCLT, VXUS, GLD, SCHH, BIL and a
+   * money-market fund all arrive here with quoteType ETF, and they behave nothing
+   * alike. The classifier reads what the fund actually holds — see
+   * reference/risk-models.ts — so a corporate bond ETF gets duration and credit
+   * exposure, a gold trust gets the gold complex, a REIT fund gets cap rates, an
+   * international fund gets currency risk, and a T-bill fund gets modelled as cash.
+   *
+   * This replaces `if (fundamentals.duration != null) treat as a bond`, which
+   * misfired in both directions on live data.
+   */
   factors(raw, ctx) {
-    const f = raw.symbol ? ctx.fundamentals.get(raw.symbol.toUpperCase()) : undefined;
-    const beta = measuredBeta(raw.symbol, ctx) ?? f?.beta ?? CLASS_FACTORS.etf.equityBeta!;
-
-    // A bond ETF is a bond, whatever its wrapper says. When the provider gives us
-    // a real duration, this fund gets a bond's rate sensitivity — not an equity's.
-    // Without this, a Treasury ETF is stress-tested as a stock.
-    const duration = f?.duration ?? null;
-    if (duration != null && Number.isFinite(duration) && duration > 0) {
-      return mergeFactors(CLASS_FACTORS.bond, { rates: -duration, equityBeta: beta });
-    }
-
-    return mergeFactors(CLASS_FACTORS.etf, { equityBeta: beta });
+    return riskModelFor(raw, ctx).factors;
   },
 
   metrics(raw, ctx) {
@@ -42,7 +41,11 @@ export const etfAdapter: PortfolioClassAdapter = {
       expenseRatio: f?.expenseRatio ?? null,
       dividendYield: f?.dividendYield ?? null,
       beta: measuredBeta(raw.symbol, ctx) ?? f?.beta ?? null,
-      duration: f?.duration ?? null,
+      // The MODELLED effective duration, not the provider's field: for a bond ETF
+      // Yahoo reports 3.55 on TLT and 3.88 on a floating-rate fund. Showing one
+      // number here and stress-testing another would be two authorities for the
+      // same quantity.
+      duration: riskModelFor(raw, ctx).duration,
       marketCap: f?.marketCap ?? null,
     };
   },
@@ -53,6 +56,8 @@ export const etfAdapter: PortfolioClassAdapter = {
       sector: f?.sector ?? "Diversified",
       geography: f?.country ?? null,
       currency: f?.currency ?? raw.currency,
+      // Traceability: which risk model this holding was stress-tested under.
+      riskModel: riskModelFor(raw, ctx).label,
     };
   },
 

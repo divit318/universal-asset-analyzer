@@ -227,7 +227,17 @@ export interface ImpactEstimate {
   healthDelta: number;
   /** Change in annualized volatility, in percentage points. Negative = less risky. */
   riskDelta: number | null;
-  /** Change in asset-class HHI. Negative = better diversified. */
+  /**
+   * Change in ASSET-CLASS HHI (`allocation.byAssetClass.hhi`). Negative = better
+   * diversified.
+   *
+   * PAIR THIS ONLY WITH AN ASSET-CLASS HHI BASELINE. It is a delta on one
+   * specific denominator, and this app computes an HHI on several: adding it to
+   * `UniversalRisk.positionHhi` (an HHI over individual holdings) produces a
+   * number that belongs to no denominator at all — which is exactly what the
+   * Decision Center rendered until it was caught (688 + −160 = 528, versus a true
+   * post-trade position HHI of 664 and asset-class HHI of 3271).
+   */
   diversificationDelta: number;
   /** Change in expected annual income, in base currency. */
   incomeDelta: number;

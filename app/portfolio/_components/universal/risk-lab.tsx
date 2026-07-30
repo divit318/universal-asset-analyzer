@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Card, Badge } from "@/app/_components/ui";
 import { formatCurrency } from "@/lib/format";
+import { describeIlliquidWeight } from "@/lib/portfolio/model/types";
 import type { UniversalRisk } from "@/lib/portfolio/engines/risk";
 import type { ScenarioResult } from "@/lib/portfolio/engines/scenario";
 
@@ -14,16 +15,29 @@ import type { ScenarioResult } from "@/lib/portfolio/engines/scenario";
  * from the portfolio's factor exposures.
  */
 
+/**
+ * One risk figure.
+ *
+ * `tone` is deliberately NOT derived from the sign of the number. Half the
+ * metrics here are "higher is worse" (volatility, drawdown, VaR, duration,
+ * illiquidity) and half are "higher is better" (Sharpe, Sortino), so a shared
+ * sign→colour rule would actively mislead on one half of the grid. Each call
+ * site states its own tone, and an UNKNOWN value is always neutral — a missing
+ * measurement is not good news, which is what a green em-dash would imply.
+ */
 function Metric({
   label,
   value,
   hint,
   tone = "default",
+  title,
 }: {
   label: string;
   value: string;
   hint?: string;
   tone?: "default" | "positive" | "negative" | "warning";
+  /** Plain-English definition, for a metric whose name is jargon. */
+  title?: string;
 }) {
   const toneClass =
     tone === "positive" ? "text-positive"
@@ -33,7 +47,12 @@ function Metric({
 
   return (
     <div className="flex flex-col gap-0.5 rounded-lg border border-border bg-surface/40 p-3">
-      <span className="text-[10px] uppercase tracking-wider text-muted/70">{label}</span>
+      <span
+        className={`text-[10px] uppercase tracking-wider text-muted/70 ${title ? "cursor-help decoration-dotted underline-offset-2 hover:underline" : ""}`}
+        title={title}
+      >
+        {label}
+      </span>
       <span className={`font-mono text-base font-bold tabular-nums ${toneClass}`}>{value}</span>
       {hint && <span className="text-[10px] leading-snug text-muted/70">{hint}</span>}
     </div>
@@ -43,56 +62,202 @@ function Metric({
 const n = (v: number | null, suffix = "", digits = 2) =>
   v == null ? "—" : `${v.toFixed(digits)}${suffix}`;
 
+/**
+ * Signed rendering for a sensitivity, where the sign IS the information: a
+ * credit or inflation sensitivity of −0.42 and +0.42 are opposite facts, and
+ * `toFixed` alone renders the positive one without its sign.
+ */
+const signed = (v: number | null, suffix = "", digits = 2) =>
+  v == null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(digits)}${suffix}`;
+
+/** A sensitivity's tone: unknown is neutral, hurt is negative, helped is positive. */
+function sensitivityTone(v: number | null, hurtBelow: number): "default" | "negative" | "positive" {
+  if (v == null) return "default";
+  if (v < hurtBelow) return "negative";
+  return v > 0 ? "positive" : "default";
+}
+
 export function RiskLab({ risk, scenarios }: { risk: UniversalRisk; scenarios: ScenarioResult[] }) {
   const [selected, setSelected] = useState<string | null>(scenarios[0]?.id ?? null);
   const active = scenarios.find((s) => s.id === selected) ?? null;
+  const illiquid = describeIlliquidWeight(risk.illiquidPct, risk.illiquidHoldings);
 
   return (
     <div className="flex flex-col gap-4">
       {/* ── Coverage disclosure ───────────────────────────────────────────────
-          The old engine computed volatility on whichever holdings happened to have
-          price history and reported it as THE portfolio's volatility — while the
-          illiquid ones still counted in the weights. That systematically understates
-          risk. We state coverage instead of hiding it. */}
-      {risk.coverage.proxiedPct > 0 && (
-        <Card className="flex flex-col gap-1 border-warning/25 bg-warning/[0.04] p-4">
-          <span className="text-xs font-semibold text-warning">Risk coverage</span>
+          Gated on observedPct < 100, NOT on proxiedPct > 0.
+
+          The old gate was `proxiedPct > 0`, and a declared proxy volatility only
+          exists for the manually-valued classes and cash. So a MARKET-priced
+          holding whose price history simply didn't arrive — a fresh listing, a
+          delisted ticker, a provider error, a line the provider has no series
+          for — was counted in the weights, excluded from every statistic, and
+          disclosed NOWHERE: proxiedPct stayed 0, so this card never rendered,
+          and a portfolio measured on 60% of its value presented volatility,
+          beta, VaR and drawdown as if they described the whole book.
+          Understating risk silently is the exact failure the risk engine's own
+          docblock says it exists to prevent. */}
+      {risk.coverage.observedPct < 100 && (
+        <Card className="flex flex-col gap-1.5 border-warning/25 bg-warning/[0.04] p-4">
+          <span className="text-xs font-semibold text-warning">
+            Risk measured on {risk.coverage.observedPct}% of portfolio value
+          </span>
           <p className="text-[11px] leading-relaxed text-muted">
-            Volatility and drawdown are measured on the {risk.coverage.observedPct}% of the
-            portfolio with a real price history.{" "}
-            <strong className="text-foreground">
-              {risk.coverage.proxiedPct}% ({risk.coverage.holdingsProxied}{" "}
-              {risk.coverage.holdingsProxied === 1 ? "holding" : "holdings"})
-            </strong>{" "}
-            has none, so a declared proxy volatility is used instead of assuming it is
-            riskless. An illiquid asset with a flat carrying value is not a low-risk
-            asset — it is an unobserved one.
+            Volatility, beta, drawdown, VaR and the ratios below are computed from the{" "}
+            <strong className="text-foreground">{risk.coverage.observedPct}%</strong> of the
+            portfolio that has a real price history.
+            {risk.coverage.proxiedPct > 0 && (
+              <>
+                {" "}
+                <strong className="text-foreground">
+                  {risk.coverage.proxiedPct}% ({risk.coverage.holdingsProxied}{" "}
+                  {risk.coverage.holdingsProxied === 1 ? "holding" : "holdings"})
+                </strong>{" "}
+                has none, so a declared proxy volatility is used instead of assuming it is
+                riskless. An illiquid asset with a flat carrying value is not a low-risk
+                asset — it is an unobserved one.
+              </>
+            )}
+            {risk.coverage.unmodelledPct > 0 && (
+              <>
+                {" "}
+                <strong className="text-negative">
+                  {risk.coverage.unmodelledPct}% ({risk.coverage.holdingsUnmodelled}{" "}
+                  {risk.coverage.holdingsUnmodelled === 1 ? "holding" : "holdings"})
+                </strong>{" "}
+                is market-priced but returned no price history at all, so it enters the
+                weights and none of the statistics. Treat every figure below as describing
+                the measured sleeve, not the whole portfolio.
+              </>
+            )}
           </p>
         </Card>
       )}
 
       {/* ── Return-based risk ── */}
       <div>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">
+        <h3 className="mb-2 flex items-baseline gap-2 text-xs font-semibold uppercase tracking-wider text-muted">
           Market risk
+          {risk.coverage.observedPct < 100 && (
+            <span className="font-normal normal-case tracking-normal text-muted/60">
+              measured on {risk.coverage.observedPct}% of value
+            </span>
+          )}
         </h3>
-        <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
-          <Metric label="Volatility" value={n(risk.annualizedVolatility, "%", 1)} hint="Annualized" />
-          <Metric label="Beta" value={n(risk.beta, "", 2)} hint="vs SPY" />
-          <Metric label="Sharpe" value={n(risk.sharpeRatio, "", 2)} />
-          <Metric label="Max drawdown" value={n(risk.maxDrawdown, "%", 1)} tone="negative" />
+        <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-4">
+          <Metric
+            label="Volatility"
+            value={n(risk.annualizedVolatility, "%", 1)}
+            hint="Annualized standard deviation"
+            title="How much the portfolio's value swings year to year. Higher means a wider range of outcomes, in both directions."
+          />
+          <Metric
+            label="Beta"
+            value={n(risk.beta, "", 2)}
+            hint="vs SPY"
+            title="How much the portfolio moves for each 1% move in the S&P 500. 1.0 = moves with the market; below 1.0 = moves less."
+          />
+          <Metric
+            label="Max drawdown"
+            value={n(risk.maxDrawdown, "%", 1)}
+            hint="Worst peak-to-trough fall"
+            tone="negative"
+            title="The largest percentage fall from a previous high, over the measured window. What it actually felt like to hold at the worst moment."
+          />
+          <Metric
+            label="Sharpe"
+            value={n(risk.sharpeRatio, "", 2)}
+            hint="Return per unit of total risk"
+            tone={risk.sharpeRatio == null ? "default" : risk.sharpeRatio >= 1 ? "positive" : risk.sharpeRatio < 0 ? "negative" : "default"}
+            title="Return above cash, divided by total volatility. Above 1.0 is good; negative means you were paid less than a Treasury bill for taking risk."
+          />
+          {/* Sortino was computed by the risk engine and rendered nowhere — so the
+              one ratio that distinguishes harmful downside from mere choppiness
+              was invisible. (It was also mathematically wrong until the same
+              audit; see computeRiskAdjustedRatios.) */}
+          <Metric
+            label="Sortino"
+            value={n(risk.sortinoRatio, "", 2)}
+            hint="Return per unit of DOWNSIDE risk"
+            tone={risk.sortinoRatio == null ? "default" : risk.sortinoRatio >= 1.5 ? "positive" : risk.sortinoRatio < 0 ? "negative" : "default"}
+            title="Like Sharpe, but it only counts volatility to the downside. Upside swings are not penalised. Higher than Sharpe for most portfolios."
+          />
           <Metric
             label="VaR (95%)"
             value={risk.var95Dollar != null ? formatCurrency(risk.var95Dollar) : "—"}
-            hint="Worst 1-day loss, 19 days in 20"
+            hint={risk.var95Pct != null ? `${risk.var95Pct.toFixed(2)}% · 1 day in 20` : "Worst 1-day loss, 19 days in 20"}
             tone="negative"
+            title="Value at Risk: on the worst 1 day in 20, the portfolio is modelled to lose at least this much."
           />
           {/* CVaR answers the question VaR cannot: when it IS bad, how bad? */}
           <Metric
             label="CVaR (95%)"
             value={risk.cvar95Dollar != null ? formatCurrency(risk.cvar95Dollar) : "—"}
-            hint="Average loss on the worst days"
+            hint={risk.cvar95Pct != null ? `${risk.cvar95Pct.toFixed(2)}% · average bad day` : "Average loss on the worst days"}
             tone="negative"
+            title="Conditional VaR, or expected shortfall: the AVERAGE loss across the worst 5% of days. VaR says where the tail starts; this says how deep it goes."
+          />
+          <Metric
+            label="Avg correlation"
+            value={risk.correlation ? risk.correlation.avgCorrelation.toFixed(2) : "—"}
+            hint={risk.correlation ? `across ${risk.correlation.symbols.length} holdings` : "Not enough history"}
+            tone={
+              risk.correlation == null ? "default"
+              : risk.correlation.avgCorrelation >= 0.7 ? "warning"
+              : risk.correlation.avgCorrelation <= 0.3 ? "positive"
+              : "default"
+            }
+            title="Average pairwise correlation between holdings. Near 1.0 means they move together, so the portfolio is less diversified than its holding count suggests."
+          />
+        </div>
+      </div>
+
+      {/* ── Concentration ────────────────────────────────────────────────────
+          The engine computed HHI, top-holding, top-class and top-sector weight
+          and a low/medium/high verdict, and the Risk Lab displayed none of it —
+          concentration is the single most common way a real portfolio gets hurt,
+          and it was only visible as a banner at the top of the page. */}
+      <div>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">
+          Concentration
+        </h3>
+        <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-5">
+          <Metric
+            label="Verdict"
+            value={risk.concentrationRisk === "low" ? "Low" : risk.concentrationRisk === "medium" ? "Medium" : "High"}
+            hint="Across holding, class and HHI"
+            tone={risk.concentrationRisk === "high" ? "negative" : risk.concentrationRisk === "medium" ? "warning" : "positive"}
+          />
+          {/* "Position HHI", never a bare "HHI".
+              The Dashboard's allocation bars each show an HHI too — over ASSET
+              CLASSES, SECTORS, CURRENCIES and so on. On the real book this one read
+              689 ("Low") while the asset-class one read 3440 ("concentrated"), both
+              labelled "HHI", both correct, on the same page. Identical labels for
+              different denominators is the fastest way to make a user believe the
+              tool contradicts itself — the same rule that renamed the holdings
+              table's "Score" column to "Quality". */}
+          <Metric
+            label="Position HHI"
+            value={risk.positionHhi.toFixed(0)}
+            hint={`${(risk.positionHhi > 0 ? 10000 / risk.positionHhi : 0).toFixed(1)} effective holdings`}
+            tone={risk.positionHhi > 2500 ? "negative" : risk.positionHhi > 1500 ? "warning" : "positive"}
+            title="Herfindahl-Hirschman Index over INDIVIDUAL HOLDING weights: the sum of squared weights, 0-10000. Below 1500 is diversified, above 2500 is concentrated. 10000/HHI is the equal-weight equivalent number of holdings. The allocation bars on the Dashboard show a separate HHI per dimension (asset class, sector, currency) — a book can be spread across many names and still sit in one asset class, so those figures are expected to differ from this one."
+          />
+          <Metric
+            label="Top holding"
+            value={`${risk.topHoldingWeight.toFixed(1)}%`}
+            tone={risk.topHoldingWeight > 25 ? "negative" : risk.topHoldingWeight > 15 ? "warning" : "default"}
+          />
+          <Metric
+            label="Top asset class"
+            value={`${risk.topAssetClassWeight.toFixed(1)}%`}
+            tone={risk.topAssetClassWeight > 85 ? "negative" : risk.topAssetClassWeight > 70 ? "warning" : "default"}
+          />
+          <Metric
+            label="Top sector"
+            value={risk.topSectorWeight > 0 ? `${risk.topSectorWeight.toFixed(1)}%` : "—"}
+            hint={risk.topSectorWeight > 0 ? "of total portfolio value" : "No sector-classified holdings"}
+            tone={risk.topSectorWeight > 50 ? "negative" : risk.topSectorWeight > 40 ? "warning" : "default"}
           />
         </div>
       </div>
@@ -111,26 +276,50 @@ export function RiskLab({ risk, scenarios }: { risk: UniversalRisk; scenarios: S
           />
           <Metric
             label="Credit sensitivity"
-            value={n(risk.creditSensitivity, "%", 2)}
+            value={signed(risk.creditSensitivity, "%")}
             hint="Per 1pp of spread widening"
-            tone={risk.creditSensitivity != null && risk.creditSensitivity < -1 ? "warning" : "default"}
+            tone={sensitivityTone(risk.creditSensitivity, -1)}
+            title="How much portfolio value moves if corporate credit spreads widen by 1 percentage point. Negative means credit stress hurts you."
           />
+          {/* The tone here used to be `sensitivity < -0.5 ? negative : positive`,
+              which painted TWO wrong states green: a null (no inflation-sensitive
+              exposure at all rendered a green em-dash, implying the portfolio was
+              inflation-protected when nothing had been measured), and any value
+              between -0.5 and 0 (still losing money to inflation, shown as a
+              positive). Unknown is now neutral and only a genuine positive
+              sensitivity reads as protection. */}
           <Metric
             label="Inflation"
-            value={n(risk.inflationSensitivity, "%", 2)}
-            hint="Per 1pp inflation surprise"
-            tone={risk.inflationSensitivity != null && risk.inflationSensitivity < -0.5 ? "negative" : "positive"}
+            value={signed(risk.inflationSensitivity, "%")}
+            hint={
+              risk.inflationSensitivity == null
+                ? "No inflation-sensitive exposure measured"
+                : "Per 1pp inflation surprise"
+            }
+            tone={sensitivityTone(risk.inflationSensitivity, -0.5)}
+            title="How much portfolio value moves on a surprise 1 percentage point rise in inflation, including the policy-rate response. Negative means inflation hurts you."
           />
           <Metric
             label="Foreign currency"
             value={`${risk.foreignCurrencyPct.toFixed(0)}%`}
             hint={risk.foreignCurrencyPct < 1 ? "No currency diversification" : "Non-base currency"}
           />
+          {/* Weight AND count. "Illiquid: 0%" alone is true by dollar-weight and
+              false as an impression: three genuinely illiquid holdings worth
+              $1,750 in a $9.2M book round to 0.0%, and a reader concludes nothing
+              here is illiquid — while the Holdings tab shows three ILLIQUID
+              badges. Both numbers come from the same isIlliquid() predicate as
+              those badges, and the WORDING comes from the shared
+              describeIlliquidWeight() so the Optimize tab's "cannot be
+              rebalanced" banner states this identical fact identically. Same
+              weight-plus-context pairing as "Position HHI 688 · 14.5 effective
+              holdings" above. */}
           <Metric
             label="Illiquid"
-            value={`${risk.illiquidPct.toFixed(0)}%`}
-            hint="Cannot sell within days"
+            value={illiquid.weight}
+            hint={illiquid.context}
             tone={risk.illiquidPct > 30 ? "warning" : "default"}
+            title="Share of portfolio VALUE that cannot be liquidated within days, and how many holdings that is. A small weight across several holdings is still an illiquid sleeve — it just cannot move the total. Matches the ILLIQUID badges on the Holdings tab and the Optimize tab's rebalancing banner."
           />
         </div>
       </div>
@@ -138,11 +327,14 @@ export function RiskLab({ risk, scenarios }: { risk: UniversalRisk; scenarios: S
       {/* ── Correlation ── */}
       {risk.correlation && (
         <Card className="flex flex-col gap-2 p-5">
+          {/* The average itself lives in the Market risk grid above; repeating it
+              here would be two authorities for one number. This card is the
+              detail: which specific pairs are the problem. */}
           <div className="flex items-baseline justify-between">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted">Correlation</h3>
-            <span className="font-mono text-xs tabular-nums text-muted">
-              avg r = {risk.correlation.avgCorrelation.toFixed(2)}
-            </span>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted">
+              Most correlated pairs
+            </h3>
+            <span className="text-[11px] text-muted/70">r &gt; 0.75</span>
           </div>
 
           {risk.correlation.highPairs.length > 0 ? (
@@ -258,6 +450,11 @@ export function RiskLab({ risk, scenarios }: { risk: UniversalRisk; scenarios: S
                         <td className="py-2 text-xs font-medium text-foreground">
                           {h.symbol ?? h.name}
                         </td>
+                        {/* No "≤−100%" marker here any more, and no floor to mark:
+                            the engine composes factor shocks in log-return space, so
+                            a long position's impact is bounded above −100% by
+                            construction rather than clamped after the fact. See
+                            applyShocks(). */}
                         <td className={`px-2 py-2 text-right font-mono text-xs font-semibold tabular-nums ${
                           h.impactPct < 0 ? "text-negative" : h.impactPct > 0 ? "text-positive" : "text-muted"
                         }`}>

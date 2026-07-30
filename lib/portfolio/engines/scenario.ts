@@ -26,8 +26,12 @@
  * its class adapter and measured wherever possible (equity beta from returns, bond
  * duration from the provider).
  *
- *     holding impact % = Σ_factor  sensitivity[factor] × shock[factor]
+ *     holding impact = exp( Σ_factor  sensitivity[factor] × shock[factor] ) − 1
  *     portfolio impact = Σ_holding impact% × weight
+ *
+ * The composition is in LOG-RETURN space — see applyShocks() for why summing the
+ * products as simple returns is not merely imprecise but produces impossible
+ * results at crisis-sized shocks.
  *
  * Gold rises in the 2008 scenario because its gold/inflation sensitivities are
  * positive and its equity beta is ~0 — not because someone remembered to add a
@@ -54,7 +58,11 @@ export interface HoldingImpact {
   symbol: string | null;
   name: string;
   assetClass: string;
-  /** % change in this holding's value. */
+  /**
+   * % change in this holding's value.
+   *
+   * Structurally bounded to (−100, ∞) for a long position — see applyShocks().
+   */
   impactPct: number;
   /** Change in base-currency value. */
   impactValue: number;
@@ -69,6 +77,17 @@ export interface ScenarioResult {
   category: ScenarioDef["category"];
   /** % change in total portfolio value. */
   portfolioImpactPct: number;
+  /**
+   * `portfolioImpactPct` before rounding to one decimal.
+   *
+   * Anything that DIFFERENCES two scenario runs must use this, for the same reason
+   * HealthScore carries `totalExact`: a before/after comparison that subtracts two
+   * values already quantized to 0.1pp cannot resolve a change smaller than that,
+   * and it reports the quantization as the answer. That is how the cash plan's
+   * scenario table came to show "−8.6% → −6.6%, change 0.0pp" — the columns and
+   * the delta were rounded independently, so they contradicted each other.
+   */
+  portfolioImpactPctExact: number;
   portfolioImpactValue: number;
   holdings: HoldingImpact[];
   worst: HoldingImpact | null;
@@ -233,36 +252,86 @@ function isCovered(sens: FactorSensitivities, shocks: FactorShocks): boolean {
   });
 }
 
+/** A log return, as the simple % change a reader understands. */
+const pctFromLog = (logReturn: number) => Math.expm1(logReturn) * 100;
+
+/**
+ * One factor's contribution, in LOG-RETURN space.
+ *
+ * `equityBeta`, `usd`, `oil`, `gold`, `cryptoBeta` are ELASTICITIES against a %
+ * move in that complex, so the complex's move is converted to a log return first
+ * and the elasticity scales it: a beta of 1.0 against a −50% equity shock is
+ * exactly −50%, a beta of 2.0 is −75%, never −100%.
+ *
+ * `rates`, `creditSpread`, `inflation`, `realEstateCap`, `liquidityStress` are
+ * per-unit-of-shock PRICE sensitivities, and that is a log-price derivative by
+ * definition — modified duration IS −∂ln P/∂y, which is why the textbook
+ * approximation for a large rate move is `exp(−D·Δy)`, not `1 − D·Δy`. So their
+ * product is already a log return and only needs rescaling from % to a fraction.
+ *
+ * A complex cannot fall more than 100%, and a total wipeout of one is log(0) —
+ * unbounded for anything with a NEGATIVE loading on it, and NaN for a shock past
+ * −100%. Neither is a number the UI or JSON can carry, so the move is bounded a
+ * hair above a wipeout. Only `runCustomScenario` can reach it; nothing in
+ * SCENARIOS shocks a complex by more than −70%.
+ */
+const MIN_FACTOR_MOVE = -0.9999;
+
+function logContribution(factor: Factor, sensitivity: number, shock: number): number {
+  if (FACTOR_SHOCK_UNIT[factor] !== "%") return (sensitivity * shock) / 100;
+  return sensitivity * Math.log1p(Math.max(shock / 100, MIN_FACTOR_MOVE));
+}
+
 /**
  * Apply a factor-shock vector to one holding.
  *
- * `equityBeta`, `usd`, `oil`, `gold`, `cryptoBeta` are elasticities: a beta of 1.2
- * against a -35% equity shock is -42%. `rates`, `creditSpread`, `inflation`,
- * `realEstateCap` are per-percentage-point: a -7 duration against a +2pp rate shock
- * is -14%. Both are just `sensitivity × shock` — the units are chosen so the
- * arithmetic is uniform, which is what lets one line of code handle a Treasury fund
- * and a gold ETF correctly at the same time.
+ * ── Why the sum is in log space ───────────────────────────────────────────────
+ *
+ * This used to be `impactPct = Σ sensitivity × shock`, floored at −100%. The
+ * floor was load-bearing, and that is the tell: on the real book TSM carries a
+ * MEASURED equity beta of 2.14, and the 2008 scenario shocks equities −50%, so
+ * the sum came to −105.2% — a long-only position with no leverage projected to
+ * lose more than it owns. The floor turned that into a confident "−100.0%", i.e.
+ * a total wipeout of a quality large-cap (TSM fell ~55% in 2008), and every
+ * dollar figure downstream inherited it.
+ *
+ * The defect is not the coefficient — a 2.14 beta is a real measurement — it is
+ * the composition. Adding `sensitivity × shock` terms treats each as a SIMPLE
+ * return, and simple returns do not compose additively over a large move: two
+ * −50% legs are −75%, not −100%. Sensitivities are derivatives of log price
+ * (see logContribution), so they compose by ADDITION IN LOG SPACE and convert
+ * back through `exp`. That is bounded below by −100% for any finite exposure, so
+ * the impossible result is now unrepresentable rather than clamped away.
+ *
+ * The correction only bites at crisis scale, which is the point: at a −12%
+ * equity shock log and linear agree to ~0.1pp, so ordinary scenarios read as
+ * they did. And it never flatters risk where it matters — a beta of 1.0 against
+ * −50% is still exactly −50%, and a sub-1 beta loses slightly MORE than the
+ * linear model said.
  */
 export function applyShocks(holding: Holding, shocks: FactorShocks): HoldingImpact {
   const drivers: { factor: Factor; label: string; contribution: number }[] = [];
-  let impactPct = 0;
+  let logImpact = 0;
 
   for (const [f, shock] of Object.entries(shocks) as [Factor, number][]) {
     const sensitivity = holding.factors[f];
     if (sensitivity == null || sensitivity === 0 || shock === 0) continue;
+    if (!Number.isFinite(sensitivity) || !Number.isFinite(shock)) continue;
 
-    const contribution = sensitivity * shock;
-    impactPct += contribution;
-    drivers.push({ factor: f, label: FACTOR_LABEL[f], contribution: Math.round(contribution * 10) / 10 });
+    const contribution = logContribution(f, sensitivity, shock);
+    logImpact += contribution;
+    // Reported in the same simple-% space as the total, so a driver reads as
+    // "this factor alone would move the holding by X%".
+    drivers.push({
+      factor: f,
+      label: FACTOR_LABEL[f],
+      contribution: Math.round(pctFromLog(contribution) * 10) / 10,
+    });
   }
 
   drivers.sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution));
 
-  // A holding cannot lose more than 100% of its value. Without this bound a
-  // long-duration bond against a large rate shock, or a levered property, can
-  // mathematically go below zero — which would then quietly corrupt the
-  // portfolio total it feeds into.
-  impactPct = Math.max(impactPct, -100);
+  const impactPct = pctFromLog(logImpact);
 
   return {
     id: holding.id,
@@ -302,14 +371,15 @@ export function runScenario(
 
   const sorted = [...impacts].sort((a, b) => a.impactPct - b.impactPct);
 
+  const impactPctExact = totalValue > 0 ? (portfolioImpactValue / totalValue) * 100 : 0;
+
   return {
     id: def.id,
     name: def.name,
     description: def.description,
     category: def.category,
-    portfolioImpactPct: totalValue > 0
-      ? Math.round((portfolioImpactValue / totalValue) * 1000) / 10
-      : 0,
+    portfolioImpactPct: Math.round(impactPctExact * 10) / 10,
+    portfolioImpactPctExact: impactPctExact,
     portfolioImpactValue: Math.round(portfolioImpactValue),
     holdings: impacts,
     worst: sorted[0] ?? null,
@@ -317,6 +387,73 @@ export function runScenario(
     coveragePct: totalValue > 0 ? Math.round((coveredValue / totalValue) * 100) : 0,
     shockSummary: describeShocks(def.shocks),
   };
+}
+
+export interface ScenarioComparisonRow {
+  id: string;
+  name: string;
+  description: string;
+  /** Rounded to `decimals`. */
+  beforePct: number | null;
+  /** Rounded to `decimals`. */
+  afterPct: number | null;
+  /** EXACTLY `afterPct − beforePct` at the same precision. Null when the scenario wasn't in the before set. */
+  deltaPp: number | null;
+}
+
+export interface ScenarioComparison {
+  rows: ScenarioComparisonRow[];
+  /** Decimal places every column in this table is rendered at. */
+  decimals: number;
+}
+
+/**
+ * Pair two scenario runs into before / after / change rows.
+ *
+ * Two rules, both learned from the bug this replaces:
+ *
+ *   1. THE CHANGE IS DERIVED FROM THE DISPLAYED VALUES, not computed in parallel
+ *      with them. Rounding the columns and the delta independently is how a row
+ *      came to read "−8.6% → −6.6%, change 0.0pp": three numbers that each
+ *      answered a slightly different question. `deltaPp` here is the subtraction
+ *      the reader can do on the page, by construction.
+ *   2. THE PRECISION IS CHOSEN FROM THE DATA. One decimal is right for a −41%
+ *      crisis loss and destroys a 0.02pp improvement, and a small deployment into
+ *      a large portfolio produces exactly the latter — a table of "0.0pp"s that
+ *      looks like a broken calculation but is really a precision floor. So when
+ *      nothing in the table moves by 0.1pp, every column gains a decimal instead
+ *      of the whole comparison collapsing to zero.
+ */
+export function compareScenarioSets(
+  before: ScenarioResult[],
+  after: ScenarioResult[],
+): ScenarioComparison {
+  const beforeById = new Map(before.map((s) => [s.id, s]));
+
+  const largestMove = after.reduce((max, s) => {
+    const b = beforeById.get(s.id);
+    if (!b) return max;
+    return Math.max(max, Math.abs(s.portfolioImpactPctExact - b.portfolioImpactPctExact));
+  }, 0);
+  const decimals = largestMove > 0 && largestMove < 0.1 ? 2 : 1;
+  const round = (v: number) => Math.round(v * 10 ** decimals) / 10 ** decimals;
+
+  const rows = after.map((s) => {
+    const b = beforeById.get(s.id);
+    const beforePct = b ? round(b.portfolioImpactPctExact) : null;
+    const afterPct = round(s.portfolioImpactPctExact);
+    return {
+      id: s.id,
+      name: s.name,
+      description: s.description,
+      beforePct,
+      afterPct,
+      // Rounded again so binary floating point can't turn 2.0 into 2.0000000000000004.
+      deltaPp: beforePct != null ? round(afterPct - beforePct) : null,
+    };
+  });
+
+  return { rows, decimals };
 }
 
 export function runAllScenarios(holdings: Holding[], totalValue: number): ScenarioResult[] {

@@ -1,6 +1,5 @@
 import { registerClass } from "../model/adapter";
-import { marketValuation, yieldIncome, measuredBeta, fundamentalScore } from "./market-base";
-import { CLASS_FACTORS, mergeFactors } from "./reference/factor-sensitivities";
+import { marketValuation, yieldIncome, measuredBeta, fundamentalScore, riskModelFor } from "./market-base";
 import type { PortfolioClassAdapter } from "../model/adapter";
 
 /**
@@ -24,10 +23,12 @@ export const reitAdapter: PortfolioClassAdapter = {
   value: marketValuation,
   income: (raw, val, ctx) => yieldIncome(raw, val, ctx, "distribution"),
 
+  // Unchanged in substance — measured beta over the REIT reference, plus rate and
+  // cap-rate exposure — but resolved through the one shared classifier, so a REIT
+  // FUND bought as an ETF (SCHH, VNQ) now lands on this same model instead of
+  // being stress-tested as a broad equity fund.
   factors(raw, ctx) {
-    const f = raw.symbol ? ctx.fundamentals.get(raw.symbol.toUpperCase()) : undefined;
-    const beta = measuredBeta(raw.symbol, ctx) ?? f?.beta ?? CLASS_FACTORS.reit.equityBeta!;
-    return mergeFactors(CLASS_FACTORS.reit, { equityBeta: beta });
+    return riskModelFor(raw, ctx).factors;
   },
 
   metrics(raw, ctx) {
@@ -57,6 +58,7 @@ export const reitAdapter: PortfolioClassAdapter = {
     return {
       sector: "Real Estate",
       industry: f?.industry ?? null,
+      riskModel: riskModelFor(raw, ctx).label,
       geography: f?.country ?? null,
       currency: f?.currency ?? raw.currency,
     };

@@ -1,9 +1,23 @@
 import { registerClass, manualValuation, lerpScore, coverage, shrinkToConfidence } from "../model/adapter";
-import { CLASS_FACTORS, mergeFactors } from "./reference/factor-sensitivities";
+import { riskModelFor } from "./market-base";
 import { toManualAsset, MANUAL_STALENESS_DAYS } from "./manual-base";
 import { computeRealEstateMetrics } from "../../manual-asset-analysis";
 import type { PortfolioClassAdapter } from "../model/adapter";
+import type { RawHolding } from "../model/types";
 import type { RealEstateDetails } from "../../types";
+
+/**
+ * Equity multiple on the property: gross value ÷ net equity, capped at 6× so a
+ * near-zero-equity position cannot produce an absurd shock. Used for the factor
+ * loadings only — value() already reports net equity.
+ */
+function leverageOf(raw: RawHolding): number {
+  const d = raw.meta.details as RealEstateDetails | undefined;
+  const value = raw.manualValue ?? raw.costBasis;
+  const mortgage = d?.outstandingMortgage ?? 0;
+  const equity = Math.max(value - mortgage, 1);
+  return Math.min(value / equity, 6);
+}
 
 /**
  * Real estate — a manually-valued, illiquid, LEVERED asset.
@@ -67,27 +81,21 @@ export const realEstateAdapter: PortfolioClassAdapter = {
     };
   },
 
-  factors(raw) {
-    const d = raw.meta.details as RealEstateDetails | undefined;
-    const base = CLASS_FACTORS.real_estate;
-
-    // Leverage amplifies every factor loading. A 75%-LTV property has ~4x the
-    // sensitivity to cap rates that an unlevered one does — ignoring this is how a
-    // stress test tells someone their house is safe.
-    const value = raw.manualValue ?? raw.costBasis;
-    const mortgage = d?.outstandingMortgage ?? 0;
-    const equity = Math.max(value - mortgage, 1);
-    const leverage = Math.min(value / equity, 6); // cap at 6x to keep shocks sane
-
-    const levered: Record<string, number> = {};
-    for (const [k, v] of Object.entries(base)) {
-      levered[k] = v * leverage;
-    }
-    // The mortgage itself is a short bond position: rising rates on a FIXED
-    // mortgage actually help the owner (the liability's market value falls).
-    // We do not model that here — it requires the loan term we never collect —
-    // so rate sensitivity stays the (conservative) levered property sensitivity.
-    return mergeFactors(levered);
+  /**
+   * Leverage amplifies every factor loading. A 75%-LTV property has ~4x the
+   * sensitivity to cap rates that an unlevered one does — ignoring this is how a
+   * stress test tells someone their house is safe. Unchanged in substance; the
+   * multiple is now handed to the shared factor builder (which applies it to every
+   * loading and to the reported duration) instead of being multiplied here, so
+   * property sits in the same catalogue and audit trail as everything else.
+   *
+   * The mortgage itself is a short bond position: rising rates on a FIXED mortgage
+   * actually help the owner (the liability's market value falls). We do not model
+   * that — it requires the loan term we never collect — so rate sensitivity stays
+   * the (conservative) levered property sensitivity.
+   */
+  factors(raw, ctx) {
+    return riskModelFor(raw, ctx, { measurements: { leverage: leverageOf(raw) } }).factors;
   },
 
   metrics(raw) {
@@ -103,13 +111,14 @@ export const realEstateAdapter: PortfolioClassAdapter = {
     };
   },
 
-  attributes(raw) {
+  attributes(raw, ctx) {
     const d = raw.meta.details as RealEstateDetails | undefined;
     return {
       sector: "Real Estate",
       propertyType: d?.propertyType ?? null,
       geography: d?.address ? "Direct property" : null,
       currency: raw.currency,
+      riskModel: riskModelFor(raw, ctx, { measurements: { leverage: leverageOf(raw) } }).label,
     };
   },
 

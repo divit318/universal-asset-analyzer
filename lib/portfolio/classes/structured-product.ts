@@ -1,5 +1,6 @@
 import { registerClass, manualValuation, fxRate, lerpScore } from "../model/adapter";
 import { CLASS_FACTORS, mergeFactors } from "./reference/factor-sensitivities";
+import { RISK_MODELS } from "./reference/risk-models";
 import { toManualAsset, MANUAL_STALENESS_DAYS } from "./manual-base";
 import { computeStructuredProductMetrics } from "../../manual-asset-analysis";
 import type { PortfolioClassAdapter } from "../model/adapter";
@@ -129,6 +130,11 @@ export const structuredProductAdapter: PortfolioClassAdapter = {
       productType: d?.productType ?? null,
       geography: null,
       currency: raw.currency,
+      // This class keeps its own factors() deliberately: the equity beta is
+      // CONDITIONAL on the live distance to the barrier, which no catalogue entry
+      // can express. It is registered in the catalogue as `structured_note` so the
+      // model inventory stays complete.
+      riskModel: RISK_MODELS.structured_note.label,
     };
   },
 

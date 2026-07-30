@@ -1,5 +1,5 @@
 import { registerClass, fxRate, lerpScore } from "../model/adapter";
-import { CLASS_FACTORS, mergeFactors } from "./reference/factor-sensitivities";
+import { riskModelFor } from "./market-base";
 import type { PortfolioClassAdapter } from "../model/adapter";
 
 /**
@@ -59,8 +59,14 @@ export const cashAdapter: PortfolioClassAdapter = {
     };
   },
 
-  factors() {
-    return mergeFactors(CLASS_FACTORS.cash);
+  /**
+   * Still inflation-exposed and still a liquidity ASSET — plus, now, the currency
+   * exposure a foreign deposit obviously has. A CHF balance in a USD book used to
+   * carry no `usd` loading at all, i.e. it was modelled as immune to the exchange
+   * rate that entirely determines its dollar value.
+   */
+  factors(raw, ctx) {
+    return riskModelFor(raw, ctx).factors;
   },
 
   metrics(raw) {
@@ -68,12 +74,13 @@ export const cashAdapter: PortfolioClassAdapter = {
     return { yield: apy };
   },
 
-  attributes(raw) {
+  attributes(raw, ctx) {
     return {
       sector: "Cash",
       geography: null,
       currency: raw.currency,
       vehicle: typeof raw.meta.vehicle === "string" ? raw.meta.vehicle : null,
+      riskModel: riskModelFor(raw, ctx).label,
     };
   },
 
