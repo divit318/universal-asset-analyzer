@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
-import { listLots } from "@/lib/db";
-import { getHistory, getQuote, getQuotes } from "@/lib/yahoo";
-import { portfolioPerformance, type PortfolioPerformance } from "@/lib/portfolio-performance";
-import type { PortfolioLot } from "@/lib/types";
+import { buildEvaluation } from "@/lib/portfolio/report";
+import { buildPerformance } from "@/lib/portfolio/performance";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,53 +8,34 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/portfolio/performance
  *
- * Money-weighted (XIRR) portfolio performance from the lot ledger, plus a
- * true benchmark-relative comparison (the same cash flows invested in the
- * benchmark index). This is the "are you actually beating the market?" answer
- * the old cost-vs-value number could never give.
+ * Money-weighted (XIRR) performance, the realized/unrealized split, and a true
+ * benchmark-relative comparison, for callers that want performance WITHOUT the
+ * rest of the report.
+ *
+ * The Portfolio page does NOT use this route. It reads `report.performance`, which
+ * is derived from the report's own evaluation, because two routes each building
+ * their own `MarketContext` against a 15-second quote cache produced two totals
+ * that could not reconcile — a measured $2,074.82 gap between the page headline and
+ * this panel's own "total portfolio value". Anything that renders BOTH a portfolio
+ * total and a performance figure must take them from one report.
+ *
+ * All the math lives in lib/portfolio/performance.ts and lib/portfolio-performance.ts.
+ * This route is a thin adapter over the same functions, so it cannot drift from the
+ * page's numbers by definition — only by snapshot time.
  */
-export async function GET() {
-  const lots = listLots();
-  if (lots.length === 0) {
-    return NextResponse.json({ empty: true } satisfies { empty: true });
+export async function GET(request: Request) {
+  const portfolioId = Number(new URL(request.url).searchParams.get("portfolioId") ?? 1);
+  if (!Number.isInteger(portfolioId) || portfolioId < 1) {
+    return NextResponse.json({ error: "Invalid portfolioId" }, { status: 400 });
   }
 
-  // Group lots by symbol.
-  const bySymbol = new Map<string, PortfolioLot[]>();
-  for (const l of lots) {
-    const list = bySymbol.get(l.symbol);
-    if (list) list.push(l);
-    else bySymbol.set(l.symbol, [l]);
+  try {
+    const { ctx, evaluation } = await buildEvaluation({ portfolioId });
+    const performance = await buildPerformance(evaluation.holdings, ctx.asOf, portfolioId, ctx);
+    return NextResponse.json(performance);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to compute performance";
+    console.error("[portfolio/performance]", err);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
-
-  const symbols = [...bySymbol.keys()];
-  const asOf = new Date().toISOString();
-
-  // Benchmark: S&P 500 via SPY. (A per-region benchmark split — SPY vs ^NSEI —
-  // is a future refinement; today's holdings are US.)
-  const BENCH = "SPY";
-  const earliest = lots.reduce((min, l) => (l.tradeDate < min ? l.tradeDate : min), lots[0].tradeDate);
-  const daysSinceFirst = Math.ceil((Date.now() - Date.parse(earliest)) / 86_400_000) + 7;
-
-  const [quotes, benchHistory, benchQuote] = await Promise.all([
-    getQuotes(symbols),
-    getHistory(BENCH, Math.max(30, daysSinceFirst)),
-    getQuote(BENCH).catch(() => null),
-  ]);
-
-  const priceBySymbol = new Map(quotes.map((q) => [q.symbol.toUpperCase(), q.price]));
-  const priceFor = (s: string) => priceBySymbol.get(s.toUpperCase()) ?? null;
-
-  const benchPriceNow = benchQuote?.price ?? benchHistory.at(-1)?.close ?? 0;
-  const benchmark =
-    benchHistory.length > 0 && benchPriceNow > 0
-      ? {
-          symbol: BENCH,
-          history: benchHistory.map((h) => ({ date: h.date.slice(0, 10), close: h.close })),
-          priceNow: benchPriceNow,
-        }
-      : undefined;
-
-  const performance: PortfolioPerformance = portfolioPerformance(bySymbol, priceFor, asOf, benchmark);
-  return NextResponse.json(performance);
 }

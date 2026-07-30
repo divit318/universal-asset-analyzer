@@ -30,6 +30,19 @@ export interface PositionAggregate {
   avgCost: number;
   /** Cumulative realized P&L from sells, net of fees. */
   realizedPnl: number;
+  /**
+   * The same realized P&L, broken out per sell with the date it happened on.
+   * Sums exactly to `realizedPnl`.
+   *
+   * Realized P&L is a HISTORICAL fact: it was banked on a specific day, at that
+   * day's exchange rate. A single cumulative scalar cannot be converted to another
+   * currency correctly — it has no one date to convert at — which is why a closed
+   * foreign position's gain could only ever be converted at today's rate, or (when
+   * the currency was unknown because the position had left the holdings list) at
+   * 1.0. Exposed here rather than recomputed by callers, so the average-cost logic
+   * above stays the only implementation of it.
+   */
+  realizedEvents: { date: string; amount: number }[];
   /** Total transaction fees paid across all lots. */
   totalFees: number;
   /** Earliest lot's trade date — the position's inception. */
@@ -65,6 +78,7 @@ export function aggregateLots(lots: PortfolioLot[]): PositionAggregate | null {
   let avgCost = 0;
   let realizedPnl = 0;
   let totalFees = 0;
+  const realizedEvents: { date: string; amount: number }[] = [];
 
   for (const lot of sorted) {
     totalFees += lot.fees;
@@ -76,7 +90,9 @@ export function aggregateLots(lots: PortfolioLot[]): PositionAggregate | null {
     } else {
       // Realize against current basis on the shares actually held; fees reduce it.
       const basisShares = Math.min(lot.shares, Math.max(shares, 0));
-      realizedPnl += basisShares * (lot.price - avgCost) - lot.fees;
+      const realized = basisShares * (lot.price - avgCost) - lot.fees;
+      realizedPnl += realized;
+      realizedEvents.push({ date: lot.tradeDate, amount: realized });
       shares = Math.max(0, shares - lot.shares);
       if (shares === 0) avgCost = 0; // flat → basis resets for any re-entry
     }
@@ -88,6 +104,7 @@ export function aggregateLots(lots: PortfolioLot[]): PositionAggregate | null {
     shares: tidy(shares),
     avgCost,
     realizedPnl,
+    realizedEvents,
     totalFees,
     firstTradeDate: sorted[0].tradeDate,
     lotCount: lots.length,
