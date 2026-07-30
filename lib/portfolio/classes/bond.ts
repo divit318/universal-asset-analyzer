@@ -57,7 +57,13 @@ export const bondAdapter: PortfolioClassAdapter = {
     return {
       duration: f?.duration ?? null,
       maturity: f?.maturity ?? null,
-      yield: f?.dividendYield ?? null,
+      // `dividendYield` arrives from the provider as a FRACTION (0.0432), but the
+      // portfolio model's `yield` metric is in PERCENT everywhere else — cash
+      // reports APY as 4.32, real estate reports capRatePercent, and so on. It is
+      // converted here, at the boundary, so one metric key never carries two
+      // different units. (Before this, the display layer guessed from magnitude
+      // and got a 100x error on anything above 1.)
+      yield: f?.dividendYield != null ? f.dividendYield * 100 : null,
       expenseRatio: f?.expenseRatio ?? null,
     };
   },

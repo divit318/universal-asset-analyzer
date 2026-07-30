@@ -257,7 +257,7 @@ export default function EnginePage() {
   // never mark them current, and clicking "Health" would leave it stranded
   // mid-viewport. This gives every jump target room to actually reach the top.
   return (
-    <PageShell gap="gap-8" py="py-8 pb-[40vh]">
+    <PageShell gap="gap-8" py="py-8 pb-[40vh]" width="wide">
       <DeskRail sections={sections} />
 
       {/* ── Masthead ── */}

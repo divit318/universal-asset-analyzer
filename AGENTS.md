@@ -276,6 +276,99 @@ export function MyComponent({ data, onSubmit }: Props) {
 
 ---
 
+## Verification Commands
+
+Run these before considering any change complete:
+
+```bash
+npx tsc --noEmit          # must be silent
+npx vitest run            # 1426 tests as of the 2026-07-27 audit
+npx eslint app lib        # see "known pre-existing" below
+npm run build             # catches Server/Client boundary errors tsc misses
+```
+
+**Known pre-existing lint issues** (do not "fix" as a drive-by, and do not treat
+as a regression you caused):
+- `app/_home/_atmosphere/use-count-up.ts:34` — setState-in-effect error
+- `app/_home/modules/todays-brief.tsx:31` — unused `definition` warning
+
+For UI work, verify in the browser (Playwright MCP) as well. `tsc` passes on JSX
+that Turbopack cannot parse, so a green typecheck is **not** proof the page
+renders — `npm run build` or a real page load is.
+
+---
+
+## Shipped-But-Unwired: Check Before You Build
+
+The single most common finding of the 2026-07-27 product audit was **fully-built,
+fully-documented infrastructure with zero callers**. Before implementing anything,
+grep for it — it is often already there:
+
+| What existed | Who was using it | Impact once wired |
+|---|---|---|
+| `/api/ai/report` streaming route | nobody | 103s → 28s to first content |
+| `aiVerdict` cache policy in `lib/platform/registry.ts` | nobody | 115.3s → 0.04s on a repeat view |
+| Scanner's staged progress UI | only the Scanner | reused as `<TaskProgress>` |
+
+`lib/platform/data-layer.ts` claims "Nothing bypasses it. Not … AI generation
+itself." AI generation was the one thing that did. **Treat doc comments as intent,
+not as fact** — verify against the call graph.
+
+---
+
+## Correctness Rules Learned The Hard Way
+
+**Never infer a unit from a value's magnitude.** `Math.abs(v) <= 1 ? v*100 : v`
+rendered AAPL's 1.4147 ROE as "1.41%" — 100x low on exactly the values an analyst
+most wants to see. Declare units per metric key (see `METRIC_UNITS` in
+`app/portfolio/_components/universal/holdings-panel.tsx`).
+
+**Opt-in scoring arguments cause cross-surface divergence.** `computeScore`'s
+`sectorRotation` parameter is documented as "omit entirely to leave existing
+callers' output unchanged". `/compare` omitted it and reported NVDA at 86 while
+`/research` said 80. If you add a caller of `computeScore`, pass **every**
+argument, including the market region and the same history window (1825 days).
+`tests/scoring-consistency.test.ts` pins this.
+
+**Nulls sink in both sort directions.** "Worst first" must not surface every row
+whose value is merely unknown. A missing value is not a small value.
+
+**Never cache a failure.** Persisting an Ollama-offline fallback pins "Start
+Ollama" for the whole TTL after Ollama comes back. See `cacheVerdict`.
+
+**`isInitialLoading` includes the `idle` tick.** The client store starts at
+`idle`, not `loading`. A page deriving `empty` from `!isInitialLoading && !data`
+will flash its empty state before any request starts — `/portfolio` told a user
+with 26 holdings "No holdings yet."
+
+**Name a score by the question it answers.** UAA computes six different 0-100
+numbers (`lib/score-kinds.ts`). Rendering any of them as "Score" or "Overall"
+makes two correct answers look like a contradiction. Use `<ScoreChip kind=…>`,
+and only band the kinds that are genuinely Buy/Hold/Sell calls.
+
+**A paragraph explaining a label means the label is wrong.** Rename instead.
+
+---
+
+## Layout Conventions
+
+- `<PageShell width="wide">` (1920px) for data grids: Screener, Portfolio,
+  Compare, Engine, Knowledge Graph, Watchlist.
+- `<PageShell>` (default `reading`, 1280px) for prose and reports: IC Report,
+  Journal, Calendar.
+- Use `<DataTable>` for any list of 10+ rows rather than a card list. Cards cost
+  ~2.2x the vertical space and cannot be ranked.
+- Page `description` text is an onboarding affordance. Hide it once the user has
+  loaded real data.
+- Use semantic tokens (`text-positive`, `text-negative`, `text-warning`,
+  `text-brand`), never raw Tailwind palette values (`text-emerald-500`), which do
+  not respond to `data-theme`.
+- For d3-force graphs: `forceCenter` only moves the centroid. Without weak
+  `forceX`/`forceY`, loosely-connected nodes drift thousands of units out and
+  destroy any fit-to-viewport calculation.
+
+---
+
 ## One More Thing
 
 This is a single-user, self-hosted equity research platform. All data stays local. No cloud APIs, no subscriptions, no selling data. Code quality and architectural clarity matter because there's no DevOps team to fix problems.

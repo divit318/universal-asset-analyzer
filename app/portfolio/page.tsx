@@ -115,7 +115,7 @@ function PortfolioPageInner() {
   const empty = !isInitialLoading && !error && (!report || report.holdingCount === 0);
 
   return (
-    <PageShell>
+    <PageShell width="wide">
       <ArrivalHighlight targetId={highlightTarget} />
       <PageHeader
         title="Portfolio"

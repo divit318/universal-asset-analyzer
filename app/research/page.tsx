@@ -20,12 +20,13 @@ import type {
   SectorRotationEntry,
   TimelineEvent,
 } from "@/lib/types";
-import type { InvestmentVerdict } from "@/app/api/ai/verdict/route";
+import type { InvestmentProfile, PortfolioFitAnalysis } from "@/lib/ios/types";
 import type { ChartQARelatedTarget } from "@/lib/ai-chart-qa";
 import type { ScreenerInCompany, ScreenerInPeer } from "@/lib/screener-in";
 import { detectMarket, MARKET_BADGE, MARKET_LABEL, type MarketRegion } from "@/lib/market";
 import { detectAssetClass } from "@/lib/asset-class";
 import { useResearchBundle } from "@/lib/platform/client/use-research-bundle";
+import { useVerdictStream } from "@/lib/ai/client/use-verdict-stream";
 import { useFocusSafe } from "@/lib/focus-context";
 import { useDataset, useDatasetValue } from "@/lib/platform/client/use-dataset";
 import { useRecordActivity } from "@/app/_home/use-record-activity";
@@ -207,6 +208,33 @@ const RelativeStrengthChart = dynamic(
 
 type Tab = "conviction" | "analysis" | "financials" | "ownership" | "details";
 
+/**
+ * The portfolio-personalization query params for the streamed verdict.
+ *
+ * Returns `{}` (not null) when there is nothing to personalize with, so the
+ * request still runs — a generic verdict is the correct output for a user with
+ * no portfolio, and gating on personalization would leave them with no verdict
+ * at all.
+ */
+function buildVerdictParams(
+  fit: PortfolioFitAnalysis | null | undefined,
+  profile: InvestmentProfile | null,
+): Record<string, string> {
+  if (!fit || fit.isGeneric || !profile?.hasPortfolio) return {};
+
+  const params: Record<string, string> = {
+    fitScore: String(fit.fitScore),
+    fitTier: fit.fitTier,
+    isInPortfolio: String(fit.isInPortfolio),
+    objective: profile.objective,
+  };
+  if (fit.reasons.length > 0) params.reasons = fit.reasons.slice(0, 2).join("; ");
+  if (fit.suggestedAllocationPct != null) params.suggestedPct = fit.suggestedAllocationPct.toFixed(1);
+  if (profile.missingSectors.length > 0)
+    params.missingSectors = profile.missingSectors.slice(0, 4).join(", ");
+  return params;
+}
+
 interface IndiaDerivedData {
   promoterHolding: number | null;
   fiiHolding: number | null;
@@ -329,9 +357,9 @@ function ResearchWorkspace({
   // Tab state
   const [tab, setTab] = useState<Tab>("conviction");
 
-  // AI verdict (auto-fetched, drives hero + analysis tab)
-  const [verdict, setVerdict] = useState<InvestmentVerdict | null>(null);
-  const [verdictLoading, setVerdictLoading] = useState(true);
+  // AI verdict — streamed section by section (see the hook's header for why the
+  // previous fetch-once-per-render-of-a-changing-key approach fired three
+  // concurrent inferences). Wired up below `portfolioFit`, which it depends on.
 
   // Fundamentals, peers, and sector rotation are delivered by the orchestrated
   // research bundle and read straight from the platform store. They used to be
@@ -455,38 +483,27 @@ function ResearchWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quote.symbol]);
 
-  // Verdict fetch — re-runs when symbol changes OR when portfolio fit becomes
-  // available (progressive enhancement: generic verdict → personalized verdict).
-  const verdictPortfolioKey = portfolioFit && !portfolioFit.isGeneric ? portfolioFit.fitScore : null;
-  useEffect(() => {
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setVerdictLoading(true);
-    setVerdict(null);
-    /* eslint-enable react-hooks/set-state-in-effect */
+  /* ── AI verdict, streamed ────────────────────────────────────────────────────
+     The personalization params are built once, memoized on their own values, and
+     the request is gated on the IOS profile having settled. That gate is the
+     whole fix: the previous version deliberately generated a *generic* verdict
+     and then re-generated a *personalized* one the moment portfolio fit arrived.
+     On a backend that serializes generations, that "progressive enhancement"
+     bought nothing and cost a second full inference — and because it never
+     aborted the first, a third request from the same transition ran too.
 
-    const params = new URLSearchParams({ symbol: quote.symbol });
-    if (portfolioFit && !portfolioFit.isGeneric && ios?.profile.hasPortfolio) {
-      params.set("fitScore", String(portfolioFit.fitScore));
-      params.set("fitTier", portfolioFit.fitTier);
-      if (portfolioFit.reasons.length > 0)
-        params.set("reasons", portfolioFit.reasons.slice(0, 2).join("; "));
-      params.set("isInPortfolio", String(portfolioFit.isInPortfolio));
-      if (portfolioFit.suggestedAllocationPct != null)
-        params.set("suggestedPct", portfolioFit.suggestedAllocationPct.toFixed(1));
-      if (ios.profile.missingSectors.length > 0)
-        params.set("missingSectors", ios.profile.missingSectors.slice(0, 4).join(", "));
-      params.set("objective", ios.profile.objective);
-    }
+     No memo is needed here: the hook keys the request on the *serialized* query
+     string, so a fresh object with equal values is not a new request. */
+  const verdictParams = buildVerdictParams(portfolioFit, ios?.profile ?? null);
 
-    void fetch(`/api/ai/verdict?${params}`)
-      .then((r) => r.json() as Promise<InvestmentVerdict & { error?: string }>)
-      .then((json) => {
-        if (!json.error) setVerdict(json);
-      })
-      .catch(() => { /* AI is best-effort */ })
-      .finally(() => setVerdictLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quote.symbol, verdictPortfolioKey]);
+  const verdictStream = useVerdictStream(quote.symbol, verdictParams, {
+    // Waiting for the profile costs a second or two of "waiting"; not waiting
+    // costs an entire extra local inference and shows a verdict about to be
+    // replaced. `ios == null` means there is no IOS provider at all, so there is
+    // nothing to wait for.
+    enabled: ios == null || ios.profileReady,
+  });
+  const verdict = verdictStream.verdict;
 
   // The asset-class-specific sections below all go through `useDataset`, which
   // gives each of them three things the hand-rolled `useEffect` + `fetch` +
@@ -762,7 +779,12 @@ function ResearchWorkspace({
       <Reveal index={2}>
         <DecisionHero
           verdict={verdict}
-          loading={verdictLoading}
+          loading={verdict == null && verdictStream.status !== "error"}
+          received={verdictStream.received}
+          streaming={verdictStream.streaming}
+          elapsedMs={verdictStream.elapsedMs}
+          error={verdictStream.error}
+          onRetry={verdictStream.retry}
           score={isIndia || isMacro ? null : isFund ? fundScore : isCrypto ? cryptoScore : isCommodity ? commodityScore : isForex ? forexScore : fundamentals?.score ?? null}
           confidenceOverride={isIndia ? indiaSnapshot?.composite ?? null : null}
         />
@@ -873,6 +895,9 @@ function ResearchWorkspace({
           symbol={quote.symbol}
           sector={fundamentals?.snapshot?.sector}
           autoLoad
+          // Hold until fundamentals resolve, so the sector is part of the very
+          // first request instead of triggering a second, superseding one.
+          ready={!fundsLoading}
           onLoaded={setMovementExplanation}
         />
       </Reveal>
@@ -965,7 +990,7 @@ function ResearchWorkspace({
         <Reveal index={0} className="flex flex-col gap-6">
           <WhySection
             verdict={verdict}
-            verdictLoading={verdictLoading}
+            verdictLoading={verdict == null && verdictStream.streaming}
             risks={fundamentals?.risks}
             news={news}
           />
@@ -1726,9 +1751,21 @@ function ResearchPageInner() {
   return (
     <PageShell gap="gap-6" py="py-10">
       <ArrivalHighlight targetId={highlightTarget} />
+      {/* The description is an ONBOARDING affordance, so it is shown only while
+          there is nothing to research yet.
+        
+          It is a 300-character feature list, and it used to sit above the company
+          header on every load — pushing NVDA's price, market cap and ranges below
+          y=220 on a 1000px viewport so that ~170px of the most valuable space on
+          the page was occupied by prose the user had already read. Once a symbol is
+          loaded, the instrument is the headline. */}
       <PageHeader
         title="Research Hub"
-        description="Universal investment research — equities, funds, crypto, commodities, forex, and macro across US, India, Japan, Europe & more via ticker search, plus derivatives, real estate, private markets, alternatives, and structured products."
+        description={
+          data
+            ? undefined
+            : "Equities, funds, crypto, commodities, forex and macro across US, India, Japan and Europe by ticker — plus derivatives, real estate, private markets and structured products."
+        }
       />
 
       {/* Search bar */}

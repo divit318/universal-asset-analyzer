@@ -9,6 +9,7 @@ import { SymbolSearch } from "@/app/_components/symbol-search";
 import { useToast } from "@/app/_components/toast";
 import type { Decision, DecisionAction, ThesisEvolution } from "@/lib/types";
 import type { DecisionOutcome, TrackRecord, GroupStat } from "@/lib/decision-journal";
+import { MIN_SCORED_FOR_TRACK_RECORD } from "@/lib/decision-journal";
 import { formatCurrency } from "@/lib/format";
 import { ThesisEvolutionPanel } from "./_components/thesis-evolution-panel";
 
@@ -232,8 +233,23 @@ function JournalPageInner() {
         />
       </Reveal>
 
-      {/* Track record */}
-      {tr && tr.scored > 0 && (
+      {/* Track record.
+          Below MIN_SCORED_FOR_TRACK_RECORD the statistics are not merely noisy,
+          they are actively misleading: with one scored decision the page read
+          "HIT RATE 0%" and named the SAME position as both BEST CALL and WORST
+          CALL. A track record is a claim about a distribution, so it is withheld
+          until there is a distribution — and the withholding is explained, with
+          a count of how many more calls it needs. */}
+      {tr && tr.scored > 0 && tr.scored < MIN_SCORED_FOR_TRACK_RECORD && (
+        <Card>
+          <SectionHeader
+            label="Track record"
+            description={`${tr.scored} of ${MIN_SCORED_FOR_TRACK_RECORD} scored decisions. Hit rate and calibration appear once there are enough closed calls to mean something — ${MIN_SCORED_FOR_TRACK_RECORD - tr.scored} more to go.`}
+          />
+        </Card>
+      )}
+
+      {tr && tr.scored >= MIN_SCORED_FOR_TRACK_RECORD && (
         <Reveal index={1} className="flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <StatTile
@@ -248,6 +264,9 @@ function JournalPageInner() {
               value={pct(tr.avgReturnPct)}
               sublabel="directional, since decision"
             />
+            {/* Best and worst are only distinct claims when they are different
+                positions. With a degenerate spread, show one labelled extreme
+                instead of the same name twice under opposite headings. */}
             <StatTile
               label="Best Call"
               tone="positive"
@@ -257,8 +276,12 @@ function JournalPageInner() {
             <StatTile
               label="Worst Call"
               tone="negative"
-              value={tr.worst ? tr.worst.symbol : "—"}
-              sublabel={tr.worst ? pct(tr.worst.directionalReturnPct) : ""}
+              value={tr.worst && tr.worst.symbol !== tr.best?.symbol ? tr.worst.symbol : "—"}
+              sublabel={
+                tr.worst && tr.worst.symbol !== tr.best?.symbol
+                  ? pct(tr.worst.directionalReturnPct)
+                  : "needs a second scored call"
+              }
             />
           </div>
           <div className="grid gap-3 md:grid-cols-2">

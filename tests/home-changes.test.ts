@@ -86,6 +86,7 @@ function digestSource(overrides: Partial<FingerprintSource> = {}): FingerprintSo
       cashPct: 5,
       diversificationScore: 60,
       largestDrift: { label: "Equity", driftPct: 4.2 },
+      totalReturnOnCostPct: 3.1,
       marketPricedPct: 100,
       radar: [],
       biggestStrength: null,

@@ -201,9 +201,12 @@ const SECTIONS: SectionDef[] = [
     ],
   },
   {
-    title: "Composite Scores",
+    title: "Conviction & dimensions",
     metrics: [
-      { label: "Overall Score", description: "The blended composite score across every dimension below.", getValue: (e) => e.score?.composite ?? null, format: score100, higherBetter: true },
+      // Named "Conviction" because it IS /research's Conviction score — same
+      // engine, and now the same inputs. "Overall Score" gave a reader no way to
+      // tell it apart from the Screener's Overall, which is a different engine.
+      { label: "Conviction", description: "The same Conviction score /research shows — blended across every dimension below.", getValue: (e) => e.score?.composite ?? null, format: score100, higherBetter: true },
       { label: "Fundamental Score", description: "Composite of valuation, growth, quality and financial health — excludes momentum and analyst signals.", getValue: (e) => e.score?.total ?? null, format: score100, higherBetter: true },
       { label: "Valuation Score", description: "How cheap the stock is relative to its own scoring bands.", getValue: (e) => (e.score ? bucketPct(e.score, "Valuation") : null), format: score100, higherBetter: true },
       { label: "Growth Score", description: "How fast the business is growing relative to its own scoring bands.", getValue: (e) => (e.score ? bucketPct(e.score, "Growth") : null), format: score100, higherBetter: true },
@@ -211,7 +214,7 @@ const SECTIONS: SectionDef[] = [
       { label: "Financial Health Score", description: "Balance-sheet strength relative to its own scoring bands.", getValue: (e) => (e.score ? bucketPct(e.score, "Financial Health") : null), format: score100, higherBetter: true },
       { label: "Momentum Signal", description: "Price trend strength — how the stock has been trading recently.", getValue: (e) => e.score?.signals.momentum ?? null, format: score100, higherBetter: true },
       { label: "Analyst Signal", description: "Consensus analyst sentiment, distilled into a single score.", getValue: (e) => e.score?.signals.analysts ?? null, format: score100, higherBetter: true },
-      { label: "Confidence", description: "How much underlying data supports this stock's overall score — lower when data is sparse.", getValue: (e) => e.score?.confidence ?? null, format: score100, higherBetter: true },
+      { label: "Confidence", description: "How much underlying data supports this stock's Conviction score — lower when data is sparse.", getValue: (e) => e.score?.confidence ?? null, format: score100, higherBetter: true },
     ],
   },
 ];
@@ -601,7 +604,9 @@ export default function ComparePage() {
   return (
     <HoverSymbolProvider>
       <BackgroundDepth />
-      <PageShell py="py-10">
+      {/* Compare is a data grid, so it takes the wide (1920px) shell, not the
+          default reading width — see the layout conventions in AGENTS.md. */}
+      <PageShell py="py-10" width="wide">
       {/* Page header */}
       <div className="flex items-end justify-between gap-4">
         <div className="flex flex-col gap-1.5">
@@ -1130,7 +1135,7 @@ function StockCard({ entry, color, colorBg }: { entry: CompareEntry; color: stri
 
       {score && (
         <div className="mt-3 space-y-1.5">
-          <ScoreBar label="Overall" value={score.composite} color={color} />
+          <ScoreBar label="Conviction" value={score.composite} color={color} />
           <ScoreBar label="Quality" value={entry.score ? bucketPct(entry.score, "Quality") : null} color={color} />
           <ScoreBar label="Growth" value={entry.score ? bucketPct(entry.score, "Growth") : null} color={color} />
           <ScoreBar label="Health" value={entry.score ? bucketPct(entry.score, "Financial Health") : null} color={color} />

@@ -365,7 +365,7 @@ export const cryptoClass: AssetClassDefinition = {
   ],
 
   columns: [
-    { key: "rankScore", label: "Rank", align: "right" },
+    { key: "rankScore", label: "Match", align: "right" },
     { key: "marketCap", label: "Mkt Cap", align: "right" },
     { key: "fdv", label: "FDV", align: "right" },
     { key: "mcapToFdv", label: "MC/FDV", align: "right" },

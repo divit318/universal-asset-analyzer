@@ -130,19 +130,26 @@ export function BookModule() {
 
             {/* Return vs benchmark · cash. */}
             <div className="grid grid-cols-2 gap-3 border-t border-hairline pt-3">
+              {/* Two different, both-correct measures of "return" — so each is
+                  named for what it actually measures. XIRR is money-weighted and
+                  annualized over the lot ledger; the fallback is cumulative
+                  return on cost across the whole book, which is the exact number
+                  /portfolio shows in its "Total return" tile. Labelling one of
+                  them simply "Return" is what made Home and /portfolio look like
+                  they disagreed. */}
               {xirr != null ? (
                 <Stat
                   label="Return (XIRR)"
                   value={fmtSignedPct(xirr)}
                   tone={toneClass(xirr)}
-                  sub={bench ? `vs ${bench.symbol} ${fmtSignedPct(bench.benchmarkPct)}` : "annualized"}
+                  sub={bench ? `annualized vs ${bench.symbol} ${fmtSignedPct(bench.benchmarkPct)}` : "annualized, money-weighted"}
                 />
               ) : (
                 <Stat
-                  label="Return"
-                  value={perf ? fmtSignedPct(perf.totalReturnPct) : "—"}
-                  tone={perf ? toneClass(perf.totalReturnPct) : "text-muted"}
-                  sub="since inception"
+                  label="Return on cost"
+                  value={d.totalReturnOnCostPct != null ? fmtSignedPct(d.totalReturnOnCostPct) : "—"}
+                  tone={d.totalReturnOnCostPct != null ? toneClass(d.totalReturnOnCostPct) : "text-muted"}
+                  sub="cumulative, whole book"
                 />
               )}
               <Stat

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Card, Badge } from "@/app/_components/ui";
+import { Card, Badge, ScoreChip } from "@/app/_components/ui";
 import { formatCurrency } from "@/lib/format";
 // Import from lib/portfolio/classes (not model/adapter directly) — this module's
 // side effect registers all twelve class adapters. Client and server bundles are
@@ -61,55 +61,125 @@ const METRIC_LABEL: Record<string, string> = {
   barrier: "Barrier",
 };
 
-const PERCENT_KEYS = new Set([
-  "returnOnEquity", "revenueGrowth", "operatingMargins", "dividendYield", "yield",
-  "expenseRatio", "volatility", "capRate", "cashOnCash", "rentalYield", "appreciation",
-  "annualizedReturn", "cagr", "distanceToBarrier", "ownershipPercent", "couponRate",
-  "barrier", "worstOfLevel",
-]);
-const CURRENCY_KEYS = new Set(["marketCap", "noi", "debtService", "impliedOwnershipValue"]);
-const YEAR_KEYS = new Set(["duration", "maturity", "yearsToMaturity"]);
-const MULTIPLE_KEYS = new Set(["peRatio", "priceToBook", "priceToFFO", "moic"]);
+/**
+ * The unit every metric arrives in — DECLARED, never inferred.
+ *
+ * This used to be inferred from magnitude: `Math.abs(value) <= 1 ? value * 100 :
+ * value`. That heuristic is correct for the common case and silently wrong by a
+ * factor of 100 for exactly the values an analyst most wants to see:
+ *
+ *   - AAPL `returnOnEquity` 1.4147 rendered as "1.41%" instead of "141%"
+ *   - ORLA `revenueGrowth`  1.693  rendered as "1.69%" instead of "+169%"
+ *
+ * A hypergrowth or buyback-heavy compounder appearing 100x weaker than a slow
+ * industrial is not a rounding problem, it is a credibility problem — an analyst
+ * who sees Apple at 1.41% ROE beside J&J at 25.74% stops trusting every other
+ * number on the screen. Magnitude can never distinguish "0.85 = 85%" from
+ * "1.85 = 1.85%", so the only correct fix is to stop guessing.
+ *
+ * `ratio` means the provider hands back a fraction (0.2574 = 25.74%).
+ * `percent` means the value is already in percent units (27.2 = 27.2%) — those
+ * keys are named `...Percent` at their source in lib/portfolio/classes/*.
+ */
+type MetricUnit = "ratio" | "percent" | "currency" | "years" | "multiple" | "count";
 
-function formatMetric(key: string, value: number | null): string {
+const METRIC_UNITS: Record<string, MetricUnit> = {
+  // Provider fractions (Yahoo `quoteSummary` conventions).
+  returnOnEquity: "ratio",
+  revenueGrowth: "ratio",
+  operatingMargins: "ratio",
+  dividendYield: "ratio",
+
+  // Already percent at the source — see lib/portfolio/classes/*.ts, where these
+  // are read from fields explicitly suffixed `...Percent`. `yield` is normalized
+  // to percent in bond.ts so it matches cash's APY.
+  yield: "percent",
+  expenseRatio: "percent",
+  volatility: "percent",
+  capRate: "percent",
+  cashOnCash: "percent",
+  rentalYield: "percent",
+  appreciation: "percent",
+  annualizedReturn: "percent",
+  cagr: "percent",
+  distanceToBarrier: "percent",
+  ownershipPercent: "percent",
+  couponRate: "percent",
+  barrier: "percent",
+  worstOfLevel: "percent",
+
+  marketCap: "currency",
+  noi: "currency",
+  debtService: "currency",
+  impliedOwnershipValue: "currency",
+
+  duration: "years",
+  maturity: "years",
+  yearsToMaturity: "years",
+
+  peRatio: "multiple",
+  priceToBook: "multiple",
+  priceToFFO: "multiple",
+  moic: "multiple",
+
+  debtToEquity: "count",
+};
+
+/** Percent digits: keep 2 for readable values, drop to 0 once the integer part dominates. */
+function percentDigits(pct: number): number {
+  return Math.abs(pct) >= 100 ? 0 : 2;
+}
+
+export function formatMetric(key: string, value: number | null): string {
   // An unavailable metric shows an em-dash. It never shows 0, and it never shows a
   // fabricated midpoint — the two ways the old engine hid a data gap.
   if (value == null || !Number.isFinite(value)) return "—";
 
-  if (CURRENCY_KEYS.has(key)) return formatCurrency(value);
-  if (YEAR_KEYS.has(key)) return `${value.toFixed(1)}y`;
-  if (MULTIPLE_KEYS.has(key)) return `${value.toFixed(1)}×`;
-  if (PERCENT_KEYS.has(key)) {
-    // Yahoo hands back fractions for some fields and percentages for others.
-    const pct = Math.abs(value) <= 1 && !["capRate", "cashOnCash", "distanceToBarrier", "ownershipPercent", "expenseRatio", "volatility", "worstOfLevel", "barrier"].includes(key)
-      ? value * 100
-      : value;
-    return `${pct.toFixed(pct >= 100 ? 0 : 2)}%`;
+  switch (METRIC_UNITS[key]) {
+    case "currency":
+      return formatCurrency(value);
+    case "years":
+      return `${value.toFixed(1)}y`;
+    case "multiple":
+      return `${value.toFixed(1)}×`;
+    case "ratio": {
+      const pct = value * 100;
+      return `${pct.toFixed(percentDigits(pct))}%`;
+    }
+    case "percent":
+      return `${value.toFixed(percentDigits(value))}%`;
+    case "count":
+      return value.toFixed(0);
+    default:
+      // An undeclared metric is a number, not a guessed percentage. Adding a new
+      // metric to the model means adding it to METRIC_UNITS above.
+      return value.toFixed(2);
   }
-  if (key === "debtToEquity") return value.toFixed(0);
-  return value.toFixed(2);
 }
 
-function ScoreChip({ holding }: { holding: Holding }) {
-  // A null score renders as "no basis", NOT as 50. This is the visible face of the
-  // model's central rule: unknown must read as unknown.
-  if (!holding.score) {
-    return (
-      <span className="font-mono text-[11px] text-muted/50" title="This asset class has no scoreable data from our providers.">
-        no basis
-      </span>
-    );
-  }
-
-  const { score, confidence } = holding.score;
-  const tone = score >= 65 ? "text-positive" : score >= 40 ? "text-foreground" : "text-negative";
-
+/**
+ * The holding's own asset-class score, rendered as the `quality` kind.
+ *
+ * Naming it matters here more than anywhere else in the app: this column headed
+ * "SCORE" is what disagreed with /research's Conviction — AAPL read 76 here and
+ * 57 there. Both are right (an excellent business at a full price), but neither
+ * screen said which question it was answering. `quality` is explicitly NOT
+ * banded, so it no longer implies a buy/sell call it was never measuring.
+ *
+ * A null score still renders as "no basis", never as 50 — the visible face of the
+ * model's central rule that unknown must read as unknown.
+ */
+function HoldingScoreCell({ holding }: { holding: Holding }) {
   return (
-    <span className="flex items-baseline justify-end gap-1" title={holding.score.why.join(". ")}>
-      <span className={`font-mono text-sm font-semibold tabular-nums ${tone}`}>{score}</span>
-      {/* Confidence is shown next to every score. A 70 at 20% confidence must not
-          look like a 70 at 90%. */}
-      <span className="font-mono text-[10px] tabular-nums text-muted/60">/{confidence}%</span>
+    <span className="flex items-baseline justify-end">
+      <ScoreChip
+        kind="quality"
+        score={holding.score?.score ?? null}
+        confidence={holding.score?.confidence ?? null}
+        why={holding.score?.why}
+        size="sm"
+        showLabel={false}
+      />
     </span>
   );
 }
@@ -211,7 +281,7 @@ function HoldingRow({ h, onManage }: { h: Holding; onManage: (h: Holding) => voi
         ))}
 
         <td className="px-2 py-2.5 text-right">
-          <ScoreChip holding={h} />
+          <HoldingScoreCell holding={h} />
         </td>
 
         <td className="py-2.5 pl-2 pr-4 text-right">
@@ -326,7 +396,10 @@ function ClassGroup({ assetClass, holdings, totalValue, onManage }: {
                   {METRIC_LABEL[k] ?? k}
                 </th>
               ))}
-              <th className="px-2 py-2 text-right font-semibold">Score</th>
+              {/* "Quality", not "Score": this column measures the asset, not the
+                  decision, and calling it Score is what made it look like it
+                  contradicted the Conviction score on /research. */}
+              <th className="px-2 py-2 text-right font-semibold" title="How good the underlying asset is, setting price aside. Not a buy/sell call.">Quality</th>
               <th className="py-2 pl-2 pr-4 text-right font-semibold">Actions</th>
             </tr>
           </thead>

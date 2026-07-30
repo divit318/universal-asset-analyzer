@@ -511,7 +511,7 @@ export const equityClass: AssetClassDefinition = {
   ],
 
   columns: [
-    { key: "rankScore", label: "Rank", align: "right" },
+    { key: "rankScore", label: "Match", align: "right" },
     { key: "overallScore", label: "Overall", align: "right" },
     { key: "valueScore", label: "Value", align: "right" },
     { key: "growthScore", label: "Growth", align: "right" },

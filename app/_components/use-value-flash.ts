@@ -26,7 +26,9 @@ export function useValueFlash(value: number | string | null | undefined): string
       typeof prev === "number" && typeof value === "number"
         ? value > prev ? "up" : "down"
         : "neutral";
-    setFlash(direction); // eslint-disable-line react-hooks/set-state-in-effect -- comparing against the previous committed value is the whole point
+    // Comparing against the previous committed value is the whole point: the
+    // flash is a reaction to a change, so it cannot be derived during render.
+    setFlash(direction);
     const handle = setTimeout(() => setFlash(null), FLASH_MS);
     return () => clearTimeout(handle);
   }, [value]);

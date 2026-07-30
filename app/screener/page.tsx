@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { PageShell, PageHeader, Button, Card, Badge } from "@/app/_components/ui";
+import { PageShell, PageHeader, Button, Card, Badge, TaskProgress, useElapsedMs } from "@/app/_components/ui";
 import { Reveal } from "@/app/_components/reveal";
 import { downloadBlob } from "@/lib/download";
 import { getAssetClass, getMetric, isAssetClassId, listAssetClasses } from "@/lib/assets/registry";
@@ -25,7 +25,7 @@ import { PENDING_SCREEN_KEY, type PendingScreenHandoff } from "@/app/_components
 import type { RankedCandidate, ScreenerResponse, UniverseStatus } from "@/lib/screener/types";
 import type { SavedScreen } from "@/lib/db";
 import { FilterPanel } from "./_components/filter-panel";
-import { ResultsTable } from "./_components/results-table";
+import { ResultsTable, type ResultsEmptyState } from "./_components/results-table";
 import { SavedScreens } from "./_components/saved-screens";
 import {
   countActive,
@@ -39,29 +39,64 @@ import {
 
 const PAGE_SIZE = 50;
 
-/** The universe is still warming — show progress rather than an empty table. */
+/**
+ * Universe state.
+ *
+ * A cold build fetches fundamentals for every asset in the class and takes
+ * minutes, so while it runs this shows the same real progress the Scanner does —
+ * named stage, percent, elapsed, and an estimated finish — instead of a bare
+ * count. A first-time user watching "0/0 (0%)" next to an empty table has no way
+ * to tell a warming cache from a broken product.
+ */
 function UniverseBar({
   status,
   loading,
+  startedAt,
   onRefresh,
 }: {
   status: UniverseStatus | null;
   loading: boolean;
+  startedAt: number | null;
   onRefresh: () => void;
 }) {
+  // Hook before any early return — this ticks once a second while a build runs.
+  const elapsed = useElapsedMs(startedAt);
+
   if (!status) return null;
 
   const building = status.stage === "building";
-  const pct = status.total > 0 ? Math.round((status.ready / status.total) * 100) : 0;
+  const pct = status.total > 0 ? (status.ready / status.total) * 100 : null;
+
+  // Extrapolate from observed throughput. Only offered once enough of the build
+  // has completed for the rate to mean anything. Elapsed comes from the shared
+  // ticking hook rather than a render-time Date.now(), which would be impure.
+  const remainingMs =
+    building && pct != null && pct >= 5 && elapsed > 3000
+      ? Math.round((elapsed / pct) * (100 - pct))
+      : null;
+
+  if (building) {
+    return (
+      <div className="rounded-card border border-border bg-surface p-4">
+        <TaskProgress
+          label="Building the screening universe"
+          detail={
+            status.total > 0
+              ? `${status.ready.toLocaleString()} of ${status.total.toLocaleString()} assets priced`
+              : "Fetching the asset list"
+          }
+          pct={pct}
+          elapsedMs={elapsed}
+          remainingMs={remainingMs}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
       {status.stage === "error" ? (
-        <span className="text-rose-500">Universe failed to build: {status.error}</span>
-      ) : building ? (
-        <span>
-          Building universe… {status.ready}/{status.total} ({pct}%)
-        </span>
+        <span className="text-negative">Universe failed to build: {status.error}</span>
       ) : (
         <span>
           {status.ready.toLocaleString()} assets ready
@@ -71,7 +106,7 @@ function UniverseBar({
       <button
         type="button"
         onClick={onRefresh}
-        disabled={loading || building}
+        disabled={loading}
         className="underline underline-offset-2 transition-colors hover:text-brand disabled:opacity-40"
       >
         Refresh data
@@ -104,6 +139,8 @@ export default function ScreenerPage() {
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [status, setStatus] = useState<UniverseStatus | null>(null);
+  /** When the current universe build was first observed — drives elapsed/ETA. */
+  const [buildStartedAt, setBuildStartedAt] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -185,6 +222,12 @@ export default function ScreenerPage() {
       // The filters the visible rows were actually produced with — see
       // `pendingFilterChanges` below for why the draft alone isn't enough.
       setApplied({ draft: opts.draft, templateId: opts.templateId });
+
+      // Latch the moment a build was first observed, so elapsed/ETA measure the
+      // build rather than the age of the last poll.
+      setBuildStartedAt((prev) =>
+        json.status.stage === "building" ? prev ?? Date.now() : null,
+      );
     } catch (err) {
       if (!isCurrent()) return;
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -539,6 +582,20 @@ export default function ScreenerPage() {
     JSON.stringify(toFilterValues(assetClass, draft)) !==
     JSON.stringify(toFilterValues(assetClass, applied.draft));
 
+  /* Why an empty results table is empty. Resolved here, where the universe
+     status and the filter draft both live, so the table never has to guess —
+     and never again tells a user to loosen filters they have not set.
+     `appliedCount`, not the draft count: the question is which filters produced
+     the rows on screen, not which ones the user is midway through editing. */
+  const emptyState: ResultsEmptyState =
+    status?.stage === "error"
+      ? { kind: "universe-error", error: status.error ?? "Unknown error." }
+      : status?.stage === "building"
+        ? { kind: "building", ready: status.ready, total: status.total }
+        : appliedCount === 0
+          ? { kind: "not-run" }
+          : { kind: "no-matches", activeFilterCount: appliedCount };
+
   /*
    * Revealed at section granularity — the four blocks a user actually perceives
    * (identity, templates, filters, results), not the table rows.
@@ -550,7 +607,7 @@ export default function ScreenerPage() {
    * simply there.
    */
   return (
-    <PageShell py="py-10">
+    <PageShell py="py-10" width="wide">
       <Reveal index={0} className="flex flex-col gap-3">
         <PageHeader
           title="Universal Screener"
@@ -577,7 +634,7 @@ export default function ScreenerPage() {
         </nav>
 
         <p className="text-sm text-muted">{def.description}</p>
-        <UniverseBar status={status} loading={loading} onRefresh={refresh} />
+        <UniverseBar status={status} loading={loading} startedAt={buildStartedAt} onRefresh={refresh} />
       </Reveal>
 
       {/* 2. Templates. */}
@@ -714,6 +771,7 @@ export default function ScreenerPage() {
                 onSort={toggleSort}
                 watchlisted={watchlisted}
                 onWatch={watch}
+                emptyState={emptyState}
               />
 
               {total > PAGE_SIZE ? (

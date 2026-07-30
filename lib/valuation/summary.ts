@@ -7,10 +7,15 @@
  * engine prior for itself — is what keeps "one intrinsic value in the system"
  * true in practice and not just in principle.
  *
- * Pure apart from the engine-prior file read, which is a cached `fs` call.
+ * Pure. The engine prior is passed in rather than read here: this module is
+ * imported by client components (the Register), and reaching into
+ * `engine-prior` — which reads the Parquet snapshot over `fs` and can shell out
+ * to Python — dragged `fs`, `path` and `child_process` into the browser bundle
+ * and failed the production build outright. Whoever has a filesystem does the
+ * read; this file only shapes what it is given.
  */
 
-import { getEnginePrior, type EnginePrior } from "./engine-prior";
+import type { EnginePrior } from "./engine-prior";
 import {
   caseFreshness,
   computeCaseResult,
@@ -64,10 +69,10 @@ export interface ValuationSummary {
 export function summarizeForDisplay(
   vcase: ValuationCase,
   livePrice: number | null = null,
+  prior: EnginePrior | null = null,
 ): ValuationSummary {
   const price = livePrice ?? vcase.priceAt;
   const result = livePrice != null ? computeCaseResult(vcase.assumptions, livePrice) : vcase.result;
-  const prior = getEnginePrior(vcase.symbol);
   const fresh = caseFreshness(vcase.updatedAt);
   const owned = userAuthoredKeys(vcase.assumptions);
 

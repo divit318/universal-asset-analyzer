@@ -34,7 +34,16 @@ export function PortfolioDecisionCard({ recommendation }: { recommendation: Reco
     <div className="card-lift flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Portfolio Decision</span>
+          {/* "Rebalance" distinguishes this from the Policy target above it:
+              this engine only reallocates among holdings the user already owns,
+              so the two targets are different quantities and are now named as
+              such rather than explained in a footnote. */}
+          <span
+            className="text-[10px] font-semibold uppercase tracking-widest text-muted"
+            title="Reallocates among your current holdings only. The Policy target above sizes a position from your investment policy, so the two can differ."
+          >
+            Rebalance decision
+          </span>
           <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-semibold ${ACTION_STYLE[r.action]}`}>
             {ACTION_LABEL[r.action]}
           </span>

@@ -1,11 +1,20 @@
 import { NextResponse } from "next/server";
 import { buildCompanyContext } from "@/lib/ai/context";
 import { readPortfolioFacts } from "@/lib/ai/facts";
-import { buildVerdictPrompt, sectionFor, sectionsInOrder } from "@/lib/ai/report-sections";
+import { sectionFor, sectionsInOrder } from "@/lib/ai/report-sections";
 import { runTaskStream } from "@/lib/ai/orchestrator";
 import { JsonFieldStreamer } from "@/lib/ai/streaming-json";
-import { collectClaimText, verifyGrounding } from "@/lib/ai/grounding";
+import {
+  assembleVerdict,
+  cacheVerdict,
+  offlineVerdict,
+  peekVerdict,
+  planVerdict,
+  verdictCacheParams,
+} from "@/lib/ai/verdict";
+import { personalizationParams } from "@/lib/ai/verdict-params";
 import { normalizeSymbol } from "@/lib/market";
+import { REPORT_SECTIONS } from "@/lib/ai/report-sections";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,8 +34,14 @@ export const maxDuration = 300;
  *     {"type":"done","verdict":{…},"grounding":{…},"model":"…"}
  *
  * This is ONE generation, using the exact prompt/context/schema that
- * `/api/ai/verdict` uses (both call `buildVerdictPrompt`), parsed incrementally
- * so each top-level field is emitted the instant it is syntactically complete.
+ * `/api/ai/verdict` uses (both build the same {@link planVerdict} plan), parsed
+ * incrementally so each top-level field is emitted the instant it is
+ * syntactically complete.
+ *
+ * Serves **every** asset class. The plan decides which task, prompt, and
+ * evidence block to use — equity, fund, crypto, commodity, forex, or macro —
+ * and all six emit the same eight top-level JSON keys, so the same section
+ * streamer works for all of them without branching here.
  *
  * Consequences, all of them deliberate:
  *   - The assembled report is **the same object** the non-streamed route would
@@ -62,7 +77,22 @@ export async function GET(request: Request) {
     );
   }
 
-  const { prompt, evidence } = buildVerdictPrompt(ctx, readPortfolioFacts(url));
+  // Planning is the only remaining I/O (asset-class score + fact block). Doing
+  // it before the stream opens keeps a data failure a real HTTP error instead of
+  // an error event the client has to special-case.
+  let plan;
+  try {
+    plan = await planVerdict(ctx, readPortfolioFacts(url));
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Could not load data for this symbol" },
+      { status: 404 },
+    );
+  }
+
+  const cacheParams = verdictCacheParams(ctx.symbol, plan.kind, personalizationParams(url));
+  const cached = url.searchParams.get("refresh") === "1" ? null : peekVerdict(cacheParams);
+
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
@@ -86,15 +116,51 @@ export async function GET(request: Request) {
         type: "manifest",
         symbol: ctx.symbol,
         name: ctx.name,
+        assetClass: plan.kind,
         warnings: ctx.warnings,
         sections: sectionsInOrder().map((s) => ({ id: s.id, title: s.title, order: s.order })),
       });
+
+      /* A cached report replays instantly, section by section, in the same
+         protocol a live generation uses — so the client needs no special case and
+         a repeat visit costs nothing instead of another multi-minute inference.
+         The sections are emitted in schema order rather than arrival order
+         because a finished report has no arrival order. */
+      if (cached) {
+        const record = cached as unknown as Record<string, unknown>;
+        for (const spec of REPORT_SECTIONS) {
+          if (record[spec.id] === undefined) continue;
+          send({
+            type: "section",
+            id: spec.id,
+            title: spec.title,
+            order: spec.order,
+            data: record[spec.id],
+            elapsedMs: 0,
+          });
+        }
+        send({
+          type: "done",
+          verdict: cached,
+          grounding: cached.grounding,
+          model: cached.model,
+          durationMs: Date.now() - startedAt,
+          fromCache: true,
+        });
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          /* already closed by the client */
+        }
+        return;
+      }
 
       const parser = new JsonFieldStreamer();
       let model = "unknown";
 
       try {
-        const generation = runTaskStream("investment-thesis", prompt, {
+        const generation = runTaskStream(plan.task, plan.prompt, {
           json: true,
           signal: request.signal,
         });
@@ -134,24 +200,21 @@ export async function GET(request: Request) {
           });
         }
 
-        const verdict = parser.result();
+        // Coercion + grounding run through the SAME assembler the blocking
+        // route uses, so the streamed report is the same object rather than a
+        // look-alike: identical defaults for omitted fields, identical claim
+        // extraction, identical evidence block.
+        const verdict = assembleVerdict(plan, parser.result(), model);
 
-        // Same grounding check the non-streamed verdict runs: every figure in the
-        // generated prose must trace back to a line in the evidence block.
-        const claims = collectClaimText([
-          verdict.headline as string,
-          verdict.thesis as string,
-          (verdict.catalysts as string[]) ?? [],
-          (verdict.risks as string[]) ?? [],
-          ((verdict.keyMetrics as { label: string; value: string }[]) ?? []).map(
-            (m) => `${m.label} ${m.value}`,
-          ),
-        ]);
+        // Persist under the registry's `aiVerdict` policy so the next view is
+        // instant. `cacheVerdict` refuses to store an offline fallback, so an
+        // Ollama outage cannot pin "start Ollama" for the whole TTL.
+        cacheVerdict(cacheParams, verdict, ctx.symbol);
 
         send({
           type: "done",
           verdict,
-          grounding: verifyGrounding(claims, evidence),
+          grounding: verdict.grounding,
           model,
           durationMs: Date.now() - startedAt,
         });
@@ -160,10 +223,15 @@ export async function GET(request: Request) {
           // Sections that already streamed stay on screen — the client keeps
           // them and marks only the incomplete ones as stopped. A partial report
           // is worth more than a wiped one.
+          //
+          // `fallback` carries the same actionable offline verdict the blocking
+          // route returns, so a client that got nothing usable can still render
+          // "start Ollama" instead of an empty panel.
           send({
             type: "error",
             error: err instanceof Error ? err.message : "Generation failed",
             completed: parser.keys(),
+            fallback: parser.keys().length === 0 ? offlineVerdict(plan) : undefined,
           });
         }
       } finally {

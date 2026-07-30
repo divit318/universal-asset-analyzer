@@ -8,7 +8,7 @@ import {
   type CaseFlag,
   type ValuationSummary,
 } from "@/lib/valuation/summary";
-import { hasEnginePriors } from "@/lib/valuation/engine-prior";
+import { getEnginePrior, hasEnginePriors } from "@/lib/valuation/engine-prior";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,7 +57,13 @@ export async function GET() {
   }
 
   const rows = cases
-    .map((c) => summarizeForDisplay(c, prices.get(c.symbol.toUpperCase()) ?? null))
+    .map((c) =>
+      summarizeForDisplay(
+        c,
+        prices.get(c.symbol.toUpperCase()) ?? null,
+        getEnginePrior(c.symbol),
+      ),
+    )
     .sort(compareForRegister)
     .map((summary) => ({ ...summary, flags: caseFlags(summary) }));
 

@@ -114,3 +114,136 @@ describe("engines route through the canonical bands", () => {
     }
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* Cross-surface identity                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The invariant that failed in production.
+ *
+ * /research and /compare both call `computeScore`, but `sectorRotation` is an
+ * OPT-IN fifth argument ("omit entirely to leave existing callers' output
+ * unchanged"). /compare omitted it, so NVDA scored 86 there and 80 on Research —
+ * same engine, same company, different inputs, and nothing on either screen to
+ * explain the gap.
+ *
+ * These tests pin the two things that make that impossible to reintroduce
+ * silently: that the argument genuinely changes the number (so omitting it is a
+ * real divergence, not a no-op), and that identical inputs give identical output.
+ */
+describe("cross-surface score identity", () => {
+  const laggingSector = {
+    sector: "Technology",
+    etf: "XLK",
+    rank: 11,
+    totalSectors: 11,
+    trend: "lagging",
+    relativeStrength: -10.4,
+    momentumScore: -10.2,
+    oneMonthReturn: -8.9,
+  } as unknown as Parameters<typeof computeScore>[4];
+
+  const bullishAnalyst = { strongBuy: 20, buy: 5, upsidePercent: 45, recommendationKey: "strong_buy" };
+
+  it("passing sectorRotation CHANGES the composite — so omitting it is a real divergence", () => {
+    const without = computeScore(snap(), null, analyst(bullishAnalyst));
+    const withRotation = computeScore(snap(), null, analyst(bullishAnalyst), null, laggingSector);
+
+    // A lagging sector must drag the score down. If these were ever equal, the
+    // argument would be decorative and this whole class of bug impossible — but
+    // it is not, which is exactly why every surface must pass it.
+    expect(withRotation.composite).not.toBe(without.composite);
+    expect(withRotation.composite).toBeLessThan(without.composite);
+  });
+
+  it("adds a Sector Rotation bucket only when the argument is supplied", () => {
+    const without = computeScore(snap(), null, analyst(bullishAnalyst));
+    const withRotation = computeScore(snap(), null, analyst(bullishAnalyst), null, laggingSector);
+
+    expect(without.buckets.some((b) => b.name === "Sector Rotation")).toBe(false);
+    expect(withRotation.buckets.some((b) => b.name === "Sector Rotation")).toBe(true);
+  });
+
+  it("treats an explicit null differently from an omitted argument", () => {
+    // `null` means "checked, this sector has no rotation entry" and still adds the
+    // bucket; `undefined` means "this caller has no rotation data at all". Callers
+    // must be able to express the first, which is why /compare passes null rather
+    // than defaulting the parameter away.
+    const omitted = computeScore(snap(), null, analyst(bullishAnalyst));
+    const explicitNull = computeScore(snap(), null, analyst(bullishAnalyst), null, null);
+
+    expect(omitted.buckets.some((b) => b.name === "Sector Rotation")).toBe(false);
+    expect(explicitNull.buckets.some((b) => b.name === "Sector Rotation")).toBe(true);
+  });
+
+  it("is deterministic: identical inputs produce an identical score everywhere", () => {
+    const a = computeScore(snap(), null, analyst(bullishAnalyst), null, laggingSector, "US");
+    const b = computeScore(snap(), null, analyst(bullishAnalyst), null, laggingSector, "US");
+
+    expect(a.composite).toBe(b.composite);
+    expect(a.recommendation).toBe(b.recommendation);
+    expect(a.buckets.map((x) => [x.name, x.points])).toEqual(b.buckets.map((x) => [x.name, x.points]));
+  });
+
+  it("market weighting changes the blend, so every surface must pass the same market", () => {
+    const us = computeScore(snap(), null, analyst(bullishAnalyst), null, laggingSector, "US");
+    const india = computeScore(snap(), null, analyst(bullishAnalyst), null, laggingSector, "IN");
+
+    // India leans harder on fundamentals and much less on analysts, so a
+    // strongly-bullish analyst set moves the US score more than the Indian one.
+    expect(us.composite).not.toBe(india.composite);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Score kinds                                                                */
+/* -------------------------------------------------------------------------- */
+
+describe("score-kind registry", () => {
+  it("gives every kind a distinct, non-generic label", async () => {
+    const { SCORE_KINDS } = await import("@/lib/score-kinds");
+    const labels = Object.values(SCORE_KINDS).map((k) => k.label);
+
+    expect(new Set(labels).size).toBe(labels.length);
+    // "Score" and "Overall" are exactly the wordless labels that made two
+    // different engines' outputs look like a contradiction.
+    for (const label of labels) {
+      expect(label).not.toBe("Score");
+      expect(label).not.toBe("Overall");
+    }
+  });
+
+  it("states a question and an engine for every kind", async () => {
+    const { SCORE_KINDS } = await import("@/lib/score-kinds");
+    for (const kind of Object.values(SCORE_KINDS)) {
+      expect(kind.question.endsWith("?")).toBe(true);
+      expect(kind.engine.length).toBeGreaterThan(0);
+      expect(kind.inputs.length).toBeGreaterThan(20);
+    }
+  });
+
+  it("bands only the kinds that are actually directional calls", async () => {
+    const { SCORE_KINDS } = await import("@/lib/score-kinds");
+
+    // These answer "should I own this?" — a Buy/Hold/Sell label is meaningful.
+    expect(SCORE_KINDS.conviction.banded).toBe(true);
+    expect(SCORE_KINDS.screen.banded).toBe(true);
+    expect(SCORE_KINDS.quant.banded).toBe(true);
+
+    // These do not. Colouring a portfolio fit of 45 as "Sell" would assert
+    // something the number never measured.
+    expect(SCORE_KINDS.fit.banded).toBe(false);
+    expect(SCORE_KINDS.quality.banded).toBe(false);
+    expect(SCORE_KINDS.health.banded).toBe(false);
+  });
+
+  it("distinguishes two kinds without claiming either is wrong", async () => {
+    const { distinguish } = await import("@/lib/score-kinds");
+    const text = distinguish("conviction", "quality");
+
+    expect(text).toContain("Conviction");
+    expect(text).toContain("Quality");
+    expect(text).toContain("can disagree");
+  });
+});

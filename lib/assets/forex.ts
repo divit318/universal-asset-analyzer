@@ -260,7 +260,7 @@ export const forexClass: AssetClassDefinition = {
   ],
 
   columns: [
-    { key: "rankScore", label: "Rank", align: "right" },
+    { key: "rankScore", label: "Match", align: "right" },
     { key: "price", label: "Price", align: "right" },
     { key: "rateDifferential", label: "Carry", align: "right" },
     { key: "carryToVol", label: "Carry/Vol", align: "right" },

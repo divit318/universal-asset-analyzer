@@ -72,7 +72,11 @@ export function PositionActionCard({
         <div className="flex flex-col gap-1">
           <div className="flex justify-between text-micro text-faint">
             <span>Current {action.currentPct.toFixed(1)}%</span>
-            <span>Target {action.targetPct.toFixed(1)}%</span>
+            {/* Named for what it is. The two targets on this page are not the same
+                quantity, and the previous copy tried to resolve that with a
+                sentence of explanation instead of a distinct name — a paragraph
+                apologising for a label is a sign the label is wrong. */}
+            <span>Policy target {action.targetPct.toFixed(1)}%</span>
           </div>
           {/* Current weight grows to its value; the target sits as a fixed marker
               so the gap the action closes is what moves. */}
@@ -81,7 +85,7 @@ export function PositionActionCard({
             <div className="absolute inset-y-0 w-0.5 bg-brand" style={{ left: `${(action.targetPct / barMax) * 100}%` }} />
           </div>
           <p className="text-[10px] text-faint">
-            Conviction-sized target from your investment policy (fit score, sector caps, diversification) — if a Portfolio Decision target appears below, that one only rebalances among your current holdings, so the two can differ.
+            Sized by your investment policy — portfolio fit, sector caps and diversification.
           </p>
         </div>
       )}

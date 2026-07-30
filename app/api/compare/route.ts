@@ -4,7 +4,8 @@ import { getFinancialStatements, getFinancialStatementsYahoo } from "@/lib/state
 import { getHistory, getQuote, getQuoteMeta, getQuoteSummaryMeta } from "@/lib/yahoo";
 import { computeMomentum, computeScore, assessRisks } from "@/lib/scoring";
 import { compareStocks } from "@/lib/ai-compare";
-import { normalizeSymbol, detectMarket } from "@/lib/market";
+import { detectMarket, normalizeSymbol } from "@/lib/market";
+import { findSectorRotationEntry, getLatestSectorRotation } from "@/lib/sector-rotation";
 import { buildOpportunityProfile, type OpportunityProfile } from "@/lib/opportunity-engine";
 import { computeEntryBenchmarks, peerGroupOf, loadBenchmarkUniverse, type PeerBenchmark } from "@/lib/compare/benchmarks";
 import type { EntryFreshness } from "@/lib/compare/types";
@@ -82,7 +83,14 @@ export async function GET(request: Request) {
         const [parts, quote, history, quoteMeta, fundamentalsMeta] = await Promise.all([
           getFundamentals(symbol),
           getQuote(symbol),
-          getHistory(symbol, 420),
+          // 1825 days, matching lib/fundamentals-data.ts. `computeMomentum` reads
+          // the series it is given, so a 420-day window produced a different
+          // momentum signal — and therefore a different conviction score — than
+          // /research for the same company. The window is part of the input, so it
+          // has to match. The platform caches history by (symbol, days), so asking
+          // for the same window the research bundle asks for is also a cache hit
+          // rather than an extra fetch.
+          getHistory(symbol, 1825),
           getQuoteMeta(symbol),
           getQuoteSummaryMeta(symbol, MODULES),
         ]);
@@ -103,11 +111,36 @@ export async function GET(request: Request) {
         })();
 
         const momentum = computeMomentum(history);
-        // market activates lib/scoring.ts's own MARKET_SIGNAL_WEIGHTS.IN reweight
-        // (lean on fundamentals, discount sparse analyst coverage) — the signal
-        // blend was already built with India in mind, just never wired up here.
-        const market = detectMarket(quote);
-        const score = computeScore(parts.snapshot, statements, parts.analyst, momentum, undefined, market);
+
+        /* Sector rotation is threaded in EXPLICITLY, exactly as the research
+           bundle does it.
+        
+           `computeScore`'s 5th argument is opt-in ("omit entirely to leave
+           existing callers' output unchanged"), and this route used to omit it.
+           Same engine, same company, different inputs — so /research and /compare
+           reported different conviction scores for the same stock with nothing on
+           either screen to explain it. Measured: NVDA scored 80 on Research
+           (sector rotation 4/100 — Technology ranked 11 of 11) and 86 on Compare,
+           which simply had not been told about the sector.
+        
+           `null` is a meaningful value here and distinct from `undefined`: it
+           means "checked, this sector has no rotation entry", which still adds the
+           bucket. So it is passed through rather than defaulted away. */
+        const sectorRotation = parts.snapshot?.sector
+          ? findSectorRotationEntry(getLatestSectorRotation(), parts.snapshot.sector)
+          : null;
+
+        const score = computeScore(
+          parts.snapshot,
+          statements,
+          parts.analyst,
+          momentum,
+          sectorRotation,
+          // Market-aware weighting: India leans harder on fundamentals because
+          // analyst coverage is sparser. Research does this too, so omitting it
+          // here would be a second source of divergence for NSE/BSE names.
+          detectMarket(quote),
+        );
         const oneYearReturn = computeOneYearReturn(history);
 
         const fcfYieldPct =

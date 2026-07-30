@@ -7,10 +7,11 @@
  * else — which model, retry/fallback, response shape — is the Router's job.
  */
 
-import type { ProviderChatTurn } from "./provider";
+import type { AIProvider, ProviderChatTurn } from "./provider";
 import { route, routeStream, type RouteOptions } from "./router";
 import type { AIResponse } from "./response";
 import type { TaskType } from "./task-registry";
+import { dedupe } from "../platform/dedup";
 
 export interface RunTaskOptions {
   system?: string;
@@ -24,9 +25,52 @@ export interface RunTaskOptions {
   /** Receives reasoning deltas when the routed model is a thinking model. */
   onReasoning?: (delta: string) => void;
   signal?: AbortSignal;
+  /**
+   * Test/DI hook: override which providers are considered. Mirrors the Router's
+   * own `providers` option so orchestrator-level behaviour (coalescing) can be
+   * tested without a live Ollama.
+   */
+  providers?: AIProvider[];
 }
 
-/** Run a task and get the full normalized response (confidence, timing, model used, etc.). */
+/**
+ * A stable fingerprint of the work a request represents.
+ *
+ * Only the inputs that change the *output* participate: the task (which picks
+ * the model), the explicit model override, JSON mode, temperature, and the
+ * message content. Timeouts and abort signals do not — two callers asking the
+ * same question with different patience are still asking the same question.
+ *
+ * FNV-1a rather than node:crypto so this module stays importable anywhere.
+ */
+function fingerprint(taskType: TaskType, messages: ProviderChatTurn[], opts: RunTaskOptions): string {
+  const payload = JSON.stringify([
+    taskType,
+    opts.model ?? "",
+    opts.json ?? false,
+    opts.temperature ?? "",
+    messages.map((m) => [m.role, m.content]),
+  ]);
+
+  let h = 0x811c9dc5;
+  for (let i = 0; i < payload.length; i++) {
+    h ^= payload.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `ai:${taskType}:${payload.length.toString(36)}:${h.toString(36)}`;
+}
+
+/**
+ * Run a task and get the full normalized response (confidence, timing, model used, etc.).
+ *
+ * Identical concurrent work is **coalesced**: if the same task with the same
+ * messages is already generating, this attaches to it rather than starting a
+ * second inference. That matters far more here than for a normal HTTP cache,
+ * because Ollama serializes generations — a duplicate does not run in parallel
+ * and finish at the same time, it doubles the wall-clock wait for everyone
+ * queued behind it. The research page alone was firing duplicate movement and
+ * financial-insight generations that the verdict then had to wait behind.
+ */
 export async function runTask(
   taskType: TaskType,
   prompt: string,
@@ -36,19 +80,30 @@ export async function runTask(
     ...(opts.system ? [{ role: "system" as const, content: opts.system }] : []),
     { role: "user" as const, content: prompt },
   ];
-  const routeOpts: RouteOptions = opts.model ? { model: opts.model } : {};
-  return route(
-    taskType,
-    {
-      messages,
-      temperature: opts.temperature,
-      maxTokens: opts.maxTokens,
-      timeoutMs: opts.timeoutMs,
-      json: opts.json,
-      signal: opts.signal,
-    },
-    routeOpts,
-  );
+  const routeOpts: RouteOptions = {
+    ...(opts.model ? { model: opts.model } : {}),
+    ...(opts.providers ? { providers: opts.providers } : {}),
+  };
+
+  const run = (signal?: AbortSignal) =>
+    route(
+      taskType,
+      {
+        messages,
+        temperature: opts.temperature,
+        maxTokens: opts.maxTokens,
+        timeoutMs: opts.timeoutMs,
+        json: opts.json,
+        signal,
+      },
+      routeOpts,
+    );
+
+  // A reasoning sink is per-caller, so coalescing would silently drop one
+  // caller's deltas. Those requests run on their own.
+  if (opts.onReasoning) return run(opts.signal);
+
+  return dedupe(fingerprint(taskType, messages, opts), run, { signal: opts.signal });
 }
 
 /** Run a task and get just the answer text — the common case for single-shot feature prompts. */
@@ -109,7 +164,10 @@ export async function* runTaskChat(
       ? [{ role: "system", content: opts.system }, ...messages]
       : messages;
 
-  const routeOpts: RouteOptions = opts.model ? { model: opts.model } : {};
+  const routeOpts: RouteOptions = {
+    ...(opts.model ? { model: opts.model } : {}),
+    ...(opts.providers ? { providers: opts.providers } : {}),
+  };
 
   return yield* routeStream(
     taskType,

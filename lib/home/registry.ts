@@ -171,6 +171,10 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     dataSources: ["yahoo", "scanner", "sector-rotation"],
     dependencies: [],
     ai: null,
+    // The link's label matches the destination's own <h1> and its nav entry —
+    // all three say "The Wire". This module keeps its own separate name because
+    // it shows the tape, not the feed. Rename the destination and this label
+    // moves with it, or the same page acquires two names again.
     navTarget: { href: "/wire", label: "The Wire" },
   },
 

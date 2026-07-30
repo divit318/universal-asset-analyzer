@@ -140,7 +140,21 @@ export function useDataset<T>(
   return {
     ...entry,
     refresh,
-    isInitialLoading: entry.status === "loading" && entry.data == null,
+    /*
+     * "There is nothing to show yet" — which includes the `idle` tick before the
+     * effect has run, not just `loading`.
+     *
+     * Missing the idle case made this false on the very first paint, so a page
+     * that renders `empty` as `!isInitialLoading && !data` flashed its
+     * empty state before any request had even started. /portfolio told a user
+     * with 26 holdings "No holdings yet." for the first frame, and showed no
+     * skeleton for the ~10s that followed.
+     *
+     * Gated on `enabled`: a deliberately-disabled dataset is not loading, it is
+     * simply not wanted, and reporting it as loading would leave callers that
+     * derive readiness from this (lib/ios-context.tsx) waiting forever.
+     */
+    isInitialLoading: enabled && entry.data == null && (entry.status === "loading" || entry.status === "idle"),
   };
 }
 

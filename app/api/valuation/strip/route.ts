@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { normalizeSymbol } from "@/lib/market";
 import { getValuationCase } from "@/lib/db";
 import { summarizeForDisplay, type ValuationSummary } from "@/lib/valuation/summary";
+import { getEnginePrior } from "@/lib/valuation/engine-prior";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,6 +34,6 @@ export async function GET(request: Request) {
   const livePrice = Number.isFinite(priceParam) && priceParam > 0 ? priceParam : null;
 
   return NextResponse.json({
-    summary: summarizeForDisplay(vcase, livePrice),
+    summary: summarizeForDisplay(vcase, livePrice, getEnginePrior(symbol)),
   } satisfies StripResponse);
 }

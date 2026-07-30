@@ -75,6 +75,20 @@ export interface GroupStat {
   avgReturnPct: number | null;
 }
 
+/**
+ * Scored decisions required before a track record is shown at all.
+ *
+ * A hit rate is a claim about a distribution; below a handful of closed calls
+ * there is no distribution, only an artifact. With one scored decision the
+ * journal displayed "HIT RATE 0%" and named the same position as both BEST CALL
+ * and WORST CALL — technically true, and worse than showing nothing, because it
+ * reads as a verdict on the user's judgment rather than as an empty sample.
+ *
+ * Five is not a statistical threshold (nothing is significant at n=5); it is the
+ * point at which the numbers stop being self-evidently degenerate.
+ */
+export const MIN_SCORED_FOR_TRACK_RECORD = 5;
+
 export interface TrackRecord {
   total: number;
   open: number;
