@@ -29,7 +29,7 @@
  *   Sizing feasibility           0.18
  */
 
-import type { PortfolioObjective } from "@/lib/portfolio-analytics";
+import type { PortfolioObjective } from "./types";
 import type {
   FitAssetData,
   FitDimension,

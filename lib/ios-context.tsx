@@ -28,8 +28,8 @@ import {
   type ReactNode,
 } from "react";
 
-import type { PortfolioObjective, PortfolioConstraints } from "@/lib/portfolio-analytics";
-import { DEFAULT_CONSTRAINTS } from "@/lib/portfolio-analytics";
+import type { PortfolioObjective, PortfolioConstraints } from "@/lib/ios/types";
+import { DEFAULT_CONSTRAINTS } from "@/lib/ios/types";
 import type { UniversalPortfolioReport } from "@/lib/portfolio/report";
 import { useDataset } from "@/lib/platform/client/use-dataset";
 

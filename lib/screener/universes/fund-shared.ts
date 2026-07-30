@@ -42,6 +42,12 @@ interface RawFundDetail {
     stockPosition?: number;
     bondPosition?: number;
     cashPosition?: number;
+    /**
+     * Futures collateral and physical bullion land here: GLD/IAU/SLV report
+     * otherPosition 1.0 and nothing else, so this is the only field that says
+     * "this fund holds neither stocks nor bonds".
+     */
+    otherPosition?: number;
     /** Present for bond funds. Verified against AGG/TLT/HYG. */
     bondHoldings?: { maturity?: number; duration?: number };
     /** Rating buckets, each 0-1. Verified against AGG/TLT/HYG. */
@@ -63,6 +69,16 @@ export interface FundDetail {
   topSector: string | null;
   equityWeight: number | null; // %
   bondWeight: number | null; // %
+  /**
+   * Cash and "other" (futures collateral, physical metal), in %.
+   *
+   * Needed because the position mix does NOT partition the way it looks like it
+   * should: a T-bill ETF (BIL) reports cash 100% / bonds 0%, and a bullion trust
+   * (GLD) reports other 100%. Classifying on `bondWeight` alone calls both of them
+   * equity funds. See lib/portfolio/classes/reference/risk-models.ts.
+   */
+  cashWeight: number | null; // %
+  otherWeight: number | null; // %
   // Bond-fund fields (null for equity ETFs).
   duration: number | null; // years
   maturity: number | null; // years
@@ -133,6 +149,8 @@ function parseDetail(raw: RawFundDetail): FundDetail {
     topSector: top ? (SECTOR_LABEL[top[0]] ?? top[0]) : null,
     equityWeight: pct(holdings.stockPosition),
     bondWeight: pct(holdings.bondPosition),
+    cashWeight: pct(holdings.cashPosition),
+    otherWeight: pct(holdings.otherPosition),
     duration: holdings.bondHoldings?.duration ?? null,
     maturity: holdings.bondHoldings?.maturity ?? null,
     ratings,

@@ -88,8 +88,16 @@ async function buildPerformance(): Promise<PortfolioPerformanceSummary> {
   const earliest = lots.reduce((min, l) => (l.tradeDate < min ? l.tradeDate : min), lots[0].tradeDate);
   const daysSinceFirst = Math.ceil((Date.now() - Date.parse(earliest)) / 86_400_000) + 7;
 
+  // Synthetic tickers never reach the provider. `upsertCash()` stores cash as a
+  // `CASH-<CCY>` lot, and sending that to Yahoo not only can't resolve it — it costs
+  // OTHER symbols in the same batch their quotes (on the Portfolio's book it silently
+  // dropped a forex position), and it produces a cache key no other surface shares.
+  // Cash is excluded from these figures either way, because `priceBySymbol` never
+  // resolves it — which is correct, and now the exclusion costs nothing else.
+  const quotableSymbols = [...bySymbol.keys()].filter((s) => !s.toUpperCase().startsWith("CASH-"));
+
   const [quotes, benchHistory, benchQuote] = await Promise.all([
-    getQuotes([...bySymbol.keys()]),
+    getQuotes(quotableSymbols),
     getHistory(BENCHMARK, Math.max(30, daysSinceFirst)).catch(() => []),
     getQuote(BENCHMARK).catch(() => null),
   ]);
@@ -124,8 +132,12 @@ async function buildPerformance(): Promise<PortfolioPerformanceSummary> {
     status: "ok",
     xirrPct,
     holdingDays: perf.holdingDays,
-    totalReturnPct: asPct(perf.totalReturnPct),
-    totalReturnDollar: perf.totalPnl,
+    // `total` is the whole-portfolio figure the Portfolio page's headline renders,
+    // already in percent — one definition of "total return" across every surface.
+    // This used to be `perf.totalReturnPct`, whose denominator summed transaction
+    // flows including synthetic cash lots and so understated the return by ~40%.
+    totalReturnPct: perf.total.pct,
+    totalReturnDollar: perf.total.pnl,
     // The benchmark comparison is XIRR-vs-XIRR, so it inherits the same gate:
     // if we won't annualize the portfolio, we can't honestly annualize the gap.
     benchmark:

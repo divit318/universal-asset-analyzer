@@ -17,7 +17,7 @@
  */
 
 import { getPortfolioForIOS } from "./ios/server";
-import { buildInvestmentProfile, fromLegacyReport } from "./ios/profile";
+import { buildInvestmentProfile, fromUniversalReport } from "./ios/profile";
 import { rankByFit } from "./ios/fit-scorer";
 import type { FitAssetData } from "./ios/types";
 import { getLatestSectorRotation } from "./sector-rotation";
@@ -29,8 +29,10 @@ import { getQuotes } from "./yahoo";
 import { computeTrackRecord, type TrackRecord } from "./decision-journal";
 import { gatherWatchlistAlerts } from "./ai-watchlist";
 import type { Freshness } from "./provenance";
-import { DEFAULT_CONSTRAINTS } from "./portfolio-analytics";
-import type { PortfolioReport, PortfolioAlert } from "./portfolio-analytics";
+import { DEFAULT_CONSTRAINTS } from "./ios/types";
+import { buildThreats } from "./home/threats";
+import type { ThreatItem } from "./home/contracts";
+import type { UniversalPortfolioReport } from "./portfolio/report";
 import type { MarketRegime, SectorRotationSnapshot, WatchlistAlert, Notification } from "./types";
 
 export type CardStatus = "ok" | "empty" | "degraded";
@@ -78,7 +80,14 @@ export interface ActionQueueCard {
 
 export interface OpportunitySnapshotCard {
   status: CardStatus;
-  healthIssues: PortfolioAlert[];
+  /**
+   * What is wrong with the portfolio right now, from the universal report's own
+   * threat model (lib/home/threats.ts) rather than a second alert generator. The
+   * legacy engine produced its own `PortfolioAlert[]` from its own concentration
+   * and risk math, which is how the Home digest could disagree with the Risk Lab
+   * about the same portfolio.
+   */
+  healthIssues: ThreatItem[];
   opportunities: OpportunitySnapshotItem[];
   scannerFreshness: Freshness | null;
 }
@@ -96,7 +105,7 @@ export interface CalibrationCard {
 
 /** Shared deterministic context — gathered once per digest, read by four builders. */
 export interface MissionControlContext {
-  report: PortfolioReport | null;
+  report: UniversalPortfolioReport | null;
   rotation: SectorRotationSnapshot | null;
   regime: MarketRegime | null;
   watchlistAlerts: WatchlistAlert[];
@@ -159,35 +168,37 @@ const SEVERITY_RANK: Record<"high" | "medium" | "low", number> = { high: 0, medi
 
 /** Exported for unit testing — pure, no I/O. */
 export function buildActionQueue(
-  report: PortfolioReport | null,
+  report: UniversalPortfolioReport | null,
   watchlistAlerts: WatchlistAlert[],
   notifications: Notification[],
 ): ActionQueueCard {
   const items: ActionQueueItem[] = [];
 
-  for (const alert of report?.alerts ?? []) {
+  // Portfolio problems come from the universal report's threat model, and the
+  // proposed actions from its recommendation engine — the same two lists the
+  // Portfolio page shows. Nothing is re-derived here.
+  for (const threat of buildThreats(report).threats) {
     items.push({
-      id: `alert-${alert.type}-${alert.symbol ?? "portfolio"}`,
-      severity: alert.severity,
+      id: threat.id,
+      severity: threat.severity,
       source: "alert",
-      title: alert.title,
-      description: alert.description,
-      href: alert.symbol ? `/research?symbol=${alert.symbol}` : "/portfolio",
-      symbol: alert.symbol,
+      title: threat.title,
+      description: threat.detail,
+      href: threat.href,
+      symbol: undefined,
     });
   }
 
   for (const rec of report?.recommendations ?? []) {
-    if (rec.action === "HOLD") continue; // not actionable
-    const severity = rec.action === "STRONG_BUY" || rec.action === "SELL" ? "high" : "medium";
     items.push({
-      id: `rec-${rec.symbol}`,
-      severity,
+      id: `rec-${rec.id}`,
+      // The recommendation engine ranks by priority; 1 is the one to do first.
+      severity: rec.priority <= 1 ? "high" : rec.priority <= 3 ? "medium" : "low",
       source: "recommendation",
-      title: `${rec.action.replace("_", " ")}: ${rec.symbol}`,
-      description: rec.reasoning,
-      href: `/research?symbol=${rec.symbol}`,
-      symbol: rec.symbol,
+      title: rec.title,
+      description: rec.rationale,
+      href: rec.symbol ? `/research?symbol=${rec.symbol}` : "/portfolio?tab=decisions",
+      symbol: rec.symbol ?? undefined,
     });
   }
 
@@ -226,17 +237,19 @@ export function buildActionQueue(
 export function buildOpportunitySnapshot(
   ctx: MissionControlContext,
 ): OpportunitySnapshotCard {
-  const healthIssues = (ctx.report?.alerts ?? []).filter(
-    (a) => a.type === "concentration" || a.type === "diversification" || a.type === "risk",
-  ).slice(0, 3);
+  const healthIssues = buildThreats(ctx.report).threats
+    .filter((t) => t.category === "concentration" || t.category === "correlation" || t.category === "liquidity" || t.category === "drawdown")
+    .slice(0, 3);
 
   const snapshot = getLatestScannerSnapshot();
   if (!snapshot) {
     return { status: "empty", healthIssues, opportunities: [], scannerFreshness: null };
   }
 
-  const portfolioSymbols = new Set(ctx.report?.positions.map((p) => p.symbol) ?? []);
-  const profile = buildInvestmentProfile(ctx.report ? fromLegacyReport(ctx.report) : null, "ai_optimized", DEFAULT_CONSTRAINTS);
+  const portfolioSymbols = new Set(
+    (ctx.report?.holdings ?? []).map((h) => h.symbol).filter((s): s is string => s != null),
+  );
+  const profile = buildInvestmentProfile(ctx.report ? fromUniversalReport(ctx.report) : null, "ai_optimized", DEFAULT_CONSTRAINTS);
 
   const candidates: Array<FitAssetData & { absoluteScore: number }> = [
     ...snapshot.result.highConviction,
@@ -266,13 +279,14 @@ export function buildOpportunitySnapshot(
 
 /** Exported for unit testing — pure, no I/O. */
 export function buildSectorAttention(
-  report: PortfolioReport | null,
+  report: UniversalPortfolioReport | null,
   rotation: SectorRotationSnapshot | null,
 ): SectorAttentionCard {
   if (!rotation || rotation.leadershipChanges.length === 0) {
     return { status: "empty", changes: [] };
   }
-  const weightBySector = new Map((report?.sectorAllocation ?? []).map((s) => [s.sector, s.weight]));
+  // The report's own sector allocation — one weighting, shared with every panel.
+  const weightBySector = new Map((report?.allocation.bySector.slices ?? []).map((s) => [s.label, s.weight]));
   const changes: SectorAttentionChange[] = rotation.leadershipChanges
     .filter((c) => weightBySector.has(c.sector))
     .map((c) => ({ ...c, portfolioWeightPct: weightBySector.get(c.sector) ?? null }));
@@ -281,7 +295,7 @@ export function buildSectorAttention(
 }
 
 /** Exported for unit testing. */
-export async function buildCalibration(report: PortfolioReport | null): Promise<CalibrationCard> {
+export async function buildCalibration(report: UniversalPortfolioReport | null): Promise<CalibrationCard> {
   const decisions = listDecisions();
   const eligible = decisions.length >= 5;
   if (!eligible) return { status: "empty", trackRecord: null, eligible: false };

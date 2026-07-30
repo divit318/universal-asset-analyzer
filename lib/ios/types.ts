@@ -7,7 +7,6 @@
  * of "Is this a good stock?"
  */
 
-import type { PortfolioObjective, PortfolioConstraints } from "@/lib/portfolio-analytics";
 import type { CompositeScores, ScoreResult } from "@/lib/types";
 
 /* -------------------------------------------------------------------------- */
@@ -224,3 +223,67 @@ export interface ContextualRanking {
   /** One-liner explaining the fit rank. */
   fitSummary: string;
 }
+
+/* -------------------------------------------------------------------------- */
+/* The user's stated objective and constraints                                 */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * These live HERE, with the IOS, because they are the IOS's own vocabulary: the
+ * objective the user picks for personalising ideas ("maximize growth", "reduce
+ * risk", "AI optimized"), and the guard-rails the fit scorer respects. They used
+ * to live in lib/portfolio-analytics.ts alongside a second, now-deleted portfolio
+ * report builder, which made that module look like a portfolio engine that half
+ * the app depended on. It is not one any more — see its header.
+ *
+ * Deliberately NOT the same enum as lib/portfolio/engines/optimize.ts's
+ * `Objective`. That one names a REBALANCING objective the optimizer solves for
+ * ("maximize_sharpe", "target_allocation"); this one names how the user wants
+ * IDEAS ranked. Two different questions, and collapsing them would change what
+ * the Wire and Research pages mean by "fit".
+ */
+
+export type PortfolioObjective =
+  | "maximize_growth"
+  | "reduce_risk"
+  | "improve_diversification"
+  | "increase_income"
+  | "beat_benchmark"
+  | "preserve_capital"
+  | "ai_optimized";
+
+export interface ObjectiveConfig {
+  label: string;
+  description: string;
+  icon: string;
+  color: string;
+  activeColor: string;
+}
+
+export const OBJECTIVE_CONFIG: Record<PortfolioObjective, ObjectiveConfig> = {
+  maximize_growth:         { label: "Maximize Growth",    description: "Focus on high-growth, high-momentum stocks",              icon: "↗", color: "border-border text-muted hover:border-positive/40 hover:text-positive",         activeColor: "border-positive/50 bg-positive/10 text-positive" },
+  reduce_risk:             { label: "Reduce Risk",        description: "Prioritize defensive, low-volatility positions",          icon: "◉", color: "border-border text-muted hover:border-blue-400/40 hover:text-blue-400",          activeColor: "border-blue-400/50 bg-blue-400/10 text-blue-400" },
+  improve_diversification: { label: "Diversify",         description: "Fill sector and factor gaps in the portfolio",            icon: "⊞", color: "border-border text-muted hover:border-accent/40 hover:text-accent",              activeColor: "border-accent/50 bg-accent/10 text-accent" },
+  increase_income:         { label: "Increase Income",   description: "Prioritize high-dividend and income-generating assets",   icon: "$", color: "border-border text-muted hover:border-amber-400/40 hover:text-amber-400",        activeColor: "border-amber-400/50 bg-amber-400/10 text-amber-400" },
+  beat_benchmark:          { label: "Beat Benchmark",    description: "Maximize alpha relative to SPY",                         icon: "⚡", color: "border-border text-muted hover:border-orange-400/40 hover:text-orange-400",      activeColor: "border-orange-400/50 bg-orange-400/10 text-orange-400" },
+  preserve_capital:        { label: "Preserve Capital",  description: "Minimize drawdown risk, protect principal",              icon: "◈", color: "border-border text-muted hover:border-muted/60 hover:text-foreground",            activeColor: "border-border bg-surface-2 text-foreground" },
+  ai_optimized:            { label: "AI Optimized",      description: "AI selects the optimal objective based on your profile", icon: "✦", color: "border-border text-muted hover:border-accent/50 hover:text-accent",              activeColor: "border-accent bg-accent/15 text-accent font-semibold" },
+};
+
+export interface PortfolioConstraints {
+  maxPositionPct: number;      // max % allocation per single stock (default: 25)
+  maxSectorPct: number;        // max % allocation per sector (default: 40)
+  minCashPct: number;          // minimum cash reserve % (default: 2)
+  excludedSymbols: string[];   // never-sell / avoid-buy list
+  requireDividend: boolean;    // only recommend dividend payers (default: false)
+  marketCapFilter: "any" | "large" | "mid" | "small";  // default: "any"
+}
+
+export const DEFAULT_CONSTRAINTS: PortfolioConstraints = {
+  maxPositionPct: 25,
+  maxSectorPct: 40,
+  minCashPct: 2,
+  excludedSymbols: [],
+  requireDividend: false,
+  marketCapFilter: "any",
+};

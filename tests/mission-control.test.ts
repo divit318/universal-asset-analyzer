@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { PortfolioReport, PortfolioAlert, PositionRecommendation } from "@/lib/portfolio-analytics";
+import type { UniversalPortfolioReport } from "@/lib/portfolio/report";
+import type { Recommendation } from "@/lib/portfolio/engines/recommend";
 import type { SectorRotationSnapshot, WatchlistAlert, Notification, Decision } from "@/lib/types";
 
 const dbMocks = {
@@ -29,17 +30,33 @@ const {
 } = await import("@/lib/mission-control");
 const { getLatestScannerSnapshot, persistScannerSnapshot } = await import("@/lib/scanner/cache");
 
-function alert(overrides: Partial<PortfolioAlert> = {}): PortfolioAlert {
-  return { type: "risk", severity: "medium", title: "t", description: "d", action: "a", ...overrides };
+/**
+ * The digest reads the UNIVERSAL report — there is one Portfolio engine. Portfolio
+ * problems reach the queue through lib/home/threats.ts (the same threat model the
+ * Home page and the Risk Lab use) rather than a second alert generator, so a
+ * fixture that wants a threat states the risk that produces one.
+ */
+function recommendation(overrides: Partial<Recommendation> = {}): Recommendation {
+  return {
+    id: "rec-1", action: "ADD", title: "Add bonds", subject: "Bonds", symbol: "AAA",
+    rationale: "r", confidence: 70, confidenceBasis: [], amount: 1000,
+    priority: 1, alternatives: [], alternativesEvaluated: 0,
+    ...overrides,
+  } as Recommendation;
 }
 
-function recommendation(overrides: Partial<PositionRecommendation> = {}): PositionRecommendation {
+/** A report shaped just enough for the builders under test. */
+function report(overrides: Record<string, unknown>): UniversalPortfolioReport {
   return {
-    symbol: "AAA", name: "Alpha", action: "HOLD", confidence: 80, currentWeight: 5, targetWeight: 5,
-    delta: 0, suggestedDollar: 0, suggestedShares: null, composite: 70, fundamentalScore: 70,
-    analystScore: null, momentumScore: null, reasoning: "r", keyMetrics: [], catalysts: [], risks: [],
+    totalValue: 100_000,
+    holdings: [],
+    recommendations: [],
+    risk: { illiquidPct: 0, topHoldingWeight: 0, topSectorWeight: 0, positionHhi: 0, correlation: null, maxDrawdown: null },
+    allocation: { bySector: { slices: [] }, byAssetClass: { slices: [] } },
+    scenarios: [],
+    concentration: [],
     ...overrides,
-  };
+  } as unknown as UniversalPortfolioReport;
 }
 
 function watchlistAlert(overrides: Partial<WatchlistAlert> = {}): WatchlistAlert {
@@ -52,28 +69,31 @@ function notification(overrides: Partial<Notification> = {}): Notification {
 
 describe("buildActionQueue", () => {
   it("orders items by severity across all four sources and caps at 10", () => {
-    const report = {
-      alerts: [alert({ severity: "low", title: "low alert" })],
-      recommendations: [recommendation({ action: "SELL", symbol: "BBB" })],
-    } as unknown as PortfolioReport;
+    const r = report({ recommendations: [recommendation({ priority: 4, title: "low priority rec" })] });
     const watchlistAlerts = [watchlistAlert({ severity: "high", title: "high watch" })];
     const notifications = [notification({ severity: "warning", title: "warn note" })];
 
-    const result = buildActionQueue(report, watchlistAlerts, notifications);
+    const result = buildActionQueue(r, watchlistAlerts, notifications);
 
     expect(result.status).toBe("ok");
-    // high-severity items (watchlist "high", notification mapped to "high", SELL mapped to "high") precede the low alert
-    expect(result.items.at(-1)!.title).toBe("low alert");
+    // The low-priority recommendation sinks below the high-severity watchlist and
+    // notification items.
+    expect(result.items.at(-1)!.title).toBe("low priority rec");
     expect(result.items.map((i) => i.severity)).toEqual([...result.items.map((i) => i.severity)].sort(
       (a, b) => ({ high: 0, medium: 1, low: 2 }[a] - { high: 0, medium: 1, low: 2 }[b]),
     ));
   });
 
-  it("excludes HOLD recommendations as not actionable", () => {
-    const report = { alerts: [], recommendations: [recommendation({ action: "HOLD" })] } as unknown as PortfolioReport;
-    const result = buildActionQueue(report, [], []);
-    expect(result.items).toEqual([]);
-    expect(result.status).toBe("empty");
+  it("surfaces every recommendation the engine produced, ranked by its priority", () => {
+    // The universal engine does not emit no-op advice — there is no HOLD to filter,
+    // and filtering here would mean the digest and the Decision Center disagreed
+    // about what is actionable.
+    const result = buildActionQueue(
+      report({ recommendations: [recommendation({ priority: 1, title: "first" }), recommendation({ id: "rec-2", priority: 5, title: "later" })] }),
+      [], [],
+    );
+    expect(result.items.map((i) => i.title)).toEqual(["first", "later"]);
+    expect(result.items[0].severity).toBe("high");
   });
 
   it("excludes already-read notifications", () => {
@@ -97,15 +117,15 @@ describe("buildSectorAttention", () => {
   }
 
   it("only includes sectors the portfolio actually holds", () => {
-    const report = { sectorAllocation: [{ sector: "Technology", value: 1000, weight: 25, positionCount: 2, avgComposite: null }] } as unknown as PortfolioReport;
-    const result = buildSectorAttention(report, rotation());
+    const r = report({ allocation: { bySector: { slices: [{ key: "Technology", label: "Technology", value: 1000, weight: 25, count: 2 }] }, byAssetClass: { slices: [] } } });
+    const result = buildSectorAttention(r, rotation());
     expect(result.status).toBe("ok");
     expect(result.changes).toEqual([{ sector: "Technology", fromRank: 3, toRank: 1, portfolioWeightPct: 25 }]);
   });
 
   it("excludes a leadership change for a sector not held", () => {
-    const report = { sectorAllocation: [{ sector: "Healthcare", value: 500, weight: 10, positionCount: 1, avgComposite: null }] } as unknown as PortfolioReport;
-    const result = buildSectorAttention(report, rotation());
+    const r = report({ allocation: { bySector: { slices: [{ key: "Healthcare", label: "Healthcare", value: 500, weight: 10, count: 1 }] }, byAssetClass: { slices: [] } } });
+    const result = buildSectorAttention(r, rotation());
     expect(result).toEqual({ status: "empty", changes: [] });
   });
 
@@ -188,17 +208,14 @@ describe("buildOpportunitySnapshot", () => {
     };
     dbMocks.getScannerSnapshot.mockReturnValue({ result: JSON.stringify(scannerResult), generatedAt: freshAt });
 
-    const report = {
-      positions: [{ symbol: "HELD", weight: 100 }],
-      alerts: [],
-      sectorAllocation: [],
-      positionCount: 1,
+    const r = report({
+      holdings: [{ symbol: "HELD", weight: 100, valuation: { valueBase: 10_000 }, metrics: {} }],
+      holdingCount: 1,
       totalValue: 10_000,
-      factors: { tilts: [] },
-      risk: { hhi: 5000, annualizedVolatility: 15, beta: 1 },
+      risk: { positionHhi: 5000, annualizedVolatility: 15, beta: 1, illiquidPct: 0, topHoldingWeight: 100, topSectorWeight: 0, correlation: null, maxDrawdown: null },
       health: { total: 70 },
-    } as unknown as PortfolioReport;
-    const result = buildOpportunitySnapshot({ report, rotation: null, regime: null, watchlistAlerts: [], scannerFreshness: null });
+    });
+    const result = buildOpportunitySnapshot({ report: r, rotation: null, regime: null, watchlistAlerts: [], scannerFreshness: null });
 
     expect(result.status).toBe("ok");
     expect(result.opportunities.map((o) => o.symbol)).toEqual(["NEW"]);

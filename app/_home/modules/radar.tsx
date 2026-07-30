@@ -33,7 +33,7 @@ const TIER: Record<string, "positive" | "brand" | "neutral" | "warning"> = {
   avoid: "warning",
 };
 
-function AddButton({ symbol }: { symbol: string }) {
+function AddButton({ symbol, reason }: { symbol: string; reason?: string | null }) {
   const toast = useToast();
   const [state, setState] = useState<"idle" | "adding" | "added">("idle");
 
@@ -44,7 +44,9 @@ function AddButton({ symbol }: { symbol: string }) {
       const res = await fetch("/api/watchlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol }),
+        // Provenance (lib/idea-source.ts): the Radar's own fit summary is the
+        // reason this appeared, so it travels with the idea into the pipeline.
+        body: JSON.stringify({ symbol, source: "radar", sourceDetail: reason ?? null }),
       });
       if (!res.ok) throw new Error();
       setState("added");
@@ -53,7 +55,7 @@ function AddButton({ symbol }: { symbol: string }) {
       setState("idle");
       toast(`Couldn't add ${symbol}`, "error");
     }
-  }, [state, symbol, toast]);
+  }, [state, symbol, reason, toast]);
 
   return (
     <button
@@ -97,7 +99,7 @@ function RadarRow({ o, ctx, isNew }: { o: OpportunitySnapshotItem; ctx: SymbolCo
         </span>
         <span className="truncate text-[11px] text-muted">{o.fitSummary}</span>
       </span>
-      <AddButton symbol={o.symbol} />
+      <AddButton symbol={o.symbol} reason={o.fitSummary} />
     </li>
   );
 }

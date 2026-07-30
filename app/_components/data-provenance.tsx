@@ -31,12 +31,18 @@ export function DataProvenance({
   const age = f.label === "unknown" ? "as-of unknown" : liveLabel && f.level === "fresh" ? "Live" : `updated ${f.label}`;
   return (
     <span
-      className={`inline-flex items-center gap-1.5 text-xs text-muted ${className}`}
+      className={`inline-flex min-w-0 items-center gap-1.5 text-xs text-muted ${className}`}
       title={`Source: ${meta.name} · ${age}`}
     >
       <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT[f.level]}`} aria-hidden />
-      <span className="font-medium text-foreground/80">{meta.short}</span>
-      <span className="text-faint">· {age}</span>
+      <span className="shrink-0 font-medium text-foreground/80">{meta.short}</span>
+      {/* min-w-0 + truncate: when a caller crams this badge alongside other
+          content on one line (e.g. Compare's "FY2025 · Yahoo · updated..."
+          row in a narrow, 5-way-comparison card), the age text is the part
+          that should give way — it ellipsizes instead of word-wrapping onto
+          a second line and leaving a stray "·" dangling at the start of it.
+          The full text is still available via the title tooltip above. */}
+      <span className="min-w-0 truncate text-faint">· {age}</span>
     </span>
   );
 }

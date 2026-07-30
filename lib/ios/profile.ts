@@ -3,18 +3,17 @@
  *
  * Pure function, no network I/O, no side effects.
  *
- * Two portfolio engines currently coexist (see PLAN-portfolio-universal.md's debt
- * section): the legacy equity-only `PortfolioReport` (lib/portfolio-analytics.ts,
- * still used server-side by lib/ios/server.ts + lib/mission-control.ts) and the new
- * `UniversalPortfolioReport` (lib/portfolio/report.ts, used by IOSProvider
- * client-side). Rather than have buildInvestmentProfile know about both shapes —
- * or worse, only handle one and crash on the other, which is what happened here —
- * it consumes a small normalized `IOSReportInput`, and each report type gets one
- * adapter function below. When the legacy engine is retired, delete
- * `fromLegacyReport` and this file needs no other change.
+ * There is ONE portfolio engine: `UniversalPortfolioReport` (lib/portfolio/report.ts).
+ * The legacy equity-only `PortfolioReport` and its `fromLegacyReport` adapter are
+ * gone — server and client now build this profile from the same report, so a "fit"
+ * badge in the Wire is scored against exactly the portfolio the Portfolio page shows.
+ *
+ * buildInvestmentProfile still consumes a small normalized `IOSReportInput` rather
+ * than the report itself: that is what keeps this file independent of the report's
+ * shape, and it is a projection, not a second engine.
  */
 
-import type { PortfolioReport, PortfolioObjective, PortfolioConstraints, FactorTilt } from "@/lib/portfolio-analytics";
+import type { PortfolioObjective, PortfolioConstraints } from "./types";
 import type { UniversalPortfolioReport } from "@/lib/portfolio/report";
 import type {
   InvestmentProfile,
@@ -64,55 +63,6 @@ const ALL_SECTORS = [
   "Real Estate",
   "Utilities",
 ];
-
-/* -------------------------------------------------------------------------- */
-/* Adapter: legacy PortfolioReport → IOSReportInput                           */
-/* -------------------------------------------------------------------------- */
-
-function extractStyleWeightsFromTilts(tilts: FactorTilt[]): StyleWeights {
-  const find = (name: string): number => {
-    const t = tilts.find((f) => f.factor.toLowerCase().includes(name.toLowerCase()));
-    if (!t) return 50;
-    // score is -100 to +100; convert to 0-100 where 50 = neutral
-    return Math.round(Math.min(100, Math.max(0, 50 + t.score / 2)));
-  };
-  return {
-    growth: find("growth"),
-    value: find("value"),
-    momentum: find("momentum"),
-    quality: find("quality"),
-    income: find("income") || find("dividend"),
-  };
-}
-
-export function fromLegacyReport(report: PortfolioReport): IOSReportInput {
-  const sectorWeights: SectorWeight[] = report.sectorAllocation.map((s) => ({
-    sector: s.sector,
-    weight: Math.round(s.weight * 10) / 10,
-  }));
-
-  // Conservative: treat every position as large-cap until EnrichedPosition gains
-  // a marketCap field — matches this engine's historical behavior exactly.
-  const large = report.positions.reduce((sum, p) => sum + p.value, 0);
-  const marketCapWeights: MarketCapWeights = {
-    large: report.totalValue > 0 ? Math.round((large / report.totalValue) * 100) : 0,
-    mid: 0,
-    small: 0,
-  };
-
-  return {
-    totalValue: report.totalValue,
-    positionCount: report.positionCount,
-    holdingSymbols: report.positions.map((p) => p.symbol),
-    sectorWeights,
-    styleWeights: extractStyleWeightsFromTilts(report.factors?.tilts ?? []),
-    marketCapWeights,
-    hhi: report.risk.hhi,
-    healthScore: report.health.total,
-    annualizedVolatility: report.risk.annualizedVolatility,
-    beta: report.risk.beta,
-  };
-}
 
 /* -------------------------------------------------------------------------- */
 /* Adapter: UniversalPortfolioReport → IOSReportInput                         */
@@ -210,7 +160,9 @@ export function fromUniversalReport(report: UniversalPortfolioReport): IOSReport
     sectorWeights,
     styleWeights: styleWeightsFromHoldings(report.holdings),
     marketCapWeights: marketCapWeightsFromHoldings(report.holdings, report.totalValue),
-    hhi: report.risk.hhi,
+    // Position-level, which is what projectHHI() and the Pipeline's
+    // "position-level concentration moves X → Y" copy both assume.
+    hhi: report.risk.positionHhi,
     healthScore: report.health.total,
     annualizedVolatility: report.risk.annualizedVolatility,
     beta: report.risk.beta,

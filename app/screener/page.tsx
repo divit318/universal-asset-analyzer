@@ -452,7 +452,14 @@ export default function ScreenerPage() {
       await fetch("/api/watchlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol: row.symbol, name: row.name }),
+        // Provenance: which screen produced this idea, so the Pipeline board can
+        // answer "why am I seeing this?" months later (lib/idea-source.ts).
+        body: JSON.stringify({
+          symbol: row.symbol,
+          name: row.name,
+          source: "screener",
+          sourceDetail: `${def.label} screen · rank #${row.rank}`,
+        }),
       });
     } catch {
       setWatchlisted((prev) => {

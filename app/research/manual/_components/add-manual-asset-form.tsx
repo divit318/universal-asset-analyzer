@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Field, Input } from "@/app/_components/ui";
+import { Button, DateInput, Field, Input } from "@/app/_components/ui";
 import { DataProvenance } from "@/app/_components/data-provenance";
 import type { ManualAssetCategory, StructuredProductType } from "@/lib/types";
 import type { RealEstateLookupResult, RealEstateSearchReason } from "@/lib/rentcast";
@@ -296,7 +296,7 @@ export function AddManualAssetForm({
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. 123 Main St Duplex" />
         </Field>
         <Field label="Acquisition Date">
-          <Input type="date" value={acquisitionDate} onChange={(e) => setAcquisitionDate(e.target.value)} />
+          <DateInput value={acquisitionDate} onChange={setAcquisitionDate} />
         </Field>
         <Field label="Acquisition Cost ($)">
           <Input type="number" value={acquisitionCost} onChange={(e) => setAcquisitionCost(e.target.value)} placeholder="0" />
@@ -305,7 +305,7 @@ export function AddManualAssetForm({
           <Input type="number" value={currentValue} onChange={(e) => setCurrentValue(e.target.value)} placeholder="0" />
         </Field>
         <Field label="Current Value As Of" hint="Optional">
-          <Input type="date" value={currentValueAsOf} onChange={(e) => setCurrentValueAsOf(e.target.value)} />
+          <DateInput value={currentValueAsOf} onChange={setCurrentValueAsOf} />
         </Field>
       </div>
 
@@ -493,7 +493,7 @@ export function AddManualAssetForm({
               <Input type="number" step="0.01" value={principalProtectionPercent} onChange={(e) => setPrincipalProtectionPercent(e.target.value)} />
             </Field>
             <Field label="Maturity Date">
-              <Input type="date" value={maturityDate} onChange={(e) => setMaturityDate(e.target.value)} />
+              <DateInput value={maturityDate} onChange={setMaturityDate} />
             </Field>
           </div>
         </div>

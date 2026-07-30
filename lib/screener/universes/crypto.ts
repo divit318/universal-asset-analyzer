@@ -12,6 +12,7 @@
  * lib/assets/crypto.ts.
  */
 
+import { displayAssetName } from "../../format";
 import { getHistory } from "../../yahoo";
 import { pageRawScreener, q, type RawQuoteRow } from "../../yahoo-screener";
 import {
@@ -63,7 +64,11 @@ export function toCandidate(row: RawQuoteRow, stats: HistoryStats | undefined): 
 
   return {
     symbol,
-    name: str(row.longName) ?? str(row.shortName) ?? symbol,
+    // Yahoo appends the quote currency to every pair's name, which is already the
+    // second half of the symbol — see displayAssetName(). Normalized here so a
+    // candidate carries the name the rest of the app will show, rather than each
+    // surface that ever persists it (the watchlist did) storing the raw duplicate.
+    name: displayAssetName(symbol, str(row.longName) ?? str(row.shortName) ?? symbol),
     assetClass: "crypto",
     price,
     changePercent: num(row.regularMarketChangePercent),

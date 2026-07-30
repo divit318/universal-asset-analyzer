@@ -167,7 +167,9 @@ export function CommandPalette() {
         const res = await fetch("/api/watchlist", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ symbol }),
+          // Provenance (lib/idea-source.ts): typed in, with no analysis behind it —
+          // recorded as exactly that rather than left to look like a screen hit.
+          body: JSON.stringify({ symbol, source: "command-palette" }),
         });
         if (!res.ok) throw new Error();
         recordFocus(symbol);

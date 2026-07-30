@@ -24,7 +24,7 @@ import type { InvestmentProfile, PortfolioFitAnalysis } from "@/lib/ios/types";
 import type { ChartQARelatedTarget } from "@/lib/ai-chart-qa";
 import type { ScreenerInCompany, ScreenerInPeer } from "@/lib/screener-in";
 import { detectMarket, MARKET_BADGE, MARKET_LABEL, type MarketRegion } from "@/lib/market";
-import { detectAssetClass } from "@/lib/asset-class";
+import { detectAssetClass, ASSET_CLASS_LABEL } from "@/lib/asset-class";
 import { useResearchBundle } from "@/lib/platform/client/use-research-bundle";
 import { useVerdictStream } from "@/lib/ai/client/use-verdict-stream";
 import { useFocusSafe } from "@/lib/focus-context";
@@ -1676,7 +1676,14 @@ function ResearchPageInner() {
       const res = await fetch("/api/watchlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol: data.quote.symbol, name: data.quote.name }),
+        // Provenance for the Pipeline board (lib/idea-source.ts): kept out of a
+        // research session, and which kind of asset was being researched.
+        body: JSON.stringify({
+          symbol: data.quote.symbol,
+          name: data.quote.name,
+          source: "research",
+          sourceDetail: `Researched as ${ASSET_CLASS_LABEL[detectAssetClass(data.quote)]}`,
+        }),
       });
       if (res.ok) {
         setSaved(true);

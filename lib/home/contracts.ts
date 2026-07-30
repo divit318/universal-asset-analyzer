@@ -472,8 +472,14 @@ export interface PortfolioPerformanceSummary {
  * Below this, an annualized return says more about the calendar than about the
  * portfolio. A quarter is the shortest window over which the extrapolation is
  * not actively misleading.
+ *
+ * Re-exported from the engine that computes `holdingDays` rather than declared
+ * again here. Three surfaces had each defined their own copy of this threshold, and
+ * the Portfolio page's copy was applied to its own XIRR but not to the benchmark
+ * comparison drawn from the same 18-day window — a divergence a shared constant
+ * makes impossible.
  */
-export const MIN_DAYS_TO_ANNUALIZE = 90;
+export { MIN_DAYS_TO_ANNUALIZE } from "../portfolio-performance";
 
 /* ------------------------------------------------------------------ */
 /* Module 10 — Continue Where You Left Off                             */

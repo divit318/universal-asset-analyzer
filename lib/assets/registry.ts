@@ -58,6 +58,22 @@ export function listAssetClasses(): AssetClassDefinition[] {
   return ASSET_CLASS_IDS.map((id) => DEFINITIONS[id]);
 }
 
+/**
+ * The class a symbol's own *shape* declares, via each definition's `validate` —
+ * `HE=F` is a commodity future, `USDCHF=X` is a pair, `USD136148-USD` is crypto.
+ *
+ * Returns null for anything whose shape says nothing, which is every bare
+ * ticker: no symbol distinguishes an equity from an ETF or a REIT, and guessing
+ * would put "Equity" on a bond fund. Callers that have the real class (a
+ * holding's `asset_class`, a screener candidate's `assetClass`) must prefer it —
+ * this is only for symbols we hold no record of, such as a watchlist row.
+ */
+export function assetClassForSymbol(symbol: string): AssetClassId | null {
+  const sym = symbol.trim().toUpperCase();
+  if (!sym) return null;
+  return ASSET_CLASS_IDS.find((id) => DEFINITIONS[id].validate?.(sym) ?? false) ?? null;
+}
+
 /** Classes that support a given capability — e.g. everything Portfolio can hold. */
 export function assetClassesWith(capability: Capability): AssetClassDefinition[] {
   return listAssetClasses().filter((d) => d.capabilities.includes(capability));
