@@ -22,7 +22,7 @@
  */
 
 import { Suspense, useState, useRef, useCallback, useEffect, useMemo } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { AlertTriangle, ArrowUpRight, Check, Copy, RotateCcw } from "lucide-react";
 import type {
@@ -1166,19 +1166,10 @@ function pushRecent(theme: string): string[] {
 
 function ThematicPageInner() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const themeFromQuery = searchParams.get("theme");
 
-  // Lazy initializers restore from sessionStorage on first render — no effect
-  // needed. A `?theme=` deep-link (e.g. from Scanner's "Deep Thematic Research
-  // →") always wins over any stale cached report, since we auto-run it below.
-  const [report, setReport] = useState<ThematicReport | null>(() => {
-    if (themeFromQuery) return null;
-    try {
-      const saved = sessionStorage.getItem(STORAGE_KEY);
-      return saved ? asCurrentReport(JSON.parse(saved)) : null;
-    } catch { /* ignore corrupt storage */ }
-    return null;
-  });
+  const [report, setReport] = useState<ThematicReport | null>(null);
   const [theme, setTheme] = useState(() => themeFromQuery ?? "");
   const [running, setRunning] = useState(false);
   const [events, setEvents] = useState<ThematicProgressEvent[]>([]);
@@ -1186,12 +1177,27 @@ function ThematicPageInner() {
   const [elapsed, setElapsed] = useState(0);
   const [recent, setRecent] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
+  /** The theme most recently started (typed, preset, or deep link) — the guard
+   *  that keeps the URL sync below from re-triggering the run it came from. */
+  const startedThemeRef = useRef<string | null>(null);
 
-  // Recent themes come from localStorage, which doesn't exist during SSR — read
-  // it after mount so the server and client first paints agree.
+  // Recent themes and the saved report live in browser storage, which doesn't
+  // exist during SSR — restore both after mount so the server and client first
+  // paints agree. Restoring the report in the lazy initializer instead caused
+  // a hydration mismatch (and a full client re-render) on every revisit with a
+  // saved report, because /thematic prerenders without one. A `?theme=`
+  // deep-link always wins over any stale saved report, since it auto-runs.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reading localStorage after mount IS the mechanism: doing it in the initializer would make the SSR and client first paints disagree.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reading browser storage after mount IS the mechanism: doing it in the initializer makes the SSR and client first paints disagree.
     setRecent(readRecent());
+    if (themeFromQuery) return;
+    try {
+      const saved = sessionStorage.getItem(STORAGE_KEY);
+      const restored = saved ? asCurrentReport(JSON.parse(saved)) : null;
+      if (restored) setReport(restored);
+    } catch { /* ignore corrupt storage */ }
+    // Mount only: a later query change is handled by the deep-link effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -1223,6 +1229,12 @@ function ThematicPageInner() {
     setReport(null);
     setError(null);
     setRecent(pushRecent(t));
+
+    // The URL names what is on screen. Without this, a reload after
+    // researching a second theme silently re-ran whatever stale `?theme=`
+    // the address bar still carried and discarded the report being read.
+    startedThemeRef.current = t;
+    router.replace(`/thematic?theme=${encodeURIComponent(t)}`, { scroll: false });
 
     try {
       const res = await fetch("/api/thematic", {
@@ -1271,21 +1283,27 @@ function ThematicPageInner() {
     } finally {
       setRunning(false);
     }
-  }, [theme]);
+  }, [theme, router]);
 
   const handlePreset = useCallback((label: string) => {
     setTheme(label);
     void run(label);
   }, [run]);
 
-  // Deep-link auto-run: a theme arriving via `?theme=` should populate the field
-  // AND start analysis immediately — the user should never re-enter it.
+  // Deep-link auto-run: a theme arriving via `?theme=` should populate the
+  // field AND start analysis immediately — the user should never re-enter it.
+  // This reacts to every query change, not just the mount: a second deep link
+  // while already on /thematic (assistant navigation, another Wire card) used
+  // to change the URL and trigger nothing. The ref distinguishes a genuinely
+  // new deep link from the echo of run()'s own router.replace.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- kicking off the deep-linked run is the effect's whole purpose; its state writes are the run's progress.
-    if (themeFromQuery) void run(themeFromQuery);
-    // Mount only — `run`'s identity changes whenever `theme` state updates.
+    if (!themeFromQuery || themeFromQuery === startedThemeRef.current) return;
+    setTheme(themeFromQuery);
+    void run(themeFromQuery);
+    // `run`'s identity changes whenever `theme` state updates; the ref above
+    // is the real re-run guard.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [themeFromQuery]);
 
   const tooLong = theme.length >= MAX_THEME_LENGTH;
 
