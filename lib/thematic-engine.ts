@@ -1715,11 +1715,23 @@ export async function runThematicEngine(
 async function fetchThemeNews(theme: string): Promise<NewsItem[]> {
   const items = await fetchMarketNews({ query: theme, india: false, global: true, limit: 40 })
     .catch(() => [] as NewsItem[]);
-  const words = theme.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !STOPWORDS.has(w));
-  if (words.length === 0) return items.slice(0, 20);
+  const tokens = theme.split(/[^a-zA-Z0-9]+/).filter(Boolean);
+  const longWords = tokens
+    .map((t) => t.toLowerCase())
+    .filter((w) => w.length >= 4 && !STOPWORDS.has(w));
+  // The defining token of many themes is 2-3 characters — "AI Compute",
+  // "EV charging", "5G", "LNG" — and the old >=4 filter dropped it outright,
+  // so an "AI Compute" report kept only headlines containing "compute" and
+  // discarded every AI headline. Short tokens qualify when the user wrote
+  // them as standalone uppercase words (which excludes prose like "of"/"in"),
+  // and they match on word boundaries so "AI" never matches "said".
+  const shortWords = tokens
+    .filter((t) => t.length >= 2 && t.length <= 3 && t === t.toUpperCase() && /[A-Z]/.test(t))
+    .map((t) => t.toLowerCase());
+  if (longWords.length === 0 && shortWords.length === 0) return items.slice(0, 20);
   const onTheme = items.filter((n) => {
     const text = `${n.headline} ${n.summary ?? ""}`.toLowerCase();
-    return words.some((w) => text.includes(w));
+    return longWords.some((w) => text.includes(w)) || shortWords.some((w) => themeMatches(text, w));
   });
   // If nothing survives, the theme genuinely has no news coverage right now —
   // report that rather than falling back to unrelated market noise.

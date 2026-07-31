@@ -18,7 +18,8 @@ vi.mock("@/lib/yahoo", () => ({
   getQuotes: vi.fn().mockResolvedValue([]),
   getHistory: vi.fn().mockResolvedValue([]),
 }));
-vi.mock("@/lib/news", () => ({ fetchMarketNews: vi.fn().mockResolvedValue([]) }));
+const fetchMarketNewsMock = vi.fn().mockResolvedValue([]);
+vi.mock("@/lib/news", () => ({ fetchMarketNews: (...args: unknown[]) => fetchMarketNewsMock(...args) }));
 vi.mock("yahoo-finance2", () => ({
   default: class {
     async quote() { throw new Error("no network in tests"); }
@@ -272,6 +273,33 @@ describe("runThematicEngine — failure tracking", () => {
     expect(report.stageFailures).toHaveLength(1);
     expect(report.stageFailures[0].stage).toBe("Bottleneck");
     expect(report.bottleneck.score).toBe(5); // neutral default
+  });
+});
+
+describe("theme news filtering", () => {
+  const news = (headline: string) => ({
+    headline, source: "Test", url: `https://example.com/${headline.replaceAll(" ", "-")}`,
+    publishedAt: "2026-08-01T00:00:00Z", tickers: [], summary: null,
+  });
+
+  it("keeps headlines matching a short uppercase theme token on a word boundary", async () => {
+    // "AI Compute" used to filter on {"compute"} alone: the >=4 length gate
+    // dropped "AI", so every AI headline was discarded and the tab claimed
+    // no news coverage existed.
+    fetchMarketNewsMock.mockResolvedValueOnce([
+      news("AI capex hits new record"),          // matches short token "AI"
+      news("Compute demand outpaces supply"),    // matches long word "compute"
+      news("Senator said tariffs may rise"),     // "said" must NOT match "AI"
+      news("Retail sales climb in June"),        // matches nothing
+    ]);
+    runPromptMock.mockReset();
+    runPromptMock.mockImplementation(async (_task: string, prompt: string) => routeByPrompt(prompt));
+
+    const report = await runThematicEngine({ theme: "AI Compute" });
+    expect(report.newsItems.map((n) => n.headline)).toEqual([
+      "AI capex hits new record",
+      "Compute demand outpaces supply",
+    ]);
   });
 });
 
