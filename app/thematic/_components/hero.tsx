@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { AlertTriangle, Copy, RotateCcw } from "lucide-react";
 import type { ThematicReport, RiskFlag, ScoreFactor } from "@/lib/thematic-engine";
 import { Badge, Button, Card, SectionHeader } from "@/app/_components/ui";
@@ -115,32 +115,62 @@ export function Hero({ report, onRefresh }: { report: ThematicReport; onRefresh:
 function FactorStrip({ factors }: { factors: ScoreFactor[] }) {
   return (
     <div className="mt-6 grid grid-cols-2 gap-2 border-t border-border pt-5 sm:grid-cols-4 lg:grid-cols-7">
-      {factors.map((f, i) => {
-        const tone = scoreTone(f.score);
-        return (
-          <Reveal
-            key={f.key}
-            index={i}
-            className="group flex flex-col gap-1.5 rounded-control border border-border bg-surface-2 px-2.5 py-2 transition-colors hover:border-border-strong"
-            title={`${f.meaning}${f.evidenced ? "" : "\n\nThis stage returned nothing usable — scored at a neutral default."}`}
-          >
-            <span className="truncate text-label font-medium uppercase tracking-wide text-muted/70">{f.label}</span>
-            <span className="flex items-baseline gap-1">
-              <span className={`font-mono text-sm font-semibold tabular-nums ${f.evidenced ? tone.text : "text-faint"}`}>
-                {f.evidenced ? Math.round(f.score) : "—"}
-              </span>
-              <span className="text-label text-muted/60">wt {Math.round(f.weight * 100)}%</span>
-            </span>
-            <ValueBar
-              value={f.evidenced ? f.score : null}
-              barClassName={tone.bar}
-              trackClassName={f.evidenced ? "bg-border" : "bg-border/40"}
-              durationMs={900}
-            />
-          </Reveal>
-        );
-      })}
+      {factors.map((f, i) => (
+        <FactorTile key={f.key} factor={f} index={i} />
+      ))}
     </div>
+  );
+}
+
+/**
+ * One factor tile. The meaning text is the only place the score's semantics
+ * are explained, so it renders in a click/focus popover (the ScoreChip
+ * pattern) rather than a `title` attribute — invisible on touch devices and
+ * unreliable for screen readers, which is where it used to live.
+ */
+function FactorTile({ factor: f, index }: { factor: ScoreFactor; index: number }) {
+  const [open, setOpen] = useState(false);
+  const tone = scoreTone(f.score);
+  return (
+    <Reveal index={index} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        title={`${f.meaning}${f.evidenced ? "" : "\n\nThis stage returned nothing usable — scored at a neutral default."}`}
+        className="group flex w-full flex-col gap-1.5 rounded-control border border-border bg-surface-2 px-2.5 py-2 text-left outline-none transition-colors hover:border-border-strong focus-visible:ring-2 focus-visible:ring-brand/40"
+      >
+        <span className="truncate text-label font-medium uppercase tracking-wide text-muted/70">{f.label}</span>
+        <span className="flex items-baseline gap-1">
+          <span className={`font-mono text-sm font-semibold tabular-nums ${f.evidenced ? tone.text : "text-faint"}`}>
+            {f.evidenced ? Math.round(f.score) : "—"}
+          </span>
+          <span className="text-label text-muted/60">wt {Math.round(f.weight * 100)}%</span>
+        </span>
+        <ValueBar
+          value={f.evidenced ? f.score : null}
+          barClassName={tone.bar}
+          trackClassName={f.evidenced ? "bg-border" : "bg-border/40"}
+          durationMs={900}
+        />
+      </button>
+      {open && (
+        <span
+          role="tooltip"
+          className="absolute left-0 top-full z-50 mt-2 w-64 animate-popover-in rounded-panel border border-border bg-surface p-3 text-left shadow-popover"
+        >
+          <span className="block text-[11px] font-semibold text-foreground">
+            {f.label} · weight {Math.round(f.weight * 100)}%
+          </span>
+          <span className="mt-1 block text-[11px] leading-relaxed text-muted">{f.meaning}</span>
+          {!f.evidenced && (
+            <span className="mt-2 block text-[11px] leading-relaxed text-warning">
+              This stage returned nothing usable — scored at a neutral default.
+            </span>
+          )}
+        </span>
+      )}
+    </Reveal>
   );
 }
 
