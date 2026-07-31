@@ -449,6 +449,46 @@ describe("score clamping", () => {
   });
 });
 
+describe("stage retry", () => {
+  it("retries an empty dependency chain once with the terse prompt and uses the result", async () => {
+    runPromptMock.mockReset();
+    let chainCalls = 0;
+    runPromptMock.mockImplementation(async (_task: string, prompt: string) => {
+      if (prompt.includes("belong to which tier")) return companyMappingJson();
+      if (prompt.includes("dependency chain") || prompt.includes("6-tier dependency chain")) {
+        chainCalls += 1;
+        return chainCalls === 1 ? "[]" : chainJson(); // first attempt empty, retry succeeds
+      }
+      return routeByPrompt(prompt);
+    });
+
+    const report = await runThematicEngine({ theme: "AI Compute Semiconductors" });
+    expect(chainCalls).toBe(2);
+    expect(report.dependencyChain).toHaveLength(6);
+    expect(report.stageFailures.map((f) => f.stage)).not.toContain("Dependency Chain");
+    // The timing entry says the stage needed the second chance.
+    expect(report.stageTimings.find((t) => t.stage === "Dependency Chain")?.retried).toBe(true);
+  });
+
+  it("records the failure when the retry also returns nothing", async () => {
+    runPromptMock.mockReset();
+    let chainCalls = 0;
+    runPromptMock.mockImplementation(async (_task: string, prompt: string) => {
+      if (prompt.includes("belong to which tier")) return companyMappingJson();
+      if (prompt.includes("dependency chain") || prompt.includes("6-tier dependency chain")) {
+        chainCalls += 1;
+        return "[]";
+      }
+      return routeByPrompt(prompt);
+    });
+
+    const report = await runThematicEngine({ theme: "AI Compute Semiconductors" });
+    expect(chainCalls).toBe(2); // exactly one retry, never more
+    expect(report.dependencyChain).toEqual([]);
+    expect(report.stageFailures.map((f) => f.stage)).toContain("Dependency Chain");
+  });
+});
+
 describe("silent-failure tracking", () => {
   it("does not claim a score impact when only a weightless stage failed", async () => {
     // Observed live: a chain-only failure shipped evidenceScore 100 beside a

@@ -257,8 +257,9 @@ export interface ThematicReport {
   /** AI stages that failed and fell back to a neutral default — the report above is missing their input. */
   stageFailures: StageFailure[];
   integrity: ReportIntegrity;
-  /** Wall-clock ms each stage took — drives the progress ETA on the next run. */
-  stageTimings: { stage: string; ms: number }[];
+  /** Wall-clock ms each stage took — drives the progress ETA on the next run
+   *  (see app/thematic/_components/storage.recordStageTimings). */
+  stageTimings: { stage: string; ms: number; retried?: boolean }[];
 }
 
 export interface ThematicReportInput {
@@ -514,6 +515,9 @@ export function pickCommodityProxies(theme: string): { ticker: string; name: str
  *  candidate list gets a materially better tier mapping out of a small local
  *  model than a long one padded with irrelevant names. */
 const SHORTLIST_SIZE = 140;
+/** How many of the shortlist's head actually reach the mapping prompt — see
+ *  mapCompaniesToTiers. */
+const MAPPING_PROMPT_CANDIDATES = 60;
 /** Below this, the screener genuinely doesn't cover the theme; say so rather than pad. */
 export const MIN_VIABLE_SHORTLIST = 12;
 
@@ -810,6 +814,30 @@ Return JSON only — an array of exactly 6 objects:
   return extractJsonArray(raw, sanitizeDependencyNode).slice(0, 6);
 }
 
+/**
+ * Retry variant of {@link buildDependencyChain}, deliberately terser.
+ *
+ * The chain is the stage observed failing most on local models (a 14B model
+ * spent 72s and returned nothing usable on a live run). Small models answer a
+ * short, rigid ask far more reliably than a discursive one, so the one retry
+ * the orchestrator grants this stage swaps the full framing for a compressed
+ * tier list and a bare output contract.
+ */
+async function buildDependencyChainTerse(theme: string, signal?: AbortSignal): Promise<DependencyNode[]> {
+  const prompt = `List the 6-tier dependency chain for the investment theme below.
+
+${themeBlock(theme)}
+
+Tiers: 1 end products, 2 enabling infrastructure, 3 equipment & tools, 4 raw materials, 5 services & consumables, 6 recycling & end-of-life.
+
+Return ONLY a JSON array of exactly 6 objects, no prose:
+[{"tier":1,"tierLabel":"<short label>","description":"<one sentence>","exampleCompanies":["<company>","<company>"],"isBottleneck":false}]`;
+
+  const raw = await runPrompt("thematic-analysis", prompt, { json: true, signal });
+  assertParseable(raw);
+  return extractJsonArray(raw, sanitizeDependencyNode).slice(0, 6);
+}
+
 function sanitizeDependencyNode(item: unknown): DependencyNode | null {
   if (item === null || typeof item !== "object") return null;
   const n = item as Record<string, unknown>;
@@ -836,11 +864,11 @@ ${chainSummary}
 
 A bottleneck is a tier that:
 - Is scarce (limited supply, long permitting, concentrated reserves)
-
-Write every field about this theme specifically. Never copy example text out of this prompt.
 - Is difficult or slow to replicate (years to build, regulatory hurdles)
 - Is not easily substituted
 - Controls the throughput of the entire value chain
+
+Write every field about this theme specifically. Never copy example text out of this prompt.
 
 Score the bottleneck 0–10 (10 = extreme bottleneck like TSMC for chips, 0 = no real constraint).
 
@@ -1138,7 +1166,14 @@ async function mapCompaniesToTiers(
 ): Promise<TierCompany[]> {
   if (dbCompanies.length === 0) return [];
 
-  const companyList = dbCompanies.map((c) =>
+  // The prompt carries fewer candidates than the shortlist keeps. The full
+  // 140-row list serialized to ~9KB and the observed yield was 1 mapping from
+  // 53 candidates — a small local model does materially better ranking a
+  // short, dense list than searching a long one. The shortlist is
+  // relevance-then-quality ordered (see shortlistUniverse), so the head IS
+  // the densest slice; integrity metrics still report the full shortlist.
+  const candidates = dbCompanies.slice(0, MAPPING_PROMPT_CANDIDATES);
+  const companyList = candidates.map((c) =>
     `${c.symbol} | ${c.name} | ${c.sector ?? "n/a"} | ${c.industry ?? "n/a"}`
   ).join("\n");
 
@@ -1165,7 +1200,7 @@ Select the 12–18 most relevant companies across all tiers. Keep the response c
 3. Identify the moat type: cost / scale / technology / distribution / regulation / none
 4. Write a 1-sentence rationale for why it belongs in this tier
 
-Return JSON only — an array:
+Return JSON only — an array of between 12 and 18 objects (fewer only if fewer candidates plausibly fit):
 [
   {
     "symbol": "<TICKER>",
@@ -1188,7 +1223,7 @@ Return JSON only — an array:
   // Case- and whitespace-insensitive: a model that answers "nvda" or " CCJ "
   // was previously dropped silently by an exact Map lookup, so a correct
   // mapping could still yield zero companies.
-  const symMap = new Map(dbCompanies.map((c) => [c.symbol.trim().toUpperCase(), c]));
+  const symMap = new Map(candidates.map((c) => [c.symbol.trim().toUpperCase(), c]));
   const tierLabels: Record<number, string> = { ...GENERIC_TIER_LABELS };
   for (const n of chain) tierLabels[n.tier] = n.tierLabel;
 
@@ -1560,7 +1595,7 @@ export async function runThematicEngine(
   };
 
   const failures: StageFailure[] = [];
-  const timings: { stage: string; ms: number }[] = [];
+  const timings: ThematicReport["stageTimings"] = [];
   const theme = normalizeTheme(input.theme);
   const { signal } = input;
 
@@ -1581,10 +1616,23 @@ export async function runThematicEngine(
     fn: () => Promise<T>,
     fallback: T,
     isEmpty?: (v: T) => boolean,
+    /**
+     * One second chance, for the stages empirically prone to returning nothing
+     * usable (the chain, the mapping). Runs only when `isEmpty` triggered —
+     * a thrown error stays a failure — and is capped at a single attempt so a
+     * bad day adds one stage's time, not a doubling of the pipeline. The
+     * retry is recorded on the timing entry so slow runs are attributable.
+     */
+    retryFn?: () => Promise<T>,
   ): Promise<T> {
     const startedAt = Date.now();
+    let retried = false;
     try {
-      const value = await fn();
+      let value = await fn();
+      if (isEmpty?.(value) && retryFn && !signal?.aborted) {
+        retried = true;
+        value = await retryFn();
+      }
       if (isEmpty?.(value)) {
         failures.push({ stage: name, error: "The model returned no usable content for this stage." });
         return fallback;
@@ -1595,7 +1643,7 @@ export async function runThematicEngine(
       failures.push({ stage: name, error: err instanceof Error ? err.message : String(err) });
       return fallback;
     } finally {
-      timings.push({ stage: name, ms: Date.now() - startedAt });
+      timings.push({ stage: name, ms: Date.now() - startedAt, ...(retried ? { retried: true } : {}) });
     }
   }
 
@@ -1636,6 +1684,8 @@ export async function runThematicEngine(
     () => buildDependencyChain(theme, signal),
     [] as DependencyNode[],
     (c) => c.length === 0,
+    // The stage observed failing most in practice — retry once, terser.
+    () => buildDependencyChainTerse(theme, signal),
   );
   emit("dependency_chain", chain.length > 0 ? `${chain.length} tiers mapped` : "No tiers returned — chain unavailable", chain);
 
@@ -1673,6 +1723,9 @@ export async function runThematicEngine(
     () => mapCompaniesToTiers(theme, chain, universe.companies, signal),
     [] as TierCompany[],
     (c) => c.length === 0 && universe.companies.length > 0,
+    // Retry with only the densest half of the candidates — a zero-yield
+    // mapping over 60 names usually means the list overwhelmed the model.
+    () => mapCompaniesToTiers(theme, chain, universe.companies.slice(0, 30), signal),
   );
   emit("company_mapping", `${tierCompanies.length} companies mapped across ${new Set(tierCompanies.map((c) => c.tier)).size} tiers`, tierCompanies);
 
@@ -1705,6 +1758,16 @@ export async function runThematicEngine(
     integrity: buildIntegrity(opportunity, failures, universe),
     stageTimings: timings,
   };
+
+  // One structured line per run so latency regressions (a prompt growing, a
+  // model change, a retry becoming routine) are visible the day they happen,
+  // without needing DEBUG_PIPELINE. This is the pipeline's flight recorder.
+  const totalMs = timings.reduce((s, t) => s + t.ms, 0);
+  console.info(
+    `[thematic] "${theme}" ${Math.round(totalMs / 1000)}s total | ` +
+      timings.map((t) => `${t.stage}=${Math.round(t.ms / 1000)}s${t.retried ? "(retried)" : ""}`).join(" ") +
+      (failures.length > 0 ? ` | unevidenced: ${failures.map((f) => f.stage).join(", ")}` : ""),
+  );
 
   // Deliberately payload-free: the API route sends the report once, in its own
   // terminal event. Emitting it here too put two ~22KB copies of the same

@@ -19,9 +19,18 @@ const VERDICT_VARIANT = {
   avoid: "negative",
 } as const;
 
+/** "6m 54s" from the report's own measured stage times; null pre-timings shapes. */
+function totalRunTime(report: ThematicReport): string | null {
+  const ms = (report.stageTimings ?? []).reduce((s, t) => s + t.ms, 0);
+  if (ms < 1000) return null;
+  const s = Math.round(ms / 1000);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
+
 export function Hero({ report, onRefresh }: { report: ThematicReport; onRefresh: () => void }) {
   const { opportunity, integrity } = report;
   const toast = useToast();
+  const runTime = totalRunTime(report);
 
   const copyMarkdown = useCallback(() => {
     void navigator.clipboard.writeText(toMarkdown(report)).then(
@@ -59,6 +68,12 @@ export function Hero({ report, onRefresh }: { report: ThematicReport; onRefresh:
             <span>
               {integrity.universeShortlisted} of {integrity.universeTotal} screener names in scope
             </span>
+            {runTime && (
+              <>
+                <span className="text-faint">·</span>
+                <span title="Measured wall-clock time of the analysis stages">analysed in {runTime}</span>
+              </>
+            )}
           </div>
         </div>
 
