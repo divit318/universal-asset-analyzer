@@ -48,7 +48,7 @@ export function Hero({ report, onRefresh }: { report: ThematicReport; onRefresh:
             <Badge variant={VERDICT_VARIANT[opportunity.verdict]}>{opportunity.verdict}</Badge>
             {integrity.stagesEvidenced < integrity.stagesTotal && (
               <Badge variant="warning">
-                {integrity.stagesEvidenced}/{integrity.stagesTotal} stages evidenced
+                {integrity.stagesEvidenced}/{integrity.stagesTotal} AI stages evidenced
               </Badge>
             )}
           </div>

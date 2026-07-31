@@ -7,7 +7,7 @@ export function toMarkdown(r: ThematicReport): string {
     "",
     `**Opportunity score:** ${r.opportunity.themeScore}/100 (${r.opportunity.verdict.toUpperCase()})`,
     `**Generated:** ${new Date(r.generatedAt).toLocaleString()} · ${r.model}`,
-    `**Evidence:** ${r.integrity.stagesEvidenced}/${r.integrity.stagesTotal} stages evidenced · ${r.integrity.evidenceScore}% of the score weight`,
+    `**Evidence:** ${r.integrity.stagesEvidenced}/${r.integrity.stagesTotal} AI stages evidenced · ${r.integrity.evidenceScore}% of the score weight`,
     "",
     r.opportunity.verdictRationale,
   ];

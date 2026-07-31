@@ -227,7 +227,9 @@ function ThematicPageInner() {
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center gap-2">
           <h1 className="text-2xl font-semibold tracking-tight">Thematic Research</h1>
-          <Badge variant="brand">10 stages</Badge>
+          {/* Same denominator as the report's integrity badge (n/8 AI stages) —
+              the header used to say "10 stages" beside a hero counting out of 8. */}
+          <Badge variant="brand">8 AI stages + screener</Badge>
         </div>
         <p className="max-w-2xl text-sm leading-relaxed text-muted">
           Industries &amp; Commodities Discovery Framework. Most investors study products — this maps the dependency
