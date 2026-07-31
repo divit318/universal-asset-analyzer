@@ -1167,6 +1167,7 @@ function pushRecent(theme: string): string[] {
 function ThematicPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const toast = useToast();
   const themeFromQuery = searchParams.get("theme");
 
   const [report, setReport] = useState<ThematicReport | null>(null);
@@ -1228,7 +1229,6 @@ function ThematicPageInner() {
     setEvents([]);
     setReport(null);
     setError(null);
-    setRecent(pushRecent(t));
 
     // The URL names what is on screen. Without this, a reload after
     // researching a second theme silently re-ran whatever stale `?theme=`
@@ -1262,7 +1262,7 @@ function ThematicPageInner() {
         for (const part of parts) {
           const line = part.trim();
           if (!line.startsWith("data: ")) continue;
-          let evt: ThematicProgressEvent & { report?: ThematicReport };
+          let evt: ThematicProgressEvent & { report?: ThematicReport; cached?: boolean };
           try {
             evt = JSON.parse(line.slice(6));
           } catch {
@@ -1271,6 +1271,13 @@ function ThematicPageInner() {
           setEvents((prev) => [...prev, evt]);
           if (evt.stage === "done" && evt.report) {
             setReport(evt.report);
+            // Recent is a list of themes with a *saved report to load* — a
+            // cancelled or failed run has none, so it joins only on success
+            // (its chips promise "Saved reports load instantly").
+            setRecent(pushRecent(evt.report.theme));
+            // The route says when a report was served from cache and how old
+            // it is; that message was previously discarded on the floor.
+            if (evt.cached) toast(evt.message);
             try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(evt.report)); } catch { /* quota */ }
           }
           if (evt.stage === "error") setError(evt.message);
@@ -1283,7 +1290,7 @@ function ThematicPageInner() {
     } finally {
       setRunning(false);
     }
-  }, [theme, router]);
+  }, [theme, router, toast]);
 
   const handlePreset = useCallback((label: string) => {
     setTheme(label);
