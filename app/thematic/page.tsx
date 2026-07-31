@@ -106,19 +106,39 @@ function Panel({
   index,
   children,
   className = "",
+  evidenced = true,
 }: {
   title: string;
   score?: number;
   index: number;
   children: React.ReactNode;
   className?: string;
+  /** False when this panel's stage fell back to a neutral default — the
+   *  contents below are placeholders, and must never read as findings. */
+  evidenced?: boolean;
 }) {
   return (
     <Reveal index={index} className={className}>
       <Card padding="md" className="h-full">
         <div className="mb-4 flex items-baseline justify-between gap-4">
-          <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
-          {score !== undefined && <StageScore value={score} />}
+          <div className="flex min-w-0 flex-wrap items-baseline gap-2">
+            <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
+            {!evidenced && (
+              <Badge variant="warning" className="normal-case tracking-normal">
+                unevidenced — neutral default
+              </Badge>
+            )}
+          </div>
+          {score !== undefined &&
+            (evidenced ? (
+              <StageScore value={score} />
+            ) : (
+              /* Mirrors the factor strip: an assumption renders as absence,
+                 never as a number that looks measured. */
+              <span className="shrink-0 font-mono text-lg font-semibold text-faint">
+                —<span className="text-xs font-normal text-muted">/10</span>
+              </span>
+            ))}
         </div>
         {children}
       </Card>
@@ -426,10 +446,14 @@ function ThematicReportView({ report, onRefresh, refreshing }: { report: Themati
 
 function OverviewTab({ report }: { report: ThematicReport }) {
   const { futureState, bottleneck, supplyDemand, commodityFramework, policy, structuralAdvantage, opportunity } = report;
+  // Stage names as the engine records failures — a panel whose stage fell
+  // back to a neutral default must say so, or its defaults read as findings.
+  const failed = new Set(report.integrity.missingStages);
+  const sdEvidenced = !failed.has("Supply/Demand");
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <Panel title="Future state" score={futureState.inevitabilityScore} index={0}>
+      <Panel title="Future state" score={futureState.inevitabilityScore} index={0} evidenced={!failed.has("Future State")}>
         <div className="flex flex-col gap-4">
           <div className="flex items-baseline gap-2 text-sm">
             <span className="text-muted">Horizon to mainstream</span>
@@ -443,7 +467,7 @@ function OverviewTab({ report }: { report: ThematicReport }) {
         </div>
       </Panel>
 
-      <Panel title="Bottleneck" score={bottleneck.score} index={1}>
+      <Panel title="Bottleneck" score={bottleneck.score} index={1} evidenced={!failed.has("Bottleneck")}>
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center gap-2">
             <TierBadge tier={bottleneck.bottleneckTier} />
@@ -463,7 +487,7 @@ function OverviewTab({ report }: { report: ThematicReport }) {
         </div>
       </Panel>
 
-      <Panel title="Supply–demand cycle" score={supplyDemand.score} index={2} className="lg:col-span-2">
+      <Panel title="Supply–demand cycle" score={supplyDemand.score} index={2} className="lg:col-span-2" evidenced={sdEvidenced}>
         <div className="flex flex-col gap-5">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {(
@@ -476,7 +500,11 @@ function OverviewTab({ report }: { report: ThematicReport }) {
             ).map(([label, value, good]) => (
               <div key={label} className="flex flex-col gap-0.5 rounded-control border border-border bg-surface-2 px-3 py-2.5">
                 <span className="text-label font-semibold uppercase tracking-widest text-muted/70">{label}</span>
-                <span className={`text-sm font-semibold capitalize ${good ? "text-positive" : "text-foreground"}`}>{value}</span>
+                {/* A defaulted enum drawn in full colour reads as a measured
+                    one — grey it when the stage never actually answered. */}
+                <span className={`text-sm font-semibold capitalize ${!sdEvidenced ? "text-faint" : good ? "text-positive" : "text-foreground"}`}>
+                  {value}
+                </span>
               </div>
             ))}
           </div>
@@ -527,7 +555,7 @@ function OverviewTab({ report }: { report: ThematicReport }) {
         </div>
       </Panel>
 
-      <Panel title="Commodity framework" score={commodityFramework.score} index={3}>
+      <Panel title="Commodity framework" score={commodityFramework.score} index={3} evidenced={!failed.has("Commodity Framework")}>
         <div className="flex flex-col gap-4">
           <div>
             <Label>Primary commodities</Label>
@@ -562,7 +590,7 @@ function OverviewTab({ report }: { report: ThematicReport }) {
         </div>
       </Panel>
 
-      <Panel title="Policy & geopolitics" score={policy.score} index={4}>
+      <Panel title="Policy & geopolitics" score={policy.score} index={4} evidenced={!failed.has("Policy")}>
         <div className="flex flex-col gap-4">
           <p className="text-sm leading-relaxed text-muted">{policy.capitalFlowDirection || "No clear policy-driven capital flow identified."}</p>
           <PolicyTable policies={policy.relevantPolicies} />
@@ -581,7 +609,7 @@ function OverviewTab({ report }: { report: ThematicReport }) {
         </div>
       </Panel>
 
-      <Panel title="Global structural advantage" score={structuralAdvantage.score} index={5} className="lg:col-span-2">
+      <Panel title="Global structural advantage" score={structuralAdvantage.score} index={5} className="lg:col-span-2" evidenced={!failed.has("Global Structural Advantage")}>
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="positive">Leads: {structuralAdvantage.currentLeader}</Badge>
