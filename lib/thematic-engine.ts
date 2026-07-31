@@ -236,7 +236,12 @@ export interface OpportunityScore {
 export interface AnalystChecklistItem {
   question: string;
   answer: string;
-  signal: "positive" | "neutral" | "negative";
+  /**
+   * "unscored" means no stage output can grade this answer — the UI renders it
+   * without a signal dot. Previously these items were hardcoded "neutral",
+   * which read as a measured middle verdict when nothing had measured anything.
+   */
+  signal: "positive" | "neutral" | "negative" | "unscored";
 }
 
 export interface ThematicReport {
@@ -1416,7 +1421,11 @@ export function computeOpportunityScore(
   const checklist: AnalystChecklistItem[] = [
     {
       question: "What future state is becoming inevitable?",
-      answer: `${futureState.drivingForces.join("; ")}. Score: ${futureState.inevitabilityScore}/10.`,
+      // Omit the driving-forces clause when the stage returned none — the
+      // template otherwise rendered a dangling ". Score: 5/10.".
+      answer: futureState.drivingForces.length > 0
+        ? `${futureState.drivingForces.join("; ")}. Score: ${futureState.inevitabilityScore}/10.`
+        : `Score: ${futureState.inevitabilityScore}/10.`,
       signal: futureState.inevitabilityScore >= 7 ? "positive" : futureState.inevitabilityScore >= 5 ? "neutral" : "negative",
     },
     {
@@ -1449,15 +1458,18 @@ export function computeOpportunityScore(
       answer: `${structuralAdvantage.currentLeader} currently leads; ${structuralAdvantage.fastestImproving} is closing the gap fastest. ${structuralAdvantage.longTermImplications}`,
       signal: structuralAdvantage.score >= 7 ? "positive" : structuralAdvantage.score >= 5 ? "neutral" : "negative",
     },
+    // Items 8 and 9 answer with free text no stage grades numerically, so they
+    // carry "unscored" instead of a hardcoded "neutral" that read as a measured
+    // middle verdict regardless of what the text said.
     {
       question: "Are reserve/supply concentrations creating geopolitical risk?",
       answer: commodity.reserveConcentration,
-      signal: "neutral",
+      signal: "unscored",
     },
     {
       question: "Is recycling creating a meaningful substitute supply stream?",
       answer: commodity.recyclingEconomics,
-      signal: "neutral",
+      signal: "unscored",
     },
     {
       question: "Is the market underestimating the dependency?",

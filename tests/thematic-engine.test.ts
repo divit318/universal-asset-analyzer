@@ -170,6 +170,24 @@ describe("computeOpportunityScore", () => {
     const result = computeOpportunityScore(futureState, bottleneck, supplyDemand, commodity, policy, structural, companies);
     expect(result.topCompanies[0].symbol).toBe("CRIT");
   });
+
+  it("omits the driving-forces clause from checklist item 1 when the stage returned none", () => {
+    // drivingForces: [] previously rendered a dangling ". Score: 10/10." answer.
+    const result = computeOpportunityScore(futureState, bottleneck, supplyDemand, commodity, policy, structural, []);
+    expect(result.analystChecklist[0].answer).toBe("Score: 10/10.");
+    const withForces = computeOpportunityScore({ ...futureState, drivingForces: ["a", "b"] }, bottleneck, supplyDemand, commodity, policy, structural, []);
+    expect(withForces.analystChecklist[0].answer).toBe("a; b. Score: 10/10.");
+  });
+
+  it("marks the free-text checklist items (reserves, recycling) as unscored, not neutral", () => {
+    // No stage output grades these answers; a hardcoded "neutral" read as a
+    // measured middle verdict regardless of what the text said.
+    const checklist = computeOpportunityScore(futureState, bottleneck, supplyDemand, commodity, policy, structural, []).analystChecklist;
+    const reserves = checklist.find((q) => q.question.includes("reserve/supply concentrations"));
+    const recycling = checklist.find((q) => q.question.includes("recycling"));
+    expect(reserves?.signal).toBe("unscored");
+    expect(recycling?.signal).toBe("unscored");
+  });
 });
 
 describe("runThematicEngine — failure tracking", () => {

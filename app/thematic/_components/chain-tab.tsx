@@ -9,9 +9,10 @@ export function ChainTab({ report }: { report: ThematicReport }) {
   if (report.dependencyChain.length === 0) {
     return (
       <Empty>
-        The dependency chain stage returned no usable tiers for this theme, so there is nothing to show here rather
-        than a chain we don&apos;t have. Re-run the report to try again — a larger local model maps the six tiers far
-        more reliably.
+        The dependency chain stage returned no usable tiers for this theme
+        {report.model ? ` from ${report.model}` : ""}, so there is nothing to show here rather than a chain we
+        don&apos;t have. Re-run the report to try again — this stage is the one that most often comes back empty, and a
+        second pass frequently succeeds.
       </Empty>
     );
   }
