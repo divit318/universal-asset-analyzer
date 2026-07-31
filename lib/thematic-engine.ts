@@ -546,7 +546,20 @@ const STOPWORDS = new Set([
  */
 export function shortlistUniverse(theme: string, rows: StockFundamentals[]): UniverseShortlist {
   const entries = matchedLexicon(theme);
-  const industryHints = [...new Set(entries.flatMap((e) => e.industries ?? []))];
+
+  // A lexicon entry lists its industries most-on-theme first, so the hint's
+  // position carries information: for "AI Compute", a Semiconductors row is a
+  // closer fit than an IT Services row even though both are plausible. Weight
+  // hints 10 down to 6 by position (an industry named by several matched
+  // entries keeps its best weight). Before this, every industry hit scored a
+  // flat 10 — see the tie-break comment below for what that did to the cap.
+  const industryWeights = new Map<string, number>();
+  for (const entry of entries) {
+    (entry.industries ?? []).forEach((hint, i) => {
+      const weight = Math.max(6, 10 - i);
+      if ((industryWeights.get(hint) ?? 0) < weight) industryWeights.set(hint, weight);
+    });
+  }
   const sectorHints = [...new Set(entries.flatMap((e) => e.sectors ?? []))];
 
   // Free-text themes ("Obesity drugs", "Shrinkflation") match no lexicon entry.
@@ -562,7 +575,7 @@ export function shortlistUniverse(theme: string, rows: StockFundamentals[]): Uni
     const sector = (row.sector ?? "").toLowerCase();
     const name = (row.name ?? "").toLowerCase();
     let score = 0;
-    for (const hint of industryHints) if (industry.includes(hint)) score += 10;
+    for (const [hint, weight] of industryWeights) if (industry.includes(hint)) score += weight;
     for (const hint of sectorHints) if (sector.includes(hint)) score += 3;
     for (const word of themeWords) {
       if (industry.includes(word)) score += 6;
@@ -574,15 +587,28 @@ export function shortlistUniverse(theme: string, rows: StockFundamentals[]): Uni
 
   const relevant = scored
     .filter((s) => s.score > 0)
-    // Ties broken by symbol so the shortlist is stable across runs.
-    .sort((a, b) => b.score - a.score || a.row.symbol.localeCompare(b.row.symbol))
+    /**
+     * Ties break on composite quality, then symbol. The symbol-only tie-break
+     * made the 140-row cap *alphabetical* whenever a broad theme matched more
+     * rows than the cap: "AI Compute" matched 194 rows all scored a flat 10,
+     * so everything after ~"PL" was silently cut — TSMC excluded while Corsair
+     * and Logitech were analysed. Quality is deterministic over the cached
+     * fundamentals, so the shortlist stays stable across runs while the cap
+     * now discards the *weakest* plausible names instead of the last ones in
+     * the alphabet.
+     */
+    .map((s) => ({ ...s, quality: fundamentalQualityScore(s.row) ?? -1 }))
+    .sort(
+      (a, b) =>
+        b.score - a.score || b.quality - a.quality || a.row.symbol.localeCompare(b.row.symbol),
+    )
     .slice(0, SHORTLIST_SIZE)
     .map((s) => s.row);
 
   return {
     companies: relevant,
     total: rows.length,
-    usedTextFallback: industryHints.length === 0 && sectorHints.length === 0,
+    usedTextFallback: industryWeights.size === 0 && sectorHints.length === 0,
   };
 }
 

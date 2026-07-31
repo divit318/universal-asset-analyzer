@@ -323,6 +323,45 @@ describe("shortlistUniverse", () => {
     expect(shortlistUniverse("Shrinkflation", universe).usedTextFallback).toBe(true);
     expect(shortlistUniverse("Uranium", universe).usedTextFallback).toBe(false);
   });
+
+  it("cuts an over-cap universe by quality, not by alphabet", () => {
+    // 200 same-industry rows: the first 150 alphabetically (AA00..) carry weak
+    // fundamentals, the last 50 (ZZ00..) carry strong ones. The old symbol-only
+    // tie-break kept the alphabet's first 140 and cut every ZZ name — observed
+    // live as TSM being excluded from "AI Compute" while Corsair survived.
+    const weak = Array.from({ length: 150 }, (_, i) => ({
+      symbol: `AA${String(i).padStart(3, "0")}`,
+      name: `Weak ${i}`,
+      sector: "Technology",
+      industry: "Semiconductors",
+      roic: 2, roe: 3, grossMargin: 20, operatingMargin: 4, fcfMargin: 1,
+      revenueGrowthYoY: -5, debtToEquity: 3,
+    })) as unknown as StockFundamentals[];
+    const strong = Array.from({ length: 50 }, (_, i) => ({
+      symbol: `ZZ${String(i).padStart(3, "0")}`,
+      name: `Strong ${i}`,
+      sector: "Technology",
+      industry: "Semiconductors",
+      roic: 28, roe: 30, grossMargin: 60, operatingMargin: 32, fcfMargin: 25,
+      revenueGrowthYoY: 25, debtToEquity: 0.2,
+    })) as unknown as StockFundamentals[];
+
+    const symbols = shortlistUniverse("Semiconductors", [...weak, ...strong]).companies.map((c) => c.symbol);
+    expect(symbols.length).toBe(140);
+    // Every strong name survives the cap; the cut lands on the weakest names.
+    expect(symbols.filter((s) => s.startsWith("ZZ"))).toHaveLength(50);
+  });
+
+  it("ranks a first-listed industry above a later-listed one for the same theme", () => {
+    // The "ai" entry lists "semiconductor" before "information technology
+    // services": a semis row must outrank an IT-services row on relevance.
+    const rows = [
+      fund("ITSV", "Information Technology Services", "Technology"),
+      fund("SEMI", "Semiconductors", "Technology"),
+    ];
+    const symbols = shortlistUniverse("AI", rows).companies.map((c) => c.symbol);
+    expect(symbols[0]).toBe("SEMI");
+  });
 });
 
 describe("score clamping", () => {
