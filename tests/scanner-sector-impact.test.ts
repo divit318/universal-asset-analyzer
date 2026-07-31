@@ -23,11 +23,37 @@ describe("analyzeSectorImpacts", () => {
 
   it("attaches driving event ids from affectedSectors cross-reference", async () => {
     runPromptMock.mockResolvedValue(JSON.stringify({
+      sectorImpacts: [{ sector: "Financials", direction: "bearish", strength: 65, rationale: "r", keyBeneficiaries: [], keyLosers: [] }],
+    }));
+
+    // The event's affectedSectors say "Banking" (classifier output is
+    // open-vocabulary) — the canonicalized cross-reference must still link it.
+    const result = await analyzeSectorImpacts([event("e1")], []);
+    expect(result[0].drivingEvents).toEqual(["e1"]);
+  });
+
+  it("re-maps an off-vocabulary sector to its GICS name at parse time", async () => {
+    runPromptMock.mockResolvedValue(JSON.stringify({
       sectorImpacts: [{ sector: "Banking", direction: "bearish", strength: 65, rationale: "r", keyBeneficiaries: [], keyLosers: [] }],
     }));
 
     const result = await analyzeSectorImpacts([event("e1")], []);
+    expect(result).toHaveLength(1);
+    expect(result[0].sector).toBe("Financials");
+    expect(result[0].etfTicker).toBe("XLF");
     expect(result[0].drivingEvents).toEqual(["e1"]);
+  });
+
+  it("rejects an unmappable sector instead of letting it drift the join", async () => {
+    runPromptMock.mockResolvedValue(JSON.stringify({
+      sectorImpacts: [
+        { sector: "Space Tourism", direction: "bullish", strength: 80, rationale: "r" },
+        { sector: "Healthcare", direction: "bullish", strength: 50, rationale: "r" },
+      ],
+    }));
+
+    const result = await analyzeSectorImpacts([event("e1")], []);
+    expect(result.map((s) => s.sector)).toEqual(["Healthcare"]);
   });
 
   it("defaults omitted array fields on a valid-but-incomplete impact instead of crashing", async () => {

@@ -5,8 +5,7 @@ import type { ScannerResult, ScannerProgressEvent, ScannerPartialKey, ScannerOpp
 import { CATEGORY_LABELS, type OpportunityCategory } from "@/lib/opportunity-engine";
 import { MarketRegimeBanner } from "./_components/market-regime-banner";
 import { MarketSummaryCard } from "./_components/market-summary-card";
-import { SectorRotationGrid } from "./_components/sector-rotation-grid";
-import { SectorRotationPanel } from "@/app/_components/sector-rotation-panel";
+import { UnifiedSectorRotation } from "./_components/unified-sector-rotation";
 import { useBootReady } from "@/app/_components/boot-context";
 import { OpportunityCard } from "./_components/opportunity-card";
 import { EmergingThemeCard } from "./_components/emerging-theme-card";
@@ -571,19 +570,13 @@ export default function ScannerPage() {
             </WireSection>
           )}
 
-          {/* Zone 7: Sector Rotation — the continuous price-rank panel and this
-              scan's news-sentiment grid, together. The panel (shared with other
-              pages) owns the zone's "Sector Rotation" heading; the grid renders
-              a sub-label. Unified per-sector tiles with divergence flags replace
-              both grids in the next stage. */}
-          <section id="sector-rotation" className="flex flex-col gap-6">
-            <SectorRotationPanel />
-            {display.sectorImpacts && display.sectorImpacts.length > 0 ? (
-              <SectorRotationGrid impacts={display.sectorImpacts} />
-            ) : loading && !display.sectorImpacts ? (
-              <SectionSkeleton height="h-32" />
-            ) : null}
-          </section>
+          {/* Zone 7: Sector Rotation — ONE grid, one tile per sector, carrying
+              both datasets (price rank + news sentiment) with divergence as
+              the primary affordance. Replaces the two identically-titled
+              grids; the shared SectorRotationPanel component is untouched. */}
+          <WireSection id="sector-rotation" title="Sector Rotation" collapsible persist>
+            <UnifiedSectorRotation impacts={display.sectorImpacts} scanLoading={loading} />
+          </WireSection>
 
           {/* Zone 8: Risk Monitor */}
           {(display.riskAlerts?.length || (loading && !display.riskAlerts)) ? (

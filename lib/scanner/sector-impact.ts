@@ -12,7 +12,8 @@ import { runPrompt } from "../ai";
 import { extractJsonObject } from "../json-extract";
 import type { MarketEvent, SectorImpact, SignalDirection } from "../types";
 import type { SectorPerformance } from "./signals";
-import { SECTOR_ETF_MAP as CANONICAL_SECTOR_ETF_MAP } from "../sector-rotation";
+import { SECTOR_ETF_MAP } from "../sector-rotation";
+import { GICS_SECTORS, canonicalizeSector } from "../gics-sectors";
 
 import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
 interface RawSectorImpact {
@@ -46,21 +47,24 @@ function sanitizeSectorImpact(item: unknown): RawSectorImpact | null {
   };
 }
 
-// India-specific sector names have no direct GICS ETF equivalent; map them to
-// the closest US sector ETF for live price context. Merged with the canonical
-// map from lib/sector-rotation.ts (single source of truth for GICS sectors).
-const SECTOR_ETF_MAP: Record<string, string> = {
-  ...CANONICAL_SECTOR_ETF_MAP,
-  "Banking":        "XLF",
-  "IT Services":    "XLK",
-  "Pharma":         "XLV",
-  "Auto":           "XLY",
-  "FMCG":           "XLP",
-  "Infrastructure": "XLI",
-  "Power":          "XLU",
-  "Metals":         "XLB",
-  "Telecom":        "XLC",
-};
+/**
+ * Sector names are constrained to the canonical GICS-11 vocabulary at
+ * generation time (the prompt lists the allowed names) and enforced at parse
+ * time: an off-vocabulary label is re-mapped via lib/gics-sectors.ts's legacy
+ * table when possible, otherwise the impact row is rejected. Both outcomes
+ * are logged — an open-vocabulary label that silently passes through is how
+ * the sector join to the price panel drifts.
+ */
+function enforceGicsSector(raw: RawSectorImpact): RawSectorImpact | null {
+  if (GICS_SECTORS.includes(raw.sector)) return raw;
+  const canonical = canonicalizeSector(raw.sector);
+  if (canonical) {
+    console.warn(`[sector-impact] re-mapped off-vocabulary sector "${raw.sector}" → "${canonical}"`);
+    return { ...raw, sector: canonical };
+  }
+  console.warn(`[sector-impact] rejected impact with unmappable sector "${raw.sector}"`);
+  return null;
+}
 
 function buildSectorImpactPrompt(
   events: MarketEvent[],
@@ -97,6 +101,7 @@ ${perfContext || "Not available"}
 Based on the events and their causal effects, assess the investment impact on each affected sector.
 
 For each sector with a clear signal, provide:
+- sector: EXACTLY one of these 11 names, spelled exactly as written: ${GICS_SECTORS.join(" | ")}. Fold sub-industries into their sector (e.g. banking → Financials, pharma → Healthcare, telecom → Communication Services). Any other sector name will be discarded.
 - direction: bullish | bearish | neutral
 - strength: 0-100 (how strong the signal is — 80+ = very significant, 40-79 = moderate, below 40 = minor)
 - rationale: specific explanation of how the events impact this sector (2 sentences max)
@@ -109,7 +114,7 @@ ${JSON_SCHEMA_LEAD_IN}
 {
   "sectorImpacts": [
     {
-      "sector": "Banking",
+      "sector": "Financials",
       "direction": "bearish",
       "strength": 65,
       "rationale": "RBI rate cut compresses net interest margins for banks as they reprice deposits slower than loans. Weaker NIM guidance expected in next earnings cycle.",
@@ -135,26 +140,32 @@ export async function analyzeSectorImpacts(
       { maxTokens: 2500, json: true },
     );
     const parsed = extractJsonObject(raw, { sectorImpacts: [] as unknown[] });
-    sectorImpacts = parsed.sectorImpacts.map(sanitizeSectorImpact).filter((s): s is RawSectorImpact => s !== null);
+    sectorImpacts = parsed.sectorImpacts
+      .map(sanitizeSectorImpact)
+      .filter((s): s is RawSectorImpact => s !== null)
+      .map(enforceGicsSector)
+      .filter((s): s is RawSectorImpact => s !== null);
   } catch {
     return [];
   }
 
   if (sectorImpacts.length === 0) return [];
 
-  // Map driving event IDs per sector via affectedSectors cross-reference
+  // Map driving event IDs per sector via affectedSectors cross-reference.
+  // Classifier output is open-vocabulary, so keys are canonicalized to the
+  // same GICS names the impacts now carry — "Banking" events still drive the
+  // "Financials" impact.
   const sectorEventIds = new Map<string, string[]>();
+  const addEventSector = (sector: string, eventId: string) => {
+    const canonical = canonicalizeSector(sector) ?? sector;
+    const existing = sectorEventIds.get(canonical) ?? [];
+    if (!existing.includes(eventId)) sectorEventIds.set(canonical, [...existing, eventId]);
+  };
   for (const event of events) {
-    for (const sector of event.affectedSectors) {
-      const existing = sectorEventIds.get(sector) ?? [];
-      sectorEventIds.set(sector, [...existing, event.id]);
-    }
+    for (const sector of event.affectedSectors) addEventSector(sector, event.id);
     // Also include sectors mentioned in causal chains
     for (const effect of event.causalChain) {
-      for (const sector of effect.affectedSectors) {
-        const existing = sectorEventIds.get(sector) ?? [];
-        sectorEventIds.set(sector, [...existing, event.id]);
-      }
+      for (const sector of effect.affectedSectors) addEventSector(sector, event.id);
     }
   }
 
