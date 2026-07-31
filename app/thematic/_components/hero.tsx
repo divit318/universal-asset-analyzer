@@ -1,0 +1,183 @@
+"use client";
+
+import { useCallback } from "react";
+import { AlertTriangle, Copy, RotateCcw } from "lucide-react";
+import type { ThematicReport, RiskFlag, ScoreFactor } from "@/lib/thematic-engine";
+import { Badge, Button, Card, SectionHeader } from "@/app/_components/ui";
+import { Reveal } from "@/app/_components/reveal";
+import { ScoreRing } from "@/app/_components/score-ring";
+import { ValueBar } from "@/app/_components/value-bar";
+import { useToast } from "@/app/_components/toast";
+import { scoreTone } from "./shared";
+import { toMarkdown } from "./markdown";
+
+const VERDICT_VARIANT = {
+  exceptional: "positive",
+  strong: "positive",
+  moderate: "neutral",
+  weak: "negative",
+  avoid: "negative",
+} as const;
+
+export function Hero({ report, onRefresh, refreshing }: { report: ThematicReport; onRefresh: () => void; refreshing: boolean }) {
+  const { opportunity, integrity } = report;
+  const toast = useToast();
+
+  const copyMarkdown = useCallback(() => {
+    void navigator.clipboard.writeText(toMarkdown(report)).then(
+      () => toast("Report copied as Markdown"),
+      () => toast("Couldn't copy to the clipboard", "error"),
+    );
+  }, [report, toast]);
+
+  return (
+    <Card padding="lg">
+      <div className="flex flex-wrap items-start justify-between gap-6">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="brand">Thematic report</Badge>
+            <Badge variant={VERDICT_VARIANT[opportunity.verdict]}>{opportunity.verdict}</Badge>
+            {integrity.stagesEvidenced < integrity.stagesTotal && (
+              <Badge variant="warning">
+                {integrity.stagesEvidenced}/{integrity.stagesTotal} stages evidenced
+              </Badge>
+            )}
+          </div>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight">{report.theme}</h1>
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">{opportunity.verdictRationale}</p>
+          {opportunity.verdictCaveat && (
+            <p className="mt-2 flex max-w-2xl items-start gap-2 text-sm leading-relaxed text-warning">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={2} />
+              {opportunity.verdictCaveat}
+            </p>
+          )}
+          <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+            <span>{new Date(report.generatedAt).toLocaleString()}</span>
+            <span className="text-faint">·</span>
+            <span className="font-mono">{report.model}</span>
+            <span className="text-faint">·</span>
+            <span>
+              {integrity.universeShortlisted} of {integrity.universeTotal} screener names in scope
+            </span>
+          </div>
+        </div>
+
+        <div className="flex shrink-0 flex-col items-center gap-3">
+          <ScoreRing
+            key={report.theme}
+            score={opportunity.themeScore}
+            size={116}
+            strokeWidth={5}
+            arcClassName={scoreTone(opportunity.themeScore).text}
+            valueClassName="text-3xl"
+            caption="/ 100"
+            label={`Opportunity score ${opportunity.themeScore} out of 100`}
+          />
+          <div className="flex gap-1.5">
+            <Button size="xs" variant="ghost" onClick={copyMarkdown} title="Copy the whole report as Markdown">
+              <Copy className="h-3 w-3" strokeWidth={2} /> Copy
+            </Button>
+            <Button size="xs" variant="ghost" onClick={onRefresh} disabled={refreshing} title="Discard the saved report and re-run every stage">
+              <RotateCcw className="h-3 w-3" strokeWidth={2} /> Re-run
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <FactorStrip factors={opportunity.factors} />
+    </Card>
+  );
+}
+
+/**
+ * The weighted inputs behind the headline score.
+ *
+ * Each tile now says what it measures, how much it counts, and — the part that
+ * was missing — whether it rests on a real answer at all. An unevidenced factor
+ * is drawn muted and struck through with a dashed track so a 5/10 assumption
+ * can never be mistaken for a 5/10 finding.
+ */
+function FactorStrip({ factors }: { factors: ScoreFactor[] }) {
+  return (
+    <div className="mt-6 grid grid-cols-2 gap-2 border-t border-border pt-5 sm:grid-cols-4 lg:grid-cols-7">
+      {factors.map((f, i) => {
+        const tone = scoreTone(f.score);
+        return (
+          <Reveal
+            key={f.key}
+            index={i}
+            className="group flex flex-col gap-1.5 rounded-control border border-border bg-surface-2 px-2.5 py-2 transition-colors hover:border-border-strong"
+            title={`${f.meaning}${f.evidenced ? "" : "\n\nThis stage returned nothing usable — scored at a neutral default."}`}
+          >
+            <span className="truncate text-label font-medium uppercase tracking-wide text-muted/70">{f.label}</span>
+            <span className="flex items-baseline gap-1">
+              <span className={`font-mono text-sm font-semibold tabular-nums ${f.evidenced ? tone.text : "text-faint"}`}>
+                {f.evidenced ? Math.round(f.score) : "—"}
+              </span>
+              <span className="text-label text-muted/60">wt {Math.round(f.weight * 100)}%</span>
+            </span>
+            <ValueBar
+              value={f.evidenced ? f.score : null}
+              barClassName={tone.bar}
+              trackClassName={f.evidenced ? "bg-border" : "bg-border/40"}
+              durationMs={900}
+            />
+          </Reveal>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * What would have to be true for this report to be wrong.
+ *
+ * The report used to answer "how good is this theme?" and stop. A research
+ * surface that only ever argues one side is a pitch deck, not analysis.
+ */
+export function RiskFlags({ flags }: { flags: RiskFlag[] }) {
+  if (flags.length === 0) return null;
+  const TONE = {
+    high: "border-negative/30 bg-negative/5 text-negative",
+    medium: "border-warning/30 bg-warning/5 text-warning",
+    low: "border-border bg-surface-2 text-muted",
+  } as const;
+  return (
+    <div className="flex flex-col gap-3">
+      <SectionHeader label="What could break this" description="Derived from the stage outputs above — not a separate AI opinion." />
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {flags.map((f, i) => (
+          <Reveal key={f.label} index={i} className={`rounded-card border px-3.5 py-3 ${TONE[f.severity]}`}>
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
+              <span className="text-xs font-semibold capitalize">{f.label}</span>
+            </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-muted">{f.detail}</p>
+          </Reveal>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Caveats that qualify the headline, stated once, at the top, in plain language. */
+export function IntegrityNotice({ report }: { report: ThematicReport }) {
+  const caveats = report.integrity.caveats;
+  if (caveats.length === 0) return null;
+  return (
+    <div className="rounded-card border border-warning/30 bg-warning/5 px-4 py-3">
+      <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-warning">
+        <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2} />
+        Read this score with {caveats.length} caveat{caveats.length === 1 ? "" : "s"}
+      </p>
+      <ul className="mt-2 flex flex-col gap-1.5">
+        {caveats.map((c, i) => (
+          <li key={i} className="flex items-start gap-2 text-xs leading-relaxed text-muted">
+            <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-warning" />
+            {c}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
