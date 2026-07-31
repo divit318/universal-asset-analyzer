@@ -13,6 +13,7 @@
     "monitor": "node scripts/monitor.mjs"
   },
   "dependencies": {
+    "@sentry/nextjs": "^10.68.0",
     "@types/d3-force": "^3.0.10",
     "d3-force": "^3.0.0",
     "exceljs": "^4.4.0",

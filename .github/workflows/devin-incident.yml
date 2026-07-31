@@ -1,0 +1,62 @@
+# Incident response — INERT until the app actually has a deployment.
+#
+# UAA currently runs localhost-only, so no uptime monitor can reach it and
+# nothing sends the `uaa-incident` repository_dispatch event this workflow
+# listens for. The wiring is checked in now so that turning it on later is a
+# single step: point an uptime monitor's webhook at a tiny relay that calls
+#   POST /repos/divit318/universal-asset-analyzer/dispatches
+#   { "event_type": "uaa-incident", "client_payload": { ...alert fields... } }
+# (UptimeRobot's free tier can't set an Authorization header, hence the relay
+# — a ~20-line Cloudflare Worker; full design in docs/devin-integration.md.)
+#
+# When triggered, this creates one Devin session that investigates the outage
+# window against recent commits and drafts a postmortem PR
+# (docs/postmortems/<date>-<slug>.md). Capped at 5 ACUs per incident.
+# `workflow_dispatch` exists so the path can be tested end-to-end by hand.
+name: Devin Incident Response
+
+on:
+  repository_dispatch:
+    types: [uaa-incident]
+  workflow_dispatch:
+    inputs:
+      details:
+        description: "Alert details (monitor name, status, timestamps)"
+        required: true
+
+# One investigation at a time; a flapping monitor shouldn't fan out sessions.
+concurrency:
+  group: devin-incident
+  cancel-in-progress: false
+
+jobs:
+  investigate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+
+      - name: Create Devin incident session
+        env:
+          DEVIN_API_KEY: ${{ secrets.DEVIN_API_KEY }}
+          DEVIN_ORG_ID: ${{ secrets.DEVIN_ORG_ID }}
+          ALERT_CONTEXT: |
+            Trigger: ${{ github.event_name }} (workflow run ${{ github.run_id }})
+            Payload: ${{ toJSON(github.event.client_payload) }}
+            Manual details: ${{ github.event.inputs.details }}
+        run: |
+          if [ -z "$DEVIN_API_KEY" ] || [ -z "$DEVIN_ORG_ID" ]; then
+            echo "::error::DEVIN_API_KEY / DEVIN_ORG_ID secrets not set"
+            exit 1
+          fi
+          node scripts/devin/create-session.mjs \
+            --title "Incident investigation — $(date -u +%Y-%m-%d)" \
+            --prompt-file scripts/devin/prompts/incident.md \
+            --append-env ALERT_CONTEXT \
+            --tags incident-response \
+            --max-acu 5

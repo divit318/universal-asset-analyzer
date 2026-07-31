@@ -1,0 +1,48 @@
+# Weekly dependency-maintenance Devin session.
+#
+# Creates one Devin session (POST /v3/organizations/{org}/sessions) with the
+# versioned prompt in scripts/devin/prompts/maintenance.md: audit outdated
+# deps + npm audit, apply only safe (patch/minor, ≥7-day-old) upgrades that
+# pass tsc + vitest + build, and open a single PR — or open nothing if there
+# is nothing safe to do.
+#
+# Cost control: one session per week, hard-capped at 5 ACUs via
+# max_acu_limit. Expect roughly 1–4 ACUs per run depending on how much
+# actually needs upgrading; a no-op week costs well under 1.
+#
+# Requires repo secrets DEVIN_API_KEY (service user with `ManageOrgSessions`)
+# and DEVIN_ORG_ID — see docs/devin-integration.md.
+name: Devin Weekly Maintenance
+
+on:
+  schedule:
+    # Mondays 14:00 UTC (09:00/10:00 US Eastern). GitHub cron is UTC-only.
+    - cron: "0 14 * * 1"
+  workflow_dispatch:
+
+jobs:
+  maintenance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+
+      - name: Create Devin maintenance session
+        env:
+          DEVIN_API_KEY: ${{ secrets.DEVIN_API_KEY }}
+          DEVIN_ORG_ID: ${{ secrets.DEVIN_ORG_ID }}
+        run: |
+          if [ -z "$DEVIN_API_KEY" ] || [ -z "$DEVIN_ORG_ID" ]; then
+            echo "::warning::DEVIN_API_KEY / DEVIN_ORG_ID secrets not set — skipping"
+            exit 0
+          fi
+          node scripts/devin/create-session.mjs \
+            --title "Weekly dependency audit — $(date -u +%Y-%m-%d)" \
+            --prompt-file scripts/devin/prompts/maintenance.md \
+            --tags scheduled-maintenance \
+            --max-acu 5

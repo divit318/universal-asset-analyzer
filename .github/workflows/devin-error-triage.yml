@@ -1,0 +1,73 @@
+# Human-gated error triage: Sentry files GitHub issues (via its native GitHub
+# integration — configured in Sentry, see docs/devin-integration.md); adding
+# the `devin-triage` label to any issue launches a Devin session that
+# root-causes it, writes a failing test, fixes it, and opens a PR that closes
+# the issue.
+#
+# The label gate is the cost control: nothing runs automatically on new Sentry
+# events, so noisy/duplicate errors cost 0 ACUs until a human opts in. Each
+# triage session is hard-capped at 8 ACUs (investigation + test + fix + PR
+# typically lands in the 2–6 range; the prompt tells Devin to stop and report
+# findings on the issue if it can't root-cause within budget).
+#
+# GitHub becomes the webhook receiver here on purpose: the UAA app is
+# localhost-only, so it can never receive a Sentry webhook directly.
+#
+# Requires repo secrets DEVIN_API_KEY (service user with `ManageOrgSessions`)
+# and DEVIN_ORG_ID.
+name: Devin Error Triage
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  issues: write
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.label.name == 'devin-triage'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+
+      - name: Create Devin triage session
+        id: devin
+        env:
+          DEVIN_API_KEY: ${{ secrets.DEVIN_API_KEY }}
+          DEVIN_ORG_ID: ${{ secrets.DEVIN_ORG_ID }}
+          # Issue content goes through env (not shell interpolation) so titles
+          # or Sentry stack traces containing quotes/backticks can't break or
+          # inject into the shell command.
+          ISSUE_CONTEXT: |
+            Issue: #${{ github.event.issue.number }} — ${{ github.event.issue.title }}
+            URL: ${{ github.event.issue.html_url }}
+
+            ${{ github.event.issue.body }}
+        run: |
+          if [ -z "$DEVIN_API_KEY" ] || [ -z "$DEVIN_ORG_ID" ]; then
+            echo "::error::DEVIN_API_KEY / DEVIN_ORG_ID secrets not set"
+            exit 1
+          fi
+          node scripts/devin/create-session.mjs \
+            --title "Triage: ${{ github.event.issue.title }}" \
+            --prompt-file scripts/devin/prompts/error-triage.md \
+            --append-env ISSUE_CONTEXT \
+            --tags error-triage \
+            --max-acu 8
+
+      - name: Link session on the issue
+        if: steps.devin.outputs.session_url != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SESSION_URL: ${{ steps.devin.outputs.session_url }}
+        run: |
+          gh issue comment "${{ github.event.issue.number }}" \
+            --repo "${{ github.repository }}" \
+            --body "Devin is investigating this error: ${SESSION_URL} (ACU-capped at 8; it will open a PR referencing this issue, or comment findings if it can't root-cause it)."

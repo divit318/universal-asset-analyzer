@@ -1,0 +1,53 @@
+# Devin Review on every PR — Cognition's native PR-review product, triggered
+# via its dedicated v3 endpoint (POST /v3/organizations/{org}/pr-reviews).
+# Devin fetches the latest head commit itself and leaves inline comments on
+# the PR; no session-creation payload or checkout is needed here.
+#
+# Cost control: triggers only when a PR is opened, reopened, or leaves draft —
+# NOT on every push (`synchronize`). Re-request a review on new commits by
+# re-running this workflow from the Actions tab, or switch trigger modes in
+# app.devin.ai Settings > Review. Draws from the org's on-demand credit pool.
+#
+# Requires repo secrets DEVIN_API_KEY (service user with `UseReviewManual`
+# permission) and DEVIN_ORG_ID — see docs/devin-integration.md.
+name: Devin PR Review
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+
+# Only the newest review request per PR matters.
+concurrency:
+  group: devin-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ !github.event.pull_request.draft }}
+
+    steps:
+      - name: Trigger Devin Review
+        env:
+          DEVIN_API_KEY: ${{ secrets.DEVIN_API_KEY }}
+          DEVIN_ORG_ID: ${{ secrets.DEVIN_ORG_ID }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          if [ -z "$DEVIN_API_KEY" ] || [ -z "$DEVIN_ORG_ID" ]; then
+            echo "::warning::DEVIN_API_KEY / DEVIN_ORG_ID secrets not set — skipping review"
+            exit 0
+          fi
+          response=$(curl -sS -w '\n%{http_code}' \
+            -X POST "https://api.devin.ai/v3/organizations/${DEVIN_ORG_ID}/pr-reviews" \
+            -H "Authorization: Bearer ${DEVIN_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{\"pr_url\": \"${PR_URL}\"}")
+          status=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+          echo "HTTP ${status}: ${body}"
+          # 409 = a review for this commit is already pending/running — fine.
+          if [ "$status" != "200" ] && [ "$status" != "409" ]; then
+            echo "::error::Devin Review trigger failed (HTTP ${status})"
+            exit 1
+          fi
