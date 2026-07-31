@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { ThematicReport } from "@/lib/thematic-engine";
-import { Tabs, type TabItem } from "@/app/_components/ui";
+import { Tabs, TabPanel, type TabItem } from "@/app/_components/ui";
 import { Hero, IntegrityNotice, RiskFlags } from "./hero";
 import { OverviewTab } from "./overview-tab";
 import { ChainTab } from "./chain-tab";
@@ -29,17 +29,17 @@ export function ThematicReportView({ report, onRefresh }: { report: ThematicRepo
       <IntegrityNotice report={report} />
       <RiskFlags flags={report.opportunity.riskFlags} />
 
-      <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
+      <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} idBase="thematic-report" />
 
       {/* Each tab is keyed so its reveals and score animations play once on
           entry rather than being replayed by a shared subtree re-render. */}
-      <div key={activeTab}>
+      <TabPanel key={activeTab} idBase="thematic-report" tabId={activeTab}>
         {activeTab === "overview" && <OverviewTab report={report} />}
         {activeTab === "chain" && <ChainTab report={report} />}
         {activeTab === "companies" && <CompaniesTab report={report} />}
         {activeTab === "signals" && <SignalsTab report={report} />}
         {activeTab === "checklist" && <ChecklistTab items={report.opportunity.analystChecklist} />}
-      </div>
+      </TabPanel>
     </div>
   );
 }
