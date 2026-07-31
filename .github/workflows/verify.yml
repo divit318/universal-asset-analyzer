@@ -1,0 +1,55 @@
+# Verification only — no deployment.
+#
+# Until this existed, nothing in the repository checked anything: the sole status
+# check on a commit was Vercel's deployment, which reports "Deployment was
+# blocked" without ever compiling the code. A three-person merge landed on main
+# having been verified by one person's laptop.
+#
+# These are the same three commands AGENTS.md asks for before calling a change
+# complete. `npm run build` is not redundant with `tsc`: tsc accepts JSX that
+# Turbopack cannot parse and knows nothing about the Server/Client component
+# boundary, so a green typecheck is not proof a page renders.
+name: Verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A newer push to the same ref makes an in-flight run irrelevant.
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Pinned to the version the code is developed against. lib/db.ts imports
+          # DatabaseSync from `node:sqlite`, which needed --experimental-sqlite on
+          # Node 22 and is only unflagged on newer lines — so the major here is
+          # load-bearing, not incidental.
+          node-version: '26'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npx vitest run
+
+      # No .env.local in CI, and none is needed: every environment variable this
+      # app reads is optional (API keys for optional data sources), and nothing
+      # throws at import or build time when one is absent. Verified by building
+      # locally with .env.local removed.
+      - name: Build
+        run: npm run build
