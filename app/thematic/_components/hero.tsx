@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { AlertTriangle, Copy, RotateCcw } from "lucide-react";
+import { AlertTriangle, Copy, FileSpreadsheet, RotateCcw } from "lucide-react";
 import type { ThematicReport, RiskFlag, ScoreFactor } from "@/lib/thematic-engine";
 import { Badge, Button, Card, SectionHeader } from "@/app/_components/ui";
 import { Reveal } from "@/app/_components/reveal";
 import { ScoreRing } from "@/app/_components/score-ring";
 import { ValueBar } from "@/app/_components/value-bar";
 import { useToast } from "@/app/_components/toast";
+import { downloadBlob } from "@/lib/download";
 import { scoreTone } from "./shared";
 import { toMarkdown } from "./markdown";
 
@@ -37,6 +38,16 @@ export function Hero({ report, onRefresh }: { report: ThematicReport; onRefresh:
       () => toast("Report copied as Markdown"),
       () => toast("Couldn't copy to the clipboard", "error"),
     );
+  }, [report, toast]);
+
+  const exportExcel = useCallback(() => {
+    const slug = report.theme.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "theme";
+    void downloadBlob(
+      "/api/export/thematic",
+      `thematic-${slug}-${new Date().toISOString().slice(0, 10)}.xlsx`,
+      "POST",
+      { report },
+    ).catch((e: unknown) => toast(e instanceof Error ? e.message : "Export failed", "error"));
   }, [report, toast]);
 
   return (
@@ -91,6 +102,9 @@ export function Hero({ report, onRefresh }: { report: ThematicReport; onRefresh:
           <div className="flex gap-1.5">
             <Button size="xs" variant="ghost" onClick={copyMarkdown} title="Copy the whole report as Markdown">
               <Copy className="h-3 w-3" strokeWidth={2} /> Copy
+            </Button>
+            <Button size="xs" variant="ghost" onClick={exportExcel} title="Download the companies table, score summary, and universe as XLSX">
+              <FileSpreadsheet className="h-3 w-3" strokeWidth={2} /> Excel
             </Button>
             <Button size="xs" variant="ghost" onClick={onRefresh} title="Discard the saved report and re-run every stage">
               <RotateCcw className="h-3 w-3" strokeWidth={2} /> Re-run
