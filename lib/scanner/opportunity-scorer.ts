@@ -42,12 +42,16 @@ function computeMomentumScore(opp: ScannerOpportunity): number {
         ? Math.max(0, -todayChange) * 2  // bonus for bearish thesis confirmed by price action
         : 0;
 
+  // Rounded here, not at render time: directionBoost carries the raw quote's
+  // fractional changePercent, and this is the one factor of the four that
+  // wasn't an integer — every consumer of OpportunityScore gets the same
+  // clean 0-100 integer scale as catalyst/quality/valuation.
   if (compositeMomentum == null) {
     // Fallback: convert today's price change into a score
     const base = 50; // neutral
-    return Math.max(0, Math.min(100, base + directionBoost));
+    return Math.round(Math.max(0, Math.min(100, base + directionBoost)));
   }
-  return Math.max(0, Math.min(100, compositeMomentum + directionBoost));
+  return Math.round(Math.max(0, Math.min(100, compositeMomentum + directionBoost)));
 }
 
 /** Score and rank all opportunities. */
