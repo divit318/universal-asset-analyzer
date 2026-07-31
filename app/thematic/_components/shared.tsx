@@ -67,12 +67,19 @@ export function Empty({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * Six tiers, six distinguishable hues, all from the theme system: brand /
+ * warning / positive carry tiers 1, 3, 6; the categorical chart palette
+ * (purple, orange, teal — theme-adjusted for light mode) carries 2, 4, 5.
+ * Previously 2/4/5 used raw Tailwind `purple-500`/`orange-500`/`blue-500`
+ * utilities, which sat outside the token system and never followed a theme.
+ */
 const TIER_TONE: Record<number, string> = {
   1: "border-brand/30 bg-brand/10 text-brand",
-  2: "border-purple-500/30 bg-purple-500/10 text-purple-400",
+  2: "border-chart-1/30 bg-chart-1/10 text-chart-1",
   3: "border-warning/30 bg-warning/10 text-warning",
-  4: "border-orange-500/30 bg-orange-500/10 text-orange-400",
-  5: "border-blue-500/30 bg-blue-500/10 text-blue-400",
+  4: "border-chart-2/30 bg-chart-2/10 text-chart-2",
+  5: "border-chart-3/30 bg-chart-3/10 text-chart-3",
   6: "border-positive/30 bg-positive/10 text-positive",
 };
 

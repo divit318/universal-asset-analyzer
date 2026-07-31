@@ -41,6 +41,16 @@
   --color-negative: var(--negative);
   --color-warning: var(--warning);
 
+  /* Categorical series palette — identity of a series/tier, not semantics.
+     Same values the charts use (see --chart-* per theme below), exposed as
+     utilities so multi-category UI (e.g. the Thematic tier badges) draws
+     from the theme-adjusted palette instead of raw Tailwind hues. */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 
