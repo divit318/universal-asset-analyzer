@@ -114,6 +114,15 @@ export function Hero({ report, onRefresh }: { report: ThematicReport; onRefresh:
       </div>
 
       <FactorStrip factors={opportunity.factors} />
+
+      {/* PR-2: the score's construction, stated where the score is. Stage
+          scores are AI interpretation; the flags and caps are computation —
+          per the project's "label AI output as interpretation" rule. */}
+      <p className="mt-3 text-xs leading-relaxed text-faint">
+        Methodology: score = weighted mean of the stage scores above, weights fixed by the framework (Part 10.5).
+        The verdict is capped one band when the capital cycle contradicts it. Stage scores are a local model&apos;s
+        interpretation; the risk flags, integrity figures, and verdict cap are computed from them, not asked for.
+      </p>
     </Card>
   );
 }
