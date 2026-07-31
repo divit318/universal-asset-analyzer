@@ -116,8 +116,10 @@ export function DeskRail({ sections }: { sections: RailSection[] }) {
                     active ? "w-5 bg-brand" : "w-1.5 bg-border-strong group-hover:bg-muted"
                   } ${s.state === "loading" ? "animate-pulse" : ""}`}
                 />
+                {/* Labels extend past the reserved gutter over page content, so
+                    they carry a backdrop chip — legible on top of anything. */}
                 <span
-                  className={`whitespace-nowrap text-label font-medium uppercase tracking-widest transition-[opacity,color] duration-200 ${
+                  className={`whitespace-nowrap rounded bg-background/85 px-1.5 py-0.5 text-label font-medium uppercase tracking-widest backdrop-blur-sm transition-[opacity,color] duration-200 ${
                     active
                       ? "text-foreground opacity-100"
                       : "text-muted opacity-0 group-hover:opacity-100"

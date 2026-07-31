@@ -6,6 +6,7 @@ import {
   SIGNAL_LABEL,
   SIGNAL_ORDER,
   WEIGHTED_FACTORS,
+  describeEngineError,
   isDashboardEmpty,
   scoreKey,
   signalTone,
@@ -82,5 +83,49 @@ describe("isDashboardEmpty", () => {
     // half-rendered hero reading zeroes.
     const res: DashboardResponse = { empty: true, degraded: true, reason: "Timed out." };
     expect(isDashboardEmpty(res)).toBe(true);
+  });
+});
+
+describe("describeEngineError", () => {
+  const TRACEBACK = [
+    "Traceback (most recent call last):",
+    '  File "<frozen runpy>", line 203, in _run_module_as_main',
+    '  File "/repo/engine/dashboard.py", line 34, in <module>',
+    "    import duckdb",
+    "ModuleNotFoundError: No module named 'duckdb'",
+  ].join("\n");
+
+  it("names the missing package and prescribes the venv fix", () => {
+    const { summary, detail } = describeEngineError(TRACEBACK);
+    expect(summary).toContain('"duckdb"');
+    expect(summary).toContain("requirements.txt");
+    // The raw traceback must survive — demoted to detail, never dropped.
+    expect(detail).toBe(TRACEBACK);
+  });
+
+  it("reduces an arbitrary traceback to its exception line", () => {
+    const raw = TRACEBACK.replace(
+      "ModuleNotFoundError: No module named 'duckdb'",
+      "duckdb.IOException: Conflicting lock on data/engine.duckdb",
+    );
+    const { summary, detail } = describeEngineError(raw);
+    expect(summary).toContain("duckdb.IOException: Conflicting lock");
+    expect(summary).not.toContain("_run_module_as_main");
+    expect(detail).toBe(raw);
+  });
+
+  it("recognises a missing interpreter", () => {
+    const { summary } = describeEngineError("spawn /repo/.venv/bin/python ENOENT");
+    expect(summary).toContain("Python interpreter");
+  });
+
+  it("passes short human-authored messages through with no detail", () => {
+    const msg = "Reading the scorecard snapshot timed out.";
+    expect(describeEngineError(msg)).toEqual({ summary: msg, detail: null });
+  });
+
+  it("never returns an empty summary", () => {
+    expect(describeEngineError("").summary.length).toBeGreaterThan(0);
+    expect(describeEngineError(null).summary.length).toBeGreaterThan(0);
   });
 });

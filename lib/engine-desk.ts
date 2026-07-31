@@ -267,3 +267,64 @@ export type DashboardResponse =
 export function isDashboardEmpty(d: DashboardResponse): d is EngineDashboardEmpty & { degraded?: boolean } {
   return d.empty === true;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Error vocabulary                                                           */
+/* -------------------------------------------------------------------------- */
+
+/** A user-facing account of an engine failure: one plain-language line, plus the
+ *  raw output (a Python traceback, usually) demoted to collapsible detail. */
+export interface EngineErrorDescription {
+  summary: string;
+  /** Raw technical output for a "technical details" disclosure. Null when the
+   *  message is already short and human-readable on its own. */
+  detail: string | null;
+}
+
+/**
+ * Turn whatever an engine subprocess left in stderr into something a person can
+ * act on. The engine's failure modes surface as raw Python tracebacks, spawn
+ * errors, or timeout prose — only the last of those is fit to show directly.
+ * Everything here is best-effort string inspection: an unrecognised message
+ * falls through as its own first line with the rest as detail, never dropped.
+ */
+export function describeEngineError(raw: string | null | undefined): EngineErrorDescription {
+  const text = (raw ?? "").trim();
+  if (!text) return { summary: "Something went wrong in the engine.", detail: null };
+
+  const moduleMatch = text.match(/ModuleNotFoundError: No module named '([^']+)'/);
+  if (moduleMatch) {
+    return {
+      summary:
+        `The engine's Python environment is missing the "${moduleMatch[1]}" package. ` +
+        "From the project root, run: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
+      detail: text,
+    };
+  }
+
+  if (/spawn .*python.* (ENOENT|EACCES)/i.test(text) || (/ENOENT/.test(text) && /python/i.test(text))) {
+    return {
+      summary:
+        "No usable Python interpreter was found for the engine. Create the project environment with: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
+      detail: text,
+    };
+  }
+
+  const trace = text.indexOf("Traceback (most recent call last)");
+  if (trace !== -1) {
+    // The last non-empty line of a traceback is the exception itself — the only
+    // line of the dump that belongs in a sentence.
+    const lines = text.slice(trace).split("\n").map((l) => l.trim()).filter(Boolean);
+    const last = lines[lines.length - 1] ?? "unknown error";
+    return { summary: `The engine's Python process failed: ${last}`, detail: text };
+  }
+
+  // Short single-line messages (timeouts, route-authored prose) are already the
+  // summary; anything long or multi-line keeps its first line and demotes the rest.
+  const [first = ""] = text.split("\n");
+  if (text === first && first.length <= 200) return { summary: first, detail: null };
+  return {
+    summary: first.length > 200 ? `${first.slice(0, 197)}…` : first,
+    detail: text,
+  };
+}

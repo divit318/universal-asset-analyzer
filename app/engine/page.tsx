@@ -35,12 +35,13 @@ import { LoadingMark } from "@/app/_components/loading-mark";
 import { Reveal } from "@/app/_components/reveal";
 import { Badge, Button, PageShell, SectionHeader, Skeleton } from "@/app/_components/ui";
 import { downloadBlob } from "@/lib/download";
-import { isDashboardEmpty, type DashboardResponse, type ScorecardRow } from "@/lib/engine-desk";
+import { describeEngineError, isDashboardEmpty, type DashboardResponse, type ScorecardRow } from "@/lib/engine-desk";
 import { useDataset } from "@/lib/platform/client/use-dataset";
 import { BreadthMap } from "./_components/breadth-map";
 import { ChangedToday } from "./_components/changed-today";
 import { ConvictionBook } from "./_components/conviction-book";
 import { DeskRail, type RailSection, type RailState } from "./_components/desk-rail";
+import { EngineErrorState } from "./_components/error-state";
 import { FactorLab } from "./_components/factor-lab";
 import { ModelHealth, type OosMetrics } from "./_components/model-health";
 import { ModelValidation } from "./_components/model-validation";
@@ -226,6 +227,9 @@ export default function EnginePage() {
   const briefState: RailState =
     dashboard.isInitialLoading ? "loading" : dashboard.error ? "error" : brief ? "ready" : "empty";
 
+  const nothingAtAll =
+    !dashboard.isInitialLoading && !scorecard.isInitialLoading && !brief && rows.length === 0;
+
   // Only sections that are actually in the DOM. This is load-bearing twice over:
   // the rail must not offer a jump target that doesn't exist, and the rail's
   // IntersectionObserver re-subscribes when this list changes — so excluding the
@@ -234,30 +238,35 @@ export default function EnginePage() {
   // sections present on first paint, and the rail stayed stuck on "Regime".)
   const sections: RailSection[] = useMemo(
     () =>
-      SECTION_META.filter((s) => !s.needsBrief || brief != null).map(({ id, label }) => ({
-        id,
-        label,
-        state:
-          id === "desk-scorecard"
-            ? scorecard.isInitialLoading ? "loading" : scorecard.error ? "error" : rows.length ? "ready" : "empty"
-            : id === "desk-health"
-              ? health.isInitialLoading ? "loading" : health.error ? "error" : "ready"
-              : id === "desk-validation"
-                ? "ready"
-                : briefState,
-      })),
-    [brief, briefState, scorecard.isInitialLoading, scorecard.error, rows.length, health.isInitialLoading, health.error],
+      SECTION_META.filter((s) => !s.needsBrief || brief != null)
+        // On a cold desk the regime and scorecard sections are not rendered at
+        // all (the cold-start panel speaks for them), so the rail must not
+        // offer them as jump targets.
+        .filter((s) => !nothingAtAll || (s.id !== "desk-regime" && s.id !== "desk-scorecard"))
+        .map(({ id, label }) => ({
+          id,
+          label,
+          state:
+            id === "desk-scorecard"
+              ? scorecard.isInitialLoading ? "loading" : scorecard.error ? "error" : rows.length ? "ready" : "empty"
+              : id === "desk-health"
+                ? health.isInitialLoading ? "loading" : health.error ? "error" : "ready"
+                : id === "desk-validation"
+                  ? "ready"
+                  : briefState,
+        })),
+    [brief, briefState, nothingAtAll, scorecard.isInitialLoading, scorecard.error, rows.length, health.isInitialLoading, health.error],
   );
-
-  const nothingAtAll =
-    !dashboard.isInitialLoading && !scorecard.isInitialLoading && !brief && rows.length === 0;
 
   // Deep trailing padding is functional, not decorative: without it the document
   // ends before the last sections can be scrolled to the top, so the rail could
   // never mark them current, and clicking "Health" would leave it stranded
   // mid-viewport. This gives every jump target room to actually reach the top.
   return (
-    <PageShell gap="gap-8" py="py-8 pb-[40vh]" width="wide">
+    // `xl:pl-14` reserves a real gutter for the fixed rail — without it the
+    // rail's dots sat on top of the content's left edge at exactly the widths
+    // where the rail becomes visible.
+    <PageShell gap="gap-8" py="py-8 pb-[40vh]" width="wide" className="xl:pl-14">
       <DeskRail sections={sections} />
 
       {/* ── Masthead ── */}
@@ -303,9 +312,7 @@ export default function EnginePage() {
         />
 
         {runError && (
-          <p className="rounded-card border border-negative/40 bg-negative/10 px-4 py-3 text-sm text-negative">
-            {runError}
-          </p>
+          <EngineErrorState title="The engine run failed" error={runError} />
         )}
         {exportError && <p className="text-xs text-negative">{exportError}</p>}
       </div>
@@ -313,8 +320,8 @@ export default function EnginePage() {
       {/* ── Cold start ── */}
       {nothingAtAll && (
         <ColdStart
-          reason={briefEmpty?.reason ?? "No scored universe on file yet."}
-          degraded={Boolean(briefEmpty?.degraded)}
+          reason={briefEmpty?.reason ?? dashboard.error ?? "No scored universe on file yet."}
+          degraded={Boolean(briefEmpty?.degraded) || Boolean(dashboard.error)}
           running={running}
           onRun={() => void runEngine({ noForecast: true })}
           onRetry={() => { dashboard.refresh(); scorecard.refresh(); }}
@@ -322,11 +329,20 @@ export default function EnginePage() {
       )}
 
       {/* ── 1. Regime ── */}
-      <DeskSection id="desk-regime" label="Market regime" description="The model's read on the tape, and what it implies">
+      {/* On a cold desk this section (and the scorecard) is not rendered: the
+          cold-start panel above already says what happened and what to do, and
+          repeating the same failure under two more headings taught nothing. */}
+      {!nothingAtAll && (
+      <DeskSection
+        id="desk-regime"
+        label="Market regime"
+        description="The model's read on the tape, and what it implies"
+        refreshing={dashboard.revalidating}
+      >
         {dashboard.isInitialLoading ? (
           <HeroSkeleton />
         ) : dashboard.error ? (
-          <SectionFailure message={dashboard.error} onRetry={dashboard.refresh} />
+          <EngineErrorState title="Couldn't load the market brief" error={dashboard.error} onRetry={dashboard.refresh} />
         ) : brief ? (
           <Reveal index={0}>
             <RegimeHero
@@ -336,14 +352,27 @@ export default function EnginePage() {
               nSymbols={brief.n_symbols}
             />
           </Reveal>
+        ) : briefEmpty?.degraded ? (
+          <EngineErrorState
+            title="The market brief is unavailable"
+            error={briefEmpty.reason}
+            onRetry={dashboard.refresh}
+            retryLabel="Retry load"
+          />
         ) : (
-          <SectionNote>{briefEmpty?.reason ?? "No regime on file."}</SectionNote>
+          <SectionNote>No regime on file yet — run the engine to publish a market brief.</SectionNote>
         )}
       </DeskSection>
+      )}
 
       {/* ── 2. What changed ── */}
       {brief && (
-        <DeskSection id="desk-changed" label="Changed today" description="Deltas since the previous run — where the new work is">
+        <DeskSection
+          id="desk-changed"
+          label="Changed today"
+          description="Deltas since the previous run — where the new work is"
+          refreshing={dashboard.revalidating}
+        >
           <ChangedToday movers={brief.movers} prevDate={brief.prev_date} />
         </DeskSection>
       )}
@@ -354,6 +383,7 @@ export default function EnginePage() {
           id="desk-book"
           label="Conviction book"
           description="Highest-conviction longs and shorts, with the distribution behind each"
+          refreshing={dashboard.revalidating}
         >
           <ConvictionBook
             longs={brief.conviction.longs}
@@ -370,6 +400,7 @@ export default function EnginePage() {
           id="desk-factors"
           label="Factor lab"
           description="Which factors are carrying the signal, and how the weighting has rotated"
+          refreshing={dashboard.revalidating}
         >
           <FactorLab weights={brief.factor_weights} />
         </DeskSection>
@@ -377,21 +408,28 @@ export default function EnginePage() {
 
       {/* ── 5. Breadth ── */}
       {brief && (
-        <DeskSection id="desk-breadth" label="Market breadth" description="The shape of the whole scored universe">
+        <DeskSection
+          id="desk-breadth"
+          label="Market breadth"
+          description="The shape of the whole scored universe"
+          refreshing={dashboard.revalidating}
+        >
           <BreadthMap breadth={brief.breadth} onFilterSignal={setSignalFilter} activeSignal={signalFilter} />
         </DeskSection>
       )}
 
       {/* ── 6. Full scorecard ── */}
+      {!nothingAtAll && (
       <DeskSection
         id="desk-scorecard"
         label="Full scorecard"
         description="Every scored name and every factor column — the complete record"
+        refreshing={scorecard.revalidating}
       >
         {scorecard.isInitialLoading ? (
           <TableSkeleton />
         ) : scorecard.error ? (
-          <SectionFailure message={scorecard.error} onRetry={scorecard.refresh} />
+          <EngineErrorState title="Couldn't load the scorecard" error={scorecard.error} onRetry={scorecard.refresh} />
         ) : rows.length > 0 ? (
           <ScorecardTable
             rows={rows}
@@ -404,17 +442,19 @@ export default function EnginePage() {
           <SectionNote>No scorecard snapshot yet — run the engine to score a universe.</SectionNote>
         )}
       </DeskSection>
+      )}
 
       {/* ── 7. Model health ── */}
       <DeskSection
         id="desk-health"
         label="Model health"
         description="The engine's continuous, out-of-sample report on itself"
+        refreshing={health.revalidating}
       >
         {health.isInitialLoading ? (
           <GridSkeleton />
         ) : health.error ? (
-          <SectionFailure message={health.error} onRetry={health.refresh} />
+          <EngineErrorState title="Couldn't load model health" error={health.error} onRetry={health.refresh} />
         ) : health.data ? (
           <ModelHealth metrics={health.data} />
         ) : (
@@ -445,34 +485,34 @@ function DeskSection({
   id,
   label,
   description,
+  refreshing = false,
   children,
 }: {
   id: string;
   label: string;
   description: string;
+  /** Quiet mid-run indicator: the section's data is being republished (the
+   *  engine polls fill the desk in stage by stage), without blanking content. */
+  refreshing?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <section id={id} className="flex scroll-mt-24 flex-col gap-4">
-      <SectionHeader label={label} description={description} />
+      <SectionHeader
+        label={label}
+        description={description}
+        actions={refreshing ? <LoadingMark size={12} label="Updating" /> : undefined}
+      />
       {children}
     </section>
   );
 }
 
 function SectionNote({ children }: { children: React.ReactNode }) {
-  return <p className="py-4 text-sm text-muted">{children}</p>;
-}
-
-/** A failed section fails alone: its own message, its own retry, siblings intact. */
-function SectionFailure({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="flex flex-col items-start gap-2 rounded-card border border-negative/30 bg-negative/5 px-4 py-3">
-      <p className="text-sm text-negative">{message}</p>
-      <Button variant="secondary" size="sm" onClick={onRetry}>
-        Retry
-      </Button>
-    </div>
+    <p className="rounded-card border border-dashed border-border bg-surface-2/30 px-4 py-6 text-center text-sm text-muted">
+      {children}
+    </p>
   );
 }
 
@@ -489,17 +529,35 @@ function ColdStart({
   onRun: () => void;
   onRetry: () => void;
 }) {
+  // Degraded means "the brief could not be built", which is a failure and gets
+  // the desk's one error treatment; a genuinely empty desk is a fresh install
+  // and reads as an invitation, not an alarm.
+  const described = degraded ? describeEngineError(reason) : null;
+
   return (
     <div className="flex flex-col items-center gap-5 rounded-card border border-border bg-surface px-6 py-12 text-center">
       <LoadingMark size={32} state={running ? "loading" : "done"} />
-      <div className="flex max-w-lg flex-col gap-2">
-        <p className="text-sm font-semibold">{degraded ? "Brief unavailable" : "The desk has no data yet"}</p>
-        <p className="text-xs leading-relaxed text-muted">{reason}</p>
+      <div className="flex w-full max-w-xl flex-col gap-2">
+        <p className="text-sm font-semibold">
+          {degraded ? "The market brief is unavailable" : "The desk has no data yet"}
+        </p>
+        <p className="text-xs leading-relaxed text-muted">{described ? described.summary : reason}</p>
         {!degraded && (
           <p className="text-xs leading-relaxed text-muted">
             Pick a universe above and run the engine. Results start appearing before the run finishes —
             factor scores publish first, then Monte Carlo valuations, then forecasts.
           </p>
+        )}
+        {described?.detail && (
+          <details className="group mx-auto w-full max-w-lg text-left">
+            <summary className="cursor-pointer select-none text-center text-label font-medium uppercase tracking-widest text-muted transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+              <span aria-hidden className="mr-1.5 inline-block transition-transform group-open:rotate-90">▸</span>
+              Technical details
+            </summary>
+            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-control border border-border bg-surface-2/50 p-3 text-left font-mono text-caption leading-relaxed text-muted">
+              {described.detail}
+            </pre>
+          </details>
         )}
       </div>
       <div className="flex gap-2">

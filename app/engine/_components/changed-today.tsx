@@ -35,8 +35,9 @@ export function ChangedToday({ movers, prevDate }: { movers: Movers; prevDate: s
   if (!hasAny) {
     return (
       <p className="text-sm text-muted">
-        Nothing moved between {prevDate} and the latest run across the {movers.n_compared} names
-        present in both.
+        {movers.n_compared === 0
+          ? `The previous run (${prevDate}) scored a different universe, so there is no overlap to compare against yet. Deltas resume once the same universe has two runs on file.`
+          : `Nothing moved between ${prevDate} and the latest run across the ${movers.n_compared} names present in both.`}
       </p>
     );
   }

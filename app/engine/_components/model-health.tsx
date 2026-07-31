@@ -117,26 +117,36 @@ export function ModelHealth({ metrics }: { metrics: OosMetrics }) {
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {tiles.map((t, i) => (
-          <Reveal
-            key={t.label}
-            index={i}
-            className="flex flex-col gap-0.5 rounded-card border border-border bg-surface p-3"
-            title={t.hint}
-          >
-            <span className="text-label font-semibold uppercase tracking-widest text-muted/70">{t.label}</span>
-            {t.value != null && Number.isFinite(t.value) ? (
-              <CountUp
-                value={t.value}
-                durationMs={700}
-                format={t.format}
-                className={`font-mono text-base font-semibold tabular-nums ${t.tone(t.value)}`}
-              />
-            ) : (
-              <span className="font-mono text-base text-faint">—</span>
-            )}
-          </Reveal>
-        ))}
+        {tiles.map((t, i) => {
+          const hasValue = t.value != null && Number.isFinite(t.value);
+          return (
+            <Reveal
+              key={t.label}
+              index={i}
+              // A tile with nothing to say gets a dashed border and an honest
+              // caption — a bare "—" in a solid box read as broken, not pending.
+              className={`flex flex-col gap-0.5 rounded-card border p-3 ${
+                hasValue ? "border-border bg-surface" : "border-dashed border-border bg-surface-2/30"
+              }`}
+              title={hasValue ? t.hint : `${t.hint}. Not measurable yet — it needs scored signals with realized forward returns.`}
+            >
+              <span className="text-label font-semibold uppercase tracking-widest text-muted/70">{t.label}</span>
+              {hasValue ? (
+                <CountUp
+                  value={t.value as number}
+                  durationMs={700}
+                  format={t.format}
+                  className={`font-mono text-base font-semibold tabular-nums ${t.tone(t.value as number)}`}
+                />
+              ) : (
+                <>
+                  <span className="font-mono text-base text-faint">—</span>
+                  <span className="text-caption text-faint">awaiting realized returns</span>
+                </>
+              )}
+            </Reveal>
+          );
+        })}
       </div>
 
       {/* Input health — a model is only as honest as what it was fed. */}

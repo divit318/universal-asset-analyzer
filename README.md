@@ -33,9 +33,18 @@ are no migrations to run.
 To run the Python quant engine (optional):
 
 ```bash
-pip install -r requirements.txt
-python engine/daily_run.py
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m engine.daily_run
 ```
+
+> The venv location matters: the app spawns the engine's Python itself (reading
+> the scorecard, building the market brief, running the engine from `/engine`),
+> and `lib/engine-python.ts` resolves the interpreter as `.venv/bin/python` at
+> the project root, falling back to whatever `python3` is on `PATH`. Installing
+> the requirements anywhere else (system Python, conda, a differently named
+> venv) leaves the app spawning an interpreter without the engine's
+> dependencies, and `/engine` fails with `ModuleNotFoundError`.
 
 ## Scripts
 

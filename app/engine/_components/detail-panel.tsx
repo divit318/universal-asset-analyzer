@@ -29,6 +29,7 @@ import {
   type ScorecardRow,
 } from "@/lib/engine-desk";
 import { Derivation, ProbBand, ProbMeter, Rule, Sparkline, ZBar, fmtPct, fmtZ } from "./desk-primitives";
+import { EngineErrorState } from "./error-state";
 
 interface RegimePoint {
   date: string;
@@ -98,7 +99,7 @@ export function DetailPanel({ symbol, onClose }: { symbol: string; onClose: () =
     return json;
   }, [symbol]);
 
-  const { data, error: fetchError, isInitialLoading } = useDataset<DetailData>("engineDetail", symbol, fetcher);
+  const { data, error: fetchError, isInitialLoading, refresh } = useDataset<DetailData>("engineDetail", symbol, fetcher);
 
   const status: "loading" | "ready" | "error" = isInitialLoading
     ? "loading"
@@ -166,7 +167,13 @@ export function DetailPanel({ symbol, onClose }: { symbol: string; onClose: () =
       )}
 
       {status === "error" && (
-        <div className="px-4 py-6 text-sm text-negative">{error}</div>
+        <div className="p-4">
+          <EngineErrorState
+            title={`Couldn't read the engine's working for ${symbol}`}
+            error={error ?? "Failed to load detail"}
+            onRetry={refresh}
+          />
+        </div>
       )}
 
       {status === "ready" && data && (

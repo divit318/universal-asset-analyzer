@@ -21,6 +21,7 @@ import { Button, StatTile } from "@/app/_components/ui";
 import { signalTone, SIGNAL_LABEL } from "@/lib/engine-desk";
 import type { BacktestResult } from "@/lib/backtest";
 import { Derivation, Rule } from "./desk-primitives";
+import { EngineErrorState } from "./error-state";
 
 interface ValidationRun {
   result: BacktestResult;
@@ -119,7 +120,9 @@ export function ModelValidation() {
           </p>
         </div>
         <div className="flex flex-col items-end gap-1.5">
-          <Button variant="primary" onClick={() => void runValidation()} disabled={running}>
+          {/* Secondary, deliberately: the page's one primary action is running
+              the engine itself. This is an on-demand study, not the main job. */}
+          <Button variant="secondary" onClick={() => void runValidation()} disabled={running}>
             {running ? (
               <>
                 <LoadingMark size={14} />
@@ -140,9 +143,12 @@ export function ModelValidation() {
       </div>
 
       {status === "error" && message && (
-        <p className="rounded-card border border-negative/40 bg-negative/10 px-4 py-3 text-sm text-negative">
-          {message}
-        </p>
+        <EngineErrorState
+          title="Validation couldn't finish"
+          error={message}
+          onRetry={() => void runValidation()}
+          retryLabel="Run again"
+        />
       )}
       {status === "empty" && message && (
         <p className="rounded-card border border-border bg-surface-2 px-4 py-3 text-sm text-muted">{message}</p>
