@@ -73,9 +73,18 @@ function ScoreBar({
 export function OpportunityCard({
   opportunity,
   style,
+  triggerEvent,
+  inWatchlist = false,
+  onAddToWatchlist,
+  onDismiss,
 }: {
   opportunity: ScannerOpportunity;
   style?: CSSProperties;
+  /** The market event that produced this idea, joined from sourceEventIds. */
+  triggerEvent?: { headline: string; sourceCount: number } | null;
+  inWatchlist?: boolean;
+  onAddToWatchlist?: () => void;
+  onDismiss?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const dir = DIR_STYLE[opportunity.direction];
@@ -174,6 +183,17 @@ export function OpportunityCard({
           {opportunity.thesis?.headline ?? opportunity.rationale}
         </p>
 
+        {/* Triggering event + corroboration — the "why now" behind the idea */}
+        {triggerEvent && (
+          <p className="flex items-baseline gap-1.5 text-[10px] leading-4 text-muted/70">
+            <span className="shrink-0 text-accent">⚡</span>
+            <span className="line-clamp-1" title={triggerEvent.headline}>{triggerEvent.headline}</span>
+            <span className="shrink-0 text-muted/50">
+              · {triggerEvent.sourceCount} source{triggerEvent.sourceCount === 1 ? "" : "s"}
+            </span>
+          </p>
+        )}
+
         {/* Score bars */}
         <div className="flex flex-col gap-1">
           <ScoreBar label="Catalyst"  value={score.catalystStrength}  color="bg-accent" />
@@ -185,7 +205,20 @@ export function OpportunityCard({
 
       {/* Action bar */}
       <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-2.5">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {onAddToWatchlist && (
+            <button
+              onClick={onAddToWatchlist}
+              disabled={inWatchlist}
+              className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
+                inWatchlist
+                  ? "border-positive/30 text-positive cursor-default"
+                  : "border-border text-muted hover:border-accent/40 hover:text-accent"
+              }`}
+            >
+              {inWatchlist ? "✓ Watchlisted" : "+ Watchlist"}
+            </button>
+          )}
           <Link
             href={researchHref}
             className="rounded-md border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-accent/40 hover:text-accent"
@@ -208,14 +241,26 @@ export function OpportunityCard({
             Compare
           </Link>
         </div>
-        {hasThesis && (
-          <button
-            onClick={() => setExpanded((v) => !v)}
-            className="rounded-md border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-accent/40 hover:text-accent"
-          >
-            Thesis {expanded ? "−" : "+"}
-          </button>
-        )}
+        <div className="flex items-center gap-1.5">
+          {hasThesis && (
+            <button
+              onClick={() => setExpanded((v) => !v)}
+              className="rounded-md border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-accent/40 hover:text-accent"
+            >
+              Thesis {expanded ? "−" : "+"}
+            </button>
+          )}
+          {onDismiss && (
+            <button
+              onClick={onDismiss}
+              title="Dismiss this opportunity"
+              aria-label={`Dismiss ${opportunity.ticker}`}
+              className="rounded-md border border-border px-2 py-1 text-xs text-muted/60 transition-colors hover:border-negative/40 hover:text-negative"
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Expanded thesis */}

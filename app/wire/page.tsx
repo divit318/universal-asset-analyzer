@@ -23,6 +23,8 @@ import { SectionNav, type WireSection as WireSectionId } from "./_components/sec
 import { useIOSSafe } from "@/lib/ios-context";
 import { PageShell, Skeleton } from "@/app/_components/ui";
 import { Reveal } from "@/app/_components/reveal";
+import { useToast } from "@/app/_components/toast";
+import { usePersistedState } from "@/app/_components/use-persisted-state";
 
 const CACHE_KEY = "uaa_scanner_v3";
 
@@ -113,6 +115,14 @@ function SectionSkeleton({ height = "h-40" }: { height?: string }) {
   return <Skeleton height={height} radius="rounded-xl" className="border border-border" />;
 }
 
+const isStringArray = (v: unknown): v is string[] =>
+  Array.isArray(v) && v.every((x) => typeof x === "string");
+
+/** .NS/.BO-insensitive symbol key, matching the impact panels' comparison. */
+function symbolKey(symbol: string): string {
+  return symbol.replace(/\.(NS|BO)$/, "").toUpperCase();
+}
+
 const CACHE_TTL = 15 * 60 * 1000; // 15 minutes — matches server cache
 
 function saveCache(result: ScannerResult) {
@@ -165,6 +175,11 @@ export default function ScannerPage() {
 
   const [fitRanking, setFitRanking] = useState(false);
   const [activeCategory, setActiveCategory] = useState<OpportunityCategory | "all">("all");
+
+  const toast = useToast();
+  // Dismissals persist across visits and scans (an idea you rejected should
+  // not resurrect on refresh) and are restorable — never a silent deletion.
+  const [dismissed, setDismissed] = usePersistedState<string[]>("uaa.wire.dismissed", [], isStringArray);
 
   // IOS — portfolio fit re-ranking
   const ios = useIOSSafe();
@@ -312,10 +327,57 @@ export default function ScannerPage() {
   // Once `result` lands it wins per-field over `partial` (spread order below),
   // so nothing here ever shows stale streamed data next to the final version.
   const display: Partial<ScannerResult> = { ...partial, ...result };
-  const opportunities = display.opportunities ?? [];
-  const highConviction = display.highConviction ?? [];
-  const developing = display.developing ?? [];
+  const allOpportunities = display.opportunities ?? [];
   const causalEvents = (display.events ?? []).filter((e) => e.causalChain.length > 0).slice(0, 6);
+
+  // Dismissed ideas leave the Opportunities zone (only — impact panels still
+  // reflect the full scan) and can be restored from the section header.
+  const dismissedSet = new Set(dismissed.map(symbolKey));
+  const isDismissed = (o: ScannerOpportunity) => dismissedSet.has(symbolKey(o.ticker));
+  const opportunities = allOpportunities.filter((o) => !isDismissed(o));
+  const highConviction = (display.highConviction ?? []).filter((o) => !isDismissed(o));
+  const developing = (display.developing ?? []).filter((o) => !isDismissed(o));
+  const dismissedCount = allOpportunities.length - opportunities.length;
+
+  // Join each opportunity back to the market event that produced it — the
+  // "why now" line and its corroboration count on the card.
+  const eventById = new Map((display.events ?? []).map((e) => [e.id, e]));
+  function triggerFor(opp: ScannerOpportunity): { headline: string; sourceCount: number } | null {
+    const evs = opp.sourceEventIds
+      .map((id) => eventById.get(id))
+      .filter((e): e is NonNullable<typeof e> => e != null);
+    if (evs.length === 0) return null;
+    return {
+      headline: evs[0].headline,
+      sourceCount: evs.reduce((n, e) => n + Math.max(1, e.sources.length), 0),
+    };
+  }
+
+  const watchlistSet = new Set(watchlistSymbols.map(symbolKey));
+  async function addTickerToWatchlist(ticker: string) {
+    try {
+      const res = await fetch("/api/watchlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // Provenance (lib/idea-source.ts): "scanner" — flagged by an event scan.
+        body: JSON.stringify({ symbol: ticker, source: "scanner" }),
+      });
+      if (!res.ok) throw new Error();
+      setWatchlistSymbols((prev) => [...prev, ticker]);
+      toast(`${ticker} added to watchlist`, "success");
+    } catch {
+      toast(`Couldn't add ${ticker}`, "error");
+    }
+  }
+
+  /** Shared card wiring for every opportunity grid in the zone. */
+  const cardProps = (opp: ScannerOpportunity) => ({
+    opportunity: opp,
+    triggerEvent: triggerFor(opp),
+    inWatchlist: watchlistSet.has(symbolKey(opp.ticker)),
+    onAddToWatchlist: () => void addTickerToWatchlist(opp.ticker),
+    onDismiss: () => setDismissed([...dismissed, opp.ticker]),
+  });
   // Cluster/dedupe/noise-filter the raw feed once per newsItems arrival —
   // pure and tested in lib/wire/tape.ts, so the component just renders it.
   const newsItems = display.newsItems;
@@ -429,19 +491,30 @@ export default function ScannerPage() {
             title="Opportunities"
             badge={opportunities.length > 0 ? `${opportunities.length}` : undefined}
             actions={
-              ios?.profileReady && ios.profile.hasPortfolio && highConviction.length > 0 ? (
-                <button
-                  onClick={() => setFitRanking((v) => !v)}
-                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[11px] font-medium transition-colors ${
-                    fitRanking
-                      ? "border-brand/40 bg-brand/10 text-brand"
-                      : "border-border text-muted hover:border-brand/30 hover:text-brand"
-                  }`}
-                >
-                  <span>✦</span>
-                  {fitRanking ? "Sorted by Portfolio Fit" : "Sort by Portfolio Fit"}
-                </button>
-              ) : undefined
+              <>
+                {dismissedCount > 0 && (
+                  <button
+                    onClick={() => setDismissed([])}
+                    className="text-xs text-muted transition-colors hover:text-foreground"
+                    title="Bring back every dismissed opportunity"
+                  >
+                    Restore dismissed ({dismissedCount})
+                  </button>
+                )}
+                {ios?.profileReady && ios.profile.hasPortfolio && highConviction.length > 0 && (
+                  <button
+                    onClick={() => setFitRanking((v) => !v)}
+                    className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                      fitRanking
+                        ? "border-brand/40 bg-brand/10 text-brand"
+                        : "border-border text-muted hover:border-brand/30 hover:text-brand"
+                    }`}
+                  >
+                    <span>✦</span>
+                    {fitRanking ? "Sorted by Portfolio Fit" : "Sort by Portfolio Fit"}
+                  </button>
+                )}
+              </>
             }
           >
             {opportunities.length === 0 ? (
@@ -449,7 +522,9 @@ export default function ScannerPage() {
                 <SectionSkeleton />
               ) : (
                 <p className="rounded-xl border border-border bg-surface px-4 py-6 text-center text-sm text-muted">
-                  No company-level opportunities from this scan.
+                  {dismissedCount > 0
+                    ? `All ${dismissedCount} opportunities from this scan are dismissed.`
+                    : "No company-level opportunities from this scan."}
                 </p>
               )
             ) : (
@@ -485,7 +560,7 @@ export default function ScannerPage() {
                 {activeCategory !== "all" && (
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                     {activeCategoryOpportunities.map((opp, i) => (
-                      <OpportunityCard key={opp.id} opportunity={opp} style={{ animationDelay: `${i * 40}ms` }} />
+                      <OpportunityCard key={opp.id} {...cardProps(opp)} style={{ animationDelay: `${i * 40}ms` }} />
                     ))}
                   </div>
                 )}
@@ -503,7 +578,7 @@ export default function ScannerPage() {
                     </div>
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                       {rankOpportunities(highConviction).map((opp, i) => (
-                        <OpportunityCard key={opp.id} opportunity={opp} style={{ animationDelay: `${i * 40}ms` }} />
+                        <OpportunityCard key={opp.id} {...cardProps(opp)} style={{ animationDelay: `${i * 40}ms` }} />
                       ))}
                     </div>
                   </div>
@@ -520,7 +595,7 @@ export default function ScannerPage() {
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                       {developing.map((opp, i) => (
-                        <OpportunityCard key={opp.id} opportunity={opp} style={{ animationDelay: `${i * 40}ms` }} />
+                        <OpportunityCard key={opp.id} {...cardProps(opp)} style={{ animationDelay: `${i * 40}ms` }} />
                       ))}
                     </div>
                   </div>
@@ -607,10 +682,12 @@ export default function ScannerPage() {
       {(watchlistSymbols.length > 0 || portfolioSymbols.length > 0) && (
         <WireSection id="portfolio-impact" title="Portfolio Impact">
           <div className="flex flex-col gap-5">
-            {opportunities.length > 0 && (
+            {/* Full scan output, not the dismissed-filtered list — a signal on
+                something you HOLD stays visible even if the idea was dismissed. */}
+            {allOpportunities.length > 0 && (
               <div className="grid gap-4 sm:grid-cols-2">
-                <WatchlistImpact opportunities={opportunities} watchlistSymbols={watchlistSymbols} />
-                <PortfolioImpact opportunities={opportunities} portfolioSymbols={portfolioSymbols} />
+                <WatchlistImpact opportunities={allOpportunities} watchlistSymbols={watchlistSymbols} />
+                <PortfolioImpact opportunities={allOpportunities} portfolioSymbols={portfolioSymbols} />
               </div>
             )}
             <PortfolioWatch />
