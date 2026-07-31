@@ -343,6 +343,10 @@ describe("isRenderableReport", () => {
     const older: Record<string, unknown> = { ...report };
     delete older.newsItems;
     expect(isRenderableReport(older)).toBe(false);
+    // Pre-universePreview era (schema v2).
+    const preUniverse: Record<string, unknown> = { ...report };
+    delete preUniverse.universePreview;
+    expect(isRenderableReport(preUniverse)).toBe(false);
   });
 });
 
@@ -421,6 +425,26 @@ describe("shortlistUniverse", () => {
     expect(symbols.length).toBe(140);
     // Every strong name survives the cap; the cut lands on the weakest names.
     expect(symbols.filter((s) => s.startsWith("ZZ"))).toHaveLength(50);
+  });
+
+  it("carries an auditable preview: matched, shown to model, shortlisted, cut", () => {
+    // PR-1: the shortlist decision used to be computed and thrown away, so a
+    // name cut by the cap was indistinguishable from a name never covered.
+    const rows = Array.from({ length: 150 }, (_, i) =>
+      fund(`S${String(i).padStart(3, "0")}`, "Semiconductors", "Technology"),
+    );
+    const { preview } = shortlistUniverse("Semiconductors", rows);
+    expect(preview.matched).toBe(150);
+    expect(preview.shortlisted).toBe(140);
+    expect(preview.cutTotal).toBe(10);
+    expect(preview.shownToModel).toBe(60);
+    const statuses = preview.candidates.map((c) => c.status);
+    expect(statuses.filter((s) => s === "prompt")).toHaveLength(60);
+    expect(statuses.filter((s) => s === "shortlist")).toHaveLength(80);
+    expect(statuses.filter((s) => s === "cut")).toHaveLength(10);
+    // Each candidate carries the evidence for its inclusion.
+    expect(preview.candidates[0].matched).toContain("semiconductor");
+    expect(preview.candidates[0].score).toBeGreaterThan(0);
   });
 
   it("ranks a first-listed industry above a later-listed one for the same theme", () => {

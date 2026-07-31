@@ -2,8 +2,8 @@
 
 import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight } from "lucide-react";
-import type { ThematicReport, TierCompany } from "@/lib/thematic-engine";
+import { ArrowUpRight, ChevronDown } from "lucide-react";
+import type { ThematicReport, TierCompany, UniverseCandidate, UniversePreview } from "@/lib/thematic-engine";
 import { Badge, Card, DataTable, DataTableAction, type DataTableColumn } from "@/app/_components/ui";
 import { Reveal } from "@/app/_components/reveal";
 import { useToast } from "@/app/_components/toast";
@@ -28,13 +28,18 @@ export function CompaniesTab({ report }: { report: ThematicReport }) {
 
   if (companies.length === 0) {
     return (
-      <Empty>
-        {report.integrity.universeTotal === 0
-          ? "The screener universe is empty, so there is nothing to map this theme onto. Load the screener once to populate cached fundamentals, then re-run."
-          : report.integrity.universeShortlisted === 0
-            ? `None of the ${report.integrity.universeTotal} companies in the screener universe plausibly touch this theme — the coverage gap is real, not a failure. Try a broader theme, or one closer to listed industries.`
-            : `${report.integrity.universeShortlisted} companies were in scope but the mapping stage couldn't place any of them into a tier. Re-run to try again.`}
-      </Empty>
+      <div className="flex flex-col gap-4">
+        <Empty>
+          {report.integrity.universeTotal === 0
+            ? "The screener universe is empty, so there is nothing to map this theme onto. Load the screener once to populate cached fundamentals, then re-run."
+            : report.integrity.universeShortlisted === 0
+              ? `None of the ${report.integrity.universeTotal} companies in the screener universe plausibly touch this theme — the coverage gap is real, not a failure. Try a broader theme, or one closer to listed industries.`
+              : `${report.integrity.universeShortlisted} companies were in scope but the mapping stage couldn't place any of them into a tier. Re-run to try again.`}
+        </Empty>
+        {/* Precisely when the mapping came back empty, the eligible universe is
+            the evidence an analyst needs to judge whether the gap is real. */}
+        <UniverseSection preview={report.universePreview} universeTotal={report.integrity.universeTotal} />
+      </div>
     );
   }
 
@@ -78,7 +83,129 @@ export function CompaniesTab({ report }: { report: ThematicReport }) {
       })}
 
       {filtered.length === 0 && <Empty>No company matches the current filters.</Empty>}
+
+      <UniverseSection preview={report.universePreview} universeTotal={report.integrity.universeTotal} />
     </div>
+  );
+}
+
+/** Wording + tone for a candidate's fate — shared by the table and the legend. */
+const CANDIDATE_STATUS = {
+  prompt: { label: "shown to model", variant: "brand", rank: 2 },
+  shortlist: { label: "shortlisted", variant: "neutral", rank: 1 },
+  cut: { label: "cut by cap", variant: "warning", rank: 0 },
+} as const;
+
+/**
+ * Constituent transparency: the eligible universe, not just the survivors.
+ *
+ * The first professional question about any theme list is "what was the
+ * eligible universe and why these names". This section answers it: every
+ * candidate the theme filter matched, the evidence for its inclusion (matched
+ * industry hints / theme words and the relevance score), and what happened to
+ * it — shown to the model, kept below the prompt cut, or discarded by the
+ * shortlist cap. TH-01's silent truncation is now a visible, checkable
+ * decision.
+ */
+function UniverseSection({ preview, universeTotal }: { preview: UniversePreview | undefined; universeTotal: number }) {
+  const [open, setOpen] = useState(false);
+  // Reports written before the preview existed (schema v2) can still arrive
+  // via sessionStorage restores mid-deploy; degrade to nothing, not a crash.
+  if (!preview || preview.candidates.length === 0) return null;
+
+  const summary =
+    `${preview.matched} of ${universeTotal} screener names matched · ` +
+    `${preview.shownToModel} shown to the model` +
+    (preview.shortlisted > preview.shownToModel ? ` · ${preview.shortlisted - preview.shownToModel} shortlisted below the prompt cut` : "") +
+    (preview.cutTotal > 0 ? ` · ${preview.cutTotal} cut by the shortlist cap` : "");
+
+  return (
+    <Card padding="none">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2.5 px-4 py-3 text-left outline-none transition-colors hover:bg-surface-2/60 focus-visible:ring-2 focus-visible:ring-brand/40"
+      >
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted transition-transform ${open ? "" : "-rotate-90"}`} strokeWidth={2} />
+        <span className="text-sm font-semibold">Universe</span>
+        <span className="min-w-0 truncate text-xs text-muted tabular-nums">{summary}</span>
+      </button>
+      {open && (
+        <div className="border-t border-border">
+          <p className="px-4 pt-3 text-xs leading-relaxed text-muted">
+            Every screener name the theme filter matched, with the evidence for its inclusion. The model can only map
+            companies it was shown — anything cut by the cap was never analysed.
+            {preview.cutTotal > preview.candidates.length - preview.shortlisted
+              ? ` Showing the ${preview.candidates.length - preview.shortlisted} highest-ranked of the ${preview.cutTotal} cut names.`
+              : ""}
+          </p>
+          <UniverseTable candidates={preview.candidates} />
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function UniverseTable({ candidates }: { candidates: UniverseCandidate[] }) {
+  const columns: DataTableColumn<UniverseCandidate>[] = [
+    {
+      key: "symbol",
+      label: "Symbol",
+      firstSortDir: "asc",
+      sortValue: (c) => c.symbol,
+      render: (c) => <span className="font-mono text-xs font-semibold">{c.symbol}</span>,
+    },
+    {
+      key: "name",
+      label: "Company",
+      firstSortDir: "asc",
+      sortValue: (c) => c.name,
+      render: (c) => <span className="block max-w-[13rem] truncate text-muted">{c.name}</span>,
+    },
+    {
+      key: "industry",
+      label: "Industry",
+      firstSortDir: "asc",
+      sortValue: (c) => c.industry,
+      render: (c) => <span className="block max-w-[12rem] truncate text-xs text-muted">{c.industry ?? "—"}</span>,
+    },
+    {
+      key: "matched",
+      label: "Matched on",
+      help: "The lexicon industry hints and theme words this row matched",
+      render: (c) => (
+        <span className="block max-w-[14rem] truncate text-xs text-muted">{c.matched.join(", ") || "—"}</span>
+      ),
+    },
+    {
+      key: "score",
+      label: "Relevance",
+      help: "Deterministic relevance score from the shortlist — higher ranks earlier",
+      numeric: true,
+      sortValue: (c) => c.score,
+      render: (c) => <span className="font-mono text-xs tabular-nums">{c.score}</span>,
+    },
+    {
+      key: "status",
+      label: "Outcome",
+      help: "Shown to the model, shortlisted below the prompt cut, or cut by the shortlist cap",
+      sortValue: (c) => CANDIDATE_STATUS[c.status]?.rank ?? 0,
+      render: (c) => {
+        const s = CANDIDATE_STATUS[c.status] ?? CANDIDATE_STATUS.cut;
+        return <Badge variant={s.variant}>{s.label}</Badge>;
+      },
+    },
+  ];
+
+  return (
+    <DataTable
+      rows={candidates}
+      columns={columns}
+      rowKey={(c) => c.symbol}
+      label="Eligible universe for this theme"
+      showDensityToggle={false}
+    />
   );
 }
 

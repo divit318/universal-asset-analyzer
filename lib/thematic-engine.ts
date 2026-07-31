@@ -262,6 +262,8 @@ export interface ThematicReport {
   /** AI stages that failed and fell back to a neutral default — the report above is missing their input. */
   stageFailures: StageFailure[];
   integrity: ReportIntegrity;
+  /** The eligible universe and what happened to each name — the audit trail behind the Companies tab. */
+  universePreview: UniversePreview;
   /** Wall-clock ms each stage took — drives the progress ETA on the next run
    *  (see app/thematic/_components/storage.recordStageTimings). */
   stageTimings: { stage: string; ms: number; retried?: boolean }[];
@@ -531,6 +533,46 @@ export interface UniverseShortlist {
   total: number;
   /** True when the theme resolved to no lexicon industries at all (free-text theme). */
   usedTextFallback: boolean;
+  /** The auditable version of this shortlist — travels on the report (see {@link UniversePreview}). */
+  preview: UniversePreview;
+}
+
+/** One row of the eligible universe, with the evidence for its inclusion. */
+export interface UniverseCandidate {
+  symbol: string;
+  name: string;
+  industry: string | null;
+  /** Deterministic relevance score from {@link shortlistUniverse}. */
+  score: number;
+  /** The industry hints / theme words that matched this row (capped at 4). */
+  matched: string[];
+  /**
+   * Where the candidate ended up: in the mapping prompt ("prompt"), kept on
+   * the shortlist but below the prompt cut ("shortlist"), or matched the
+   * theme but discarded by the shortlist cap ("cut").
+   */
+  status: "prompt" | "shortlist" | "cut";
+}
+
+/**
+ * The eligible universe behind the Companies tab, made inspectable.
+ *
+ * The first professional question about any theme list is "what was the
+ * eligible universe and why these names". Before this existed the shortlist
+ * (and its cap) was computed and thrown away, so a name silently cut by the
+ * cap was indistinguishable from a name the screener never covered.
+ */
+export interface UniversePreview {
+  /** Rows that matched the theme filter at all, before the cap. */
+  matched: number;
+  /** Rows kept after the shortlist cap. */
+  shortlisted: number;
+  /** Head of the shortlist that actually reached the mapping prompt. */
+  shownToModel: number;
+  /** Rows that matched but were discarded by the cap. */
+  cutTotal: number;
+  /** Shortlist rows plus up to {@link CUT_PREVIEW} of the best cut rows. */
+  candidates: UniverseCandidate[];
 }
 
 /** Words that carry no industry signal — they'd match half the universe. */
@@ -582,16 +624,24 @@ export function shortlistUniverse(theme: string, rows: StockFundamentals[]): Uni
     const sector = (row.sector ?? "").toLowerCase();
     const name = (row.name ?? "").toLowerCase();
     let score = 0;
-    for (const [hint, weight] of industryWeights) if (industry.includes(hint)) score += weight;
+    const matched: string[] = [];
+    for (const [hint, weight] of industryWeights) {
+      if (industry.includes(hint)) {
+        score += weight;
+        matched.push(hint);
+      }
+    }
     for (const word of themeWords) {
       if (industry.includes(word)) score += 6;
       else if (name.includes(word)) score += 4;
       else if (sector.includes(word)) score += 2;
+      else continue;
+      matched.push(word);
     }
-    return { row, score };
+    return { row, score, matched };
   });
 
-  const relevant = scored
+  const ranked = scored
     .filter((s) => s.score > 0)
     /**
      * Ties break on composite quality, then symbol. The symbol-only tie-break
@@ -607,14 +657,51 @@ export function shortlistUniverse(theme: string, rows: StockFundamentals[]): Uni
     .sort(
       (a, b) =>
         b.score - a.score || b.quality - a.quality || a.row.symbol.localeCompare(b.row.symbol),
-    )
-    .slice(0, SHORTLIST_SIZE)
-    .map((s) => s.row);
+    );
+
+  const kept = ranked.slice(0, SHORTLIST_SIZE);
+  const cut = ranked.slice(SHORTLIST_SIZE);
+  const toCandidate = (
+    s: (typeof ranked)[number],
+    status: UniverseCandidate["status"],
+  ): UniverseCandidate => ({
+    symbol: s.row.symbol,
+    name: s.row.name,
+    industry: s.row.industry ?? null,
+    score: s.score,
+    matched: s.matched.slice(0, 4),
+    status,
+  });
 
   return {
-    companies: relevant,
+    companies: kept.map((s) => s.row),
     total: rows.length,
     usedTextFallback: industryWeights.size === 0,
+    preview: {
+      matched: ranked.length,
+      shortlisted: kept.length,
+      shownToModel: Math.min(kept.length, MAPPING_PROMPT_CANDIDATES),
+      cutTotal: cut.length,
+      candidates: [
+        ...kept.map((s, i) => toCandidate(s, i < MAPPING_PROMPT_CANDIDATES ? "prompt" : "shortlist")),
+        // The cut list is ranked too, so its head is exactly the names an
+        // analyst would ask about ("why not X?"); the tail is noise.
+        ...cut.slice(0, CUT_PREVIEW).map((s) => toCandidate(s, "cut")),
+      ],
+    },
+  };
+}
+
+/** How many cap-discarded rows the report carries for inspection. */
+const CUT_PREVIEW = 60;
+
+/** The universe fallback when the fundamentals cache is unreachable. */
+export function emptyUniverse(): UniverseShortlist {
+  return {
+    companies: [],
+    total: 0,
+    usedTextFallback: true,
+    preview: { matched: 0, shortlisted: 0, shownToModel: 0, cutTotal: 0, candidates: [] },
   };
 }
 
@@ -1683,7 +1770,7 @@ export async function runThematicEngine(
     Promise.resolve().then(() => {
       const { rows } = getFreshFundamentals(7 * 24 * 60 * 60 * 1000); // 7-day cache
       return shortlistUniverse(theme, rows);
-    }).catch(() => ({ companies: [], total: 0, usedTextFallback: true } as UniverseShortlist)),
+    }).catch(() => emptyUniverse()),
   ]);
 
   emit("future_state", `Scoring inevitability of "${theme}"…`);
@@ -1768,6 +1855,7 @@ export async function runThematicEngine(
     newsItems,
     stageFailures: failures,
     integrity: buildIntegrity(opportunity, failures, universe),
+    universePreview: universe.preview,
     stageTimings: timings,
   };
 

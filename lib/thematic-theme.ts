@@ -49,7 +49,7 @@ export function themeCacheKey(theme: string): string {
  * old-shape row into a clean cache miss instead of a render-time surprise.
  * The orphaned rows age out through the platform cache's normal pruning.
  */
-export const REPORT_SCHEMA_VERSION = 2;
+export const REPORT_SCHEMA_VERSION = 3;
 
 // Type-only import: erased at compile time, so this module stays client-safe
 // (see the header comment — importing a runtime VALUE from the engine would
@@ -82,5 +82,6 @@ export function isRenderableReport(value: unknown): value is ThematicReport {
   if (!Array.isArray(r.dependencyChain) || !Array.isArray(r.tierCompanies) || !Array.isArray(r.newsItems) || !Array.isArray(r.stageFailures)) return false;
   const i = r.integrity;
   if (!i || !Array.isArray(i.caveats) || !Array.isArray(i.missingStages)) return false;
+  if (!r.universePreview || !Array.isArray(r.universePreview.candidates)) return false;
   return true;
 }
