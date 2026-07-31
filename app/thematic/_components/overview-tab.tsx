@@ -250,7 +250,7 @@ export function OverviewTab({ report }: { report: ThematicReport }) {
               <h2 className="text-sm font-semibold tracking-tight">Best expressions of this theme</h2>
               <p className="text-xs text-muted">Ranked by strategic importance, then composite quality, then leverage.</p>
             </div>
-            <CompanyTable companies={opportunity.topCompanies} compact />
+            <CompanyTable companies={opportunity.topCompanies} compact theme={report.theme} />
           </Card>
         </Reveal>
       )}

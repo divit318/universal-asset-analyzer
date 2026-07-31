@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import type { ThematicReport, TierCompany } from "@/lib/thematic-engine";
-import { Badge, Card, DataTable, type DataTableColumn } from "@/app/_components/ui";
+import { Badge, Card, DataTable, DataTableAction, type DataTableColumn } from "@/app/_components/ui";
 import { Reveal } from "@/app/_components/reveal";
+import { useToast } from "@/app/_components/toast";
 import { formatPercent, toneClass } from "@/lib/format";
 import { Empty, IMPORTANCE_VARIANT, QualityCell, TierBadge } from "./shared";
 
@@ -70,7 +71,7 @@ export function CompaniesTab({ report }: { report: ThematicReport }) {
                 <span className="text-sm font-semibold">{rows[0].tierLabel}</span>
                 <span className="text-xs text-muted tabular-nums">{rows.length}</span>
               </div>
-              <CompanyTable companies={rows} />
+              <CompanyTable companies={rows} theme={report.theme} />
             </Card>
           </Reveal>
         );
@@ -100,6 +101,46 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
 const IMPORTANCE_RANK = { critical: 4, high: 3, medium: 2, low: 1 } as const;
 
 /**
+ * "Add to watchlist" with real provenance.
+ *
+ * lib/idea-source.ts has declared the "thematic" IdeaSource (detail: "the
+ * theme and tier") since the Pipeline shipped, and nothing ever emitted it —
+ * the classic shipped-but-unwired case. The watchlist API already accepts
+ * source/sourceDetail, so acting on this research costs one POST; the
+ * Pipeline board and Ledger then show where the idea came from for free.
+ */
+function useAddToWatchlist(theme: string) {
+  const toast = useToast();
+  const [added, setAdded] = useState<ReadonlySet<string>>(new Set());
+  const add = useCallback(
+    async (c: TierCompany) => {
+      try {
+        const res = await fetch("/api/watchlist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            symbol: c.symbol,
+            name: c.name,
+            source: "thematic",
+            sourceDetail: `${theme} — T${c.tier} ${c.tierLabel}`.slice(0, 120),
+          }),
+        });
+        if (!res.ok) {
+          const json = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(json.error ?? `Request failed (${res.status})`);
+        }
+        setAdded((prev) => new Set(prev).add(c.symbol));
+        toast(`${c.symbol} added to the watchlist`);
+      } catch (err) {
+        toast(err instanceof Error ? err.message : "Couldn't add to the watchlist", "error");
+      }
+    },
+    [theme, toast],
+  );
+  return { add, added };
+}
+
+/**
  * The one company table — used by both the hero shortlist and the tier groups.
  *
  * Built on the shared DataTable rather than a hand-rolled `<table>`: an
@@ -109,7 +150,17 @@ const IMPORTANCE_RANK = { critical: 4, high: 3, medium: 2, low: 1 } as const;
  * brings aria-sort, null-values-sink ordering, and the header tooltip that
  * used to be a touch-inaccessible `title` attribute.
  */
-export function CompanyTable({ companies, compact = false }: { companies: TierCompany[]; compact?: boolean }) {
+export function CompanyTable({
+  companies,
+  compact = false,
+  theme,
+}: {
+  companies: TierCompany[];
+  compact?: boolean;
+  /** When provided, each row offers "Add to watchlist" with `${theme} — tier` provenance. */
+  theme?: string;
+}) {
+  const { add, added } = useAddToWatchlist(theme ?? "");
   const columns: DataTableColumn<TierCompany>[] = [
     {
       key: "symbol",
@@ -231,6 +282,20 @@ export function CompanyTable({ companies, compact = false }: { companies: TierCo
       // The tier groups already order rows by the report's own ranking; a
       // caller-side sort would fight it, so sorting starts unsorted.
       showDensityToggle={false}
+      actions={
+        theme
+          ? (c) => (
+              <>
+                <DataTableAction onClick={() => void add(c)} disabled={added.has(c.symbol)}>
+                  {added.has(c.symbol) ? "On the watchlist" : "Add to watchlist"}
+                </DataTableAction>
+                <DataTableAction href={`/research?symbol=${encodeURIComponent(c.symbol)}`}>
+                  Open in Research
+                </DataTableAction>
+              </>
+            )
+          : undefined
+      }
     />
   );
 }
