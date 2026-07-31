@@ -4,9 +4,10 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import type { ThematicReport, TierCompany } from "@/lib/thematic-engine";
-import { Badge, Card } from "@/app/_components/ui";
+import { Badge, Card, DataTable, type DataTableColumn } from "@/app/_components/ui";
 import { Reveal } from "@/app/_components/reveal";
-import { Empty, IMPORTANCE_VARIANT, QualityCell, TierBadge, changeTone, pct } from "./shared";
+import { formatPercent, toneClass } from "@/lib/format";
+import { Empty, IMPORTANCE_VARIANT, QualityCell, TierBadge } from "./shared";
 
 export function CompaniesTab({ report }: { report: ThematicReport }) {
   const companies = report.tierCompanies;
@@ -95,66 +96,141 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
   );
 }
 
-/** The one company table — used by both the hero shortlist and the tier groups. */
+/** Sortable ranking of the mapping's own vocabulary — "critical first". */
+const IMPORTANCE_RANK = { critical: 4, high: 3, medium: 2, low: 1 } as const;
+
+/**
+ * The one company table — used by both the hero shortlist and the tier groups.
+ *
+ * Built on the shared DataTable rather than a hand-rolled `<table>`: an
+ * analyst's first move on a companies list is to rank it by quality or by
+ * leverage, and the private table offered six numeric columns and no way to
+ * sort any of them (while Screener and Watchlist could). DataTable also
+ * brings aria-sort, null-values-sink ordering, and the header tooltip that
+ * used to be a touch-inaccessible `title` attribute.
+ */
 export function CompanyTable({ companies, compact = false }: { companies: TierCompany[]; compact?: boolean }) {
+  const columns: DataTableColumn<TierCompany>[] = [
+    {
+      key: "symbol",
+      label: "Symbol",
+      firstSortDir: "asc",
+      sortValue: (c) => c.symbol,
+      render: (c) => (
+        <Link
+          href={`/stocks/${encodeURIComponent(c.symbol)}`}
+          className="group inline-flex items-center gap-1 font-mono text-xs font-semibold text-brand outline-none hover:underline focus-visible:ring-2 focus-visible:ring-brand/40"
+        >
+          {c.symbol}
+          <ArrowUpRight className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" strokeWidth={2} />
+        </Link>
+      ),
+    },
+    {
+      key: "name",
+      label: "Company",
+      firstSortDir: "asc",
+      sortValue: (c) => c.name,
+      render: (c) => <span className="block max-w-[11rem] truncate text-muted">{c.name}</span>,
+    },
+    compact
+      ? {
+          key: "tier",
+          label: "Tier",
+          firstSortDir: "asc" as const,
+          sortValue: (c: TierCompany) => c.tier,
+          render: (c: TierCompany) => <TierBadge tier={c.tier} />,
+        }
+      : {
+          key: "sector",
+          label: "Sector",
+          firstSortDir: "asc" as const,
+          sortValue: (c: TierCompany) => c.sector,
+          render: (c: TierCompany) => <span className="text-xs text-muted">{c.sector ?? "—"}</span>,
+        },
+    {
+      key: "role",
+      label: "Role",
+      help: "Strategic importance the mapping stage assigned — critical sorts first",
+      sortValue: (c) => IMPORTANCE_RANK[c.strategicImportance] ?? 0,
+      render: (c) => <Badge variant={IMPORTANCE_VARIANT[c.strategicImportance]}>{c.strategicImportance}</Badge>,
+    },
+    {
+      key: "moat",
+      label: "Moat",
+      firstSortDir: "asc",
+      sortValue: (c) => c.moatType,
+      render: (c) => <span className="text-xs capitalize text-muted">{c.moatType}</span>,
+    },
+    {
+      key: "quality",
+      label: "Quality",
+      help: "Composite quality score from the screener (0–100)",
+      numeric: true,
+      sortValue: (c) => c.qualityScore,
+      render: (c) => <QualityCell score={c.qualityScore} />,
+    },
+    {
+      key: "roic",
+      label: "ROIC",
+      numeric: true,
+      sortValue: (c) => c.roic,
+      render: (c) => <span className="font-mono text-xs tabular-nums">{c.roic != null ? `${c.roic.toFixed(1)}%` : "—"}</span>,
+    },
+    ...(!compact
+      ? [
+          {
+            key: "margin",
+            label: "Margin",
+            help: "Gross margin",
+            numeric: true,
+            sortValue: (c: TierCompany) => c.grossMargin,
+            render: (c: TierCompany) => (
+              <span className="font-mono text-xs tabular-nums">{c.grossMargin != null ? `${c.grossMargin.toFixed(1)}%` : "—"}</span>
+            ),
+          },
+        ]
+      : []),
+    {
+      key: "revGrowth",
+      label: "Rev growth",
+      help: "Revenue growth, year over year",
+      numeric: true,
+      sortValue: (c) => c.revenueGrowthYoY,
+      render: (c) => (
+        <span className={`font-mono text-xs tabular-nums ${toneClass(c.revenueGrowthYoY)}`}>
+          {formatPercent(c.revenueGrowthYoY, 1)}
+        </span>
+      ),
+    },
+    {
+      key: "debtToEquity",
+      label: "D/E",
+      help: "Debt to equity — lower is safer; sorting puts the most levered first",
+      numeric: true,
+      sortValue: (c) => c.debtToEquity,
+      render: (c) => (
+        <span className="font-mono text-xs tabular-nums text-muted">
+          {c.debtToEquity != null ? c.debtToEquity.toFixed(2) : "—"}
+        </span>
+      ),
+    },
+    {
+      key: "rationale",
+      label: "Why it belongs here",
+      render: (c) => <span className="block max-w-[16rem] text-xs leading-relaxed text-muted">{c.relevanceRationale || "—"}</span>,
+    },
+  ];
+
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border text-left text-label uppercase tracking-widest text-muted/70">
-            <th className="px-4 py-2 font-semibold">Symbol</th>
-            <th className="px-4 py-2 font-semibold">Company</th>
-            {compact && <th className="px-4 py-2 font-semibold">Tier</th>}
-            {!compact && <th className="px-4 py-2 font-semibold">Sector</th>}
-            <th className="px-4 py-2 font-semibold">Role</th>
-            <th className="px-4 py-2 font-semibold">Moat</th>
-            <th className="px-4 py-2 text-right font-semibold" title="Composite quality score from the screener (0–100)">Quality</th>
-            <th className="px-4 py-2 text-right font-semibold">ROIC</th>
-            {!compact && <th className="px-4 py-2 text-right font-semibold">Margin</th>}
-            <th className="px-4 py-2 text-right font-semibold">Rev growth</th>
-            <th className="px-4 py-2 text-right font-semibold">D/E</th>
-            <th className="px-4 py-2 font-semibold">Why it belongs here</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {companies.map((c) => (
-            <tr key={c.symbol} className="transition-colors hover:bg-surface-2">
-              <td className="px-4 py-2.5">
-                <Link
-                  href={`/stocks/${encodeURIComponent(c.symbol)}`}
-                  className="group inline-flex items-center gap-1 font-mono text-xs font-semibold text-brand outline-none hover:underline focus-visible:ring-2 focus-visible:ring-brand/40"
-                >
-                  {c.symbol}
-                  <ArrowUpRight className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" strokeWidth={2} />
-                </Link>
-              </td>
-              <td className="max-w-[11rem] truncate px-4 py-2.5 text-muted">{c.name}</td>
-              {compact && <td className="px-4 py-2.5"><TierBadge tier={c.tier} /></td>}
-              {!compact && <td className="px-4 py-2.5 text-xs text-muted">{c.sector ?? "—"}</td>}
-              <td className="px-4 py-2.5">
-                <Badge variant={IMPORTANCE_VARIANT[c.strategicImportance]}>{c.strategicImportance}</Badge>
-              </td>
-              <td className="px-4 py-2.5 text-xs capitalize text-muted">{c.moatType}</td>
-              <td className="px-4 py-2.5 text-right"><QualityCell score={c.qualityScore} /></td>
-              <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums">
-                {c.roic != null ? `${c.roic.toFixed(1)}%` : "—"}
-              </td>
-              {!compact && (
-                <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums">
-                  {c.grossMargin != null ? `${c.grossMargin.toFixed(1)}%` : "—"}
-                </td>
-              )}
-              <td className={`px-4 py-2.5 text-right font-mono text-xs tabular-nums ${changeTone(c.revenueGrowthYoY)}`}>
-                {pct(c.revenueGrowthYoY)}
-              </td>
-              <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-muted">
-                {c.debtToEquity != null ? c.debtToEquity.toFixed(2) : "—"}
-              </td>
-              <td className="max-w-[16rem] px-4 py-2.5 text-xs leading-relaxed text-muted">{c.relevanceRationale || "—"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      rows={companies}
+      columns={columns}
+      rowKey={(c) => c.symbol}
+      label="Companies mapped to this theme"
+      // The tier groups already order rows by the report's own ranking; a
+      // caller-side sort would fight it, so sorting starts unsorted.
+      showDensityToggle={false}
+    />
   );
 }

@@ -3,7 +3,8 @@
 import type { ThematicReport, PolicyItem } from "@/lib/thematic-engine";
 import { Badge, Card } from "@/app/_components/ui";
 import { Reveal } from "@/app/_components/reveal";
-import { Bullets, Chips, Label, StageScore, TierBadge, changeTone, pct } from "./shared";
+import { formatPercent, toneClass } from "@/lib/format";
+import { Bullets, Chips, Label, StageScore, TierBadge } from "./shared";
 import { CompanyTable } from "./companies-tab";
 
 function Panel({
@@ -138,7 +139,7 @@ export function OverviewTab({ report }: { report: ThematicReport }) {
                       {([["1M", p.priceChange1M], ["3M", p.priceChange3M], ["1Y", p.priceChange1Y]] as [string, number | null][]).map(
                         ([period, change]) => (
                           <span key={period} className="flex flex-col items-end leading-tight">
-                            <span className={changeTone(change)}>{pct(change)}</span>
+                            <span className={toneClass(change)}>{formatPercent(change, 1)}</span>
                             <span className="text-label text-muted/60">{period}</span>
                           </span>
                         ),

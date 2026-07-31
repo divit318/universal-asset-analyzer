@@ -67,16 +67,6 @@ export function Empty({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function pct(v: number | null): string {
-  if (v == null) return "—";
-  return `${v > 0 ? "+" : ""}${v.toFixed(1)}%`;
-}
-
-export function changeTone(v: number | null): string {
-  if (v == null) return "text-faint";
-  return v > 0 ? "text-positive" : v < 0 ? "text-negative" : "text-muted";
-}
-
 const TIER_TONE: Record<number, string> = {
   1: "border-brand/30 bg-brand/10 text-brand",
   2: "border-purple-500/30 bg-purple-500/10 text-purple-400",
