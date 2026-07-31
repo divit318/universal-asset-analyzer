@@ -2382,23 +2382,25 @@ interface ScannerCacheRow {
   created_at: number;
 }
 
-export function getScannerCache(cacheKey: string): string | null {
-  const cutoff = Date.now() - SCANNER_CACHE_TTL;
+export function getScannerCache(cacheKey: string, ttlMs = SCANNER_CACHE_TTL): string | null {
+  const cutoff = Date.now() - ttlMs;
   const row = getDb()
     .prepare("SELECT result, created_at FROM scanner_cache WHERE cache_key = ? AND created_at >= ?")
     .get(cacheKey, cutoff) as unknown as ScannerCacheRow | undefined;
   return row?.result ?? null;
 }
 
-export function putScannerCache(cacheKey: string, result: string): void {
+export function putScannerCache(cacheKey: string, result: string, ttlMs = SCANNER_CACHE_TTL): void {
   getDb()
     .prepare(
       `INSERT INTO scanner_cache (cache_key, result, created_at) VALUES (?, ?, ?)
        ON CONFLICT(cache_key) DO UPDATE SET result = excluded.result, created_at = excluded.created_at`,
     )
     .run(cacheKey, result, Date.now());
-  // Prune entries older than TTL
-  const cutoff = Date.now() - SCANNER_CACHE_TTL;
+  // Prune entries older than the LONGEST TTL any caller uses (stage-level LLM
+  // entries live 60 minutes — see lib/scanner/prompt-cache.ts), so a shorter-
+  // lived writer can't evict a longer-lived reader's still-valid rows.
+  const cutoff = Date.now() - Math.max(ttlMs, 60 * 60 * 1000);
   getDb().prepare("DELETE FROM scanner_cache WHERE created_at < ?").run(cutoff);
 }
 

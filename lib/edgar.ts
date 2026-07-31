@@ -6,6 +6,19 @@ const SEC_UA =
 
 const TICKERS_URL = "https://www.sec.gov/files/company_tickers.json";
 
+/**
+ * SEC fetch deadline. Every EDGAR request previously ran without one, so a
+ * hung socket (SEC throttling holds connections rather than 429ing) blocked
+ * its caller forever — no unbounded waits anywhere is the rule. Combined
+ * with the platform's caller-abort signal when one is provided.
+ */
+const SEC_TIMEOUT_MS = 30_000;
+
+function withSecDeadline(signal?: AbortSignal): AbortSignal {
+  const deadline = AbortSignal.timeout(SEC_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, deadline]) : deadline;
+}
+
 export interface CikEntry {
   cik: string; // 10-digit zero-padded
   name: string;
@@ -50,7 +63,7 @@ async function loadTickerMap(): Promise<Map<string, CikEntry>> {
     async (signal) => {
       const res = await fetch(TICKERS_URL, {
         headers: { "User-Agent": SEC_UA },
-        signal,
+        signal: withSecDeadline(signal),
       });
       if (!res.ok) {
         throw new Error(`SEC ticker list unavailable (${res.status})`);
@@ -140,7 +153,7 @@ export async function getRecentFilings(
     async (signal) => {
       const res = await fetch(
         `https://data.sec.gov/submissions/CIK${entry.cik}.json`,
-        { headers: { "User-Agent": SEC_UA }, signal },
+        { headers: { "User-Agent": SEC_UA }, signal: withSecDeadline(signal) },
       );
       if (!res.ok) {
         throw new Error(`SEC submissions unavailable for ${symbol} (${res.status})`);
@@ -225,7 +238,10 @@ export async function searchFormD(companyName: string, max = 8): Promise<FormDFi
   url.searchParams.set("q", `"${trimmed}"`);
   url.searchParams.set("forms", "D");
   try {
-    const res = await fetch(url.toString(), { headers: { "User-Agent": SEC_UA } });
+    const res = await fetch(url.toString(), {
+      headers: { "User-Agent": SEC_UA },
+      signal: withSecDeadline(),
+    });
     if (!res.ok) return [];
     const raw = (await res.json()) as RawFullTextSearchResponse;
     return parseFormDSearchHits(raw, max);
@@ -284,7 +300,10 @@ export async function getFormDDetails(cik: string, accessionNumber: string): Pro
   const accessionPath = accessionNumber.replace(/-/g, "");
   const url = `https://www.sec.gov/Archives/edgar/data/${cikNumber}/${accessionPath}/primary_doc.xml`;
   try {
-    const res = await fetch(url, { headers: { "User-Agent": SEC_UA } });
+    const res = await fetch(url, {
+      headers: { "User-Agent": SEC_UA },
+      signal: withSecDeadline(),
+    });
     if (!res.ok) return null;
     const xml = await res.text();
     return parseFormDXml(xml);

@@ -11,7 +11,7 @@
  * whether it has actually started generating yet.
  */
 
-import { runPrompt } from "../ai";
+import { describeError, scannerPrompt, type ScanRunContext } from "./llm";
 import { extractJsonObject } from "../json-extract";
 import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
 import type {
@@ -86,6 +86,7 @@ export async function buildTheses(
   opportunities: ScannerOpportunity[],
   events: MarketEvent[],
   sectorImpacts: SectorImpact[],
+  run?: ScanRunContext,
 ): Promise<ScannerOpportunity[]> {
   if (opportunities.length === 0) return [];
 
@@ -93,8 +94,11 @@ export async function buildTheses(
   const sectorMap = new Map(sectorImpacts.map((s) => [s.sector, s]));
 
   const withTheses: ScannerOpportunity[] = [];
+  run?.setUnits?.(opportunities.length);
 
-  for (const opp of opportunities) {
+  for (let i = 0; i < opportunities.length; i++) {
+    const opp = opportunities[i];
+    run?.item?.(`${opp.ticker} (${i + 1} of ${opportunities.length})`);
     const drivingEvents = opp.sourceEventIds
       .map((id) => eventMap.get(id))
       .filter((e): e is MarketEvent => e != null);
@@ -103,10 +107,11 @@ export async function buildTheses(
 
     let thesis: InvestmentThesis | null = null;
     try {
-      const raw = await runPrompt(
+      const raw = await scannerPrompt(
+        run,
         "investment-thesis",
         buildThesisPrompt(opp, drivingEvents, sectorImpact),
-        { maxTokens: 1500, json: true },
+        { maxTokens: 1500 },
       );
       const parsed = extractJsonObject(raw, {
         headline: "",
@@ -129,11 +134,14 @@ export async function buildTheses(
           : "months",
         confidence: Math.max(0, Math.min(100, Number.isFinite(confidence) ? confidence : 60)),
       };
-    } catch {
+    } catch (err) {
+      if (run?.signal?.aborted) throw err;
       // Thesis is best-effort — opportunity still surfaces without it
+      run?.degrade?.(`thesis skipped for ${opp.ticker}: ${describeError(err)}`);
     }
 
     withTheses.push({ ...opp, thesis });
+    run?.tick?.();
   }
 
   return withTheses;

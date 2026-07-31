@@ -8,7 +8,7 @@
  *   - Causal chain sector mentions across all events
  */
 
-import { runPrompt } from "../ai";
+import { describeError, scannerPrompt, type ScanRunContext } from "./llm";
 import { extractJsonObject } from "../json-extract";
 import type { MarketEvent, SectorImpact, SignalDirection } from "../types";
 import type { SectorPerformance } from "./signals";
@@ -129,15 +129,17 @@ ${JSON_SCHEMA_LEAD_IN}
 export async function analyzeSectorImpacts(
   events: MarketEvent[],
   sectorPerf: SectorPerformance[],
+  run?: ScanRunContext,
 ): Promise<SectorImpact[]> {
   if (events.length === 0) return [];
 
   let sectorImpacts: RawSectorImpact[];
   try {
-    const raw = await runPrompt(
+    const raw = await scannerPrompt(
+      run,
       "opportunity-engine",
       buildSectorImpactPrompt(events, sectorPerf),
-      { maxTokens: 2500, json: true },
+      { maxTokens: 2500 },
     );
     const parsed = extractJsonObject(raw, { sectorImpacts: [] as unknown[] });
     sectorImpacts = parsed.sectorImpacts
@@ -145,7 +147,9 @@ export async function analyzeSectorImpacts(
       .filter((s): s is RawSectorImpact => s !== null)
       .map(enforceGicsSector)
       .filter((s): s is RawSectorImpact => s !== null);
-  } catch {
+  } catch (err) {
+    if (run?.signal?.aborted) throw err;
+    run?.degrade?.(`sector impact analysis skipped: ${describeError(err)}`);
     return [];
   }
 

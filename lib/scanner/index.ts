@@ -33,21 +33,28 @@ import { buildCompanyOpportunities } from "./company-impact";
 import { applyFundamentalGate } from "./fundamental-gate";
 import { scoreOpportunities, segmentOpportunities, refreshProfileWithThesis } from "./opportunity-scorer";
 import { buildTheses } from "./thesis-builder";
-import { runPrompt } from "../ai";
+import { pickModel } from "../ai/router";
 import { extractJsonObject } from "../json-extract";
 import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
 import { logPipeline, timeStage } from "../debug-pipeline";
+import { runStagedPipeline, type StageDef } from "../platform/runner";
+import { describeError, scannerPrompt, type ScanRunContext } from "./llm";
 import type {
   ScannerResult,
   ScannerProgressEvent,
   ScannerPartialEvent,
   ScannerPartialKey,
   ScannerStage,
+  ScannerStageEvent,
+  ScannerOpportunity,
+  SectorImpact,
+  NewsItem,
   MarketEvent,
   EmergingTheme,
   RiskAlert,
   MarketRegime,
 } from "../types";
+import type { SectorPerformance } from "./signals";
 
 /**
  * Cap on events surviving into Classification and every stage after it.
@@ -63,9 +70,13 @@ export interface ScannerPipelineOptions {
   query?: string;
   india?: boolean;
   global?: boolean;
+  /** Cancels the scan: in-flight model calls abort server-side, the pipeline throws. */
+  signal?: AbortSignal;
   onProgress?: (event: ScannerProgressEvent) => void;
   /** Fired as soon as each ScannerResult field is ready, before Assembly. */
   onPartial?: (event: ScannerPartialEvent) => void;
+  /** Stage degradations and stall notices, streamed as they happen. */
+  onStageEvent?: (event: ScannerStageEvent) => void;
 }
 
 function emit(
@@ -113,6 +124,7 @@ export function sanitizeTheme(item: unknown): RawEmergingTheme | null {
 
 async function detectEmergingThemes(
   events: MarketEvent[],
+  run?: ScanRunContext,
 ): Promise<EmergingTheme[]> {
   if (events.length === 0) return [];
 
@@ -148,7 +160,7 @@ ${JSON_SCHEMA_LEAD_IN}
 }`;
 
   try {
-    const raw = await runPrompt("opportunity-engine", prompt, { maxTokens: 1200, json: true });
+    const raw = await scannerPrompt(run, "opportunity-engine", prompt, { maxTokens: 1200 });
     const parsed = extractJsonObject(raw, { themes: [] as unknown[] });
     const themes = parsed.themes.map(sanitizeTheme).filter((t): t is RawEmergingTheme => t !== null);
     return themes.map((t) => ({
@@ -166,7 +178,9 @@ ${JSON_SCHEMA_LEAD_IN}
       topTickers: t.topTickers ?? [],
       thematicResearchUrl: `/thematic?theme=${encodeURIComponent(t.name)}`,
     }));
-  } catch {
+  } catch (err) {
+    if (run?.signal?.aborted) throw err;
+    run?.degrade?.(`theme detection skipped: ${describeError(err)}`);
     return [];
   }
 }
@@ -195,7 +209,10 @@ export function sanitizeRiskAlert(item: unknown): Omit<RiskAlert, "id"> | null {
   };
 }
 
-async function extractRiskAlerts(events: MarketEvent[]): Promise<RiskAlert[]> {
+async function extractRiskAlerts(
+  events: MarketEvent[],
+  run?: ScanRunContext,
+): Promise<RiskAlert[]> {
   const bearishEvents = events.filter((e) =>
     e.causalChain.some((c) => c.direction === "bearish") ||
     e.category === "geopolitics",
@@ -222,14 +239,16 @@ ${JSON_SCHEMA_LEAD_IN}
 }`;
 
   try {
-    const raw = await runPrompt("opportunity-engine", prompt, { maxTokens: 800, json: true });
+    const raw = await scannerPrompt(run, "opportunity-engine", prompt, { maxTokens: 800 });
     const parsed = extractJsonObject(raw, { alerts: [] as unknown[] });
     const alerts = parsed.alerts.map(sanitizeRiskAlert).filter((a): a is Omit<RiskAlert, "id"> => a !== null);
     return alerts.slice(0, 3).map((a) => ({
       ...a,
       id: crypto.randomUUID(),
     }));
-  } catch {
+  } catch (err) {
+    if (run?.signal?.aborted) throw err;
+    run?.degrade?.(`risk alerts skipped: ${describeError(err)}`);
     return [];
   }
 }
@@ -295,187 +314,277 @@ export function assessMarketRegime(
 export async function runScannerPipeline(
   opts: ScannerPipelineOptions = {},
 ): Promise<ScannerResult> {
-  const { query, india = true, global: glob = true, onProgress, onPartial } = opts;
+  const { query, india = true, global: glob = true, signal, onProgress, onPartial, onStageEvent } = opts;
 
   // TEMPORARY (DEBUG_PIPELINE): per-scan scope so concurrent scans are
   // distinguishable in the NDJSON log.
   const scanId = `scan-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e4)}`;
   logPipeline({ type: "pipeline_start", scope: scanId, query: query ?? null, india, global: glob });
 
-  emit(onProgress, "collecting", "Collecting signals from all sources…", 5);
+  // One model for the whole scan's opportunity-engine calls. Without the pin,
+  // a health cooldown mid-scan swapped one 9GB model for another (measured
+  // 2026-07-31: 145s cold load + the original's reload after) — see
+  // lib/scanner/llm.ts. Resolved here so every stage agrees.
+  const pinnedModel = await pickModel("opportunity-engine");
 
-  // Stage 1: Parallel data collection. Needs no LLM call, so its outputs can
-  // stream immediately — News Timeline and Macro Dashboard don't have to
-  // wait for anything below.
-  const [newsItems, macroSignals, sectorPerf] = await timeStage(scanId, "collecting", () =>
-    Promise.all([
-      fetchMarketNews({ query, india, global: glob, limit: 60 }).catch(() => []),
-      fetchMacroSignals().catch(() => []),
-      fetchSectorPerformance().catch(() => []),
-    ]),
-    { limit: 60 },
-  );
-  partial(onPartial, "newsItems", newsItems);
-  partial(onPartial, "macroSignals", macroSignals);
+  // Shared mutable context the stages fill in order. Each field is written by
+  // exactly one stage and read only by later ones.
+  const ctx = {
+    newsItems: [] as NewsItem[],
+    macroSignals: [] as Awaited<ReturnType<typeof fetchMacroSignals>>,
+    sectorPerf: [] as SectorPerformance[],
+    events: [] as MarketEvent[],
+    classifiedEvents: [] as MarketEvent[],
+    emergingThemes: [] as EmergingTheme[],
+    marketRegime: null as MarketRegime | null,
+    enrichedEvents: [] as MarketEvent[],
+    riskAlerts: [] as RiskAlert[],
+    sectorImpacts: [] as SectorImpact[],
+    candidates: [] as ScannerOpportunity[],
+    all: [] as ScannerOpportunity[],
+    highConviction: [] as ScannerOpportunity[],
+    developing: [] as ScannerOpportunity[],
+    refreshedHighConviction: [] as ScannerOpportunity[],
+    allWithTheses: [] as ScannerOpportunity[],
+  };
 
-  emit(
-    onProgress,
-    "deduplicating",
-    `Clustering ${newsItems.length} signals into stories…`,
-    15,
-  );
+  type Ctx = typeof ctx;
 
-  // Stage 2: Semantic deduplication
-  const dedupedEvents = await timeStage(scanId, "deduplicating", () =>
-    deduplicateIntoEvents(newsItems),
-    { newsItems: newsItems.length },
-  );
+  // Adapts the runner's StageApi to the per-stage ScanRunContext the stage
+  // modules take (signal for cancellation, pinned model, tick/degrade).
+  const runCtx = (api: Parameters<StageDef<Ctx>["run"]>[1]): ScanRunContext => ({
+    signal: api.signal,
+    model: pinnedModel,
+    setUnits: api.setUnits,
+    tick: api.tick,
+    item: api.item,
+    degrade: api.fail,
+  });
 
-  // Cap to the most-corroborated stories before any per-event LLM stage
-  // runs (see MAX_EVENTS above) — shrinks Classification's batch, Causal
-  // Reasoning's loop, and Risk Alert extraction together.
-  const events = [...dedupedEvents]
-    .sort((a, b) => b.sources.length - a.sources.length)
-    .slice(0, MAX_EVENTS);
+  const stages: StageDef<Ctx>[] = [
+    {
+      id: "collecting",
+      label: "Collecting signals from all sources",
+      units: 1,
+      timeoutMs: 60_000,
+      run: async (c, api) => {
+        // Parallel data collection. Needs no LLM call, so its outputs can
+        // stream immediately — News Timeline and Macro Dashboard don't have
+        // to wait for anything below.
+        const [newsItems, macroSignals, sectorPerf] = await timeStage(scanId, "collecting", () =>
+          Promise.all([
+            fetchMarketNews({ query, india, global: glob, limit: 60 }).catch(() => []),
+            fetchMacroSignals().catch(() => []),
+            fetchSectorPerformance().catch(() => []),
+          ]),
+          { limit: 60 },
+        );
+        c.newsItems = newsItems;
+        c.macroSignals = macroSignals;
+        c.sectorPerf = sectorPerf;
+        api.tick();
+        partial(onPartial, "newsItems", newsItems);
+        partial(onPartial, "macroSignals", macroSignals);
+      },
+    },
+    {
+      id: "deduplicating",
+      label: "Clustering headlines into stories",
+      units: 1,
+      run: async (c, api) => {
+        const deduped = await timeStage(scanId, "deduplicating", () =>
+          deduplicateIntoEvents(c.newsItems, runCtx(api)),
+          { newsItems: c.newsItems.length },
+        );
+        // Cap to the most-corroborated stories before any per-event LLM stage
+        // runs (see MAX_EVENTS above) — shrinks Classification's batch, Causal
+        // Reasoning's loop, and Risk Alert extraction together.
+        c.events = [...deduped]
+          .sort((a, b) => b.sources.length - a.sources.length)
+          .slice(0, MAX_EVENTS);
+      },
+    },
+    {
+      id: "classifying",
+      label: "Classifying market events",
+      units: 1,
+      run: async (c, api) => {
+        c.classifiedEvents = await timeStage(scanId, "classifying", () =>
+          classifyEvents(c.events, runCtx(api)),
+          { events: c.events.length },
+        );
+      },
+    },
+    {
+      // Reordered before Causal Reasoning — Market Regime + Emerging Themes
+      // only need category/affectedThemes, both set by Classification, so
+      // they're ready and streamed well before the per-event causal loop.
+      id: "theme_detection",
+      label: "Detecting emerging themes",
+      units: 1,
+      run: async (c, api) => {
+        c.emergingThemes = await timeStage(scanId, "theme_detection", () =>
+          detectEmergingThemes(c.classifiedEvents, runCtx(api)),
+          { events: c.classifiedEvents.length },
+        );
+        c.marketRegime = assessMarketRegime(c.macroSignals, c.sectorPerf, c.classifiedEvents);
+        partial(onPartial, "marketRegime", c.marketRegime);
+        partial(onPartial, "emergingThemes", c.emergingThemes);
+      },
+    },
+    {
+      // Sequential per event — Ollama serves one request at a time locally.
+      // Sector Impact genuinely needs this stage's output (its prompt
+      // references each event's causal chain), which is why — unlike Theme
+      // Detection/Market Regime above — it can't move any earlier.
+      id: "causal_reasoning",
+      label: "Building cause-and-effect chains",
+      units: 4,
+      run: async (c, api) => {
+        c.enrichedEvents = await timeStage(scanId, "causal_reasoning", () =>
+          buildCausalChains(c.classifiedEvents, runCtx(api)),
+          { events: c.classifiedEvents.length },
+        );
+      },
+    },
+    {
+      // Only needs enrichedEvents, not opportunities or theses, so it doesn't
+      // wait behind 5 more stages for nothing.
+      id: "risk_alerts",
+      label: "Extracting risk alerts",
+      units: 1,
+      run: async (c, api) => {
+        c.riskAlerts = await timeStage(scanId, "risk_alerts", () =>
+          extractRiskAlerts(c.enrichedEvents, runCtx(api)),
+          { events: c.enrichedEvents.length },
+        );
+        partial(onPartial, "events", c.enrichedEvents);
+        partial(onPartial, "riskAlerts", c.riskAlerts);
+      },
+    },
+    {
+      id: "sector_impact",
+      label: "Analyzing sector impact",
+      units: 1,
+      run: async (c, api) => {
+        c.sectorImpacts = await timeStage(scanId, "sector_impact", () =>
+          analyzeSectorImpacts(c.enrichedEvents, c.sectorPerf, runCtx(api)),
+          { events: c.enrichedEvents.length },
+        );
+        partial(onPartial, "sectorImpacts", c.sectorImpacts);
+      },
+    },
+    {
+      id: "company_impact",
+      label: "Identifying company opportunities",
+      units: 4,
+      run: async (c, api) => {
+        c.candidates = await timeStage(scanId, "company_impact", () =>
+          buildCompanyOpportunities(c.enrichedEvents, c.sectorImpacts, runCtx(api)),
+          { events: c.enrichedEvents.length, sectorImpacts: c.sectorImpacts.length },
+        );
+      },
+    },
+    {
+      id: "fundamental_gate",
+      label: "Validating candidates against fundamentals",
+      units: 1,
+      timeoutMs: 60_000,
+      run: async (c, api) => {
+        const validated = await timeStage(scanId, "fundamental_gate", () =>
+          applyFundamentalGate(c.candidates),
+          { candidates: c.candidates.length },
+        );
+        const scored = scoreOpportunities(
+          validated,
+          c.sectorImpacts,
+          c.emergingThemes.map((t) => t.name),
+        );
+        const { all, highConviction, developing } = segmentOpportunities(scored);
+        c.all = all;
+        c.highConviction = highConviction;
+        c.developing = developing;
+        api.tick();
+        // Ship the ranked list now, without theses — cards render immediately;
+        // the thesis for each one is a progressive enhancement, not a gate.
+        partial(onPartial, "opportunities", all);
+        partial(onPartial, "highConviction", highConviction);
+        partial(onPartial, "developing", developing);
+      },
+    },
+    {
+      id: "thesis_building",
+      label: "Building investment theses",
+      units: 2,
+      run: async (c, api) => {
+        const withTheses = await timeStage(scanId, "thesis_building", () =>
+          buildTheses(c.highConviction, c.enrichedEvents, c.sectorImpacts, runCtx(api)),
+          { highConviction: c.highConviction.length },
+        );
+        // Replace highConviction with thesis-enriched versions in `all`, and
+        // refresh each one's opportunity profile so the narrative reflects the
+        // real thesis. Same keys and opp.id per item as the partials above —
+        // the frontend updates already-rendered cards in place.
+        c.refreshedHighConviction = withTheses.map(refreshProfileWithThesis);
+        const thesisMap = new Map(c.refreshedHighConviction.map((o) => [o.id, o]));
+        c.allWithTheses = c.all.map((o) => thesisMap.get(o.id) ?? o);
+        partial(onPartial, "opportunities", c.allWithTheses);
+        partial(onPartial, "highConviction", c.refreshedHighConviction);
+      },
+    },
+  ];
 
-  emit(
-    onProgress,
-    "classifying",
-    `Classifying ${events.length} market events…`,
-    25,
-  );
+  const { failures } = await runStagedPipeline(stages, ctx, {
+    signal,
+    onEvent: (event) => {
+      if (event.type === "progress") {
+        onProgress?.({
+          stage: event.stage as ScannerStage,
+          message: event.message,
+          pct: event.pct,
+          currentItem: event.currentItem,
+          unitsDone: event.unitsDone,
+          unitsTotal: event.unitsTotal,
+        });
+      } else {
+        logPipeline({ scope: scanId, ...event, type: `scan_${event.type}` });
+        onStageEvent?.(event);
+      }
+    },
+  });
 
-  // Stage 3: Classification
-  const classifiedEvents = await timeStage(scanId, "classifying", () =>
-    classifyEvents(events),
-    { events: events.length },
-  );
+  emit(onProgress, "assembling", "Assembling intelligence report", 99);
 
-  // Stage 4/5 (reordered — Market Regime + Emerging Themes only need
-  // category/affectedThemes, both set by Classification, not by Causal
-  // Reasoning's causalChain field. Running them here means they're ready
-  // and streamed well before Causal Reasoning's per-event loop even starts,
-  // instead of waiting behind it for no data reason. ScannerStage's own
-  // type union already lists theme_detection before causal_reasoning.)
-  emit(onProgress, "theme_detection", "Detecting emerging themes…", 32);
-  const emergingThemes = await timeStage(scanId, "theme_detection", () =>
-    detectEmergingThemes(classifiedEvents),
-    { events: classifiedEvents.length },
-  );
-  const marketRegime = assessMarketRegime(macroSignals, sectorPerf, classifiedEvents);
-  emit(onProgress, "theme_detection", "Emerging themes identified", 38);
-  partial(onPartial, "marketRegime", marketRegime);
-  partial(onPartial, "emergingThemes", emergingThemes);
-
-  emit(onProgress, "causal_reasoning", "Building cause-and-effect chains…", 45);
-
-  // Stage 6: causal reasoning. Sequential — Ollama serves one request at a
-  // time locally, so running this concurrently with anything else wouldn't
-  // actually parallelize, only queue. Sector Impact (below) genuinely needs
-  // this stage's output (its prompt references each event's causal chain),
-  // which is why — unlike Theme Detection/Market Regime above — it can't
-  // move any earlier.
-  const enrichedEvents = await timeStage(scanId, "causal_reasoning", () =>
-    buildCausalChains(classifiedEvents),
-    { events: classifiedEvents.length },
-  );
-  emit(onProgress, "causal_reasoning", "Cause-and-effect chains built", 50);
-
-  // Risk alerts (reordered — only needs enrichedEvents, not opportunities
-  // or theses, so it no longer waits behind 5 more stages for nothing).
-  const riskAlerts = await timeStage(scanId, "risk_alerts", () =>
-    extractRiskAlerts(enrichedEvents),
-    { events: enrichedEvents.length },
-  );
-  partial(onPartial, "events", enrichedEvents);
-  partial(onPartial, "riskAlerts", riskAlerts);
-
-  const sectorImpacts = await timeStage(scanId, "sector_impact", () =>
-    analyzeSectorImpacts(enrichedEvents, sectorPerf),
-    { events: enrichedEvents.length },
-  );
-  emit(onProgress, "sector_impact", "Sector impact analysis complete", 58);
-  partial(onPartial, "sectorImpacts", sectorImpacts);
-
-  emit(onProgress, "company_impact", "Identifying company-level opportunities…", 62);
-
-  // Stage 7: Company impact
-  const candidates = await timeStage(scanId, "company_impact", () =>
-    buildCompanyOpportunities(enrichedEvents, sectorImpacts),
-    { events: enrichedEvents.length, sectorImpacts: sectorImpacts.length },
-  );
-
-  emit(
-    onProgress,
-    "fundamental_gate",
-    `Validating ${candidates.length} candidates against fundamentals…`,
-    70,
-  );
-
-  // Stage 8: Fundamental gate
-  const validated = await timeStage(scanId, "fundamental_gate", () =>
-    applyFundamentalGate(candidates),
-    { candidates: candidates.length },
-  );
-
-  emit(onProgress, "opportunity_scoring", "Scoring and ranking opportunities…", 78);
-
-  // Stage 9: Opportunity scoring
-  const scored = scoreOpportunities(validated, sectorImpacts, emergingThemes.map((t) => t.name));
-  const { all, highConviction, developing } = segmentOpportunities(scored);
-  // Ship the ranked list now, without theses — cards render immediately;
-  // the thesis for each one is a progressive enhancement, not a gate.
-  partial(onPartial, "opportunities", all);
-  partial(onPartial, "highConviction", highConviction);
-  partial(onPartial, "developing", developing);
-
-  emit(
-    onProgress,
-    "thesis_building",
-    `Building investment theses for ${highConviction.length} high-conviction ideas…`,
-    85,
-  );
-
-  // Stage 10: Thesis building (high-conviction only)
-  const highConvictionWithTheses = await timeStage(scanId, "thesis_building", () =>
-    buildTheses(highConviction, enrichedEvents, sectorImpacts),
-    { highConviction: highConviction.length },
-  );
-
-  emit(onProgress, "assembling", "Assembling intelligence report…", 95);
-
-  // Replace highConviction with thesis-enriched versions in `all`, and refresh
-  // each one's opportunity profile so the narrative reflects the real thesis.
-  const refreshedHighConviction = highConvictionWithTheses.map(refreshProfileWithThesis);
-  const thesisMap = new Map(refreshedHighConviction.map((o) => [o.id, o]));
-  const allWithTheses = all.map((o) => thesisMap.get(o.id) ?? o);
-  // Same keys as above, same opp.id per item — the frontend updates
-  // already-rendered cards in place rather than rendering duplicates.
-  partial(onPartial, "opportunities", allWithTheses);
-  partial(onPartial, "highConviction", refreshedHighConviction);
+  const marketRegime =
+    ctx.marketRegime ?? assessMarketRegime(ctx.macroSignals, ctx.sectorPerf, ctx.classifiedEvents);
 
   const result: ScannerResult = {
     scannedAt: new Date().toISOString(),
     pipelineVersion: 2,
     marketRegime,
-    macroSignals,
-    sectorImpacts,
-    emergingThemes,
-    events: enrichedEvents,
-    opportunities: allWithTheses,
-    highConviction: refreshedHighConviction,
-    developing,
-    riskAlerts,
-    newsItems,
+    macroSignals: ctx.macroSignals,
+    sectorImpacts: ctx.sectorImpacts,
+    emergingThemes: ctx.emergingThemes,
+    // Fallbacks keep a partially-failed scan honest but non-empty: a thrown
+    // stage leaves its ctx field unset, so read the best upstream value.
+    events: ctx.enrichedEvents.length > 0 ? ctx.enrichedEvents : ctx.classifiedEvents,
+    opportunities: ctx.allWithTheses.length > 0 ? ctx.allWithTheses : ctx.all,
+    highConviction:
+      ctx.refreshedHighConviction.length > 0 ? ctx.refreshedHighConviction : ctx.highConviction,
+    developing: ctx.developing,
+    riskAlerts: ctx.riskAlerts,
+    newsItems: ctx.newsItems,
     aiSummary: marketRegime.summary,
+    stageFailures: failures,
   };
 
   emit(onProgress, "done", "Scan complete", 100);
   logPipeline({
     type: "pipeline_end",
     scope: scanId,
-    opportunities: allWithTheses.length,
-    events: enrichedEvents.length,
+    opportunities: ctx.allWithTheses.length,
+    events: ctx.enrichedEvents.length,
+    stageFailures: failures.length,
   });
   return result;
 }

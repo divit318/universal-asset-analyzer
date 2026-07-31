@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import type { ScannerProgressEvent } from "@/lib/types";
+import type { ScannerProgressEvent, ScannerStageEvent } from "@/lib/types";
 import { relativeAge } from "@/lib/provenance";
 import { InlineScanProgress } from "./progress-stream";
 
@@ -51,6 +51,9 @@ export function CommandBar({
   onSubmit,
   loading,
   progress,
+  stall,
+  degradedCount,
+  onCancel,
   scannedAt,
   fromCache,
   onRefresh,
@@ -62,6 +65,9 @@ export function CommandBar({
   onSubmit: (e?: React.FormEvent) => void;
   loading: boolean;
   progress: ScannerProgressEvent | null;
+  stall?: Extract<ScannerStageEvent, { type: "stall" }> | null;
+  degradedCount?: number;
+  onCancel?: () => void;
   scannedAt: string | null;
   fromCache: boolean;
   onRefresh: () => void;
@@ -150,7 +156,14 @@ export function CommandBar({
         </form>
 
         {/* Row 3 — inline scan progress, only while a scan is running */}
-        {loading && <InlineScanProgress event={progress} />}
+        {loading && (
+          <InlineScanProgress
+            event={progress}
+            stall={stall}
+            degradedCount={degradedCount}
+            onCancel={onCancel}
+          />
+        )}
       </div>
     </div>
   );

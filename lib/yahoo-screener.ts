@@ -33,15 +33,22 @@ async function getAuth(): Promise<Auth> {
   // fc.yahoo.com sets the session cookie; getcrumb mints a matching crumb.
   // `no-store` is essential: Next.js instruments global fetch with caching, and
   // a cached crumb/cookie would desync and get rejected (401/429).
+  // Deadlines on every request in the handshake: a hung Yahoo socket
+  // previously blocked whichever screener/universe build called this, forever.
   const seed = await fetch("https://fc.yahoo.com", {
     headers: { "User-Agent": UA },
     cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
   }).catch(() => null);
   const cookie = seed?.headers.get("set-cookie") ?? "";
 
   const crumbRes = await fetch(
     "https://query1.finance.yahoo.com/v1/test/getcrumb",
-    { headers: { "User-Agent": UA, cookie }, cache: "no-store" },
+    {
+      headers: { "User-Agent": UA, cookie },
+      cache: "no-store",
+      signal: AbortSignal.timeout(15_000),
+    },
   );
   const crumb = (await crumbRes.text()).trim();
   // A real crumb is a short token with no whitespace/markup. Anything else
@@ -99,6 +106,7 @@ async function postScreener(
       },
       body: JSON.stringify(body),
       cache: "no-store",
+      signal: AbortSignal.timeout(20_000),
     },
   );
 }

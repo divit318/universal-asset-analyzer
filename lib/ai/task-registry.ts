@@ -212,6 +212,11 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     jsonMode: true,
     maxTokens: 2048,
     timeoutMs: 300_000,
+    // Without this the scanner ran at Ollama's 4096 default while its
+    // company-impact prompts alone measured ~2.7k tokens (2026-07-31) — plus
+    // the 2048-token generation cap, the window was silently overflowing and
+    // shifting the oldest prompt tokens (the instructions) out of context.
+    contextTokens: 8_192,
   },
   "timeline-analysis": {
     complexity: "standard",

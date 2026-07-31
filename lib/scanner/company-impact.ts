@@ -10,7 +10,7 @@
  * gate and opportunity scorer to process.
  */
 
-import { runPrompt } from "../ai";
+import { describeError, scannerPrompt, type ScanRunContext } from "./llm";
 import { extractJsonObject } from "../json-extract";
 import { getFreshFundamentals } from "../db";
 import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
@@ -59,8 +59,15 @@ function buildCompanyMatchPrompt(
     .map((e) => `• ${e.headline} — ${e.summary}`)
     .join("\n");
 
+  // The model is asked for 3-8 names, so 40 well-known candidates are ample.
+  // The old 200-row list cost real money for nothing: prompt eval measured at
+  // ~40 tok/s on this class of host (2026-07-31), so ~1.6k extra tokens of
+  // list was ~40s of pure prompt processing per sector — and pushed the
+  // prompt past Ollama's 4096-token default window besides. Callers pre-rank
+  // by market cap so the cut keeps the names the model can actually reason
+  // about.
   const companyList = companies
-    .slice(0, 200)
+    .slice(0, 40)
     .map((c) => `${c.symbol} | ${c.name} | ${c.industry ?? c.sector ?? ""}`)
     .join("\n");
 
@@ -106,17 +113,25 @@ function uid(): string {
 export async function buildCompanyOpportunities(
   events: MarketEvent[],
   sectorImpacts: SectorImpact[],
+  run?: ScanRunContext,
 ): Promise<ScannerOpportunity[]> {
   // Load screener DB (7-day cache OK — we just need sector/industry for filtering)
   const { rows: dbRows } = getFreshFundamentals(7 * 24 * 60 * 60 * 1000);
   if (dbRows.length === 0) return [];
 
-  // Build sector → companies map
+  // Build sector → companies map. Rows are pre-ranked by company size so the
+  // prompt's 40-company cap (see buildCompanyMatchPrompt) keeps the largest,
+  // most recognizable names. Cached fundamentals deliberately exclude market
+  // cap (it lives in the live price layer), so EBITDA with cash-flow
+  // fallbacks is the size proxy — banks report no EBITDA but do report OCF.
+  const sizeOf = (r: (typeof dbRows)[number]) =>
+    r.ebitda ?? r.operatingCashflow ?? r.freeCashflow ?? 0;
+  const ranked = [...dbRows].sort((a, b) => sizeOf(b) - sizeOf(a));
   const sectorCompanyMap = new Map<
     string,
     { symbol: string; name: string; sector: string | null; industry: string | null }[]
   >();
-  for (const row of dbRows) {
+  for (const row of ranked) {
     const sectorKey = row.sector ?? "Unknown";
     const existing = sectorCompanyMap.get(sectorKey) ?? [];
     sectorCompanyMap.set(sectorKey, [
@@ -141,8 +156,10 @@ export async function buildCompanyOpportunities(
   // so firing these concurrently would only queue them behind each other
   // while each one's own timeout keeps counting down.
   const toProcess = significantSectors.slice(0, 6);
+  run?.setUnits?.(toProcess.length);
 
   for (const sector of toProcess) {
+    run?.item?.(`${sector.sector} (${toProcess.indexOf(sector) + 1} of ${toProcess.length})`);
     // Find companies in this sector (and related sector names)
     const sectorVariants = getSectorVariants(sector.sector);
     const sectorCompanies: { symbol: string; name: string; sector: string | null; industry: string | null }[] = [];
@@ -151,13 +168,19 @@ export async function buildCompanyOpportunities(
       sectorCompanies.push(...companies);
     }
 
-    if (sectorCompanies.length === 0) continue;
+    if (sectorCompanies.length === 0) {
+      run?.tick?.();
+      continue;
+    }
 
     // Get driving events for this sector
     const drivingEvents = events.filter((e) =>
       sector.drivingEvents.includes(e.id),
     );
-    if (drivingEvents.length === 0) continue;
+    if (drivingEvents.length === 0) {
+      run?.tick?.();
+      continue;
+    }
 
     let matches: CompanyMatchRaw[];
     const sectorStartedAt = Date.now();
@@ -172,7 +195,7 @@ export async function buildCompanyOpportunities(
       promptChars: prompt.length,
     });
     try {
-      const raw = await runPrompt("opportunity-engine", prompt, { maxTokens: 1500, json: true });
+      const raw = await scannerPrompt(run, "opportunity-engine", prompt, { maxTokens: 1500 });
       const parsed = extractJsonObject(raw, { matches: [] as unknown[] });
       matches = parsed.matches.map(sanitizeMatch).filter((m): m is CompanyMatchRaw => m !== null);
       logPipeline({
@@ -182,13 +205,17 @@ export async function buildCompanyOpportunities(
         rawChars: raw.length,
         matches: matches.length,
       });
+      run?.tick?.();
     } catch (err) {
+      if (run?.signal?.aborted) throw err;
       logPipeline({
         type: "company_impact_sector_error",
         sector: sector.sector,
         durationMs: Date.now() - sectorStartedAt,
         message: err instanceof Error ? err.message : String(err),
       });
+      run?.degrade?.(`${sector.sector} opportunities skipped: ${describeError(err)}`);
+      run?.tick?.();
       continue;
     }
 

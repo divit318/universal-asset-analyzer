@@ -27,6 +27,7 @@
 
 import { disabledModels, pinnedModels } from "./config";
 import { classifyAiError } from "./errors";
+import { acquireGenerationSlot } from "./gate";
 import { isHealthy, markFailure, markSuccess, recentSuccessWithinMs } from "./health";
 import { logAiEvent } from "./log";
 import { fitsInMemory, specForInstalled, type ModelCapability, type ModelSpec } from "./models";
@@ -326,9 +327,17 @@ async function isWarm(provider: AIProvider, model: string): Promise<boolean> {
  * So the tasks a human is actively waiting on hold the model; `background` work
  * accepts its own eviction rather than pinning ~10GB for a scheduled job that
  * runs once an hour. This is the reason a warm assistant answers in ~1s.
+ *
+ * Background/standard work now holds the model for 10 minutes rather than
+ * accepting Ollama's 5-minute default: a multi-stage pipeline (the Wire scan,
+ * an IC report) issues its calls back-to-back, but a single interleaved
+ * interactive request on a memory-tight host evicts the pipeline's model and
+ * the next stage pays a cold load mid-scan (observed 2026-07-31: a mid-scan
+ * model swap cost 145s). Ten minutes comfortably outlives any gap between a
+ * pipeline's own calls without pinning the model for hours.
  */
 function keepAliveFor(task: TaskConfig): string | undefined {
-  return task.latency === "interactive" ? "30m" : undefined;
+  return task.latency === "interactive" ? "30m" : "10m";
 }
 
 /**
@@ -377,37 +386,50 @@ export async function route(
   const MAX_COLD_TIMEOUT_FALLBACKS = 1;
   for (const model of candidates) {
     const settings = settingsFor(task, model, request);
-    // Detected once per attempt, right before using it — a model can warm up
-    // or get evicted between candidates within the same route() call.
-    const warm = await isWarm(provider, model);
-    const timeoutMs = warm ? settings.timeoutMs : widenForColdStart(model, settings.timeoutMs);
-    const attemptStartedAt = Date.now();
+    const queuedAt = Date.now();
+    let warm = true;
+    let attemptStartedAt = queuedAt;
     try {
-      const result = await provider.complete({
-        model,
-        messages: request.messages,
-        signal: request.signal,
-        ...settings,
-        timeoutMs,
-      });
-      markSuccess(model);
-      logAiEvent({
-        category: "success",
-        taskType,
-        model,
-        coldStart: !warm,
-        durationMs: Date.now() - attemptStartedAt,
-      });
-      return normalizeResponse({
-        content: result.content,
-        reasoning: result.reasoning,
-        model,
-        provider: provider.id,
-        startedAt,
-        tokenUsage: result.tokenUsage,
-        fallbackErrors: attemptErrors,
-        metadata: { taskType, candidatesConsidered: candidates.length, coldStart: !warm },
-      });
+      // Wait for the generation gate BEFORE starting the attempt's clock:
+      // Ollama serializes generations, so a deadline that starts at enqueue
+      // races the queue rather than the model — measured burning a full 300s
+      // budget while waiting, then aborting having never generated a token.
+      const release = await acquireGenerationSlot(request.signal);
+      try {
+        // Detected once per attempt, right before using it — a model can warm
+        // up or get evicted while this request was queued at the gate.
+        warm = await isWarm(provider, model);
+        const timeoutMs = warm ? settings.timeoutMs : widenForColdStart(model, settings.timeoutMs);
+        attemptStartedAt = Date.now();
+        const result = await provider.complete({
+          model,
+          messages: request.messages,
+          signal: request.signal,
+          ...settings,
+          timeoutMs,
+        });
+        markSuccess(model);
+        logAiEvent({
+          category: "success",
+          taskType,
+          model,
+          coldStart: !warm,
+          durationMs: Date.now() - attemptStartedAt,
+          queueMs: attemptStartedAt - queuedAt,
+        });
+        return normalizeResponse({
+          content: result.content,
+          reasoning: result.reasoning,
+          model,
+          provider: provider.id,
+          startedAt,
+          tokenUsage: result.tokenUsage,
+          fallbackErrors: attemptErrors,
+          metadata: { taskType, candidatesConsidered: candidates.length, coldStart: !warm },
+        });
+      } finally {
+        release();
+      }
     } catch (err) {
       const classified = classifyAiError(err);
       logAiEvent({
@@ -416,6 +438,7 @@ export async function route(
         model,
         coldStart: !warm,
         durationMs: Date.now() - attemptStartedAt,
+        queueMs: attemptStartedAt - queuedAt,
         message: err instanceof Error ? err.message : String(err),
       });
 
@@ -480,29 +503,48 @@ export async function* routeStream(
   for (const model of candidates) {
     let started = false;
     const settings = settingsFor(task, model, request);
-    const warm = await isWarm(provider, model);
-    const timeoutMs = warm ? settings.timeoutMs : widenForColdStart(model, settings.timeoutMs);
-    const attemptStartedAt = Date.now();
+    const queuedAt = Date.now();
+    let warm = true;
+    let attemptStartedAt = queuedAt;
     try {
-      const stream = provider.stream(
-        {
+      // Same gate as route(): the deadline must race the model, not the queue.
+      // The slot is held for the whole stream — Ollama is busy until the last
+      // token, so releasing earlier would only let a second request pile up
+      // behind this one inside Ollama where its timeout can't see the queue.
+      const release = await acquireGenerationSlot(request.signal);
+      try {
+        warm = await isWarm(provider, model);
+        const timeoutMs = warm ? settings.timeoutMs : widenForColdStart(model, settings.timeoutMs);
+        attemptStartedAt = Date.now();
+        const stream = provider.stream(
+          {
+            model,
+            messages: request.messages,
+            signal: request.signal,
+            ...settings,
+            timeoutMs,
+          },
+          request.onReasoning,
+        );
+
+        for await (const delta of stream) {
+          started = true;
+          yield delta;
+        }
+
+        markSuccess(model);
+        logAiEvent({
+          category: "success",
+          taskType,
           model,
-          messages: request.messages,
-          signal: request.signal,
-          ...settings,
-          timeoutMs,
-        },
-        request.onReasoning,
-      );
-
-      for await (const delta of stream) {
-        started = true;
-        yield delta;
+          coldStart: !warm,
+          durationMs: Date.now() - attemptStartedAt,
+          queueMs: attemptStartedAt - queuedAt,
+        });
+        return model;
+      } finally {
+        release();
       }
-
-      markSuccess(model);
-      logAiEvent({ category: "success", taskType, model, coldStart: !warm, durationMs: Date.now() - attemptStartedAt });
-      return model;
     } catch (err) {
       const classified = classifyAiError(err);
       logAiEvent({

@@ -73,6 +73,7 @@ export class OllamaProvider implements AIProvider {
         maxTokens: request.maxTokens,
         timeoutMs: request.timeoutMs,
         keepAlive: request.keepAlive,
+        signal: request.signal,
       });
       // Native `thinking` field first; fall back to inline <think> tags for
       // models/runtimes that still embed reasoning in the answer text.

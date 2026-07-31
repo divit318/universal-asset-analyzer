@@ -25,7 +25,10 @@ async function rentcastGet<T>(path: string, params: Record<string, string>): Pro
   const url = new URL(`${RENTCAST_BASE}${path}`);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   try {
-    const res = await fetch(url.toString(), { headers: { "X-Api-Key": key, Accept: "application/json" } });
+    const res = await fetch(url.toString(), {
+      headers: { "X-Api-Key": key, Accept: "application/json" },
+      signal: AbortSignal.timeout(15_000),
+    });
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {

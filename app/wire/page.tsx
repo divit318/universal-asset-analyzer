@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useState, useRef, useMemo } from "react";
-import type { ScannerResult, ScannerProgressEvent, ScannerPartialKey, ScannerOpportunity } from "@/lib/types";
+import type {
+  ScannerResult,
+  ScannerProgressEvent,
+  ScannerPartialKey,
+  ScannerOpportunity,
+  ScannerStageEvent,
+  ScannerStageFailure,
+} from "@/lib/types";
 import { CATEGORY_LABELS, type OpportunityCategory } from "@/lib/opportunity-engine";
 import { MarketRegimeBanner } from "./_components/market-regime-banner";
 import { MarketSummaryCard } from "./_components/market-summary-card";
@@ -149,19 +156,30 @@ function loadCache(): ScannerResult | null {
   } catch { return null; }
 }
 
-/** Load watchlist/portfolio symbols from the API for impact panels. */
+/** Symbols out of an API payload — tolerant of shape drift, never throws. */
+function extractSymbols(value: unknown, key: string): string[] {
+  const container = (value as Record<string, unknown> | null)?.[key];
+  if (!Array.isArray(container)) return [];
+  return container
+    .map((i) => (i as { symbol?: unknown } | null)?.symbol)
+    .filter((s): s is string => typeof s === "string");
+}
+
+/** Load watchlist/portfolio symbols from the API for impact panels.
+ *  /api/watchlist returns { items, groups } (since the Watchlist rebuild);
+ *  /api/portfolio returns { holdings, positions } — `positions` is the
+ *  market-symbol view the impact panels' ticker match needs. Treating either
+ *  payload as a bare array threw, emptied BOTH lists, and silently removed
+ *  the Portfolio Impact zone from the page. */
 async function loadUserSymbols(): Promise<{ watchlist: string[]; portfolio: string[] }> {
-  try {
-    const [wl, pf] = await Promise.allSettled([
-      fetch("/api/watchlist").then((r) => r.json()),
-      fetch("/api/portfolio").then((r) => r.json()),
-    ]);
-    const watchlist: string[] = (wl.status === "fulfilled" ? (wl.value as { symbol: string }[]) : []).map((i) => i.symbol);
-    const portfolio: string[] = (pf.status === "fulfilled" ? (pf.value as { symbol: string }[]) : []).map((i) => i.symbol);
-    return { watchlist, portfolio };
-  } catch {
-    return { watchlist: [], portfolio: [] };
-  }
+  const [wl, pf] = await Promise.allSettled([
+    fetch("/api/watchlist").then((r) => r.json()),
+    fetch("/api/portfolio").then((r) => r.json()),
+  ]);
+  return {
+    watchlist: wl.status === "fulfilled" ? extractSymbols(wl.value, "items") : [],
+    portfolio: pf.status === "fulfilled" ? extractSymbols(pf.value, "positions") : [],
+  };
 }
 
 export default function ScannerPage() {
@@ -176,6 +194,11 @@ export default function ScannerPage() {
   // partial first, result second), so this never shows stale data.
   const [partial, setPartial] = useState<Partial<ScannerResult>>({});
   const [error, setError] = useState<string | null>(null);
+  // Honest degradation: stages that fell back mid-scan (streamed live), and
+  // the latest stall notice while nothing is visibly progressing. A starved
+  // scan used to swallow ten timeouts and render as a clean empty result.
+  const [stageFailures, setStageFailures] = useState<ScannerStageFailure[]>([]);
+  const [stall, setStall] = useState<Extract<ScannerStageEvent, { type: "stall" }> | null>(null);
   const [fromCache, setFromCache] = useState(false);
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([]);
   const [portfolioSymbols, setPortfolioSymbols] = useState<string[]>([]);
@@ -249,6 +272,8 @@ export default function ScannerPage() {
     setResult(null);
     setPartial({});
     setProgress(null);
+    setStageFailures([]);
+    setStall(null);
     setScanStartedAt(scanStart);
     setFromCache(false);
 
@@ -281,11 +306,13 @@ export default function ScannerPage() {
         for (const line of lines) {
           if (!line.trim()) continue;
           let msg:
-            | { type: "progress"; stage: string; message: string; pct: number }
+            | ({ type: "progress" } & ScannerProgressEvent)
             | { type: "partial"; key: ScannerPartialKey; data: unknown }
+            | ScannerStageEvent
             | { type: "result"; data: ScannerResult }
             | { type: "cached"; data: ScannerResult }
-            | { type: "error"; message: string };
+            | { type: "error"; message: string }
+            | { type: "cancelled" };
           try {
             msg = JSON.parse(line);
           } catch {
@@ -293,17 +320,34 @@ export default function ScannerPage() {
           }
 
           if (msg.type === "progress") {
-            setProgress({ stage: msg.stage as ScannerProgressEvent["stage"], message: msg.message, pct: msg.pct });
+            setProgress({
+              stage: msg.stage,
+              message: msg.message,
+              pct: msg.pct,
+              currentItem: msg.currentItem,
+              unitsDone: msg.unitsDone,
+              unitsTotal: msg.unitsTotal,
+            });
+            setStall(null); // any progress clears the stall notice
           } else if (msg.type === "partial") {
             setPartial((prev) => ({ ...prev, [msg.key]: msg.data }));
+          } else if (msg.type === "stage_failed") {
+            setStageFailures((prev) => [...prev, { stage: msg.stage, reason: msg.reason }]);
+          } else if (msg.type === "stall") {
+            setStall(msg);
           } else if (msg.type === "result") {
             setResult(msg.data);
+            setStageFailures(msg.data.stageFailures ?? []);
             saveCache(msg.data);
             recordScanDuration(Date.now() - scanStart);
           } else if (msg.type === "cached") {
             setResult(msg.data);
+            setStageFailures(msg.data.stageFailures ?? []);
             saveCache(msg.data);
             setFromCache(true);
+          } else if (msg.type === "cancelled") {
+            // The job stopped server-side (this or another subscriber cancelled).
+            return;
           } else if (msg.type === "error") {
             throw new Error(msg.message);
           }
@@ -336,6 +380,20 @@ export default function ScannerPage() {
     setFocus(f);
     setQuery(querySeed);
     void runScan(undefined, querySeed, f);
+  }
+
+  /**
+   * Cancel genuinely stops the scan: aborting the fetch disconnects this
+   * stream's subscription, and the job registry (lib/platform/jobs.ts) aborts
+   * the pipeline server-side once its last subscriber is gone — including the
+   * in-flight model call. Not just a client-side unmount.
+   */
+  function cancelScan() {
+    abortRef.current?.abort();
+    setLoading(false);
+    setProgress(null);
+    setStall(null);
+    setScanStartedAt(null);
   }
 
   // Once `result` lands it wins per-field over `partial` (spread order below),
@@ -468,6 +526,9 @@ export default function ScannerPage() {
         onSubmit={runScan}
         loading={loading}
         progress={progress}
+        stall={stall}
+        degradedCount={stageFailures.length}
+        onCancel={cancelScan}
         scannedAt={result?.scannedAt ?? null}
         fromCache={fromCache}
         onRefresh={() => void runScan()}
@@ -487,6 +548,26 @@ export default function ScannerPage() {
         <div className="rounded-lg border border-negative/40 bg-negative/10 px-4 py-3 text-sm text-negative">
           {error}
         </div>
+      )}
+
+      {/* ── Degraded scan — sections below reflect PARTIAL analysis. Rendered
+          once the result is in (or while failures stream), never silently:
+          an empty Opportunities zone with no explanation reads as "no
+          opportunities today", which is a different claim. ── */}
+      {stageFailures.length > 0 && (
+        <details className="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning">
+          <summary className="cursor-pointer">
+            Partial scan — {stageFailures.length} stage{stageFailures.length === 1 ? "" : "s"} degraded.
+            Affected sections reflect reduced analysis.
+          </summary>
+          <ul className="mt-2 list-disc pl-5 text-xs">
+            {stageFailures.map((f, i) => (
+              <li key={i}>
+                <span className="font-medium">{f.stage}</span>: {f.reason}
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
 
       {/* ── Active evidence trace — a Tape story lit up through the page ── */}
@@ -699,35 +780,40 @@ export default function ScannerPage() {
             </WireSection>
           ) : null}
 
-          {/* Zone 6: Cause & Effect — collapsed by default */}
-          {(causalEvents.length > 0 || (loading && !display.events)) && (
-            <WireSection
-              id="cause-effect"
-              title="Cause & Effect"
-              badge={causalEvents.length > 0 ? `${causalEvents.length}` : undefined}
-              collapsible
-              defaultCollapsed
-              persist
-            >
-              {causalEvents.length > 0 ? (
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {causalEvents.map((event, i) => (
-                    <CausalChainCard
-                      key={event.id}
-                      event={event}
-                      style={{ animationDelay: `${i * 60}ms` }}
-                      onShowEvidence={() =>
-                        setEvidence({ title: event.headline, storyIds: eventStoryIds(event) })
-                      }
-                      highlighted={tracedEventIds.has(event.id)}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <SectionSkeleton />
-              )}
-            </WireSection>
-          )}
+          {/* Zone 6: Cause & Effect — collapsed by default. Renders even when
+              the scan produced no chains: a zone that silently disappears is
+              indistinguishable from a rendering bug (and only macro/policy/
+              geopolitics events are analyzed, so "none" is a real outcome). */}
+          <WireSection
+            id="cause-effect"
+            title="Cause & Effect"
+            badge={causalEvents.length > 0 ? `${causalEvents.length}` : undefined}
+            collapsible
+            defaultCollapsed
+            persist
+          >
+            {causalEvents.length > 0 ? (
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {causalEvents.map((event, i) => (
+                  <CausalChainCard
+                    key={event.id}
+                    event={event}
+                    style={{ animationDelay: `${i * 60}ms` }}
+                    onShowEvidence={() =>
+                      setEvidence({ title: event.headline, storyIds: eventStoryIds(event) })
+                    }
+                    highlighted={tracedEventIds.has(event.id)}
+                  />
+                ))}
+              </div>
+            ) : loading && !display.events ? (
+              <SectionSkeleton />
+            ) : (
+              <p className="rounded-xl border border-border bg-surface px-4 py-6 text-center text-sm text-muted">
+                No cause-and-effect chains from this scan — none of its events classified as macro, policy, or geopolitics.
+              </p>
+            )}
+          </WireSection>
 
           {/* Zone 7: Sector Rotation — ONE grid, one tile per sector, carrying
               both datasets (price rank + news sentiment) with divergence as
@@ -751,36 +837,39 @@ export default function ScannerPage() {
             />
           </WireSection>
 
-          {/* Zone 8: Risk Monitor */}
-          {(display.riskAlerts?.length || (loading && !display.riskAlerts)) ? (
-            <WireSection
-              id="risk-monitor"
-              title="Risk Monitor"
-              badge={display.riskAlerts?.length ? `${display.riskAlerts.length}` : undefined}
-            >
-              {display.riskAlerts && display.riskAlerts.length > 0 ? (
-                <div className="rounded-xl border border-border overflow-hidden">
-                  {display.riskAlerts.map((alert, i) => (
-                    <RiskAlertRow
-                      key={alert.id}
-                      alert={alert}
-                      style={{ animationDelay: `${i * 40}ms` }}
-                      onShowEvidence={() => {
-                        // Risks carry no pipeline-recorded event link (that
-                        // needs an additive field in extractRiskAlerts, whose
-                        // file another session is instrumenting) — this is an
-                        // overlap join and the drawer labels it approximate.
-                        const { storyIds, approximate } = riskStoryIds(alert, events);
-                        setEvidence({ title: alert.headline, storyIds, approximate });
-                      }}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <SectionSkeleton height="h-20" />
-              )}
-            </WireSection>
-          ) : null}
+          {/* Zone 8: Risk Monitor — same rule as Cause & Effect: an empty
+              result renders as a statement, not a missing section. */}
+          <WireSection
+            id="risk-monitor"
+            title="Risk Monitor"
+            badge={display.riskAlerts?.length ? `${display.riskAlerts.length}` : undefined}
+          >
+            {display.riskAlerts && display.riskAlerts.length > 0 ? (
+              <div className="rounded-xl border border-border overflow-hidden">
+                {display.riskAlerts.map((alert, i) => (
+                  <RiskAlertRow
+                    key={alert.id}
+                    alert={alert}
+                    style={{ animationDelay: `${i * 40}ms` }}
+                    onShowEvidence={() => {
+                      // Risks carry no pipeline-recorded event link (that
+                      // needs an additive field in extractRiskAlerts, whose
+                      // file another session is instrumenting) — this is an
+                      // overlap join and the drawer labels it approximate.
+                      const { storyIds, approximate } = riskStoryIds(alert, events);
+                      setEvidence({ title: alert.headline, storyIds, approximate });
+                    }}
+                  />
+                ))}
+              </div>
+            ) : loading && !display.riskAlerts ? (
+              <SectionSkeleton height="h-20" />
+            ) : (
+              <p className="rounded-xl border border-border bg-surface px-4 py-6 text-center text-sm text-muted">
+                No risk alerts from this scan — no events carried bearish causal effects or geopolitical classification.
+              </p>
+            )}
+          </WireSection>
 
         </div>
       )}

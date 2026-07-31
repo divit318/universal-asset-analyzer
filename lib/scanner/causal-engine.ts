@@ -15,7 +15,7 @@
  * meaningful and gives steady progress instead of a burst of failures.
  */
 
-import { runPrompt } from "../ai";
+import { describeError, scannerPrompt, type ScanRunContext } from "./llm";
 import { extractJsonObject } from "../json-extract";
 import type { MarketEvent, CausalEffect, SignalDirection } from "../types";
 
@@ -90,15 +90,17 @@ Include 2-4 first-order effects and 2-3 second-order effects. Be specific — ge
 
 async function buildCausalChainForEvent(
   event: MarketEvent,
+  run?: ScanRunContext,
 ): Promise<CausalEffect[]> {
   try {
-    const raw = await runPrompt("opportunity-engine", buildCausalPrompt(event), {
+    const raw = await scannerPrompt(run, "opportunity-engine", buildCausalPrompt(event), {
       maxTokens: 1200,
-      json: true,
     });
     const parsed = extractJsonObject(raw, { effects: [] as unknown[] });
     return parsed.effects.map(sanitizeEffect).filter((e): e is CausalEffect => e !== null);
-  } catch {
+  } catch (err) {
+    if (run?.signal?.aborted) throw err;
+    run?.degrade?.(`causal chain skipped for "${event.headline.slice(0, 60)}": ${describeError(err)}`);
     return [];
   }
 }
@@ -109,16 +111,21 @@ async function buildCausalChainForEvent(
  */
 export async function buildCausalChains(
   events: MarketEvent[],
+  run?: ScanRunContext,
 ): Promise<MarketEvent[]> {
   const macroEvents = events.filter(
     (e) => e.category === "macro" || e.category === "policy" || e.category === "geopolitics",
   );
   if (macroEvents.length === 0) return events;
 
+  run?.setUnits?.(macroEvents.length);
   const enrichedMap = new Map<string, MarketEvent>();
-  for (const event of macroEvents) {
-    const chain = await buildCausalChainForEvent(event);
+  for (let i = 0; i < macroEvents.length; i++) {
+    const event = macroEvents[i];
+    run?.item?.(`${event.headline.slice(0, 60)} (${i + 1} of ${macroEvents.length})`);
+    const chain = await buildCausalChainForEvent(event, run);
     enrichedMap.set(event.id, { ...event, causalChain: chain });
+    run?.tick?.();
   }
 
   // Rebuild in original order

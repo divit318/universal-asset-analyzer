@@ -299,6 +299,14 @@ export interface GenerateOptions {
   timeoutMs?: number;
   /** See {@link ChatOptions.keepAlive}. */
   keepAlive?: string;
+  /**
+   * Caller's own abort (client disconnect, pipeline Cancel). Combined with the
+   * deadline via {@link deadlineSignal} — this was previously dropped on the
+   * single-turn path, so cancelling a scan left the local model generating an
+   * answer nobody would read, and (because Ollama serializes) delayed every
+   * other request queued behind it.
+   */
+  signal?: AbortSignal;
 }
 
 export interface GenerateResult {
@@ -327,7 +335,7 @@ export async function generate(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: buildBody({ ...opts, messages }, false),
-      signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000),
+      signal: deadlineSignal(opts.signal, opts.timeoutMs ?? 120_000),
     }),
   );
 

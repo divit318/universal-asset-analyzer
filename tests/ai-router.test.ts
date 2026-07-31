@@ -590,9 +590,14 @@ describe("route: keepAlive", () => {
     expect(provider.requests[0].keepAlive).toBe("30m");
   });
 
-  it("does not pin memory for background work", async () => {
+  it("holds the model briefly for background work — pipelines call back-to-back", async () => {
+    // Background work used to accept Ollama's 5-minute default eviction; a
+    // single interleaved interactive request on a memory-tight host then
+    // evicted a mid-scan pipeline's model (measured 2026-07-31: a 145s cold
+    // load mid-scan). Ten minutes outlives any gap between a pipeline's own
+    // calls without pinning ~10GB for hours.
     const provider = new FakeProvider(installed, ok);
     await route("investment-thesis", { messages: [{ role: "user", content: "hi" }] }, { providers: [provider] });
-    expect(provider.requests[0].keepAlive).toBeUndefined();
+    expect(provider.requests[0].keepAlive).toBe("10m");
   });
 });

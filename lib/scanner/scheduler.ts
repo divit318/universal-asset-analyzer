@@ -13,16 +13,11 @@
  * never ages past "fresh".
  */
 
-import { runScannerPipeline } from "./index";
-import { getLatestScannerSnapshot, persistScannerSnapshot } from "./cache";
-import { putScannerCache } from "../db";
+import { getLatestScannerSnapshot } from "./cache";
+import { scanJobResult, startScanJob } from "./job";
+import { hasRunningJob } from "../platform/jobs";
 
 const TICK_KEY = Symbol.for("uaa.scanner.scheduler");
-
-// Same key app/api/scanner/v2/route.ts's buildCacheKey() produces for the
-// default (no query, india+global) auto-scan — keeping this warm is what
-// lets Timeline/Knowledge Graph/Opportunity Map read a recent scan too.
-const DEFAULT_CACHE_KEY = "v2::true:true";
 
 /** exported for tests */
 export function resolveScannerIntervalMs(rawEnv: string | undefined): number {
@@ -41,15 +36,22 @@ async function tick(): Promise<void> {
   const snapshot = getLatestScannerSnapshot();
   if (snapshot && snapshot.freshness.level === "fresh") return; // still current — skip the heavy pipeline
 
+  // A user-triggered scan (any parameters) is already occupying the local
+  // model, which serializes generations — piling the auto-scan on top would
+  // only slow the scan a human is actually watching. Measured 2026-07-31:
+  // the boot-warmup tick racing a /wire page scan made every queued call of
+  // the losing scan burn its whole 300s timeout waiting its turn. The next
+  // hourly tick refreshes the snapshot instead.
+  if (hasRunningJob("scanner:")) return;
+
   running = true;
   try {
-    const result = await runScannerPipeline({ india: true, global: true });
-    persistScannerSnapshot(result);
-    try {
-      putScannerCache(DEFAULT_CACHE_KEY, JSON.stringify(result));
-    } catch {
-      // best-effort — Timeline/Knowledge Graph/Opportunity Map just fall back to their empty states
-    }
+    // startScanJob persists the snapshot + default cache key on completion;
+    // detached so it never depends on subscribers. If a user starts the same
+    // default scan meanwhile, they attach to THIS job rather than racing it.
+    const result = await scanJobResult(
+      startScanJob({ india: true, global: true }, { detached: true }),
+    );
     console.log(
       `[scanner] auto-scan complete — ${result.highConviction.length} high-conviction, ${result.developing.length} developing`,
     );

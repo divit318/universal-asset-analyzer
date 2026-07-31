@@ -1013,6 +1013,7 @@ export type ScannerStage =
   | "classifying"
   | "theme_detection"
   | "causal_reasoning"
+  | "risk_alerts"
   | "sector_impact"
   | "company_impact"
   | "fundamental_gate"
@@ -1025,7 +1026,22 @@ export type ScannerStage =
 export interface ScannerProgressEvent {
   stage: ScannerStage;
   message: string;
-  pct: number; // 0-100 progress
+  pct: number; // 0-100 progress, derived from completed work units (lib/platform/runner.ts)
+  /** The item currently in flight ("Consumer Cyclical, 2 of 3"), when the stage reports one. */
+  currentItem?: string | null;
+  unitsDone?: number;
+  unitsTotal?: number;
+}
+
+/** A stage that degraded or a scan that has stopped visibly progressing. */
+export type ScannerStageEvent =
+  | { type: "stage_failed"; stage: string; reason: string }
+  | { type: "stall"; stage: string; stalledMs: number; currentItem: string | null };
+
+/** One stage's recorded degradation — surfaced on the result so a partial scan reads as partial, never as a clean run. */
+export interface ScannerStageFailure {
+  stage: string;
+  reason: string;
 }
 
 /**
@@ -1070,6 +1086,8 @@ export interface ScannerResult {
   riskAlerts: RiskAlert[];
   newsItems: NewsItem[];
   aiSummary: string;
+  /** Stages that fell back or were skipped this run. Absent/empty on a clean scan. */
+  stageFailures?: ScannerStageFailure[];
 }
 
 /* -------------------------------------------------------------------------- */

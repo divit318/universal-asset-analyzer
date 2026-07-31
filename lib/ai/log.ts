@@ -36,6 +36,8 @@ export interface AiLogEvent {
   /** Whether the model had to cold-load before answering — see lib/ai/ollama.ts's isModelResident. */
   coldStart?: boolean;
   durationMs?: number;
+  /** Time spent waiting at the generation gate before the attempt began — see lib/ai/gate.ts. */
+  queueMs?: number;
   /** Short, human-readable detail — an error message, not a stack trace. */
   message?: string;
 }

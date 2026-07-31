@@ -10,7 +10,7 @@
  * Runs a single batch Ollama call for efficiency.
  */
 
-import { runPrompt } from "../ai";
+import { describeError, scannerPrompt, type ScanRunContext } from "./llm";
 import { extractJsonObject } from "../json-extract";
 import type { MarketEvent, SignalCategory } from "../types";
 
@@ -109,18 +109,20 @@ ${JSON_SCHEMA_LEAD_IN}
 /** Enrich a batch of MarketEvents with classification data. */
 export async function classifyEvents(
   events: MarketEvent[],
+  run?: ScanRunContext,
 ): Promise<MarketEvent[]> {
   if (events.length === 0) return events;
 
   let parsed: { classifications: unknown[] };
   try {
-    const raw = await runPrompt("opportunity-engine", buildClassificationPrompt(events), {
+    const raw = await scannerPrompt(run, "opportunity-engine", buildClassificationPrompt(events), {
       maxTokens: 3000,
-      json: true,
     });
     parsed = extractJsonObject(raw, { classifications: [] as unknown[] });
-  } catch {
+  } catch (err) {
+    if (run?.signal?.aborted) throw err;
     // Return events unmodified if classification fails
+    run?.degrade?.(`event classification skipped: ${describeError(err)}`);
     return events;
   }
 
