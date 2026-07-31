@@ -333,6 +333,21 @@ function columnsFor(assetClass: PortfolioAssetClass): DataTableColumn<Holding>[]
                 stale
               </span>
             )}
+            {/* Fresh (non-stale) marks that still aren't a live market price get their
+                own glanceable tag — the portfolio-level valuation-basis disclosure,
+                extended to the row it's actually about, not just the aggregate. */}
+            {!h.valuation.stale && h.valuation.mode !== "market" && (
+              <span
+                className="rounded border border-border px-1 text-[9px] uppercase tracking-wide text-muted/70"
+                title={`Valuation basis: ${
+                  h.valuation.mode === "manual" ? "your estimate"
+                  : h.valuation.mode === "derived" ? "derived from terms"
+                  : "face value"
+                } — not a live market price.`}
+              >
+                {h.valuation.mode === "manual" ? "est." : h.valuation.mode === "derived" ? "derived" : "face"}
+              </span>
+            )}
           </span>
           {h.symbol && <span className="truncate text-[11px] text-muted">{h.name}</span>}
         </div>
@@ -500,7 +515,7 @@ function ClassGroup({ assetClass, holdings, totalValue, sortKey, sortDir, onSort
             {h.symbol && (
               <>
                 <DataTableAction href={`/research?symbol=${encodeURIComponent(h.symbol)}`}>Research</DataTableAction>
-                <DataTableAction href={`/dcf?symbol=${encodeURIComponent(h.symbol)}`}>DCF</DataTableAction>
+                <DataTableAction href={`/valuation?symbol=${encodeURIComponent(h.symbol)}`}>Valuation</DataTableAction>
               </>
             )}
           </>

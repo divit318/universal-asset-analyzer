@@ -2,6 +2,12 @@
 
 import type { InvestmentVerdict } from "@/app/api/ai/verdict/route";
 import type { RiskItem, RiskLevel, ScoreResult } from "@/lib/types";
+import { RECOMMENDATION_ARC, scoreToRecommendation } from "@/lib/recommendation";
+import { CountUp } from "@/app/_components/count-up";
+import { LoadingPanel } from "@/app/_components/loading-panel";
+import { Reveal } from "@/app/_components/reveal";
+import { ScoreRing } from "@/app/_components/score-ring";
+import { ValueBar } from "@/app/_components/value-bar";
 
 const REC_LABEL: Record<string, string> = {
   STRONG_BUY:  "Strong Buy",
@@ -50,22 +56,7 @@ function worstRisk(risks: RiskItem[]): RiskItem | null {
 /* -------------------------------------------------------------------------- */
 
 function Skeleton() {
-  return (
-    <div className="flex flex-col gap-5 rounded-xl border border-border bg-surface p-6">
-      <div className="h-4 w-48 animate-pulse rounded bg-surface-2" />
-      <div className="space-y-4">
-        {[1, 2, 3, 4].map((i) => (
-          <div key={i} className="space-y-2">
-            <div className="flex justify-between">
-              <div className="h-3 w-32 animate-pulse rounded bg-surface-2" />
-              <div className="h-3 w-16 animate-pulse rounded bg-surface-2" />
-            </div>
-            <div className="h-1.5 w-full animate-pulse rounded-full bg-surface-2" />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  return <LoadingPanel height="h-[248px]" message="Scoring fundamentals, analyst consensus, and momentum…" />;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -97,12 +88,16 @@ export function ConvictionBreakdown({ score, loading, verdict, risks, onViewRisk
     <div className="flex flex-col gap-6">
 
       {/* ── Top row: overall score + recommendation ── */}
-      <div className="flex flex-wrap items-center gap-5 rounded-xl border border-border bg-surface p-5">
-        {/* Composite score ring */}
-        <div className="relative flex h-[80px] w-[80px] shrink-0 flex-col items-center justify-center rounded-full border-2 border-accent/40">
-          <span className="text-[1.75rem] font-bold leading-none tabular-nums">{score.composite}</span>
-          <span className="mt-0.5 text-[9px] font-medium uppercase tracking-wide text-muted">/ 100</span>
-        </div>
+      <div className="card-lift flex flex-wrap items-center gap-5 rounded-xl border border-border bg-surface p-5">
+        {/* Composite score ring — arc draws to the score as the number counts up */}
+        <ScoreRing
+          score={score.composite}
+          size={80}
+          strokeWidth={4}
+          arcClassName={RECOMMENDATION_ARC[scoreToRecommendation(score.composite)]}
+          valueClassName="text-[1.75rem] font-bold"
+          label={`Composite score ${score.composite} out of 100`}
+        />
 
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -128,10 +123,12 @@ export function ConvictionBreakdown({ score, loading, verdict, risks, onViewRisk
             })()}
           </div>
           <div className="flex items-center gap-2">
-            <div className="h-1 w-24 overflow-hidden rounded-full bg-surface-2">
-              <div className="h-full rounded-full bg-accent/60" style={{ width: `${score.confidence}%` }} />
+            <div className="w-24">
+              <ValueBar value={score.confidence} barClassName="bg-accent/60" />
             </div>
-            <span className="text-xs text-muted">{score.confidence}% data confidence</span>
+            <span className="text-xs text-muted">
+              <CountUp value={score.confidence} format={(v) => String(Math.round(v))} durationMs={800} />% data confidence
+            </span>
           </div>
           {score.rationale && (
             <p className="max-w-lg text-[11px] leading-5 text-muted">{score.rationale}</p>
@@ -151,21 +148,18 @@ export function ConvictionBreakdown({ score, loading, verdict, risks, onViewRisk
             { label: "Analyst Consensus", value: score.signals.analysts },
             { label: "Price Momentum", value: score.signals.momentum },
             { label: "Data Confidence", value: score.confidence },
-          ].map(({ label, value }) => (
-            <div key={label} className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2 p-3.5">
+          ].map(({ label, value }, i) => (
+            <Reveal key={label} index={i} className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2 p-3.5">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[11px] font-medium uppercase tracking-wider text-muted">{label}</span>
                 <span className="font-mono text-sm font-semibold tabular-nums">
-                  {value != null ? value : "—"}
+                  {value != null
+                    ? <CountUp value={value} format={(v) => String(Math.round(v))} durationMs={800} />
+                    : "—"}
                 </span>
               </div>
-              <div className="h-1 w-full overflow-hidden rounded-full bg-surface">
-                <div
-                  className={`h-full rounded-full transition-all duration-700 ${barColor(value ?? 0)}`}
-                  style={{ width: `${value ?? 0}%` }}
-                />
-              </div>
-            </div>
+              <ValueBar value={value ?? null} barClassName={barColor(value ?? 0)} trackClassName="bg-surface" />
+            </Reveal>
           ))}
         </div>
       </div>
@@ -190,29 +184,26 @@ export function ConvictionBreakdown({ score, loading, verdict, risks, onViewRisk
             compared against each other at a glance, which is the only reason to
             show them together. */}
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-          {score.buckets.map((bucket) => {
+          {score.buckets.map((bucket, i) => {
             const pct = Math.round((bucket.points / bucket.max) * 100);
             const conf = confidenceLabel(pct);
             const visibleFactors = bucket.factors.filter((f) => f.detail !== "n/a");
             return (
-              <div
+              <Reveal
                 key={bucket.name}
+                index={i}
                 className="flex flex-col gap-1.5 rounded-card border border-border bg-surface p-3"
               >
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="truncate text-xs font-medium text-foreground">{bucket.name}</span>
                   <span className="shrink-0 font-mono text-xs tabular-nums text-muted">
-                    {bucket.points}<span className="text-muted/40">/{bucket.max}</span>
+                    <CountUp value={bucket.points} format={(v) => String(Math.round(v))} durationMs={800} />
+                    <span className="text-muted/40">/{bucket.max}</span>
                   </span>
                 </div>
 
                 {/* Confidence bar */}
-                <div className="h-1 w-full overflow-hidden rounded-full bg-surface-2">
-                  <div
-                    className={`h-full rounded-full transition-all duration-700 ${barColor(pct)}`}
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
+                <ValueBar value={pct} barClassName={barColor(pct)} height="h-1" />
 
                 <div className="flex items-baseline justify-between gap-2">
                   <span className={`text-[10px] font-semibold ${conf.cls}`}>{conf.text}</span>
@@ -228,7 +219,7 @@ export function ConvictionBreakdown({ score, loading, verdict, risks, onViewRisk
                     ))}
                   </div>
                 )}
-              </div>
+              </Reveal>
             );
           })}
         </div>

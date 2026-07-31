@@ -1,5 +1,3 @@
-"use client";
-
 import { Card, Badge } from "@/app/_components/ui";
 import { formatCurrency } from "@/lib/format";
 import type { TradeSelectionSummary } from "./use-trade-selection";

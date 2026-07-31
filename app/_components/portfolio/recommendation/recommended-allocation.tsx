@@ -1,4 +1,4 @@
-import { Button, Card } from "@/app/_components/ui";
+import { Button, Card, Skeleton } from "@/app/_components/ui";
 import { formatCurrency } from "@/lib/format";
 import type { BuyRecommendationResponse } from "./types";
 
@@ -32,10 +32,10 @@ export function RecommendedAllocation({
   if (loading && !recommendation) {
     return (
       <Card className="flex flex-col gap-3 p-4" aria-busy="true">
-        <div className="h-3 w-40 animate-pulse rounded bg-surface-2" />
-        <div className="h-8 w-52 animate-pulse rounded bg-surface-2" />
-        <div className="h-3 w-full animate-pulse rounded bg-surface-2" />
-        <div className="h-3 w-4/5 animate-pulse rounded bg-surface-2" />
+        <Skeleton height="h-3" width="w-40" />
+        <Skeleton height="h-8" width="w-52" />
+        <Skeleton height="h-3" />
+        <Skeleton height="h-3" width="w-4/5" />
         <span className="sr-only">Calculating your recommended allocation…</span>
       </Card>
     );

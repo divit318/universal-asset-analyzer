@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { MarketRegime, MacroSignal } from "@/lib/types";
+import { Skeleton } from "@/app/_components/ui";
 
 /** Sits above MarketRegimeBanner + SectorRotationPanel — the AI narrates what those two already computed. */
 export function MarketSummaryCard({
@@ -43,7 +44,7 @@ export function MarketSummaryCard({
   }, [scannedAt]);
 
   if (loading) {
-    return <div className="h-20 animate-pulse rounded-xl border border-border bg-surface" />;
+    return <Skeleton height="h-20" radius="rounded-xl" className="border border-border" />;
   }
   if (!summary) return null;
 

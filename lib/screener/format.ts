@@ -33,11 +33,24 @@ export function formatMetricValue(metric: MetricDef, value: number | null): stri
       return formatMoney(value);
     case "$":
       return value >= 1000 ? formatMoney(value) : `$${value.toFixed(2)}`;
-    case "%":
-      // One decimal below 100%: the difference between a 22.4% and a 22.9% ROIC
-      // is real, and rounding it away in a screener is a loss of signal. Above
-      // 100% (a triple-digit return) the decimal is noise.
-      return `${value.toFixed(Math.abs(value) < 100 ? 1 : 0)}%`;
+    case "%": {
+      // Precision scales with magnitude, because a single rule can't serve both
+      // a 22.4% ROIC and a 0.03% expense ratio.
+      //
+      // Two decimals below 1%: sub-1% percentages are a real and common class
+      // of value here — 111 of the 457 US ETFs in the universe charge between
+      // 0.00% and 0.10%, and at one decimal every one of them rendered as
+      // "0.0%" or "0.1%", making the single most important column in the ETF
+      // screener useless for comparing funds. Worse, `explain` formats the
+      // *filter bound* with this function too, so a "max 0.15%" filter was
+      // restated back to the user as "Expense Ratio ≤ 0.2%" — a constraint that
+      // was never applied.
+      //
+      // One decimal in between: the difference between a 22.4% and a 22.9% ROIC
+      // is real. Above 100% (a triple-digit return) the decimal is noise.
+      const abs = Math.abs(value);
+      return `${value.toFixed(abs < 1 && abs > 0 ? 2 : abs < 100 ? 1 : 0)}%`;
+    }
     case "x":
       return `${value.toFixed(2)}x`;
     case "yrs":

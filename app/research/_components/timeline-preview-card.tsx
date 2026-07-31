@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { TimelineEvent, TimelineImpact } from "@/lib/types";
+import { LoadingPanel } from "@/app/_components/loading-panel";
+import { Reveal } from "@/app/_components/reveal";
 
 /**
  * Investment Timeline, embedded as a compact preview (top milestones) rather
@@ -51,7 +53,7 @@ export function TimelinePreviewCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol]);
 
-  if (loading) return <div className="h-24 w-full animate-pulse rounded-xl bg-surface-2" />;
+  if (loading) return <LoadingPanel height="h-24" markSize={18} />;
   if (events.length === 0) return null;
 
   const topEvents = [...events]
@@ -59,7 +61,7 @@ export function TimelinePreviewCard({
     .slice(0, 5);
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
+    <div className="card-lift flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-medium">Investment Timeline</h3>
         <Link
@@ -70,14 +72,14 @@ export function TimelinePreviewCard({
         </Link>
       </div>
       <ul className="flex flex-col gap-2.5">
-        {topEvents.map((e) => (
-          <li key={e.id} className="flex items-start gap-2.5">
+        {topEvents.map((e, i) => (
+          <Reveal key={e.id} as="li" index={i} className="flex items-start gap-2.5">
             <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${IMPACT_DOT[e.impact]}`} />
             <div className="min-w-0 flex-1">
               <p className="text-xs font-medium leading-5 text-foreground">{e.title}</p>
               <p className="text-[10px] text-muted">{formatDate(e.timestamp)} · {e.category.replace(/_/g, " ")}</p>
             </div>
-          </li>
+          </Reveal>
         ))}
       </ul>
     </div>

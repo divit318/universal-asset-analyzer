@@ -10,7 +10,14 @@ import { detectAllSignals, type DetectedSignal, type SignalDetectionInput } from
 import { generateQuestions, groupByAgent, type InvestigativeQuestion } from "./ic-questions";
 import { runAgentNetwork, type AgentFinding, type AgentFailure } from "./ic-agents";
 import { formThesis, type Thesis } from "./ic-thesis";
-import { runValuationEngine, computeRunHotCold, type ValuationResult } from "./ic-valuation";
+import {
+  runValuationEngine,
+  computeRunHotCold,
+  reconcileValuations,
+  type ReconciliationResult,
+  type ValuationResult,
+} from "./ic-valuation";
+import { summarizeCase, type ValuationCase } from "./valuation/case";
 import type { FundamentalsSnapshot, FinancialStatements, InsiderActivity, AnalystConsensus } from "./types";
 import type { ScreenerInCompany } from "./screener-in";
 import { pickModel } from "./ai/router";
@@ -44,12 +51,28 @@ export interface ICReport {
   agentFailures: AgentFailure[];
   thesis: Thesis;
   valuation: ValuationResult;
+  /** Case vs. the engine's systematic prior. Null when no prior was supplied. */
+  reconciliation: ReconciliationResult | null;
   monitorables: string[];
   runHotCold: ReturnType<typeof computeRunHotCold>;
 }
 
 export interface ICReportInput {
   symbol: string;
+  /**
+   * The ValuationCase to adjudicate. Supplied by the API route, which owns the
+   * database — this module stays free of persistence so the pipeline remains a
+   * pure orchestration of domain logic.
+   */
+  valuationCase?: ValuationCase | null;
+  /**
+   * The quant engine's Monte Carlo median intrinsic value per share, when the
+   * symbol was in the last scored universe. Reconciling the case against it is
+   * the engine-vs-judgment half of the three-way bridge; null until the engine
+   * read seam lands, at which point this stage starts reporting the spread with
+   * no further change here.
+   */
+  enginePriorP50?: number | null;
   companyName: string;
   currentPrice?: number | null;
   currency?: string;
@@ -103,6 +126,7 @@ export async function generateICReport(
       insider: input.insider,
       screenerIn: input.screenerIn,
       signals,
+      valuationCaseSummary: input.valuationCase ? summarizeCase(input.valuationCase) : null,
     },
     (finding) => {
       emit("agent_complete", `${finding.agentLabel} complete (${finding.confidence} confidence)`, finding);
@@ -134,7 +158,7 @@ export async function generateICReport(
   emit("thesis", "Thesis formed", thesis);
 
   // Stage 5: Valuation engine — fetch 5Y price history for run hot/cold
-  emit("valuation", "Running valuation engine…");
+  emit("valuation", input.valuationCase ? "Adjudicating the valuation case…" : "Running valuation cross-checks…");
   const priceHistory = await getHistory(symbol, 7300).catch(() => []); // up to 20 years ≈ 7300 days
   const runHotCold = computeRunHotCold(priceHistory);
   if (runHotCold) {
@@ -151,8 +175,24 @@ export async function generateICReport(
     priceHistory,
     companyName,
     input.model,
+    input.valuationCase ?? null,
   );
   emit("valuation", `Valuation: ${valuation.intrinsicValueRange} (${valuation.impliedUpside})`, valuation);
+
+  // Reconcile the case against the engine's prior when one is available. These
+  // are the two estimates worth comparing: one the user owns, one nothing human
+  // touched.
+  let reconciliation: ReconciliationResult | null = null;
+  if (input.enginePriorP50 != null && input.valuationCase) {
+    reconciliation = await reconcileValuations(
+      symbol,
+      input.valuationCase.result.fairValue,
+      input.enginePriorP50,
+      input.currency ?? "$",
+      valuation.approaches.map((a) => a.method),
+    );
+    emit("valuation", reconciliation.explanation, reconciliation);
+  }
 
   // Derive monitorables from thesis keyDrivers + high-severity signals
   const monitorables = [
@@ -173,6 +213,7 @@ export async function generateICReport(
     agentFailures,
     thesis,
     valuation,
+    reconciliation,
     monitorables,
     runHotCold,
   };

@@ -16,6 +16,7 @@ export { Input, Field } from "./input";
 export { DateInput } from "./date-input";
 export { Tabs, type TabItem } from "./tabs";
 export { Section, SectionSkeleton, type SectionTier, type SectionState } from "./section";
+export { Skeleton, SkeletonText } from "./skeleton";
 export {
   TaskProgress,
   useElapsedMs,

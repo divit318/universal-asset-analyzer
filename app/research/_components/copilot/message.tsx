@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { ChatMessage } from "@/lib/ai/types";
 import { GroundingBadge } from "@/app/_components/grounding-badge";
+import { LoadingLine } from "@/app/_components/loading-panel";
 import { Markdown } from "./markdown";
 import { SaveNoteButton } from "../research-notes";
 
@@ -48,10 +49,7 @@ export function Message({ message, streaming, symbol }: { message: ChatMessage; 
 
       <div className="text-sm text-foreground">
         {empty && streaming ? (
-          <span className="inline-flex gap-1 text-muted">
-            <span className="animate-pulse">Analyzing the dossier</span>
-            <span className="animate-bounce">…</span>
-          </span>
+          <LoadingLine message="Analyzing the dossier…" />
         ) : (
           <Markdown content={message.content} />
         )}

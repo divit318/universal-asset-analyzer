@@ -111,6 +111,12 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
   SGD: "S$",
 };
 
+/** Display symbol for an ISO 4217 code, falling back to the code itself. */
+export function currencySymbol(currency: string | null | undefined): string {
+  const code = (currency ?? "USD").toUpperCase();
+  return CURRENCY_SYMBOLS[currency ?? ""] ?? CURRENCY_SYMBOLS[code] ?? `${code} `;
+}
+
 /**
  * Compact currency amount, labelled with the currency it is actually in.
  *
@@ -122,13 +128,14 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
  */
 export function formatCompactCurrency(
   value: number | null | undefined,
-  currency: string | null | undefined,
+  currency: string | null | undefined = "USD",
 ): string {
   if (!isRenderable(value)) return "—";
   const code = (currency ?? "USD").toUpperCase();
   const symbol = CURRENCY_SYMBOLS[currency ?? ""] ?? CURRENCY_SYMBOLS[code];
-  const amount = formatCompact(value);
-  return symbol ? `${symbol}${amount}` : `${code} ${amount}`;
+  const sign = value < 0 ? "-" : "";
+  const amount = formatCompact(Math.abs(value));
+  return symbol ? `${sign}${symbol}${amount}` : `${sign}${code} ${amount}`;
 }
 
 /**

@@ -1,7 +1,12 @@
 "use client";
 
+import { useCallback, useRef, type PointerEvent } from "react";
 import type { InvestmentVerdict } from "@/app/api/ai/verdict/route";
 import type { ScoreResult } from "@/lib/types";
+import { CountUp } from "@/app/_components/count-up";
+import { ValueBar } from "@/app/_components/value-bar";
+import { LoadingMark } from "@/app/_components/loading-mark";
+import { Reveal } from "@/app/_components/reveal";
 import { TaskProgress } from "@/app/_components/ui";
 
 /* -------------------------------------------------------------------------- */
@@ -49,26 +54,23 @@ const SIGNAL_CLASS = {
 /* -------------------------------------------------------------------------- */
 
 /**
+ * The page's headline answer is worth waiting on explicitly — the brand mark
+ * doing the work, plus what it's doing and roughly how long — rather than a
+ * mosaic of grey bars implying content that is already there.
+ *
  * Shown only before the first field arrives (~4s), not for the whole generation.
  * The `stage` line is a real progress statement from the stream, not a guess: it
  * reports elapsed time and what is being waited on.
  */
 function Skeleton({ stage, elapsedMs }: { stage: string; elapsedMs: number }) {
   return (
-    <div className="rounded-xl border border-border bg-surface p-6">
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <div className="flex flex-col gap-2">
-          <div className="h-7 w-28 animate-pulse rounded-lg bg-surface-2" />
-          <div className="h-4 w-64 animate-pulse rounded bg-surface-2" />
-        </div>
-        <div className="flex flex-col items-end gap-2">
-          <div className="h-4 w-24 animate-pulse rounded bg-surface-2" />
-          <div className="h-1.5 w-32 animate-pulse rounded-full bg-surface-2" />
-        </div>
-      </div>
-      <div className="mb-5 space-y-2">
-        <div className="h-3.5 w-full animate-pulse rounded bg-surface-2" />
-        <div className="h-3.5 w-5/6 animate-pulse rounded bg-surface-2" />
+    <div className="flex min-h-[184px] flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-8">
+      <LoadingMark size={30} label="Building the investment verdict" />
+      <div className="flex flex-col items-center gap-1 text-center">
+        <p className="text-sm font-medium text-foreground">Building the investment verdict</p>
+        <p className="text-caption text-muted">
+          Reasoning over fundamentals, filings, and news — typically 20–40 s on a local model.
+        </p>
       </div>
       <StreamStatus stage={stage} elapsedMs={elapsedMs} />
     </div>
@@ -132,6 +134,24 @@ export function DecisionHero({
   error = null,
   onRetry,
 }: Props) {
+  const heroRef = useRef<HTMLDivElement | null>(null);
+  /** Cursor-aware sheen (see .uaa-cursor-sheen, app/globals.css) — the hero is
+   *  the one surface deliberate enough to warrant a light that tracks the
+   *  pointer; everywhere else stays still. rAF-throttled so it never runs
+   *  more than once per frame. */
+  const rafRef = useRef(0);
+  const onPointerMove = useCallback((e: PointerEvent<HTMLDivElement>) => {
+    const el = heroRef.current;
+    if (!el) return;
+    cancelAnimationFrame(rafRef.current);
+    const { clientX, clientY } = e;
+    rafRef.current = requestAnimationFrame(() => {
+      const rect = el.getBoundingClientRect();
+      el.style.setProperty("--spot-x", `${((clientX - rect.left) / rect.width) * 100}%`);
+      el.style.setProperty("--spot-y", `${((clientY - rect.top) / rect.height) * 100}%`);
+    });
+  }, []);
+
   if (loading || (!verdict && streaming)) {
     return (
       <Skeleton
@@ -163,7 +183,11 @@ export function DecisionHero({
   const confidenceNum = confidenceOverride ?? score?.confidence ?? null;
 
   return (
-    <div className={`rounded-xl border ${c.border} ${c.bg} p-6`}>
+    <div
+      ref={heroRef}
+      onPointerMove={onPointerMove}
+      className={`uaa-cursor-sheen rounded-xl border ${c.border} ${c.bg} p-6`}
+    >
 
       {/* ── Header row ── */}
       <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
@@ -182,7 +206,8 @@ export function DecisionHero({
             )}
             {confidenceNum != null && (
               <span className={`font-mono text-2xl font-bold tabular-nums ${c.label}`}>
-                {confidenceNum}<span className="text-base font-normal text-muted">%</span>
+                <CountUp value={confidenceNum} format={(v) => String(Math.round(v))} durationMs={800} />
+                <span className="text-base font-normal text-muted">%</span>
               </span>
             )}
           </div>
@@ -214,10 +239,12 @@ export function DecisionHero({
           {/* Confidence bar (numeric, when score available) */}
           {confidenceNum != null && (
             <div className="mt-1 flex items-center gap-2">
-              <div className="h-1 w-28 overflow-hidden rounded-full bg-surface-2">
-                <div className={`h-full rounded-full ${c.bar}`} style={{ width: `${confidenceNum}%` }} />
+              <div className="w-28">
+                <ValueBar value={confidenceNum} barClassName={c.bar} />
               </div>
-              <span className="text-label text-muted tabular-nums">{confidenceNum}/100</span>
+              <span className="text-label text-muted tabular-nums">
+                <CountUp value={confidenceNum} format={(v) => String(Math.round(v))} durationMs={800} />/100
+              </span>
             </div>
           )}
           <span className="rounded-full border border-brand/25 bg-brand/8 px-2 py-0.5 text-micro font-semibold uppercase tracking-widest text-brand">
@@ -246,10 +273,10 @@ export function DecisionHero({
           {has("catalysts") ? (
             <ul className="space-y-1.5">
               {verdict.catalysts.map((cat, i) => (
-                <li key={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
+                <Reveal key={i} as="li" index={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
                   <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${c.bullet}`} />
                   {cat}
-                </li>
+                </Reveal>
               ))}
             </ul>
           ) : (
@@ -263,10 +290,10 @@ export function DecisionHero({
           {has("risks") ? (
             <ul className="space-y-1.5">
               {verdict.risks.map((risk, i) => (
-                <li key={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
+                <Reveal key={i} as="li" index={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
                   <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-negative/50" />
                   {risk}
-                </li>
+                </Reveal>
               ))}
             </ul>
           ) : (
@@ -281,7 +308,7 @@ export function DecisionHero({
           {verdict.keyMetrics.map((m, i) => (
             <div
               key={i}
-              className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5"
+              className="card-lift flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5"
             >
               <span className="text-caption text-muted">{m.label}</span>
               <span className={`font-mono text-caption font-semibold ${SIGNAL_CLASS[m.signal]}`}>

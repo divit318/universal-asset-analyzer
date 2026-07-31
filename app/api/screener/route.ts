@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAssetClass, isAssetClassId } from "@/lib/assets/registry";
+import { getAssetClass, getMetric, isAssetClassId } from "@/lib/assets/registry";
 import type { AssetClassId } from "@/lib/assets/types";
 import { parseFilters } from "@/lib/screener/filter-engine";
 import { refreshUniverse, runScreen } from "@/lib/screener/pipeline";
@@ -20,6 +20,13 @@ const DEFAULT_CLASS: AssetClassId = "equity";
 function resolveClass(value: unknown): AssetClassId | null {
   if (value == null || value === "") return DEFAULT_CLASS;
   return isAssetClassId(value) ? value : null;
+}
+
+/** Columns the ranking layer can actually order by: the row's own fields, plus any metric of the class. */
+const BUILTIN_SORT_KEYS = new Set(["rankScore", "symbol", "name", "price", "changePercent"]);
+
+function isSortable(assetClass: AssetClassId, key: string): boolean {
+  return BUILTIN_SORT_KEYS.has(key) || getMetric(assetClass, key) != null;
 }
 
 /** GET /api/screener?class=<id> — universe build status, for polling while it warms. */
@@ -97,7 +104,17 @@ export async function POST(request: Request) {
       ? template.filters
       : parseFilters(assetClass, body.filters);
 
-  const sortKey = typeof body.sortKey === "string" ? body.sortKey : def.defaultSort.key;
+  /**
+   * An unrecognised sortKey used to be passed straight through to the sorter,
+   * where every candidate resolved to `null` and the "sorted" table silently
+   * came back in universe order with no column marked. Saved screens and the
+   * NL-filter handoff can both name a key that no longer exists on this class,
+   * so falling back to the class's own default sort is the honest outcome.
+   */
+  const sortKey =
+    typeof body.sortKey === "string" && isSortable(assetClass, body.sortKey)
+      ? body.sortKey
+      : def.defaultSort.key;
   const sortDir = body.sortDir === "asc" ? "asc" : "desc";
   const size = Math.min(Math.max(Number(body.size) || 50, 1), 200);
   const offset = Math.max(Number(body.offset) || 0, 0);

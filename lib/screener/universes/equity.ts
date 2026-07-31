@@ -103,4 +103,8 @@ export const equityUniverse: UniverseProvider = {
   refresh() {
     return toStatus(equityDataset.refresh());
   },
+
+  peekStatus() {
+    return toStatus(equityDataset.getStatus());
+  },
 };

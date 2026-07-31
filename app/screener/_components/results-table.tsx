@@ -63,7 +63,13 @@ function scoreTone(score: number): string {
 }
 
 function cellValue(assetClass: AssetClassId, row: RankedCandidate, key: string): string {
-  if (key === "rankScore") return String(row.rankScore);
+  if (key === "rankScore") {
+    // Zero confidence means not one ranking factor had data, so `rankScore`
+    // fell through to 0 — which the score colouring then paints red, reading as
+    // "the worst asset in the universe" when it actually means "we know nothing
+    // about it". An unknown score is an em dash, like every other unknown.
+    return row.confidence === 0 ? "—" : String(row.rankScore);
+  }
   if (key === "price") {
     return row.price == null
       ? "—"
@@ -310,7 +316,9 @@ export function ResultsTable({
                     <td
                       key={col.key}
                       className={`px-3 py-2 tabular-nums ${col.align === "left" ? "text-left" : "text-right"} ${
-                        col.key === "rankScore" ? `font-semibold ${scoreTone(row.rankScore)}` : ""
+                        col.key === "rankScore"
+                          ? `font-semibold ${row.confidence === 0 ? "text-muted" : scoreTone(row.rankScore)}`
+                          : ""
                       }`}
                     >
                       {cellValue(assetClass, row, col.key)}

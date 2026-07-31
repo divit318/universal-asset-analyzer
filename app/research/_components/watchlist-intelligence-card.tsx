@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { SmartAlerts } from "@/app/portfolio/_components/smart-alerts";
+import { SmartAlerts } from "@/app/_components/smart-alerts";
+import { LoadingPanel } from "@/app/_components/loading-panel";
 import type { WatchlistAlert } from "@/lib/types";
 
 /**
@@ -28,7 +29,7 @@ export function WatchlistIntelligenceCard({ symbol }: { symbol: string }) {
     return () => { cancelled = true; };
   }, [symbol]);
 
-  if (loading) return <div className="h-16 w-full animate-pulse rounded-xl bg-surface-2" />;
+  if (loading) return <LoadingPanel height="h-16" markSize={16} />;
   if (alerts.length === 0) return null;
 
   return (

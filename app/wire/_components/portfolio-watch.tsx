@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { NewsItem } from "@/lib/types";
 import { NewsItemRow } from "./news-item";
+import { Skeleton } from "@/app/_components/ui";
 
 interface HoldingNews {
   symbol: string;
@@ -89,7 +90,7 @@ export function PortfolioWatch() {
           ))}
         </ul>
       ) : (
-        <div className="h-24 animate-pulse rounded-xl border border-border bg-surface" />
+        <Skeleton height="h-24" radius="rounded-xl" className="border border-border" />
       )}
     </section>
   );

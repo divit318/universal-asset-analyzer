@@ -88,14 +88,6 @@ const SECTIONS: SectionDef[] = [
   },
 ];
 
-// Section header colors (navy-ish background)
-const SECTION_BG_ARGB = "FF1E3A5F";
-const SECTION_BG_FILLS: ExcelJS.Fill[] = SECTIONS.map(() => ({
-  type: "pattern" as const, pattern: "solid" as const,
-  fgColor: { argb: SECTION_BG_ARGB },
-}));
-void SECTION_BG_FILLS;
-
 const NAVY: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
 const BLUE: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1E40AF" } };
 const SECTION_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1E3A5F" } };

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Newspaper, Bot, FileText, LineChart, BarChart3, X } from "lucide-react";
 import { Badge, Button } from "@/app/_components/ui";
+import { LoadingMark } from "@/app/_components/loading-mark";
 import { formatDate } from "@/lib/format";
 import {
   computePatternStats,
@@ -128,7 +129,7 @@ export function PatternAnalysisPanel({
       <p className="text-xs leading-relaxed text-muted">
         {insight}
         {insightSource === "fallback" && (
-          <span className="ml-1 inline-block h-2 w-2 animate-pulse rounded-full bg-brand/50 align-middle" title="Refining with AI…" />
+          <LoadingMark size={11} className="ml-1 inline-flex align-middle" label="Refining with AI" />
         )}
       </p>
 

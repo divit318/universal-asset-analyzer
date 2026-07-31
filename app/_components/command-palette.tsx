@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Search, CornerDownLeft, TrendingUp, Plus } from "lucide-react";
 import type { SymbolSuggestion } from "@/lib/types";
-import { ALL_TOOLS } from "./nav-config";
+import { ALL_TOOLS, type NavIcon } from "./nav-config";
 import { useFocus } from "@/lib/focus-context";
 import { useToast } from "./toast";
 
@@ -14,7 +14,7 @@ export const OPEN_PALETTE_EVENT = "uaa:open-palette";
 
 type Item =
   | { kind: "ticker"; symbol: string; name: string; sub: string }
-  | { kind: "tool"; href: string; label: string; desc: string; icon: React.ComponentType<{ className?: string; strokeWidth?: number }>; objective: string };
+  | { kind: "tool"; href: string; label: string; desc: string; icon: NavIcon; objective: string };
 
 /**
  * The symbol-first verbs (§4.4). Derived from `ALL_TOOLS`'s `symbolParam`
@@ -25,7 +25,7 @@ type Item =
 const VERB_LABEL: Record<string, string> = {
   "/research": "Research",
   "/compare": "Compare",
-  "/dcf": "DCF",
+  "/valuation": "Valuation",
   "/ic-report": "IC Report",
 };
 const SYMBOL_TOOLS = ALL_TOOLS.filter((t) => t.symbolParam);

@@ -43,12 +43,18 @@ import {
 import { DownloadIcon } from "./_components/download-icon";
 import { SymbolSearch } from "@/app/_components/symbol-search";
 import { LoadingMark } from "@/app/_components/loading-mark";
+import { LoadingPanel, LoadingLine } from "@/app/_components/loading-panel";
+import { Reveal } from "@/app/_components/reveal";
+import { CountUp } from "@/app/_components/count-up";
+import { useValueFlash } from "@/app/_components/use-value-flash";
 import { useBootReady } from "@/app/_components/boot-context";
+import { DataProvenance } from "@/app/_components/data-provenance";
 import { ResearchCopilot } from "./_components/copilot/research-copilot";
 import type { AskAIPayload } from "./_components/pattern-analysis-panel";
 import { RESEARCH_ACTIONS } from "@/lib/ai/actions";
 import { ResearchNotes } from "./_components/research-notes";
 import { DecisionHero } from "./_components/decision-hero";
+import { ValuationStrip } from "./_components/valuation-strip";
 import { MovementExplainerCard } from "@/app/_components/movement-explainer-card";
 import { ConvictionBreakdown } from "./_components/conviction-breakdown";
 import { WhySection } from "./_components/why-section";
@@ -126,9 +132,7 @@ const InteractiveChart = dynamic(
   () => import("./_components/interactive-chart").then((m) => m.InteractiveChart),
   {
     ssr: false,
-    loading: () => (
-      <div className="h-[420px] w-full animate-pulse rounded-card border border-border bg-surface-2" />
-    ),
+    loading: () => <LoadingPanel height="h-[420px]" message="Loading price history…" markSize={26} />,
   },
 );
 
@@ -136,7 +140,7 @@ const InteractiveChart = dynamic(
 // matches each real component's rendered height so mounting in doesn't
 // shift layout or measure a 0x0 ResponsiveContainer.
 function ChartSkeleton({ h }: { h: string }) {
-  return <div className={`${h} w-full animate-pulse rounded-card border border-border bg-surface-2`} />;
+  return <LoadingPanel height={h} />;
 }
 
 // Five more recharts-bearing chains, deferred so recharts (and the
@@ -319,13 +323,7 @@ function TabNav({ active, onChange }: { active: Tab; onChange: (t: Tab) => void 
 /* -------------------------------------------------------------------------- */
 
 function LoadingSkeleton() {
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="h-20 animate-pulse rounded-xl bg-surface" />
-      <div className="h-48 animate-pulse rounded-xl bg-surface" />
-      <div className="h-32 animate-pulse rounded-xl bg-surface" />
-    </div>
-  );
+  return <LoadingPanel height="h-56" message="Loading analysis…" markSize={24} />;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -343,7 +341,7 @@ function ResearchWorkspace({
   saved: boolean;
   onCopyLink: () => void;
 }) {
-  const { quote, history, filings, edgarError, benchmarks, news } = data;
+  const { quote, history, filings, edgarError, benchmarks, news, quoteUpdatedAt, filingsUpdatedAt } = data;
   const toast = useToast();
   const [buyingOpen, setBuyingOpen] = useState(false);
   const market: MarketRegion = detectMarket(quote);
@@ -656,12 +654,21 @@ function ResearchWorkspace({
     [indiaCompany, indiaDerived],
   );
 
+  // A re-polled quote briefly marks the price instead of silently swapping the
+  // number under the user (see app/_components/use-value-flash.ts). Keyed on the
+  // price itself, so an unchanged re-poll stays quiet.
+  const priceFlash = useValueFlash(quote.price);
+
   /* ========================================================== */
+  // Section order below is the reveal order: identity → confidence → the
+  // answer → why now → context → personalised fit → evidence. Each `Reveal`
+  // index adds 60ms, and since sections mount as their data streams in, each
+  // one animates on arrival rather than everything waiting on the slowest.
   return (
     <div className="flex flex-col gap-5">
 
       {/* ── 1. Company masthead — identity, price, actions & key stats ── */}
-      <div data-arrival-target="price" className="overflow-hidden rounded-card border border-border bg-surface shadow-card">
+      <Reveal index={0} data-arrival-target="price" className="overflow-hidden rounded-card border border-border bg-surface shadow-card">
         <div className="flex flex-wrap items-start justify-between gap-4 p-5">
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2.5">
@@ -675,14 +682,23 @@ function ResearchWorkspace({
               )}
             </div>
             <div className="flex items-baseline gap-3">
-              <span className="text-4xl font-semibold tabular-nums tracking-tight">
-                {formatCurrency(quote.price, quote.currency)}
-              </span>
+              {/* Keyed on the symbol, not the price: the headline number counts
+                  up once per researched name, and a live re-poll of the *same*
+                  name updates in place (marked by priceFlash) instead of
+                  re-running the count from zero. */}
+              <CountUp
+                key={quote.symbol}
+                value={quote.price}
+                format={(v) => formatCurrency(v, quote.currency)}
+                durationMs={650}
+                className={`text-4xl font-semibold tabular-nums tracking-tight ${priceFlash}`}
+              />
               <span className={`inline-flex items-center gap-1 text-sm font-medium tabular-nums ${positive ? "text-positive" : "text-negative"}`}>
                 {positive ? <TrendingUp className="h-4 w-4" strokeWidth={2} /> : <TrendingDown className="h-4 w-4" strokeWidth={2} />}
                 {formatCurrency(quote.change, quote.currency)} ({formatPercent(quote.changePercent)})
               </span>
             </div>
+            <DataProvenance source="yahoo" asOf={quoteUpdatedAt} ttlHours={0.02} liveLabel />
           </div>
 
           {/* Action row */}
@@ -701,7 +717,7 @@ function ResearchWorkspace({
             </Link>
             <button
               onClick={onCopyLink}
-              className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-2 text-sm text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
+              className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-2 text-sm text-muted outline-none transition-[color,background-color,transform] duration-150 hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40 active:scale-[0.97]"
             >
               <Link2 className="h-4 w-4" strokeWidth={1.75} /> Copy link
             </button>
@@ -709,15 +725,15 @@ function ResearchWorkspace({
             <button
               onClick={downloadReport}
               disabled={downloading}
-              className="inline-flex items-center gap-1.5 rounded-control border border-brand/40 bg-brand-muted px-3 py-2 text-sm font-medium text-brand outline-none transition-colors hover:bg-brand/20 focus-visible:ring-2 focus-visible:ring-brand/40 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-control border border-brand/40 bg-brand-muted px-3 py-2 text-sm font-medium text-brand outline-none transition-[color,background-color,transform] duration-150 hover:bg-brand/20 focus-visible:ring-2 focus-visible:ring-brand/40 disabled:opacity-50 enabled:active:scale-[0.97]"
             >
-              <DownloadIcon />
+              {downloading ? <LoadingMark size={16} label="Generating report" /> : <DownloadIcon />}
               {downloading ? "Generating…" : "Excel Report"}
             </button>
             <button
               onClick={onSave}
               disabled={saved}
-              className={`inline-flex items-center gap-1.5 rounded-control border px-3 py-2 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand/40 disabled:opacity-60 ${
+              className={`inline-flex items-center gap-1.5 rounded-control border px-3 py-2 text-sm font-medium outline-none transition-[color,background-color,border-color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-brand/40 disabled:opacity-60 enabled:active:scale-[0.97] ${
                 saved ? "border-brand/40 bg-brand-muted text-brand" : "border-border hover:bg-surface-2"
               }`}
             >
@@ -726,7 +742,7 @@ function ResearchWorkspace({
             </button>
             <button
               onClick={() => setBuyingOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-control border border-brand/40 bg-brand-muted px-3 py-2 text-sm font-medium text-brand outline-none transition-colors hover:bg-brand/20 focus-visible:ring-2 focus-visible:ring-brand/40"
+              className="inline-flex items-center gap-1.5 rounded-control border border-brand/40 bg-brand-muted px-3 py-2 text-sm font-medium text-brand outline-none transition-[color,background-color,transform] duration-150 hover:bg-brand/20 focus-visible:ring-2 focus-visible:ring-brand/40 active:scale-[0.97]"
             >
               <Wallet className="h-4 w-4" strokeWidth={1.75} />
               Add to Portfolio
@@ -743,16 +759,16 @@ function ResearchWorkspace({
             </div>
           ))}
         </dl>
-      </div>
+      </Reveal>
 
       {/* ── 2b. Identity strip: personality badge + research confidence ── */}
       {isEquity && (
-        <div className="flex flex-wrap items-center gap-3">
+        <Reveal index={1} className="flex flex-wrap items-center gap-3">
           <InvestmentPersonalityBadge personality={fundamentals?.personality ?? null} loading={fundsLoading} />
           <div className="min-w-[220px] flex-1">
             <ResearchConfidenceMeter symbol={quote.symbol} />
           </div>
-        </div>
+        </Reveal>
       )}
 
       {/* ── 3. AI Decision Hero — the primary answer ────────────── */}
@@ -760,44 +776,66 @@ function ResearchWorkspace({
           snapshot, never the Yahoo composite, so the hero and the Investment
           Snapshot below always agree. Funds use their own fund score instead
           of the (equity-only, always-null-for-funds) fundamentals score. */}
-      <DecisionHero
-        verdict={verdict}
-        loading={verdict == null && verdictStream.status !== "error"}
-        received={verdictStream.received}
-        streaming={verdictStream.streaming}
-        elapsedMs={verdictStream.elapsedMs}
-        error={verdictStream.error}
-        onRetry={verdictStream.retry}
-        score={isIndia || isMacro ? null : isFund ? fundScore : isCrypto ? cryptoScore : isCommodity ? commodityScore : isForex ? forexScore : fundamentals?.score ?? null}
-        confidenceOverride={isIndia ? indiaSnapshot?.composite ?? null : null}
-      />
+      <Reveal index={2}>
+        <DecisionHero
+          verdict={verdict}
+          loading={verdict == null && verdictStream.status !== "error"}
+          received={verdictStream.received}
+          streaming={verdictStream.streaming}
+          elapsedMs={verdictStream.elapsedMs}
+          error={verdictStream.error}
+          onRetry={verdictStream.retry}
+          score={isIndia || isMacro ? null : isFund ? fundScore : isCrypto ? cryptoScore : isCommodity ? commodityScore : isForex ? forexScore : fundamentals?.score ?? null}
+          confidenceOverride={isIndia ? indiaSnapshot?.composite ?? null : null}
+        />
+      </Reveal>
+
+      {/* ── 3a-bis. Valuation strip — read-only. Research observes, Valuation judges:
+          the case is displayed here and edited only in the workspace, so there is
+          never a second editable copy of the one intrinsic value.
+
+          Equities only, because the case is a free-cash-flow model — but that
+          includes Indian listings: the valuation layer sources them from Yahoo
+          (not screener.in, which reports neither free cash flow nor a share
+          count) and is already region-aware, using the India risk-free rate, ERP
+          and terminal growth. Names with no reported FCF get an explicit "cannot
+          be valued" message rather than a hidden strip. ── */}
+      {isEquity ? (
+        <Reveal index={3}>
+          <ValuationStrip symbol={quote.symbol} price={quote.price ?? null} />
+        </Reveal>
+      ) : null}
 
       {/* ── 3b. Why Now — biggest current catalysts, composed from data already on the page ── */}
-      <WhyNowCard
-        verdict={verdict}
-        sectorEntry={sectorRotationEntry}
-        topMovementDriver={movementExplanation?.drivers[0]?.description ?? null}
-        nearestTimelineHeadline={nearestTimelineEvent?.title ?? null}
-      />
+      <Reveal index={3}>
+        <WhyNowCard
+          verdict={verdict}
+          sectorEntry={sectorRotationEntry}
+          topMovementDriver={movementExplanation?.drivers[0]?.description ?? null}
+          nearestTimelineHeadline={nearestTimelineEvent?.title ?? null}
+        />
+      </Reveal>
 
       {/* ── 3c. Macro Context — secondary context, collapsed so the answer leads ── */}
       {isEquity && (
-        <CollapsibleSection title="Macro context" subtitle="Market · sector · company regime">
-          <MacroContextLadder
-            sectorEntry={sectorRotationEntry}
-            industry={fundamentals?.snapshot?.industry}
-            recommendation={
-              isIndia
-                ? indiaSnapshot?.recommendation ?? null
-                : fundamentals?.score?.recommendation ?? null
-            }
-          />
-        </CollapsibleSection>
+        <Reveal index={4}>
+          <CollapsibleSection title="Macro context" subtitle="Market · sector · company regime">
+            <MacroContextLadder
+              sectorEntry={sectorRotationEntry}
+              industry={fundamentals?.snapshot?.industry}
+              recommendation={
+                isIndia
+                  ? indiaSnapshot?.recommendation ?? null
+                  : fundamentals?.score?.recommendation ?? null
+              }
+            />
+          </CollapsibleSection>
+        </Reveal>
       )}
 
       {/* ── 4. Portfolio Fit + Portfolio Decision — personalised context for this user ── */}
       {ios?.profileReady && portfolioFit && (
-        <div className="flex flex-col gap-3">
+        <Reveal index={5} className="flex flex-col gap-3">
           <PortfolioFitPanel
             fit={portfolioFit}
             collapsible
@@ -816,7 +854,7 @@ function ResearchWorkspace({
             fit={portfolioFit}
           />
           {portfolioRecommendation && <PortfolioDecisionCard recommendation={portfolioRecommendation} />}
-        </div>
+        </Reveal>
       )}
 
       {buyingOpen && (
@@ -832,29 +870,37 @@ function ResearchWorkspace({
       )}
 
       {/* ── 4b. Sector Intelligence — this company's sector rank/rotation ── */}
-      {isEquity && <SectorContextCard entry={sectorRotationEntry} />}
+      {isEquity && (
+        <Reveal index={6}>
+          <SectorContextCard entry={sectorRotationEntry} />
+        </Reveal>
+      )}
 
       {/* ── 5. Price chart — always visible above tabs ──────────── */}
-      <InteractiveChart
-        symbol={quote.symbol}
-        history={history}
-        benchmarks={benchmarks ?? { spy: [], sectorEtf: null, sector: [] }}
-        news={news}
-        onAskAI={handleChartAskAI}
-        onOpenTechnical={handleOpenTechnical}
-        onNavigate={handleChartNavigate}
-      />
+      <Reveal index={7}>
+        <InteractiveChart
+          symbol={quote.symbol}
+          history={history}
+          benchmarks={benchmarks ?? { spy: [], sectorEtf: null, sector: [] }}
+          news={news}
+          onAskAI={handleChartAskAI}
+          onOpenTechnical={handleOpenTechnical}
+          onNavigate={handleChartNavigate}
+        />
+      </Reveal>
 
       {/* ── 5b. Explain Every Movement — auto-loads (single instance on this page) ── */}
-      <MovementExplainerCard
-        symbol={quote.symbol}
-        sector={fundamentals?.snapshot?.sector}
-        autoLoad
-        // Hold until fundamentals resolve, so the sector is part of the very
-        // first request instead of triggering a second, superseding one.
-        ready={!fundsLoading}
-        onLoaded={setMovementExplanation}
-      />
+      <Reveal index={8}>
+        <MovementExplainerCard
+          symbol={quote.symbol}
+          sector={fundamentals?.snapshot?.sector}
+          autoLoad
+          // Hold until fundamentals resolve, so the sector is part of the very
+          // first request instead of triggering a second, superseding one.
+          ready={!fundsLoading}
+          onLoaded={setMovementExplanation}
+        />
+      </Reveal>
 
       {/* ── 5. Tab navigation ───────────────────────────────────── */}
       <TabNav active={tab} onChange={setTab} />
@@ -862,8 +908,10 @@ function ResearchWorkspace({
       {/* ── 6. Tab content ──────────────────────────────────────── */}
 
       {/* CONVICTION — score breakdown + investment assumptions */}
+      {/* Each panel is its own Reveal, so switching tabs fades the new content
+          in rather than hard-cutting it. */}
       {tab === "conviction" && (
-        <div className="flex flex-col gap-6">
+        <Reveal index={0} className="flex flex-col gap-6">
           {isIndia && hasIndia && indiaCompany && indiaDerived ? (
             // Indian stocks: screener.in is the single source of the conviction
             // score. The Yahoo composite is intentionally omitted here — showing
@@ -929,17 +977,17 @@ function ResearchWorkspace({
             />
           )}
           {isIndia && indiaLoading && (
-            <div className="flex items-center gap-3 rounded-xl border border-border bg-surface p-5 text-sm text-muted">
-              <LoadingMark size={16} className="shrink-0" label="Loading India research data" />
-              Loading India research data…
-            </div>
+            <LoadingLine
+              message="Loading India research data…"
+              className="rounded-xl border border-border bg-surface p-5"
+            />
           )}
-        </div>
+        </Reveal>
       )}
 
       {/* ANALYSIS — why own/avoid, biggest risks, what changed */}
       {tab === "analysis" && (
-        <div className="flex flex-col gap-6">
+        <Reveal index={0} className="flex flex-col gap-6">
           <WhySection
             verdict={verdict}
             verdictLoading={verdict == null && verdictStream.streaming}
@@ -997,12 +1045,12 @@ function ResearchWorkspace({
           {isMacro && macroSummary && (
             <AiMacroInsight section="macro-context" resetKey={quote.symbol} summary={macroSummary} news={news} />
           )}
-        </div>
+        </Reveal>
       )}
 
       {/* FINANCIALS — earnings, score, charts */}
       {tab === "financials" && (
-        <div className="flex flex-col gap-6">
+        <Reveal index={0} className="flex flex-col gap-6">
           {isFund ? (
             fundLoading ? (
               <LoadingSkeleton />
@@ -1135,6 +1183,7 @@ function ResearchWorkspace({
                 ) : null;
               })()}
 
+              <DataProvenance source="yahoo" asOf={fundamentalsEntry.updatedAt} ttlHours={24} />
               <ScoreCard score={fundamentals.score} momentum={fundamentals.momentum} />
               {hasEarnings && <EarningsCard earnings={fundamentals.earnings} />}
 
@@ -1172,6 +1221,7 @@ function ResearchWorkspace({
               {isIndia && hasIndia && indiaCompany && hasIndiaFinancials && (
                 <div className="flex flex-col gap-5">
                   <SectionDivider title="India Financial Trends (screener.in)" />
+                  <DataProvenance source="screener_in" asOf={indiaEntry.updatedAt} ttlHours={24} />
                   {(indiaCompany.quarterlyPL?.length ?? 0) >= 2 && (
                     <section className="flex flex-col gap-4">
                       <div>
@@ -1210,9 +1260,7 @@ function ResearchWorkspace({
                 </div>
               )}
 
-              {isIndia && indiaLoading && (
-                <p className="text-xs text-muted">Loading India financial data…</p>
-              )}
+              {isIndia && indiaLoading && <LoadingLine message="Loading India financial data…" />}
 
               {fundamentals.statementsError && (
                 <p className="text-xs text-muted">
@@ -1221,12 +1269,12 @@ function ResearchWorkspace({
               )}
             </>
           ) : null}
-        </div>
+        </Reveal>
       )}
 
       {/* OWNERSHIP — holders, insider, India shareholding */}
       {tab === "ownership" && (
-        <div className="flex flex-col gap-6">
+        <Reveal index={0} className="flex flex-col gap-6">
           {fundsLoading ? (
             <LoadingSkeleton />
           ) : (
@@ -1252,12 +1300,7 @@ function ResearchWorkspace({
                 </div>
               )}
 
-              {isIndia && indiaLoading && (
-                <div className="flex items-center gap-2 text-sm text-muted">
-                  <LoadingMark size={16} className="shrink-0" label="Loading shareholding data" />
-                  Loading shareholding data…
-                </div>
-              )}
+              {isIndia && indiaLoading && <LoadingLine message="Loading shareholding data…" />}
 
               {/* Global institutional ownership + insider */}
               {hasOwnership && <OwnershipCard ownership={fundamentals!.ownership} />}
@@ -1294,12 +1337,12 @@ function ResearchWorkspace({
               )}
             </>
           )}
-        </div>
+        </Reveal>
       )}
 
       {/* DETAILS — analyst, risk heatmap, filings, copilot, notes */}
       {tab === "details" && (
-        <div className="flex flex-col gap-6">
+        <Reveal index={0} className="flex flex-col gap-6">
           {/* Investment Timeline, Knowledge Graph, Opportunity Map — compact previews */}
           <TimelinePreviewCard
             symbol={quote.symbol}
@@ -1313,7 +1356,7 @@ function ResearchWorkspace({
 
           {/* Options chain (equity/fund underlyings with listed options — additive, not every symbol has one) */}
           {derivativesLoading ? (
-            <div className="h-40 w-full animate-pulse rounded-card border border-border bg-surface-2" />
+            <LoadingPanel height="h-40" message="Loading options chain…" />
           ) : derivativesSummary ? (
             <div className="flex flex-col gap-4">
               <DerivativesSummaryCard summary={derivativesSummary} />
@@ -1334,6 +1377,9 @@ function ResearchWorkspace({
           {isEquity && (
             <section className="flex flex-col gap-3">
               <SectionDivider title="SEC Filings" />
+              {!edgarError && filings.length > 0 && (
+                <DataProvenance source="sec_edgar" asOf={filingsUpdatedAt} ttlHours={24} />
+              )}
               {edgarError ? (
                 <p className="text-sm text-muted">EDGAR unavailable: {edgarError}</p>
               ) : filings.length === 0 ? (
@@ -1391,7 +1437,7 @@ function ResearchWorkspace({
 
           {/* User notes */}
           <ResearchNotes symbol={quote.symbol} />
-        </div>
+        </Reveal>
       )}
     </div>
   );
@@ -1465,7 +1511,7 @@ function EmptyState({
             <button
               key={sym}
               onClick={() => onSelect(sym)}
-              className="rounded-lg border border-border bg-surface px-4 py-2 font-mono text-sm transition-all hover:border-brand/40 hover:bg-surface-2 hover:text-brand"
+              className="rounded-lg border border-border bg-surface px-4 py-2 font-mono text-sm transition-all duration-150 hover:-translate-y-px hover:border-brand/40 hover:bg-surface-2 hover:text-brand active:scale-[0.97]"
             >
               {sym}
             </button>
@@ -1473,11 +1519,13 @@ function EmptyState({
         </div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {FEATURE_CARDS.map((f) => (
-          <Card key={f.title} padding="md" className="flex flex-col gap-1">
-            <p className="text-sm font-semibold text-foreground">{f.title}</p>
-            <p className="text-xs leading-5 text-muted">{f.desc}</p>
-          </Card>
+        {FEATURE_CARDS.map((f, i) => (
+          <Reveal key={f.title} index={i}>
+            <Card padding="md" className="card-lift flex h-full flex-col gap-1">
+              <p className="text-sm font-semibold text-foreground">{f.title}</p>
+              <p className="text-xs leading-5 text-muted">{f.desc}</p>
+            </Card>
+          </Reveal>
         ))}
       </div>
       <ManualAssetsPreview />
@@ -1581,8 +1629,10 @@ function ResearchPageInner() {
         sector: sectorEntry.data?.history ?? [],
       },
       news: newsEntry.data ?? [],
+      quoteUpdatedAt: quoteEntry.updatedAt,
+      filingsUpdatedAt: filingsEntry.updatedAt,
     };
-  }, [quoteEntry.data, historyEntry.data, filingsEntry.data, filingsEntry.error, spyEntry.data, sectorEntry.data, newsEntry.data]);
+  }, [quoteEntry.data, quoteEntry.updatedAt, historyEntry.data, filingsEntry.data, filingsEntry.error, filingsEntry.updatedAt, spyEntry.data, sectorEntry.data, newsEntry.data]);
 
   // The page shell renders as soon as the quote and the price series exist
   // (~500ms) rather than waiting for the slowest section (~2.3s). Everything
@@ -1781,14 +1831,14 @@ function ResearchPageInner() {
         </div>
       )}
 
-      {/* Loading skeleton */}
+      {/* Loading state — the brand mark, not a stack of grey rectangles
+          pretending to be the content that's about to arrive. */}
       {loading && (
-        <div className="flex flex-col gap-4">
-          <div className="h-24 animate-pulse rounded-xl bg-surface" />
-          <div className="h-12 animate-pulse rounded-xl bg-surface" />
-          <div className="h-36 animate-pulse rounded-xl bg-surface" />
-          <div className="h-64 animate-pulse rounded-xl bg-surface" />
-        </div>
+        <LoadingPanel
+          height="h-72"
+          markSize={34}
+          message={`Assembling research on ${symbol.trim().toUpperCase() || "this asset"}…`}
+        />
       )}
 
       {/* Main workspace */}

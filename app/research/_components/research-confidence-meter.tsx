@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { CountUp } from "@/app/_components/count-up";
+import { LoadingLine } from "@/app/_components/loading-panel";
+import { ValueBar } from "@/app/_components/value-bar";
 import type { CopilotCoverage } from "./copilot/use-copilot";
 
 /**
@@ -45,7 +48,11 @@ export function ResearchConfidenceMeter({ symbol }: { symbol: string }) {
   }, [symbol]);
 
   if (loading) {
-    return <div className="h-10 w-full animate-pulse rounded-lg bg-surface-2" />;
+    return (
+      <div className="flex h-10 items-center rounded-lg border border-border bg-surface-2 px-4">
+        <LoadingLine message="Checking data coverage…" className="text-caption" />
+      </div>
+    );
   }
   if (!coverage) return null;
 
@@ -58,12 +65,12 @@ export function ResearchConfidenceMeter({ symbol }: { symbol: string }) {
       <div className="flex items-center justify-between gap-3">
         <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Research Confidence</span>
         <span className="font-mono text-xs tabular-nums text-muted">
-          {available.length}/{DATASETS.length} datasets · {coverage.filings} filings · {coverage.news} news
+          {available.length}/{DATASETS.length} datasets ·{" "}
+          <CountUp value={coverage.filings} format={(v) => String(Math.round(v))} /> filings ·{" "}
+          <CountUp value={coverage.news} format={(v) => String(Math.round(v))} /> news
         </span>
       </div>
-      <div className="h-1 w-full overflow-hidden rounded-full bg-surface">
-        <div className={`h-full rounded-full ${barColor(pct)}`} style={{ width: `${pct}%` }} />
-      </div>
+      <ValueBar key={symbol} value={pct} barClassName={barColor(pct)} trackClassName="bg-surface" />
       {missing.length > 0 && (
         <p className="text-[10px] text-muted/70">
           Missing: {missing.map((d) => d.label).join(", ")} — AI confidence reflects this gap.

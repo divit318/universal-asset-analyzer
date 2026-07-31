@@ -72,3 +72,6 @@ __pycache__/
 
 # Playwright MCP browser debug session artifacts (console logs, traces)
 /.playwright-mcp/
+
+# stray self-referencing symlink (repo root -> repo root); breaks recursive tooling
+/universal-asset-analyzer

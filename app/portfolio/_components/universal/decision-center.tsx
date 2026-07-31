@@ -1,5 +1,3 @@
-"use client";
-
 import { Card, Badge } from "@/app/_components/ui";
 import { CollapsibleSection } from "@/app/_components/collapsible-section";
 import { formatCurrency } from "@/lib/format";

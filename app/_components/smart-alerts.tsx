@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * Structural shape shared by PortfolioAlert (lib/portfolio-analytics.ts) and
  * WatchlistAlert (lib/types.ts) — both are deterministic, severity-sorted

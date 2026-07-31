@@ -147,9 +147,36 @@ export function AddHoldingDialog({ open, onClose, onSaved }: {
     setErr(null);
   }
 
+  // Cancel, Escape and backdrop-click all close via `open` going false — reset
+  // there too, not just on successful submit, so reopening never shows stale
+  // values from an abandoned entry.
+  /* eslint-disable react-hooks/set-state-in-effect -- syncing local form state
+     to `open`, an external prop the parent controls, not derivable at render
+     time. */
+  useEffect(() => {
+    if (!open) {
+      resetFields();
+      setErr(null);
+    }
+  }, [open]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
+
+    // HTML `min="0"` only blocks negatives, not zero — a 0-quantity or
+    // 0-cost holding is never a valid entry, so check it before hitting the API.
+    if (isCash) {
+      if (!(Number(quantity) > 0)) {
+        setErr("Enter an amount greater than 0.");
+        return;
+      }
+    } else if (!(Number(quantity) > 0) || !(Number(avgCost) > 0)) {
+      setErr("Quantity and avg cost must be greater than 0.");
+      return;
+    }
+
     setSaving(true);
 
     try {

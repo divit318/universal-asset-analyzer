@@ -4,58 +4,8 @@ import { Card } from "@/app/_components/ui";
 import { CollapsibleSection } from "@/app/_components/collapsible-section";
 import { compareScenarioSets } from "@/lib/portfolio/engines/scenario";
 import { StateRow } from "../impact-display";
+import { AllocationDiffChart } from "../allocation-diff-chart";
 import type { CashPlanResponse } from "./types";
-
-/** Current vs. projected asset-class allocation — same visual language as the
- * Optimize tab's PortfolioDiffChart, built locally since the shapes differ
- * (a full before/after evaluation pair, not a trade-selection preview). */
-function AllocationDiff({ plan }: { plan: CashPlanResponse }) {
-  const beforeByClass = new Map(plan.before.allocation.byAssetClass.slices.map((s) => [s.key, s]));
-  const afterByClass = new Map(plan.after.allocation.byAssetClass.slices.map((s) => [s.key, s]));
-  const allKeys = new Set([...beforeByClass.keys(), ...afterByClass.keys()]);
-
-  const rows = [...allKeys]
-    .map((key) => {
-      const before = beforeByClass.get(key);
-      const after = afterByClass.get(key);
-      return {
-        key,
-        label: before?.label ?? after?.label ?? key,
-        beforeWeight: before?.weight ?? 0,
-        afterWeight: after?.weight ?? 0,
-      };
-    })
-    .filter((r) => Math.abs(r.afterWeight - r.beforeWeight) >= 0.1)
-    .sort((a, b) => Math.abs(b.afterWeight - b.beforeWeight) - Math.abs(a.afterWeight - a.beforeWeight));
-
-  if (rows.length === 0) return null;
-
-  return (
-    <Card className="flex flex-col gap-3 p-4">
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">
-        Current vs. projected allocation
-      </span>
-      <ul className="flex flex-col gap-2">
-        {rows.map((r) => (
-          <li key={r.key} className="flex flex-col gap-1">
-            <div className="flex items-baseline justify-between gap-2 text-xs">
-              <span className="font-semibold text-foreground">{r.label}</span>
-              <span className="flex items-baseline gap-1.5 font-mono tabular-nums">
-                <span className="text-muted/70">{r.beforeWeight.toFixed(1)}%</span>
-                <span className="text-muted/40">→</span>
-                <span className="font-semibold text-foreground">{r.afterWeight.toFixed(1)}%</span>
-              </span>
-            </div>
-            <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
-              <div className="absolute inset-y-0 left-0 rounded-full bg-brand/25" style={{ width: `${Math.min(r.beforeWeight, 100)}%` }} />
-              <div className="absolute inset-y-0 w-0.5 rounded-full bg-foreground" style={{ left: `${Math.min(r.afterWeight, 100)}%` }} />
-            </div>
-          </li>
-        ))}
-      </ul>
-    </Card>
-  );
-}
 
 function RiskComparisonCard({ plan }: { plan: CashPlanResponse }) {
   const { before, after } = plan.riskComparison;
@@ -137,7 +87,7 @@ function ScenarioTable({ plan }: { plan: CashPlanResponse }) {
 export function AnalysisPanel({ plan }: { plan: CashPlanResponse }) {
   return (
     <div className="flex flex-col gap-3">
-      <AllocationDiff plan={plan} />
+      <AllocationDiffChart before={plan.before.allocation} after={plan.after.allocation} />
       <RiskComparisonCard plan={plan} />
       {/* Counted, not asserted — the hardcoded "19" here disagreed with the 18
           scenarios the engine actually runs. */}

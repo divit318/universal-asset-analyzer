@@ -40,6 +40,8 @@ interface AgentContext {
   insider?: InsiderActivity;
   screenerIn?: ScreenerInCompany | null;
   signals: DetectedSignal[];
+  /** The current ValuationCase, rendered by lib/valuation/case.ts:summarizeCase. */
+  valuationCaseSummary?: string | null;
 }
 
 function formatNum(v: number | null | undefined, suffix = "", decimals = 1): string {
@@ -55,6 +57,12 @@ function buildDataContext(ctx: AgentContext, domains: AgentDomain[]): string {
   const a = ctx.analyst;
   const ins = ctx.insider;
   const si = ctx.screenerIn;
+
+  if (domains.includes("valuation") && ctx.valuationCaseSummary) {
+    parts.push(`${ctx.valuationCaseSummary}
+
+This case is the app's single intrinsic-value estimate. Critique it; do not replace it.`);
+  }
 
   if (domains.includes("business") || domains.includes("valuation")) {
     if (s) {
@@ -175,8 +183,12 @@ const AGENT_CONFIG: Record<AgentDomain, { label: string; persona: string }> = {
     persona: "You are a forensic accounting analyst. Focus on earnings quality, cash conversion, working capital trends, revenue recognition, off-balance-sheet items, and red flags in financial statement trends.",
   },
   valuation: {
+    // Deliberately a critic, not a producer. The intrinsic value belongs to the
+    // ValuationCase (lib/valuation/), which is a persisted, versioned object the
+    // user can correct — so an agent narrating its own fair value would be a
+    // second, unfalsifiable answer to the one question the case exists to own.
     label: "Valuation Analyst",
-    persona: "You are a valuation specialist. Work through intrinsic value estimates using the available data: DCF assumptions, relative multiples vs peers, and scenario analysis. Be explicit about assumptions and their sensitivity.",
+    persona: "You are a valuation specialist reviewing an existing valuation case. Do NOT produce your own fair value or price target. Instead: state where the case's assumptions are supported by the data and where they are not, name the single weakest assumption and say what evidence would change it, and flag any assumption that is internally inconsistent with the others (growth that implies reinvestment the cash flows do not show, a terminal value carrying too much of the total, a discount rate that ignores leverage). Be specific and cite the figures you were given.",
   },
   governance: {
     label: "Governance & Ownership Analyst",
@@ -319,6 +331,8 @@ export interface AgentNetworkInput {
   insider?: InsiderActivity;
   screenerIn?: ScreenerInCompany | null;
   signals: DetectedSignal[];
+  /** The current ValuationCase, rendered by lib/valuation/case.ts:summarizeCase. */
+  valuationCaseSummary?: string | null;
 }
 
 export interface AgentFailure {
@@ -357,6 +371,7 @@ export async function runAgentNetwork(
     insider: input.insider,
     screenerIn: input.screenerIn,
     signals: input.signals,
+    valuationCaseSummary: input.valuationCaseSummary,
   };
 
   const entries = [...input.questionsByAgent.entries()];

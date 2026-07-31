@@ -188,7 +188,7 @@ export function WatchlistRowDetail({
         <div className="flex flex-wrap gap-3 text-[11px]">
           {[
             { href: `/research?symbol=${item.symbol}`, label: "Research" },
-            { href: `/dcf?symbol=${item.symbol}`, label: "DCF" },
+            { href: `/valuation?symbol=${item.symbol}`, label: "Valuation" },
             { href: `/ic-report?symbol=${item.symbol}`, label: "IC Report" },
             { href: `/compare?symbols=${item.symbol}`, label: "Compare" },
           ].map((l) => (

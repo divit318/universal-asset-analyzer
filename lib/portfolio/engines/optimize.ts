@@ -331,7 +331,11 @@ function distributeWithinClass(
   // Confidence-weighted relative weights: tilt away from equal weight in
   // proportion to BOTH how good the score is and how much we trust it.
   const items = holdings.map((h) => {
-    const score = h.score?.score ?? 50;
+    // `score` only matters multiplied by `conf` below, and `conf` is 0 for an
+    // unscored holding — so this must never read as "assume average quality"
+    // (the fabricated-50 pattern model/adapter.ts's score() contract forbids).
+    // 0 is inert for the same reason 50 was: conf=0 zeroes the whole tilt term.
+    const score = h.score?.score ?? 0;
     const conf = (h.score?.confidence ?? 0) / 100;
     const tilt = ((score - 50) / 50) * conf * 0.6;
     return { id: h.id, weight: Math.max(1 + tilt, 1e-4), alloc: 0, capped: false };

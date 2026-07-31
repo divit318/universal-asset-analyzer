@@ -121,8 +121,92 @@ export function categoryStyle(category: string | null): string | null {
 
 /* -------------------------------------------------------------------------- */
 
+/* -------------------------------------------------------------------------- */
+/* What is (and isn't) an ETF for this class                                   */
+/* -------------------------------------------------------------------------- */
+
 /** Bond categories are screened as the `bond` asset class, not as generic ETFs. */
 const BOND_CATEGORY_SET = new Set<string>(BOND_CATEGORIES.map((c) => c.toLowerCase()));
+
+/**
+ * Fixed-income and cash categories that are NOT in BOND_CATEGORIES, because the
+ * bond universe doesn't query them — so nothing else in the app filters them
+ * out. All three verified live against real `fundProfile.categoryName` values.
+ *
+ * `Convertibles` is here on the strength of what the funds actually are: ICVT is
+ * named "iShares Convertible Bond ETF" and reports 0.1% stocks against 16%
+ * bonds, with the balance in convertible paper. Note that this class is the only
+ * place it currently appears — see the note in the audit about extending
+ * BOND_CATEGORIES so convertibles are screenable as bonds instead.
+ *
+ * Preferred-stock funds are deliberately NOT here: the registry already models
+ * them (`categoryStyle` maps "preferred" to the Income style), they have nowhere
+ * else to live, and unlike a bond ladder they are legitimately screened as ETFs.
+ * They are kept out of the low-volatility *template* instead, which is where
+ * their bond-like volatility was actually doing damage.
+ */
+const NON_EQUITY_CATEGORY_PATTERNS = [/money market/, /target maturity/, /convertible/];
+
+/**
+ * Names that give a bond or cash fund away when holdings data is unavailable.
+ * Deliberately narrow: this only runs for the handful of funds Yahoo returned
+ * nothing for, where the alternative is admitting them blind.
+ */
+const FIXED_INCOME_NAME_RE =
+  /\b(bond|bonds|treasury|treasuries|muni|municipal|money market|t-bill|ultra[- ]?short|floating rate)\b/i;
+
+/**
+ * Is this fund something other than an equity/commodity/crypto ETF — i.e. a bond
+ * fund, a money-market fund or a bond ladder that happens to trade on an
+ * exchange?
+ *
+ * Such funds belong to the `bond` class (where duration and credit quality are
+ * first-class) or nowhere, and they are actively harmful in this one: the ETF
+ * ranking weights volatility, so cash vehicles sweep any low-volatility screen
+ * by construction. Live verification of the "Low Volatility" template returned
+ * SBIL (a money-market fund, 0.26% vol), BSCQ and IBDR (bond ladders) as its
+ * top three results — ahead of every actual low-volatility equity ETF.
+ *
+ * The rules are ordered cheapest-and-sharpest first, and every threshold below
+ * was set against real payloads rather than intuition. The two traps:
+ *
+ *  - **0% equity does not mean "not an equity ETF".** GLD, SLV, USO and BITO all
+ *    report `stockPosition: 0`. Excluding on low equity weight would delete the
+ *    entire commodity and crypto shelf.
+ *  - **A big cash position does not mean "cash fund".** Futures-backed funds post
+ *    collateral: BITO holds 67.5% cash, USO 57.3%, TQQQ 34.5%. Only cash *plus*
+ *    bonds at ~100% with no equity is actually a cash vehicle.
+ */
+export function isNonEquityFund(detail: FundDetail | undefined, name: string): boolean {
+  // Nothing known at all — fall back to the name rather than admitting blind.
+  // (This is why `available` exists: an enrichment timeout used to produce the
+  // same all-null detail as a genuine "holds no bonds", and NXUS — an aggregate
+  // bond ETF — rode that ambiguity straight into the equity ETF universe.)
+  if (!detail?.available) return FIXED_INCOME_NAME_RE.test(name);
+
+  const category = detail.category?.toLowerCase() ?? null;
+  if (category) {
+    if (BOND_CATEGORY_SET.has(category)) return true;
+    if (NON_EQUITY_CATEGORY_PATTERNS.some((re) => re.test(category))) return true;
+  }
+
+  const bond = detail.bondWeight;
+  const cash = detail.cashWeight;
+  const equity = detail.equityWeight ?? 0;
+
+  // Majority bonds: a bond fund, or an allocation fund dominated by its bond
+  // sleeve (FREI — 61.6% bonds against 22% equity — wearing "Miscellaneous
+  // Allocation" as a category).
+  if (bond != null && bond >= 50 && bond > equity) return true;
+
+  // Effectively all bonds and cash with no equity at all: a money-market fund or
+  // a maturity-dated ladder. SBIL reports 31.2% bonds + 68.8% cash; BSCQ and
+  // IBDR both 48% + 52%. The 90% floor is what keeps BITO (67.5% cash) and USO
+  // (57.3%) — which are real, screenable funds — on the right side of the line.
+  if (bond != null && cash != null && bond + cash >= 90 && equity < 5) return true;
+
+  return false;
+}
 
 export function toCandidate(
   row: RawQuoteRow,
@@ -194,21 +278,20 @@ async function build(report: (ready: number, total: number) => void): Promise<Sc
     report(++done, rows.length);
   });
 
-  // Bond funds belong to the `bond` asset class, where duration and credit
-  // quality are first-class; judging them on top-10 concentration and sector
-  // weight would be meaningless. The ETF *screener row* carries no category
-  // field (verified — it has netExpenseRatio and netAssets but no
-  // categoryName), so the only reliable signal is what enrichment tells us the
-  // fund actually holds: a portfolio that is ≥70% bonds is a bond fund,
-  // whatever it calls itself. Funds past the enrichment cap can't be
-  // classified this way and are left in — they're small, and the alternative
-  // is dropping legitimate equity ETFs we simply didn't look at.
+  // Bond funds, money-market funds and maturity-dated bond ladders belong to the
+  // `bond` asset class, where duration and credit quality are first-class;
+  // judging them on top-10 concentration and sector weight would be meaningless,
+  // and leaving them here lets cash instruments win every low-volatility screen.
+  //
+  // The ETF *screener row* carries no category field (verified — it has
+  // netExpenseRatio and netAssets but no categoryName), so the classification
+  // has to come from what enrichment says the fund actually holds. See
+  // `isNonEquityFund` for the rules and the payloads behind each threshold.
   return rows
     .filter((r) => {
-      const d = details.get(r.symbol as string);
-      if (!d) return true;
-      if (d.bondWeight != null && d.bondWeight >= 70) return false;
-      return !(d.category && BOND_CATEGORY_SET.has(d.category.toLowerCase()));
+      const symbol = r.symbol as string;
+      const name = str(r.longName) ?? str(r.shortName) ?? symbol;
+      return !isNonEquityFund(details.get(symbol), name);
     })
     .map((r) =>
       toCandidate(r, details.get(r.symbol as string), histories.get(r.symbol as string)),

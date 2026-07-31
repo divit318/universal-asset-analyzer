@@ -3,7 +3,8 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { PageShell, PageHeader, StatTile, Button, Field, Input, Card, SectionHeader } from "@/app/_components/ui";
+import { PageShell, PageHeader, StatTile, Button, Field, Input, Card, SectionHeader, Skeleton } from "@/app/_components/ui";
+import { Reveal } from "@/app/_components/reveal";
 import { SymbolSearch } from "@/app/_components/symbol-search";
 import { useToast } from "@/app/_components/toast";
 import type { Decision, DecisionAction, ThesisEvolution } from "@/lib/types";
@@ -225,10 +226,12 @@ function JournalPageInner() {
 
   return (
     <PageShell gap="gap-6">
-      <PageHeader
-        title="Decision Journal"
-        description="Log every call with your conviction and thesis, then measure whether you were right. The loop that makes you a better investor."
-      />
+      <Reveal index={0}>
+        <PageHeader
+          title="Decision Journal"
+          description="Log every call with your conviction and thesis, then measure whether you were right. The loop that makes you a better investor."
+        />
+      </Reveal>
 
       {/* Track record.
           Below MIN_SCORED_FOR_TRACK_RECORD the statistics are not merely noisy,
@@ -247,7 +250,7 @@ function JournalPageInner() {
       )}
 
       {tr && tr.scored >= MIN_SCORED_FOR_TRACK_RECORD && (
-        <div className="flex flex-col gap-4">
+        <Reveal index={1} className="flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <StatTile
               label="Hit Rate"
@@ -285,10 +288,11 @@ function JournalPageInner() {
             <CalibrationTable title="Calibration — by conviction" rows={tr.byConviction} labelFor={(k) => `Conv. ${k}`} />
             <CalibrationTable title="Does fit help? — by fit tier" rows={tr.byFitTier} />
           </div>
-        </div>
+        </Reveal>
       )}
 
       {/* Log a decision */}
+      <Reveal index={2} as="section">
       <Card>
         <SectionHeader label="Log a decision" description="Capture the call and the reasoning while it's fresh" />
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -349,15 +353,16 @@ function JournalPageInner() {
           </Button>
         </div>
       </Card>
+      </Reveal>
 
       {/* Thesis evolution for the selected symbol (migrated from the timeline). */}
       {symbol && evolution && evolution.points.length > 0 ? <ThesisEvolutionPanel evolution={evolution} /> : null}
 
       {/* Decision list */}
-      <div className="flex flex-col gap-2">
+      <Reveal index={3} className="flex flex-col gap-2">
         <SectionHeader label="Decisions" description={hasDecisions ? `${data!.decisions.length} logged` : undefined} />
         {loading ? (
-          <div className="h-24 animate-pulse rounded-card border border-border bg-surface" />
+          <Skeleton height="h-24" radius="rounded-card" className="border border-border" />
         ) : !hasDecisions ? (
           <div className="rounded-card border border-border bg-surface px-5 py-10 text-center text-sm text-muted">
             No decisions logged yet. Log your first call above, or from any stock&apos;s research page.
@@ -404,7 +409,7 @@ function JournalPageInner() {
             );
           })
         )}
-      </div>
+      </Reveal>
     </PageShell>
   );
 }

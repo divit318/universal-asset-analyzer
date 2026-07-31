@@ -27,6 +27,7 @@
 
 import type { ReactNode } from "react";
 import { Card } from "./card";
+import { Skeleton, SkeletonText } from "./skeleton";
 
 /**
  * Rendering tiers, in the order the user perceives them. The tier does not gate
@@ -143,18 +144,16 @@ export function SectionSkeleton({ tier = 3 }: { tier?: SectionTier }) {
   if (tier === 4) {
     return (
       <div className="space-y-2" aria-hidden>
-        <div className="h-3 w-1/3 animate-pulse rounded bg-surface-2" />
-        <div className="h-2.5 w-full animate-pulse rounded bg-surface-2" />
-        <div className="h-2.5 w-11/12 animate-pulse rounded bg-surface-2" />
-        <div className="h-2.5 w-4/5 animate-pulse rounded bg-surface-2" />
+        <Skeleton height="h-3" width="w-1/3" />
+        <SkeletonText lines={3} />
       </div>
     );
   }
 
   return (
     <div className="space-y-2" aria-hidden>
-      <div className="h-3 w-1/4 animate-pulse rounded bg-surface-2" />
-      <div className="h-20 w-full animate-pulse rounded-lg bg-surface-2" />
+      <Skeleton height="h-3" width="w-1/4" />
+      <Skeleton height="h-20" radius="rounded-lg" />
     </div>
   );
 }

@@ -1,19 +1,26 @@
 /**
- * IC Pipeline — Stage 5: Valuation Engine
+ * IC Pipeline — Stage 5: Valuation adjudication.
  *
- * Runs 4 valuation approaches in parallel using structured data and AI:
- *   1. DCF — AI derives growth/margin/WACC assumptions from data, builds model
- *   2. Relative valuation — vs sector peers on key multiples
- *   3. Dividend discount / earnings yield (where applicable)
- *   4. Sum-of-the-parts (SOTP) — for conglomerates / multi-segment businesses
+ * This stage no longer produces an intrinsic value. The ValuationCase does
+ * (lib/valuation/), and it is persisted, versioned and correctable by the user;
+ * a second estimate narrated here would be a competing answer to the one
+ * question the case exists to own, and an unfalsifiable one at that.
  *
- * Each approach returns a price target range with explicit assumptions.
- * The final output includes scenario analysis and a consolidated target.
+ * What this stage does instead:
+ *   1. Reports the case's own fair value, range and margin of safety.
+ *   2. Runs cross-checks that are genuinely *different lenses*, not DCF copies:
+ *      relative multiples vs peers, dividend/earnings yield, and sum-of-the-parts
+ *      for conglomerates. These triangulate the case; they do not replace it.
+ *   3. Adjudicates — states where it agrees with the case and where it does not,
+ *      and which assumption is weakest.
+ *   4. Reconciles the case against the quant engine's Monte Carlo prior when one
+ *      is available.
  */
 
 import { runPrompt } from "./ai";
 import { extractJsonObject } from "./json-extract";
 import type { FundamentalsSnapshot, FinancialStatements, AnalystConsensus } from "./types";
+import { summarizeCase, type ValuationCase } from "./valuation/case";
 import type { ScreenerInCompany } from "./screener-in";
 
 /* ─── FX context helpers ─────────────────────────────────────────────── */
@@ -173,14 +180,49 @@ export interface ValuationApproach {
   confidence: "high" | "medium" | "low";
 }
 
+/** Where the report stands relative to the case it is discussing. */
+export type CaseStance = "agrees" | "disagrees" | "partial";
+
+export interface CaseAssessment {
+  stance: CaseStance;
+  /** Where the report agrees with the case and where it does not. */
+  reasoning: string;
+  /** Assumptions the report considers least supported, weakest first. */
+  weakestAssumptions: string[];
+}
+
 export interface ValuationResult {
   currentPrice: string;
+  /**
+   * The ValuationCase's bear–bull range, per share.
+   *
+   * Named for what it is now: the case's range, copied in. It was
+   * `intrinsicValueRange` when this stage produced its own estimate, and that
+   * name became a lie the moment the case took ownership of the number.
+   * `intrinsicValueRange` is retained as a deprecated alias so existing report
+   * renderers and exports keep working.
+   */
+  caseValueRange: string;
+  /** @deprecated Use `caseValueRange`. Kept so older consumers do not break. */
   intrinsicValueRange: string;
+  /** Return implied by the case's base value from today's price. */
+  caseImpliedUpside: string;
+  /** @deprecated Use `caseImpliedUpside`. */
   impliedUpside: string;
+  /** Cross-checks only. The DCF lens is the case and is deliberately absent. */
   approaches: ValuationApproach[];
+  /** Narrative around the case's own bear/base/bull, whose prices come from it. */
   scenarios: ValuationScenario[];
+  /**
+   * Prose on how the case reacts to growth and discount-rate changes. The
+   * numeric grid lives in the workspace and the case export; this is commentary.
+   */
+  sensitivityCommentary: string;
+  /** @deprecated Use `sensitivityCommentary`. */
   dcfSensitivity: string;
   valuationVerdict: string;
+  /** The adjudication. Null when there is no case to discuss. */
+  caseAssessment: CaseAssessment | null;
 }
 
 const CONFIDENCE_LEVELS = ["high", "medium", "low"] as const;
@@ -215,6 +257,24 @@ function sanitizeScenario(item: unknown): ValuationScenario | null {
   };
 }
 
+const CASE_STANCES = ["agrees", "disagrees", "partial"] as const;
+
+function sanitizeCaseAssessment(item: unknown): CaseAssessment | null {
+  if (item === null || typeof item !== "object") return null;
+  const a = item as Record<string, unknown>;
+  const reasoning = typeof a.reasoning === "string" ? a.reasoning : "";
+  if (!reasoning) return null;
+  const raw = typeof a.stance === "string" ? a.stance.toLowerCase() : "";
+  const stance = (CASE_STANCES as readonly string[]).includes(raw) ? (raw as CaseStance) : "partial";
+  return {
+    stance,
+    reasoning,
+    weakestAssumptions: Array.isArray(a.weakestAssumptions)
+      ? a.weakestAssumptions.filter((x): x is string => typeof x === "string")
+      : [],
+  };
+}
+
 /** Exported for unit testing — pure, no I/O. */
 export function parseValuation(raw: string): ValuationResult {
   // extractJsonObject does not recurse into nested arrays — approaches/scenarios
@@ -227,11 +287,18 @@ export function parseValuation(raw: string): ValuationResult {
     scenarios: [] as unknown[],
     dcfSensitivity: "",
     valuationVerdict: "",
+    caseAssessment: null as unknown,
   });
   return {
     ...parsed,
+    // The new names are canonical; the deprecated aliases are kept in lockstep so
+    // a consumer reading either sees the same string.
+    caseValueRange: parsed.intrinsicValueRange,
+    caseImpliedUpside: parsed.impliedUpside,
+    sensitivityCommentary: parsed.dcfSensitivity,
     approaches: parsed.approaches.map(sanitizeApproach).filter((a): a is ValuationApproach => a !== null),
     scenarios: parsed.scenarios.map(sanitizeScenario).filter((s): s is ValuationScenario => s !== null),
+    caseAssessment: sanitizeCaseAssessment(parsed.caseAssessment),
   };
 }
 
@@ -334,33 +401,28 @@ export interface ReconciliationResult {
 }
 
 /**
- * Reconcile LLM valuation target vs MC p50.
+ * Reconcile the ValuationCase against the quant engine's Monte Carlo prior.
  *
- * If the spread between LLM mid-target and MC p50 exceeds 30%, triggers a
- * divergence LLM call to explain the discrepancy. Otherwise returns a simple
- * one-line reconciliation.
+ * Previously this compared the *LLM's* narrated mid-target against the engine,
+ * which required scraping a number back out of a formatted string like
+ * "₹1,450–₹1,600" — and, more importantly, reconciled two estimates the user
+ * could neither see the workings of nor correct. It now takes the case's fair
+ * value directly: one side is the user-owned judgment, the other is the
+ * systematic prior, which is the comparison actually worth explaining.
  *
- * llm_target_mid: midpoint parsed from ValuationResult.intrinsicValueRange
- * mc_p50:         MC p50 intrinsic value from scorecard/detail
+ * caseFairValue: the case's base-case fair value per share
+ * mc_p50:        the engine's Monte Carlo median intrinsic value per share
  */
 export async function reconcileValuations(
   symbol: string,
-  llmResult: ValuationResult,
+  caseFairValue: number | null,
   mc_p50: number | null,
   currency = "$",
+  crossChecks: string[] = [],
 ): Promise<ReconciliationResult> {
-  // Parse LLM mid-target from intrinsicValueRange string
-  let llm_target_mid: number | null = null;
-  const rangeStr = llmResult.intrinsicValueRange;
-  if (rangeStr && rangeStr !== "n/a") {
-    // Handles "$180–$220", "₹1,450–₹1,600", "$195", etc.
-    const nums = rangeStr.replace(/[^\d.,–\-]/g, " ").trim().split(/[–\-]+/).map((s) => {
-      const n = parseFloat(s.replace(/,/g, "").trim());
-      return isFinite(n) ? n : null;
-    }).filter((n): n is number => n !== null);
-    if (nums.length === 2) llm_target_mid = (nums[0] + nums[1]) / 2;
-    else if (nums.length === 1) llm_target_mid = nums[0];
-  }
+  const llm_target_mid = caseFairValue != null && Number.isFinite(caseFairValue)
+    ? caseFairValue
+    : null;
 
   if (llm_target_mid === null || mc_p50 === null || mc_p50 === 0) {
     return {
@@ -382,19 +444,19 @@ export async function reconcileValuations(
       divergence: false,
       llm_target_mid,
       mc_p50,
-      explanation: `LLM target (${currency}${llm_target_mid.toFixed(0)}) is ${(spread_pct * 100).toFixed(1)}% ${direction} MC p50 (${currency}${mc_p50.toFixed(0)}) — within 30% threshold.`,
+      explanation: `The case (${currency}${llm_target_mid.toFixed(0)}) is ${(spread_pct * 100).toFixed(1)}% ${direction} the engine's Monte Carlo median (${currency}${mc_p50.toFixed(0)}) — within the 30% threshold.`,
     };
   }
 
   // Divergence call: ask LLM to explain the gap
-  const divergencePrompt = `Two independent valuation methods produce divergent estimates for ${symbol}.
+  const divergencePrompt = `Two independent valuations diverge for ${symbol}.
 
-LLM multi-method mid-target: ${currency}${llm_target_mid.toFixed(0)}
-Monte Carlo DCF p50:          ${currency}${mc_p50.toFixed(0)}
+Valuation case (user-owned assumptions): ${currency}${llm_target_mid.toFixed(0)}
+Quant engine Monte Carlo p50:            ${currency}${mc_p50.toFixed(0)}
 Spread: ${(spread_pct * 100).toFixed(1)}%
 
-MC DCF assumptions: CAPM WACC with rolling 252-day beta, sector-specific terminal growth, TTM revenue from SEC XBRL (or EBITDA proxy), 50k paths.
-LLM target approaches: ${llmResult.approaches.map((a) => a.method).join(", ")}.
+Engine assumptions: CAPM WACC with rolling 252-day beta, sector-specific terminal growth, TTM revenue from SEC XBRL (or EBITDA proxy), 50k simulated paths.
+${crossChecks.length > 0 ? `Independent cross-checks run on this name: ${crossChecks.join(", ")}.` : ""}
 
 Explain in 2–3 sentences: why these estimates diverge and which is likely more reliable for ${symbol} given its sector and stage.
 Be concrete — reference the actual numbers. Do not speculate beyond the data.`;
@@ -408,7 +470,7 @@ Be concrete — reference the actual numbers. Do not speculate beyond the data.`
       divergence: true,
       llm_target_mid,
       mc_p50,
-      explanation: `Divergence detected (${(spread_pct * 100).toFixed(1)}%): LLM ${currency}${llm_target_mid.toFixed(0)} vs MC ${currency}${mc_p50.toFixed(0)}. Reconciliation LLM call failed.`,
+      explanation: `Divergence detected (${(spread_pct * 100).toFixed(1)}%): case ${currency}${llm_target_mid.toFixed(0)} vs engine ${currency}${mc_p50.toFixed(0)}. Explanation call failed.`,
     };
   }
 }
@@ -425,6 +487,8 @@ export async function runValuationEngine(
   priceHistory?: { date: string; close: number }[],
   companyName?: string,
   model?: string,
+  /** The case being adjudicated. Without one, the stage runs cross-checks only. */
+  vcase?: ValuationCase | null,
 ): Promise<ValuationResult> {
   // Compute run hot/cold percentile from 5Y history
   const runHotCold = priceHistory && priceHistory.length >= 252
@@ -467,25 +531,27 @@ export async function runValuationEngine(
     ? `\nRUN HOT/COLD NOTE: Stock is at the ${runHotCold.percentile}th percentile of its own historical 1-year returns (${runHotCold.signal.replace("_", " ")}). Reflect this in valuationVerdict — if run hot, warn of mean reversion risk; if run cold, note potential reversion opportunity.`
     : "";
 
-  const prompt = `You are a senior valuation analyst. Using ONLY the data below, build a rigorous multi-method valuation for ${symbol}.
+  const caseBlock = vcase
+    ? `\n${summarizeCase(vcase)}\n`
+    : "\nNo valuation case exists for this symbol yet.\n";
+
+  const caseInstruction = vcase
+    ? `\nYOUR ROLE: A valuation case already exists (above) and it is this app's single intrinsic-value estimate. Do NOT produce your own fair value, price target, or intrinsic value range — those come from the case. Your job is to (a) run independent cross-checks that use a *different* lens than discounted cash flow, and (b) adjudicate: say where you agree with the case and where you do not, and which of its assumptions is weakest. Assumptions marked "user-owned" are the user's judgment — you may argue with them, but treat them as deliberate.`
+    : `\nYOUR ROLE: No case exists yet, so run the cross-checks below and leave caseAssessment null.`;
+
+  const prompt = `You are a senior valuation analyst reviewing an existing valuation case for ${symbol}.
 
 ${context}
+${caseBlock}${caseInstruction}
 
-Run 4 valuation approaches and 3 scenarios. Be explicit about every assumption. Cite the data that drives each assumption.${fxInstruction}${runHotColdInstruction}
+Run 3 cross-check approaches and 3 scenarios. For scenarios give only the label and key assumptions — the prices come from the case, not from you. Cite the data behind every claim.${fxInstruction}${runHotColdInstruction}
 
 Return as JSON:
 {
   "currentPrice": "current price as string with currency symbol",
-  "intrinsicValueRange": "your consolidated intrinsic value range e.g. '$180–$220'",
-  "impliedUpside": "e.g. '+15%' or '-8%' vs current price (use the midpoint of your range)",
+  "intrinsicValueRange": "leave as empty string — the case supplies this",
+  "impliedUpside": "leave as empty string — the case supplies this",
   "approaches": [
-    {
-      "method": "DCF",
-      "priceTarget": "e.g. '$195'",
-      "impliedUpside": "e.g. '+12%'",
-      "assumptions": "Explicitly state: revenue growth rate used (cite historical CAGR), operating margin trajectory, WACC assumed, terminal growth rate, net debt adjustment",
-      "confidence": "high|medium|low"
-    },
     {
       "method": "Relative Valuation (P/E)",
       "priceTarget": "...",
@@ -511,36 +577,103 @@ Return as JSON:
     },
     {
       "label": "Base case",
-      "priceTarget": "...",
-      "impliedUpside": "...",
+      "priceTarget": "",
+      "impliedUpside": "",
       "keyAssumptions": ["assumption 1", "assumption 2", "assumption 3"]
     },
     {
       "label": "Bear case",
-      "priceTarget": "...",
-      "impliedUpside": "...",
+      "priceTarget": "",
+      "impliedUpside": "",
       "keyAssumptions": ["assumption 1", "assumption 2", "assumption 3"]
     }
   ],
   "dcfSensitivity": "2-3 sentences: how sensitive is the DCF valuation to changes in growth rate and WACC? What is the breakeven growth rate?",
-  "valuationVerdict": "2-3 sentences: summary of valuation — cheap/fair/expensive vs history and peers, with your recommended entry/exit levels"
+  "valuationVerdict": "2-3 sentences: summary of valuation — cheap/fair/expensive vs history and peers, with your recommended entry/exit levels",
+  "caseAssessment": {
+    "stance": "agrees|disagrees|partial",
+    "reasoning": "2-3 sentences: where you agree with the case and where you do not, citing its actual assumption values",
+    "weakestAssumptions": ["name of the least-supported assumption", "next"]
+  }
 }`;
 
+  const px = currentPrice ?? snapshot.price;
+
+  let result: ValuationResult;
   try {
     const raw = await runPrompt("scenario-analysis", prompt, { maxTokens: 2000, json: true, model });
-    return parseValuation(raw);
+    result = parseValuation(raw);
   } catch {
-    const px = currentPrice ?? snapshot.price;
-    const analystTarget = analyst.targetMean;
-    const upside = px && analystTarget ? ((analystTarget - px) / px * 100).toFixed(1) : "n/a";
-    return {
+    // The cross-checks and the adjudication are lost, but the case's own numbers
+    // are not — they are applied below regardless, so the report still reports a
+    // valuation even with AI unavailable.
+    result = {
       currentPrice: px != null ? `${currency}${px.toFixed(2)}` : "n/a",
-      intrinsicValueRange: analystTarget ? `${currency}${analystTarget.toFixed(0)}` : "n/a",
-      impliedUpside: upside !== "n/a" ? `${parseFloat(upside) >= 0 ? "+" : ""}${upside}%` : "n/a",
+      caseValueRange: "n/a",
+      intrinsicValueRange: "n/a",
+      caseImpliedUpside: "n/a",
+      impliedUpside: "n/a",
       approaches: [],
       scenarios: [],
-      dcfSensitivity: "Valuation engine unavailable — AI response could not be parsed.",
-      valuationVerdict: "See analyst consensus targets above.",
+      sensitivityCommentary: "Cross-checks unavailable — AI response could not be parsed.",
+      dcfSensitivity: "Cross-checks unavailable — AI response could not be parsed.",
+      valuationVerdict: vcase
+        ? "Showing the valuation case's own numbers; AI commentary unavailable."
+        : "See analyst consensus targets above.",
+      caseAssessment: null,
     };
   }
+
+  return applyCaseNumbers(result, vcase ?? null, px, currency);
+}
+
+/**
+ * Overwrite every price the model may have emitted with the case's own.
+ *
+ * Belt and braces: the prompt asks it not to produce prices, but a model that
+ * ignores that instruction must not be able to introduce a second fair value
+ * into the report. Scenario labels and key assumptions are the model's; the
+ * numbers beside them are always the case's.
+ */
+export function applyCaseNumbers(
+  result: ValuationResult,
+  vcase: ValuationCase | null,
+  price: number | null,
+  currency = "$",
+): ValuationResult {
+  if (!vcase) return result;
+  const r = vcase.result;
+  const fmt = (v: number) => `${currency}${v.toFixed(2)}`;
+  const pct = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
+
+  const range = r.fairValueBear != null && r.fairValueBull != null
+    ? `${fmt(r.fairValueBear)}–${fmt(r.fairValueBull)}`
+    : r.fairValue != null ? fmt(r.fairValue) : "not computable";
+
+  const byLabel: Record<string, number | null> = {
+    bull: r.fairValueBull,
+    base: r.fairValue,
+    bear: r.fairValueBear,
+  };
+
+  const upside = r.impliedUpside != null ? pct(r.impliedUpside) : "n/a";
+  return {
+    ...result,
+    currentPrice: price != null ? fmt(price) : result.currentPrice,
+    caseValueRange: range,
+    intrinsicValueRange: range,
+    caseImpliedUpside: upside,
+    impliedUpside: upside,
+    scenarios: result.scenarios.map((scenario) => {
+      const key = Object.keys(byLabel).find((k) => scenario.label.toLowerCase().includes(k));
+      const value = key ? byLabel[key] : null;
+      return {
+        ...scenario,
+        priceTarget: value != null ? fmt(value) : "",
+        impliedUpside: value != null && price != null && price > 0
+          ? pct(((value - price) / price) * 100)
+          : "",
+      };
+    }),
+  };
 }

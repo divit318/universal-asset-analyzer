@@ -750,21 +750,78 @@ Watchlist Intelligence structured alerts), `app/_components/ui/data-table.tsx`.
 
 ---
 
-### Quant Engine (`app/engine/page.tsx`)
-**Purpose**: Daily quant screening powered by Python DuckDB pipeline.
+### Quant Engine — the systematic desk (`app/engine/page.tsx`)
+**Purpose**: answer *"what opportunities is the market creating today, and why?"* —
+a market-wide, model-driven view, explicitly not another per-company workspace.
+The module boundary against its neighbours is the whole point:
+
+| Module | Question | Unit of analysis |
+|--------|----------|------------------|
+| Research Hub | What do we think about this company? | one name |
+| Compare | Which of these is better? | 2–5 names |
+| Screener | Which names pass my filters? | user-defined filters |
+| **Quant Engine** | **What is the market creating today, and why?** | **the whole scored universe** |
+
+Consequences of that boundary, all deliberate: the desk owns regime detection,
+probability distributions, adaptive factor weights, and Kelly position sizing —
+none of which exist elsewhere in UAA. It does **not** own company narrative,
+filings, news, or AI theses; the conviction book links out to `/research` and
+`/ic-report` for those instead of duplicating them. (The old page embedded a full
+batch IC-report runner and viewer; that was a copy of `/ic-report` and was removed.)
+
+**Page structure** (`app/engine/_components/`), ordered by cost so first paint never
+waits on the slowest computation:
+
+| Section | Component | Source |
+|---------|-----------|--------|
+| Market regime | `regime-hero.tsx` | brief |
+| Changed today | `changed-today.tsx` | brief |
+| Conviction book | `conviction-book.tsx` | brief |
+| Factor lab | `factor-lab.tsx` | brief |
+| Market breadth | `breadth-map.tsx` | brief |
+| Full scorecard | `scorecard-table.tsx` (code-split) + `detail-panel.tsx` | Parquet |
+| Model health | `model-health.tsx` | signal log |
+| Model validation | `model-validation.tsx` | on demand only |
+
+Shared visual grammar lives in `desk-primitives.tsx` (`ZBar`, `ProbMeter`,
+`ProbBand`, `Sparkline`, `RegimeChip`); the long-page navigator is `desk-rail.tsx`;
+shared types and vocabulary (signal tiers, regimes, factor definitions) are
+`lib/engine-desk.ts`.
 
 **Lifecycle:**
-1. `python engine/daily_run.py` runs daily (separate process, not integrated with Next.js)
-2. Outputs `data/scorecard_snapshot.parquet` (daily stocks + scores + signals)
-3. Next.js reads Parquet via `/api/engine` (read-only)
+1. `python -m engine.daily_run` runs the pipeline (separate process, not integrated with `npm dev`)
+2. At **each** export stage it publishes two artifacts, so the UI fills in progressively
+   rather than waiting for the slowest stage:
+   - `data/scorecard_snapshot.parquet` — per-name scores (atomic tmp+rename)
+   - `data/engine_dashboard.json` — the market-wide brief (`engine/dashboard.py`)
+   - `data/engine_progress.json` — current stage + names published
+3. Next.js reads those files. Nothing on the read path opens `engine.duckdb`.
 
-**Output Structure:**
-- Symbol, company name, sector
-- Quant scores (momentum, mean reversion, value, quality, growth factors)
-- Signals (detected by quant model)
-- Backtest performance (out-of-sample returns)
+**Why file-first matters (the "engine appears to hang" fix)**: the brief's queries
+against `engine.duckdb` are individually instant, but *opening* a multi-GB DuckDB on
+a cold page cache measured over two minutes. So the brief is precomputed during the
+run and served as a file (~1ms). `/api/engine/dashboard` falls back to
+`python -m engine.dashboard` only when the file is absent, under a hard timeout, and
+returns an explicit `degraded` brief rather than hanging. Every read route is
+bounded via `runEnginePython()` (`lib/engine-python.ts`), and `/api/engine` memoises
+the parsed Parquet on the file's mtime+size — which turned a repeated ~1.8s Python
+spawn into a ~15ms response.
 
-**Not Real-Time**: Daily snapshot, not live updates. For live screening use `/screener`.
+**Routes**:
+- `GET /api/engine/dashboard` — the brief (file → memo → bounded rebuild → degraded)
+- `GET /api/engine` — scorecard rows (memoised); `POST` streams a run's stdout
+- `GET /api/engine/progress` — current stage of an in-flight run
+- `GET /api/engine/detail?symbol=` — one name's full working (bounded)
+- `GET /api/engine/oos-metrics` — continuous live-IC self-monitoring
+- `GET|POST /api/engine/validation` — GET reads the cache, POST runs the study
+
+**Model Validation absorbed the standalone `/backtest` page.** "Do these signals
+work" is not a separate workflow from the desk that produces them. `lib/backtest.ts`
+(pure, unit-tested) is unchanged and reused; only the trigger semantics moved — it is
+now POST-only and never fires on page load, because it fetches price history for
+every logged signal. `app/backtest/` and `app/api/backtest/` were deleted.
+
+**Not Real-Time**: snapshot-driven, not live quotes. For live screening use `/screener`.
 
 **Used By**: Systematic traders, factor-driven strategies, signal validation.
 

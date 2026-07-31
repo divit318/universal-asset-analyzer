@@ -6,25 +6,45 @@ import { useBootState, useTaskSplash } from "./boot-context";
 import { BOOT_MESSAGES, type BootContext } from "./boot-messages";
 import { MARK_DONE_SEQUENCE_MS, prefersReducedMotion } from "./motion";
 
-const WAVE_CYCLE_MS = 2000; // matches mark-bar-wave / mark-terminus-wave in globals.css
 const MESSAGE_INTERVAL_MS = 2400;
+/**
+ * How long to give a page to claim the boot before concluding that nothing will.
+ * `useBootReady` fires from a mount effect, so a page that reports at all has
+ * reported well inside this; anything longer is just the splash waiting on a
+ * page that was never going to answer. See BootState.bootClaimed.
+ */
+const CLAIM_GRACE_MS = 700;
 const SAFETY_TIMEOUT_MS = 20_000; // never wait forever on a stalled fetch
-const EXIT_DURATION_MS = 640; // boot-overlay-dissolve: 260ms delay + 380ms animation, globals.css
+const EXIT_DURATION_MS = 300; // boot-overlay-dissolve: 40ms delay + 260ms animation, globals.css
 
 type Phase = "loading" | "done" | "exiting" | "hidden";
 
-function useSplashSequence(ready: boolean, onHidden?: () => void) {
+function useSplashSequence(ready: boolean, claimed: boolean, onHidden?: () => void) {
   const [phase, setPhase] = useState<Phase>("loading");
-  // Set only inside the mount effect below — Date.now() during render is impure.
-  const mountedAt = useRef<number | null>(null);
   const scheduled = useRef(false);
+  const [graceElapsed, setGraceElapsed] = useState(false);
 
+  // Nothing has claimed the boot within the grace window → there is no
+  // readiness signal coming, so the splash has nothing left to wait for.
   useEffect(() => {
-    mountedAt.current = Date.now();
-  }, []);
+    if (claimed) return;
+    const t = setTimeout(() => setGraceElapsed(true), CLAIM_GRACE_MS);
+    return () => clearTimeout(t);
+  }, [claimed]);
 
-  // loading -> done, aligned to the wave's own cycle boundary so it never cuts
-  // a bar mid-fade — unless reduced motion, where there's nothing to align to.
+  // An unclaimed boot is "ready" once the grace window has passed.
+  const effectiveReady = claimed ? ready : graceElapsed;
+
+  // loading -> done, the instant the page reports ready.
+  //
+  // This used to wait out the remainder of the loading wave's 2000ms cycle
+  // before starting the resolve, so that no bar was cut mid-fade. That cost up
+  // to two full seconds of dead time *after the page was already rendered
+  // underneath* — on average about a second, on every hard load — and it was
+  // unnecessary on this file's own terms: the `is-done` animations are
+  // self-contained keyframes that start from a clean 0% "regardless of
+  // interruption" (see the note above them in globals.css). Interrupting the
+  // wave is exactly what they are built to absorb.
   //
   // `ready` genuinely flickers true -> false -> true on real pages: every
   // loading boolean we're handed (useDataset's isInitialLoading, a stream's
@@ -38,17 +58,14 @@ function useSplashSequence(ready: boolean, onHidden?: () => void) {
     if (phase !== "loading") return;
     const reduced = prefersReducedMotion();
 
-    if (!ready && !reduced) {
+    if (!effectiveReady && !reduced) {
       scheduled.current = false;
       return;
     }
     if (scheduled.current) return;
     scheduled.current = true;
-    const elapsed = Date.now() - (mountedAt.current ?? Date.now());
-    const wait = reduced ? 0 : WAVE_CYCLE_MS - (elapsed % WAVE_CYCLE_MS);
-    const t = setTimeout(() => setPhase("done"), wait);
-    return () => clearTimeout(t);
-  }, [phase, ready]);
+    setPhase("done");
+  }, [phase, effectiveReady]);
 
   // Independent safety net: force completion if `ready` never arrives (a
   // stalled fetch), so the splash can never wait forever.
@@ -99,13 +116,17 @@ function useMessageIndex(messages: string[], holdAtEnd: boolean) {
 function SplashMark({
   context,
   ready,
+  /** False only for a first-load boot no page has claimed; a task splash is a
+   *  claim by definition, so it defaults to true. */
+  claimed = true,
   onHidden,
 }: {
   context: BootContext;
   ready: boolean;
+  claimed?: boolean;
   onHidden?: () => void;
 }) {
-  const { phase } = useSplashSequence(ready, onHidden);
+  const { phase } = useSplashSequence(ready, claimed, onHidden);
   const messages = BOOT_MESSAGES[context] ?? BOOT_MESSAGES.generic;
   const message = useMessageIndex(messages, !ready);
 
@@ -128,7 +149,7 @@ function SplashMark({
 /** Mounted once from AppShell. Renders the first-load boot splash, the
  * opt-in task splash (IC Report's long AI run), or nothing — never both. */
 export function BootSplash() {
-  const { showBootSplash, bootContext, bootReady, taskSplash } = useBootState();
+  const { showBootSplash, bootContext, bootReady, bootClaimed, taskSplash } = useBootState();
   const { hide } = useTaskSplash();
 
   if (taskSplash) {
@@ -144,5 +165,5 @@ export function BootSplash() {
 
   if (!showBootSplash) return null;
 
-  return <SplashMark key="boot" context={bootContext} ready={bootReady} />;
+  return <SplashMark key="boot" context={bootContext} ready={bootReady} claimed={bootClaimed} />;
 }

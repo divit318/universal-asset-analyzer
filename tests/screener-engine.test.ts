@@ -471,4 +471,25 @@ describe("formatMetricValue", () => {
     expect(formatMetricValue(getMetric("equity", "roic")!, null)).toBe("—");
     expect(formatMetricValue(getMetric("equity", "roic")!, NaN)).toBe("—");
   });
+
+  /**
+   * Regression: one decimal place collapsed a quarter of the ETF universe into
+   * "0.0%" / "0.1%" — VEA (0.03%) and IJR (0.06%) were indistinguishable in the
+   * Expense column that the whole class is ranked on. The same function formats
+   * filter *bounds* in the match explanation, so a max of 0.15% was also
+   * restated to the user as "≤ 0.2%": a tighter constraint than the one applied.
+   */
+  it("keeps two decimals below 1%, where expense ratios live", () => {
+    const expense = getMetric("etf", "expenseRatio")!;
+    expect(formatMetricValue(expense, 0.03)).toBe("0.03%");
+    expect(formatMetricValue(expense, 0.06)).toBe("0.06%");
+    expect(formatMetricValue(expense, 0.15)).toBe("0.15%");
+    expect(formatMetricValue(expense, 0.9)).toBe("0.90%");
+    expect(formatMetricValue(expense, -0.04)).toBe("-0.04%");
+    // A genuine zero fee is unambiguous at one decimal, and reads better.
+    expect(formatMetricValue(expense, 0)).toBe("0.0%");
+    // …and nothing above 1% changes.
+    expect(formatMetricValue(getMetric("equity", "roic")!, 22.4)).toBe("22.4%");
+    expect(formatMetricValue(getMetric("equity", "oneYearReturn")!, 143.6)).toBe("144%");
+  });
 });

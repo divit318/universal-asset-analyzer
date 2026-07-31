@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Card, Button, Input, Field, Badge } from "@/app/_components/ui";
 import { CollapsibleSection } from "@/app/_components/collapsible-section";
 import { formatCurrency } from "@/lib/format";
 import { useToast } from "@/app/_components/toast";
 import { OBJECTIVES, type Objective, type ObjectiveConfig } from "@/lib/portfolio/engines/optimize";
 import { PORTFOLIO_ASSET_CLASSES, PORTFOLIO_CLASS_LABEL, type PortfolioAssetClass } from "@/lib/portfolio/model/types";
+import { ObjectivePicker } from "./objective-picker";
 import { useCashPreview } from "./cash/use-cash-preview";
 import { useCashSelection } from "./cash/use-cash-selection";
 import { RecommendationRow } from "./cash/recommendation-row";
@@ -38,6 +39,7 @@ export function CashPanel({ onExecuted }: { onExecuted?: () => void }) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [snapshotRefreshSignal, setSnapshotRefreshSignal] = useState(0);
+  const submittingRef = useRef(false); // belt-and-suspenders against a double click racing the setState below
   const toast = useToast();
 
   const amount = Number(amountInput);
@@ -61,6 +63,8 @@ export function CashPanel({ onExecuted }: { onExecuted?: () => void }) {
 
   async function handleConfirmedExecute() {
     if (!plan || blocked) return;
+    if (submittingRef.current) return; // rapid double-click / double-submit guard
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const res = await fetch("/api/portfolio/allocate-cash/execute", {
@@ -115,6 +119,7 @@ export function CashPanel({ onExecuted }: { onExecuted?: () => void }) {
     } catch (e) {
       toast(e instanceof Error ? e.message : "Failed to deploy cash", "error");
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }
@@ -130,30 +135,13 @@ export function CashPanel({ onExecuted }: { onExecuted?: () => void }) {
           </p>
         </div>
 
-        <div className="flex flex-col gap-2">
-          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted">Objective</h4>
-          <div className="flex flex-wrap gap-1.5">
-            {objectiveEntries.map(([id, cfg]) => {
-              const active = id === objective;
-              return (
-                <button
-                  key={id}
-                  onClick={() => setObjective(id)}
-                  title={cfg.description}
-                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition-colors ${
-                    active
-                      ? "border-brand bg-brand/10 font-semibold text-foreground"
-                      : "border-border text-muted hover:border-brand/40 hover:text-foreground"
-                  }`}
-                >
-                  <span aria-hidden>{cfg.icon}</span>
-                  {cfg.label}
-                </button>
-              );
-            })}
-          </div>
-          <p className="text-[11px] leading-relaxed text-muted/70">{OBJECTIVES[objective].description}</p>
-        </div>
+        <ObjectivePicker
+          entries={objectiveEntries}
+          active={objective}
+          onChange={setObjective}
+          description={OBJECTIVES[objective].description}
+          headingTag="h4"
+        />
 
         {objective === "target_allocation" && (
           <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface/40 p-3">

@@ -17,6 +17,10 @@ import { getFinancialStatements } from "@/lib/statements";
 import { getQuote } from "@/lib/yahoo";
 import { getScreenerInCompany } from "@/lib/screener-in";
 import { generateICReport, type ICProgressEvent } from "@/lib/ic-report";
+import { appendValuationEvent, getValuationCase } from "@/lib/db";
+import { computeCaseResult, seedAssumptions } from "@/lib/valuation/case";
+import { canValue, fetchValuationFacts } from "@/lib/valuation/prefill";
+import { getEnginePriorEnsured } from "@/lib/valuation/engine-prior";
 
 export async function POST(req: Request) {
   let body: { symbol?: string; exchange?: string; model?: string };
@@ -69,6 +73,41 @@ export async function POST(req: Request) {
 
         const companyName = quote?.name ?? screenerIn?.name ?? symbol;
 
+        // The report adjudicates a valuation case rather than inventing a fair
+        // value, so it needs one to exist. Seeding here (rather than inside the
+        // pipeline) keeps lib/ic-report.ts free of database access. Non-fatal:
+        // without a case the stage falls back to cross-checks only.
+        let valuationCase = getValuationCase(symbol);
+        if (!valuationCase) {
+          try {
+            const facts = await fetchValuationFacts(symbol);
+            if (canValue(facts)) {
+              const assumptions = seedAssumptions({
+                baseFcf: facts.baseFcf!,
+                sharesOutstanding: facts.sharesOutstanding!,
+                netDebt: facts.netDebt ?? 0,
+                price: facts.price,
+                discountRate: facts.wacc.waccPercent,
+                terminalGrowth: facts.terminalGrowth,
+                deliveredGrowth: facts.deliveredGrowth.value,
+                deliveredGrowthLabel: facts.deliveredGrowth.label,
+              });
+              valuationCase = appendValuationEvent({
+                symbol,
+                currency: facts.currency,
+                author: "reverse",
+                kind: "seeded",
+                assumptions,
+                result: computeCaseResult(assumptions, facts.price),
+                priceAt: facts.price,
+                triggerSource: "ic_report",
+              });
+            }
+          } catch {
+            /* non-fatal — the report runs its cross-checks without a case */
+          }
+        }
+
         const report = await generateICReport(
           {
             symbol,
@@ -80,6 +119,11 @@ export async function POST(req: Request) {
             analyst: fundamentals?.analyst,
             insider: fundamentals?.insider,
             screenerIn,
+            valuationCase,
+            // Reconciling the case against the engine's Monte Carlo median is the
+            // engine-vs-judgment comparison; null when the engine has not scored
+            // this name, in which case the stage simply omits it.
+            enginePriorP50: (await getEnginePriorEnsured(symbol).catch(() => null))?.p50 ?? null,
             model: body.model ?? undefined,
           },
           (event) => {

@@ -11,49 +11,74 @@ import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";
-import { enginePython } from "@/lib/engine-python";
+import { EngineTimeoutError, enginePython, runEnginePython } from "@/lib/engine-python";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const SNAPSHOT_PATH = path.join(process.cwd(), "data", "scorecard_snapshot.parquet");
 
+/** Reading a 15KB Parquet is fast; *starting Python* is not. Well under a cold
+ *  interpreter + polars import, but bounded so a wedged spawn can't hang the page. */
+const READ_TIMEOUT_MS = 20_000;
+
 // Track the active engine process. DuckDB allows only one writer at a time —
 // spawning a second process without killing the first causes "Conflicting lock".
 let activeEngineProcess: ReturnType<typeof spawn> | null = null;
 
-async function readScorecardSnapshot(symbols?: string[]): Promise<object[]> {
-  if (!fs.existsSync(SNAPSHOT_PATH)) return [];
+/**
+ * Memo of the full parsed snapshot, keyed on the Parquet's mtime+size.
+ *
+ * Without this, every visit to the desk — and every 3s poll during a run — paid a
+ * fresh Python interpreter start plus a polars import just to re-read a file that
+ * had not changed. The engine writes this snapshot atomically (tmp + rename), so
+ * mtime+size is a sound invalidation key: any new content is a new fingerprint,
+ * and a partially written file is never visible under this path.
+ */
+let memo: { fingerprint: string; rows: SnapshotRow[] } | null = null;
+let inflight: Promise<SnapshotRow[]> | null = null;
 
-  // Read Parquet via a minimal Python one-liner — fast, no DuckDB involved
-  const filter = symbols?.length
-    ? `df = df.filter(pl.col("symbol").is_in(${JSON.stringify(symbols)}))`
-    : "";
+interface SnapshotRow { symbol?: string; [k: string]: unknown }
+
+function fingerprint(): string {
+  try {
+    const s = fs.statSync(SNAPSHOT_PATH);
+    return `${s.mtimeMs}:${s.size}`;
+  } catch {
+    return "absent";
+  }
+}
+
+/** Always reads every row; filtering happens in-process so one symbol's request
+ *  can be served from the same memo as the full-universe request. */
+async function readScorecardSnapshot(): Promise<SnapshotRow[]> {
   const script = `
-import polars as pl, json, sys
+import polars as pl
 df = pl.read_parquet(${JSON.stringify(SNAPSHOT_PATH)})
-${filter}
 print(df.to_pandas().to_json(orient="records", date_format="iso"))
 `.trim();
 
-  return new Promise((resolve, reject) => {
-    const py = spawn(enginePython(), ["-c", script]);
-    let out = ""; let err = "";
-    py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
-    py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
-    py.on("close", (code) => {
-      if (code !== 0) { reject(new Error(err || "Parquet read failed")); return; }
-      try { resolve(JSON.parse(out.trim()) as object[]); }
-      catch { reject(new Error("Failed to parse snapshot JSON")); }
-    });
-  });
+  const out = await runEnginePython(["-c", script], { timeoutMs: READ_TIMEOUT_MS });
+  return JSON.parse(out.trim()) as SnapshotRow[];
+}
+
+async function loadRows(): Promise<SnapshotRow[]> {
+  const fp = fingerprint();
+  if (memo?.fingerprint === fp) return memo.rows;
+
+  // Coalesce: the desk's poll and its initial load can overlap, and two
+  // interpreters reading the same file is pure waste.
+  inflight ??= readScorecardSnapshot()
+    .then((rows) => { memo = { fingerprint: fp, rows }; return rows; })
+    .finally(() => { inflight = null; });
+  return inflight;
 }
 
 export async function GET(req: NextRequest) {
   const symbolsParam = req.nextUrl.searchParams.get("symbols");
   const symbols = symbolsParam
-    ? symbolsParam.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean)
-    : undefined;
+    ? new Set(symbolsParam.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean))
+    : null;
 
   if (!fs.existsSync(SNAPSHOT_PATH)) {
     return NextResponse.json(
@@ -63,10 +88,14 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const rows = await readScorecardSnapshot(symbols);
+    const all = await loadRows();
+    const rows = symbols ? all.filter((r) => typeof r.symbol === "string" && symbols.has(r.symbol)) : all;
     return NextResponse.json({ scorecard: rows, count: rows.length });
   } catch (err) {
-    return NextResponse.json({ error: String(err) }, { status: 500 });
+    const message = err instanceof EngineTimeoutError
+      ? "Reading the scorecard snapshot timed out. Check that the engine's Python environment is installed (.venv)."
+      : err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: message, scorecard: [], count: 0 }, { status: 500 });
   }
 }
 

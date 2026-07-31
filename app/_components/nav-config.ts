@@ -1,23 +1,27 @@
+import type { ComponentType, SVGProps } from "react";
+import { LayoutDashboard, Compass, Microscope, Briefcase } from "lucide-react";
 import {
-  LayoutDashboard,
-  Compass,
-  Microscope,
-  Briefcase,
-  ListFilter,
-  Radar,
-  Network,
-  Waypoints,
-  Search,
-  GitCompare,
-  Calculator,
-  FileText,
-  Cog,
-  History,
-  Bookmark,
-  NotebookPen,
-  CalendarDays,
-  type LucideIcon,
-} from "lucide-react";
+  ScreenerIcon,
+  WireIcon,
+  ThematicIcon,
+  QuantEngineIcon,
+  ResearchIcon,
+  CompareIcon,
+  DcfIcon,
+  IcReportIcon,
+  KnowledgeGraphIcon,
+  PortfolioIcon,
+  WatchlistIcon,
+  JournalIcon,
+  CalendarIcon,
+} from "./icons";
+
+/** Any nav icon — a Terminus Mark icon (app/_components/icons.tsx) or, for
+ * the 4 objective-level icons below (currently unused in the UI — see the
+ * icon system exploration for why the header only ever renders tool icons),
+ * a plain Lucide icon. Deliberately looser than Lucide's own `LucideIcon`
+ * type so a hand-drawn icon component satisfies it too. */
+export type NavIcon = ComponentType<SVGProps<SVGSVGElement>>;
 
 /* ============================================================================
    Information architecture — single source of truth for the header nav AND
@@ -30,7 +34,7 @@ export interface NavTool {
   href: string;
   label: string;
   desc: string;
-  icon: LucideIcon;
+  icon: NavIcon;
   /** Whether this tool takes a ?symbol= deep-link (used by the palette). */
   symbolParam?: "symbol" | "symbols";
   /** Extra search terms for the command palette. */
@@ -42,7 +46,7 @@ export interface NavObjective {
   label: string;
   href: string;
   tagline: string;
-  icon: LucideIcon;
+  icon: NavIcon;
   tools: NavTool[];
 }
 
@@ -62,13 +66,15 @@ export const NAV: NavObjective[] = [
     tagline: "Find your next idea",
     icon: Compass,
     tools: [
-      { href: "/screener", label: "Screener", desc: "Filter by fundamentals, scores & AI criteria", icon: ListFilter, keywords: ["filter", "screen", "quant", "fundamental"] },
-      { href: "/wire", label: "The Wire", desc: "Live news, event-driven signals & your portfolio's headlines", icon: Radar, keywords: ["news", "events", "signals", "catalysts", "scanner", "wire"] },
-      { href: "/thematic", label: "Thematic", desc: "Map a macro theme's supply chain", icon: Network, keywords: ["theme", "supply chain", "macro", "industry"] },
-      // Engine + Backtest generate and validate ideas system-wide — a Discover
-      // job, not a single-company Research one (§4.3).
-      { href: "/engine", label: "Quant Engine", desc: "10-factor systematic scorecard", icon: Cog, keywords: ["quant", "factor", "scorecard", "systematic", "kelly"] },
-      { href: "/backtest", label: "Signal Backtest", desc: "Do the engine's signals actually work?", icon: History, keywords: ["backtest", "validation", "efficacy", "signal", "edge", "hit rate"] },
+      { href: "/screener", label: "Screener", desc: "Filter by fundamentals, scores & AI criteria", icon: ScreenerIcon, keywords: ["filter", "screen", "quant", "fundamental"] },
+      { href: "/wire", label: "The Wire", desc: "Live news, event-driven signals & your portfolio's headlines", icon: WireIcon, keywords: ["news", "events", "signals", "catalysts", "scanner", "wire"] },
+      { href: "/thematic", label: "Thematic", desc: "Map a macro theme's supply chain", icon: ThematicIcon, keywords: ["theme", "supply chain", "macro", "industry"] },
+      // The Engine generates ideas system-wide — a Discover job, not a
+      // single-company Research one (§4.3). Signal Backtest used to sit beside it
+      // as its own tool; it is now the Engine's own "Model validation" section,
+      // because "do these signals work" is not a separate workflow from the desk
+      // that produces them. Its palette keywords moved here with it.
+      { href: "/engine", label: "Quant Engine", desc: "Systematic desk — regime, conviction book & model validation", icon: QuantEngineIcon, keywords: ["quant", "factor", "scorecard", "systematic", "kelly", "regime", "backtest", "validation", "edge", "hit rate", "probability", "conviction"] },
     ],
   },
   {
@@ -78,13 +84,18 @@ export const NAV: NavObjective[] = [
     tagline: "Analyze any company, end to end",
     icon: Microscope,
     tools: [
-      { href: "/research", label: "Research Hub", desc: "Quote, charts, filings & AI copilot", icon: Search, symbolParam: "symbol", keywords: ["quote", "chart", "filings", "copilot", "stock", "fund", "etf"] },
-      { href: "/compare", label: "Compare", desc: "Up to 5 names side by side", icon: GitCompare, symbolParam: "symbols", keywords: ["versus", "vs", "side by side"] },
-      { href: "/dcf", label: "DCF Valuation", desc: "Intrinsic value & sensitivity", icon: Calculator, symbolParam: "symbol", keywords: ["valuation", "intrinsic", "cash flow", "wacc"] },
-      { href: "/ic-report", label: "IC Report", desc: "9-agent institutional deep dive", icon: FileText, symbolParam: "symbol", keywords: ["committee", "thesis", "bull", "bear", "deep dive"] },
+      { href: "/research", label: "Research Hub", desc: "Quote, charts, filings & AI copilot", icon: ResearchIcon, symbolParam: "symbol", keywords: ["quote", "chart", "filings", "copilot", "stock", "fund", "etf"] },
+      { href: "/compare", label: "Compare", desc: "Up to 5 names side by side", icon: CompareIcon, symbolParam: "symbols", keywords: ["versus", "vs", "side by side"] },
+      // Not a calculator: the workspace over one persisted ValuationCase per
+      // company, which every other surface reads rather than computing its own
+      // intrinsic value. Its counterpart — the Valuation Register, the book of
+      // cases — belongs under Portfolio, because "which of my cases are broken"
+      // is a portfolio job rather than a research one.
+      { href: "/valuation", label: "Valuation", desc: "Your living valuation case per company", icon: DcfIcon, symbolParam: "symbol", keywords: ["valuation", "intrinsic", "cash flow", "wacc", "dcf", "reverse dcf", "fair value", "margin of safety", "case"] },
+      { href: "/ic-report", label: "IC Report", desc: "9-agent institutional deep dive", icon: IcReportIcon, symbolParam: "symbol", keywords: ["committee", "thesis", "bull", "bear", "deep dive"] },
       // Promoted from two levels deep inside the dissolved /intelligence (§4.3).
       // Its deep-link is scope+id, not a plain ?symbol=, so no symbolParam here.
-      { href: "/knowledge-graph", label: "Knowledge Graph", desc: "Explore how your names connect", icon: Waypoints, keywords: ["graph", "network", "relationships", "connections", "map"] },
+      { href: "/knowledge-graph", label: "Knowledge Graph", desc: "Explore how your names connect", icon: KnowledgeGraphIcon, keywords: ["graph", "network", "relationships", "connections", "map"] },
     ],
   },
   {
@@ -94,10 +105,14 @@ export const NAV: NavObjective[] = [
     tagline: "Manage what you own & watch",
     icon: Briefcase,
     tools: [
-      { href: "/portfolio", label: "Portfolio", desc: "Holdings, P&L & AI CIO memo", icon: Briefcase, keywords: ["holdings", "pnl", "cio", "positions", "decisions"] },
-      { href: "/watchlist", label: "Watchlist", desc: "Track names, alerts & notes", icon: Bookmark, keywords: ["watch", "alerts", "notes", "targets"] },
-      { href: "/journal", label: "Decision Journal", desc: "Log calls, measure your track record", icon: NotebookPen, keywords: ["journal", "decisions", "track record", "conviction", "calibration", "hit rate"] },
-      { href: "/calendar", label: "Calendar", desc: "Earnings & ex-dividend dates", icon: CalendarDays, keywords: ["earnings", "dividend", "dates", "events"] },
+      { href: "/portfolio", label: "Portfolio", desc: "Holdings, P&L & AI CIO memo", icon: PortfolioIcon, keywords: ["holdings", "pnl", "cio", "positions", "decisions"] },
+      { href: "/watchlist", label: "Watchlist", desc: "Track names, alerts & notes", icon: WatchlistIcon, keywords: ["watch", "alerts", "notes", "targets"] },
+      // The book of cases. A portfolio job, not a research one: "which of my
+      // valuations have broken?" is asked while reviewing what you own, and it
+      // sits beside the Decision Journal because both grade past judgment.
+      { href: "/valuation/register", label: "Valuation Register", desc: "Every valuation case, and which need attention", icon: DcfIcon, keywords: ["valuation", "register", "cases", "margin of safety", "stale", "book of cases"] },
+      { href: "/journal", label: "Decision Journal", desc: "Log calls, measure your track record", icon: JournalIcon, keywords: ["journal", "decisions", "track record", "conviction", "calibration", "hit rate"] },
+      { href: "/calendar", label: "Calendar", desc: "Earnings & ex-dividend dates", icon: CalendarIcon, keywords: ["earnings", "dividend", "dates", "events"] },
     ],
   },
 ];

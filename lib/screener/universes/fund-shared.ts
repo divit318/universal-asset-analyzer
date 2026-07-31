@@ -56,6 +56,19 @@ interface RawFundDetail {
 }
 
 export interface FundDetail {
+  /**
+   * False when Yahoo told us nothing at all for this fund — either the request
+   * failed after retries, or the response carried neither `fundProfile` nor
+   * `topHoldings`.
+   *
+   * This distinction is load-bearing for asset-class purity. Every field below
+   * degrades to `null` in both cases, so "we asked and the fund holds no bonds"
+   * and "we never found out" used to be indistinguishable — and the ETF
+   * universe's bond-fund exclusion read the second as the first, silently
+   * admitting bond funds (NXUS, an aggregate bond ETF) into the equity ETF
+   * class whenever a single enrichment call happened to time out.
+   */
+  available: boolean;
   category: string | null;
   expenseRatio: number | null; // %
   /** Combined weight of the ten largest holdings, %. */
@@ -138,6 +151,7 @@ function parseDetail(raw: RawFundDetail): FundDetail {
     : null;
 
   return {
+    available: raw.fundProfile != null || raw.topHoldings != null,
     category: profile.categoryName ?? null,
     expenseRatio: pct(profile.feesExpensesInvestment?.annualReportExpenseRatio),
     // Zero holdings reported means "Yahoo didn't tell us", not "the fund holds

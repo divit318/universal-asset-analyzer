@@ -28,6 +28,7 @@ import { STAGE_LABEL } from "@/lib/idea-stage";
 import { SymbolTag } from "../_atmosphere/symbol-link";
 import { ExplainableValue } from "../_atmosphere/explain-popover";
 import { useHome, useHomeSlice } from "../home-provider";
+import { Skeleton } from "@/app/_components/ui";
 
 const MAX_VISIBLE = 8;
 const UNDO_MS = 10_000;
@@ -547,8 +548,8 @@ export function AttentionQueueModule() {
         <div className="flex flex-col gap-2" style={{ minHeight: 220 }} aria-hidden>
           {[0, 1, 2].map((i) => (
             <div key={i} className="flex flex-col gap-1.5 rounded-control px-3 py-2.5">
-              <div className="h-4 w-3/4 animate-pulse rounded bg-surface-2" />
-              <div className="h-3 w-1/2 animate-pulse rounded bg-surface-2" />
+              <Skeleton height="h-4" width="w-3/4" />
+              <Skeleton height="h-3" width="w-1/2" />
             </div>
           ))}
         </div>

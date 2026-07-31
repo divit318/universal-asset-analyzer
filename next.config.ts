@@ -19,8 +19,15 @@ const nextConfig: NextConfig = {
         : false,
   },
   // Scanner was renamed to The Wire (app/scanner -> app/wire); keep old links working.
+  // The DCF calculator became the Valuation workspace (app/dcf -> app/valuation):
+  // it is no longer a calculator but a view onto one persisted ValuationCase, and
+  // the Register lives beneath it. Query strings are preserved, so an old
+  // /dcf?symbol=AAPL bookmark still lands on that company's case.
   async redirects() {
-    return [{ source: "/scanner", destination: "/wire", permanent: true }];
+    return [
+      { source: "/scanner", destination: "/wire", permanent: true },
+      { source: "/dcf", destination: "/valuation", permanent: true },
+    ];
   },
 };
 

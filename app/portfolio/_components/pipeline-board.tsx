@@ -49,6 +49,7 @@ import type { FitEnrichment } from "@/lib/watchlist-fit";
 import type { IdeaStage } from "@/lib/types";
 import type { PipelineResponse, PipelineRow } from "@/app/api/pipeline/route";
 import type { PipelineFitResponse } from "@/app/api/pipeline/fit/route";
+import { Skeleton } from "@/app/_components/ui";
 import { IdeaCard } from "./pipeline/idea-card";
 
 async function fetchPipeline(signal: AbortSignal): Promise<PipelineResponse> {
@@ -334,7 +335,7 @@ export function PipelineBoard() {
     return (
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {PIPELINE_STAGES.map((s) => (
-          <div key={s} className="h-48 animate-pulse rounded-card border border-border bg-surface" />
+          <Skeleton key={s} height="h-48" radius="rounded-card" className="border border-border" />
         ))}
       </div>
     );

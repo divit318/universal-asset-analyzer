@@ -319,7 +319,30 @@ export const etfClass: AssetClassDefinition = {
       id: "country-exposure",
       name: "Country Exposure",
       tagline: "Single-country and regional funds, by cost",
+      /**
+       * The `region` filter is what makes this template its own screen.
+       *
+       * Without it — size and equity weight alone — it matched 413 of the 456
+       * funds in the universe, 311 of them US, i.e. it returned the broad US
+       * market under a "single-country and regional" heading. Naming every
+       * non-US region is deliberate rather than excluding "US", because `region`
+       * is null for funds whose category carries no geography and an exclusion
+       * would silently sweep those in too.
+       */
       filters: {
+        region: {
+          kind: "multiselect",
+          values: [
+            "Global",
+            "Developed ex-US",
+            "Emerging Markets",
+            "Europe",
+            "Japan",
+            "China",
+            "India",
+            "Latin America",
+          ],
+        },
         aum: { kind: "range", min: 100e6, max: null },
         equityWeight: { kind: "range", min: 80, max: null },
       },
@@ -349,10 +372,21 @@ export const etfClass: AssetClassDefinition = {
       id: "low-volatility",
       name: "Low Volatility",
       tagline: "Shallow drawdowns, diversified, cheap",
+      /**
+       * `equityWeight` is a floor, not decoration. Ranking on volatility means
+       * whatever holds the least equity wins, so this screen filled up with
+       * things that are quiet for reasons that have nothing to do with being a
+       * good low-volatility fund: money-market funds and bond ladders (now
+       * excluded from the class outright), and then variable-rate preferred
+       * (VRP, 2.9% vol) and 60/40 allocation funds (AOR), which are legitimate
+       * ETFs but are not low-volatility *equity* exposure. An 80% floor keeps
+       * the comparison between funds that hold the same kind of asset.
+       */
       filters: {
         volatility: { kind: "range", min: null, max: 15 },
         maxDrawdown: { kind: "range", min: -25, max: null },
         aum: { kind: "range", min: 250e6, max: null },
+        equityWeight: { kind: "range", min: 80, max: null },
       },
       rank: [
         { metric: "volatility", weight: 3 },

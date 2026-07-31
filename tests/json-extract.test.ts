@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractJson, extractJsonObject, extractJsonArray } from "@/lib/json-extract";
+import { extractJson, extractJsonObject, extractJsonArray, extractJsonObjectsLoose } from "@/lib/json-extract";
 
 describe("extractJson", () => {
   it("parses clean JSON objects", () => {
@@ -146,5 +146,43 @@ describe("extractJsonArray", () => {
       return typeof obj.symbol === "string" ? { symbol: obj.symbol } : null;
     });
     expect(out).toEqual([]);
+  });
+});
+
+describe("extractJsonObjectsLoose", () => {
+  const pass = (item: unknown) => item as Record<string, unknown>;
+
+  it("salvages the complete objects from an array truncated mid-string", () => {
+    // Exactly what a 3B model produces when it runs out of output budget:
+    // JSON.parse rejects the whole thing over the unterminated last entry.
+    const truncated = '[{"symbol":"CCJ","tier":4},{"symbol":"NXE","tier":4},{"symbol":"DNN","rationale":"the last one never finis';
+    expect(() => JSON.parse(truncated)).toThrow();
+    expect(extractJsonObjectsLoose(truncated, pass)).toEqual([
+      { symbol: "CCJ", tier: 4 },
+      { symbol: "NXE", tier: 4 },
+    ]);
+  });
+
+  it("is not confused by braces or escaped quotes inside string values", () => {
+    const raw = '[{"a":"a { brace and a \\" quote"},{"b":"}"}]';
+    expect(extractJsonObjectsLoose(raw, pass)).toEqual([{ a: 'a { brace and a " quote' }, { b: "}" }]);
+  });
+
+  it("handles nested objects as single items", () => {
+    expect(extractJsonObjectsLoose('[{"a":{"b":1}},{"c":2}]', pass)).toEqual([{ a: { b: 1 } }, { c: 2 }]);
+  });
+
+  it("drops items the sanitizer rejects and survives one malformed object", () => {
+    const raw = '[{"symbol":"OK"},{"symbol":123},{oops},{"symbol":"ALSO_OK"}]';
+    const onlyStringSymbols = (item: unknown) => {
+      const s = (item as { symbol?: unknown }).symbol;
+      return typeof s === "string" ? { symbol: s } : null;
+    };
+    expect(extractJsonObjectsLoose(raw, onlyStringSymbols)).toEqual([{ symbol: "OK" }, { symbol: "ALSO_OK" }]);
+  });
+
+  it("returns nothing for input containing no objects", () => {
+    expect(extractJsonObjectsLoose("the model refused to answer", pass)).toEqual([]);
+    expect(extractJsonObjectsLoose("}}}", pass)).toEqual([]);
   });
 });

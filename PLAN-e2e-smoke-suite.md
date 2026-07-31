@@ -137,8 +137,9 @@ errors (filtered) are empty.
 
 Routes (all exist under `app/`): `/`, `/research?symbol=AAPL`, `/screener`, `/scanner`,
 `/compare`, `/portfolio`, `/watchlist`, `/dcf`, `/calendar`, `/ic-report`, `/engine`,
-`/thematic`, `/intelligence`, `/timeline`, `/knowledge-graph`, `/journal`, `/backtest`,
+`/thematic`, `/intelligence`, `/timeline`, `/knowledge-graph`, `/journal`,
 `/analyze` *(drop this one if PLAN-legacy-cleanup has run and deleted it)*.
+`/backtest` was deleted — it is now `/engine`'s "Model validation" section.
 
 Long-running pages (`/scanner`, `/ic-report`, `/thematic`) must NOT wait for their
 pipelines — assert the initial/idle UI only (the "start scan" affordance renders).

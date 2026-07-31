@@ -1,12 +1,13 @@
 "use client";
 
-import { Fragment, useCallback, useState } from "react";
+import { Fragment, useCallback, useRef, useState } from "react";
 import { Card, Badge } from "@/app/_components/ui";
 import { formatCurrency } from "@/lib/format";
 import { useDataset } from "@/lib/platform/client/use-dataset";
 import { useToast } from "@/app/_components/toast";
 import type { OptimizationResult, Objective, ObjectiveConfig, TargetWeight } from "@/lib/portfolio/engines/optimize";
 import type { ImpactEstimate } from "@/lib/portfolio/engines/simulate";
+import { ObjectivePicker } from "./objective-picker";
 import { useTradeSelection } from "./optimize/use-trade-selection";
 import { SelectionToolbar } from "./optimize/selection-toolbar";
 import { usePreview } from "./optimize/use-preview";
@@ -66,6 +67,7 @@ export function OptimizePanel({
   const [submitting, setSubmitting] = useState(false);
   const [snapshotRefreshSignal, setSnapshotRefreshSignal] = useState(0);
   const [detailsTrade, setDetailsTrade] = useState<TargetWeight | null>(null);
+  const submittingRef = useRef(false); // belt-and-suspenders against a double click racing the setState below
 
   const impactsFetcher = useCallback(
     async (signal: AbortSignal) => {
@@ -87,6 +89,8 @@ export function OptimizePanel({
   const { preview, loading: previewLoading, error: previewError } = usePreview(selection.selectedTrades, objective);
 
   async function handleConfirmedExecute() {
+    if (submittingRef.current) return; // rapid double-click / double-submit guard
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const res = await fetch("/api/portfolio/optimize/execute", {
@@ -143,6 +147,7 @@ export function OptimizePanel({
     } catch (e) {
       toast(e instanceof Error ? e.message : "Failed to implement trades", "error");
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }
@@ -150,35 +155,13 @@ export function OptimizePanel({
   return (
     <div className="flex flex-col gap-4">
       {/* ── Objective ── */}
-      <div className="flex flex-col gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted">Objective</h3>
-        <div className="flex flex-wrap gap-1.5">
-          {entries
-            .filter(([id]) => id !== "target_allocation")
-            .map(([id, cfg]) => {
-              const active = id === objective;
-              return (
-                <button
-                  key={id}
-                  onClick={() => onObjectiveChange(id)}
-                  disabled={loading}
-                  title={cfg.description}
-                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition-colors disabled:opacity-50 ${
-                    active
-                      ? "border-brand bg-brand/10 font-semibold text-foreground"
-                      : "border-border text-muted hover:border-brand/40 hover:text-foreground"
-                  }`}
-                >
-                  <span aria-hidden>{cfg.icon}</span>
-                  {cfg.label}
-                </button>
-              );
-            })}
-        </div>
-        <p className="text-[11px] leading-relaxed text-muted/70">
-          {objectives[objective].description}
-        </p>
-      </div>
+      <ObjectivePicker
+        entries={entries.filter(([id]) => id !== "target_allocation")}
+        active={objective}
+        onChange={onObjectiveChange}
+        description={objectives[objective].description}
+        disabled={loading}
+      />
 
       {/* ── Warnings: what the plan CANNOT do ─────────────────────────────────
           An optimizer that hands you a plan you physically cannot execute (sell 30%

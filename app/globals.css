@@ -62,9 +62,53 @@
   --text-caption: 0.6875rem;     /* 11px — secondary captions */
   --text-caption--line-height: 1rem;
 
-  /* Motion — mirrored as JS constants in app/_components/motion.ts */
+  /* Motion — mirrored as JS constants in app/_components/motion.ts.
+     The companion duration scale is a plain `:root` rule below; see the note
+     there for why it can't live in here.
+
+     Two curves, both monotonic. `--ease-out` is the deep decelerate for things
+     arriving; `--ease-precise` drives harder off the mark and settles firmly,
+     for a component changing state under the user's hand (an icon swapping, a
+     card turning over).
+
+     Neither overshoots, and that is the point. This replaced
+     `--ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1)` — a curve whose 1.56
+     control point sends it past its destination and back. Overshoot reads as
+     bounce, bounce reads as *playful*, and nothing in an instrument built on
+     "one overhead light, colour only from data" should wobble when it lands.
+     A machined mechanism travels decisively and stops where it was sent. */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-precise: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* ── Motion: the duration scale ──────────────────────────────────────────
+   Named by role, not size, exactly like the radius scale above.
+   `--duration-fast` and `--duration-base` were referenced by four rules in this
+   file and defined by nothing, so every animation in the app was quietly
+   running on its inline fallback while every other timing sat as an unnamed
+   literal. A machined instrument moves at a small number of known speeds; these
+   are them, and nothing shared should invent its own.
+
+   Deliberately a plain `:root` rule rather than part of the `@theme inline`
+   block above. Tailwind v4 emits only the theme variables something references,
+   so `--duration-feedback` and `--duration-arrival` — real rungs of the ladder
+   that no CSS rule happens to use yet, because their consumers set duration
+   from TS — were tree-shaken out of the stylesheet entirely and resolved to
+   nothing at runtime (verified: `getComputedStyle(html)` returned empty for
+   both). That is precisely the bug this scale was added to fix, so the scale
+   does not get to depend on being used. A `:root` declaration always ships.
+
+   The ladder is deliberately short. Anything slower than `arrival` is a
+   signature moment (the plot sweep, the loading mark, the compare flip) and
+   keeps its own bespoke timing at the site that owns it. */
+:root {
+  --duration-feedback: 80ms;   /* press/hover acknowledgement — must feel instant */
+  --duration-fast: 120ms;      /* popovers, menus, tooltips entering */
+  --duration-base: 200ms;      /* the default: colour, border, opacity changes */
+  --duration-panel: 280ms;     /* expand/collapse, dialogs, drawers */
+  --duration-arrival: 640ms;   /* content settling into view as you reach it */
+  --duration-draw: 900ms;      /* a value drawing itself: bars, value flashes */
+  --duration-plot: 1500ms;     /* the chart sweep — the one "being drawn" moment */
 }
 
 /* ── DARK (default) ────────────────────────────────────────────────────── */
@@ -196,7 +240,7 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
   /* Smooth the theme switch without animating layout-affecting properties */
-  transition: color 200ms var(--ease-out);
+  transition: color var(--duration-base) var(--ease-out);
 }
 
 /* The single overhead light. Not colour — luminance. One soft source high and
@@ -251,6 +295,36 @@ body::before {
   to   { background-position: 200% 0; }
 }
 
+/* The one skeleton surface. Drive it from <Skeleton> (app/_components/ui), never
+   by hand.
+ *
+ * This keyframe was written for loading skeletons and then used by none of them:
+ * every placeholder in the app reached for Tailwind's `animate-pulse` instead,
+ * including the shared SectionSkeleton — whose own doc comment called itself a
+ * "shape-matched shimmer". Twenty-odd hand-rolled grey rectangles, one dead
+ * keyframe, and a LoadingPanel documented as existing so we would stop shipping
+ * "a grey pulsing rectangle pretending to be content".
+ *
+ * A sweep rather than a pulse, because the two say different things. A pulse
+ * breathes — it reads as organic, and it is the same gesture this app uses for
+ * *live* things (the assistant, the radar). A sweep is light travelling across a
+ * surface, which is the material this interface is already built from: one
+ * overhead source, panels that catch it, colour only from data. A placeholder
+ * should look like an unlit panel waiting for its value, and this is what that
+ * looks like. */
+.uaa-skeleton {
+  background-color: var(--surface-2);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--foreground) 7%, transparent) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: shimmer 1400ms linear infinite;
+}
+
 /* ── CSS-driven micro-animations for global UI ──────────────────────────
    Keeping these in CSS avoids pulling an animation library into the
    shared/first-load bundle. */
@@ -281,8 +355,28 @@ body::before {
 
 .animate-fade-rise { animation: fade-rise var(--duration-base, 200ms) var(--ease-out) both; }
 .animate-popover-in { animation: popover-in var(--duration-fast, 120ms) var(--ease-out) both; }
-.animate-icon-swap { animation: icon-swap var(--duration-base, 200ms) var(--ease-spring) both; }
+.animate-icon-swap { animation: icon-swap var(--duration-base, 200ms) var(--ease-precise) both; }
 .animate-menu-drop { animation: menu-drop var(--duration-fast, 120ms) var(--ease-out) both; }
+
+/* ── Page enter ─────────────────────────────────────────────────────────
+   The only transition navigation gets. Every route change used to be a hard
+   cut: the old page's pixels were replaced by the new page's in a single
+   frame, which is what makes an app feel like a series of documents rather
+   than one instrument.
+
+   4px, not the 8px of .animate-fade-rise. A whole page sliding a visible
+   distance reads as a slide *transition*; a whole page settling 4px reads as
+   the panel seating itself, which is the machined-instrument register. The
+   move is transform + opacity only, so it can never shift layout or fight
+   scroll restoration, and the blanket prefers-reduced-motion rule at the
+   bottom of this file neutralizes it without a special case. */
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-page-enter {
+  animation: page-enter var(--duration-base) var(--ease-out) both;
+}
 
 /* Arrival highlight — the pulse a notification's destination gets when the
    user lands on it, so it's obvious what the click was about. */
@@ -300,7 +394,7 @@ body::before {
 .flip-card-inner {
   position: relative;
   transform-style: preserve-3d;
-  transition: transform 550ms var(--ease-spring, ease);
+  transition: transform 550ms var(--ease-precise, ease);
 }
 .flip-card:hover .flip-card-inner,
 .flip-card:focus-within .flip-card-inner {
@@ -376,7 +470,7 @@ body::before {
 /* Section expand/collapse — Collapsible sets the target max-height inline;
    this owns the transition so reduced-motion can neutralize it in one place. */
 .collapsible-panel {
-  transition: max-height 280ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+  transition: max-height var(--duration-panel) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
 }
 
 /* Scroll-triggered winner highlight — gray → tinted → final, once per row,
@@ -445,17 +539,172 @@ body::before {
   to   { width: var(--bar-value, 100%); }
 }
 .animate-bar-fill {
-  animation: bar-fill 700ms var(--ease-out) both;
+  animation: bar-fill var(--duration-draw) var(--ease-out) both;
 }
 
-/* Card hover lift — subtle depth cue, applied broadly across Wire cards. */
+/* Score-ring draw — the arc travels around the circle from 0 to the score
+   once, the first time it scrolls into view, over the same window the centre
+   number counts up (see app/_components/score-ring.tsx). Same "measurement,
+   not a stamp" intent as .animate-bar-fill above, which is why it shares that
+   timing exactly: the comment used to claim a shared "timing family" while the
+   two ran at 1050ms and 900ms, and the ring's 1050 was additionally duplicated
+   as a bare literal in score-ring.tsx to keep the count-up in step. Both now
+   read --duration-draw / DRAW_MS, so there is one number and it cannot drift. */
+@keyframes ring-draw {
+  from { stroke-dashoffset: var(--ring-circ, 0); }
+  to   { stroke-dashoffset: var(--ring-offset, 0); }
+}
+.animate-ring-draw {
+  animation: ring-draw var(--duration-draw) var(--ease-out) both;
+}
+
+/* Refresh mark — a value that was just *updated* (a re-polled quote, a re-run
+   screen) gets one brief tinted sweep so the change is noticed rather than
+   silently swapped. Never loops, never fires on first paint; driven from
+   app/_components/use-value-flash.ts. */
+@keyframes value-flash {
+  0%   { background-color: var(--flash-tint); box-shadow: 0 0 0 4px var(--flash-tint); }
+  100% { background-color: transparent; box-shadow: 0 0 0 4px transparent; }
+}
+.value-flash {
+  border-radius: var(--radius-control, 8px);
+  animation: value-flash var(--duration-draw) var(--ease-out) both;
+}
+.value-flash-up      { --flash-tint: color-mix(in srgb, var(--positive) 16%, transparent); }
+.value-flash-down    { --flash-tint: color-mix(in srgb, var(--negative) 16%, transparent); }
+.value-flash-neutral { --flash-tint: color-mix(in srgb, var(--brand) 14%, transparent); }
+
+/* Smooth expand/collapse. `grid-template-rows: 0fr -> 1fr` is the one technique
+   that transitions to *content* height without measuring it in JS, so a
+   collapsible section whose body loads asynchronously can't get stuck at a
+   stale max-height. The child must be `min-h-0 overflow-hidden`. */
+.collapse-grid {
+  display: grid;
+  grid-template-rows: 0fr;
+  /* Was 240ms against .collapsible-panel's 280ms — two speeds for the same
+     gesture, which is exactly the drift the scale exists to stop. */
+  transition: grid-template-rows var(--duration-panel) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+}
+.collapse-grid.is-open { grid-template-rows: 1fr; }
+
+/* Plot draw-in — the plotted data sweeps in from left to right while the axes,
+   grid, and labels are already there, the way a chart is revealed in an
+   institutional deck. Applied to a Recharts series layer (never the whole SVG,
+   which would take the axes with it); see interactive-chart.tsx / candle-chart.tsx.
+   Longer than the UI-element timings on purpose — this is the page's one
+   deliberate "being drawn" moment. */
+@keyframes plot-draw {
+  from { clip-path: inset(0 100% 0 0); }
+  to   { clip-path: inset(0 0 0 0); }
+}
+.animate-plot-draw > .recharts-layer,
+.animate-plot-draw.recharts-layer {
+  animation: plot-draw var(--duration-plot) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) both;
+}
+
+/* Nearest-point highlight — the active dot on the price chart eases to the
+   cursor's nearest sample instead of snapping, so scrubbing across the chart
+   reads as following the cursor rather than a series of discrete swaps. */
+.uaa-chart-active-dot {
+  transition: cx 120ms var(--ease-out), cy 120ms var(--ease-out), r 120ms var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .uaa-chart-active-dot { transition: none; }
+}
+
+/* Card hover lift — subtle depth cue, applied broadly across Wire and
+   Research Hub cards. Restrained on purpose: a hair of lift and a tightened
+   shadow, never a bounce or a scale big enough to shift the reading flow. */
 .card-lift {
-  transition: transform 200ms var(--ease-out), box-shadow 200ms var(--ease-out);
+  transition: transform 220ms var(--ease-out), box-shadow 220ms var(--ease-out);
 }
 .card-lift:hover {
   transform: translateY(-2px) scale(1.01);
   box-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.35);
 }
+@media (prefers-reduced-motion: reduce) {
+  .card-lift:hover { transform: none; }
+}
+
+/* Cursor-aware sheen — a soft light that tracks the pointer across a surface,
+   as if the panel is catching the light the user is holding. Position is set
+   by the caller via --spot-x/--spot-y (percent, from a `pointermove` listener
+   on the element); opacity is 0 until hovered so the effect never shows on
+   touch devices, which never fire pointermove. One idea, applied to the one
+   or two most deliberate surfaces (the decision hero) — not a page-wide glow. */
+.uaa-cursor-sheen {
+  position: relative;
+  isolation: isolate;
+}
+.uaa-cursor-sheen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 420ms var(--ease-out);
+  background: radial-gradient(
+    360px circle at var(--spot-x, 50%) var(--spot-y, 50%),
+    color-mix(in oklab, var(--brand) 10%, transparent),
+    transparent 62%
+  );
+}
+.uaa-cursor-sheen:hover::after {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce), (hover: none) {
+  .uaa-cursor-sheen::after { display: none; }
+}
+
+/* Flip reveal — a card that turns to show supporting detail on its reverse
+   face instead of expanding/pushing layout. Institutional restraint: a
+   rotation, not a spring; the face swap is a plain opacity crossfade timed to
+   land at the midpoint of the turn so neither face is legible edge-on. */
+.uaa-flip-scene { perspective: 1600px; }
+.uaa-flip-card {
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 640ms var(--ease-out);
+}
+.uaa-flip-scene:hover .uaa-flip-card,
+.uaa-flip-scene:focus-within .uaa-flip-card {
+  transform: rotateY(180deg);
+}
+.uaa-flip-face {
+  backface-visibility: hidden;
+}
+.uaa-flip-face-back {
+  position: absolute;
+  inset: 0;
+  transform: rotateY(180deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .uaa-flip-card { transition: none; }
+  .uaa-flip-scene:hover .uaa-flip-card,
+  .uaa-flip-scene:focus-within .uaa-flip-card {
+    transform: none;
+  }
+  .uaa-flip-face-back { position: static; transform: none; margin-top: 0.625rem; }
+}
+
+/* Qualitative label ↔ underlying number — a badge that crossfades between a
+   plain-English read and its numeric basis on hover, so the number is always
+   one glance away without cluttering the resting state. */
+.uaa-swap {
+  position: relative;
+  display: inline-grid;
+}
+.uaa-swap > * {
+  grid-area: 1 / 1;
+  transition: opacity 260ms var(--ease-out);
+}
+.uaa-swap .uaa-swap-alt { opacity: 0; }
+.uaa-swap:hover .uaa-swap-base,
+.uaa-swap:focus-within .uaa-swap-base { opacity: 0; }
+.uaa-swap:hover .uaa-swap-alt,
+.uaa-swap:focus-within .uaa-swap-alt { opacity: 1; }
 
 /* Cause → Effect connector — 2-3 particles flow from cause to effect once, on
    arrival, never looping (same "arrival cue, not an idle loop" principle as
@@ -509,7 +758,7 @@ body::before {
 }
 .uaa-loading-mark .mark-terminus {
   transform: rotate(45deg);
-  transition: opacity 450ms var(--ease-out), transform 650ms var(--ease-spring);
+  transition: opacity 450ms var(--ease-out), transform 650ms var(--ease-precise);
 }
 
 @keyframes mark-bar-wave {
@@ -553,20 +802,20 @@ body::before {
 @keyframes mark-terminus-resolve {
   0%   { opacity: 0; transform: rotate(0deg) scale(0.45); animation-timing-function: var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)); }
   35%  { opacity: 1; transform: rotate(0deg) scale(1); animation-timing-function: linear; }
-  49%  { opacity: 1; transform: rotate(0deg) scale(1); animation-timing-function: var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)); }
+  49%  { opacity: 1; transform: rotate(0deg) scale(1); animation-timing-function: var(--ease-precise, cubic-bezier(0.32, 0.72, 0, 1)); }
   100% { opacity: 1; transform: rotate(45deg) scale(1); }
 }
 .uaa-loading-mark.is-done .mark-bar {
-  animation: mark-bar-resolve 380ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) both;
+  animation: mark-bar-resolve 260ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) both;
 }
 .uaa-loading-mark.is-done .mark-bar1 { animation-delay: 0ms; }
-.uaa-loading-mark.is-done .mark-bar2 { animation-delay: 110ms; }
-.uaa-loading-mark.is-done .mark-bar3 { animation-delay: 220ms; }
-.uaa-loading-mark.is-done .mark-bar4 { animation-delay: 330ms; }
+.uaa-loading-mark.is-done .mark-bar2 { animation-delay: 70ms; }
+.uaa-loading-mark.is-done .mark-bar3 { animation-delay: 140ms; }
+.uaa-loading-mark.is-done .mark-bar4 { animation-delay: 210ms; }
 .uaa-loading-mark.is-done .mark-terminus {
   opacity: 1;
-  animation: mark-terminus-resolve 1080ms both;
-  animation-delay: 440ms;
+  animation: mark-terminus-resolve 460ms both;
+  animation-delay: 280ms;
 }
 @media (prefers-reduced-motion: reduce) {
   .uaa-loading-mark.is-loading .mark-bar,
@@ -596,7 +845,7 @@ body::before {
   background: var(--background);
 }
 .uaa-boot-splash.is-exiting {
-  animation: boot-overlay-dissolve 380ms var(--ease-out) 260ms both;
+  animation: boot-overlay-dissolve 260ms var(--ease-out) 40ms both;
   pointer-events: none;
 }
 @keyframes boot-overlay-dissolve {
@@ -610,8 +859,8 @@ body::before {
    of the inline mark's own vocabulary, because this only ever fires here. */
 .uaa-boot-splash.is-exiting .mark-terminus {
   animation:
-    mark-boot-glow 260ms var(--ease-out) both,
-    mark-boot-unwind 340ms var(--ease-spring) 60ms both;
+    mark-boot-glow 180ms var(--ease-out) both,
+    mark-boot-unwind 240ms var(--ease-precise) 40ms both;
 }
 @keyframes mark-boot-glow {
   0%, 100% { filter: drop-shadow(0 0 0 transparent); }
@@ -670,9 +919,9 @@ body::before {
   border-radius: var(--radius-card);
   box-shadow: inset 0 1px 0 0 var(--edge-top), var(--depth-1);
   transition:
-    transform 240ms var(--ease-out),
-    box-shadow 240ms var(--ease-out),
-    border-color 240ms var(--ease-out);
+    transform var(--duration-base) var(--ease-out),
+    box-shadow var(--duration-base) var(--ease-out),
+    border-color var(--duration-base) var(--ease-out);
 }
 .uaa-card::before {
   content: "";

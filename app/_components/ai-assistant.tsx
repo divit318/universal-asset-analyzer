@@ -239,7 +239,7 @@ export function AppAssistant() {
         className={`fixed inset-y-0 right-0 z-[201] flex w-full max-w-sm origin-top-right flex-col border-l border-border bg-surface shadow-popover transition-[opacity,transform] duration-[240ms] ${
           open ? "translate-y-0 scale-100 opacity-100" : "pointer-events-none -translate-y-2 scale-95 opacity-0"
         }`}
-        style={{ transitionTimingFunction: "var(--ease-spring)" }}
+        style={{ transitionTimingFunction: "var(--ease-precise)" }}
       >
         <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
           <div className="flex items-center gap-2">

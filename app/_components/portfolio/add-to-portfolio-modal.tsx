@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Dialog } from "@/app/_components/dialog";
-import { Button, DateInput, Field, Input, Card } from "@/app/_components/ui";
+import { Button, Card, DateInput, Field, Input, Skeleton } from "@/app/_components/ui";
 import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
 import { useFreshQuote } from "@/app/_components/use-fresh-quote";
 import { formatCurrency } from "@/lib/format";
@@ -488,7 +488,7 @@ export function AddToPortfolioModal({
         {quote ? (
           <AssetHeader quote={quote} existingHolding={existingHolding} />
         ) : (
-          <div className="h-32 animate-pulse rounded-xl border border-border bg-surface" />
+          <Skeleton height="h-32" radius="rounded-xl" className="border border-border" />
         )}
 
         {/* Portfolio Fit */}

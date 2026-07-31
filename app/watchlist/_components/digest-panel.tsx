@@ -3,10 +3,15 @@
 /**
  * AI Watchlist Intelligence.
  *
- * Extracted from the page, and given the one state it was missing: failure. The
- * panel used to render a skeleton, then unmount silently if Ollama was offline —
- * so the user saw an analysis start and then evaporate, with nothing to retry and
- * no indication of what had happened.
+ * Extracted from the page, and given the two states it was missing: failure and
+ * idle. The panel used to render a skeleton, then unmount silently if Ollama was
+ * offline — so the user saw an analysis start and then evaporate, with nothing to
+ * retry and no indication of what had happened.
+ *
+ * Generation is OPT-IN, so idle is the state the panel is usually in: it must
+ * carry the control that starts the run. Returning null when `digest` is absent
+ * — correct while this auto-fired on load — would now make the feature
+ * unreachable, since nothing else ever sets `digest`.
  */
 
 import type { WatchlistDigest } from "@/lib/ai-watchlist";
@@ -15,7 +20,8 @@ interface Props {
   digest: WatchlistDigest | null;
   loading: boolean;
   error: string | null;
-  onRegenerate: () => void;
+  /** Runs the digest: first generation, "Try again" after a failure, and "Regenerate". */
+  onGenerate: () => void;
 }
 
 function Bullets({
@@ -46,7 +52,7 @@ function Bullets({
   );
 }
 
-export function WatchlistDigestPanel({ digest, loading, error, onRegenerate }: Props) {
+export function WatchlistDigestPanel({ digest, loading, error, onGenerate }: Props) {
   if (loading) {
     return (
       <div className="rounded-xl border border-brand/20 bg-brand/5 p-5" aria-busy="true">
@@ -75,7 +81,7 @@ export function WatchlistDigestPanel({ digest, loading, error, onRegenerate }: P
         </div>
         <button
           type="button"
-          onClick={onRegenerate}
+          onClick={onGenerate}
           className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-xs transition-colors hover:bg-surface-2"
         >
           Try again
@@ -84,7 +90,28 @@ export function WatchlistDigestPanel({ digest, loading, error, onRegenerate }: P
     );
   }
 
-  if (!digest) return null;
+  if (!digest) {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface px-5 py-3.5">
+        <div className="min-w-0">
+          <p className="text-label font-semibold uppercase tracking-widest text-muted/60">
+            AI Watchlist Intelligence
+          </p>
+          <p className="mt-0.5 text-xs text-muted">
+            Reads every name on this list and returns picks, concerns and action items. Runs on
+            your machine, so it takes a moment and starts only when you ask for it.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onGenerate}
+          className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-xs transition-colors hover:bg-surface-2"
+        >
+          Generate
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-xl border border-brand/20 bg-brand/5 p-5">
@@ -95,7 +122,7 @@ export function WatchlistDigestPanel({ digest, loading, error, onRegenerate }: P
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={onRegenerate}
+            onClick={onGenerate}
             className="rounded-full border border-border px-2 py-0.5 text-label font-semibold uppercase tracking-widest text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
           >
             Regenerate

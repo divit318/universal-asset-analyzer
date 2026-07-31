@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import type { MarketRegime, Recommendation, SectorRotationEntry } from "@/lib/types";
+import { LoadingLine } from "@/app/_components/loading-panel";
+import { Reveal } from "@/app/_components/reveal";
 
 /**
  * Market → Sector → Company regime ladder. Market regime comes from /api/regime
@@ -37,15 +39,15 @@ const REC_CLASS: Record<Recommendation, { label: string; cls: string }> = {
   STRONG_SELL: { label: "Contracting", cls: "text-negative border-negative/30 bg-negative/8" },
 };
 
-function Rung({ tier, label, cls, detail }: { tier: string; label: string; cls: string; detail?: string }) {
+function Rung({ tier, label, cls, detail, index }: { tier: string; label: string; cls: string; detail?: string; index: number }) {
   return (
-    <div className="flex flex-1 flex-col gap-1.5 rounded-lg border border-border bg-surface-2 p-3">
+    <Reveal index={index} className="flex flex-1 flex-col gap-1.5 rounded-lg border border-border bg-surface-2 p-3">
       <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">{tier}</span>
       <span className={`inline-flex w-fit items-center rounded border px-2 py-0.5 text-[11px] font-semibold ${cls}`}>
         {label}
       </span>
       {detail && <span className="text-[10px] text-muted/70">{detail}</span>}
-    </div>
+    </Reveal>
   );
 }
 
@@ -71,8 +73,8 @@ export function MacroContextLadder({ sectorEntry, industry, recommendation }: Pr
 
   if (loading) {
     return (
-      <div className="flex gap-3">
-        {[1, 2, 3].map((i) => <div key={i} className="h-16 flex-1 animate-pulse rounded-lg bg-surface-2" />)}
+      <div className="flex h-16 items-center rounded-lg border border-border bg-surface-2 px-3">
+        <LoadingLine message="Reading the market regime…" className="text-caption" />
       </div>
     );
   }
@@ -97,18 +99,21 @@ export function MacroContextLadder({ sectorEntry, industry, recommendation }: Pr
       </div>
       <div className="flex flex-col gap-2 sm:flex-row">
         <Rung
+          index={0}
           tier="Market Regime"
           label={marketRung.label}
           cls={marketRung.cls}
           detail={regime ? `${regime.breadthPct != null ? `${Math.round(regime.breadthPct)}% breadth · ` : ""}${regime.dominantSectors.slice(0, 2).join(", ") || "—"}` : undefined}
         />
         <Rung
+          index={1}
           tier="Sector Regime"
           label={sectorRung.label}
           cls={sectorRung.cls}
           detail={sectorEntry ? `${sectorEntry.sector} · rank #${sectorEntry.rank}/11${industry ? ` · ${industry}` : ""}` : industry ?? undefined}
         />
         <Rung
+          index={2}
           tier="Company Regime"
           label={companyRung.label}
           cls={companyRung.cls}

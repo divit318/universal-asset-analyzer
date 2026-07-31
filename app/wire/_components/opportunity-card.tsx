@@ -194,7 +194,7 @@ export function OpportunityCard({
             Research
           </Link>
           <Link
-            href={`/dcf?symbol=${encodeURIComponent(opportunity.ticker)}`}
+            href={`/valuation?symbol=${encodeURIComponent(opportunity.ticker)}`}
             className="rounded-md border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-accent/40 hover:text-accent"
             onClick={(e) => e.stopPropagation()}
           >

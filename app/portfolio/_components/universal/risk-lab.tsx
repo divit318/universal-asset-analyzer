@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import { Card, Badge } from "@/app/_components/ui";
+import { CollapsibleSection } from "@/app/_components/collapsible-section";
 import { formatCurrency } from "@/lib/format";
 import { describeIlliquidWeight } from "@/lib/portfolio/model/types";
 import type { UniversalRisk } from "@/lib/portfolio/engines/risk";
 import type { ScenarioResult } from "@/lib/portfolio/engines/scenario";
+import { FACTOR_SENSITIVITIES_AS_OF } from "@/lib/portfolio/classes/reference/factor-sensitivities";
 
 /**
  * Risk Lab — risk beyond price volatility.
@@ -133,6 +135,46 @@ export function RiskLab({ risk, scenarios }: { risk: UniversalRisk; scenarios: S
           </p>
         </Card>
       )}
+
+      {/* ── Methodology ── where each number above actually comes from, so the
+          rigor is visible rather than just asserted. Collapsed by default —
+          this is evidence on demand, not something that should compete with
+          the numbers themselves for attention. */}
+      <CollapsibleSection
+        title="Methodology"
+        subtitle="What's measured, what's a declared reference value, and where each comes from"
+      >
+        <ul className="flex flex-col gap-2 text-[11px] leading-relaxed text-muted">
+          <li>
+            <strong className="text-foreground">Volatility, Sharpe, drawdown, VaR, CVaR</strong> — computed
+            from real daily price history for the {risk.coverage.observedPct}% of the portfolio that has
+            one. Beta is a regression of portfolio returns against SPY over the same window.
+          </li>
+          <li>
+            <strong className="text-foreground">Equity/fund beta feeding the factor exposures below</strong> —
+            measured from each holding&apos;s own daily returns where the regression explains enough of the
+            variance to be trusted (R² ≥ 0.10); otherwise it falls back to the data provider&apos;s beta, then
+            to a class-typical reference value — never a noisy measurement presented as a real one.
+          </li>
+          <li>
+            <strong className="text-foreground">Duration</strong> — real, read from each bond fund&apos;s
+            actual holdings data (topHoldings.bondHoldings.duration), not estimated.
+          </li>
+          <li>
+            <strong className="text-foreground">Credit, inflation, FX and commodity sensitivities</strong> for
+            asset classes where none of the above can be measured directly (gold, oil, broad commodities,
+            crypto, real estate) — a curated reference table of typical relationships, dated{" "}
+            {FACTOR_SENSITIVITIES_AS_OF}. These are long-run averages and can go stale across regime changes
+            (e.g. the 2022 breakdown of the stock/bond correlation), which is why the date is shown.
+          </li>
+          <li>
+            <strong className="text-foreground">Stress scenarios</strong> apply the same measured-or-reference
+            sensitivities as macro factor shocks — an asset priced by a complex (gold, oil) loads on that
+            complex&apos;s own factor, not on the macro drivers behind it, so nothing gets shocked twice for the
+            same move.
+          </li>
+        </ul>
+      </CollapsibleSection>
 
       {/* ── Return-based risk ── */}
       <div>

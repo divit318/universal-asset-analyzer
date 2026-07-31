@@ -38,7 +38,7 @@ export const RESEARCH_ACTIONS: ResearchAction[] = [
       "Build the full investment thesis for this stock as a buy-side analyst. Weigh valuation, growth, quality, and risk, and conclude with a clear stance and the assumptions it depends on.",
     intents: ["thesis", "valuation", "growth", "risks"],
     structured: true,
-    followUps: ["What assumptions would break this thesis?", "What is the intrinsic value?", "Would Buffett invest in this company?"],
+    followUps: ["What assumptions would break this thesis?", "What growth does the current price imply?", "Would Buffett invest in this company?"],
   },
   {
     id: "bull",
@@ -62,10 +62,15 @@ export const RESEARCH_ACTIONS: ResearchAction[] = [
     id: "valuation",
     label: "Valuation Analysis",
     instruction:
-      "Assess valuation. Is the stock undervalued, fairly valued, or overvalued? Estimate an intrinsic value range and state the assumptions behind it.",
+      // Deliberately does not estimate a value: the intrinsic value belongs to the
+      // ValuationCase (lib/valuation/), which is persisted and correctable. A
+      // copilot number would be a second, unfalsifiable answer that evaporates
+      // when the chat scrolls away.
+      "Assess valuation using observable evidence only: multiples versus the company's own history and its peers, what the current price implies about expected growth, and analyst targets as a third-party fact. Do NOT produce your own intrinsic value or price target — point the user to the Valuation workspace for that, and instead say which assumptions the current price depends on.",
     intents: ["valuation", "comparison"],
     structured: true,
     followUps: ["What assumptions justify the current price?", "How does valuation compare to peers?", "What is the bear case on valuation?"],
+
   },
   {
     id: "growth",
@@ -180,7 +185,7 @@ export function getAction(id: string | undefined): ResearchAction | null {
 
 /** Default follow-ups for free-text questions (no action), by intent. */
 const INTENT_FOLLOWUPS: Partial<Record<ResearchIntent, string[]>> = {
-  valuation: ["What is the intrinsic value?", "How does valuation compare to peers?", "What is the bear case?"],
+  valuation: ["What growth does the current price imply?", "How does valuation compare to peers?", "What is the bear case?"],
   growth: ["Is the growth durable?", "What are the growth catalysts?", "How does growth compare to peers?"],
   risks: ["What could cause a 30% decline?", "What is the bull case?", "How strong is the balance sheet?"],
   thesis: ["What assumptions would break the thesis?", "Would Buffett invest here?", "What is the bear case?"],

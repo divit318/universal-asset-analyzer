@@ -65,6 +65,7 @@ import { AddToPortfolioModal } from "@/app/_components/portfolio/add-to-portfoli
 import { ArrivalHighlight, useArrivalTarget } from "@/app/_components/arrival-highlight";
 import {
   PageShell,
+  Skeleton,
   DataTable,
   DataTableAction,
   ScoreChip,
@@ -72,6 +73,8 @@ import {
   type Density,
   type SortDir,
 } from "@/app/_components/ui";
+import { Reveal } from "@/app/_components/reveal";
+import { LoadingMark } from "@/app/_components/loading-mark";
 
 /* -------------------------------------------------------------------------- */
 /* Row model                                                                   */
@@ -268,7 +271,7 @@ function WatchlistPageInner() {
   const [digest, setDigest] = useState<WatchlistDigest | null>(null);
   const [digestLoading, setDigestLoading] = useState(false);
   const [digestError, setDigestError] = useState<string | null>(null);
-  const digestFetched = useRef(false);
+  const digestInFlight = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
   // Full research inputs (composite scores, sector, beta, geography) per symbol,
   // fetched on demand so every watchlist stock — including newly-added ones —
@@ -446,6 +449,12 @@ function WatchlistPageInner() {
     benchmarkQuote && Number.isFinite(benchmarkQuote.changePercent) ? benchmarkQuote.changePercent : null;
 
   const fetchDigest = useCallback(() => {
+    // One run at a time. Opt-in generation puts a button in the user's hand,
+    // so a double-click is now the ordinary way to fire this twice. A ref, not
+    // the `digestLoading` state, because this callback's closure would capture
+    // a stale value of the latter.
+    if (digestInFlight.current) return;
+    digestInFlight.current = true;
     setDigestLoading(true);
     setDigestError(null);
     const portfolioContext = ios?.profile.hasPortfolio
@@ -475,17 +484,12 @@ function WatchlistPageInner() {
             : "Local AI is unavailable. Check that Ollama is running.",
         );
       })
-      .finally(() => setDigestLoading(false));
+      .finally(() => {
+        digestInFlight.current = false;
+        setDigestLoading(false);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ios?.profile.builtAt, ios?.profile.hasPortfolio]);
-
-  // Auto-generate the digest once per session, on the first load that has items.
-  useEffect(() => {
-    if (items.length === 0 || digestFetched.current) return;
-    digestFetched.current = true;
-    fetchDigest();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items.length]);
 
   async function remove(symbol: string) {
     const snapshot = items;
@@ -1206,11 +1210,18 @@ function WatchlistPageInner() {
   /* Onboarding copy earns its space only until the user has data. */
   const showHint = items.length > 0 && items.length <= 3;
 
+  // Scoped to current `items`, not all of `quotes` — removing a symbol doesn't
+  // prune its stale quote from state, so counting every cached quote would
+  // keep a removed stock's gain/loss in the summary strip until next reload.
+  const trackedQuotes = items.map((i) => quotes[i.symbol]).filter((q): q is Quote => q != null);
+  const gainers = trackedQuotes.filter((q) => q.changePercent > 0).length;
+  const losers  = trackedQuotes.filter((q) => q.changePercent < 0).length;
+  const hasQuotes = trackedQuotes.length > 0;
+
   return (
     <PageShell py="py-10" width="wide">
       <ArrivalHighlight targetId={highlightTarget} />
-
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <Reveal index={0} className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-semibold tracking-tight">Watchlist</h1>
@@ -1275,7 +1286,7 @@ function WatchlistPageInner() {
             ↓ Export
           </button>
         </div>
-      </div>
+      </Reveal>
 
       {/* Named lists. Rendered whenever there is more than one, or the single
           default one has anything in it — a lone empty list needs no switcher. */}
@@ -1293,10 +1304,9 @@ function WatchlistPageInner() {
         />
       )}
 
-      {/* Summary strip — derived from the rows actually on screen, so it agrees
-          with the table under a filter instead of describing the whole list. */}
-      {!loading && filteredRows.length > 0 && (
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-3 rounded-xl border border-border bg-surface px-5 py-3">
+      {/* Summary strip */}
+      {!loading && items.length > 0 && hasQuotes && (
+        <Reveal index={1} className="flex flex-wrap items-center gap-4 rounded-xl border border-border bg-surface px-5 py-3">
           <div className="flex flex-col gap-0.5">
             <span className="text-label font-semibold uppercase tracking-widest text-muted/60">
               {filteredRows.length === rows.length ? "Watching" : "Showing"}
@@ -1367,21 +1377,31 @@ function WatchlistPageInner() {
               </div>
             </>
           )}
-        </div>
+        </Reveal>
       )}
 
-      {/* AI Watchlist Intelligence — auto-generated on load */}
-      {!loading && items.length > 0 && (digestLoading || digest || digestError) && (
-        <WatchlistDigestPanel
-          digest={digest}
-          loading={digestLoading}
-          error={digestError}
-          onRegenerate={fetchDigest}
-        />
+      {/* AI Watchlist Intelligence — OPT-IN. Generation is user-triggered (the
+          panel's idle state carries the button) rather than auto-firing on load:
+          this is local inference on every tracked name, and opening a page is not
+          a request to spend it. The same control regenerates afterwards, which is
+          also the only way the digest can reflect symbols added since it ran. */}
+      {!loading && items.length > 0 && (
+        <Reveal index={2}>
+          <WatchlistDigestPanel
+            digest={digest}
+            loading={digestLoading}
+            error={digestError}
+            onGenerate={fetchDigest}
+          />
+        </Reveal>
       )}
 
       {/* Structured, deterministic per-asset alerts */}
-      {!loading && digest && digest.alerts.length > 0 && <WatchlistAlerts alerts={digest.alerts} />}
+      {!loading && digest && digest.alerts.length > 0 && (
+        <Reveal index={3}>
+          <WatchlistAlerts alerts={digest.alerts} />
+        </Reveal>
+      )}
 
       {exportErr && (
         <p role="alert" className="text-xs text-negative">
@@ -1598,7 +1618,7 @@ function WatchlistPageInner() {
                     </DataTableAction>
                   ))}
               <DataTableAction href={`/research?symbol=${r.item.symbol}`}>Research</DataTableAction>
-              <DataTableAction href={`/dcf?symbol=${r.item.symbol}`}>DCF</DataTableAction>
+              <DataTableAction href={`/valuation?symbol=${r.item.symbol}`}>Valuation</DataTableAction>
               <DataTableAction href={`/ic-report?symbol=${r.item.symbol}`}>IC Report</DataTableAction>
               <DataTableAction href={`/compare?symbols=${r.item.symbol}`}>Compare</DataTableAction>
               <DataTableAction tone="danger" onClick={() => setConfirmDelete(r.item)}>

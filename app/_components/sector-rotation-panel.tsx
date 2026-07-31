@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { SectorRotationSnapshot, RotationClass } from "@/lib/types";
+import { Skeleton } from "./ui/skeleton";
 
 const CLASS_STYLE: Record<RotationClass, { bg: string; text: string; label: string }> = {
   leading: { bg: "bg-positive/10 border-positive/25", text: "text-positive", label: "Leading" },
@@ -47,7 +48,7 @@ export function SectorRotationPanel({ compact = false }: { compact?: boolean }) 
   }, []);
 
   if (loading) {
-    return <div className="h-24 animate-pulse rounded-lg bg-surface-2" />;
+    return <Skeleton height="h-24" radius="rounded-lg" />;
   }
   if (!snapshot || snapshot.sectors.length === 0) return null;
 

@@ -231,8 +231,8 @@ export async function POST(request: Request) {
       ? body.symbols
       : [body.symbolA, body.symbolB].filter((s): s is string => Boolean(s))
   )
-    .map((s) => s.trim().toUpperCase())
-    .filter(Boolean);
+    .map((s) => normalizeSymbol(s))
+    .filter((s): s is string => s !== null);
   const unique = [...new Set(symbols)];
 
   if (unique.length < 2) {

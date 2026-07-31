@@ -81,7 +81,7 @@ export function StructuredProductPayoffCard({
       </dl>
 
       {metrics.payoffScenarios ? (
-        <div className="rounded-xl border border-border bg-surface p-4">
+        <div className="card-lift rounded-xl border border-border bg-surface p-4">
           <h3 className="text-sm font-medium">Payoff at Maturity vs. Underlying Move</h3>
           <p className="mb-2 text-xs text-muted">Hypothetical scenarios — payoff as % of principal at maturity, at maturity date value ({d.maturityDate})</p>
           <ResponsiveContainer width="100%" height={220}>

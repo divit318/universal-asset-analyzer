@@ -9,7 +9,7 @@ import { HoverSymbolProvider, useHoverSymbol, useHoverHandlers, useSymbolEmphasi
 import { BackgroundDepth } from "./_components/background-depth";
 import { Collapsible } from "./_components/collapsible-section";
 import { CountUp } from "@/app/_components/count-up";
-import { useInViewOnce } from "./_components/use-in-view-once";
+import { useInViewOnce } from "@/app/_components/use-in-view-once";
 import type { CompareEntry } from "@/app/api/compare/route";
 import type { GroundingReport } from "@/lib/ai/types";
 import { downloadBlob } from "@/lib/download";
@@ -22,6 +22,7 @@ import { DataProvenance } from "@/app/_components/data-provenance";
 import { getAssetClass, listAssetClasses } from "@/lib/assets/registry";
 import type { AssetClassId } from "@/lib/assets/types";
 import type { ClassCompareEntry } from "@/lib/compare/types";
+import type { UniverseStatus } from "@/lib/screener/types";
 import type { ComparisonResult, RankedAsset } from "@/lib/ai-compare";
 import type { PeerBenchmark } from "@/lib/compare/benchmarks";
 import { useFocusSafe } from "@/lib/focus-context";
@@ -29,7 +30,7 @@ import { useFocusSafe } from "@/lib/focus-context";
 // Recharts is heavy; load the chart chunks only once the user has ≥2 stocks to
 // compare rather than shipping them in the initial /compare bundle.
 const chartFallback = (
-  <div className="h-64 w-full animate-pulse rounded-card border border-border bg-surface-2" />
+  <Skeleton height="h-64" radius="rounded-card" className="border border-border" />
 );
 const CompareChart = dynamic(
   () => import("./_components/compare-chart").then((m) => m.CompareChart),
@@ -46,7 +47,7 @@ const ClassCompareView = dynamic(
 import { formatCurrency, formatMarketCap, formatPercent } from "@/lib/format";
 import { useIOSSafe } from "@/lib/ios-context";
 import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
-import { PageShell } from "@/app/_components/ui";
+import { PageShell, Skeleton } from "@/app/_components/ui";
 import { CHART_SERIES } from "@/app/_components/chart-theme";
 import type { PortfolioFitAnalysis } from "@/lib/ios/types";
 
@@ -334,6 +335,8 @@ interface AiComparison {
    * MetricSection can surface it inline. Previously computed on every
    * request (costing model tokens/latency) but never rendered anywhere. */
   sectionCommentary?: Partial<Record<string, string>>;
+  /** Requested symbols the AI verdict couldn't load — the ranking still ran on whoever's left. */
+  droppedSymbols?: { symbol: string; reason: string }[];
 }
 
 interface CategoryWinner {
@@ -409,6 +412,11 @@ export default function ComparePage() {
   const [classEntries, setClassEntries] = useState<ClassCompareEntry[]>([]);
   const [classLoading, setClassLoading] = useState(false);
   const [classFetchError, setClassFetchError] = useState<string | null>(null);
+  // Live universe-build progress, polled while classLoading is true — a cold
+  // ETF/REIT/crypto/etc. universe can take a while on first use; this turns
+  // that wait from a generic spinner into "building — 140/237" so it never
+  // reads as hung. Purely cosmetic: fetch failures here are swallowed.
+  const [universeStatus, setUniverseStatus] = useState<UniverseStatus | null>(null);
 
   useBootReady(!loading && !classLoading, "compare");
 
@@ -510,6 +518,7 @@ export default function ComparePage() {
     if (syms.length === 0) return;
     setClassLoading(true);
     setClassFetchError(null);
+    setUniverseStatus(null);
     try {
       const res = await fetch(`/api/compare/class?assetClass=${cls}&symbols=${syms.join(",")}`);
       const json = await res.json();
@@ -523,6 +532,24 @@ export default function ComparePage() {
       setClassLoading(false);
     }
   }, []);
+
+  // While a non-equity compare is loading, poll the universe's build status
+  // so a cold first-use isn't just a spinner with no explanation. peekStatus
+  // never blocks, so this is cheap and independent of the main fetch above.
+  useEffect(() => {
+    if (!classLoading || assetClass === "equity") return;
+    let cancelled = false;
+    async function poll() {
+      try {
+        const res = await fetch(`/api/compare/class/status?assetClass=${assetClass}`);
+        const json = await res.json() as { status?: UniverseStatus };
+        if (!cancelled) setUniverseStatus(json.status ?? null);
+      } catch { /* purely cosmetic — a failed poll just leaves the generic spinner */ }
+    }
+    void poll();
+    const interval = setInterval(poll, 1500);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [classLoading, assetClass]);
 
   // Fetch whenever the class symbol list changes.
   useEffect(() => {
@@ -647,6 +674,11 @@ export default function ComparePage() {
               competitivePositioning: r.sections?.competitivePositioning,
               riskComparison: r.sections?.riskComparison,
               grounding: r.grounding,
+              // Carried through the streaming path too, not just the blocking one:
+              // partial tolerance means a comparison can succeed having dropped a
+              // symbol, and the banner saying which is the only thing that
+              // distinguishes "ranked 3 of 4" from "you only asked about 3".
+              droppedSymbols: r.droppedSymbols,
               sectionCommentary: {
                 Valuation: r.sections?.valuation || undefined,
                 Growth: r.sections?.growth || undefined,
@@ -729,6 +761,7 @@ export default function ComparePage() {
   }
 
   const validEntries = entries.filter((e) => !e.error);
+  const validClassEntries = classEntries.filter((e) => !e.error);
   const reduceMotion = useReducedMotion();
 
   // Canonical color for a symbol — its index among ALL requested symbols
@@ -783,20 +816,33 @@ export default function ComparePage() {
               : getAssetClass(assetClass).description}
           </p>
         </div>
-        {symbols.length > 0 && (
+        {(assetClass === "equity" ? symbols.length > 0 : classSymbols.length > 0) && (
           <div className="flex items-center gap-2">
-            {validEntries.length > 0 && (
-              <button
-                onClick={() => {
-                  setExportErr(null);
-                  void downloadBlob("/api/export/compare", `compare-${validEntries.map((e) => e.symbol).join("-")}-${new Date().toISOString().slice(0, 10)}.xlsx`, "POST", { entries: validEntries })
-                    .catch((e: unknown) => setExportErr(e instanceof Error ? e.message : "Export failed"));
-                }}
-                className="shrink-0 rounded-lg border border-border px-3 py-2 text-xs font-medium transition-colors hover:bg-surface-2"
-              >
-                ↓ Export Excel
-              </button>
-            )}
+            {assetClass === "equity"
+              ? validEntries.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setExportErr(null);
+                      void downloadBlob("/api/export/compare", `compare-${validEntries.map((e) => e.symbol).join("-")}-${new Date().toISOString().slice(0, 10)}.xlsx`, "POST", { entries: validEntries })
+                        .catch((e: unknown) => setExportErr(e instanceof Error ? e.message : "Export failed"));
+                    }}
+                    className="shrink-0 rounded-lg border border-border px-3 py-2 text-xs font-medium transition-colors hover:bg-surface-2"
+                  >
+                    ↓ Export Excel
+                  </button>
+                )
+              : validClassEntries.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setExportErr(null);
+                      void downloadBlob("/api/export/compare-class", `compare-${assetClass}-${validClassEntries.map((e) => e.symbol).join("-")}-${new Date().toISOString().slice(0, 10)}.xlsx`, "POST", { assetClass, entries: validClassEntries })
+                        .catch((e: unknown) => setExportErr(e instanceof Error ? e.message : "Export failed"));
+                    }}
+                    className="shrink-0 rounded-lg border border-border px-3 py-2 text-xs font-medium transition-colors hover:bg-surface-2"
+                  >
+                    ↓ Export Excel
+                  </button>
+                )}
             {exportErr && <span className="text-xs text-negative">{exportErr}</span>}
             <button
               onClick={copyUrl}
@@ -963,7 +1009,7 @@ export default function ComparePage() {
               {aiLoading && (
                 <div className="mt-4 flex flex-col gap-2">
                   {[80, 60, 90, 50].map((w) => (
-                    <div key={w} className="h-2.5 animate-pulse rounded-full bg-surface-2" style={{ width: `${w}%` }} />
+                    <Skeleton key={w} height="h-2.5" width="" radius="rounded-full" style={{ width: `${w}%` }} />
                   ))}
                   <p className="mt-1 text-xs text-muted">{aiLoadingLabel(aiLoadingElapsedMs)}</p>
                 </div>
@@ -986,6 +1032,11 @@ export default function ComparePage() {
                           </span>
                         )}
                       </div>
+                      {aiResult.droppedSymbols && aiResult.droppedSymbols.length > 0 && (
+                        <p className="text-xs text-warning">
+                          ⚠ {aiResult.droppedSymbols.map((d) => d.symbol).join(", ")} couldn&apos;t be analyzed — showing the ranking for the rest.
+                        </p>
+                      )}
                       {aiResult.executiveSummary && (
                         <p className="text-sm leading-6 text-foreground">{aiResult.executiveSummary}</p>
                       )}
@@ -1176,9 +1227,16 @@ export default function ComparePage() {
                 />
               </motion.div>
             ) : classLoading ? (
-              <motion.div key="loading" className="flex items-center justify-center gap-2 py-8 text-sm text-muted">
-                <LoadingMark size={20} label="Comparing" />
-                {`Comparing ${classSymbols.join(", ")}…`}
+              <motion.div key="loading" className="flex flex-col items-center justify-center gap-2 py-8 text-sm text-muted">
+                <div className="flex items-center gap-2">
+                  <LoadingMark size={20} label="Comparing" />
+                  {universeStatus?.stage === "building" && universeStatus.total > 0
+                    ? `Building the ${getAssetClass(assetClass).label} universe — ${universeStatus.ready}/${universeStatus.total} (${Math.round((universeStatus.ready / universeStatus.total) * 100)}%)…`
+                    : `Comparing ${classSymbols.join(", ")}…`}
+                </div>
+                {universeStatus?.stage === "building" && universeStatus.total > 0 && (
+                  <p className="text-xs text-muted/70">First-time setup for this asset class — later comparisons will be instant.</p>
+                )}
               </motion.div>
             ) : classEntries.length > 0 ? (
               <motion.div
