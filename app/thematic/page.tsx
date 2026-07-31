@@ -1236,6 +1236,20 @@ function ThematicPageInner() {
     startedThemeRef.current = t;
     router.replace(`/thematic?theme=${encodeURIComponent(t)}`, { scroll: false });
 
+    // Stall watchdog. The server heartbeats every 15s even mid-stage, so 90s
+    // of total silence means the connection is dead (proxy idle timeout, a
+    // laptop sleep) — without this, `reader.read()` waited forever while the
+    // elapsed clock kept ticking, indistinguishable from a slow model.
+    let stalled = false;
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    const armWatchdog = () => {
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        stalled = true;
+        controller.abort();
+      }, 90_000);
+    };
+
     try {
       const res = await fetch("/api/thematic", {
         method: "POST",
@@ -1252,9 +1266,11 @@ function ThematicPageInner() {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buf = "";
+      armWatchdog();
 
       while (true) {
         const { done, value } = await reader.read();
+        armWatchdog();
         if (done) break;
         buf += decoder.decode(value, { stream: true });
         const parts = buf.split("\n\n");
@@ -1284,10 +1300,14 @@ function ThematicPageInner() {
         }
       }
     } catch (err) {
-      if ((err as Error).name !== "AbortError") {
+      if (stalled) {
+        // The watchdog aborted, not the user — say what actually happened.
+        setError("The connection to the analysis went quiet for 90 seconds and was closed. The run has been stopped — try again.");
+      } else if ((err as Error).name !== "AbortError") {
         setError(err instanceof Error ? err.message : "Unexpected error");
       }
     } finally {
+      clearTimeout(watchdog);
       setRunning(false);
     }
   }, [theme, router, toast]);
