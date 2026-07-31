@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { NewsItem } from "@/lib/types";
+import { classifyNoise } from "@/lib/wire/tape";
 import { NewsItemRow } from "./news-item";
 import { Skeleton } from "@/app/_components/ui";
 
@@ -21,6 +22,7 @@ interface HoldingNews {
 export function PortfolioWatch() {
   const [holdings, setHoldings] = useState<HoldingNews[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showFiltered, setShowFiltered] = useState(false);
   const startedRef = useRef(false);
 
   useEffect(() => {
@@ -68,6 +70,11 @@ export function PortfolioWatch() {
   if (!loading && holdings.length === 0) return null;
 
   const rows = holdings.flatMap((h) => h.items.map((item) => ({ item, symbol: h.symbol })));
+  // Holdings-sourced does not mean relevant: generic personal-finance content
+  // arrives via the same ticker feeds. Same rules module and same "show
+  // filtered (N)" affordance as The Tape — down-ranked, never deleted.
+  const visible = rows.filter(({ item }) => !classifyNoise(item).filtered);
+  const noisy = rows.filter(({ item }) => classifyNoise(item).filtered);
 
   // Renders inside the "Portfolio Impact" WireSection (which owns the h2), so
   // this block identifies itself with a sub-label: it is the holdings-news half
@@ -89,11 +96,37 @@ export function PortfolioWatch() {
         )}
       </div>
       {rows.length > 0 ? (
-        <ul className="rounded-xl border border-border bg-surface">
-          {rows.map(({ item, symbol }, i) => (
-            <NewsItemRow key={`${symbol}-${item.url}`} item={item} style={{ animationDelay: `${i * 30}ms` }} />
-          ))}
-        </ul>
+        <>
+          <ul className="rounded-xl border border-border bg-surface">
+            {visible.map(({ item, symbol }, i) => (
+              <NewsItemRow key={`${symbol}-${item.url}`} item={item} style={{ animationDelay: `${i * 30}ms` }} />
+            ))}
+            {visible.length === 0 && (
+              <li className="px-4 py-3 text-xs text-muted">
+                All {rows.length} holding-related items were filtered as noise.
+              </li>
+            )}
+          </ul>
+          {noisy.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowFiltered((v) => !v)}
+                aria-expanded={showFiltered}
+                className="self-start text-xs text-muted transition-colors hover:text-foreground"
+              >
+                {showFiltered ? "Hide" : "Show"} filtered ({noisy.length})
+              </button>
+              {showFiltered && (
+                <ul className="rounded-xl border border-border bg-surface opacity-70">
+                  {noisy.map(({ item, symbol }) => (
+                    <NewsItemRow key={`filtered-${symbol}-${item.url}`} item={item} />
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </>
       ) : (
         <Skeleton height="h-24" radius="rounded-xl" className="border border-border" />
       )}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import type { ScannerResult, ScannerProgressEvent, ScannerPartialKey, ScannerOpportunity } from "@/lib/types";
 import { CATEGORY_LABELS, type OpportunityCategory } from "@/lib/opportunity-engine";
 import { MarketRegimeBanner } from "./_components/market-regime-banner";
@@ -18,7 +18,8 @@ import { recordScanDuration } from "@/lib/scanner-eta";
 import { SourceExplorer } from "./_components/source-explorer";
 import { WatchlistImpact, PortfolioImpact } from "./_components/watchlist-portfolio-impact";
 import { PortfolioWatch } from "./_components/portfolio-watch";
-import { NewsTimeline } from "./_components/news-timeline";
+import { Tape } from "./_components/tape";
+import { buildTape } from "@/lib/wire/tape";
 import { SectionNav, type WireSection as WireSectionId } from "./_components/section-nav";
 import { useIOSSafe } from "@/lib/ios-context";
 import { PageShell, Skeleton } from "@/app/_components/ui";
@@ -316,6 +317,10 @@ export default function ScannerPage() {
   const highConviction = display.highConviction ?? [];
   const developing = display.developing ?? [];
   const causalEvents = (display.events ?? []).filter((e) => e.causalChain.length > 0).slice(0, 6);
+  // Cluster/dedupe/noise-filter the raw feed once per newsItems arrival —
+  // pure and tested in lib/wire/tape.ts, so the component just renders it.
+  const newsItems = display.newsItems;
+  const tapeView = useMemo(() => (newsItems ? buildTape(newsItems) : null), [newsItems]);
 
   // Opportunity categories — "Portfolio Improver" is computed client-side from the
   // existing IOS fit engine (never recompute fit logic; just tag opportunities that
@@ -622,18 +627,22 @@ export default function ScannerPage() {
 
       {/* Zone 10: The Tape — the raw feed, last and collapsed by default. A
           scan's insights live above; this is the firehose for verification. */}
-      {scanRunningOrDone && (display.newsItems || loading) && (
+      {scanRunningOrDone && (tapeView || loading) && (
         <WireSection
           id="the-tape"
           title="The Tape"
-          badge={display.newsItems ? `${display.newsItems.length} stories` : undefined}
+          badge={
+            tapeView
+              ? `${tapeView.totalArticles} articles · ${tapeView.stories.length + tapeView.filtered.length} stories`
+              : undefined
+          }
           collapsible
           defaultCollapsed
           persist
         >
           <div className="flex flex-col gap-4">
-            {display.newsItems ? (
-              <NewsTimeline newsItems={display.newsItems} />
+            {tapeView ? (
+              <Tape view={tapeView} />
             ) : (
               <SectionSkeleton height="h-56" />
             )}
