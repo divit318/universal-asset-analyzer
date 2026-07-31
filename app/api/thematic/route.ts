@@ -87,6 +87,20 @@ export async function POST(req: Request) {
       const onClientGone = () => abort.abort();
       req.signal.addEventListener("abort", onClientGone);
 
+      // A single stage can run minutes with no data frame in between, which
+      // is longer than many proxy/browser idle timeouts. SSE comment frames
+      // (lines starting with ":") keep the connection visibly alive and are
+      // ignored by the client's `data: `-prefixed parser. They also double as
+      // the traffic the client's stall watchdog counts on.
+      const heartbeat = setInterval(() => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`: keepalive ${Date.now()}\n\n`));
+        } catch {
+          closed = true;
+        }
+      }, 15_000);
+
       try {
         if (!refresh) {
           const hit = readCache<ThematicReport>(key);
@@ -129,6 +143,7 @@ export async function POST(req: Request) {
           });
         }
       } finally {
+        clearInterval(heartbeat);
         req.signal.removeEventListener("abort", onClientGone);
         closed = true;
         try { controller.close(); } catch { /* already closed by the disconnect */ }
