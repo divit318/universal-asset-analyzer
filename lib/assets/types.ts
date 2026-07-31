@@ -128,15 +128,81 @@ export interface FilterDef {
   scale?: 1e9;
 }
 
+/**
+ * What a range filter's numbers are measured *against*.
+ *
+ * "P/E under 15" is a statement about the whole market; "P/E in the cheapest
+ * quartile of its own sector" is a statement about the company. Investors think
+ * in the second form far more often than screeners let them express it, and the
+ * difference is not cosmetic: an absolute P/E floor silently screens out every
+ * utility and screens in every miner, because it is really a sector filter
+ * wearing a valuation label.
+ *
+ * With a frame, the same input box answers a different question:
+ *   absolute  — the raw metric value (the only mode that existed before)
+ *   class     — percentile against every asset in the class
+ *   peer      — percentile against the asset's own peer group (see
+ *               AssetClassDefinition.peerGroupBy: sector for equities, issuer
+ *               type for bonds, sector for crypto, property type for REITs)
+ *
+ * Percentiles are always oriented so that **100 is best**, with the metric's own
+ * `better` direction already folded in — so `min: 75` means "top quartile"
+ * whether the metric is ROIC (high is good) or expense ratio (low is good).
+ * One mental model, no per-metric sign reasoning.
+ *
+ * Cost note: percentiles are precomputed once per universe build and cached
+ * (lib/screener/universe-stats.ts), so a framed filter is an O(1) map lookup per
+ * row at screen time — the same cost as an absolute one.
+ */
+export type FilterFrame = "absolute" | "class" | "peer";
+
+/**
+ * What to do with a candidate whose value for this filter is unknown.
+ *
+ * The engine's long-standing rule is `exclude` — you cannot confirm an unknown
+ * ROIC clears a 12% floor, so it doesn't. That rule is right by default and
+ * stays the default. But it was previously *global and invisible*, which made a
+ * thin metric indistinguishable from a strict screen: filtering on a field 40%
+ * of the universe lacks quietly deletes 40% of the universe. Making it a
+ * per-filter choice with a visible count turns that from a trap into a decision.
+ */
+export type MissingPolicy = "exclude" | "include";
+
 /** The user's chosen value for one filter. */
 export type FilterValue =
-  | { kind: "range"; min: number | null; max: number | null }
+  | {
+      kind: "range";
+      min: number | null;
+      max: number | null;
+      /** Defaults to "absolute" — i.e. exactly the previous behaviour. */
+      frame?: FilterFrame;
+      /** Defaults to "exclude" — i.e. exactly the previous behaviour. */
+      missing?: MissingPolicy;
+    }
   | { kind: "select"; value: string | null }
   | { kind: "multiselect"; values: string[] }
   | { kind: "boolean"; value: boolean | null };
 
 /** All active filters for one screen run, keyed by metric key. */
 export type FilterValues = Record<string, FilterValue>;
+
+/**
+ * Soft preferences: "I'd rather have low leverage" as opposed to "reject
+ * anything above 1.0x".
+ *
+ * Hard filters are AND-gates, and AND-gates are a poor model of how anyone
+ * actually chooses an investment. A name that misses one threshold by 2% while
+ * dominating on five other dimensions is a name you want to see; a filter makes
+ * it invisible. That single property is responsible for most of the
+ * empty-result frustration in every screener on the market, and for the quiet
+ * damage of screens that are technically satisfied and practically useless.
+ *
+ * A preference instead adds weight to the ranking: nothing is excluded, the
+ * ordering shifts. Keyed by metric, valued by weight (1 = same pull as one
+ * default rank factor). Cost is zero on top of ranking, which already reads
+ * precomputed percentiles.
+ */
+export type SoftPreferences = Record<string, number>;
 
 /* -------------------------------------------------------------------------- */
 /* Templates (a.k.a. presets)                                                  */
@@ -236,6 +302,21 @@ export interface AssetClassDefinition {
   validate?: (symbol: string) => boolean;
 
   capabilities: Capability[];
+
+  /**
+   * The attribute key that defines an asset's peer group, for `frame: "peer"`
+   * filters and for peer-relative ranking.
+   *
+   * "Cheap for a bank" and "cheap for a software company" are different
+   * statements, and a screener that can only compare across the whole class
+   * cannot express either. This names the grouping that makes a comparison
+   * fair for each class: sector for equities, issuer type for bonds, sector for
+   * crypto, property type for REITs, sector focus for ETFs.
+   *
+   * Undefined for classes where every member is already comparable (forex —
+   * 36 curated pairs are one peer group by construction).
+   */
+  peerGroupBy?: string;
 
   /** Every metric this class knows about — including the unavailable ones. */
   metrics: MetricDef[];

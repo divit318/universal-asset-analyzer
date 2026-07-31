@@ -157,6 +157,31 @@ const metrics: MetricDef[] = [
     better: "higher",
   },
 
+  {
+    key: "supplyOverhang",
+    label: "Supply Overhang",
+    description:
+      "Share of eventual supply not yet circulating — future dilution arriving on a vesting schedule. A token with 70% overhang must absorb more than three times its float in new supply, whatever its fundamentals.",
+    group: "Valuation",
+    unit: "%",
+    availability: "derived",
+    source: "yahoo",
+    formula: "(1 − market cap ÷ fully diluted value) × 100",
+    better: "lower",
+    step: 5,
+  },
+  {
+    key: "dollarVolume24h",
+    label: "24h Dollar Volume",
+    description:
+      "Absolute traded value over 24 hours. The practical exit-liquidity number — a turnover ratio flatters a small token with a thin float.",
+    group: "Liquidity",
+    unit: "$B",
+    availability: "live",
+    source: "yahoo",
+    better: "higher",
+    scale: 1e9,
+  },
   // Declared-but-unscreenable — the on-chain dimension.
   {
     key: "tvl",
@@ -255,6 +280,9 @@ export const cryptoClass: AssetClassDefinition = {
   aliases: ["crypto", "coins", "tokens", "digital assets", "cryptocurrency"],
   validate: (s) => /-USD$/i.test(s),
   capabilities: ["screen", "research", "compare", "portfolio", "watchlist", "chart", "news"],
+
+  /** Peer group for relative filters — an L1 and a stablecoin share no meaningful yardstick. */
+  peerGroupBy: "sector",
 
   metrics,
   filterGroups: ["Valuation", "Classification", "Liquidity", "Momentum", "Risk", "On-Chain"],

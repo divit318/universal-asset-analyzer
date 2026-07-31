@@ -238,6 +238,69 @@ const metrics: MetricDef[] = [
     better: "higher",
   },
 
+  {
+    key: "yieldPerDuration",
+    label: "Yield / Duration",
+    description:
+      "Carry per unit of rate risk. A 5% yield from a 2-year fund and a 5% yield from a 20-year fund are not the same trade — ranking on yield alone sorts by how much duration each fund happens to carry, not by value.",
+    group: "Yield & Spread",
+    unit: "x",
+    availability: "derived",
+    source: "yahoo",
+    formula: "distribution yield ÷ effective duration",
+    better: "higher",
+    step: 0.1,
+  },
+  {
+    key: "spreadPerDuration",
+    label: "Spread / Duration",
+    description:
+      "The same idea applied to the credit leg: how much spread you are paid per year of rate risk. Separates funds being paid for credit from funds being paid for sitting on the long end.",
+    group: "Yield & Spread",
+    unit: "x",
+    availability: "derived",
+    source: "yahoo",
+    formula: "spread over the Treasury curve ÷ effective duration",
+    better: "higher",
+    step: 0.1,
+  },
+  {
+    key: "netYield",
+    label: "Yield after Fees",
+    description:
+      "Distribution yield less the expense ratio. On a 4% carry a 30bp fee is 7.5% of the return, which a gross yield hides.",
+    group: "Yield & Spread",
+    unit: "%",
+    availability: "derived",
+    source: "yahoo",
+    formula: "dividendYield − netExpenseRatio",
+    better: "higher",
+    step: 0.1,
+  },
+  {
+    key: "cashWeight",
+    label: "Cash Weight",
+    description:
+      "Share of the portfolio in cash rather than bonds. High cash in a bond fund is undisclosed duration-shortening — it dilutes the carry you are buying.",
+    group: "Credit",
+    unit: "%",
+    availability: "live",
+    source: "yahoo",
+    better: null,
+    step: 1,
+  },
+  {
+    key: "fundAge",
+    label: "Fund Age",
+    description: "Years since first trade. Whether the fund has traded through a rate cycle at all.",
+    group: "Cost & Size",
+    unit: "yrs",
+    availability: "derived",
+    source: "yahoo",
+    formula: "now − firstTradeDateMilliseconds",
+    better: "higher",
+    step: 1,
+  },
   // Declared-but-unscreenable.
   {
     key: "coupon",
@@ -284,6 +347,9 @@ export const bondClass: AssetClassDefinition = {
   providers: ["yahoo"],
   aliases: ["bonds", "fixed income", "credit", "treasuries", "bond funds"],
   capabilities: ["screen", "research", "compare", "portfolio", "watchlist", "chart"],
+
+  /** Peer group for relative filters — a Treasury fund and a high-yield fund price on different risks. */
+  peerGroupBy: "issuerType",
 
   metrics,
   filterGroups: ["Yield & Spread", "Rate Risk", "Credit", "Classification", "Cost & Size", "Security Detail"],

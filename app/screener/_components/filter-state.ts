@@ -10,10 +10,27 @@
  */
 
 import { getAssetClass, getMetric } from "@/lib/assets/registry";
-import type { AssetClassId, FilterValues } from "@/lib/assets/types";
+import type { AssetClassId, FilterFrame, FilterValues, SoftPreferences } from "@/lib/assets/types";
 
-export type DraftValue = { kind: "range"; min: string; max: string } | { kind: "multiselect"; values: string[] };
+export type DraftValue =
+  | {
+      kind: "range";
+      min: string;
+      max: string;
+      /**
+       * What the numbers mean: raw values, or a percentile against the class or
+       * the asset's peer group. Absent = "absolute", so every existing draft and
+       * saved screen reads back unchanged.
+       */
+      frame?: FilterFrame;
+      /** Whether a name with no value for this metric survives the filter. */
+      missing?: "exclude" | "include";
+    }
+  | { kind: "multiselect"; values: string[] };
 export type Draft = Record<string, DraftValue>;
+
+/** Metric key → weight. Ranked toward, never filtered on. */
+export type PreferenceDraft = SoftPreferences;
 
 export function emptyDraft(): Draft {
   return {};
@@ -51,7 +68,14 @@ export function toFilterValues(assetClass: AssetClassId, draft: Draft): FilterVa
       continue;
     }
 
-    const scale = metric.scale ?? 1;
+    const frame = value.frame ?? "absolute";
+    /*
+     * Scale applies to absolute values only. A framed filter's numbers are
+     * percentiles, so multiplying "top 25%" by the AUM metric's 1e9 scale would
+     * ask for the 25-billionth percentile and match nothing — the kind of bug
+     * that looks like an empty screen rather than a unit error.
+     */
+    const scale = frame === "absolute" ? (metric.scale ?? 1) : 1;
     const min = parse(value.min);
     const max = parse(value.max);
     if (min == null && max == null) continue;
@@ -59,6 +83,8 @@ export function toFilterValues(assetClass: AssetClassId, draft: Draft): FilterVa
       kind: "range",
       min: min == null ? null : min * scale,
       max: max == null ? null : max * scale,
+      ...(frame !== "absolute" ? { frame } : {}),
+      ...(value.missing === "include" ? { missing: "include" as const } : {}),
     };
   }
 
@@ -85,11 +111,14 @@ export function fromFilterValues(assetClass: AssetClassId, filters: FilterValues
       continue;
     }
     if (value.kind === "range") {
-      const scale = metric.scale ?? 1;
+      const frame = value.frame ?? "absolute";
+      const scale = frame === "absolute" ? (metric.scale ?? 1) : 1;
       draft[key] = {
         kind: "range",
         min: value.min == null ? "" : String(value.min / scale),
         max: value.max == null ? "" : String(value.max / scale),
+        ...(frame !== "absolute" ? { frame } : {}),
+        ...(value.missing === "include" ? { missing: "include" as const } : {}),
       };
     }
   }

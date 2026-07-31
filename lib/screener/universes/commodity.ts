@@ -120,6 +120,28 @@ async function buildOne(ref: CommodityRef): Promise<ScreenerCandidate | null> {
       seasonalityScore: season.score,
       seasonalAvgReturn: season.avgReturn,
       volatility: history ? annualizedVolatility(history, 252) : null,
+
+      /*
+       * Return per unit of volatility over the trailing year. Commodities differ
+       * in volatility by an order of magnitude — natural gas against gold — so
+       * ranking them on raw return ranks them on how violent they are. This is
+       * the comparison that survives that difference.
+       */
+      returnPerVol: (() => {
+        const r = history ? trailingReturn(history, 252) : null;
+        const v = history ? annualizedVolatility(history, 252) : null;
+        return r != null && v != null && v > 0 ? r / v : null;
+      })(),
+      /*
+       * Roll yield as a share of total volatility: how much of the carry you are
+       * being paid is meaningful against the noise you have to sit through. A 2%
+       * roll yield on a 15% vol contract is a real edge; the same 2% on 60% vol
+       * is a rounding error.
+       */
+      carryQuality: (() => {
+        const v = history ? annualizedVolatility(history, 252) : null;
+        return slope != null && v != null && v > 0 ? -slope / v : null;
+      })(),
     },
     attributes: {
       sector: ref.sector,

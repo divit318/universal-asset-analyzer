@@ -64,6 +64,8 @@ export interface FundDetail {
    */
   available: boolean;
   category: string | null;
+  /** Issuer / fund family ("Vanguard", "iShares"). Verified present on fundProfile. */
+  family: string | null;
   expenseRatio: number | null; // %
   /** Combined weight of the ten largest holdings, %. */
   top10Concentration: number | null;
@@ -74,6 +76,8 @@ export interface FundDetail {
   /** Largest single sector weight, %. */
   topSectorWeight: number | null;
   topSector: string | null;
+  /** Inverse-Herfindahl count of sectors: "11 sectors" vs "effectively 2.3". */
+  effectiveSectors: number | null;
   equityWeight: number | null; // %
   bondWeight: number | null; // %
   /** Cash / money-market weight, %. Where a money-market fund's assets actually sit. */
@@ -126,6 +130,22 @@ function parseDetail(raw: RawFundDetail): FundDetail {
     .sort((a, b) => (b[1] as number) - (a[1] as number));
   const top = sectors[0];
 
+  /*
+   * Effective number of sectors: the inverse Herfindahl of the sector weights.
+   *
+   * A fund holding 11 sectors at 9% each and a fund holding 11 sectors where one
+   * is 80% both report "11 sectors", and only one of them is diversified. The
+   * inverse HHI answers the question a top-sector weight can't: how many sectors
+   * is this fund *effectively* spread across. Free — the weights are already
+   * parsed above for topSectorWeight.
+   */
+  const weights = sectors.map(([, v]) => v as number);
+  const weightSum = weights.reduce((a, b) => a + b, 0);
+  const effectiveSectors =
+    weightSum > 0
+      ? 1 / weights.reduce((acc, w) => acc + (w / weightSum) ** 2, 0)
+      : null;
+
   // bondRatings comes back as an array of single-key objects: [{bb: 0}, {aa: 0.74}, …]
   const ratingEntries = (holdings.bondRatings ?? []).flatMap((row) => Object.entries(row));
   const ratings = ratingEntries.length
@@ -139,6 +159,7 @@ function parseDetail(raw: RawFundDetail): FundDetail {
   return {
     available: raw.fundProfile != null || raw.topHoldings != null,
     category: profile.categoryName ?? null,
+    family: profile.family ?? null,
     expenseRatio: pct(profile.feesExpensesInvestment?.annualReportExpenseRatio),
     // Zero holdings reported means "Yahoo didn't tell us", not "the fund holds
     // nothing" — null so a concentration filter excludes it instead of ranking
@@ -147,6 +168,7 @@ function parseDetail(raw: RawFundDetail): FundDetail {
     topHoldings: namedHoldings.length > 0 ? namedHoldings : null,
     topSectorWeight: top ? pct(top[1] as number) : null,
     topSector: top ? (SECTOR_LABEL[top[0]] ?? top[0]) : null,
+    effectiveSectors,
     equityWeight: pct(holdings.stockPosition),
     bondWeight: pct(holdings.bondPosition),
     cashWeight: pct(holdings.cashPosition),

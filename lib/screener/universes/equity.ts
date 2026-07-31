@@ -62,6 +62,28 @@ export function toCandidate(m: StockMetrics): ScreenerCandidate {
       distanceFrom52WkHigh: m.distanceFrom52WkHigh,
       institutionalOwnership: m.institutionalOwnership,
       earningsSurprisePct: m.earningsSurprisePct,
+      /*
+       * Total shareholder yield: dividends plus net buybacks.
+       *
+       * Two companies returning the same cash rank very differently on dividend
+       * yield alone depending on which instrument they chose, and the choice is
+       * mostly tax and signalling preference rather than generosity. Adding them
+       * is the standard fix and both components are already here.
+       */
+      shareholderYield:
+        m.dividendYield != null || m.buybackYield != null
+          ? (m.dividendYield ?? 0) + (m.buybackYield ?? 0)
+          : null,
+      /*
+       * Quality-adjusted valuation: earnings yield × ROIC, i.e. how much
+       * compounding you get per unit of price. A cheap low-return business and an
+       * expensive high-return one can look equally attractive on either metric
+       * alone; this is the product that separates them, and it is the closest
+       * available stand-in for the "cheap *and* good" screen everyone actually
+       * wants but expresses as two unrelated filters.
+       */
+      qualityPerPrice:
+        m.forwardPE != null && m.forwardPE > 0 && m.roic != null ? (100 / m.forwardPE) * (m.roic / 100) : null,
       overallScore: m.scores.overall,
       valueScore: m.scores.value,
       growthScore: m.scores.growth,

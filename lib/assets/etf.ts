@@ -29,6 +29,50 @@ export const ETF_REGIONS = [
   "Other",
 ] as const;
 
+/**
+ * Vehicle types. `Plain` is the overwhelming majority and the thing most screens
+ * want; the rest exist so they can be excluded on purpose.
+ */
+export const ETF_STRUCTURES = [
+  "Plain",
+  "Leveraged",
+  "Inverse",
+  "Leveraged Inverse",
+  "Covered Call",
+  "Buffered",
+  "Currency Hedged",
+] as const;
+
+/**
+ * Issuers, canonicalised. These are the *normalised* names produced by
+ * `fundIssuer()` in lib/screener/universes/etf.ts, not the raw
+ * `fundProfile.family` strings — Yahoo's own spellings ("State Street Investment
+ * Management", "Dimensional Fund Advisors") would make a filter that matches
+ * nothing. Ordered by real prevalence in the live universe.
+ */
+export const ETF_ISSUERS = [
+  "iShares / BlackRock",
+  "Vanguard",
+  "State Street",
+  "Invesco",
+  "First Trust",
+  "Dimensional",
+  "JPMorgan",
+  "Schwab",
+  "Fidelity",
+  "Global X",
+  "Capital Group",
+  "Avantis",
+  "VanEck",
+  "WisdomTree",
+  "Franklin Templeton",
+  "ProShares",
+  "Goldman Sachs",
+  "Direxion",
+  "Pacer",
+  "Other",
+] as const;
+
 export const ETF_STYLES = ["Value", "Blend", "Growth", "Sector", "Thematic", "Income", "Other"] as const;
 
 export const ETF_FOCUS = [
@@ -206,7 +250,167 @@ const metrics: MetricDef[] = [
     better: null,
   },
 
+  /* ---------------------------------------------------------------------- */
+  /* Liquidity — the group that decides whether a screen result is usable    */
+  /* ---------------------------------------------------------------------- */
+  {
+    key: "dollarVolume",
+    label: "Dollar Volume",
+    description:
+      "3-month average daily traded value. The practical size limit on a position — share volume alone can't tell you whether a fund trades $2M or $2B a day.",
+    group: "Liquidity",
+    unit: "$B",
+    availability: "derived",
+    source: "yahoo",
+    formula: "regularMarketPrice × averageDailyVolume3Month",
+    better: "higher",
+    scale: 1e9,
+  },
+  {
+    key: "liquidityTrend",
+    label: "Volume Trend (10d/3m)",
+    description:
+      "Recent volume against its own 3-month average. Below ~0.5 means interest is draining out of the fund, which tends to precede a closure; above 1.5 means something is happening.",
+    group: "Liquidity",
+    unit: "x",
+    availability: "derived",
+    source: "yahoo",
+    formula: "averageDailyVolume10Day ÷ averageDailyVolume3Month",
+    better: null,
+    step: 0.1,
+  },
+
+  /* ---------------------------------------------------------------------- */
+  /* Structure — the wrapper, not the exposure                               */
+  /* ---------------------------------------------------------------------- */
+  {
+    key: "structure",
+    label: "Structure",
+    description:
+      "The kind of vehicle. Leveraged and inverse funds reset daily and decay along the path, so they are not aggressive versions of the same exposure; covered-call funds pay option premium, not dividends. Exclude them explicitly rather than ranking them alongside plain funds.",
+    group: "Structure",
+    unit: "",
+    availability: "derived",
+    source: "yahoo",
+    formula: "matched from fundProfile.categoryName + the fund's own name",
+    better: null,
+    options: ETF_STRUCTURES,
+  },
+  {
+    key: "issuer",
+    label: "Issuer",
+    description:
+      "Fund family. Stands in for the issuer-quality checks an institution runs before allocating: platform scale, product longevity, closure history.",
+    group: "Structure",
+    unit: "",
+    availability: "live",
+    source: "yahoo",
+    better: null,
+    options: ETF_ISSUERS,
+  },
+  {
+    key: "fundAge",
+    label: "Fund Age",
+    description:
+      "Years since first trade. A fund younger than a cycle has no through-cycle behaviour to evaluate, and young small funds are the ones that get closed.",
+    group: "Structure",
+    unit: "yrs",
+    availability: "derived",
+    source: "yahoo",
+    formula: "now − firstTradeDateMilliseconds",
+    better: "higher",
+    step: 1,
+  },
+
+  /* ---------------------------------------------------------------------- */
+  /* Look-through — screening a fund by what it actually holds               */
+  /* ---------------------------------------------------------------------- */
+  {
+    key: "lookThroughPE",
+    label: "Holdings P/E",
+    description:
+      "The weighted trailing P/E of the fund's underlying holdings — valuation of the portfolio rather than of the wrapper. Lets you ask 'which of these index funds is actually cheap right now', which cost and AUM cannot answer.",
+    group: "Look-Through",
+    unit: "x",
+    availability: "live",
+    source: "yahoo",
+    better: "lower",
+    step: 1,
+  },
+  {
+    key: "effectiveSectors",
+    label: "Effective Sectors",
+    description:
+      "Inverse-Herfindahl count of sector weights: how many sectors the fund is *effectively* spread across. Two funds can both hold 11 sectors while one is 80% technology — this separates them.",
+    group: "Look-Through",
+    unit: "",
+    availability: "derived",
+    source: "yahoo",
+    formula: "1 ÷ Σ(sector weight²) over the topHoldings sectorWeightings",
+    better: "higher",
+    step: 0.5,
+  },
+  {
+    key: "cashWeight",
+    label: "Cash Weight",
+    description:
+      "Share of the portfolio sitting in cash. Cash drag in an equity fund; collateral in a futures-backed one — read it alongside Structure.",
+    group: "Look-Through",
+    unit: "%",
+    availability: "live",
+    source: "yahoo",
+    better: null,
+    step: 1,
+  },
+  {
+    key: "bondWeight",
+    label: "Bond Weight",
+    description:
+      "Share of the portfolio in fixed income. Non-zero here in an equity-classified fund means it is really an allocation product.",
+    group: "Look-Through",
+    unit: "%",
+    availability: "live",
+    source: "yahoo",
+    better: null,
+    step: 1,
+  },
+  {
+    key: "threeMonthReturn",
+    label: "3-Month Return",
+    description: "Trailing three-month total return — the medium-term leg between YTD and 1-year.",
+    group: "Income & Return",
+    unit: "%",
+    availability: "live",
+    source: "yahoo",
+    better: "higher",
+  },
+  {
+    key: "distanceFrom52WkHigh",
+    label: "From 52wk High",
+    description:
+      "How far below its 52-week high the fund trades, as a negative percentage. Where in its own range you'd be buying.",
+    group: "Risk",
+    unit: "%",
+    availability: "derived",
+    source: "yahoo",
+    formula: "(price − fiftyTwoWeekHigh) ÷ fiftyTwoWeekHigh × 100",
+    better: "higher",
+  },
+
   // Declared-but-unscreenable.
+  {
+    key: "fundFlowDerived",
+    label: "Fund Flow (derived)",
+    description:
+      "Net creations minus redemptions, the standard way: change in shares outstanding × NAV.",
+    group: "Cost & Size",
+    unit: "$B",
+    availability: "unavailable",
+    source: null,
+    requires:
+      "Yahoo's screener row carries `sharesOutstanding` for only ~33% of US ETFs (measured across a live 250-fund page), and the construction needs two observations of it. Storing a shares-outstanding snapshot per universe build would make this real for the covered third after two builds; shipping it today would mean a filter that silently deletes two-thirds of the universe.",
+    better: "higher",
+  },
   {
     key: "trackingError",
     label: "Tracking Error",
@@ -261,8 +465,19 @@ export const etfClass: AssetClassDefinition = {
   aliases: ["etf", "etfs", "funds", "index funds", "trackers"],
   capabilities: ["screen", "research", "compare", "portfolio", "watchlist", "chart", "news"],
 
+  /** "Cheap for a bank" ≠ "cheap for a software company" — focus is the fair comparison. */
+  peerGroupBy: "focus",
+
   metrics,
-  filterGroups: ["Cost & Size", "Income & Return", "Risk", "Exposure"],
+  filterGroups: [
+    "Cost & Size",
+    "Liquidity",
+    "Income & Return",
+    "Risk",
+    "Exposure",
+    "Look-Through",
+    "Structure",
+  ],
 
   rank: [
     { metric: "expenseRatio", weight: 3 },

@@ -2,10 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   activeFilters,
   applyFilters,
+  bindingConstraint,
+  diagnose,
   isActive,
+  MARGINAL_SLACK,
   matches,
   parseFilters,
+  parsePreferences,
 } from "@/lib/screener/filter-engine";
+import { framedPercentile, getUniverseStats } from "@/lib/screener/universe-stats";
 import { percentileRank, rankAll, sortCandidates } from "@/lib/screener/ranking";
 import { explain } from "@/lib/screener/explain";
 import { formatMetricValue } from "@/lib/screener/format";
@@ -491,5 +496,222 @@ describe("formatMetricValue", () => {
     // …and nothing above 1% changes.
     expect(formatMetricValue(getMetric("equity", "roic")!, 22.4)).toBe("22.4%");
     expect(formatMetricValue(getMetric("equity", "oneYearReturn")!, 143.6)).toBe("144%");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Relative frames, soft preferences, and diagnostics                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The three additions that change what a screen can express, tested against the
+ * property that matters for each: a frame compares like with like, a preference
+ * reorders without excluding, and a diagnosis is either actionable or silent —
+ * never a false promise.
+ */
+describe("relative frames", () => {
+  // Two sectors with deliberately non-overlapping valuation levels: every
+  // "expensive" software name is dearer than every "cheap" bank. An absolute
+  // P/E filter can only ever return banks; a peer-framed one must return the
+  // cheapest of *each* sector.
+  const rows = [
+    candidate("SOFT_CHEAP", { forwardPE: 30 }, { sector: "Technology" }),
+    candidate("SOFT_MID", { forwardPE: 40 }, { sector: "Technology" }),
+    candidate("SOFT_DEAR", { forwardPE: 50 }, { sector: "Technology" }),
+    candidate("BANK_CHEAP", { forwardPE: 6 }, { sector: "Financial Services" }),
+    candidate("BANK_MID", { forwardPE: 8 }, { sector: "Financial Services" }),
+    candidate("BANK_DEAR", { forwardPE: 10 }, { sector: "Financial Services" }),
+  ];
+  const stats = getUniverseStats("equity", rows, "2026-01-01T00:00:00.000Z");
+
+  it("orients percentiles so 100 is always best, whichever way the metric runs", () => {
+    // forwardPE is better-lower, so the cheapest name in the class scores 100.
+    expect(framedPercentile(stats, "class", "forwardPE", "BANK_CHEAP")).toBe(100);
+    expect(framedPercentile(stats, "class", "forwardPE", "SOFT_DEAR")).toBe(0);
+  });
+
+  it("compares a company against its own sector, not the whole market", () => {
+    // Within Technology, the 30x name is the cheapest → best percentile.
+    expect(framedPercentile(stats, "peer", "forwardPE", "SOFT_CHEAP")).toBe(100);
+    expect(framedPercentile(stats, "peer", "forwardPE", "BANK_CHEAP")).toBe(100);
+    // …and the dearest of each sector is bottom of its own group.
+    expect(framedPercentile(stats, "peer", "forwardPE", "SOFT_DEAR")).toBe(0);
+    expect(framedPercentile(stats, "peer", "forwardPE", "BANK_DEAR")).toBe(0);
+  });
+
+  /**
+   * The whole point of the feature: an absolute cheapness filter is a disguised
+   * sector filter. Peer framing is what lets "cheap" mean the same thing to a
+   * bank and a software company.
+   */
+  it("returns the cheapest of every sector, where an absolute filter returns one sector", () => {
+    const peer: FilterValues = { forwardPE: { kind: "range", min: 99, max: null, frame: "peer" } };
+    const peerHits = applyFilters(rows, "equity", peer, stats).map((c) => c.symbol);
+    expect(peerHits.sort()).toEqual(["BANK_CHEAP", "SOFT_CHEAP"]);
+
+    const absolute: FilterValues = { forwardPE: { kind: "range", min: null, max: 12 } };
+    const absoluteHits = applyFilters(rows, "equity", absolute, stats).map((c) => c.symbol);
+    expect(absoluteHits.every((s) => s.startsWith("BANK"))).toBe(true);
+  });
+
+  it("treats a framed filter as unknown when no stats are supplied, rather than comparing a percentile to a raw P/E", () => {
+    const framed: FilterValues = { forwardPE: { kind: "range", min: 90, max: null, frame: "peer" } };
+    // Default missing policy excludes; without stats nothing can be confirmed.
+    expect(applyFilters(rows, "equity", framed, null)).toHaveLength(0);
+  });
+
+  it("refuses to invent a percentile for a peer group of one", () => {
+    const lonely = [...rows, candidate("ONLY_REIT", { forwardPE: 12 }, { sector: "Real Estate" })];
+    const s = getUniverseStats("equity", lonely, "2026-01-02T00:00:00.000Z");
+    // A percentile against itself is meaningless, so it is absent, not 50.
+    expect(framedPercentile(s, "peer", "forwardPE", "ONLY_REIT")).toBeNull();
+    expect(framedPercentile(s, "class", "forwardPE", "ONLY_REIT")).not.toBeNull();
+  });
+});
+
+describe("per-filter missing-data policy", () => {
+  const rows = [
+    candidate("HAS", { roic: 20 }),
+    candidate("LACKS", { roic: null }),
+  ];
+
+  it("excludes unknowns by default, preserving the engine's original rule", () => {
+    const f: FilterValues = { roic: { kind: "range", min: 10, max: null } };
+    expect(applyFilters(rows, "equity", f).map((c) => c.symbol)).toEqual(["HAS"]);
+  });
+
+  it("can be told not to hold a data gap against a name", () => {
+    const f: FilterValues = { roic: { kind: "range", min: 10, max: null, missing: "include" } };
+    expect(applyFilters(rows, "equity", f).map((c) => c.symbol).sort()).toEqual(["HAS", "LACKS"]);
+  });
+});
+
+describe("soft preferences", () => {
+  const rows = [
+    candidate("YIELDY", { overallScore: 50, dividendYield: 8 }),
+    candidate("QUALITY", { overallScore: 90, dividendYield: 1 }),
+  ];
+  const stats = getUniverseStats("equity", rows, "2026-01-03T00:00:00.000Z");
+
+  it("reorders without excluding anything", () => {
+    const base = rankAll(rows, "equity", [{ metric: "overallScore", weight: 3 }], stats.classPercentiles);
+    expect(base.get("QUALITY")!.rankScore).toBeGreaterThan(base.get("YIELDY")!.rankScore);
+
+    // A strong enough preference for yield flips the ordering — but both names
+    // are still present, which a hard filter could never promise.
+    const tilted = rankAll(
+      rows,
+      "equity",
+      [{ metric: "overallScore", weight: 3 }, { metric: "dividendYield", weight: 9 }],
+      stats.classPercentiles,
+    );
+    expect(tilted.get("YIELDY")!.rankScore).toBeGreaterThan(tilted.get("QUALITY")!.rankScore);
+    expect(tilted.size).toBe(2);
+  });
+
+  it("drops preferences that cannot mean anything", () => {
+    // Unknown metric, an unavailable one, a directionless one, and junk weights.
+    expect(parsePreferences("equity", { nope: 2, marketCap: 3, roic: 0, other: -1 })).toEqual({});
+    expect(parsePreferences("equity", { roic: 2 })).toEqual({ roic: 2 });
+    // Clamped, so a saved screen can't flatten every other factor into noise.
+    expect(parsePreferences("equity", { roic: 1e9 })).toEqual({ roic: 5 });
+  });
+});
+
+describe("infeasibility diagnosis", () => {
+  const rows = [
+    candidate("A", { roic: 20, forwardPE: 15 }, { sector: "Technology" }),
+    candidate("B", { roic: 18, forwardPE: 40 }, { sector: "Technology" }),
+    candidate("C", { roic: 4, forwardPE: 9 }, { sector: "Energy" }),
+  ];
+
+  it("names the single binding filter and the threshold that would admit a name", () => {
+    // Tech names exist, but none with ROIC ≥ 50.
+    const f: FilterValues = {
+      sector: { kind: "multiselect", values: ["Technology"] },
+      roic: { kind: "range", min: 50, max: null },
+    };
+    expect(applyFilters(rows, "equity", f)).toHaveLength(0);
+
+    const [worst] = diagnose(rows, "equity", f);
+    expect(worst.key).toBe("roic");
+    expect(worst.blocks).toBe(2); // A and B clear the sector filter but fail ROIC
+    expect(worst.relaxTo).toBe(20); // the best ROIC among them
+    expect(worst.bound).toBe("min");
+    expect(worst.relaxToIsUniverseWide).toBe(false);
+  });
+
+  /**
+   * The case a leave-one-out analysis alone gets wrong. Every filter blocks
+   * zero, because dropping any one of them still leaves the others excluding
+   * everything — so the solo counts have to carry the explanation, and no
+   * `relaxTo` may be offered, because relaxing one bound would not help.
+   */
+  it("makes no false promise when the screen is over-constrained in several places", () => {
+    /*
+     * Every name is strong on exactly one dimension, so any *pair* of these
+     * filters already excludes the whole universe. That is what makes a
+     * leave-one-out analysis mute: drop any single filter and the remaining two
+     * still return nothing, so every filter truthfully reports blocking zero.
+     * The solo counts are the only thing left that can explain it.
+     */
+    const only = [
+      candidate("R1", { roic: 100, grossMargin: 0, dividendYield: 0 }),
+      candidate("G1", { roic: 0, grossMargin: 100, dividendYield: 0 }),
+      candidate("G2", { roic: 0, grossMargin: 100, dividendYield: 0 }),
+      candidate("D1", { roic: 0, grossMargin: 0, dividendYield: 100 }),
+      candidate("D2", { roic: 0, grossMargin: 0, dividendYield: 100 }),
+      candidate("D3", { roic: 0, grossMargin: 0, dividendYield: 100 }),
+    ];
+    const f: FilterValues = {
+      roic: { kind: "range", min: 50, max: null },
+      grossMargin: { kind: "range", min: 50, max: null },
+      dividendYield: { kind: "range", min: 50, max: null },
+    };
+    expect(applyFilters(only, "equity", f)).toHaveLength(0);
+
+    const diags = diagnose(only, "equity", f);
+    expect(diags.every((d) => d.blocks === 0)).toBe(true);
+    expect(diags.every((d) => d.relaxTo == null)).toBe(true);
+    expect(diags.every((d) => d.relaxToIsUniverseWide)).toBe(true);
+    // The filter admitting fewest on its own leads, so the user is pointed at
+    // the tightest constraint rather than an arbitrary one.
+    expect(diags.map((d) => d.key)).toEqual(["roic", "grossMargin", "dividendYield"]);
+    expect(diags.map((d) => d.soloSurvivors)).toEqual([1, 2, 3]);
+  });
+});
+
+describe("binding constraint", () => {
+  const rows = [
+    candidate("TIGHT", { roic: 12.4, forwardPE: 8 }),
+    candidate("COMFORTABLE", { roic: 60, forwardPE: 8 }),
+    // Spread the distribution so p90-p10 is meaningful for both metrics.
+    candidate("LOW", { roic: 2, forwardPE: 5 }),
+    candidate("HIGH", { roic: 80, forwardPE: 60 }),
+  ];
+  const stats = getUniverseStats("equity", rows, "2026-01-04T00:00:00.000Z");
+  const filters: FilterValues = {
+    roic: { kind: "range", min: 12, max: null },
+    forwardPE: { kind: "range", min: null, max: 25 },
+  };
+
+  it("identifies which threshold a row nearly missed", () => {
+    const tight = bindingConstraint(rows[0], "equity", filters, stats)!;
+    expect(tight.key).toBe("roic");
+    expect(tight.slack).toBeLessThan(MARGINAL_SLACK);
+  });
+
+  /**
+   * Regression: normalising slack by the *threshold* rather than by the metric's
+   * spread inverted this answer, reporting a name's most comfortable margin as
+   * the one it nearly missed.
+   */
+  it("does not mistake a wide margin for a narrow one", () => {
+    const comfy = bindingConstraint(rows[1], "equity", filters, stats)!;
+    expect(comfy.slack).toBeGreaterThan(MARGINAL_SLACK);
+  });
+
+  it("is absent when no range filter is active", () => {
+    expect(bindingConstraint(rows[0], "equity", {}, stats)).toBeNull();
   });
 });

@@ -349,6 +349,32 @@ const metrics: MetricDef[] = [
     better: "higher",
   },
 
+  {
+    key: "shareholderYield",
+    label: "Shareholder Yield",
+    description:
+      "Dividends plus net buybacks. Two companies returning identical cash rank very differently on dividend yield alone depending only on which instrument they chose.",
+    group: "Shareholder Returns",
+    unit: "%",
+    availability: "derived",
+    source: "yahoo",
+    formula: "dividend yield + buyback yield",
+    better: "higher",
+    step: 0.5,
+  },
+  {
+    key: "qualityPerPrice",
+    label: "Quality per Price",
+    description:
+      "Earnings yield × ROIC — how much compounding you get per unit of price. A cheap low-return business and an expensive high-return one look equally good on either metric alone; this is the product that separates them.",
+    group: "Valuation",
+    unit: "x",
+    availability: "derived",
+    source: "yahoo",
+    formula: "(100 ÷ forward P/E) × (ROIC ÷ 100)",
+    better: "higher",
+    step: 0.01,
+  },
   // Declared-but-unscreenable.
   {
     key: "insiderBuying",
@@ -379,6 +405,9 @@ export const equityClass: AssetClassDefinition = {
   providers: ["yahoo", "sec_edgar", "platform"],
   aliases: ["stocks", "shares", "equities", "companies"],
   capabilities: ["screen", "research", "compare", "portfolio", "watchlist", "chart", "news", "fundamentals"],
+
+  /** "Cheap for a bank" ≠ "cheap for a software company" — sector is the fair comparison. */
+  peerGroupBy: "sector",
 
   metrics,
   filterGroups: [
