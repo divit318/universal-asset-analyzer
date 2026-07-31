@@ -161,7 +161,9 @@ export function deriveStatements(
 async function fetchConcept(cik: string, tag: string): Promise<AnnualPoint[]> {
   const res = await fetch(
     `https://data.sec.gov/api/xbrl/companyconcept/CIK${cik}/us-gaap/${tag}.json`,
-    { headers: { "User-Agent": SEC_UA } },
+    // Deadline, not just error handling: SEC throttling holds sockets open
+    // rather than 429ing, and this was the last SEC fetch without one.
+    { headers: { "User-Agent": SEC_UA }, signal: AbortSignal.timeout(30_000) },
   );
   if (!res.ok) return [];
   return extractAnnual((await res.json()) as Concept);

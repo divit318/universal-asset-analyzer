@@ -42,6 +42,35 @@ export interface GetDatasetOptions {
    * `params.symbol` when not given explicitly.
    */
   symbol?: string;
+  /** Deadline for a live fetch. Default {@link DEFAULT_FETCH_TIMEOUT_MS}. */
+  timeoutMs?: number;
+}
+
+/**
+ * Every live fetch through the data layer gets a deadline — the platform-wide
+ * safety net under "no unbounded waits anywhere". Providers that thread the
+ * signal into fetch() get a real socket abort; providers that ignore it
+ * (yahoo-finance2's internals) still can't hold their CALLER past the
+ * deadline, because the wait itself is raced. Generous by design: any
+ * dataset fetch that takes a minute is already failing, and per-call
+ * `timeoutMs` can widen it for a known-slow dataset.
+ */
+const DEFAULT_FETCH_TIMEOUT_MS = 60_000;
+
+function withDeadline<T>(
+  fetcher: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+): (signal: AbortSignal) => Promise<T> {
+  return (signal) => {
+    const deadline = AbortSignal.timeout(timeoutMs);
+    const combined = AbortSignal.any([signal, deadline]);
+    return new Promise<T>((resolve, reject) => {
+      deadline.addEventListener("abort", () =>
+        reject(new DOMException(`Dataset fetch exceeded ${timeoutMs}ms`, "TimeoutError")),
+      );
+      fetcher(combined).then(resolve, reject);
+    });
+  };
 }
 
 /** Keys with a background refresh already scheduled — prevents SWR refresh storms. */
@@ -83,7 +112,9 @@ export async function getDataset<T>(
     }
   }
 
-  const value = await dedupe(key, fetcher, { signal: opts.signal });
+  const value = await dedupe(key, withDeadline(fetcher, opts.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS), {
+    signal: opts.signal,
+  });
   const entry = writeCache(dataset, key, value, symbol);
 
   return { data: entry.value, meta: entry.meta, cached: false, revalidating: false };
@@ -108,7 +139,7 @@ function scheduleRevalidation<T>(
   if (revalidating.has(key)) return;
   revalidating.add(key);
 
-  void dedupe(key, fetcher, { background: true })
+  void dedupe(key, withDeadline(fetcher, DEFAULT_FETCH_TIMEOUT_MS), { background: true })
     .then((value) => {
       writeCache(dataset, key, value, symbol);
     })
