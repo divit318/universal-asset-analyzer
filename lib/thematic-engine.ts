@@ -1521,10 +1521,30 @@ function collectRiskFlags(
     });
   }
   if (failed.size > 0) {
+    // Two of the stages (Dependency Chain, Company Mapping) carry no score
+    // weight at all — their failure empties a tab but leaves the headline
+    // number fully evidenced. Saying "the score partly reflects an assumption"
+    // for those contradicted the integrity block's evidenceScore of 100% on
+    // the same screen (observed live). Each kind of failure gets the sentence
+    // that is actually true of it.
+    const weightless = new Set(["Dependency Chain", "Company Mapping"]);
+    const scoreBearing = [...failed].filter((s) => !weightless.has(s));
+    const contentOnly = [...failed].filter((s) => weightless.has(s));
+    const parts: string[] = [];
+    if (scoreBearing.length > 0) {
+      parts.push(
+        `${scoreBearing.join(", ")} fell back to a neutral 5/10, so the headline score partly reflects an assumption, not analysis.`,
+      );
+    }
+    if (contentOnly.length > 0) {
+      parts.push(
+        `${contentOnly.join(", ")} returned nothing usable — ${contentOnly.length === 1 ? "its tab is" : "their tabs are"} empty, though the headline score is unaffected.`,
+      );
+    }
     flags.push({
       label: `${failed.size} stage${failed.size === 1 ? "" : "s"} unevidenced`,
-      detail: `${[...failed].join(", ")} fell back to a neutral 5/10, so the headline score partly reflects an assumption, not analysis.`,
-      severity: failed.size >= 3 ? "high" : "medium",
+      detail: parts.join(" "),
+      severity: scoreBearing.length >= 3 ? "high" : "medium",
     });
   }
 

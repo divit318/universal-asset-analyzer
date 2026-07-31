@@ -425,6 +425,36 @@ describe("score clamping", () => {
 });
 
 describe("silent-failure tracking", () => {
+  it("does not claim a score impact when only a weightless stage failed", async () => {
+    // Observed live: a chain-only failure shipped evidenceScore 100 beside a
+    // risk flag saying "the headline score partly reflects an assumption".
+    runPromptMock.mockReset();
+    runPromptMock.mockImplementation(async (_task: string, prompt: string) => {
+      if (prompt.includes("belong to which tier")) return companyMappingJson();
+      if (prompt.includes("dependency chain")) return "[]";
+      return routeByPrompt(prompt);
+    });
+
+    const report = await runThematicEngine({ theme: "AI Compute Semiconductors" });
+    const flag = report.opportunity.riskFlags.find((f) => f.label.includes("unevidenced"));
+    expect(flag).toBeDefined();
+    expect(flag!.detail).toContain("headline score is unaffected");
+    expect(flag!.detail).not.toContain("assumption");
+    expect(report.integrity.evidenceScore).toBe(100);
+  });
+
+  it("still names the score impact when a weighted stage failed", async () => {
+    runPromptMock.mockReset();
+    runPromptMock.mockImplementation(async (_task: string, prompt: string) => {
+      if (prompt.includes("inevitability")) throw new Error("timeout");
+      return routeByPrompt(prompt);
+    });
+
+    const report = await runThematicEngine({ theme: "AI Compute Semiconductors" });
+    const flag = report.opportunity.riskFlags.find((f) => f.label.includes("unevidenced"));
+    expect(flag!.detail).toContain("partly reflects an assumption");
+  });
+
   it("records an empty dependency chain as a failure instead of shipping a blank tab as success", async () => {
     runPromptMock.mockReset();
     runPromptMock.mockImplementation(async (_task: string, prompt: string) => {
