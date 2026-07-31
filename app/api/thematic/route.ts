@@ -26,10 +26,25 @@ export const maxDuration = 300;
  * The pipeline is minutes long and Ollama serves one request at a time, so a
  * double-click on Analyse (or two tabs on the same theme) used to launch a
  * second full run that queued behind the first — doubling the wait for both and
- * for anything else in the app that needs the model. A repeat request now joins
- * the run already happening instead of starting a rival one.
+ * for anything else in the app that needs the model. A repeat request joins the
+ * run already happening instead of starting a rival one — and, since the
+ * events are tiny (~24 per run), the run keeps them all so a joiner can
+ * REPLAY the progress so far and then follow along live. Before the buffer
+ * existed a joiner received two init events and then silence for minutes,
+ * which the progress panel rendered as a run frozen on its first stage.
+ *
+ * The run owns its own AbortController: it stops when the LAST watcher
+ * disconnects, not when the first one does — previously the originator
+ * closing their tab killed the run under every joiner still watching it.
  */
-const inFlight = new Map<string, Promise<ThematicReport>>();
+interface InFlightRun {
+  promise: Promise<ThematicReport>;
+  events: ThematicProgressEvent[];
+  listeners: Set<(e: ThematicProgressEvent) => void>;
+  abort: AbortController;
+}
+
+const inFlight = new Map<string, InFlightRun>();
 
 export async function POST(req: Request) {
   let body: unknown;
@@ -81,12 +96,6 @@ export async function POST(req: Request) {
         }
       }
 
-      // A run this expensive is aborted on client disconnect, not left to
-      // finish into a void — Cancel and a closed tab both free the model.
-      const abort = new AbortController();
-      const onClientGone = () => abort.abort();
-      req.signal.addEventListener("abort", onClientGone);
-
       // A single stage can run minutes with no data frame in between, which
       // is longer than many proxy/browser idle timeouts. SSE comment frames
       // (lines starting with ":") keep the connection visibly alive and are
@@ -100,6 +109,19 @@ export async function POST(req: Request) {
           closed = true;
         }
       }, 15_000);
+
+      /** This request's live tap into the shared run; detached on every exit. */
+      const listener = (e: ThematicProgressEvent) => send(e);
+      let entry: InFlightRun | undefined;
+      const detach = () => {
+        if (!entry) return;
+        entry.listeners.delete(listener);
+        // A run this expensive is aborted when the LAST watcher disconnects,
+        // not left to finish into a void — Cancel and a closed tab free the
+        // model, but only once nobody else is still following the run.
+        if (entry.listeners.size === 0) entry.abort.abort();
+      };
+      req.signal.addEventListener("abort", detach);
 
       try {
         if (!refresh) {
@@ -119,24 +141,43 @@ export async function POST(req: Request) {
 
         send({ stage: "init", message: `Starting thematic analysis for "${theme}"…` });
 
-        // Only the *originating* request streams stage progress; a joiner gets
-        // the finished report. Streaming one run's events into two response
-        // bodies would need a fan-out buffer for very little user benefit.
-        const existing = inFlight.get(key);
-        const run = existing ?? runThematicEngine({ theme, signal: abort.signal }, send);
-        if (!existing) {
+        entry = inFlight.get(key);
+        if (!entry) {
+          const abort = new AbortController();
+          const events: ThematicProgressEvent[] = [];
+          const listeners = new Set<(e: ThematicProgressEvent) => void>([listener]);
+          const broadcast = (e: ThematicProgressEvent) => {
+            events.push(e);
+            for (const l of listeners) l(e);
+          };
+          const run: InFlightRun = {
+            events,
+            listeners,
+            abort,
+            promise: runThematicEngine({ theme, signal: abort.signal }, broadcast),
+          };
+          // The cache write belongs to the run, not to whichever request
+          // happens to still be connected when it finishes.
+          run.promise
+            .then((report) => writeCache("thematicReport", key, report))
+            .catch(() => {})
+            .finally(() => {
+              if (inFlight.get(key) === run) inFlight.delete(key);
+            });
           inFlight.set(key, run);
-          run.finally(() => inFlight.delete(key)).catch(() => {});
+          entry = run;
         } else {
           send({ stage: "init", message: `Joining the analysis already running for "${theme}"…` });
+          // Replay everything the run has emitted so far, THEN follow live —
+          // the progress panel resumes mid-run instead of freezing at stage 1.
+          for (const e of entry.events) send(e);
+          entry.listeners.add(listener);
         }
 
-        const report = await run;
-        if (!existing) writeCache("thematicReport", key, report);
-
+        const report = await entry.promise;
         send({ stage: "done", message: "Thematic report complete", report });
       } catch (err) {
-        if (!abort.signal.aborted) {
+        if (!entry?.abort.signal.aborted) {
           send({
             stage: "error",
             message: err instanceof Error ? err.message : "Unexpected error",
@@ -144,7 +185,8 @@ export async function POST(req: Request) {
         }
       } finally {
         clearInterval(heartbeat);
-        req.signal.removeEventListener("abort", onClientGone);
+        req.signal.removeEventListener("abort", detach);
+        detach();
         closed = true;
         try { controller.close(); } catch { /* already closed by the disconnect */ }
       }
