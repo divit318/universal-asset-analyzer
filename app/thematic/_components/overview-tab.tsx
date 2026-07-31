@@ -6,6 +6,7 @@ import { Reveal } from "@/app/_components/reveal";
 import { formatPercent, toneClass } from "@/lib/format";
 import { Bullets, Chips, Label, StageScore, TierBadge } from "./shared";
 import { CompanyTable } from "./companies-tab";
+import { ProxyPerformanceChart } from "./proxy-chart";
 
 function Panel({
   title,
@@ -164,7 +165,13 @@ export function OverviewTab({ report }: { report: ThematicReport }) {
         </div>
       </Panel>
 
-      <Panel title="Commodity framework" score={commodityFramework.score} index={3} evidenced={!failed.has("Commodity Framework")}>
+      {report.proxyPerformance && report.proxyPerformance.proxies.length > 0 && (
+        <Panel title="How the theme has traded" index={3} className="lg:col-span-2">
+          <ProxyPerformanceChart performance={report.proxyPerformance} />
+        </Panel>
+      )}
+
+      <Panel title="Commodity framework" score={commodityFramework.score} index={4} evidenced={!failed.has("Commodity Framework")}>
         <div className="flex flex-col gap-4">
           <div>
             <Label>Primary commodities</Label>
@@ -199,7 +206,7 @@ export function OverviewTab({ report }: { report: ThematicReport }) {
         </div>
       </Panel>
 
-      <Panel title="Policy & geopolitics" score={policy.score} index={4} evidenced={!failed.has("Policy")}>
+      <Panel title="Policy & geopolitics" score={policy.score} index={5} evidenced={!failed.has("Policy")}>
         <div className="flex flex-col gap-4">
           <p className="text-sm leading-relaxed text-muted">{policy.capitalFlowDirection || "No clear policy-driven capital flow identified."}</p>
           <PolicyTable policies={policy.relevantPolicies} />
@@ -218,7 +225,7 @@ export function OverviewTab({ report }: { report: ThematicReport }) {
         </div>
       </Panel>
 
-      <Panel title="Global structural advantage" score={structuralAdvantage.score} index={5} className="lg:col-span-2" evidenced={!failed.has("Global Structural Advantage")}>
+      <Panel title="Global structural advantage" score={structuralAdvantage.score} index={6} className="lg:col-span-2" evidenced={!failed.has("Global Structural Advantage")}>
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="positive">Leads: {structuralAdvantage.currentLeader}</Badge>
@@ -244,7 +251,7 @@ export function OverviewTab({ report }: { report: ThematicReport }) {
       </Panel>
 
       {opportunity.topCompanies.length > 0 && (
-        <Reveal index={6} className="lg:col-span-2">
+        <Reveal index={7} className="lg:col-span-2">
           <Card padding="none">
             <div className="flex flex-wrap items-baseline justify-between gap-2 px-5 py-4">
               <h2 className="text-sm font-semibold tracking-tight">Best expressions of this theme</h2>

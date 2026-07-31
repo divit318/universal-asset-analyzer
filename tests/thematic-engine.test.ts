@@ -30,6 +30,7 @@ vi.mock("yahoo-finance2", () => ({
 const {
   pickCommodityProxies,
   pctChange,
+  maxDrawdownPct,
   computeOpportunityScore,
   runThematicEngine,
   shortlistUniverse,
@@ -133,6 +134,39 @@ describe("pctChange", () => {
   it("computes the correct percentage change", () => {
     const history = [100, 110];
     expect(pctChange(history, 1)).toBeCloseTo(10);
+  });
+});
+
+describe("proxy performance (PR-3)", () => {
+  it("computes max peak-to-trough drawdown", () => {
+    expect(maxDrawdownPct([100, 120, 90, 110, 80])).toBeCloseTo(-33.3, 1);
+    expect(maxDrawdownPct([1, 2, 3])).toBe(0); // never below its peak
+    expect(maxDrawdownPct([])).toBeNull();
+  });
+
+  it("carries a downsampled 1Y series per proxy and the SPY benchmark on the report", async () => {
+    runPromptMock.mockReset();
+    runPromptMock.mockImplementation(async (_task: string, prompt: string) => routeByPrompt(prompt));
+    const yahoo = await import("@/lib/yahoo");
+    const getHistoryMock = yahoo.getHistory as ReturnType<typeof vi.fn>;
+    const mkHist = (base: number) =>
+      Array.from({ length: 300 }, (_, i) => ({
+        date: new Date(Date.UTC(2025, 0, 1 + i)).toISOString(),
+        close: base + i * 0.1,
+      }));
+    getHistoryMock.mockImplementation(async (ticker: string) => mkHist(ticker === "SPY" ? 400 : 100));
+
+    const report = await runThematicEngine({ theme: "AI Compute Semiconductors" });
+    getHistoryMock.mockReset();
+    getHistoryMock.mockResolvedValue([]);
+
+    const perf = report.proxyPerformance;
+    expect(perf).not.toBeNull();
+    // ~52 weekly points from 252 daily closes, newest kept.
+    expect(perf!.proxies[0].series.length).toBeGreaterThan(40);
+    expect(perf!.proxies[0].series.length).toBeLessThanOrEqual(53);
+    expect(perf!.benchmark?.ticker).toBe("SPY");
+    expect(perf!.proxies[0].maxDrawdown1Y).toBe(0); // strictly rising series
   });
 });
 

@@ -120,6 +120,30 @@ export interface CommodityProxy {
   trend: "rising" | "falling" | "flat";
 }
 
+/** One downsampled point of a proxy's price series. */
+export interface ProxySeriesPoint {
+  date: string;                      // ISO date
+  close: number;
+}
+
+/**
+ * How the theme has actually traded (PR-3): downsampled ~weekly closes over
+ * the last year for each matched proxy, plus SPY as the benchmark. The engine
+ * always fetched 400 days per proxy and kept only three deltas — this carries
+ * enough of the series to draw "how has this theme traded" without any new
+ * network cost beyond one cached SPY fetch.
+ */
+export interface ProxyPerformance {
+  proxies: {
+    ticker: string;
+    name: string;
+    series: ProxySeriesPoint[];
+    /** Max peak-to-trough drawdown over the window, % (negative). */
+    maxDrawdown1Y: number | null;
+  }[];
+  benchmark: { ticker: string; series: ProxySeriesPoint[] } | null;
+}
+
 export interface SupplyDemandScore {
   score: number;                     // 0–10
   demandTrajectory: "accelerating" | "growing" | "stable" | "declining";
@@ -277,6 +301,8 @@ export interface ThematicReport {
   integrity: ReportIntegrity;
   /** The eligible universe and what happened to each name — the audit trail behind the Companies tab. */
   universePreview: UniversePreview;
+  /** How the theme's proxies traded over the last year vs SPY; null when no proxy matched. */
+  proxyPerformance: ProxyPerformance | null;
   /** Wall-clock ms each stage took — drives the progress ETA on the next run
    *  (see app/thematic/_components/storage.recordStageTimings). */
   stageTimings: { stage: string; ms: number; retried?: boolean }[];
@@ -733,7 +759,8 @@ const EMPTY_PROXY = (ticker: string, name: string): CommodityProxy => ({
 });
 
 /**
- * Live prices + 1M/3M/1Y momentum for the matched proxies.
+ * Live prices + 1M/3M/1Y momentum for the matched proxies, plus the
+ * downsampled 1Y series behind them ({@link ProxyPerformance}).
  *
  * Goes through `lib/yahoo.ts` rather than instantiating yahoo-finance2 here:
  * that gets the platform's dedup + disk cache (a proxy series shared with the
@@ -741,16 +768,19 @@ const EMPTY_PROXY = (ticker: string, name: string): CommodityProxy => ({
  * calls into one batch call. The previous private client also built a fresh
  * yahoo-finance2 instance per ticker on every run.
  */
-async function fetchCommodityProxies(proxies: { ticker: string; name: string }[]): Promise<CommodityProxy[]> {
-  if (proxies.length === 0) return [];
+async function fetchCommodityProxies(
+  proxies: { ticker: string; name: string }[],
+): Promise<{ proxies: CommodityProxy[]; performance: ProxyPerformance | null }> {
+  if (proxies.length === 0) return { proxies: [], performance: null };
 
-  const [quotes, histories] = await Promise.all([
+  const [quotes, histories, benchmarkHistory] = await Promise.all([
     getQuotes(proxies.map((p) => p.ticker)).catch(() => []),
     Promise.all(proxies.map((p) => getHistory(p.ticker, 400).catch(() => []))),
+    getHistory(PROXY_BENCHMARK, 400).catch(() => []),
   ]);
   const priceBySymbol = new Map(quotes.map((q) => [q.symbol.toUpperCase(), q.price]));
 
-  return proxies.map((p, i) => {
+  const mapped = proxies.map((p, i) => {
     const closes = histories[i].map((h) => h.close).filter((c) => typeof c === "number" && c > 0);
     // The batch quote is authoritative for "now"; the last close is the
     // fallback so a quote miss doesn't blank an otherwise-good series.
@@ -764,9 +794,62 @@ async function fetchCommodityProxies(proxies: { ticker: string; name: string }[]
       priceChange1M: pctChange(closes, 22),
       priceChange3M: c3m,
       priceChange1Y: pctChange(closes, 252),
-      trend: c3m == null ? "flat" : c3m > 5 ? "rising" : c3m < -5 ? "falling" : "flat",
+      trend: (c3m == null ? "flat" : c3m > 5 ? "rising" : c3m < -5 ? "falling" : "flat") as CommodityProxy["trend"],
     };
   });
+
+  const withSeries = proxies
+    .map((p, i) => {
+      const year = histories[i].filter((h) => typeof h.close === "number" && h.close > 0).slice(-252);
+      return {
+        ticker: p.ticker,
+        name: p.name,
+        series: downsampleSeries(year),
+        maxDrawdown1Y: maxDrawdownPct(year.map((h) => h.close)),
+      };
+    })
+    .filter((p) => p.series.length >= 2);
+  const benchmarkSeries = downsampleSeries(
+    benchmarkHistory.filter((h) => typeof h.close === "number" && h.close > 0).slice(-252),
+  );
+
+  return {
+    proxies: mapped,
+    performance:
+      withSeries.length > 0
+        ? {
+            proxies: withSeries,
+            benchmark: benchmarkSeries.length >= 2 ? { ticker: PROXY_BENCHMARK, series: benchmarkSeries } : null,
+          }
+        : null,
+  };
+}
+
+/** The proxy chart's comparison line — "did this theme beat just owning the market?". */
+const PROXY_BENCHMARK = "SPY";
+
+/**
+ * Every ~5th daily close, newest kept: ~52 points over a year, 2-4 KB per
+ * proxy on the report instead of the full 400-day series.
+ */
+function downsampleSeries(hist: { date: string; close: number }[], stride = 5): ProxySeriesPoint[] {
+  const points: ProxySeriesPoint[] = [];
+  for (let i = hist.length - 1; i >= 0; i -= stride) {
+    points.push({ date: hist[i].date.slice(0, 10), close: +hist[i].close.toFixed(2) });
+  }
+  return points.reverse();
+}
+
+/** Max peak-to-trough drawdown, % (negative or 0). Computed on the daily series, not the downsample. */
+export function maxDrawdownPct(closes: number[]): number | null {
+  if (closes.length === 0) return null;
+  let peak = closes[0];
+  let mdd = 0;
+  for (const c of closes) {
+    if (c > peak) peak = c;
+    else if (peak > 0) mdd = Math.min(mdd, ((c - peak) / peak) * 100);
+  }
+  return +mdd.toFixed(1);
 }
 
 /* ───────────────────── AI scoring stages ───────────────────────────── */
@@ -1780,14 +1863,17 @@ export async function runThematicEngine(
   emit("init", proxyDefs.length > 0
     ? `Fetching ${proxyDefs.length} market proxies, theme news, and the screener universe…`
     : "Fetching theme news and the screener universe…");
-  const [proxies, newsItems, universe] = await Promise.all([
-    fetchCommodityProxies(proxyDefs).catch(() => [] as CommodityProxy[]),
+  const [proxyData, newsItems, universe] = await Promise.all([
+    fetchCommodityProxies(proxyDefs).catch(
+      () => ({ proxies: [], performance: null }) as { proxies: CommodityProxy[]; performance: ProxyPerformance | null },
+    ),
     fetchThemeNews(theme),
     Promise.resolve().then(() => {
       const { rows } = getFreshFundamentals(7 * 24 * 60 * 60 * 1000); // 7-day cache
       return shortlistUniverse(theme, rows);
     }).catch(() => emptyUniverse()),
   ]);
+  const proxies = proxyData.proxies;
 
   emit("future_state", `Scoring inevitability of "${theme}"…`);
   const futureState = await stage("Future State", () => scoreFutureState(theme, signal), DEFAULT_FUTURE_STATE);
@@ -1886,6 +1972,7 @@ export async function runThematicEngine(
     stageFailures: failures,
     integrity: buildIntegrity(opportunity, failures, universe),
     universePreview: universe.preview,
+    proxyPerformance: proxyData.performance,
     stageTimings: timings,
   };
 
