@@ -170,15 +170,34 @@ function extractSymbols(value: unknown, key: string): string[] {
  *  /api/portfolio returns { holdings, positions } — `positions` is the
  *  market-symbol view the impact panels' ticker match needs. Treating either
  *  payload as a bare array threw, emptied BOTH lists, and silently removed
- *  the Portfolio Impact zone from the page. */
-async function loadUserSymbols(): Promise<{ watchlist: string[]; portfolio: string[] }> {
+ *  the Portfolio Impact zone from the page.
+ *
+ *  Failure is REPORTED, not folded into []: an empty list means "you track
+ *  nothing", a failed fetch means "we don't know what you track" — the page
+ *  must render those differently (a section gated on `symbols.length > 0`
+ *  silently unmounted on fetch failure, indistinguishable from having no
+ *  holdings). */
+async function loadUserSymbols(): Promise<{
+  watchlist: string[];
+  portfolio: string[];
+  failed: string[];
+}> {
+  const asJson = async (url: string) => {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${url} → ${res.status}`);
+    return res.json();
+  };
   const [wl, pf] = await Promise.allSettled([
-    fetch("/api/watchlist").then((r) => r.json()),
-    fetch("/api/portfolio").then((r) => r.json()),
+    asJson("/api/watchlist"),
+    asJson("/api/portfolio"),
   ]);
   return {
     watchlist: wl.status === "fulfilled" ? extractSymbols(wl.value, "items") : [],
     portfolio: pf.status === "fulfilled" ? extractSymbols(pf.value, "positions") : [],
+    failed: [
+      ...(wl.status === "rejected" ? ["watchlist"] : []),
+      ...(pf.status === "rejected" ? ["portfolio"] : []),
+    ],
   };
 }
 
@@ -202,6 +221,11 @@ export default function ScannerPage() {
   const [fromCache, setFromCache] = useState(false);
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([]);
   const [portfolioSymbols, setPortfolioSymbols] = useState<string[]>([]);
+  // "loading" until the symbols fetch settles; failed endpoints by name after.
+  // Distinguishes "you track nothing" from "we couldn't find out" — the
+  // Portfolio Impact section renders those as different states.
+  const [symbolsLoading, setSymbolsLoading] = useState(true);
+  const [symbolsFailed, setSymbolsFailed] = useState<string[]>([]);
 
   useBootReady(!loading, "wire");
 
@@ -236,12 +260,25 @@ export default function ScannerPage() {
   }
   const abortRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    // Load user symbols for impact panels
-    loadUserSymbols().then(({ watchlist, portfolio }) => {
+  // The initial state is already "loading", so the mount effect only runs the
+  // fetch; the Retry button re-enters the loading state first.
+  function fetchUserSymbols() {
+    loadUserSymbols().then(({ watchlist, portfolio, failed }) => {
       setWatchlistSymbols(watchlist);
       setPortfolioSymbols(portfolio);
+      setSymbolsFailed(failed);
+      setSymbolsLoading(false);
     });
+  }
+
+  function refreshUserSymbols() {
+    setSymbolsLoading(true);
+    fetchUserSymbols();
+  }
+
+  useEffect(() => {
+    // Load user symbols for impact panels
+    fetchUserSymbols();
 
     // Try client cache first, then auto-scan
     const cached = loadCache();
@@ -877,18 +914,48 @@ export default function ScannerPage() {
       {/* Zone 9: Portfolio Impact — deliberately OUTSIDE the result/loading
           gate. Holdings news fetches independently of the AI pipeline (its own
           streaming route, own loading state), so it's real content the moment
-          the page loads; the scan-derived impact cards join it when ready. */}
-      {(watchlistSymbols.length > 0 || portfolioSymbols.length > 0) && (
+          the page loads; the scan-derived impact cards join it when ready.
+
+          Always mounted once the symbols fetch settles: a failed /api/watchlist
+          or /api/portfolio used to silently unmount the whole zone —
+          indistinguishable from having no holdings. Same explicit-state rule
+          as Cause & Effect / Risk Monitor: fetch failure and genuine emptiness
+          each say so in words. */}
+      {!symbolsLoading && (
         <WireSection id="portfolio-impact" title="Portfolio Impact">
           <div className="flex flex-col gap-5">
+            {symbolsFailed.length > 0 && (
+              <p className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning">
+                <span>
+                  Couldn&apos;t load your {symbolsFailed.join(" and ")} — impact matching below
+                  {symbolsFailed.length === 2 ? " is unavailable" : " is incomplete"}.
+                </span>
+                <button
+                  type="button"
+                  onClick={refreshUserSymbols}
+                  className="shrink-0 rounded border border-warning/40 px-2 py-0.5 text-xs transition-colors hover:bg-warning/20"
+                >
+                  Retry
+                </button>
+              </p>
+            )}
+            {symbolsFailed.length === 0 &&
+              watchlistSymbols.length === 0 &&
+              portfolioSymbols.length === 0 && (
+                <p className="rounded-xl border border-border bg-surface px-4 py-6 text-center text-sm text-muted">
+                  Nothing tracked yet — add symbols to your watchlist or holdings to your
+                  portfolio and each scan will flag signals on names you own or follow.
+                </p>
+              )}
             {/* Full scan output, not the dismissed-filtered list — a signal on
                 something you HOLD stays visible even if the idea was dismissed. */}
-            {allOpportunities.length > 0 && (
-              <div className="grid gap-4 sm:grid-cols-2">
-                <WatchlistImpact opportunities={allOpportunities} watchlistSymbols={watchlistSymbols} />
-                <PortfolioImpact opportunities={allOpportunities} portfolioSymbols={portfolioSymbols} />
-              </div>
-            )}
+            {allOpportunities.length > 0 &&
+              (watchlistSymbols.length > 0 || portfolioSymbols.length > 0) && (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <WatchlistImpact opportunities={allOpportunities} watchlistSymbols={watchlistSymbols} />
+                  <PortfolioImpact opportunities={allOpportunities} portfolioSymbols={portfolioSymbols} />
+                </div>
+              )}
             <PortfolioWatch />
           </div>
         </WireSection>
