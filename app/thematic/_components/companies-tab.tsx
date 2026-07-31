@@ -9,6 +9,7 @@ import { Reveal } from "@/app/_components/reveal";
 import { useToast } from "@/app/_components/toast";
 import { formatPercent, toneClass } from "@/lib/format";
 import { Empty, IMPORTANCE_VARIANT, QualityCell, TierBadge } from "./shared";
+import { ThemeOverlapSection } from "./overlap";
 
 export function CompaniesTab({ report }: { report: ThematicReport }) {
   const companies = report.tierCompanies;
@@ -94,6 +95,7 @@ export function CompaniesTab({ report }: { report: ThematicReport }) {
 
       {filtered.length === 0 && <Empty>No company matches the current filters.</Empty>}
 
+      <ThemeOverlapSection report={report} />
       <UniverseSection preview={report.universePreview} universeTotal={report.integrity.universeTotal} />
     </div>
   );
