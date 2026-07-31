@@ -14,6 +14,8 @@
  * so a log line and the user-facing message for the same failure always agree.
  */
 
+import { logPipeline } from "../debug-pipeline";
+
 export type AiLogCategory =
   | "start"
   | "success"
@@ -53,4 +55,8 @@ export function logAiEvent(event: AiLogEvent): void {
   if (ERROR_LEVEL.has(event.category)) console.error("[ai]", JSON.stringify(line));
   else if (WARN_LEVEL.has(event.category)) console.warn("[ai]", JSON.stringify(line));
   else console.log("[ai]", JSON.stringify(line));
+  // TEMPORARY (DEBUG_PIPELINE): mirror per-attempt routing outcomes into the
+  // pipeline NDJSON log so model choice/cold-start/fallback are inspectable
+  // alongside stage timings.
+  logPipeline({ type: "ai_attempt", ...event });
 }

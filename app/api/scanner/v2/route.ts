@@ -18,6 +18,7 @@ import { NextResponse } from "next/server";
 import { runScannerPipeline } from "@/lib/scanner/index";
 import { getScannerCache, putScannerCache } from "@/lib/db";
 import { persistScannerSnapshot } from "@/lib/scanner/cache";
+import { logPipeline } from "@/lib/debug-pipeline";
 import type { ScannerProgressEvent, ScannerPartialEvent } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -49,6 +50,14 @@ export async function POST(request: Request) {
   }
 
   const cacheKey = buildCacheKey(body);
+
+  // TEMPORARY (DEBUG_PIPELINE): request lifecycle — lets the log show whether
+  // two scans run concurrently and whether the client disconnected mid-run.
+  const requestId = `req-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e4)}`;
+  logPipeline({ type: "scan_request_start", requestId, cacheKey, noCache: body.noCache ?? false });
+  request.signal.addEventListener("abort", () => {
+    logPipeline({ type: "scan_client_disconnected", requestId });
+  });
 
   // Check server-side cache first (unless explicitly bypassed)
   if (!body.noCache) {
@@ -105,8 +114,10 @@ export async function POST(request: Request) {
         }
 
         sendLine({ type: "result", data: result });
+        logPipeline({ type: "scan_request_end", requestId, outcome: "result" });
       } catch (err) {
         const message = err instanceof Error ? err.message : "Pipeline failed";
+        logPipeline({ type: "scan_request_end", requestId, outcome: "error", message });
         sendLine({ type: "error", message });
       } finally {
         controller.close();

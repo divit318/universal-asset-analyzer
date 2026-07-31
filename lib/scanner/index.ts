@@ -36,6 +36,7 @@ import { buildTheses } from "./thesis-builder";
 import { runPrompt } from "../ai";
 import { extractJsonObject } from "../json-extract";
 import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
+import { logPipeline, timeStage } from "../debug-pipeline";
 import type {
   ScannerResult,
   ScannerProgressEvent,
@@ -296,16 +297,24 @@ export async function runScannerPipeline(
 ): Promise<ScannerResult> {
   const { query, india = true, global: glob = true, onProgress, onPartial } = opts;
 
+  // TEMPORARY (DEBUG_PIPELINE): per-scan scope so concurrent scans are
+  // distinguishable in the NDJSON log.
+  const scanId = `scan-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e4)}`;
+  logPipeline({ type: "pipeline_start", scope: scanId, query: query ?? null, india, global: glob });
+
   emit(onProgress, "collecting", "Collecting signals from all sources…", 5);
 
   // Stage 1: Parallel data collection. Needs no LLM call, so its outputs can
   // stream immediately — News Timeline and Macro Dashboard don't have to
   // wait for anything below.
-  const [newsItems, macroSignals, sectorPerf] = await Promise.all([
-    fetchMarketNews({ query, india, global: glob, limit: 60 }).catch(() => []),
-    fetchMacroSignals().catch(() => []),
-    fetchSectorPerformance().catch(() => []),
-  ]);
+  const [newsItems, macroSignals, sectorPerf] = await timeStage(scanId, "collecting", () =>
+    Promise.all([
+      fetchMarketNews({ query, india, global: glob, limit: 60 }).catch(() => []),
+      fetchMacroSignals().catch(() => []),
+      fetchSectorPerformance().catch(() => []),
+    ]),
+    { limit: 60 },
+  );
   partial(onPartial, "newsItems", newsItems);
   partial(onPartial, "macroSignals", macroSignals);
 
@@ -317,7 +326,10 @@ export async function runScannerPipeline(
   );
 
   // Stage 2: Semantic deduplication
-  const dedupedEvents = await deduplicateIntoEvents(newsItems);
+  const dedupedEvents = await timeStage(scanId, "deduplicating", () =>
+    deduplicateIntoEvents(newsItems),
+    { newsItems: newsItems.length },
+  );
 
   // Cap to the most-corroborated stories before any per-event LLM stage
   // runs (see MAX_EVENTS above) — shrinks Classification's batch, Causal
@@ -334,7 +346,10 @@ export async function runScannerPipeline(
   );
 
   // Stage 3: Classification
-  const classifiedEvents = await classifyEvents(events);
+  const classifiedEvents = await timeStage(scanId, "classifying", () =>
+    classifyEvents(events),
+    { events: events.length },
+  );
 
   // Stage 4/5 (reordered — Market Regime + Emerging Themes only need
   // category/affectedThemes, both set by Classification, not by Causal
@@ -343,7 +358,10 @@ export async function runScannerPipeline(
   // instead of waiting behind it for no data reason. ScannerStage's own
   // type union already lists theme_detection before causal_reasoning.)
   emit(onProgress, "theme_detection", "Detecting emerging themes…", 32);
-  const emergingThemes = await detectEmergingThemes(classifiedEvents);
+  const emergingThemes = await timeStage(scanId, "theme_detection", () =>
+    detectEmergingThemes(classifiedEvents),
+    { events: classifiedEvents.length },
+  );
   const marketRegime = assessMarketRegime(macroSignals, sectorPerf, classifiedEvents);
   emit(onProgress, "theme_detection", "Emerging themes identified", 38);
   partial(onPartial, "marketRegime", marketRegime);
@@ -357,23 +375,35 @@ export async function runScannerPipeline(
   // this stage's output (its prompt references each event's causal chain),
   // which is why — unlike Theme Detection/Market Regime above — it can't
   // move any earlier.
-  const enrichedEvents = await buildCausalChains(classifiedEvents);
+  const enrichedEvents = await timeStage(scanId, "causal_reasoning", () =>
+    buildCausalChains(classifiedEvents),
+    { events: classifiedEvents.length },
+  );
   emit(onProgress, "causal_reasoning", "Cause-and-effect chains built", 50);
 
   // Risk alerts (reordered — only needs enrichedEvents, not opportunities
   // or theses, so it no longer waits behind 5 more stages for nothing).
-  const riskAlerts = await extractRiskAlerts(enrichedEvents);
+  const riskAlerts = await timeStage(scanId, "risk_alerts", () =>
+    extractRiskAlerts(enrichedEvents),
+    { events: enrichedEvents.length },
+  );
   partial(onPartial, "events", enrichedEvents);
   partial(onPartial, "riskAlerts", riskAlerts);
 
-  const sectorImpacts = await analyzeSectorImpacts(enrichedEvents, sectorPerf);
+  const sectorImpacts = await timeStage(scanId, "sector_impact", () =>
+    analyzeSectorImpacts(enrichedEvents, sectorPerf),
+    { events: enrichedEvents.length },
+  );
   emit(onProgress, "sector_impact", "Sector impact analysis complete", 58);
   partial(onPartial, "sectorImpacts", sectorImpacts);
 
   emit(onProgress, "company_impact", "Identifying company-level opportunities…", 62);
 
   // Stage 7: Company impact
-  const candidates = await buildCompanyOpportunities(enrichedEvents, sectorImpacts);
+  const candidates = await timeStage(scanId, "company_impact", () =>
+    buildCompanyOpportunities(enrichedEvents, sectorImpacts),
+    { events: enrichedEvents.length, sectorImpacts: sectorImpacts.length },
+  );
 
   emit(
     onProgress,
@@ -383,7 +413,10 @@ export async function runScannerPipeline(
   );
 
   // Stage 8: Fundamental gate
-  const validated = await applyFundamentalGate(candidates);
+  const validated = await timeStage(scanId, "fundamental_gate", () =>
+    applyFundamentalGate(candidates),
+    { candidates: candidates.length },
+  );
 
   emit(onProgress, "opportunity_scoring", "Scoring and ranking opportunities…", 78);
 
@@ -404,10 +437,9 @@ export async function runScannerPipeline(
   );
 
   // Stage 10: Thesis building (high-conviction only)
-  const highConvictionWithTheses = await buildTheses(
-    highConviction,
-    enrichedEvents,
-    sectorImpacts,
+  const highConvictionWithTheses = await timeStage(scanId, "thesis_building", () =>
+    buildTheses(highConviction, enrichedEvents, sectorImpacts),
+    { highConviction: highConviction.length },
   );
 
   emit(onProgress, "assembling", "Assembling intelligence report…", 95);
@@ -439,5 +471,11 @@ export async function runScannerPipeline(
   };
 
   emit(onProgress, "done", "Scan complete", 100);
+  logPipeline({
+    type: "pipeline_end",
+    scope: scanId,
+    opportunities: allWithTheses.length,
+    events: enrichedEvents.length,
+  });
   return result;
 }

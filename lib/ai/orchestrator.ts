@@ -12,6 +12,13 @@ import { route, routeStream, type RouteOptions } from "./router";
 import type { AIResponse } from "./response";
 import type { TaskType } from "./task-registry";
 import { dedupe } from "../platform/dedup";
+import {
+  beginCall,
+  endCall,
+  estimateTokens,
+  logPipeline,
+  pipelineDebugEnabled,
+} from "../debug-pipeline";
 
 export interface RunTaskOptions {
   system?: string;
@@ -99,11 +106,54 @@ export async function runTask(
       routeOpts,
     );
 
-  // A reasoning sink is per-caller, so coalescing would silently drop one
-  // caller's deltas. Those requests run on their own.
-  if (opts.onReasoning) return run(opts.signal);
+  const execute = () => {
+    // A reasoning sink is per-caller, so coalescing would silently drop one
+    // caller's deltas. Those requests run on their own.
+    if (opts.onReasoning) return run(opts.signal);
+    return dedupe(fingerprint(taskType, messages, opts), run, { signal: opts.signal });
+  };
 
-  return dedupe(fingerprint(taskType, messages, opts), run, { signal: opts.signal });
+  // TEMPORARY (DEBUG_PIPELINE): per-logical-call timing + payload sizes.
+  if (!pipelineDebugEnabled()) return execute();
+
+  const promptChars = messages.reduce((n, m) => n + m.content.length, 0);
+  const promptHead = prompt.slice(0, 100).replace(/\s+/g, " ");
+  const startedAt = Date.now();
+  const handle = beginCall(`ai:${taskType} ~${estimateTokens(prompt)}tok "${promptHead}"`);
+  logPipeline({
+    type: "ai_call_start",
+    taskType,
+    promptChars,
+    promptTokensEst: Math.round(promptChars / 4),
+    promptHead,
+    json: opts.json ?? false,
+    modelOverride: opts.model ?? null,
+    timeoutMs: opts.timeoutMs ?? null,
+  });
+  try {
+    const response = await execute();
+    logPipeline({
+      type: "ai_call_end",
+      taskType,
+      durationMs: Date.now() - startedAt,
+      model: response.model,
+      responseChars: response.content.length,
+      responseTokensEst: estimateTokens(response.content),
+      tokenUsage: response.tokenUsage ?? null,
+      fallbackErrors: response.errors.length,
+    });
+    return response;
+  } catch (err) {
+    logPipeline({
+      type: "ai_call_error",
+      taskType,
+      durationMs: Date.now() - startedAt,
+      message: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  } finally {
+    endCall(handle);
+  }
 }
 
 /** Run a task and get just the answer text — the common case for single-shot feature prompts. */

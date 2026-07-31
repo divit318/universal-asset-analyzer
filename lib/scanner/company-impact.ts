@@ -14,6 +14,7 @@ import { runPrompt } from "../ai";
 import { extractJsonObject } from "../json-extract";
 import { getFreshFundamentals } from "../db";
 import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
+import { logPipeline } from "../debug-pipeline";
 import type {
   MarketEvent,
   SectorImpact,
@@ -159,15 +160,35 @@ export async function buildCompanyOpportunities(
     if (drivingEvents.length === 0) continue;
 
     let matches: CompanyMatchRaw[];
+    const sectorStartedAt = Date.now();
+    const prompt = buildCompanyMatchPrompt(sector, drivingEvents, sectorCompanies);
+    logPipeline({
+      type: "company_impact_sector_start",
+      sector: sector.sector,
+      sectorIndex: toProcess.indexOf(sector) + 1,
+      sectorTotal: toProcess.length,
+      companies: sectorCompanies.length,
+      drivingEvents: drivingEvents.length,
+      promptChars: prompt.length,
+    });
     try {
-      const raw = await runPrompt(
-        "opportunity-engine",
-        buildCompanyMatchPrompt(sector, drivingEvents, sectorCompanies),
-        { maxTokens: 1500, json: true },
-      );
+      const raw = await runPrompt("opportunity-engine", prompt, { maxTokens: 1500, json: true });
       const parsed = extractJsonObject(raw, { matches: [] as unknown[] });
       matches = parsed.matches.map(sanitizeMatch).filter((m): m is CompanyMatchRaw => m !== null);
-    } catch {
+      logPipeline({
+        type: "company_impact_sector_end",
+        sector: sector.sector,
+        durationMs: Date.now() - sectorStartedAt,
+        rawChars: raw.length,
+        matches: matches.length,
+      });
+    } catch (err) {
+      logPipeline({
+        type: "company_impact_sector_error",
+        sector: sector.sector,
+        durationMs: Date.now() - sectorStartedAt,
+        message: err instanceof Error ? err.message : String(err),
+      });
       continue;
     }
 
