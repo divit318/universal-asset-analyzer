@@ -271,7 +271,7 @@ export interface ThematicReportInput {
 // the search box has to enforce the same cap this engine's prompts assume, and
 // it cannot import anything that reaches node:sqlite. Re-exported so server
 // callers still have one import site.
-export { MAX_THEME_LENGTH, normalizeTheme, themeCacheKey } from "./thematic-theme";
+export { MAX_THEME_LENGTH, normalizeTheme, themeCacheKey, REPORT_SCHEMA_VERSION } from "./thematic-theme";
 
 /* ──────────────────── Theme lexicon (proxies + universe) ───────────── */
 

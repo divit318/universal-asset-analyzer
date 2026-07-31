@@ -37,3 +37,16 @@ export function normalizeTheme(raw: string): string {
 export function themeCacheKey(theme: string): string {
   return normalizeTheme(theme).toLowerCase();
 }
+
+/**
+ * The report shape's version, carried in the cache key.
+ *
+ * Persisted reports outlive the code that wrote them by up to the SWR window
+ * (~6.5 days), and the page renders a served report without re-validating it —
+ * a report written by an older engine shape (no `newsItems`, no `integrity`)
+ * crashed the page on first paint once already, via the sessionStorage tier.
+ * Bumping this constant when ThematicReport changes shape turns every
+ * old-shape row into a clean cache miss instead of a render-time surprise.
+ * The orphaned rows age out through the platform cache's normal pruning.
+ */
+export const REPORT_SCHEMA_VERSION = 2;

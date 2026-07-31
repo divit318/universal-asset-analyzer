@@ -11,7 +11,7 @@
 
 import { readCache, writeCache, cacheKey } from "@/lib/platform/cache";
 import { runThematicEngine, type ThematicProgressEvent, type ThematicReport } from "@/lib/thematic-engine";
-import { normalizeTheme, themeCacheKey, MAX_THEME_LENGTH } from "@/lib/thematic-theme";
+import { normalizeTheme, themeCacheKey, MAX_THEME_LENGTH, REPORT_SCHEMA_VERSION } from "@/lib/thematic-theme";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,7 +60,9 @@ export async function POST(req: Request) {
   }
 
   const refresh = (body as { refresh?: unknown })?.refresh === true;
-  const key = cacheKey("thematicReport", { theme: themeCacheKey(theme) });
+  // The schema version is part of the key: a report persisted by an older
+  // engine shape becomes a miss, never a render-time crash (see thematic-theme).
+  const key = cacheKey("thematicReport", { theme: themeCacheKey(theme), v: REPORT_SCHEMA_VERSION });
 
   const encoder = new TextEncoder();
 
