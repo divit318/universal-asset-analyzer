@@ -980,7 +980,7 @@ Return JSON only:
       "country": "<country>",
       "policy": "<specific policy name or description>",
       "impact": "highly positive" | "positive" | "neutral" | "negative",
-      "estimatedCapitalUSD": "<headline capital committed, or null if not quantified>"
+      "estimatedCapitalUSD": "<headline capital committed, e.g. $370B>" or null
     }
   ],
   "capitalFlowDirection": "<where is policy forcing capital — 1-2 sentences>",
@@ -1004,6 +1004,18 @@ Return JSON only:
   };
 }
 
+/**
+ * A model reading a JSON template whose example value is the quoted phrase
+ * "...or null if not quantified" reliably answers with the *string* "null" —
+ * observed live, rendered verbatim as a capital figure in the policy table.
+ * Absence spelled as text is still absence.
+ */
+function coerceOptionalText(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return t === "" || /^(null|none|n\/a|not quantified|unknown)$/i.test(t) ? null : t;
+}
+
 function sanitizePolicyItem(item: unknown): PolicyItem | null {
   if (item === null || typeof item !== "object") return null;
   const p = item as Record<string, unknown>;
@@ -1012,7 +1024,7 @@ function sanitizePolicyItem(item: unknown): PolicyItem | null {
     country: p.country,
     policy: p.policy,
     impact: coerceEnum(p.impact, ["highly positive", "positive", "neutral", "negative"] as const, "neutral"),
-    estimatedCapitalUSD: typeof p.estimatedCapitalUSD === "string" ? p.estimatedCapitalUSD : null,
+    estimatedCapitalUSD: coerceOptionalText(p.estimatedCapitalUSD),
   };
 }
 

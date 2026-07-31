@@ -223,6 +223,30 @@ describe("runThematicEngine — failure tracking", () => {
     expect(report.bottleneck.scarceFactors).toEqual([]); // missing field defaulted, no crash
   });
 
+  it("treats a policy capital figure of the literal string 'null' as absent, not as text", async () => {
+    // Observed live (Uranium, qwen3:14b): the prompt's quoted example taught
+    // the model to answer "null" as a string, which rendered verbatim in the
+    // policy table's Capital column.
+    runPromptMock.mockReset();
+    runPromptMock.mockImplementation(async (_task: string, prompt: string) => {
+      if (prompt.includes("government policy support")) {
+        return JSON.stringify({
+          score: 6,
+          relevantPolicies: [
+            { country: "Canada", policy: "Tax incentives", impact: "positive", estimatedCapitalUSD: "null" },
+            { country: "US", policy: "IRA funding", impact: "positive", estimatedCapitalUSD: "N/A" },
+            { country: "China", policy: "State-backed supply", impact: "positive", estimatedCapitalUSD: "$370B" },
+          ],
+          capitalFlowDirection: "d", geopoliticalFactors: [], indiaSpecificPolicies: [],
+        });
+      }
+      return routeByPrompt(prompt);
+    });
+
+    const report = await runThematicEngine({ theme: "AI Compute" });
+    expect(report.policy.relevantPolicies.map((p) => p.estimatedCapitalUSD)).toEqual([null, null, "$370B"]);
+  });
+
   it("normalizes an invented substituteRisk variant on a valid stage response", async () => {
     runPromptMock.mockReset();
     runPromptMock.mockImplementation(async (_task: string, prompt: string) => {
