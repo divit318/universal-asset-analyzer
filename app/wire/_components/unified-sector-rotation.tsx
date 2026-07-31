@@ -67,7 +67,19 @@ function DivergenceBadge({ tile }: { tile: UnifiedSectorTile }) {
   );
 }
 
-function SectorTile({ tile, scanLoading, style }: { tile: UnifiedSectorTile; scanLoading: boolean; style?: CSSProperties }) {
+function SectorTile({
+  tile,
+  scanLoading,
+  style,
+  onShowEvidence,
+  highlighted = false,
+}: {
+  tile: UnifiedSectorTile;
+  scanLoading: boolean;
+  style?: CSSProperties;
+  onShowEvidence?: () => void;
+  highlighted?: boolean;
+}) {
   const flagged = tile.divergence?.flagged ?? false;
   const dir = tile.sentiment ? DIR_STYLE[tile.sentiment.direction] : null;
 
@@ -75,7 +87,7 @@ function SectorTile({ tile, scanLoading, style }: { tile: UnifiedSectorTile; sca
     <div
       className={`card-lift animate-fade-rise flex flex-col gap-1.5 rounded-lg border px-3 py-2.5 ${
         flagged ? "border-warning/40 bg-warning/5" : "border-border bg-surface"
-      }`}
+      } ${highlighted ? "ring-2 ring-accent/40" : ""}`}
       style={style}
     >
       <div className="flex items-center justify-between gap-2">
@@ -113,7 +125,18 @@ function SectorTile({ tile, scanLoading, style }: { tile: UnifiedSectorTile; sca
             <span className={`font-bold ${dir.text}`}>
               {dir.arrow} {tile.sentiment.direction} {tile.sentiment.strength}
             </span>
-            <span className="text-[9px] uppercase tracking-wide text-muted/60">News sentiment</span>
+            {onShowEvidence ? (
+              <button
+                type="button"
+                onClick={onShowEvidence}
+                className="text-[9px] uppercase tracking-wide text-muted/60 transition-colors hover:text-accent"
+                title="Open source articles"
+              >
+                News sentiment ↗
+              </button>
+            ) : (
+              <span className="text-[9px] uppercase tracking-wide text-muted/60">News sentiment</span>
+            )}
           </div>
           <StrengthBar value={tile.sentiment.strength} />
           <p className="text-[10px] leading-4 text-muted line-clamp-2">{tile.sentiment.rationale}</p>
@@ -130,10 +153,16 @@ function SectorTile({ tile, scanLoading, style }: { tile: UnifiedSectorTile; sca
 export function UnifiedSectorRotation({
   impacts,
   scanLoading,
+  onShowEvidence,
+  highlightedSectors,
 }: {
   /** This scan's news-sentiment signals; undefined while the stage hasn't streamed in. */
   impacts: SectorImpact[] | undefined;
   scanLoading: boolean;
+  /** Opens the evidence drawer for one sector's sentiment signal. */
+  onShowEvidence?: (sector: string) => void;
+  /** Sectors lit up by a Tape trace. */
+  highlightedSectors?: Set<string>;
 }) {
   const [snapshot, setSnapshot] = useState<SectorRotationSnapshot | null>(null);
   const [priceLoading, setPriceLoading] = useState(true);
@@ -174,7 +203,14 @@ export function UnifiedSectorRotation({
       </div>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {tiles.map((tile, i) => (
-          <SectorTile key={tile.sector} tile={tile} scanLoading={scanLoading} style={{ animationDelay: `${i * 40}ms` }} />
+          <SectorTile
+            key={tile.sector}
+            tile={tile}
+            scanLoading={scanLoading}
+            style={{ animationDelay: `${i * 40}ms` }}
+            onShowEvidence={tile.sentiment && onShowEvidence ? () => onShowEvidence(tile.sector) : undefined}
+            highlighted={highlightedSectors?.has(tile.sector) ?? false}
+          />
         ))}
       </div>
       {diverging === 0 && !scanLoading && (impacts?.length ?? 0) > 0 && (

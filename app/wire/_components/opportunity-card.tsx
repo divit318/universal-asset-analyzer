@@ -77,6 +77,8 @@ export function OpportunityCard({
   inWatchlist = false,
   onAddToWatchlist,
   onDismiss,
+  onShowEvidence,
+  highlighted = false,
 }: {
   opportunity: ScannerOpportunity;
   style?: CSSProperties;
@@ -85,6 +87,8 @@ export function OpportunityCard({
   inWatchlist?: boolean;
   onAddToWatchlist?: () => void;
   onDismiss?: () => void;
+  onShowEvidence?: () => void;
+  highlighted?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const dir = DIR_STYLE[opportunity.direction];
@@ -109,7 +113,9 @@ export function OpportunityCard({
 
   return (
     <div
-      className={`card-lift animate-fade-rise flex flex-col rounded-xl border bg-surface transition-colors hover:bg-surface-2 ${dir.glow} ${highPriority ? "animate-border-shimmer" : ""}`}
+      className={`card-lift animate-fade-rise flex flex-col rounded-xl border bg-surface transition-colors hover:bg-surface-2 ${dir.glow} ${highPriority ? "animate-border-shimmer" : ""} ${
+        highlighted ? "ring-2 ring-accent/40" : ""
+      }`}
       style={style}
     >
       {/* Header */}
@@ -183,15 +189,24 @@ export function OpportunityCard({
           {opportunity.thesis?.headline ?? opportunity.rationale}
         </p>
 
-        {/* Triggering event + corroboration — the "why now" behind the idea */}
+        {/* Triggering event + corroboration — the "why now" behind the idea;
+            clicking it opens the evidence drawer with the source articles. */}
         {triggerEvent && (
-          <p className="flex items-baseline gap-1.5 text-[10px] leading-4 text-muted/70">
+          <button
+            type="button"
+            onClick={onShowEvidence}
+            disabled={!onShowEvidence}
+            className={`flex items-baseline gap-1.5 text-left text-[10px] leading-4 text-muted/70 ${
+              onShowEvidence ? "transition-colors hover:text-accent" : ""
+            }`}
+            title={onShowEvidence ? "Open source articles" : triggerEvent.headline}
+          >
             <span className="shrink-0 text-accent">⚡</span>
-            <span className="line-clamp-1" title={triggerEvent.headline}>{triggerEvent.headline}</span>
+            <span className="line-clamp-1">{triggerEvent.headline}</span>
             <span className="shrink-0 text-muted/50">
               · {triggerEvent.sourceCount} source{triggerEvent.sourceCount === 1 ? "" : "s"}
             </span>
-          </p>
+          </button>
         )}
 
         {/* Score bars */}

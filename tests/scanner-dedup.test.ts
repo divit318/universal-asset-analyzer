@@ -22,7 +22,12 @@ describe("deduplicateIntoEvents", () => {
   });
 
   it("clusters headlines per the AI response when it succeeds", async () => {
-    const items = [newsItem("Fed cuts rates"), newsItem("Fed cuts rates", "Reuters"), newsItem("NVIDIA earnings beat")];
+    // Same story from two outlets = two distinct articles (different URLs).
+    const items = [
+      newsItem("Fed cuts rates"),
+      { ...newsItem("Fed cuts rates", "Reuters"), url: "https://reuters.com/fed-cuts-rates" },
+      newsItem("NVIDIA earnings beat"),
+    ];
     runPromptMock.mockResolvedValue(JSON.stringify({
       clusters: [
         { index: 0, clusterId: "fed-cut", category: "macro", masterHeadline: "Fed cuts rates by 25bps", summary: "s" },
@@ -36,6 +41,11 @@ describe("deduplicateIntoEvents", () => {
     expect(result).toHaveLength(2); // two stories, not three raw headlines
     const fedEvent = result.find((e) => e.headline.includes("Fed"));
     expect(fedEvent?.sources).toHaveLength(2); // both sources preserved under one event
+    // Evidence linking: every member article's storyId rides on the event —
+    // derived from url when the feed item predates minted ids.
+    expect(fedEvent?.sourceStoryIds).toHaveLength(2);
+    expect(fedEvent?.sources.every((s) => typeof s.storyId === "string" && s.storyId.length > 0)).toBe(true);
+    expect(new Set(fedEvent?.sourceStoryIds).size).toBe(2);
   });
 
   it("falls back to naive per-headline dedup when the AI call fails — doesn't throw or drop all news", async () => {
@@ -47,6 +57,8 @@ describe("deduplicateIntoEvents", () => {
     expect(result).toHaveLength(2); // dedup by headline prefix still works
     expect(result.some((e) => e.headline === "Story A")).toBe(true);
     expect(result.some((e) => e.headline === "Story B")).toBe(true);
+    // The fallback path carries evidence ids too.
+    expect(result.every((e) => (e.sourceStoryIds?.length ?? 0) === 1)).toBe(true);
   });
 
   it("falls back gracefully when the AI returns unparseable garbage", async () => {

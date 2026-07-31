@@ -19,12 +19,28 @@ const CAT_STYLE: Record<string, string> = {
   sentiment:   "text-muted bg-muted/10 border-muted/20",
 };
 
-export function CausalChainCard({ event, style }: { event: MarketEvent; style?: CSSProperties }) {
+export function CausalChainCard({
+  event,
+  style,
+  onShowEvidence,
+  highlighted = false,
+}: {
+  event: MarketEvent;
+  style?: CSSProperties;
+  onShowEvidence?: () => void;
+  highlighted?: boolean;
+}) {
   const firstOrder = event.causalChain.filter((e) => e.order === 1);
   const secondOrder = event.causalChain.filter((e) => e.order === 2);
+  const sourceCount = event.sources.length;
 
   return (
-    <div className="card-lift animate-fade-rise flex flex-col gap-3 rounded-xl border border-border bg-surface p-4" style={style}>
+    <div
+      className={`card-lift animate-fade-rise flex flex-col gap-3 rounded-xl border bg-surface p-4 ${
+        highlighted ? "border-accent/60 ring-2 ring-accent/40" : "border-border"
+      }`}
+      style={style}
+    >
       {/* Event header */}
       <div className="flex items-start gap-2 flex-wrap">
         <span
@@ -100,21 +116,32 @@ export function CausalChainCard({ event, style }: { event: MarketEvent; style?: 
         </div>
       )}
 
-      {/* Sources count */}
-      <div className="flex items-center gap-2 text-[10px] text-muted/60">
-        <span>{event.sources.length} source{event.sources.length !== 1 ? "s" : ""}</span>
+      {/* Corroboration — a visible signal, not a footnote: a causal tree built
+          on one article carries materially less weight than one five outlets
+          reported, and the card must not present both with equal confidence. */}
+      <div className="flex items-center justify-between gap-2 text-[10px]">
+        <button
+          type="button"
+          onClick={onShowEvidence}
+          disabled={!onShowEvidence}
+          className={`rounded-full border px-2 py-0.5 font-semibold transition-colors ${
+            sourceCount <= 1
+              ? "border-warning/40 bg-warning/10 text-warning"
+              : "border-border bg-surface-2 text-muted"
+          } ${onShowEvidence ? "hover:border-accent/40 hover:text-accent" : ""}`}
+          title={onShowEvidence ? "Open source articles" : undefined}
+        >
+          {sourceCount <= 1 ? "1 source — uncorroborated" : `${sourceCount} sources`}
+        </button>
         {event.sources[0]?.url && (
-          <>
-            <span>·</span>
-            <a
-              href={event.sources[0].url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-accent hover:underline"
-            >
-              {event.sources[0].source}
-            </a>
-          </>
+          <a
+            href={event.sources[0].url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-muted/60 hover:text-accent hover:underline"
+          >
+            {event.sources[0].source}
+          </a>
         )}
       </div>
     </div>

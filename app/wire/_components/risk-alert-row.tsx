@@ -9,12 +9,24 @@ const SEVERITY_STYLE = {
   low:    { dot: "bg-muted", badge: "bg-muted/15 text-muted border-muted/30", label: "Low" },
 };
 
-export function RiskAlertRow({ alert, style: rowStyle }: { alert: RiskAlert; style?: CSSProperties }) {
+export function RiskAlertRow({
+  alert,
+  style: rowStyle,
+  onShowEvidence,
+  highlighted = false,
+}: {
+  alert: RiskAlert;
+  style?: CSSProperties;
+  onShowEvidence?: () => void;
+  highlighted?: boolean;
+}) {
   const style = SEVERITY_STYLE[alert.severity];
   const highSeverity = alert.severity === "high";
   return (
     <div
-      className={`flex items-start gap-3 border-b border-border px-4 py-3 last:border-b-0 animate-fade-rise ${highSeverity ? "animate-border-shimmer" : ""}`}
+      className={`flex items-start gap-3 border-b border-border px-4 py-3 last:border-b-0 animate-fade-rise ${highSeverity ? "animate-border-shimmer" : ""} ${
+        highlighted ? "bg-accent/5 ring-1 ring-inset ring-accent/40" : ""
+      }`}
       style={rowStyle}
     >
       {/* High-severity alerts get a gentle pulse — same ping+dot primitive as
@@ -46,6 +58,16 @@ export function RiskAlertRow({ alert, style: rowStyle }: { alert: RiskAlert; sty
           </div>
         )}
       </div>
+      {onShowEvidence && (
+        <button
+          type="button"
+          onClick={onShowEvidence}
+          className="shrink-0 self-center rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-muted transition-colors hover:border-accent/40 hover:text-accent"
+          title="Open related coverage (matched by sector/ticker)"
+        >
+          Evidence
+        </button>
+      )}
     </div>
   );
 }

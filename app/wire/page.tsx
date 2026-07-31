@@ -14,11 +14,20 @@ import { RiskAlertRow } from "./_components/risk-alert-row";
 import { CommandBar, type Focus } from "./_components/command-bar";
 import { WireSection } from "./_components/wire-section";
 import { recordScanDuration } from "@/lib/scanner-eta";
-import { SourceExplorer } from "./_components/source-explorer";
 import { WatchlistImpact, PortfolioImpact } from "./_components/watchlist-portfolio-impact";
 import { PortfolioWatch } from "./_components/portfolio-watch";
 import { Tape } from "./_components/tape";
-import { buildTape } from "@/lib/wire/tape";
+import { buildTape, type TapeStory } from "@/lib/wire/tape";
+import { EvidenceDrawer } from "./_components/evidence-drawer";
+import {
+  eventStoryIds,
+  storyIdsForEventIds,
+  riskStoryIds,
+  resolveArticles,
+  insightsForStories,
+  type EvidenceRequest,
+} from "@/lib/wire/evidence";
+import { canonicalizeSector } from "@/lib/gics-sectors";
 import { SectionNav, type WireSection as WireSectionId } from "./_components/section-nav";
 import { useIOSSafe } from "@/lib/ios-context";
 import { PageShell, Skeleton } from "@/app/_components/ui";
@@ -180,6 +189,11 @@ export default function ScannerPage() {
   // Dismissals persist across visits and scans (an idea you rejected should
   // not resurrect on refresh) and are restorable — never a silent deletion.
   const [dismissed, setDismissed] = usePersistedState<string[]>("uaa.wire.dismissed", [], isStringArray);
+
+  // Evidence linking: which insight's sources are open in the drawer, and
+  // which Tape story is being traced through its downstream insights.
+  const [evidence, setEvidence] = useState<EvidenceRequest | null>(null);
+  const [trace, setTrace] = useState<TapeStory | null>(null);
 
   // IOS — portfolio fit re-ranking
   const ios = useIOSSafe();
@@ -370,6 +384,32 @@ export default function ScannerPage() {
     }
   }
 
+  // ── Evidence joins (lib/wire/evidence.ts — pure, derivation-backed, so
+  //    payloads cached before storyIds existed still resolve) ──
+  const events = display.events ?? [];
+  const evidenceArticles = evidence
+    ? resolveArticles(evidence.storyIds, display.newsItems ?? [], events)
+    : [];
+
+  // Forward trace from a Tape story: light up every downstream insight.
+  // Approximate joins (risks) deliberately do not participate.
+  const tracedInsights = trace
+    ? insightsForStories(trace.storyIds, {
+        events,
+        emergingThemes: display.emergingThemes,
+        sectorImpacts: display.sectorImpacts,
+        opportunities: allOpportunities,
+      })
+    : null;
+  const tracedEventIds = new Set(tracedInsights?.eventIds ?? []);
+  const tracedThemes = new Set(tracedInsights?.themeNames ?? []);
+  const tracedSectors = new Set(
+    (tracedInsights?.sectorNames ?? []).map((s) => canonicalizeSector(s) ?? s),
+  );
+  const tracedOppIds = new Set(tracedInsights?.opportunityIds ?? []);
+  const tracedCount =
+    tracedEventIds.size + tracedThemes.size + tracedSectors.size + tracedOppIds.size;
+
   /** Shared card wiring for every opportunity grid in the zone. */
   const cardProps = (opp: ScannerOpportunity) => ({
     opportunity: opp,
@@ -377,6 +417,12 @@ export default function ScannerPage() {
     inWatchlist: watchlistSet.has(symbolKey(opp.ticker)),
     onAddToWatchlist: () => void addTickerToWatchlist(opp.ticker),
     onDismiss: () => setDismissed([...dismissed, opp.ticker]),
+    onShowEvidence: () =>
+      setEvidence({
+        title: `${opp.ticker} — ${opp.theme}`,
+        storyIds: storyIdsForEventIds(opp.sourceEventIds, events),
+      }),
+    highlighted: tracedOppIds.has(opp.id),
   });
   // Cluster/dedupe/noise-filter the raw feed once per newsItems arrival —
   // pure and tested in lib/wire/tape.ts, so the component just renders it.
@@ -440,6 +486,22 @@ export default function ScannerPage() {
       {error && (
         <div className="rounded-lg border border-negative/40 bg-negative/10 px-4 py-3 text-sm text-negative">
           {error}
+        </div>
+      )}
+
+      {/* ── Active evidence trace — a Tape story lit up through the page ── */}
+      {trace && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-accent/40 bg-accent/10 px-4 py-2.5 text-sm">
+          <span className="min-w-0 truncate text-foreground">
+            Tracing <span className="font-medium">“{trace.canonical.headline}”</span>
+            <span className="text-muted"> — {tracedCount} downstream insight{tracedCount === 1 ? "" : "s"} highlighted</span>
+          </span>
+          <button
+            onClick={() => setTrace(null)}
+            className="shrink-0 text-xs text-muted transition-colors hover:text-foreground"
+          >
+            Clear ✕
+          </button>
         </div>
       )}
 
@@ -613,9 +675,23 @@ export default function ScannerPage() {
             >
               {display.emergingThemes && display.emergingThemes.length > 0 ? (
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {display.emergingThemes.map((theme, i) => (
-                    <EmergingThemeCard key={theme.name} theme={theme} style={{ animationDelay: `${i * 40}ms` }} />
-                  ))}
+                  {display.emergingThemes.map((theme, i) => {
+                    const storyIds = storyIdsForEventIds(theme.drivingEvents, events);
+                    return (
+                      <EmergingThemeCard
+                        key={theme.name}
+                        theme={theme}
+                        style={{ animationDelay: `${i * 40}ms` }}
+                        evidenceCount={storyIds.length > 0 ? storyIds.length : undefined}
+                        onShowEvidence={
+                          storyIds.length > 0
+                            ? () => setEvidence({ title: theme.name, storyIds })
+                            : undefined
+                        }
+                        highlighted={tracedThemes.has(theme.name)}
+                      />
+                    );
+                  })}
                 </div>
               ) : (
                 <SectionSkeleton />
@@ -636,7 +712,15 @@ export default function ScannerPage() {
               {causalEvents.length > 0 ? (
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                   {causalEvents.map((event, i) => (
-                    <CausalChainCard key={event.id} event={event} style={{ animationDelay: `${i * 60}ms` }} />
+                    <CausalChainCard
+                      key={event.id}
+                      event={event}
+                      style={{ animationDelay: `${i * 60}ms` }}
+                      onShowEvidence={() =>
+                        setEvidence({ title: event.headline, storyIds: eventStoryIds(event) })
+                      }
+                      highlighted={tracedEventIds.has(event.id)}
+                    />
                   ))}
                 </div>
               ) : (
@@ -650,7 +734,21 @@ export default function ScannerPage() {
               the primary affordance. Replaces the two identically-titled
               grids; the shared SectorRotationPanel component is untouched. */}
           <WireSection id="sector-rotation" title="Sector Rotation" collapsible persist>
-            <UnifiedSectorRotation impacts={display.sectorImpacts} scanLoading={loading} />
+            <UnifiedSectorRotation
+              impacts={display.sectorImpacts}
+              scanLoading={loading}
+              highlightedSectors={tracedSectors}
+              onShowEvidence={(sector) => {
+                const impact = (display.sectorImpacts ?? []).find(
+                  (s) => (canonicalizeSector(s.sector) ?? s.sector) === sector,
+                );
+                if (!impact) return;
+                setEvidence({
+                  title: `${sector} — news sentiment`,
+                  storyIds: storyIdsForEventIds(impact.drivingEvents, events),
+                });
+              }}
+            />
           </WireSection>
 
           {/* Zone 8: Risk Monitor */}
@@ -663,7 +761,19 @@ export default function ScannerPage() {
               {display.riskAlerts && display.riskAlerts.length > 0 ? (
                 <div className="rounded-xl border border-border overflow-hidden">
                   {display.riskAlerts.map((alert, i) => (
-                    <RiskAlertRow key={alert.id} alert={alert} style={{ animationDelay: `${i * 40}ms` }} />
+                    <RiskAlertRow
+                      key={alert.id}
+                      alert={alert}
+                      style={{ animationDelay: `${i * 40}ms` }}
+                      onShowEvidence={() => {
+                        // Risks carry no pipeline-recorded event link (that
+                        // needs an additive field in extractRiskAlerts, whose
+                        // file another session is instrumenting) — this is an
+                        // overlap join and the drawer labels it approximate.
+                        const { storyIds, approximate } = riskStoryIds(alert, events);
+                        setEvidence({ title: alert.headline, storyIds, approximate });
+                      }}
+                    />
                   ))}
                 </div>
               ) : (
@@ -710,19 +820,28 @@ export default function ScannerPage() {
           defaultCollapsed
           persist
         >
-          <div className="flex flex-col gap-4">
-            {tapeView ? (
-              <Tape view={tapeView} />
-            ) : (
-              <SectionSkeleton height="h-56" />
-            )}
-            {/* Story-level sources — folds into the evidence drawer mechanism
-                once storyIds land. */}
-            {display.events && display.events.length > 0 && (
-              <SourceExplorer events={display.events} />
-            )}
-          </div>
+          {/* The standalone Source Explorer folded into evidence linking:
+              per-story sources live in each row's expander, and every insight
+              above opens its own sources in the drawer. */}
+          {tapeView ? (
+            <Tape
+              view={tapeView}
+              tracedStoryId={trace?.id ?? null}
+              onTrace={(story) => setTrace((prev) => (prev?.id === story.id ? null : story))}
+            />
+          ) : (
+            <SectionSkeleton height="h-56" />
+          )}
         </WireSection>
+      )}
+
+      {/* ── Evidence drawer — one click from any insight to its sources ── */}
+      {evidence && (
+        <EvidenceDrawer
+          request={evidence}
+          articles={evidenceArticles}
+          onClose={() => setEvidence(null)}
+        />
       )}
 
       {/* ── Empty state ── */}

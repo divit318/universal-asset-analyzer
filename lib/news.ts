@@ -13,6 +13,7 @@
 
 import YahooFinance from "yahoo-finance2";
 import { getNews, type RawNews } from "./yahoo";
+import { storyIdFor } from "./story-id";
 import type { NewsItem } from "./types";
 
 const yahooFinance = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
@@ -407,5 +408,7 @@ export async function fetchMarketNews(opts: NewsFetchOptions = {}): Promise<News
 
   // Sort newest-first, best-effort (some sources return inaccurate dates).
   deduped.sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
-  return deduped.slice(0, limit);
+  // Mint the stable evidence id at the single aggregation choke point rather
+  // than in each source adapter — every article leaves here traceable.
+  return deduped.slice(0, limit).map((item) => ({ ...item, storyId: storyIdFor(item) }));
 }

@@ -19,10 +19,25 @@ function MomentumBar({ value }: { value: number }) {
   );
 }
 
-export function EmergingThemeCard({ theme, style }: { theme: EmergingTheme; style?: CSSProperties }) {
+export function EmergingThemeCard({
+  theme,
+  style,
+  onShowEvidence,
+  evidenceCount,
+  highlighted = false,
+}: {
+  theme: EmergingTheme;
+  style?: CSSProperties;
+  onShowEvidence?: () => void;
+  /** Resolved source-article count backing this theme, when known. */
+  evidenceCount?: number;
+  highlighted?: boolean;
+}) {
   return (
     <div
-      className="card-lift animate-fade-rise flex flex-col gap-3 rounded-xl border border-border bg-surface p-4 transition-colors hover:bg-surface-2 hover:border-border/80"
+      className={`card-lift animate-fade-rise flex flex-col gap-3 rounded-xl border bg-surface p-4 transition-colors hover:bg-surface-2 ${
+        highlighted ? "border-accent/60 ring-2 ring-accent/40" : "border-border hover:border-border/80"
+      }`}
       style={style}
     >
       <div className="flex items-start justify-between gap-2">
@@ -55,12 +70,24 @@ export function EmergingThemeCard({ theme, style }: { theme: EmergingTheme; styl
         </div>
       )}
 
-      <Link
-        href={theme.thematicResearchUrl}
-        className="mt-auto self-start text-xs text-accent hover:underline"
-      >
-        Deep Thematic Research →
-      </Link>
+      <div className="mt-auto flex items-center justify-between gap-2">
+        <Link
+          href={theme.thematicResearchUrl}
+          className="text-xs text-accent hover:underline"
+        >
+          Deep Thematic Research →
+        </Link>
+        {onShowEvidence && (
+          <button
+            type="button"
+            onClick={onShowEvidence}
+            className="rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-muted transition-colors hover:border-accent/40 hover:text-accent"
+            title="Open source articles"
+          >
+            Evidence{evidenceCount != null ? ` · ${evidenceCount}` : ""}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

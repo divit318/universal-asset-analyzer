@@ -13,6 +13,7 @@
 
 import { runPrompt } from "../ai";
 import { extractJsonObject } from "../json-extract";
+import { storyIdFor } from "../story-id";
 import type { NewsItem, MarketEvent, SignalCategory } from "../types";
 
 import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
@@ -94,11 +95,12 @@ function fallbackDedup(items: NewsItem[]): MarketEvent[] {
       headline: item.headline,
       summary: item.summary ?? item.headline,
       publishedAt: item.publishedAt,
-      sources: [{ headline: item.headline, source: item.source, url: item.url }],
+      sources: [{ headline: item.headline, source: item.source, url: item.url, storyId: item.storyId ?? storyIdFor(item) }],
       affectedTickers: item.tickers,
       affectedSectors: [],
       affectedThemes: [],
       causalChain: [],
+      sourceStoryIds: [item.storyId ?? storyIdFor(item)],
     });
   }
   return events;
@@ -183,11 +185,13 @@ export async function deduplicateIntoEvents(
         headline: i.headline,
         source: i.source,
         url: i.url,
+        storyId: i.storyId ?? storyIdFor(i),
       })),
       affectedTickers: tickers,
       affectedSectors: [],
       affectedThemes: [],
       causalChain: [],
+      sourceStoryIds: clusterItems.map((i) => i.storyId ?? storyIdFor(i)),
     });
   }
 

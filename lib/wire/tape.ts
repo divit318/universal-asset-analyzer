@@ -14,6 +14,7 @@
  */
 
 import type { NewsItem } from "../types";
+import { storyIdFor } from "../story-id";
 
 /* -------------------------------------------------------------------------- */
 /* Tunable constants (exported so tests pin behavior and the UI can cite them) */
@@ -257,6 +258,8 @@ export interface TapeStory {
   canonical: NewsItem;
   /** All member articles, canonical first, then by source tier and recency. */
   items: NewsItem[];
+  /** Evidence ids of the member articles — the forward-trace handle. */
+  storyIds: string[];
   sourceCount: number;
   tickers: string[];
   earliestAt: string;
@@ -390,6 +393,7 @@ export function buildTape(
       id: hashId(members.map((m) => m.item.url || m.item.headline).sort().join("\n")),
       canonical,
       items: byPriority.map((m) => m.item),
+      storyIds: byPriority.map((m) => m.item.storyId ?? storyIdFor(m.item)),
       sourceCount: members.length,
       tickers,
       earliestAt: new Date(earliest).toISOString(),

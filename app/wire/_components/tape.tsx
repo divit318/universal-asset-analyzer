@@ -27,12 +27,23 @@ function TickerChips({ tickers }: { tickers: string[] }) {
   );
 }
 
-function StoryRow({ story, now }: { story: TapeStory; now: number }) {
+function StoryRow({
+  story,
+  now,
+  onTrace,
+  traced = false,
+}: {
+  story: TapeStory;
+  now: number;
+  /** Highlight every downstream insight this story produced. */
+  onTrace?: (story: TapeStory) => void;
+  traced?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const secondary = story.items.slice(1);
 
   return (
-    <li className="border-b border-border last:border-b-0">
+    <li className={`border-b border-border last:border-b-0 ${traced ? "bg-accent/5" : ""}`}>
       <div className="flex flex-col gap-0.5 px-3 py-1.5">
         <div className="flex items-baseline justify-between gap-3">
           <a
@@ -46,16 +57,32 @@ function StoryRow({ story, now }: { story: TapeStory; now: number }) {
           >
             {story.canonical.headline}
           </a>
-          {story.sourceCount > 1 && (
-            <button
-              type="button"
-              onClick={() => setExpanded((v) => !v)}
-              aria-expanded={expanded}
-              className="shrink-0 rounded-full border border-border px-1.5 py-px text-[10px] text-muted transition-colors hover:border-accent/40 hover:text-accent"
-            >
-              {story.sourceCount} sources {expanded ? "−" : "+"}
-            </button>
-          )}
+          <span className="flex shrink-0 items-center gap-1.5">
+            {story.sourceCount > 1 && (
+              <button
+                type="button"
+                onClick={() => setExpanded((v) => !v)}
+                aria-expanded={expanded}
+                className="rounded-full border border-border px-1.5 py-px text-[10px] text-muted transition-colors hover:border-accent/40 hover:text-accent"
+              >
+                {story.sourceCount} sources {expanded ? "−" : "+"}
+              </button>
+            )}
+            {onTrace && (
+              <button
+                type="button"
+                onClick={() => onTrace(story)}
+                className={`rounded-full border px-1.5 py-px text-[10px] transition-colors ${
+                  traced
+                    ? "border-accent/50 bg-accent/10 text-accent"
+                    : "border-border text-muted hover:border-accent/40 hover:text-accent"
+                }`}
+                title="Highlight every insight derived from this story"
+              >
+                Trace →
+              </button>
+            )}
+          </span>
         </div>
         <div className="flex items-center gap-2 text-[11px] text-muted/70">
           <span>{story.canonical.source}</span>
@@ -94,7 +121,16 @@ function StoryRow({ story, now }: { story: TapeStory; now: number }) {
   );
 }
 
-export function Tape({ view }: { view: TapeView }) {
+export function Tape({
+  view,
+  onTrace,
+  tracedStoryId,
+}: {
+  view: TapeView;
+  onTrace?: (story: TapeStory) => void;
+  /** The story currently being traced, if any. */
+  tracedStoryId?: string | null;
+}) {
   const [showFiltered, setShowFiltered] = useState(false);
 
   const buckets: TapeBucket[] = ["hour", "today", "yesterday", "earlier"];
@@ -113,7 +149,7 @@ export function Tape({ view }: { view: TapeView }) {
           </span>
           <ul className="rounded-xl border border-border bg-surface">
             {stories.map((s) => (
-              <StoryRow key={s.id} story={s} now={view.builtAt} />
+              <StoryRow key={s.id} story={s} now={view.builtAt} onTrace={onTrace} traced={s.id === tracedStoryId} />
             ))}
           </ul>
         </div>
@@ -133,7 +169,7 @@ export function Tape({ view }: { view: TapeView }) {
           {showFiltered && (
             <ul className="rounded-xl border border-border bg-surface opacity-70">
               {view.filtered.map((s) => (
-                <StoryRow key={s.id} story={s} now={view.builtAt} />
+                <StoryRow key={s.id} story={s} now={view.builtAt} onTrace={onTrace} traced={s.id === tracedStoryId} />
               ))}
             </ul>
           )}

@@ -834,6 +834,12 @@ export interface NewsItem {
   /** Tickers explicitly mentioned or returned by the news source. */
   tickers: string[];
   summary: string | null;
+  /**
+   * Stable evidence id minted at collection time (lib/story-id.ts). Optional
+   * because payloads cached before it existed lack it; consumers re-derive it
+   * deterministically from url/headline/source instead of failing.
+   */
+  storyId?: string;
 }
 
 export type SignalDirection = "bullish" | "bearish" | "neutral";
@@ -895,11 +901,13 @@ export interface MarketEvent {
   headline: string;
   summary: string;
   publishedAt: string; // ISO
-  sources: { headline: string; source: string; url: string }[];
+  sources: { headline: string; source: string; url: string; storyId?: string }[];
   affectedTickers: string[];
   affectedSectors: string[];
   affectedThemes: string[];
   causalChain: CausalEffect[];
+  /** Evidence links: storyIds of the articles this event was clustered from. */
+  sourceStoryIds?: string[];
 }
 
 export interface SectorImpact {
