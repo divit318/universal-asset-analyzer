@@ -68,6 +68,8 @@ export function CompaniesTab({ report }: { report: ThematicReport }) {
       {tiers.map((t, i) => {
         const rows = filtered.filter((c) => c.tier === t);
         if (rows.length === 0) return null;
+        const tierPE = median(rows.map((c) => c.forwardPE));
+        const themePE = median(companies.map((c) => c.forwardPE));
         return (
           <Reveal key={t} index={i}>
             <Card padding="none">
@@ -75,6 +77,14 @@ export function CompaniesTab({ report }: { report: ThematicReport }) {
                 <TierBadge tier={t} />
                 <span className="text-sm font-semibold">{rows[0].tierLabel}</span>
                 <span className="text-xs text-muted tabular-nums">{rows.length}</span>
+                {/* The valuation read at a glance: is this tier the rich or the
+                    cheap end of the theme? (PR-5) */}
+                {tierPE != null && (
+                  <span className="ml-auto text-xs text-muted tabular-nums">
+                    median fwd P/E {tierPE.toFixed(1)}×
+                    {themePE != null && ` · theme ${themePE.toFixed(1)}×`}
+                  </span>
+                )}
               </div>
               <CompanyTable companies={rows} theme={report.theme} />
             </Card>
@@ -207,6 +217,14 @@ function UniverseTable({ candidates }: { candidates: UniverseCandidate[] }) {
       showDensityToggle={false}
     />
   );
+}
+
+/** Median over the non-null values; null when fewer than 2 carry data. */
+function median(values: (number | null | undefined)[]): number | null {
+  const nums = values.filter((v): v is number => v != null && Number.isFinite(v)).sort((a, b) => a - b);
+  if (nums.length < 2) return null;
+  const mid = Math.floor(nums.length / 2);
+  return nums.length % 2 === 0 ? (nums[mid - 1] + nums[mid]) / 2 : nums[mid];
 }
 
 function FilterChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
@@ -381,6 +399,43 @@ export function CompanyTable({
         </span>
       ),
     },
+    // Valuation + crowding (PR-5): a right theme and a rich theme used to
+    // look identical — the engine discarded valuation entirely.
+    {
+      key: "forwardPE",
+      label: "Fwd P/E",
+      help: "Forward price/earnings from the fundamentals cache — the theme's valuation read",
+      numeric: true,
+      sortValue: (c) => c.forwardPE ?? null,
+      render: (c) => (
+        <span className="font-mono text-xs tabular-nums">{c.forwardPE != null ? c.forwardPE.toFixed(1) : "—"}</span>
+      ),
+    },
+    ...(!compact
+      ? [
+          {
+            key: "evToEbitda",
+            label: "EV/EBITDA",
+            numeric: true,
+            sortValue: (c: TierCompany) => c.evToEbitda ?? null,
+            render: (c: TierCompany) => (
+              <span className="font-mono text-xs tabular-nums">{c.evToEbitda != null ? c.evToEbitda.toFixed(1) : "—"}</span>
+            ),
+          },
+          {
+            key: "vsHigh",
+            label: "vs 52w high",
+            help: "Distance from the 52-week high — a crowding proxy; near zero means the market already found it",
+            numeric: true,
+            sortValue: (c: TierCompany) => c.distanceFrom52WkHigh ?? null,
+            render: (c: TierCompany) => (
+              <span className={`font-mono text-xs tabular-nums ${toneClass(c.distanceFrom52WkHigh ?? null)}`}>
+                {formatPercent(c.distanceFrom52WkHigh ?? null, 1)}
+              </span>
+            ),
+          },
+        ]
+      : []),
     {
       key: "debtToEquity",
       label: "D/E",

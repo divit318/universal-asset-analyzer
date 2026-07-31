@@ -181,6 +181,19 @@ export interface TierCompany {
   grossMargin: number | null;
   revenueGrowthYoY: number | null;
   debtToEquity: number | null;
+  /**
+   * Valuation read (PR-5): the fundamentals cache holds these for every mapped
+   * company and the engine used to discard them — a right theme and a rich
+   * theme looked identical. Both straight from the cached fundamentals.
+   */
+  forwardPE: number | null;
+  evToEbitda: number | null;
+  /**
+   * Crowding proxy: % below the 52-week high (negative = below). Filled by a
+   * single batch quote call after mapping; null when the quote is missing.
+   * A tier trading at its highs is a discovered expression of the theme.
+   */
+  distanceFrom52WkHigh: number | null;
   isIndia: boolean;
   relevanceRationale: string;
   qualityScore: number | null;       // 0–100 from screener
@@ -1336,6 +1349,9 @@ Return JSON only — an array of between 12 and 18 objects (fewer only if fewer 
       grossMargin: fund.grossMargin ?? null,
       revenueGrowthYoY: fund.revenueGrowthYoY ?? null,
       debtToEquity: fund.debtToEquity ?? null,
+      forwardPE: fund.forwardPE ?? null,
+      evToEbitda: fund.evToEbitda ?? null,
+      distanceFrom52WkHigh: null,
       isIndia: fund.symbol.endsWith(".NS") || fund.symbol.endsWith(".BO"),
       relevanceRationale: m.relevanceRationale,
       qualityScore: fundamentalQualityScore(fund),
@@ -1829,6 +1845,20 @@ export async function runThematicEngine(
   emit("company_mapping", `${tierCompanies.length} companies mapped across ${new Set(tierCompanies.map((c) => c.tier)).size} tiers`, tierCompanies);
 
   emit("company_quality", "Scoring mapped companies on the composite quality screen…");
+  // Crowding read (PR-5): one batch quote call fills in how far each mapped
+  // name trades from its 52-week high — the cheap proxy for how discovered
+  // this expression of the theme already is. Non-fatal: a quote miss leaves
+  // the column empty, never blocks the report.
+  if (tierCompanies.length > 0 && !signal?.aborted) {
+    const quotes = await getQuotes(tierCompanies.map((c) => c.symbol)).catch(() => []);
+    const bySymbol = new Map(quotes.map((q) => [q.symbol.toUpperCase(), q]));
+    for (const c of tierCompanies) {
+      const q = bySymbol.get(c.symbol.toUpperCase());
+      if (q?.price != null && q.fiftyTwoWeekHigh != null && q.fiftyTwoWeekHigh > 0) {
+        c.distanceFrom52WkHigh = ((q.price - q.fiftyTwoWeekHigh) / q.fiftyTwoWeekHigh) * 100;
+      }
+    }
+  }
   const scored = tierCompanies.filter((c) => c.qualityScore != null).length;
   emit("company_quality", `${scored} of ${tierCompanies.length} companies have a composite quality score`, tierCompanies);
 

@@ -9,7 +9,7 @@ vi.mock("@/lib/ai/router", () => ({ pickModel: vi.fn().mockResolvedValue("test-m
 vi.mock("@/lib/db", () => ({
   getFreshFundamentals: () => ({
     rows: [
-      { symbol: "ACME", name: "Acme Semiconductor", sector: "Technology", industry: "Semiconductors", roic: 20, grossMargin: 55, operatingMargin: 30, fcfMargin: 20, roe: 25, debtToEquity: 0.4, currentRatio: 2.2 } as unknown as StockFundamentals,
+      { symbol: "ACME", name: "Acme Semiconductor", sector: "Technology", industry: "Semiconductors", roic: 20, grossMargin: 55, operatingMargin: 30, fcfMargin: 20, roe: 25, debtToEquity: 0.4, currentRatio: 2.2, forwardPE: 18.2, evToEbitda: 12.5 } as unknown as StockFundamentals,
       { symbol: "ZZBANK", name: "Zed Regional Bank", sector: "Financial Services", industry: "Banks - Regional" } as unknown as StockFundamentals,
     ],
   }),
@@ -164,8 +164,8 @@ describe("computeOpportunityScore", () => {
 
   it("ranks top companies by strategic importance and quality, not input order", () => {
     const companies = [
-      { tier: 1 as const, tierLabel: "T1", symbol: "LOW", name: "Low Priority", sector: null, industry: null, roic: 5, grossMargin: null, revenueGrowthYoY: null, debtToEquity: 1, isIndia: false, relevanceRationale: "", qualityScore: null, strategicImportance: "low" as const, moatType: "none" as const },
-      { tier: 1 as const, tierLabel: "T1", symbol: "CRIT", name: "Critical Co", sector: null, industry: null, roic: 20, grossMargin: null, revenueGrowthYoY: null, debtToEquity: 0.5, isIndia: false, relevanceRationale: "", qualityScore: null, strategicImportance: "critical" as const, moatType: "scale" as const },
+      { tier: 1 as const, tierLabel: "T1", symbol: "LOW", name: "Low Priority", sector: null, industry: null, roic: 5, grossMargin: null, revenueGrowthYoY: null, debtToEquity: 1, forwardPE: null, evToEbitda: null, distanceFrom52WkHigh: null, isIndia: false, relevanceRationale: "", qualityScore: null, strategicImportance: "low" as const, moatType: "none" as const },
+      { tier: 1 as const, tierLabel: "T1", symbol: "CRIT", name: "Critical Co", sector: null, industry: null, roic: 20, grossMargin: null, revenueGrowthYoY: null, debtToEquity: 0.5, forwardPE: null, evToEbitda: null, distanceFrom52WkHigh: null, isIndia: false, relevanceRationale: "", qualityScore: null, strategicImportance: "critical" as const, moatType: "scale" as const },
     ];
     const result = computeOpportunityScore(futureState, bottleneck, supplyDemand, commodity, policy, structural, companies);
     expect(result.topCompanies[0].symbol).toBe("CRIT");
@@ -199,6 +199,27 @@ describe("runThematicEngine — failure tracking", () => {
 
     expect(report.stageFailures).toEqual([]);
     expect(runPromptMock).toHaveBeenCalledTimes(8); // was 9 before removing the wasted duplicate supply/demand call
+  });
+
+  it("carries valuation from the cache and crowding from the batch quote on mapped names (PR-5)", async () => {
+    runPromptMock.mockReset();
+    runPromptMock.mockImplementation(async (_task: string, prompt: string) => routeByPrompt(prompt));
+    const yahoo = await import("@/lib/yahoo");
+    const getQuotesMock = yahoo.getQuotes as ReturnType<typeof vi.fn>;
+    // The engine calls getQuotes twice: once for proxies, once for the mapped
+    // names. Answer the mapped-names call; leave the proxy call empty.
+    getQuotesMock.mockImplementation(async (symbols: string[]) =>
+      symbols.includes("ACME") ? [{ symbol: "ACME", price: 80, fiftyTwoWeekHigh: 100 }] : [],
+    );
+
+    const report = await runThematicEngine({ theme: "AI Compute Semiconductors" });
+    getQuotesMock.mockReset();
+    getQuotesMock.mockResolvedValue([]);
+
+    const acme = report.tierCompanies.find((c) => c.symbol === "ACME");
+    expect(acme?.forwardPE).toBe(18.2);
+    expect(acme?.evToEbitda).toBe(12.5);
+    expect(acme?.distanceFrom52WkHigh).toBeCloseTo(-20);
   });
 
   it("records a named failure and falls back to a neutral default without crashing the pipeline", async () => {
