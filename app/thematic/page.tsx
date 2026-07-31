@@ -327,10 +327,11 @@ function ThematicPageInner() {
 
       {running && <ProgressView events={events} elapsed={elapsed} />}
 
+      {/* `running` and `report` never coexist — run() clears the report before
+          streaming — so the view needs no "refreshing" state. */}
       {report && (
         <ThematicReportView
           report={report}
-          refreshing={running}
           onRefresh={() => void run(report.theme, { refresh: true })}
         />
       )}

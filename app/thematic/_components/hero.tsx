@@ -19,7 +19,7 @@ const VERDICT_VARIANT = {
   avoid: "negative",
 } as const;
 
-export function Hero({ report, onRefresh, refreshing }: { report: ThematicReport; onRefresh: () => void; refreshing: boolean }) {
+export function Hero({ report, onRefresh }: { report: ThematicReport; onRefresh: () => void }) {
   const { opportunity, integrity } = report;
   const toast = useToast();
 
@@ -77,7 +77,7 @@ export function Hero({ report, onRefresh, refreshing }: { report: ThematicReport
             <Button size="xs" variant="ghost" onClick={copyMarkdown} title="Copy the whole report as Markdown">
               <Copy className="h-3 w-3" strokeWidth={2} /> Copy
             </Button>
-            <Button size="xs" variant="ghost" onClick={onRefresh} disabled={refreshing} title="Discard the saved report and re-run every stage">
+            <Button size="xs" variant="ghost" onClick={onRefresh} title="Discard the saved report and re-run every stage">
               <RotateCcw className="h-3 w-3" strokeWidth={2} /> Re-run
             </Button>
           </div>

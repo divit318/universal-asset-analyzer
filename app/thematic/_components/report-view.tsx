@@ -12,7 +12,7 @@ import { ChecklistTab } from "./checklist-tab";
 
 type TabId = "overview" | "chain" | "companies" | "signals" | "checklist";
 
-export function ThematicReportView({ report, onRefresh, refreshing }: { report: ThematicReport; onRefresh: () => void; refreshing: boolean }) {
+export function ThematicReportView({ report, onRefresh }: { report: ThematicReport; onRefresh: () => void }) {
   const [activeTab, setActiveTab] = useState<TabId>("overview");
 
   const tabs: TabItem<TabId>[] = [
@@ -25,7 +25,7 @@ export function ThematicReportView({ report, onRefresh, refreshing }: { report: 
 
   return (
     <div className="flex flex-col gap-6">
-      <Hero report={report} onRefresh={onRefresh} refreshing={refreshing} />
+      <Hero report={report} onRefresh={onRefresh} />
       <IntegrityNotice report={report} />
       <RiskFlags flags={report.opportunity.riskFlags} />
 

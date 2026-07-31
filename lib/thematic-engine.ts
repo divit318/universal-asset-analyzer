@@ -287,13 +287,12 @@ export { MAX_THEME_LENGTH, normalizeTheme, themeCacheKey, REPORT_SCHEMA_VERSION 
  *
  * `industries` values are matched case-insensitively as substrings of the
  * Yahoo industry string (e.g. "semiconductor" catches both "Semiconductors"
- * and "Semiconductor Equipment & Materials"); `sectors` are exact-ish sector
- * fallbacks, weighted far lower because a whole sector is a weak signal.
+ * and "Semiconductor Equipment & Materials"), ordered most-on-theme first —
+ * the shortlist weights a hint by its position.
  */
 interface ThemeLexiconEntry {
   proxies?: { ticker: string; name: string }[];
   industries?: string[];
-  sectors?: string[];
   /** Extra words that mean the same thing, matched against the theme text. */
   aliases?: string[];
 }
@@ -560,7 +559,6 @@ export function shortlistUniverse(theme: string, rows: StockFundamentals[]): Uni
       if ((industryWeights.get(hint) ?? 0) < weight) industryWeights.set(hint, weight);
     });
   }
-  const sectorHints = [...new Set(entries.flatMap((e) => e.sectors ?? []))];
 
   // Free-text themes ("Obesity drugs", "Shrinkflation") match no lexicon entry.
   // Fall back to the theme's own content words against industry/sector/name so
@@ -576,7 +574,6 @@ export function shortlistUniverse(theme: string, rows: StockFundamentals[]): Uni
     const name = (row.name ?? "").toLowerCase();
     let score = 0;
     for (const [hint, weight] of industryWeights) if (industry.includes(hint)) score += weight;
-    for (const hint of sectorHints) if (sector.includes(hint)) score += 3;
     for (const word of themeWords) {
       if (industry.includes(word)) score += 6;
       else if (name.includes(word)) score += 4;
@@ -608,7 +605,7 @@ export function shortlistUniverse(theme: string, rows: StockFundamentals[]): Uni
   return {
     companies: relevant,
     total: rows.length,
-    usedTextFallback: industryWeights.size === 0 && sectorHints.length === 0,
+    usedTextFallback: industryWeights.size === 0,
   };
 }
 
@@ -764,7 +761,7 @@ Return JSON only:
   "rationale": "<2-3 sentences on why this score>"
 }`;
 
-  const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 600, json: true, signal });
+  const raw = await runPrompt("thematic-analysis", prompt, { json: true, signal });
   assertParseable(raw);
   const parsed = extractJsonObject(raw, {
     inevitabilityScore: DEFAULT_FUTURE_STATE.inevitabilityScore,
@@ -808,7 +805,7 @@ Return JSON only — an array of exactly 6 objects:
   ...
 ]`;
 
-  const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 1200, json: true, signal });
+  const raw = await runPrompt("thematic-analysis", prompt, { json: true, signal });
   assertParseable(raw);
   return extractJsonArray(raw, sanitizeDependencyNode).slice(0, 6);
 }
@@ -858,7 +855,7 @@ Return JSON only:
   "expansionDifficulty": "<how long and how capital-intensive adding capacity at this tier is, and what blocks it — specific to THIS theme; never reuse example wording>"
 }`;
 
-  const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 800, json: true, signal });
+  const raw = await runPrompt("thematic-analysis", prompt, { json: true, signal });
   assertParseable(raw);
   const parsed = extractJsonObject(raw, {
     score: DEFAULT_BOTTLENECK.score,
@@ -915,7 +912,7 @@ Return JSON only:
   "investmentSignal": "strong" | "moderate" | "weak" | "avoid"
 }`;
 
-  const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 700, json: true, signal });
+  const raw = await runPrompt("thematic-analysis", prompt, { json: true, signal });
   assertParseable(raw);
   // Omit<SupplyDemandScore, "commodityProxies"> — commodityProxies is attached
   // by the caller from live market data, never parsed from the model.
@@ -964,7 +961,7 @@ Return JSON only:
   "reserveConcentration": "<1-2 sentences on where reserves are concentrated and geopolitical implications>"
 }`;
 
-  const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 800, json: true, signal });
+  const raw = await runPrompt("thematic-analysis", prompt, { json: true, signal });
   assertParseable(raw);
   const parsed = extractJsonObject(raw, {
     score: DEFAULT_COMMODITY.score,
@@ -1014,7 +1011,7 @@ Return JSON only:
   "indiaSpecificPolicies": ["<policy1>", "<policy2>"]
 }`;
 
-  const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 1000, json: true, signal });
+  const raw = await runPrompt("thematic-analysis", prompt, { json: true, signal });
   assertParseable(raw);
   const parsed = extractJsonObject(raw, {
     score: DEFAULT_POLICY.score,
@@ -1083,7 +1080,7 @@ Return JSON only:
 
 Include 3-6 regions, ranked by relevance to this theme.`;
 
-  const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 1200, json: true, signal });
+  const raw = await runPrompt("thematic-analysis", prompt, { json: true, signal });
   assertParseable(raw);
   const parsed = extractJsonObject(raw, {
     score: DEFAULT_STRUCTURAL_ADVANTAGE.score,
@@ -1179,7 +1176,7 @@ Return JSON only — an array:
   }
 ]`;
 
-  const raw = await runPrompt("thematic-analysis", prompt, { maxTokens: 2000, json: true, signal });
+  const raw = await runPrompt("thematic-analysis", prompt, { json: true, signal });
   // This is the one stage whose response is long enough that a small local
   // model regularly truncates it mid-object. Rather than throwing away a dozen
   // valid mappings over the unterminated last one, fall back to salvaging every
