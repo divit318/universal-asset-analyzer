@@ -30,7 +30,7 @@ import { Reveal } from "@/app/_components/reveal";
 import { useToast } from "@/app/_components/toast";
 import { ThematicReportView } from "./_components/report-view";
 import { ProgressView } from "./_components/progress";
-import { STORAGE_KEY, asCurrentReport, pushRecent, readRecent, recordStageTimings } from "./_components/storage";
+import { STORAGE_KEY, asCurrentReport, pushRecent, readRecent, recordReportSnapshot, recordStageTimings } from "./_components/storage";
 
 /* ─────────────────── Preset themes ──────────────────────────────────── */
 
@@ -171,6 +171,9 @@ function ThematicPageInner() {
           }
           setEvents((prev) => [...prev, evt]);
           if (evt.stage === "done" && evt.report) {
+            // Keep the run's verdict summary (dedupes cached re-loads) BEFORE
+            // the view mounts, so the history panel sees the previous runs.
+            recordReportSnapshot(evt.report);
             setReport(evt.report);
             // Recent is a list of themes with a *saved report to load* — a
             // cancelled or failed run has none, so it joins only on success

@@ -1,5 +1,5 @@
 import type { ThematicReport } from "@/lib/thematic-engine";
-import { isRenderableReport } from "@/lib/thematic-theme";
+import { isRenderableReport, themeCacheKey } from "@/lib/thematic-theme";
 
 const RECENT_KEY = "uaa_thematic_recent";
 /** Also referenced (as a literal, with a pointer here) by app/thematic/error.tsx. */
@@ -81,5 +81,88 @@ export function recordStageTimings(timings: { stage: string; ms: number }[] | un
       next[t.stage] = prev[t.stage] ? Math.round(prev[t.stage] * 0.5 + t.ms * 0.5) : Math.round(t.ms);
     }
     localStorage.setItem(TIMINGS_KEY, JSON.stringify(next));
+  } catch { /* quota */ }
+}
+
+/* ─────────────────── Report history per theme (PR-8) ────────────────── */
+
+const HISTORY_KEY = "uaa_thematic_history";
+const HISTORY_PER_THEME = 10;
+const HISTORY_THEMES = 24;
+
+/**
+ * A run's verdict, small enough to keep. Every re-run used to overwrite the
+ * single cache row, so "the framework said 56/100 WEAK last month and 61/100
+ * STRONG today" was unknowable — the "grade your own recommendations" rule
+ * applied to this tab. Snapshots are compact summaries (not full reports),
+ * kept in the same browser storage that already holds the recent-theme chips
+ * and the learned stage-timing estimates.
+ */
+export interface ReportSnapshot {
+  generatedAt: string;
+  themeScore: number;
+  verdict: string;
+  capitalCyclePhase: string;
+  evidenceScore: number;
+  companies: number;
+}
+
+type HistoryMap = Record<string, ReportSnapshot[]>;
+
+function readHistoryMap(): HistoryMap {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: HistoryMap = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!Array.isArray(v)) continue;
+      const snaps = v.filter(
+        (s): s is ReportSnapshot =>
+          s !== null && typeof s === "object" &&
+          typeof (s as ReportSnapshot).generatedAt === "string" &&
+          typeof (s as ReportSnapshot).themeScore === "number",
+      );
+      if (snaps.length > 0) out[k] = snaps.slice(0, HISTORY_PER_THEME);
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** Newest first. */
+export function readReportHistory(theme: string): ReportSnapshot[] {
+  return readHistoryMap()[themeCacheKey(theme)] ?? [];
+}
+
+/**
+ * Record a run's summary. Dedupes on generatedAt, so re-loading a cached
+ * report never inflates the history — only genuinely new runs add entries.
+ */
+export function recordReportSnapshot(report: ThematicReport): void {
+  try {
+    const key = themeCacheKey(report.theme);
+    const map = readHistoryMap();
+    const existing = map[key] ?? [];
+    if (existing.some((s) => s.generatedAt === report.generatedAt)) return;
+    const snap: ReportSnapshot = {
+      generatedAt: report.generatedAt,
+      themeScore: report.opportunity.themeScore,
+      verdict: report.opportunity.verdict,
+      capitalCyclePhase: report.supplyDemand.capitalCyclePhase,
+      evidenceScore: report.integrity.evidenceScore,
+      companies: report.tierCompanies.length,
+    };
+    map[key] = [snap, ...existing].slice(0, HISTORY_PER_THEME);
+    // Bound the number of themes too, dropping the least recently run.
+    const keys = Object.keys(map);
+    if (keys.length > HISTORY_THEMES) {
+      const newestFirst = keys.sort((a, b) =>
+        (map[b][0]?.generatedAt ?? "").localeCompare(map[a][0]?.generatedAt ?? ""),
+      );
+      for (const k of newestFirst.slice(HISTORY_THEMES)) delete map[k];
+    }
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(map));
   } catch { /* quota */ }
 }
