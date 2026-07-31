@@ -63,6 +63,9 @@ export interface TaskProgressStep {
   label: string;
   /** Optional one-line "what this stage actually does", shown in checklist layout. */
   detail?: string;
+  /** Optional one-line finding shown once the step is DONE (checklist layout) —
+   *  e.g. "Bottleneck score: 8/10". Turns a progress list into a live summary. */
+  result?: string;
 }
 
 /**
@@ -263,6 +266,11 @@ export function TaskProgress({
                     <span className="text-[10px] leading-relaxed text-muted/60">{step.detail}</span>
                   )}
                 </span>
+                {step.result && state === "done" && (
+                  <span className="ml-auto min-w-0 shrink truncate pl-4 text-[11px] leading-relaxed text-muted/70">
+                    {step.result}
+                  </span>
+                )}
                 <span className="sr-only">
                   {state === "done" ? "complete" : state === "active" ? "in progress" : "pending"}
                 </span>

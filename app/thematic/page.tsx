@@ -30,7 +30,7 @@ import { Reveal } from "@/app/_components/reveal";
 import { useToast } from "@/app/_components/toast";
 import { ThematicReportView } from "./_components/report-view";
 import { ProgressView } from "./_components/progress";
-import { STORAGE_KEY, asCurrentReport, pushRecent, readRecent } from "./_components/storage";
+import { STORAGE_KEY, asCurrentReport, pushRecent, readRecent, recordStageTimings } from "./_components/storage";
 
 /* ─────────────────── Preset themes ──────────────────────────────────── */
 
@@ -179,6 +179,9 @@ function ThematicPageInner() {
             // The route says when a report was served from cache and how old
             // it is; that message was previously discarded on the floor.
             if (evt.cached) toast(evt.message);
+            // Every report carries real per-stage wall times — feed them to
+            // the rolling estimates that drive the next run's remaining-time.
+            recordStageTimings(evt.report.stageTimings);
             try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(evt.report)); } catch { /* quota */ }
           }
           if (evt.stage === "error") setError(evt.message);
