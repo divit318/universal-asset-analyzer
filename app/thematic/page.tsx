@@ -34,7 +34,7 @@ import type {
   RiskFlag,
   ScoreFactor,
 } from "@/lib/thematic-engine";
-import { MAX_THEME_LENGTH } from "@/lib/thematic-theme";
+import { MAX_THEME_LENGTH, isRenderableReport } from "@/lib/thematic-theme";
 import { Badge, Button, Card, Input, PageShell, SectionHeader, Tabs, type TabItem } from "@/app/_components/ui";
 import { Reveal } from "@/app/_components/reveal";
 import { ScoreRing } from "@/app/_components/score-ring";
@@ -1130,13 +1130,12 @@ const STORAGE_KEY = "uaa_thematic_last_report";
  * sessionStorage outlives the code that wrote it. A report saved by an earlier
  * version has no `integrity` or `factors`, so restoring it blindly crashed the
  * page on first paint with no way for the user to recover except clearing
- * storage by hand. An unrecognised shape is simply discarded.
+ * storage by hand. The check itself is the shared `isRenderableReport` — the
+ * same one the API route applies to platform-cache hits, so the two storage
+ * tiers can never drift apart in what they consider renderable.
  */
 function asCurrentReport(value: unknown): ThematicReport | null {
-  const r = value as Partial<ThematicReport> | null;
-  if (!r || typeof r.theme !== "string") return null;
-  if (!r.integrity || !Array.isArray(r.opportunity?.factors)) return null;
-  return r as ThematicReport;
+  return isRenderableReport(value) ? value : null;
 }
 
 /**

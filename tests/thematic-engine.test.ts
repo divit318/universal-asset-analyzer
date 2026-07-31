@@ -303,6 +303,31 @@ describe("theme news filtering", () => {
   });
 });
 
+describe("isRenderableReport", () => {
+  it("accepts a report the engine just produced", async () => {
+    runPromptMock.mockReset();
+    runPromptMock.mockImplementation(async (_task: string, prompt: string) => routeByPrompt(prompt));
+    const { isRenderableReport } = await import("@/lib/thematic-theme");
+    const report = await runThematicEngine({ theme: "AI Compute Semiconductors" });
+    expect(isRenderableReport(report)).toBe(true);
+  });
+
+  it("rejects the old shapes both storage tiers can still hold", async () => {
+    const { isRenderableReport } = await import("@/lib/thematic-theme");
+    expect(isRenderableReport(null)).toBe(false);
+    expect(isRenderableReport("{}")).toBe(false);
+    // Pre-integrity era (the shape that crashed the page once already).
+    expect(isRenderableReport({ theme: "Uranium", opportunity: { themeScore: 56 } })).toBe(false);
+    // Pre-newsItems era: everything else present, one iterated array missing.
+    runPromptMock.mockReset();
+    runPromptMock.mockImplementation(async (_task: string, prompt: string) => routeByPrompt(prompt));
+    const report = await runThematicEngine({ theme: "AI Compute" });
+    const older: Record<string, unknown> = { ...report };
+    delete older.newsItems;
+    expect(isRenderableReport(older)).toBe(false);
+  });
+});
+
 describe("normalizeTheme", () => {
   it("collapses whitespace, strips control characters, and bounds length", () => {
     expect(normalizeTheme("  AI   Compute \n ")).toBe("AI Compute");

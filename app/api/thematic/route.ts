@@ -11,7 +11,7 @@
 
 import { readCache, writeCache, cacheKey } from "@/lib/platform/cache";
 import { runThematicEngine, type ThematicProgressEvent, type ThematicReport } from "@/lib/thematic-engine";
-import { normalizeTheme, themeCacheKey, MAX_THEME_LENGTH, REPORT_SCHEMA_VERSION } from "@/lib/thematic-theme";
+import { normalizeTheme, themeCacheKey, isRenderableReport, MAX_THEME_LENGTH, REPORT_SCHEMA_VERSION } from "@/lib/thematic-theme";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -90,7 +90,9 @@ export async function POST(req: Request) {
       try {
         if (!refresh) {
           const hit = readCache<ThematicReport>(key);
-          if (hit) {
+          // Belt to the version key's braces: a row that somehow carries the
+          // current version but not the current shape is a miss, not a crash.
+          if (hit && isRenderableReport(hit.value)) {
             send({
               stage: "done",
               message: `Loaded the saved report for "${theme}" — generated ${new Date(hit.value.generatedAt).toLocaleString()}.`,

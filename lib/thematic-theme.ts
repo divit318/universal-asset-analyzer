@@ -50,3 +50,37 @@ export function themeCacheKey(theme: string): string {
  * The orphaned rows age out through the platform cache's normal pruning.
  */
 export const REPORT_SCHEMA_VERSION = 2;
+
+// Type-only import: erased at compile time, so this module stays client-safe
+// (see the header comment — importing a runtime VALUE from the engine would
+// drag node:sqlite into the browser bundle; a type costs nothing).
+import type { ThematicReport } from "./thematic-engine";
+
+/**
+ * Structural check that a value has every field the report UI renders and
+ * every array it iterates. THE one validator for stored reports — used by the
+ * API route on a platform-cache hit and by the page on a sessionStorage
+ * restore, so the two tiers can never drift apart again (the sessionStorage
+ * tier was guarded after a crash; the disk tier was not, and served old-shape
+ * reports for up to the SWR window).
+ *
+ * Deliberately shallow beyond array-ness: extractJsonObject-style coercion
+ * has already shaped item internals at write time, and the crashes this
+ * guards against are `.length`/`.map` on a missing collection.
+ */
+export function isRenderableReport(value: unknown): value is ThematicReport {
+  const r = value as Partial<ThematicReport> | null;
+  if (!r || typeof r !== "object") return false;
+  if (typeof r.theme !== "string" || typeof r.generatedAt !== "string") return false;
+  if (!r.futureState || !r.bottleneck || !r.commodityFramework) return false;
+  if (!r.supplyDemand || !Array.isArray(r.supplyDemand.commodityProxies)) return false;
+  if (!r.policy || !Array.isArray(r.policy.relevantPolicies) || !Array.isArray(r.policy.geopoliticalFactors)) return false;
+  if (!r.structuralAdvantage || !Array.isArray(r.structuralAdvantage.regions)) return false;
+  const o = r.opportunity;
+  if (!o || typeof o.themeScore !== "number" || typeof o.verdict !== "string") return false;
+  if (!Array.isArray(o.factors) || !Array.isArray(o.riskFlags) || !Array.isArray(o.analystChecklist) || !Array.isArray(o.topCompanies)) return false;
+  if (!Array.isArray(r.dependencyChain) || !Array.isArray(r.tierCompanies) || !Array.isArray(r.newsItems) || !Array.isArray(r.stageFailures)) return false;
+  const i = r.integrity;
+  if (!i || !Array.isArray(i.caveats) || !Array.isArray(i.missingStages)) return false;
+  return true;
+}
