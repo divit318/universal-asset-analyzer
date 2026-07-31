@@ -46,10 +46,9 @@ export function MarketRegimeBanner({
 }) {
   const style = REGIME_STYLE[regime.trend];
 
-  // Show the 6 most relevant macro signals
-  const featured = macroSignals
-    .filter((s) => s.price != null)
-    .slice(0, 6);
+  // The full macro rail lives here now — Market State is the ONE place the
+  // tile grid renders (the standalone Macro Dashboard section duplicated it).
+  const featured = macroSignals.filter((s) => s.price != null);
 
   return (
     <div className={`rounded-xl border px-5 py-4 ${style.bar}`}>

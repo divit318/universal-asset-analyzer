@@ -48,12 +48,11 @@ export function MarketSummaryCard({
   }
   if (!summary) return null;
 
+  // Section title ("AI Market Summary") is provided by the WireSection wrapper
+  // in page.tsx — this card only owns the interpreted-content styling.
   return (
     <div className="animate-fade-rise rounded-xl border border-accent/20 bg-accent/5 px-5 py-4">
-      <span className="text-[10px] font-semibold uppercase tracking-widest text-accent">
-        AI Market Summary
-      </span>
-      <p className="mt-1.5 text-sm leading-6 text-foreground/85">{summary}</p>
+      <p className="text-sm leading-6 text-foreground/85">{summary}</p>
     </div>
   );
 }

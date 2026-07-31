@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState, useRef } from "react";
 import type { ScannerResult, ScannerProgressEvent, ScannerPartialKey, ScannerOpportunity } from "@/lib/types";
 import { CATEGORY_LABELS, type OpportunityCategory } from "@/lib/opportunity-engine";
@@ -13,31 +12,19 @@ import { OpportunityCard } from "./_components/opportunity-card";
 import { EmergingThemeCard } from "./_components/emerging-theme-card";
 import { CausalChainCard } from "./_components/causal-chain";
 import { RiskAlertRow } from "./_components/risk-alert-row";
-import { ProgressStream } from "./_components/progress-stream";
+import { CommandBar, type Focus } from "./_components/command-bar";
+import { WireSection } from "./_components/wire-section";
 import { recordScanDuration } from "@/lib/scanner-eta";
 import { SourceExplorer } from "./_components/source-explorer";
 import { WatchlistImpact, PortfolioImpact } from "./_components/watchlist-portfolio-impact";
 import { PortfolioWatch } from "./_components/portfolio-watch";
-import { MacroDashboard } from "./_components/macro-dashboard";
 import { NewsTimeline } from "./_components/news-timeline";
-import { SectionNav, type WireSection } from "./_components/section-nav";
+import { SectionNav, type WireSection as WireSectionId } from "./_components/section-nav";
 import { useIOSSafe } from "@/lib/ios-context";
 import { PageShell, Skeleton } from "@/app/_components/ui";
 import { Reveal } from "@/app/_components/reveal";
 
 const CACHE_KEY = "uaa_scanner_v3";
-
-/** Popular Focus — replaces the old India/Global checkboxes with region shortcuts. */
-type Focus = "global" | "us" | "india" | "europe" | "china" | "asia";
-
-const FOCUS_CHIPS: { id: Focus; label: string; emoji: string }[] = [
-  { id: "global", label: "Global", emoji: "🌍" },
-  { id: "us", label: "US", emoji: "🇺🇸" },
-  { id: "india", label: "India", emoji: "🇮🇳" },
-  { id: "europe", label: "Europe", emoji: "🇪🇺" },
-  { id: "china", label: "China", emoji: "🇨🇳" },
-  { id: "asia", label: "Asia", emoji: "🌏" },
-];
 
 /**
  * Only Global/India are real backend-routed sources (fetchMarketNews in
@@ -58,19 +45,18 @@ function focusToParams(focus: Focus): { india: boolean; global: boolean; querySe
   }
 }
 
-// Ordered fastest-ready to slowest-ready, matching the page's DOM order —
-// see the comment above the dashboard's section list for why.
-const WIRE_SECTIONS: WireSection[] = [
-  { id: "hero", label: "Hero" },
-  { id: "portfolio-watch", label: "Portfolio Watch" },
-  { id: "news-timeline", label: "News Timeline" },
-  { id: "macro-dashboard", label: "Macro Dashboard" },
-  { id: "todays-brief", label: "Today's Brief" },
-  { id: "market-regime", label: "Market Regime" },
+// Insight-first order: regime → interpretation → actionable ideas → context →
+// the raw feed last. The command bar is sticky and not a nav target.
+const WIRE_SECTIONS: WireSectionId[] = [
+  { id: "market-state", label: "Market State" },
+  { id: "ai-summary", label: "AI Market Summary" },
+  { id: "opportunities", label: "Opportunities" },
   { id: "emerging-themes", label: "Emerging Themes" },
   { id: "cause-effect", label: "Cause & Effect" },
+  { id: "sector-rotation", label: "Sector Rotation" },
   { id: "risk-monitor", label: "Risk Monitor" },
-  { id: "capital-flows", label: "Capital Flows" },
+  { id: "portfolio-impact", label: "Portfolio Impact" },
+  { id: "the-tape", label: "The Tape" },
 ];
 
 const THEME_SECTOR: Record<string, string> = {
@@ -177,8 +163,6 @@ export default function ScannerPage() {
 
   useBootReady(!loading, "wire");
 
-  // Section visibility toggles
-  const [showCausal, setShowCausal] = useState(true);
   const [fitRanking, setFitRanking] = useState(false);
   const [activeCategory, setActiveCategory] = useState<OpportunityCategory | "all">("all");
 
@@ -356,101 +340,35 @@ export default function ScannerPage() {
         (a, b) => b.opportunityScore.composite - a.opportunityScore.composite,
       );
 
+  const scanRunningOrDone = loading || result != null;
+
   return (
-    <PageShell py="py-10">
+    <PageShell py="py-6" width="wide" gap="gap-6">
 
-      {/* ── Hero ── */}
-      <Reveal index={0} id="hero" className="flex flex-col gap-1.5">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-semibold tracking-tight">The Wire</h1>
-              <span className="flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-label font-medium uppercase tracking-widest text-muted">
-                <span className="relative flex h-1.5 w-1.5 shrink-0">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-positive opacity-75" />
-                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-positive" />
-                </span>
-                Live
-              </span>
-            </div>
-            {result && (
-              <span className="font-mono text-xs text-muted/60">
-                {new Date(result.scannedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
-                {fromCache && (
-                  <> · Cached · <button className="text-brand hover:underline" onClick={() => void runScan()}>refresh</button></>
-                )}
-              </span>
-            )}
-          </div>
-          <Link
-            href="/"
-            className="rounded-lg border border-border px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
-          >
-            The Desk →
-          </Link>
-        </div>
-        <p className="text-sm text-muted">
-          A live tape across markets, sectors, and your portfolio — discovers investment opportunities from market events, not just headlines.
-        </p>
-      </Reveal>
+      {/* ── Zone 1: sticky command bar. Not inside Reveal — its transform
+             would disable position:sticky. Scan status renders inline here,
+             not as a mid-page block. ── */}
+      <CommandBar
+        query={query}
+        onQueryChange={setQuery}
+        focus={focus}
+        onSelectFocus={selectFocus}
+        onSubmit={runScan}
+        loading={loading}
+        progress={progress}
+        scannedAt={result?.scannedAt ?? null}
+        fromCache={fromCache}
+        onRefresh={() => void runScan()}
+      />
 
-      {/* ── Search controls ── */}
-      <Reveal index={1} as="section">
-      <form onSubmit={runScan} className="flex flex-col gap-3">
-        <div className="flex gap-2">
-          <div className="relative flex-1">
-            <svg className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-              <circle cx="6" cy="6" r="4.5" /><path d="M9.5 9.5L13 13" />
-            </svg>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Focus on a theme, sector, or event — or leave blank to auto-scan"
-              className="w-full rounded-lg border border-border bg-surface py-2.5 pl-9 pr-4 text-sm outline-none placeholder:text-muted focus:border-brand"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={loading}
-            className="rounded-lg bg-brand-strong px-6 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
-          >
-            {loading ? "Scanning…" : "Scan"}
-          </button>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 text-label font-medium uppercase tracking-widest text-muted/60">Popular Focuses</span>
-          {FOCUS_CHIPS.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              onClick={() => selectFocus(c.id)}
-              aria-pressed={focus === c.id}
-              className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                focus === c.id
-                  ? "border-brand/40 bg-brand/10 text-brand"
-                  : "border-border text-muted hover:border-brand/30 hover:text-brand"
-              }`}
-            >
-              {c.emoji} {c.label}
-            </button>
-          ))}
-        </div>
-      </form>
+      <Reveal index={0} as="p" className="text-sm text-muted">
+        A live tape across markets, sectors, and your portfolio — discovers investment opportunities from market events, not just headlines.
       </Reveal>
 
       {/* Floating scroll-spy nav — once a scan is underway or done, so it's
           available to jump between sections as they stream in, not just
           after everything's finished. */}
-      {(loading || result) && <SectionNav sections={WIRE_SECTIONS} />}
-
-      {/* Portfolio Watch — deliberately OUTSIDE the result/loading gate below.
-          It fetches independently of the AI pipeline (its own streaming route,
-          own loading state) so it's real content the moment the page loads,
-          not gated behind the slow scan. */}
-      <Reveal index={2} id="portfolio-watch">
-        <PortfolioWatch />
-      </Reveal>
+      {scanRunningOrDone && <SectionNav sections={WIRE_SECTIONS} />}
 
       {/* ── Error ── */}
       {error && (
@@ -459,247 +377,274 @@ export default function ScannerPage() {
         </div>
       )}
 
-      {/* ── Loading / progress ── */}
-      {loading && <ProgressStream event={progress} startedAt={scanStartedAt} />}
-
-      {/* ── Results dashboard — sections render as their own data streams in
-          (see the partial-message handling in runScan() above), instead of
-          everything waiting for the final Assembly stage. Each section below
-          falls back to a skeleton while loading and not yet ready, so the
-          page's structure is visible from first paint. ── */}
-      {(loading || result) && (() => {
-        let stagger = 0;
-        const nextDelay = () => `${(stagger++) * 90}ms`;
-        return (
+      {/* ── Zones 2-8 — sections render as their own data streams in (see the
+          partial-message handling in runScan() above). Each falls back to a
+          skeleton while loading and not yet ready. Ordered by the question
+          each answers: regime → interpretation → ideas → context → risk. ── */}
+      {scanRunningOrDone && (
         <div className="flex flex-col gap-8">
 
-          {/* Sections below are ordered fastest-ready to slowest-ready, matching
-              the partial-arrival order verified against the live pipeline:
-              Stage 1 output (no LLM call) → post-Classification → post-Causal-
-              Reasoning → post-Sector-Impact → post-Opportunity-Scoring. Keeping
-              DOM order in sync with data-readiness order means the page fills
-              in top-to-bottom the way it's actually arriving, not out of order. */}
-
-          {/* News Timeline — ready right after Stage 1, before any LLM call runs */}
-          {activeCategory === "all" && (
-            <div id="news-timeline" className="animate-fade-rise" style={{ animationDelay: nextDelay() }}>
-              {display.newsItems ? (
-                <NewsTimeline newsItems={display.newsItems} />
-              ) : loading ? <SectionSkeleton height="h-56" /> : null}
-            </div>
+          {/* Zone 2: Market State — regime + the ONE macro rail */}
+          {(display.marketRegime || loading) && (
+            <WireSection id="market-state" title="Market State" collapsible persist>
+              {display.marketRegime ? (
+                <div className="animate-fade-rise">
+                  <MarketRegimeBanner
+                    regime={display.marketRegime}
+                    macroSignals={display.macroSignals ?? []}
+                  />
+                </div>
+              ) : (
+                <SectionSkeleton height="h-32" />
+              )}
+            </WireSection>
           )}
 
-          {/* Macro Dashboard — same as News Timeline, ready right after Stage 1 */}
-          {activeCategory === "all" && (
-            <div id="macro-dashboard" className="animate-fade-rise" style={{ animationDelay: nextDelay() }}>
-              {display.macroSignals ? (
-                <MacroDashboard macroSignals={display.macroSignals} />
-              ) : loading ? <SectionSkeleton height="h-24" /> : null}
-            </div>
+          {/* Zone 3: AI Market Summary — interpretation, labelled as such by
+              its accent styling; the measured panels above and below win when
+              they disagree. */}
+          {(display.marketRegime || loading) && (
+            <WireSection id="ai-summary" title="AI Market Summary">
+              {display.marketRegime ? (
+                <MarketSummaryCard
+                  regime={display.marketRegime}
+                  macroSignals={display.macroSignals ?? []}
+                  scannedAt={display.scannedAt ?? String(scanStartedAt ?? "")}
+                />
+              ) : (
+                <SectionSkeleton height="h-20" />
+              )}
+            </WireSection>
           )}
 
-          {/* Today's Brief — AI narration of the Market Regime / Capital Flows below.
-              Streams as soon as marketRegime is ready (after Classification),
-              not gated on the rest of the pipeline. */}
-          <div id="todays-brief" className="animate-fade-rise" style={{ animationDelay: nextDelay() }}>
-            {display.marketRegime ? (
-              <MarketSummaryCard
-                regime={display.marketRegime}
-                macroSignals={display.macroSignals ?? []}
-                scannedAt={display.scannedAt ?? String(scanStartedAt ?? "")}
-              />
-            ) : loading ? <SectionSkeleton height="h-20" /> : null}
-          </div>
+          {/* Zone 4: Opportunities — the pipeline's company-level output,
+              promoted above the fold. Category filtering is scoped to this
+              zone; it no longer hides the rest of the page. */}
+          <WireSection
+            id="opportunities"
+            title="Opportunities"
+            badge={opportunities.length > 0 ? `${opportunities.length}` : undefined}
+            actions={
+              ios?.profileReady && ios.profile.hasPortfolio && highConviction.length > 0 ? (
+                <button
+                  onClick={() => setFitRanking((v) => !v)}
+                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                    fitRanking
+                      ? "border-brand/40 bg-brand/10 text-brand"
+                      : "border-border text-muted hover:border-brand/30 hover:text-brand"
+                  }`}
+                >
+                  <span>✦</span>
+                  {fitRanking ? "Sorted by Portfolio Fit" : "Sort by Portfolio Fit"}
+                </button>
+              ) : undefined
+            }
+          >
+            {opportunities.length === 0 ? (
+              loading ? (
+                <SectionSkeleton />
+              ) : (
+                <p className="rounded-xl border border-border bg-surface px-4 py-6 text-center text-sm text-muted">
+                  No company-level opportunities from this scan.
+                </p>
+              )
+            ) : (
+              <div className="flex flex-col gap-5">
+                {/* Category tabs */}
+                <div className="flex flex-wrap items-center gap-1.5 overflow-x-auto pb-1">
+                  <button
+                    onClick={() => setActiveCategory("all")}
+                    className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                      activeCategory === "all"
+                        ? "border-brand/40 bg-brand/10 text-brand"
+                        : "border-border text-muted hover:border-brand/30 hover:text-brand"
+                    }`}
+                  >
+                    All ({opportunities.length})
+                  </button>
+                  {CATEGORY_ORDER.filter((c) => (categoryGroups.get(c)?.length ?? 0) > 0).map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => setActiveCategory(c)}
+                      className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                        activeCategory === c
+                          ? "border-brand/40 bg-brand/10 text-brand"
+                          : "border-border text-muted hover:border-brand/30 hover:text-brand"
+                      }`}
+                    >
+                      {CATEGORY_LABELS[c]} ({categoryGroups.get(c)!.length})
+                    </button>
+                  ))}
+                </div>
 
-          {/* Market Regime — same readiness as Today's Brief */}
-          <div id="market-regime" className="animate-fade-rise" style={{ animationDelay: nextDelay() }}>
-            {display.marketRegime ? (
-              <MarketRegimeBanner
-                regime={display.marketRegime}
-                macroSignals={display.macroSignals ?? []}
-              />
-            ) : loading ? <SectionSkeleton /> : null}
-          </div>
+                {/* Filtered single-category view */}
+                {activeCategory !== "all" && (
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {activeCategoryOpportunities.map((opp, i) => (
+                      <OpportunityCard key={opp.id} opportunity={opp} style={{ animationDelay: `${i * 40}ms` }} />
+                    ))}
+                  </div>
+                )}
 
-          {/* Emerging Themes — same readiness as Today's Brief/Market Regime */}
-          {activeCategory === "all" && (
-            display.emergingThemes && display.emergingThemes.length > 0 ? (
-              <section id="emerging-themes" className="flex flex-col gap-4">
-                <h2 className="text-sm font-semibold">Emerging Themes</h2>
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {/* Today's Opportunities (high conviction) */}
+                {activeCategory === "all" && highConviction.length > 0 && (
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-widest text-muted/60">
+                        High Conviction
+                      </span>
+                      <span className="rounded-full border border-positive/30 bg-positive/10 px-2 py-0.5 text-label font-medium text-positive">
+                        {highConviction.length}
+                      </span>
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                      {rankOpportunities(highConviction).map((opp, i) => (
+                        <OpportunityCard key={opp.id} opportunity={opp} style={{ animationDelay: `${i * 40}ms` }} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Developing Signals */}
+                {activeCategory === "all" && developing.length > 0 && (
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-widest text-muted/60">
+                        Developing Signals
+                      </span>
+                      <span className="text-xs text-muted">· Composite 40–69</span>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                      {developing.map((opp, i) => (
+                        <OpportunityCard key={opp.id} opportunity={opp} style={{ animationDelay: `${i * 40}ms` }} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </WireSection>
+
+          {/* Zone 5: Emerging Themes */}
+          {(display.emergingThemes?.length || (loading && !display.emergingThemes)) ? (
+            <WireSection
+              id="emerging-themes"
+              title="Emerging Themes"
+              badge={display.emergingThemes?.length ? `${display.emergingThemes.length}` : undefined}
+            >
+              {display.emergingThemes && display.emergingThemes.length > 0 ? (
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                   {display.emergingThemes.map((theme, i) => (
                     <EmergingThemeCard key={theme.name} theme={theme} style={{ animationDelay: `${i * 40}ms` }} />
                   ))}
                 </div>
-              </section>
-            ) : loading && !display.emergingThemes ? (
-              <div id="emerging-themes"><SectionSkeleton /></div>
-            ) : null
-          )}
+              ) : (
+                <SectionSkeleton />
+              )}
+            </WireSection>
+          ) : null}
 
-          {/* Cause & Effect — ready right after Causal Reasoning */}
-          {activeCategory === "all" && (
-            causalEvents.length > 0 ? (
-              <section id="cause-effect" className="flex flex-col gap-4">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-sm font-semibold">Cause & Effect</h2>
-                  <button
-                    onClick={() => setShowCausal((v) => !v)}
-                    className="text-xs text-muted hover:text-foreground transition-colors"
-                  >
-                    {showCausal ? "Hide" : "Show"}
-                  </button>
+          {/* Zone 6: Cause & Effect — collapsed by default */}
+          {(causalEvents.length > 0 || (loading && !display.events)) && (
+            <WireSection
+              id="cause-effect"
+              title="Cause & Effect"
+              badge={causalEvents.length > 0 ? `${causalEvents.length}` : undefined}
+              collapsible
+              defaultCollapsed
+              persist
+            >
+              {causalEvents.length > 0 ? (
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {causalEvents.map((event, i) => (
+                    <CausalChainCard key={event.id} event={event} style={{ animationDelay: `${i * 60}ms` }} />
+                  ))}
                 </div>
-                {showCausal && (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {causalEvents.map((event, i) => (
-                      <CausalChainCard key={event.id} event={event} style={{ animationDelay: `${i * 60}ms` }} />
-                    ))}
-                  </div>
-                )}
-              </section>
-            ) : loading && !display.events ? (
-              <div id="cause-effect"><SectionSkeleton /></div>
-            ) : null
+              ) : (
+                <SectionSkeleton />
+              )}
+            </WireSection>
           )}
 
-          {/* Risk Monitor — same readiness as Cause & Effect (both need enrichedEvents) */}
-          {activeCategory === "all" && (
-            display.riskAlerts && display.riskAlerts.length > 0 ? (
-              <section id="risk-monitor" className="animate-fade-rise flex flex-col gap-2" style={{ animationDelay: nextDelay() }}>
-                <h2 className="text-sm font-semibold">Risk Monitor</h2>
+          {/* Zone 7: Sector Rotation — the continuous price-rank panel and this
+              scan's news-sentiment grid, together. The panel (shared with other
+              pages) owns the zone's "Sector Rotation" heading; the grid renders
+              a sub-label. Unified per-sector tiles with divergence flags replace
+              both grids in the next stage. */}
+          <section id="sector-rotation" className="flex flex-col gap-6">
+            <SectorRotationPanel />
+            {display.sectorImpacts && display.sectorImpacts.length > 0 ? (
+              <SectorRotationGrid impacts={display.sectorImpacts} />
+            ) : loading && !display.sectorImpacts ? (
+              <SectionSkeleton height="h-32" />
+            ) : null}
+          </section>
+
+          {/* Zone 8: Risk Monitor */}
+          {(display.riskAlerts?.length || (loading && !display.riskAlerts)) ? (
+            <WireSection
+              id="risk-monitor"
+              title="Risk Monitor"
+              badge={display.riskAlerts?.length ? `${display.riskAlerts.length}` : undefined}
+            >
+              {display.riskAlerts && display.riskAlerts.length > 0 ? (
                 <div className="rounded-xl border border-border overflow-hidden">
                   {display.riskAlerts.map((alert, i) => (
                     <RiskAlertRow key={alert.id} alert={alert} style={{ animationDelay: `${i * 40}ms` }} />
                   ))}
                 </div>
-              </section>
-            ) : loading && !display.riskAlerts ? (
-              <div id="risk-monitor"><SectionSkeleton height="h-20" /></div>
-            ) : null
-          )}
-
-          {/* Source Explorer — same readiness as Cause & Effect/Risk Monitor
-              (reads display.events too); moved up from the very end where it
-              used to sit despite its data being ready much earlier. */}
-          {activeCategory === "all" && display.events && display.events.length > 0 && (
-            <SourceExplorer events={display.events} />
-          )}
-
-          {/* Capital Flows — ready right after Sector Impact */}
-          {activeCategory === "all" && (
-            <div id="capital-flows" className="animate-fade-rise flex flex-col gap-6" style={{ animationDelay: nextDelay() }}>
-              <SectorRotationPanel />
-              {display.sectorImpacts && display.sectorImpacts.length > 0 ? (
-                <SectorRotationGrid impacts={display.sectorImpacts} />
-              ) : loading && !display.sectorImpacts ? <SectionSkeleton height="h-32" /> : null}
-            </div>
-          )}
-
-          {/* Everything below needs scored opportunities (post Opportunity
-              Scoring) — the slowest-ready content on the page, since Thesis
-              Building (the single most expensive stage) still runs after this
-              point and progressively enriches these same cards in place. */}
-
-          {/* Opportunity category tabs */}
-          {opportunities.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5 overflow-x-auto pb-1">
-              <button
-                onClick={() => setActiveCategory("all")}
-                className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                  activeCategory === "all"
-                    ? "border-brand/40 bg-brand/10 text-brand"
-                    : "border-border text-muted hover:border-brand/30 hover:text-brand"
-                }`}
-              >
-                All ({opportunities.length})
-              </button>
-              {CATEGORY_ORDER.filter((c) => (categoryGroups.get(c)?.length ?? 0) > 0).map((c) => (
-                <button
-                  key={c}
-                  onClick={() => setActiveCategory(c)}
-                  className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                    activeCategory === c
-                      ? "border-brand/40 bg-brand/10 text-brand"
-                      : "border-border text-muted hover:border-brand/30 hover:text-brand"
-                  }`}
-                >
-                  {CATEGORY_LABELS[c]} ({categoryGroups.get(c)!.length})
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* Filtered single-category view */}
-          {activeCategory !== "all" && (
-            <section className="flex flex-col gap-4">
-              <h2 className="text-sm font-semibold">{CATEGORY_LABELS[activeCategory]}</h2>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {activeCategoryOpportunities.map((opp, i) => (
-                  <OpportunityCard key={opp.id} opportunity={opp} style={{ animationDelay: `${i * 40}ms` }} />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Today's Opportunities (high conviction) */}
-          {activeCategory === "all" && highConviction.length > 0 && (
-            <section className="flex flex-col gap-4">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-2">
-                  <h2 className="text-sm font-semibold">Today&apos;s Opportunities</h2>
-                  <span className="rounded-full border border-positive/30 bg-positive/10 px-2 py-0.5 text-label font-medium text-positive">
-                    {highConviction.length} High Conviction
-                  </span>
-                </div>
-                {ios?.profileReady && ios.profile.hasPortfolio && (
-                  <button
-                    onClick={() => setFitRanking((v) => !v)}
-                    className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[11px] font-medium transition-colors ${
-                      fitRanking
-                        ? "border-brand/40 bg-brand/10 text-brand"
-                        : "border-border text-muted hover:border-brand/30 hover:text-brand"
-                    }`}
-                  >
-                    <span>✦</span>
-                    {fitRanking ? "Sorted by Portfolio Fit" : "Sort by Portfolio Fit"}
-                  </button>
-                )}
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {rankOpportunities(highConviction).map((opp, i) => (
-                  <OpportunityCard key={opp.id} opportunity={opp} style={{ animationDelay: `${i * 40}ms` }} />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Watchlist + Portfolio Impact (side by side) */}
-          {activeCategory === "all" && (watchlistSymbols.length > 0 || portfolioSymbols.length > 0) && (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <WatchlistImpact opportunities={opportunities} watchlistSymbols={watchlistSymbols} />
-              <PortfolioImpact opportunities={opportunities} portfolioSymbols={portfolioSymbols} />
-            </div>
-          )}
-
-          {/* Developing Signals */}
-          {activeCategory === "all" && developing.length > 0 && (
-            <section className="flex flex-col gap-4">
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-semibold">Developing Signals</h2>
-                <span className="text-xs text-muted">· Composite 40–69</span>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {developing.map((opp, i) => (
-                  <OpportunityCard key={opp.id} opportunity={opp} style={{ animationDelay: `${i * 40}ms` }} />
-                ))}
-              </div>
-            </section>
-          )}
+              ) : (
+                <SectionSkeleton height="h-20" />
+              )}
+            </WireSection>
+          ) : null}
 
         </div>
-        );
-      })()}
+      )}
+
+      {/* Zone 9: Portfolio Impact — deliberately OUTSIDE the result/loading
+          gate. Holdings news fetches independently of the AI pipeline (its own
+          streaming route, own loading state), so it's real content the moment
+          the page loads; the scan-derived impact cards join it when ready. */}
+      {(watchlistSymbols.length > 0 || portfolioSymbols.length > 0) && (
+        <WireSection id="portfolio-impact" title="Portfolio Impact">
+          <div className="flex flex-col gap-5">
+            {opportunities.length > 0 && (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <WatchlistImpact opportunities={opportunities} watchlistSymbols={watchlistSymbols} />
+                <PortfolioImpact opportunities={opportunities} portfolioSymbols={portfolioSymbols} />
+              </div>
+            )}
+            <PortfolioWatch />
+          </div>
+        </WireSection>
+      )}
+
+      {/* Zone 10: The Tape — the raw feed, last and collapsed by default. A
+          scan's insights live above; this is the firehose for verification. */}
+      {scanRunningOrDone && (display.newsItems || loading) && (
+        <WireSection
+          id="the-tape"
+          title="The Tape"
+          badge={display.newsItems ? `${display.newsItems.length} stories` : undefined}
+          collapsible
+          defaultCollapsed
+          persist
+        >
+          <div className="flex flex-col gap-4">
+            {display.newsItems ? (
+              <NewsTimeline newsItems={display.newsItems} />
+            ) : (
+              <SectionSkeleton height="h-56" />
+            )}
+            {/* Story-level sources — folds into the evidence drawer mechanism
+                once storyIds land. */}
+            {display.events && display.events.length > 0 && (
+              <SourceExplorer events={display.events} />
+            )}
+          </div>
+        </WireSection>
+      )}
 
       {/* ── Empty state ── */}
       {!result && !loading && !error && (

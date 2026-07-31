@@ -69,10 +69,15 @@ export function PortfolioWatch() {
 
   const rows = holdings.flatMap((h) => h.items.map((item) => ({ item, symbol: h.symbol })));
 
+  // Renders inside the "Portfolio Impact" WireSection (which owns the h2), so
+  // this block identifies itself with a sub-label: it is the holdings-news half
+  // of that zone, beside the scan-derived impact cards.
   return (
-    <section className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
-        <h2 className="text-sm font-semibold">Portfolio Watch</h2>
+        <span className="text-xs font-semibold uppercase tracking-widest text-muted/60">
+          Holdings News
+        </span>
         {loading && (
           <span className="flex items-center gap-1.5 text-xs text-muted">
             <span className="relative flex h-1.5 w-1.5 shrink-0">
@@ -92,6 +97,6 @@ export function PortfolioWatch() {
       ) : (
         <Skeleton height="h-24" radius="rounded-xl" className="border border-border" />
       )}
-    </section>
+    </div>
   );
 }

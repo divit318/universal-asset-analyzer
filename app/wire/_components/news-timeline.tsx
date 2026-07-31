@@ -6,10 +6,10 @@ import { NewsItemRow } from "./news-item";
 const MAX_ITEMS = 20;
 
 /**
- * News Timeline — the raw, de-duped headline feed the pipeline already
- * collects (`result.newsItems`) but never rendered anywhere. Chronological,
- * unfiltered — the counterpart to Portfolio Watch, which is the same
- * NewsItemRow narrowed to symbols you hold.
+ * The Tape's raw headline feed (`result.newsItems`), chronological. Section
+ * chrome (title, count badge, collapse) is provided by the WireSection wrapper
+ * in page.tsx; this renders only the list. Clustering, dedupe, and the noise
+ * filter land in lib/wire/tape.ts and replace this flat list.
  */
 export function NewsTimeline({ newsItems }: { newsItems: NewsItem[] }) {
   if (newsItems.length === 0) return null;
@@ -19,13 +19,10 @@ export function NewsTimeline({ newsItems }: { newsItems: NewsItem[] }) {
     .slice(0, MAX_ITEMS);
 
   return (
-    <section className="flex flex-col gap-4">
-      <h2 className="text-sm font-semibold">News Timeline</h2>
-      <ul className="rounded-xl border border-border bg-surface">
-        {sorted.map((item, i) => (
-          <NewsItemRow key={`${item.url}-${item.publishedAt}`} item={item} style={{ animationDelay: `${i * 30}ms` }} />
-        ))}
-      </ul>
-    </section>
+    <ul className="rounded-xl border border-border bg-surface">
+      {sorted.map((item, i) => (
+        <NewsItemRow key={`${item.url}-${item.publishedAt}`} item={item} style={{ animationDelay: `${i * 30}ms` }} />
+      ))}
+    </ul>
   );
 }

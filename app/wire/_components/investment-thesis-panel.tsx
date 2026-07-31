@@ -103,7 +103,7 @@ export function InvestmentThesisPanel({
         </div>
         <div className="ml-auto flex gap-1.5">
           <Link
-            href={`/journal?symbol=${encodeURIComponent(ticker)}`}
+            href={`/ledger?symbol=${encodeURIComponent(ticker)}`}
             className="rounded-md border border-border px-2.5 py-1 text-xs text-muted hover:border-accent/40 hover:text-accent transition-colors"
           >
             Journal

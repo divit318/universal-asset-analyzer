@@ -51,7 +51,12 @@ export function SectorRotationGrid({ impacts }: { impacts: SectorImpact[] }) {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold">Sector Rotation</h2>
+        {/* Sub-label, not a second "Sector Rotation" h2 — the zone title is owned
+            by page.tsx; this block is the news-sentiment half of that zone until
+            the unified per-sector tiles replace both grids. */}
+        <span className="text-xs font-semibold uppercase tracking-widest text-muted/60">
+          Sector Sentiment — This Scan
+        </span>
         <span className="text-[10px] text-muted/60 uppercase tracking-widest">
           {impacts.filter((i) => i.direction === "bullish").length} bullish ·{" "}
           {impacts.filter((i) => i.direction === "bearish").length} bearish
