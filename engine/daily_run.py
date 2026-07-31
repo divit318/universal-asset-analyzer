@@ -21,6 +21,7 @@ Key architectural guarantees vs original:
 from __future__ import annotations
 
 import json
+import os
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
@@ -43,13 +44,20 @@ from engine.data.loader import (
     export_detail_snapshots,
     export_valuation_priors,
     save_ic_weights,
+    prune_derived_history,
 )
 from engine.dashboard import write_snapshot as write_dashboard_snapshot
+from engine.profiling import StageTimer, raise_fd_limit, timer_enabled
 from engine.data.nse_enrichment import enrich_fundamentals
 from engine.features.factory import build_features
-from engine.models.regime import run_regime_detection, fit_market_regime, predict_regimes_from_index
+from engine.models.regime import (
+    run_regime_detection,
+    fit_market_regime,
+    predict_regimes_from_index,
+    IndexRegimePosteriors,
+)
 from engine.models.factors import compute_all_factors, compute_ic_weights, _DEFAULT_WEIGHTS
-from engine.models.monte_carlo import build_mc_valuation_from_fundamentals
+from engine.models.monte_carlo import build_mc_valuation_from_fundamentals, compute_mc_upside
 from engine.models.kelly import kelly_fraction_single
 from engine.models.forecast import run_forecasts
 from engine.models.transaction_costs import NSE_COSTS, get_us_costs
@@ -128,17 +136,40 @@ def _get_fundamentals_map(conn) -> dict[str, dict]:
     return result
 
 
+_PRICE_COLS = ["date", "open", "high", "low", "close", "adj_close", "volume"]
+
+
 def _get_price_df(conn, symbol: str) -> pl.DataFrame | None:
     df = conn.execute(
-        "SELECT date::VARCHAR AS date, open, high, low, close, adj_close, volume "
+        "SELECT date, open, high, low, close, adj_close, volume "
         "FROM price_daily WHERE symbol = ? ORDER BY date",
         [symbol],
-    ).fetchdf()
-    if df.empty:
-        return None
-    pdf = pl.from_pandas(df)
-    # Parse the date string column to pl.Date
-    return pdf.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
+    ).pl()
+    return df if len(df) else None
+
+
+def _get_price_map(conn, symbols: list[str]) -> dict[str, pl.DataFrame]:
+    """
+    Load every symbol's price history in one scan and partition in-process.
+
+    One query per symbol meant len(universe) round-trips into a multi-hundred-MB
+    DuckDB, each opening its own scan; on a 250-name universe that exhausted the
+    process file-descriptor limit and crashed the run outright. A single ordered
+    scan plus `partition_by` is both faster and bounded.
+    """
+    if not symbols:
+        return {}
+    df = conn.execute(
+        "SELECT symbol, date, open, high, low, close, adj_close, volume "
+        "FROM price_daily WHERE symbol IN (SELECT UNNEST(?)) ORDER BY symbol, date",
+        [symbols],
+    ).pl()
+    if df.is_empty():
+        return {}
+    return {
+        part["symbol"][0]: part.select(_PRICE_COLS)
+        for part in df.partition_by("symbol", maintain_order=True)
+    }
 
 
 def _upsert_df(conn, df: pl.DataFrame, table: str, cols: list[str]):
@@ -179,29 +210,40 @@ def _compute_signal(composite: float, confidence: float) -> str:
     return "HOLD"
 
 
+def _fetch_10y_yield() -> float | None:
+    """Current 10Y Treasury yield as a fraction, or None if unavailable."""
+    try:
+        from engine.data.macro_loader import _yf_close
+        tnx = _yf_close("^TNX", period="5d")
+        if tnx is not None and len(tnx) > 0:
+            return float(tnx[-1]) / 100.0   # ^TNX is quoted as percent
+    except Exception:
+        pass
+    return None
+
+
 def _regime_conditional_value_weight(
     base_value_weight: float,
     universe_is_india: bool = False,
+    yield_10y: float | None = None,
 ) -> float:
     """
     Value weight regime-conditional scaling (fix 2.2).
     Base: US=0.10, India=0.20 (value works better in India due to quality-momentum premium).
     Rate-conditional: scale by clip((10Y_yield - 2) / 3, 0.5, 1.5).
     Higher rates → value premium expands (duration discount hits growth stocks more).
+
+    `yield_10y` is passed in so the caller can prefetch it concurrently with the
+    other macro calls; when omitted the fetch happens here as before.
     """
     # Market-specific base
     base = 0.20 if universe_is_india else 0.10
 
-    # Rate-conditional scaling via current 10Y Treasury yield
-    try:
-        from engine.data.macro_loader import _yf_close
-        tnx = _yf_close("^TNX", period="5d")
-        if tnx is not None and len(tnx) > 0:
-            yield_10y = float(tnx[-1]) / 100.0  # ^TNX quoted as percent
-            rate_scale = float(np.clip((yield_10y - 0.02) / 0.03, 0.5, 1.5))
-            base = base * rate_scale
-    except Exception:
-        pass
+    if yield_10y is None:
+        yield_10y = _fetch_10y_yield()
+    if yield_10y is not None:
+        rate_scale = float(np.clip((yield_10y - 0.02) / 0.03, 0.5, 1.5))
+        base = base * rate_scale
 
     return float(np.clip(base, 0.05, 0.40))
 
@@ -431,14 +473,22 @@ def run_daily(
         if verbose:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
+    T = StageTimer(enabled=timer_enabled())
+
+    _fd_before, _fd_after = raise_fd_limit()
+    if _fd_after > _fd_before:
+        log(f"Open-file limit raised {_fd_before} → {_fd_after}")
+
     # Single RNG for the entire session — ensures different paths per symbol in MC
     session_rng = np.random.default_rng()
 
     log("Initialising DuckDB...")
-    conn = get_db()
+    with T.stage("db:open"):
+        conn = get_db()
 
     log("Migrating SQLite fundamentals...")
-    n_fund = migrate_sqlite_to_duckdb()
+    with T.stage("db:migrate_sqlite"):
+        n_fund = migrate_sqlite_to_duckdb()
     log(f"  {n_fund} fundamentals in DuckDB")
 
     if fetch_prices:
@@ -451,54 +501,139 @@ def run_daily(
         # Re-downloading 5 years of daily bars for every symbol on every
         # run (including reruns on the same day) was the single largest
         # contributor to engine run time.
-        _has_recent = {
-            r[0] for r in conn.execute("""
-                SELECT symbol FROM price_daily
-                WHERE date >= current_date - INTERVAL 10 DAY
-                GROUP BY symbol
-                HAVING COUNT(*) >= 3
-            """).fetchall()
-        }
-        _full_fetch = [s for s in syms_to_fetch if s not in _has_recent]
-        _topup_fetch = [s for s in syms_to_fetch if s in _has_recent]
-        if _topup_fetch:
-            log(f"Fetching OHLCV: {len(_full_fetch)} full history, "
-                f"{len(_topup_fetch)} top-up (already have recent bars)...")
-        else:
-            log(f"Fetching OHLCV for {len(syms_to_fetch)} symbols...")
+        with T.stage("fetch:plan"):
+            _recent = {
+                r[0]: r[1] for r in conn.execute("""
+                    SELECT symbol, MAX(date) FROM price_daily
+                    WHERE date >= current_date - INTERVAL 10 DAY
+                    GROUP BY symbol
+                    HAVING COUNT(*) >= 3
+                """).fetchall()
+            }
+            # The session each *market* most recently closed on. A symbol already
+            # at that date has nothing to top up: the previous code still issued
+            # a 10-day download for all of them, which on a same-day rerun was
+            # 49s of Yahoo traffic that changed not one row.
+            #
+            # Per market, not global: NSE closes hours before NYSE, so on any
+            # given day one market is a session ahead, and a single global
+            # maximum made every symbol in the other market look stale.
+            #
+            # Modal date, not maximum: one ticker with an extra bar — an index
+            # carrying a partial intraday bar, or a symbol on a venue with a
+            # different holiday calendar — would otherwise mark the entire market
+            # stale and defeat the skip completely, which is exactly what ^GSPC
+            # did. The date most symbols share is the market's real last close.
+            from collections import Counter
+
+            def _market(sym: str) -> str:
+                return "IN" if sym.endswith((".NS", ".BO")) else "US"
+
+            _sessions: dict[str, Counter] = {}
+            for _s, _d in _recent.items():
+                if _s.startswith("^"):
+                    continue          # indices are not representative of the session
+                _sessions.setdefault(_market(_s), Counter())[_d] += 1
+            _latest_session = {
+                mk: counter.most_common(1)[0][0] for mk, counter in _sessions.items()
+            }
+
+            def _is_current(sym: str) -> bool:
+                newest = _latest_session.get(_market(sym))
+                return newest is not None and _recent[sym] >= newest
+
+            _full_fetch  = [s for s in syms_to_fetch if s not in _recent]
+            _topup_fetch = [
+                s for s in syms_to_fetch if s in _recent and not _is_current(s)
+            ]
+            _already_current = len(syms_to_fetch) - len(_full_fetch) - len(_topup_fetch)
+
+        log(f"Fetching OHLCV: {len(_full_fetch)} full history, {len(_topup_fetch)} top-up, "
+            f"{_already_current} already current (latest sessions: "
+            + ", ".join(f"{k}={v}" for k, v in sorted(_latest_session.items())) + ")")
 
         batch_size = 50
-        for label, batch_syms, period in (
-            ("full 5y", _full_fetch, "5y"),
-            ("top-up", _topup_fetch, "10d"),
+        # `fetch_share_counts` only on the full-history path. A top-up is a
+        # same-day rerun; shares outstanding and market cap have not moved, and
+        # asking Yahoo for them per symbol was the single largest cost of a
+        # warm Fast Run (73.8s of a 222s run, for values that never changed).
+        for label, batch_syms, period, want_shares in (
+            ("full 5y", _full_fetch, "5y", True),
+            ("top-up", _topup_fetch, "10d", False),
         ):
             for i in range(0, len(batch_syms), batch_size):
                 batch = batch_syms[i:i + batch_size]
                 try:
-                    n = fetch_ohlcv(batch, period=period)
+                    with T.stage(f"fetch:ohlcv_{label.replace(' ', '_')}"):
+                        n = fetch_ohlcv(batch, period=period, fetch_share_counts=want_shares)
                     log(f"  OHLCV {label} batch {i // batch_size + 1}: {n} rows")
                 except Exception as e:
                     log(f"  OHLCV {label} batch {i // batch_size + 1} error: {e}")
 
+        # Market index series. These are not members of any universe, so nothing
+        # ever fetched them — which silently disabled the whole index-level HMM
+        # design (fix 3.1): `_get_index_hmm` returned None for every symbol and
+        # each one fell back to `run_regime_detection`, i.e. 12 HMM fits per
+        # stock instead of 12 per market. Keeping them current is what makes the
+        # regime stage O(markets) rather than O(universe).
+        _markets_in_run = {_market(s) for s in syms_to_fetch}
+        with T.stage("fetch:ohlcv_index"):
+            for _idx_sym, _idx_market in (("^GSPC", "US"), ("^NSEI", "IN")):
+                if _idx_market not in _markets_in_run:
+                    continue   # no symbol in this run is priced off that index
+                try:
+                    _idx_row = conn.execute(
+                        "SELECT COUNT(*), MAX(date) FROM price_daily "
+                        "WHERE symbol = ? AND close IS NOT NULL "
+                        "AND date >= current_date - INTERVAL 10 DAY",
+                        [_idx_sym],
+                    ).fetchone()
+                    _idx_have, _idx_last = _idx_row[0], _idx_row[1]
+                    # Same "already current" test as the stocks: no point paying
+                    # a round-trip for an index that already has its market's
+                    # latest close.
+                    _mk_last = _latest_session.get(_idx_market)
+                    if _idx_have >= 3 and _mk_last is not None and _idx_last >= _mk_last:
+                        continue
+                    n = fetch_ohlcv(
+                        [_idx_sym],
+                        period=("10d" if _idx_have >= 3 else "5y"),
+                        fetch_share_counts=False,
+                    )
+                    log(f"  index {_idx_sym}: {n} rows")
+                except Exception as e:
+                    log(f"  index {_idx_sym} fetch error (non-fatal): {e}")
+
         # Fetch fundamentals for symbols that are missing them or stale (>7 days)
         log(f"Fetching fundamentals for {len(syms_to_fetch)} symbols...")
         conn2 = get_db()
+        # `OR f.forward_pe IS NULL` with no recency guard re-fetched every symbol
+        # Yahoo has no forward P/E for (no analyst coverage) on *every* run,
+        # forever — the condition can never be satisfied, so the work never
+        # stopped. Bound it by updated_at so an uncovered name is retried daily
+        # at most, not every run.
         stale = conn2.execute("""
             SELECT DISTINCT p.symbol FROM price_daily p
             LEFT JOIN fundamentals f ON f.symbol = p.symbol
             WHERE f.symbol IS NULL
+               OR f.updated_at IS NULL
                OR f.updated_at < now() - INTERVAL '7 DAY'
-               OR f.forward_pe IS NULL
+               OR (f.forward_pe IS NULL AND f.updated_at < now() - INTERVAL '1 DAY')
         """).fetchall()
         conn2.close()
         stale_syms = [r[0] for r in stale if r[0] in set(syms_to_fetch)]
         if stale_syms:
             log(f"  Fetching fundamentals for {len(stale_syms)} symbols (missing/stale)...")
-            fund_batch_size = 10  # yfinance Ticker.info is per-symbol, keep batches small
+            # Batches exist to give the log a progress cadence, but a batch of 10
+            # against 8 workers meant every batch boundary waited on its slowest
+            # symbol — 15 straggler waits for 150 names. Wider batches with more
+            # workers keep the pool full; the log still ticks per batch.
+            fund_batch_size = 50
             for i in range(0, len(stale_syms), fund_batch_size):
                 batch = stale_syms[i:i + fund_batch_size]
                 try:
-                    n = fetch_fundamentals(batch)
+                    with T.stage("fetch:fundamentals"):
+                        n = fetch_fundamentals(batch, max_workers=12)
                     log(f"  fundamentals batch {i // fund_batch_size + 1}: {n} upserted")
                 except Exception as e:
                     log(f"  fundamentals batch {i // fund_batch_size + 1} error: {e}")
@@ -509,55 +644,81 @@ def run_daily(
         # institutional_ownership, buyback_yield for Indian symbols.
         # Also computes CAGR from quarterly financials for US symbols.
         # Runs only for symbols that are missing these fields (or stale >30 days).
-        enrich_syms = []
-        for sym in syms_to_fetch:
-            try:
-                row = conn.execute("""
-                    SELECT earnings_surprise_pct, eps_cagr_3y, revenue_cagr_3y,
-                           updated_at
-                    FROM fundamentals WHERE symbol = ?
-                """, [sym]).fetchone()
-                if (row is None or
-                        row[0] is None or row[1] is None or row[2] is None):
-                    enrich_syms.append(sym)
-            except Exception:
-                enrich_syms.append(sym)
+        # One query for the whole batch. The per-symbol version issued
+        # len(universe) round-trips to answer a question a single scan answers.
+        #
+        # `enrichment_attempted_at` bounds the retry: a symbol whose upstream
+        # genuinely has no CAGR / surprise data still has NULLs after a
+        # successful attempt, so "NULL means try again" retried it on every run
+        # forever. Now a symbol is retried at most once a day.
+        with T.stage("enrich:scan"):
+            _need_set = {
+                r[0] for r in conn.execute("""
+                    SELECT symbol FROM fundamentals
+                    WHERE (earnings_surprise_pct IS NULL
+                           OR eps_cagr_3y IS NULL
+                           OR revenue_cagr_3y IS NULL)
+                      AND (enrichment_attempted_at IS NULL
+                           OR enrichment_attempted_at < now() - INTERVAL '1 DAY')
+                """).fetchall()
+            }
+            _have = {r[0] for r in conn.execute("SELECT symbol FROM fundamentals").fetchall()}
+            enrich_syms = [s for s in syms_to_fetch if s not in _have or s in _need_set]
 
         if enrich_syms:
             log(f"Enriching {len(enrich_syms)} symbols with NSE/quarterly data...")
             try:
-                n_enriched = enrich_fundamentals(conn, enrich_syms)
+                with T.stage("enrich:fundamentals"):
+                    n_enriched = enrich_fundamentals(conn, enrich_syms)
                 log(f"  NSE enrichment: {n_enriched} symbols updated")
             except Exception as e:
                 log(f"  NSE enrichment error: {e}")
 
-    if symbols is None:
-        symbols = get_symbols_with_prices(min_days=252)
-    else:
-        # When symbols are explicitly requested, use them if they have at least 60 days.
-        # This allows newly-fetched symbols to be scored on the same run.
-        available = set(get_symbols_with_prices(min_days=60))
-        symbols = [s for s in symbols if s in available]
+    with T.stage("universe:resolve"):
+        if symbols is None:
+            symbols = get_symbols_with_prices(min_days=252)
+        else:
+            # When symbols are explicitly requested, use them if they have at least 60 days.
+            # This allows newly-fetched symbols to be scored on the same run.
+            available = set(get_symbols_with_prices(min_days=60))
+            symbols = [s for s in symbols if s in available]
     log(f"Processing {len(symbols)} symbols...")
 
-    fund_map  = _get_fundamentals_map(conn)
+    with T.stage("load:fundamentals_map"):
+        fund_map  = _get_fundamentals_map(conn)
     price_map: dict[str, pl.DataFrame] = {}
 
+    # Which markets this universe actually touches. A US-only universe has no
+    # use for the NSE index model, and fitting it anyway cost ~2s of HMM
+    # training per run for a model nothing would read.
+    _needs_india = any(s.endswith((".NS", ".BO")) for s in symbols)
+    _needs_us    = any(not s.endswith((".NS", ".BO")) for s in symbols)
+
     # --- Load index price data (used for rolling beta and index-level HMM) ---
-    _index_nsei = _get_price_df(conn, "^NSEI")
-    _index_gspc = _get_price_df(conn, "^GSPC")
+    with T.stage("load:index_prices"):
+        _index_nsei = _get_price_df(conn, "^NSEI") if _needs_india else None
+        _index_gspc = _get_price_df(conn, "^GSPC") if _needs_us else None
 
     def _get_index_df(sym: str) -> pl.DataFrame | None:
         return _index_nsei if sym.endswith(".NS") else _index_gspc
 
     # --- Fetch macro features for HMM augmentation (fix 7.2, fix 8.2) ---
+    # Three independent Yahoo round-trips (US macro, India macro, ^TNX for the
+    # rate-conditional value weight) that were issued one after another at three
+    # different points in the run. Fired together here: the 10Y result is only
+    # needed much later, so its latency now overlaps everything in between.
     log("Fetching macro features for HMM augmentation...")
     _us_macro: dict = {}
     _india_macro: dict = {}
+    _rate_pool = ThreadPoolExecutor(max_workers=1)
+    _rate_future = _rate_pool.submit(_fetch_10y_yield)
     try:
         from engine.data.macro_loader import fetch_us_macro_features, fetch_india_macro_features
-        _us_macro = fetch_us_macro_features()
-        _india_macro = fetch_india_macro_features()
+        with T.stage("macro:fetch"), ThreadPoolExecutor(max_workers=2) as _mex:
+            _f_us = _mex.submit(fetch_us_macro_features)
+            _f_in = _mex.submit(fetch_india_macro_features)
+            _us_macro = _f_us.result() or {}
+            _india_macro = _f_in.result() or {}
         log(f"  US macro: yield_curve={_us_macro.get('yield_curve_2s10s')}, vix_z={_us_macro.get('vix_zscore')}")
         log(f"  India macro: fii_norm={_india_macro.get('fii_net_flow_norm')}, vix_z={_india_macro.get('india_vix_zscore')}")
     except Exception as e:
@@ -581,52 +742,102 @@ def run_daily(
     } or None
     if _index_nsei is not None and len(_index_nsei) >= 252:
         try:
-            _hmm_nsei = fit_market_regime(_index_nsei, macro_features=_india_hmm_macro)
+            with T.stage("hmm:fit_nsei"):
+                _hmm_nsei = fit_market_regime(
+                    _index_nsei, macro_features=_india_hmm_macro, cache_key="^NSEI"
+                )
         except Exception as e:
             log(f"  NSEI HMM training failed: {e}")
     if _index_gspc is not None and len(_index_gspc) >= 252:
         try:
-            _hmm_gspc = fit_market_regime(_index_gspc, macro_features=_us_hmm_macro)
+            with T.stage("hmm:fit_gspc"):
+                _hmm_gspc = fit_market_regime(
+                    _index_gspc, macro_features=_us_hmm_macro, cache_key="^GSPC"
+                )
         except Exception as e:
             log(f"  GSPC HMM training failed: {e}")
 
     def _get_index_hmm(sym: str):
         return _hmm_nsei if sym.endswith(".NS") else _hmm_gspc
 
+    # Index posteriors are market-level: identical for every symbol in a market.
+    # Built once here; `predict_regimes_from_index` then costs a searchsorted
+    # and a row scale per symbol instead of a full re-inference.
+    with T.stage("regime:index_posteriors"):
+        _post_nsei = (
+            IndexRegimePosteriors(_hmm_nsei, _index_nsei)
+            if _hmm_nsei is not None and _index_nsei is not None else None
+        )
+        _post_gspc = (
+            IndexRegimePosteriors(_hmm_gspc, _index_gspc)
+            if _hmm_gspc is not None and _index_gspc is not None else None
+        )
+
+    def _get_index_posteriors(sym: str):
+        return _post_nsei if sym.endswith(".NS") else _post_gspc
+
+    # regime_daily's readers look at the last 60 rows (detail panel) and the last
+    # 90 days (dashboard). Writing five years of per-stock regime rows on every
+    # run grew the table to 273k rows to serve a 90-row query.
+    _REGIME_HISTORY_ROWS = 260
+    _FEATURE_HISTORY_ROWS = 1
+
     # --- Features + Regime ---
     log("Computing features and regime detection...")
+
+    with T.stage("load:prices"):
+        _loaded_prices = _get_price_map(conn, symbols)
+
+    # One scan for "which symbols already have a regime row at their latest price
+    # date", instead of a COUNT(*) round-trip per symbol.
+    with T.stage("regime:existence_check"):
+        _regime_latest = {
+            r[0]: r[1] for r in conn.execute(
+                "SELECT symbol, MAX(date) FROM regime_daily "
+                "WHERE symbol IN (SELECT UNNEST(?)) GROUP BY symbol",
+                [symbols],
+            ).fetchall()
+        }
+
     for i, sym in enumerate(symbols):
-        price_df = _get_price_df(conn, sym)
+        price_df = _loaded_prices.get(sym)
         if price_df is None or len(price_df) < 30:
             continue
         price_map[sym] = price_df
 
         try:
-            feat_df = build_features(price_df, sym)
-            _upsert_df(conn, feat_df, "features_daily",
-                       ["symbol", "date", "feature", "value"])
+            with T.stage("features:compute"):
+                # features_daily is read at MAX(date) only (detail panel), so the
+                # latest bar is the whole product. Emitting the full history wrote
+                # ~70k rows per symbol per run — 15.4M rows and 1.1GB of DuckDB to
+                # serve a 58-row query, and it is what exhausted file descriptors
+                # on larger universes.
+                feat_df = build_features(price_df, sym, emit_rows=_FEATURE_HISTORY_ROWS)
+            with T.stage("features:write"):
+                _upsert_df(conn, feat_df, "features_daily",
+                           ["symbol", "date", "feature", "value"])
         except Exception as e:
             log(f"  {sym} features error: {e}")
 
         try:
             # Skip HMM computation if regime already exists for latest price date
-            latest_price_date = price_df.sort("date")["date"][-1]
-            existing_regime = conn.execute(
-                "SELECT COUNT(*) FROM regime_daily WHERE symbol = ? AND date = ?",
-                [sym, latest_price_date]
-            ).fetchone()[0]
-            if existing_regime == 0:
+            latest_price_date = price_df["date"][-1]
+            if _regime_latest.get(sym) != latest_price_date:
                 idx_hmm   = _get_index_hmm(sym)
                 idx_df    = _get_index_df(sym)
-                if idx_hmm is not None and idx_df is not None:
-                    # Use stock beta (from MC result if available, else default 1.0)
-                    mc_beta = None  # computed later; use 1.0 here — regime is fast
-                    regime_df = predict_regimes_from_index(idx_hmm, idx_df, price_df, sym, beta=1.0)
-                else:
-                    regime_df = run_regime_detection(price_df, sym)
-                _upsert_df(conn, regime_df, "regime_daily",
-                           ["symbol", "date", "regime", "regime_label",
-                            "prob_bull", "prob_bear", "prob_range", "prob_crash", "prob_recovery"])
+                with T.stage("regime:compute"):
+                    if idx_hmm is not None and idx_df is not None:
+                        regime_df = predict_regimes_from_index(
+                            idx_hmm, idx_df, price_df, sym, beta=1.0,
+                            posteriors=_get_index_posteriors(sym),
+                            max_rows=_REGIME_HISTORY_ROWS,
+                        )
+                    else:
+                        regime_df = run_regime_detection(price_df, sym)
+                with T.stage("regime:write"):
+                    _upsert_df(conn, regime_df, "regime_daily",
+                               ["symbol", "date", "regime", "regime_label",
+                                "prob_bull", "prob_bear", "prob_range", "prob_crash", "prob_recovery"])
         except Exception as e:
             log(f"  {sym} regime error: {e}")
 
@@ -635,14 +846,23 @@ def run_daily(
 
     # --- Load IC weights from history ---
     log("Computing IC weights from historical scorecard...")
-    ic_weights = _load_ic_weights(conn)
+    with T.stage("ic:weights"):
+        ic_weights = _load_ic_weights(conn)
 
     # Apply regime-conditional value weight (fix 2.2)
     _universe_is_india = bool(symbols and all(s.endswith(".NS") or s.endswith(".BO") for s in symbols))
-    _val_weight = _regime_conditional_value_weight(
-        ic_weights.get("value", 0.20),
-        universe_is_india=_universe_is_india,
-    )
+    with T.stage("ic:value_weight_rate_fetch"):
+        try:
+            _yield_10y = _rate_future.result(timeout=20)
+        except Exception:
+            _yield_10y = None
+        finally:
+            _rate_pool.shutdown(wait=False)
+        _val_weight = _regime_conditional_value_weight(
+            ic_weights.get("value", 0.20),
+            universe_is_india=_universe_is_india,
+            yield_10y=_yield_10y,
+        )
     # Re-normalise: adjust value weight and scale others proportionally
     _old_val = ic_weights.get("value", 0.20)
     _delta = _val_weight - _old_val
@@ -670,7 +890,8 @@ def run_daily(
 
     # --- Factors (cross-sectional with IC weights) ---
     log("Computing cross-sectional factors...")
-    factor_df = compute_all_factors(price_map, fund_map, ic_weights=ic_weights)
+    with T.stage("factors:compute"):
+        factor_df = compute_all_factors(price_map, fund_map, ic_weights=ic_weights)
     factor_map: dict[str, dict] = {}
     if not factor_df.is_empty():
         _upsert_df(conn, factor_df, "factors_daily",
@@ -691,7 +912,8 @@ def run_daily(
     # results as they become available instead of waiting for the full run.
     _live_ic: float | None = None
     try:
-        _pre_live_metrics = compute_live_metrics()
+        with T.stage("oos:pre_live_metrics"):
+            _pre_live_metrics = compute_live_metrics()
         if _pre_live_metrics:
             _live_ic = _pre_live_metrics.get("live_IC")
     except Exception:
@@ -703,21 +925,69 @@ def run_daily(
     mc_map: dict[str, dict] = {}
     forecast_data: dict[str, dict] = {}
 
+    # Per-symbol constants that `_build_scorecard_rows` recomputed on every one of
+    # its three calls: the latest regime posterior (one SQL round-trip per symbol
+    # per call), the last valid close, and the run date. None of them change
+    # between stages, so they are resolved once here.
+    with T.stage("scorecard:prepare"):
+        _regime_rows: dict[str, tuple] = {}
+        try:
+            for r in conn.execute("""
+                SELECT r.symbol, r.prob_bull, r.prob_bear, r.prob_range,
+                       r.prob_crash, r.prob_recovery
+                FROM regime_daily r
+                JOIN (SELECT symbol, MAX(date) AS d FROM regime_daily
+                      WHERE symbol IN (SELECT UNNEST(?)) GROUP BY symbol) latest
+                  ON r.symbol = latest.symbol AND r.date = latest.d
+            """, [symbols]).fetchall():
+                _regime_rows[r[0]] = r[1:]
+        except Exception as e:
+            log(f"  regime posterior load error (non-fatal): {e}")
+
+        _nse_failed: set[str] = set()
+        if any(s.endswith(".NS") for s in symbols):
+            from engine.data.nse_enrichment import get_nse_status, _STATUS_FAILED
+            _nse_failed = {
+                s for s in symbols
+                if s.endswith(".NS") and get_nse_status(s) == _STATUS_FAILED
+            }
+
+        # last non-null close + run date, once per symbol
+        _price_facts: dict[str, tuple[float, object]] = {}
+        for sym, price_df in price_map.items():
+            _valid = price_df.filter(pl.col("close").is_not_null())
+            if _valid.is_empty():
+                continue
+            _price_facts[sym] = (float(_valid["close"][-1]), price_df["date"][-1])
+
+        # Round-trip cost depends only on symbol, market cap and price.
+        _rt_costs: dict[str, float] = {}
+        for sym, (cur_price, _) in _price_facts.items():
+            if sym.endswith(".NS"):
+                _rt_costs[sym] = NSE_COSTS.round_trip_pct()
+            else:
+                _mktcap = fund_map.get(sym, {}).get("market_cap")
+                _mktcap_f = float(_mktcap) if _mktcap and np.isfinite(float(_mktcap)) else None
+                _rt_costs[sym] = get_us_costs(
+                    market_cap=_mktcap_f, avg_price=cur_price
+                ).round_trip_pct()
+
+        # Regime score is a pure function of the posterior — also stage-invariant.
+        _regime_scores: dict[str, float] = {}
+        for sym, reg in _regime_rows.items():
+            if all(v is not None for v in reg):
+                _regime_scores[sym] = _compute_regime_score(*(float(v) for v in reg))
+
     def _build_scorecard_rows() -> list[dict]:
+      with T.stage("scorecard:build_rows"):
         rows = []
         for sym in symbols:
             fac      = factor_map.get(sym, {})
             mc       = mc_map.get(sym, {})
-            price_df = price_map.get(sym)
-            if price_df is None:
+            facts    = _price_facts.get(sym)
+            if facts is None:
                 continue
-
-            _sorted = price_df.sort("date")
-            _valid  = _sorted.filter(pl.col("close").is_not_null())
-            if _valid.is_empty():
-                continue
-            current_price = float(_valid["close"][-1])
-            run_date      = _sorted["date"][-1]
+            current_price, run_date = facts
 
             momentum_score = float(fac.get("momentum") or 0.0)
             quality_score  = float(fac.get("quality")  or 0.0)
@@ -726,23 +996,11 @@ def run_daily(
             revision_score = float(fac.get("revision") or 0.0)
             # Zero-weight revision for NSE symbols with failed fetches (fix 1.3)
             # Prevents stale/missing data from entering composite as a signal
-            if sym.endswith(".NS"):
-                from engine.data.nse_enrichment import get_nse_status, _STATUS_FAILED
-                if get_nse_status(sym) == _STATUS_FAILED:
-                    revision_score = 0.0
+            if sym in _nse_failed:
+                revision_score = 0.0
 
             # Regime score: probability-weighted expected return (mathematically justified)
-            regime_score = 0.0
-            reg_row = conn.execute(
-                "SELECT prob_bull, prob_bear, prob_range, prob_crash, prob_recovery "
-                "FROM regime_daily WHERE symbol = ? ORDER BY date DESC LIMIT 1",
-                [sym],
-            ).fetchone()
-            if reg_row and all(v is not None for v in reg_row):
-                pb, pbe, prng, pc, pr = reg_row
-                regime_score = _compute_regime_score(
-                    float(pb), float(pbe), float(prng), float(pc), float(pr)
-                )
+            regime_score = _regime_scores.get(sym, 0.0)
 
             # Forecast score: calibrated P(return > 0) centred at 0
             fc = forecast_data.get(sym, {})
@@ -793,12 +1051,7 @@ def run_daily(
 
             # Net expected return after transaction costs (round-trip applied once per hold period)
             # REBALANCE_FREQ_DAYS≈63 → cost amortised quarterly
-            if sym.endswith(".NS"):
-                rt_cost = NSE_COSTS.round_trip_pct()
-            else:
-                _mktcap = fund_map.get(sym, {}).get("market_cap")
-                _mktcap_f = float(_mktcap) if _mktcap and np.isfinite(float(_mktcap)) else None
-                rt_cost = get_us_costs(market_cap=_mktcap_f, avg_price=current_price).round_trip_pct()
+            rt_cost = _rt_costs[sym]
             net_p50 = p50_ret - rt_cost            # cost deducted from median expected return
 
             rows.append({
@@ -837,7 +1090,8 @@ def run_daily(
         import pathlib
         try:
             df = pl.DataFrame(rows) if rows else pl.DataFrame(schema=_SCORECARD_SCHEMA)
-            export_scorecard_snapshot(conn, df)
+            with T.stage("export:scorecard_snapshot"):
+                export_scorecard_snapshot(conn, df)
             progress_path = pathlib.Path("data/engine_progress.json")
             progress_path.parent.mkdir(parents=True, exist_ok=True)
             progress_path.write_text(json.dumps({
@@ -856,7 +1110,8 @@ def run_daily(
         # must never pay that cost. Reuses this run's connection (read-only work
         # on a handle we already hold, no second open, no lock contention).
         try:
-            write_dashboard_snapshot(conn)
+            with T.stage("export:dashboard_snapshot"):
+                write_dashboard_snapshot(conn)
         except Exception as e:
             log(f"  Stage '{stage}' dashboard snapshot error (non-fatal): {e}")
 
@@ -872,14 +1127,50 @@ def run_daily(
     # per-symbol paths regardless of thread scheduling order).
     log("Running Monte Carlo valuations...")
     _mc_seeds = {sym: int(s) for sym, s in zip(symbols, session_rng.integers(0, 2**63 - 1, size=len(symbols)))}
-    _n_workers = min(8, max(1, len(symbols)))
+    # 50k vectorized paths per symbol, GIL released inside numpy. Machine core
+    # count rather than a hardcoded 8 — the old value under-used a 10-core box
+    # and over-subscribed a 4-core one.
+    _n_workers = min(max(4, (os.cpu_count() or 8)), max(1, len(symbols)))
+
+    # Reuse a valuation already computed for this symbol's latest bar, the same
+    # way the regime stage does. MC inputs (fundamentals + last close) have not
+    # moved within a session, so a rerun re-drew 50k paths per symbol to land on
+    # the same distribution.
+    with T.stage("mc:reuse_scan"):
+        _mc_cached: dict[str, dict] = {}
+        try:
+            for r in conn.execute("""
+                SELECT m.symbol, m.date, m.intrinsic_p10, m.intrinsic_p25, m.intrinsic_p50,
+                       m.intrinsic_p75, m.intrinsic_p90, m.wacc, m.terminal_growth
+                FROM mc_valuation m
+                JOIN (SELECT symbol, MAX(date) AS d FROM mc_valuation
+                      WHERE symbol IN (SELECT UNNEST(?)) GROUP BY symbol) latest
+                  ON m.symbol = latest.symbol AND m.date = latest.d
+            """, [symbols]).fetchall():
+                sym = r[0]
+                facts = _price_facts.get(sym)
+                if facts is None or r[1] != facts[1] or r[4] in (None, 0):
+                    continue
+                row = {
+                    "p10": r[2], "p25": r[3], "p50": float(r[4]), "p75": r[5], "p90": r[6],
+                    "wacc": r[7], "terminal_growth": r[8],
+                }
+                row["upside_to_p50"] = compute_mc_upside(facts[0], row)
+                _mc_cached[sym] = row
+        except Exception as e:
+            log(f"  MC reuse scan error (non-fatal): {e}")
+    _mc_todo = [s for s in symbols if s not in _mc_cached]
+    mc_map.update(_mc_cached)
+    if _mc_cached:
+        log(f"  MC: reusing {len(_mc_cached)} valuations at current bar, "
+            f"computing {len(_mc_todo)}")
 
     def _mc_worker(sym: str):
         fund     = fund_map.get(sym, {})
         price_df = price_map.get(sym)
         if price_df is None:
             return sym, None, None, None
-        _valid_prices = price_df.sort("date").filter(pl.col("close").is_not_null())
+        _valid_prices = price_df.filter(pl.col("close").is_not_null())
         if _valid_prices.is_empty():
             return sym, None, None, None
         current_price = float(_valid_prices["close"][-1])
@@ -899,8 +1190,8 @@ def run_daily(
         except Exception as e:
             return sym, None, None, str(e)
 
-    with ThreadPoolExecutor(max_workers=_n_workers) as ex:
-        for sym, mc, run_date, err in ex.map(_mc_worker, symbols):
+    with T.stage("mc:run"), ThreadPoolExecutor(max_workers=_n_workers) as ex:
+        for sym, mc, run_date, err in ex.map(_mc_worker, _mc_todo):
             if err:
                 log(f"  {sym} MC error: {err}")
             elif mc:
@@ -925,7 +1216,7 @@ def run_daily(
             except Exception as e:
                 return sym, None, str(e)
 
-        with ThreadPoolExecutor(max_workers=min(8, max(1, len(_forecast_syms)))) as ex:
+        with T.stage("forecast:run"), ThreadPoolExecutor(max_workers=min(8, max(1, len(_forecast_syms)))) as ex:
             for sym, fc_df, err in ex.map(_forecast_worker, _forecast_syms):
                 if err:
                     log(f"  {sym} forecast error: {err}")
@@ -969,6 +1260,7 @@ def run_daily(
     })
 
     if not scorecard_df.is_empty():
+      with T.stage("write:scorecard_daily"):
         _upsert_df(conn, scorecard_df, "scorecard_daily", [
             "symbol", "date", "momentum_score", "quality_score", "value_score",
             "low_vol_score", "revision_score", "regime_score", "forecast_score",
@@ -981,20 +1273,25 @@ def run_daily(
     scored_symbols = [r["symbol"] for r in scorecard_rows]
     log("Exporting read snapshots...")
     try:
-        export_scorecard_snapshot(conn, scorecard_df)
-        export_detail_snapshots(conn, scored_symbols)
+        with T.stage("export:scorecard_snapshot"):
+            export_scorecard_snapshot(conn, scorecard_df)
+        with T.stage("export:detail_snapshots"):
+            export_detail_snapshots(conn, scored_symbols)
         # One flat JSON map of the MC intrinsic-value prior. The valuation layer
         # reads it with plain fs, so publishing it here is what keeps the
         # Research Hub strip and the Register free of subprocess spawning.
-        export_valuation_priors(conn)
+        with T.stage("export:valuation_priors"):
+            export_valuation_priors(conn)
         log(f"  Snapshots written: {len(scored_symbols)} detail files + scorecard.")
     except Exception as e:
         log(f"  Snapshot export error (non-fatal): {e}")
 
     # Live OOS validation: log signals, backfill returns, compute metrics, alert on degradation
     try:
-        append_signals(scorecard_rows, price_map=price_map, fund_map=fund_map)
-        live_metrics = compute_live_metrics()
+        with T.stage("oos:append_signals"):
+            append_signals(scorecard_rows, price_map=price_map, fund_map=fund_map)
+        with T.stage("oos:live_metrics"):
+            live_metrics = compute_live_metrics()
         if live_metrics:
             log(f"Live OOS metrics: IC={live_metrics.get('live_IC')}, "
                 f"hit_rate={live_metrics.get('hit_rate')}, "
@@ -1052,8 +1349,23 @@ def run_daily(
     except Exception:
         pass
 
-    conn.close()
+    # Evict derived rows no reader consumes before the checkpoint, so the
+    # checkpoint has less to write and the file stops growing without bound.
+    with T.stage("db:prune"):
+        try:
+            _pruned = prune_derived_history(conn)
+            if any(_pruned.values()):
+                log("  Pruned derived rows: "
+                    + ", ".join(f"{k}={v}" for k, v in _pruned.items() if v))
+        except Exception as e:
+            log(f"  Prune error (non-fatal): {e}")
+
+    with T.stage("db:close"):
+        conn.close()
     log(f"Done. {len(scorecard_rows)} symbols scored.")
+    if T.enabled:
+        for line in T.report():
+            log(line)
     return scorecard_df
 
 
@@ -1071,8 +1383,11 @@ if __name__ == "__main__":
 
     syms = args.symbols or None
     if args.universe:
+        import time as _time
+        _t0 = _time.perf_counter()
         syms = get_universe_by_name(args.universe)
-        print(f"Universe '{args.universe}': {len(syms)} symbols")
+        print(f"Universe '{args.universe}': {len(syms)} symbols "
+              f"(resolved in {_time.perf_counter() - _t0:.1f}s)", flush=True)
 
     df = run_daily(
         symbols=syms,
