@@ -281,6 +281,15 @@ export interface Decision {
   closePrice: number | null;
   closedAt: string | null;
   createdAt: string;
+  /**
+   * Version of the symbol's valuation case this call was committed against.
+   * NULL means "not recorded" — either the decision predates the Judgment
+   * Ledger, or there was no case for the symbol at the time. It is never
+   * inferred: lib/ledger.ts falls back to the case's current assumptions and
+   * labels the result as an approximation rather than claiming the user held
+   * today's numbers when they acted.
+   */
+  caseVersion: number | null;
 }
 
 /** A delivered alert in the notification center (see lib/alerts.ts + lib/db.ts). */
@@ -943,6 +952,13 @@ export interface ScannerOpportunity {
   thesis: InvestmentThesis | null; // generated only for high-conviction
   sourceEventIds: string[];
   dividendYieldPct: number | null;
+  /**
+   * Per-ticker 0-100 confidence from the company-impact stage's LLM match —
+   * previously sanitized and then discarded, which left every non-thesis card
+   * showing buildOpportunityProfile's hardcoded 55 fallback. Null when the
+   * model omitted it (or on payloads cached before the field existed).
+   */
+  matchConfidence?: number | null;
   /** Shared Opportunity Engine output — categories, conviction, horizon, narrative. Set by opportunity-scorer.ts. */
   profile: OpportunityProfile | null;
 }

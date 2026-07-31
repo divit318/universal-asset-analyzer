@@ -52,6 +52,24 @@ describe("buildCompanyOpportunities", () => {
     expect(result).toHaveLength(1);
     expect(result[0].ticker).toBe("AAA");
     expect(result[0].name).toBe("Alpha Corp");
+    // The model's per-ticker confidence must reach the opportunity — it was
+    // previously sanitized here and then discarded, pinning every card at
+    // the profile engine's 55 default.
+    expect(result[0].matchConfidence).toBe(80);
+  });
+
+  it("stores a missing/zero match confidence as null, never as 0%", async () => {
+    runPromptMock.mockResolvedValue(JSON.stringify({
+      matches: [{ symbol: "AAA", direction: "bullish", rationale: "r", timeframe: "medium" }],
+    }));
+
+    const result = await buildCompanyOpportunities(
+      [marketEvent("e1", ["Technology"])],
+      [sectorImpact("Technology", 60, ["e1"])],
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].matchConfidence).toBeNull();
   });
 
   it("degrades one sector's failure to an empty contribution without crashing the whole batch", async () => {

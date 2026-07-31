@@ -127,6 +127,9 @@ export function scoreOpportunities(
         financialHealth: opp.compositeScores?.financialHealth ?? null,
         momentum: opp.compositeScores?.momentum ?? null,
       },
+      // The company-impact LLM's per-ticker confidence — without this, every
+      // non-thesis card fell through to the engine's hardcoded 55 default.
+      confidence: opp.matchConfidence ?? null,
       dividendYieldPct: opp.dividendYieldPct,
       momentum3mReturn: opp.quote?.changePercent ?? null,
       momentumTrend: opp.direction === "bullish" ? "up" : opp.direction === "bearish" ? "down" : "flat",
@@ -158,6 +161,9 @@ export function refreshProfileWithThesis(opp: ScannerOpportunity): ScannerOpport
       financialHealth: opp.compositeScores?.financialHealth ?? null,
       momentum: opp.compositeScores?.momentum ?? null,
     },
+    // Kept as the fallback beneath the thesis's own confidence, which the
+    // engine gives precedence (input.thesis?.confidence ?? input.confidence).
+    confidence: opp.matchConfidence ?? null,
     dividendYieldPct: opp.dividendYieldPct,
     momentum3mReturn: opp.quote?.changePercent ?? null,
     momentumTrend: opp.direction === "bullish" ? "up" : opp.direction === "bearish" ? "down" : "flat",

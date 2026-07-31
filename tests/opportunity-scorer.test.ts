@@ -38,6 +38,7 @@ function opportunity(overrides: Partial<ScannerOpportunity> = {}): ScannerOpport
     thesis: null,
     sourceEventIds: ["e1"],
     dividendYieldPct: null,
+    matchConfidence: null,
     profile: null,
     ...overrides,
   };
@@ -116,6 +117,48 @@ describe("scoreOpportunities — differentiation", () => {
     expect(s.composite).toBeGreaterThan(w.composite);
     expect(s.composite - w.composite).toBeGreaterThanOrEqual(20);
     expect(s.verdict).not.toBe(w.verdict);
+  });
+
+  it("profile.confidence varies with the company-impact match confidence instead of pinning at 55", () => {
+    const scored = scoreOpportunities(
+      [
+        opportunity({ id: "a", ticker: "AAA", matchConfidence: 82 }),
+        opportunity({ id: "b", ticker: "BBB", matchConfidence: 41 }),
+        opportunity({ id: "c", ticker: "CCC", matchConfidence: null }), // model omitted it
+      ],
+      [sectorImpact("Technology", 60)],
+    );
+    const byTicker = new Map(scored.map((o) => [o.ticker, o.profile!.confidence]));
+    expect(byTicker.get("AAA")).toBe(82);
+    expect(byTicker.get("BBB")).toBe(41);
+    // The 55 default is now a last resort for genuinely missing data only.
+    expect(byTicker.get("CCC")).toBe(55);
+  });
+
+  it("a payload cached before matchConfidence existed degrades to the default, not a crash", () => {
+    const stale = opportunity({ id: "old", ticker: "OLD" });
+    delete (stale as Partial<ScannerOpportunity>).matchConfidence;
+    const [scored] = scoreOpportunities([stale], [sectorImpact("Technology", 60)]);
+    expect(scored.profile!.confidence).toBe(55);
+  });
+
+  it("matchConfidence survives the JSON round-trip used by every cache layer", () => {
+    // persistScannerSnapshot / putScannerCache / sessionStorage all store
+    // JSON.stringify(result) verbatim (opaque TEXT, no field mapping), so the
+    // round-trip guarantee reduces to: the field is a JSON value, never
+    // undefined. company-impact sets it explicitly (number or null) on every
+    // opportunity it emits.
+    const scored = scoreOpportunities(
+      [
+        opportunity({ id: "a", ticker: "AAA", matchConfidence: 78 }),
+        opportunity({ id: "b", ticker: "BBB", matchConfidence: null }),
+      ],
+      [sectorImpact("Technology", 60)],
+    );
+    const revived = JSON.parse(JSON.stringify(scored)) as ScannerOpportunity[];
+    expect(revived.find((o) => o.ticker === "AAA")!.matchConfidence).toBe(78);
+    expect(revived.find((o) => o.ticker === "BBB")!.matchConfidence).toBeNull();
+    expect(Object.keys(revived[0])).toContain("matchConfidence");
   });
 
   it("preserves each opportunity's own direction — scoring never overwrites it", () => {
