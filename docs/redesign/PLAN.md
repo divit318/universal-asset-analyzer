@@ -1,7 +1,7 @@
 # UAA Redesign — Implementation Plan & Session Handoff
 
-> Status: **Phase 0 in progress** (this file's creation is Phase 0's first deliverable)
-> Last updated: 2026-07-31
+> Status: **Phase 0 complete — next up: Phase 1 (tokens & primitives)**
+> Last updated: 2026-08-02
 >
 > **If you are an agent starting a fresh session: read this file top to bottom, then read
 > `docs/brand-preview/terminal/SPEC.md`, then execute the next incomplete phase in §4 —
@@ -89,11 +89,11 @@ GATE: npx tsc --noEmit          (silent)
 
 ### Phase 0 — Baseline & guardrails  *(no visual change)*
 - [x] Write this file; add pointer in AGENTS.md.
-- [ ] Record performance baseline into §6: production build time; per-route bundle sizes
+- [x] Record performance baseline into §6: production build time; per-route bundle sizes
       (`npm run build` output); LCP/TTI for `/`, `/research`, `/screener`, `/portfolio`,
       `/ic-report` (real page loads, dev machine, noted conditions); screener scroll FPS
       at full universe; heap after 30-min simulated session.
-- [ ] Decide and log (§7): light theme handling. Recommendation: dark-only during the
+- [x] Decide and log (§7): light theme handling. Recommendation: dark-only during the
       transformation; re-derive light from the token layer in Phase 7. The current
       `data-theme` mechanism stays intact either way.
 
@@ -186,19 +186,62 @@ page recorded in §6.
 
 | Date | Phase | What shipped | Gate results | Perf vs baseline | Open items |
 |---|---|---|---|---|---|
+| 2026-08-02 | 0 (complete) | Baseline recorded below; `scripts/perf-baseline.mjs` added (lcp/fps/heap modes — rerun after every phase); light-theme decision logged in §7 with owner sign-off | tsc silent · vitest 1,660 passed / 3 skipped (count grew from 1,426) · eslint: 2 known issues + 2 pre-existing warnings in `app/ic-report/page.tsx` (unused eslint-disable + exhaustive-deps; file untouched this session — add to AGENTS.md known list or fix in a real ic-report phase) · build green | is the baseline | none |
 | 2026-07-31 | 0 (started) | PLAN.md written; AGENTS.md pointer added | n/a | baseline not yet recorded | Record baseline; log light-theme decision |
 
-### Phase 0 baseline (fill in before Phase 1)
+### Phase 0 baseline (recorded 2026-08-02)
+
+Conditions: dev machine (macOS, Darwin 23.6.0), Next.js 16.2.9 (Turbopack) production
+build served via `next start -p 3100`, headless Chromium 1440×900 via
+`scripts/perf-baseline.mjs`, local SQLite data, Ollama state as-found. Working tree
+included uncommitted brand-asset work (see git log around this date); re-measure from
+the Phase 0 commit if in doubt.
+
+Methodology notes (bind future comparisons to the same method):
+- Turbopack's `next build` no longer prints per-route bundle sizes; route JS below is
+  the deduped set of `<script src>` tags in each route's prerendered
+  `.next/server/app/*.html` — i.e. initial JS, excluding lazy-loaded chunks.
+- TTI is a proxy: max(FCP, end of last long task) after a ≥5s quiet window
+  (`perf-baseline.mjs lcp`). LCP/FCP via PerformanceObserver, 3 runs, median reported
+  (all runs kept in the raw table below because data-fetch variance is real).
+
 ```
-build time:            TBD
-route bundles:         TBD (paste `npm run build` route table)
-LCP/TTI  /            TBD
-LCP/TTI  /research    TBD
-LCP/TTI  /screener    TBD
-LCP/TTI  /portfolio   TBD
-LCP/TTI  /ic-report   TBD
-screener scroll fps:   TBD (row count noted)
-heap after 30 min:     TBD
+build time:            16.1s wall (npm run build; compile 5.0s, TS 8.3s, 26 static pages)
+
+route bundles (initial JS, gzip / raw KB):
+  /portfolio        369 / 1261     (heaviest)
+  /journal          333 / 1117
+  /compare          302 / 1003
+  /research         290 /  995
+  /screener         248 /  837
+  /watchlist        244 /  816
+  /                 237 /  791
+  /engine           236 /  784
+  /wire             231 /  776
+  /thematic         230 /  764
+  /calendar         227 /  762
+  /knowledge-graph  229 /  756
+  /valuation        228 /  756
+  /ic-report        225 /  751    (lightest)
+
+LCP/TTI medians of 3 runs, ms (raw runs were noisy — LCP on / ranged 76–4668 depending
+on when async content landed; compare medians AND worst-run against this table):
+  /            FCP 172   LCP 172   TTI 4623   (worst LCP 4668)
+  /research    FCP  68   LCP 120   TTI   68   (worst LCP  240)
+  /screener    FCP 160   LCP 444   TTI  278   (worst LCP 3064)
+  /portfolio   FCP 128   LCP 208   TTI  128   (worst TTI 5374)
+  /ic-report   FCP  68   LCP  68   TTI   68   (worst TTI  324)
+
+screener scroll fps:   60.1 avg fps, 0/361 frames >26ms — at 50 rows, because the
+                       current screener paginates at PAGE_SIZE=50 and cannot render the
+                       full universe at all. There is NO pre-existing full-universe
+                       render to baseline against: Phase 4b's 60fps-at-~400-rows gate
+                       is absolute, not relative. (`perf-baseline.mjs fps`)
+heap after 30 min:     11.3 MB used / 15.4 MB total JS heap — 59 full cycles over the
+                       five routes above with scroll, single tab (`perf-baseline.mjs
+                       heap`). Note: today's app does full-document navigations, which
+                       reset the heap per page; once Phase 2 makes navigation client-
+                       side this number becomes the one to watch for leaks.
 ```
 
 ## 7. Decision log  *(deviations from SPEC.md land here or they didn't happen)*
@@ -206,4 +249,4 @@ heap after 30 min:     TBD
 | Date | Decision | Why |
 |---|---|---|
 | 2026-07-31 | spec-demo + SPEC.md are the binding skeleton for the final product; deviations require an entry here | Owner confirmation |
-| TBD | Light theme: (recommended: dark-only until Phase 7) | pending owner sign-off |
+| 2026-08-02 | Light theme: dark-only through the transformation; light re-derived from the token layer in Phase 7. The existing `data-theme` mechanism stays intact throughout. | Owner sign-off, 2026-08-02 (chose PLAN.md's recommended option). Halves visual QA per phase; SPEC.md's system is defined dark-first. |
