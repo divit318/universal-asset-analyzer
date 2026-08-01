@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>UAA — Spec Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#101113;--ink:#e9ebee;--mut:#9aa1ab;--dim:#5e646d;
+  --rule:#2b2e34;--rule2:#3c4048;
+  --up:#4bd587;--dn:#f0716b;--att:#e2a336;
+  --sans:"Geist",system-ui,sans-serif;--mono:"Geist Mono",ui-monospace,monospace;
+  --ease:cubic-bezier(.32,.72,0,1);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13.5px;line-height:1.55;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;border-radius:0}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.up{color:var(--up)}.dn{color:var(--dn)}.att{color:var(--att)}
+.sc{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:500}
+
+/* chrome */
+.cmd{display:flex;align-items:center;border-bottom:1px solid var(--rule2);background:var(--bg);position:sticky;top:0;z-index:60;height:37px}
+.cmd .brand{font-family:var(--mono);font-weight:600;font-size:12px;padding:0 18px;border-right:1px solid var(--rule);line-height:37px}
+.cmd .line{flex:1;font-family:var(--mono);font-size:12px;color:var(--dim);padding:0 18px;white-space:nowrap;overflow:hidden}
+.cmd .line b{color:var(--ink);font-weight:500}
+.cmd .cur{display:inline-block;width:7px;height:13px;background:var(--mut);vertical-align:-2px;margin-left:2px;animation:blink 1.1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.cmd .dock{font-family:var(--mono);font-size:10px;color:var(--att);padding:0 14px;border-left:1px solid var(--rule);line-height:37px;cursor:pointer;opacity:0;transition:opacity .24s var(--ease);pointer-events:none;white-space:nowrap}
+.cmd .dock.onn{opacity:1;pointer-events:auto}
+.cmd .dock.clear{color:var(--dim)}
+.cmd .stat{font-family:var(--mono);font-size:10.5px;color:var(--dim);padding:0 18px;border-left:1px solid var(--rule);line-height:37px;white-space:nowrap}
+.cmd .stat .on{color:var(--up)}
+.fn{display:flex;border-bottom:1px solid var(--rule);background:var(--bg);position:sticky;top:37px;z-index:60;overflow-x:auto}
+.fn button{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;color:var(--dim);padding:8px 16px;white-space:nowrap}
+.fn button:hover{color:var(--mut)}
+.fn button.on{color:var(--ink);box-shadow:inset 0 -2px 0 var(--ink)}
+.fn .gap{flex:1}
+.protonote{font-family:var(--mono);font-size:9.5px;color:var(--dim);text-align:center;padding:6px 18px;border-bottom:1px solid var(--rule);letter-spacing:.06em}
+.protonote b{color:var(--mut);font-weight:500}
+
+/* page scaffold — content plus reserved talking margin (cols 10–12) */
+.pg{display:none;max-width:1360px;margin:0 auto;padding:0 36px 120px;position:relative}
+.pg.on{display:block}
+.pg .content{max-width:1000px}
+.marginnote{position:absolute;right:36px;width:250px;font-family:var(--mono);font-size:10px;line-height:1.7;color:var(--dim);opacity:0;transition:opacity .12s var(--ease);pointer-events:none;border-left:1px solid var(--rule);padding-left:12px}
+.marginnote.onn{opacity:1}
+.marginnote b{color:var(--mut);font-weight:500}
+[data-m]{cursor:default}
+[data-m]:hover{color:var(--ink)}
+
+.mast{padding:26px 0 0}
+.mast .toprow{display:flex;align-items:baseline;gap:18px;flex-wrap:wrap}
+.mast h1{font-size:21px;font-weight:600;letter-spacing:-.01em}
+.mast h1 .co{color:var(--mut);font-weight:400}
+.mast .px{font-family:var(--mono);font-size:30px;font-weight:600;letter-spacing:-.02em;cursor:ew-resize;user-select:none}
+.mast .px.probing{color:var(--att)}
+.mast .chg{font-family:var(--mono);font-size:14px}
+.mast .sess{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--dim);text-align:right;line-height:1.7}
+
+.decide{display:flex;gap:12px;align-items:baseline;margin:18px 0 0;padding:12px 0;border-top:1px solid var(--rule2);border-bottom:1px solid var(--rule)}
+.decide .tick{font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--att);white-space:nowrap;transition:color .42s var(--ease)}
+.decide .tick.none{color:var(--dim)}
+.decide p{font-size:13.5px;color:var(--mut)}
+.decide p b{color:var(--ink);font-weight:600}
+.decide .go{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink);white-space:nowrap;border-bottom:1px solid var(--rule2);padding-bottom:1px}
+.redraw{height:1px;background:var(--rule2);width:0;transition:width .42s var(--ease)}
+
+.stand{margin:22px 0 0;font-size:16.5px;line-height:1.5;color:var(--ink);max-width:66ch}
+.stand .qual{color:var(--mut)}
+.figrow{display:flex;margin:26px 0 0;border-top:1px solid var(--rule2);border-bottom:1px solid var(--rule);flex-wrap:wrap}
+.fig{padding:14px 24px 12px 0;margin-right:24px}
+.fig+.fig{border-left:1px solid var(--rule);padding-left:24px}
+.fig .v{font-family:var(--mono);font-size:19px;font-weight:600}
+.fig .k{margin-top:2px}
+
+.colset{display:grid;margin-top:30px;grid-template-columns:minmax(0,6.6fr) minmax(0,3.4fr)}
+.colset>div{min-width:0;padding:0 26px}
+.colset>div:first-child{padding-left:0}
+.colset>div:last-child{padding-right:0;border-left:1px solid var(--rule)}
+h3.head{font-size:13px;font-weight:600;padding-bottom:8px;border-bottom:1px solid var(--rule);margin-bottom:12px}
+h3.head .n{color:var(--dim);font-family:var(--mono);font-size:10px;margin-right:8px}
+
+.bignum{font-family:var(--mono);font-size:76px;font-weight:600;letter-spacing:-.025em;line-height:1}
+.bignum-cap{display:flex;align-items:baseline;gap:14px}
+.readings{font-size:13px;margin-top:14px}
+.reading{display:grid;grid-template-columns:82px 40px 1fr;gap:10px;padding:7px 0;border-bottom:1px solid var(--rule);align-items:baseline}
+.reading:last-child{border-bottom:0}
+.reading .eng{color:var(--mut)}
+.reading .val{font-family:var(--mono);font-weight:600;text-align:right}
+.reading .note{color:var(--dim);font-size:12px}
+.reading.dis .note{color:var(--att)}
+.probeline{font-family:var(--mono);font-size:11px;color:var(--att);margin-top:10px;min-height:17px}
+
+.wire{font-size:12.5px}
+.wire .it{display:grid;grid-template-columns:52px 1fr;gap:12px;padding:7px 0;border-bottom:1px solid var(--rule)}
+.wire .it:last-child{border-bottom:0}
+.wire .d{font-family:var(--mono);font-size:10px;color:var(--dim);padding-top:2px}
+.wire .h{color:var(--ink)}
+.wire .s{color:var(--dim);font-size:11.5px}
+
+/* grid tables (div-based so rows can animate) */
+.gt{width:100%;font-size:12.5px}
+.gt .hd,.gt .row{display:grid;align-items:baseline;column-gap:14px;padding:8px 0}
+.gt .hd{font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--dim);font-weight:500;border-bottom:1px solid var(--rule2)}
+.gt .row{border-bottom:1px solid var(--rule);position:relative;transition:opacity .24s var(--ease)}
+.gt .row.focus::before{content:"";position:absolute;left:-14px;top:6px;bottom:6px;width:2px;background:var(--att)}
+.gt .num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right}
+.gt .sym{font-family:var(--mono);font-weight:600}
+.gt .co{color:var(--mut)}
+.gt .note{color:var(--dim);font-size:12px}
+.gt .row.flag{background:linear-gradient(90deg,rgba(226,163,54,.06),transparent 60%)}
+.gt .row.leaving{overflow:hidden}
+
+.query{margin-top:24px;font-family:var(--mono);font-size:13px;padding:12px 0;border-top:1px solid var(--rule2);border-bottom:1px solid var(--rule)}
+.query .op{color:var(--dim)}
+.query .bind{color:var(--att)}
+.query .edit{border-bottom:1px dashed var(--rule2);cursor:pointer}
+.query .stepper{font-size:10px;color:var(--dim);margin-left:4px;cursor:pointer;user-select:none}
+.query .stepper:hover{color:var(--ink)}
+.query-note{margin-top:10px;font-size:12.5px;color:var(--dim);max-width:74ch}
+.query-note b{color:var(--mut);font-weight:500}
+
+.attn{counter-reset:a;max-width:76ch}
+.attn .it{display:grid;grid-template-columns:40px 1fr auto;gap:14px;padding:13px 0;border-bottom:1px solid var(--rule);align-items:baseline;transition:opacity .42s var(--ease),transform .42s var(--ease)}
+.attn .it::before{counter-increment:a;content:counter(a,decimal-leading-zero);font-family:var(--mono);font-size:11px;color:var(--att)}
+.attn .it.old::before{font-size:13px}
+.attn .it p{color:var(--mut)}
+.attn .it p b{color:var(--ink);font-weight:600}
+.attn .it.old p b{font-weight:700}
+.attn .age{font-family:var(--mono);font-size:9.5px;color:var(--att);letter-spacing:.08em;margin-left:8px}
+.attn .go{font-family:var(--mono);font-size:11px;color:var(--ink);white-space:nowrap;border-bottom:1px solid var(--rule2);padding-bottom:1px}
+.attn .it.gone{opacity:0;transform:translateY(-6px)}
+.desk-empty{display:none;padding:120px 0;max-width:56ch;margin:0 auto;color:var(--mut);font-size:14.5px;text-align:left}
+.desk-empty.onn{display:block;animation:fadein .42s var(--ease)}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+
+.analyst{max-width:70ch}
+.analyst .attline{font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--dim);margin-bottom:10px}
+.analyst p{color:var(--mut);margin-top:10px}
+.analyst p:first-of-type{margin-top:0}
+.analyst p b{color:var(--ink);font-weight:600}
+.analyst .sources{margin-top:14px;font-family:var(--mono);font-size:10px;color:var(--dim);border-top:1px solid var(--rule);padding-top:10px}
+
+/* watchlist strikethrough */
+.wnote{position:relative;display:inline}
+.wnote .strike{position:absolute;left:0;top:52%;height:1px;background:var(--mut);width:0;transition:width .42s var(--ease)}
+.retired .wnote{color:var(--dim)}
+.retired .sym,.retired .num{color:var(--dim)!important}
+.rbtn{font-family:var(--mono);font-size:10px;color:var(--dim);border-bottom:1px solid var(--rule2)}
+.rbtn:hover{color:var(--ink)}
+.retiredtag{font-family:var(--mono);font-size:9.5px;color:var(--dim);letter-spacing:.06em}
+
+/* ic doc */
+.doc{display:grid;grid-template-columns:190px minmax(0,1fr);margin-top:30px}
+.doc .toc{padding-right:26px;border-right:1px solid var(--rule);position:sticky;top:110px;align-self:start}
+.doc .toc a{display:block;color:var(--dim);padding:4px 0;text-decoration:none;font-family:var(--mono);font-size:10.5px;transition:color .42s var(--ease)}
+.doc .toc a.read{color:var(--ink)}
+.doc .toc a.diss{color:var(--att)}
+.doc .body{padding-left:34px;max-width:76ch}
+.doc .body h4{font-size:13.5px;font-weight:600;margin-top:30px;padding-top:16px;border-top:1px solid var(--rule)}
+.doc .body h4 .n{font-family:var(--mono);color:var(--dim);font-size:10px;margin-right:10px}
+.doc .body h4 .verd{float:right;font-family:var(--mono);font-size:10px;color:var(--dim);font-weight:400}
+.doc .body h4 .verd.d{color:var(--att)}
+.doc .body p{color:var(--mut);margin-top:8px;font-size:13px}
+.doc .body p b{color:var(--ink);font-weight:600}
+.inset{margin-top:14px;padding-left:18px;border-left:2px solid var(--att)}
+.readcount{font-family:var(--mono);font-size:10.5px;color:var(--dim);border-top:1px solid var(--rule2);padding-top:12px;margin-top:26px}
+.readcount b{color:var(--ink);font-weight:500}
+
+/* run */
+.runlog{margin-top:26px;max-width:900px}
+.runlog .step{display:grid;grid-template-columns:64px 1fr;gap:18px;padding:9px 0;border-bottom:1px solid var(--rule);opacity:0;transform:translateY(4px);transition:opacity .42s var(--ease),transform .42s var(--ease)}
+.runlog .step.onn{opacity:1;transform:none}
+.runlog .ts{font-family:var(--mono);font-size:11px;color:var(--dim)}
+.runlog .live .ts{color:var(--att)}
+.runlog .what{color:var(--mut);font-size:13px}
+.runlog .what b{color:var(--ink);font-weight:600}
+.stream{margin-top:20px;padding-top:16px;border-top:1px solid var(--rule2);max-width:74ch;min-height:80px}
+.stream p{color:var(--mut)}
+.stream .cursor{display:inline-block;width:7px;height:13px;background:var(--mut);vertical-align:-2px;animation:blink 1.1s steps(1) infinite}
+.stream s{color:var(--dim)}
+.stream .corr{color:var(--ink)}
+.replay{font-family:var(--mono);font-size:10.5px;color:var(--dim);border-bottom:1px solid var(--rule2);margin-top:20px;display:inline-block}
+.replay:hover{color:var(--ink)}
+
+/* trim sheet */
+.trim{display:none;margin-top:16px;padding:16px 0;border-top:1px solid var(--rule2);border-bottom:1px solid var(--rule)}
+.trim.onn{display:block}
+.trim .rowline{display:grid;grid-template-columns:70px 1fr 120px 130px;gap:18px;align-items:center;padding:8px 0}
+.trim .sym{font-family:var(--mono);font-weight:600}
+.trim input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:2px;background:var(--rule2);outline:none}
+.trim input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:18px;background:var(--ink);cursor:ew-resize;border-radius:0}
+.trim .num{font-family:var(--mono);text-align:right}
+.trim .sum{margin-top:10px;font-size:13px;color:var(--mut)}
+.trim .sum b{color:var(--ink)}
+
+/* limits + kbd overlay */
+.limits{max-width:74ch}
+.limits h4{font-size:13.5px;font-weight:600;margin-top:26px}
+.limits p{color:var(--mut);margin-top:6px}
+.limits .r{display:grid;grid-template-columns:26px 1fr;gap:12px;padding:9px 0;border-bottom:1px solid var(--rule)}
+.limits .r::before{content:"—";color:var(--dim);font-family:var(--mono)}
+.limits .r p{margin:0}
+.kbd-ov{display:none;position:fixed;inset:0;background:rgba(16,17,19,.96);z-index:100;padding:80px 0}
+.kbd-ov.onn{display:block}
+.kbd-ov .card{max-width:760px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:60px}
+.kbd-ov h5{font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--dim);border-bottom:1px solid var(--rule2);padding-bottom:8px;margin-bottom:12px}
+.kbd-ov .k{display:grid;grid-template-columns:110px 1fr;gap:14px;padding:5px 0;font-size:12.5px;color:var(--mut)}
+.kbd-ov .k span:first-child{font-family:var(--mono);color:var(--ink)}
+.kbd-ov .close{position:absolute;top:30px;right:40px;font-family:var(--mono);font-size:10px;color:var(--dim)}
+
+@media(max-width:1180px){.marginnote{display:none}.pg .content{max-width:100%}.pg{padding:0 20px 90px}}
+@media(max-width:900px){.colset{grid-template-columns:1fr}.colset>div{padding:0 0 22px;border-left:0!important}.doc{grid-template-columns:1fr}.doc .toc{display:none}.doc .body{padding-left:0}}
+</style>
+</head>
+<body>
+
+<div class="cmd">
+  <span class="brand">UAA</span>
+  <span class="line" id="cline"><b>desk</b><span class="cur"></span>&nbsp;&nbsp;— the docket. type a ticker to leave it.</span>
+  <span class="dock" id="dock">◆ 1 OPEN</span>
+  <span class="stat"><span class="on">●</span> LOCAL · PROTOTYPE · <span id="clock">09:42:07</span></span>
+</div>
+<div class="fn" id="fn">
+  <button data-p="desk" class="on">THE&nbsp;DESK</button>
+  <button data-p="research">RESEARCH</button>
+  <button data-p="screen">SCREEN</button>
+  <button data-p="portfolio">PORTFOLIO</button>
+  <button data-p="watch">WATCHLIST</button>
+  <button data-p="ic">IC&nbsp;REPORT</button>
+  <button data-p="run">RUN</button>
+  <span class="gap"></span>
+  <button data-p="limits">WHAT&nbsp;A&nbsp;SAMPLE&nbsp;CAN'T&nbsp;SHOW</button>
+</div>
+<div class="protonote">PROTOTYPE OF THE SPEC · DATA IS CANNED, THE INTERACTIONS ARE REAL · TRY: <b>drag the price on RESEARCH</b> · <b>▲▼ the ROE clause on SCREEN</b> · <b>“size the trims” on PORTFOLIO</b> · <b>retire a note on WATCHLIST</b> · <b>scroll the IC REPORT</b> · <b>press ?</b></div>
+
+<!-- ================= THE DESK ================= -->
+<main class="pg on" id="p-desk">
+  <div class="content">
+  <div class="mast"><div class="toprow"><h1>The Desk <span class="co">Tuesday 27 May</span></h1><div class="sess">LAST SESSION ENDED TUE 16:12<br/>2 DECISIONS RECORDED</div></div></div>
+
+  <div id="docket">
+    <div style="margin-top:26px">
+      <h3 class="head"><span class="n">◆</span>Open decisions <span style="float:right;font-family:var(--mono);font-size:10px;color:var(--dim);font-weight:400">3 OPEN · OLDEST 11 WEEKS</span></h3>
+      <div class="attn">
+        <div class="it old" data-m="opened 12 mar · touched 4× · never decided. age sets the type weight — the interface applies polite pressure, nothing more.">
+          <p><b>Semiconductors are 24.1% of the book against your 15% limit</b><span class="age">OPEN 11 WEEKS</span><br/>The limit is yours, set 12 Mar, in writing, for exactly this situation. Two trims clear it and raise $44,700.</p>
+          <button class="go" data-goto="portfolio">size the trims ↵</button>
+        </div>
+        <div class="it" data-m="opened this morning, when ASML crossed 900.">
+          <p><b>ASML closed under your line.</b><br/>Your note of 12 May reads “buy under 900” — it closed at 897.40, and Tuesday’s IC report reads Buy with one reservation.</p>
+          <button class="go" data-goto="watch">decide ↵</button>
+        </div>
+        <div class="it" data-m="opened 3 days ago by the price, not by you.">
+          <p><b>NVDA is 3.2% above your trim line.</b><br/>The note’s condition — data-center re-acceleration — resolves 28 May. Waiting is consistent with the note. Silence isn’t.</p>
+          <button class="go" data-goto="research">open research ↵</button>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:48px">
+      <h3 class="head"><span class="n">02</span>Overnight</h3>
+      <div class="wire">
+        <div class="it"><span class="d">06:00</span><div><div class="h">NVDA opened above your trim line — the decision above got more expensive to ignore</div></div></div>
+        <div class="it"><span class="d">06:00</span><div><div class="h">PLTR’s screen/quant gap widened to 43 — the widest in your universe</div><div class="s">The fundamentals rank it 3rd. The factor model won’t come along. Worth ten minutes before anyone buys the rank.</div></div></div>
+        <div class="it"><span class="d">04:12</span><div><div class="h">MU reports Wednesday — your note says decide after, so nothing is asked of you yet</div></div></div>
+      </div>
+    </div>
+
+    <div class="figrow" style="margin-top:44px">
+      <div class="fig"><div class="v">$482,960</div><div class="k sc">The book</div></div>
+      <div class="fig"><div class="v up">+0.84%</div><div class="k sc">Today</div></div>
+      <div class="fig"><div class="v att">◆ 1</div><div class="k sc">Policy breach</div></div>
+      <div class="fig"><div class="v">74</div><div class="k sc">Health · weakest: income</div></div>
+    </div>
+    <p style="margin-top:14px;font-size:11px;color:var(--dim)">Sample only: <button id="clearDesk" style="font-family:var(--mono);font-size:10.5px;color:var(--mut);border-bottom:1px solid var(--rule2)">pretend everything is decided</button> to see the empty state the spec describes.</p>
+  </div>
+
+  <div class="desk-empty" id="deskEmpty">
+    <p>Nothing needs you. The book is fine, the watchlist is quiet, and the last open decision was closed Tuesday. Come back when something changes — it will be at the top.</p>
+    <p style="margin-top:22px"><button id="restoreDesk" style="font-family:var(--mono);font-size:10.5px;color:var(--dim);border-bottom:1px solid var(--rule2)">restore the docket (sample)</button></p>
+  </div>
+  </div>
+</main>
+
+<!-- ================= RESEARCH ================= -->
+<main class="pg" id="p-research">
+  <div class="content">
+  <div class="mast"><div class="toprow">
+    <h1>NVDA <span class="co">NVIDIA Corporation · Nasdaq</span></h1>
+    <span class="px mono" id="px" data-m="drag me. the page recomputes at the counterfactual price — the engines are local and deterministic, so this is instant in the real product.">1,187.42</span>
+    <span class="chg up" id="pchg">+14.55&nbsp;&nbsp;+1.24%</span>
+    <div class="sess">VOL 41.2M · MKT CAP 2.92T<br/>SESSION OPEN · <span id="clk2">09:42:07</span> ET</div>
+  </div></div>
+
+  <div class="decide" id="d-research">
+    <span class="tick">DECISION OPEN</span>
+    <p>Your note of 12 Mar: <b>“trim above 1,150 unless data-center re-accelerates.”</b> The price is 1,187. The re-acceleration print is due 28 May.</p>
+    <button class="go">journal ↵</button>
+  </div>
+
+  <p class="stand" data-m="written by the analyst at 06:00 and frozen for the day. in the real product, hovering shows yesterday’s standfirst struck through, right here in the margin.">Priced for two more perfect quarters. Consensus wants $28.4B of data-center revenue on 28 May and a gross margin that starts with a 7; <span class="qual">the multiple assumes both arrive.</span></p>
+
+  <div class="figrow">
+    <div class="fig"><div class="v">+122.4%</div><div class="k sc">Revenue yoy</div></div>
+    <div class="fig"><div class="v">78.4%</div><div class="k sc">Gross margin</div></div>
+    <div class="fig"><div class="v">$39.3B</div><div class="k sc">FCF ttm</div></div>
+    <div class="fig"><div class="v" id="pe" data-m="reflows live during a price probe.">38.2×</div><div class="k sc">P/E fwd</div></div>
+    <div class="fig"><div class="v up">net cash</div><div class="k sc">Balance sheet</div></div>
+  </div>
+
+  <div class="colset">
+    <div>
+      <div class="sc" style="margin-bottom:6px">ONE YEAR · DAILY CLOSE · 200-DAY IN GRAY · YOUR LINE FROM THE JOURNAL</div>
+      <svg viewBox="0 0 700 230" width="100%" style="display:block">
+        <g fill="#5e646d" font-family="Geist Mono" font-size="9">
+          <text x="666" y="30">1,200</text><text x="674" y="118">950</text><text x="674" y="206">700</text>
+          <text x="600" y="52" fill="#e2a336">YOUR LINE · 12 MAR</text>
+        </g>
+        <line x1="0" y1="58" x2="656" y2="58" stroke="#e2a336" stroke-width="1" stroke-dasharray="2 5" opacity=".55"/>
+        <path d="M0,192 C50,186 95,194 145,182 C195,170 240,176 290,162 C340,148 385,156 435,136 C485,116 530,124 580,98 C620,82 650,72 656,62" fill="none" stroke="#5e646d" stroke-width="1.1"/>
+        <path d="M0,204 C40,192 75,206 120,186 C165,166 205,180 255,154 C305,128 345,142 395,116 C445,90 485,104 535,78 C585,52 620,68 656,34" fill="none" stroke="#e9ebee" stroke-width="1.7"/>
+        <circle cx="656" cy="34" r="2.6" fill="#e9ebee"/>
+      </svg>
+      <div style="margin-top:26px">
+        <h3 class="head"><span class="n">02</span>What moved the score this quarter</h3>
+        <div class="wire">
+          <div class="it"><span class="d">+6</span><div><div class="h">FY26 consensus EPS revised up 4.1% — 28 analysts, no cuts</div><div class="s">The single largest contributor. Revision breadth matters more to the score than magnitude.</div></div></div>
+          <div class="it"><span class="d">+3</span><div><div class="h">Gross margin held above 78% for a third quarter</div><div class="s">The score treats the third occurrence as a level, not an event.</div></div></div>
+          <div class="it"><span class="d">−4</span><div><div class="h">First inventory build in four quarters — +9.8% qoq</div><div class="s">Probably deliberate ahead of Blackwell. The accounting screen flags it anyway; deliberate is a hypothesis, not a fact.</div></div></div>
+        </div>
+      </div>
+      <div style="margin-top:30px">
+        <h3 class="head"><span class="n">03</span>The analyst’s note</h3>
+        <div class="analyst">
+          <div class="attline">WRITTEN LOCALLY · QWEN3 · 41S · 9 OF 9 FIGURES TRACED</div>
+          <p>The 81 is a fundamentals-and-revisions score; the momentum inside it is modest, and momentum is precisely the part the factor model disputes. Nothing in the quarter argues with the business. <b>The argument is entirely about the price of admission.</b></p>
+          <div class="sources">10-Q p.12 · Q1 CALL TRANSCRIPT · CONSENSUS TABLE (28) · YOUR JOURNAL, 12 MAR</div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="sc">CONVICTION — THE PAGE’S ONE BIG NUMBER</div>
+      <div class="bignum-cap" style="margin-top:8px">
+        <span class="bignum" id="conv" data-m="conviction outranks the price on this page — the opinion is set larger than the fact. that inversion is the page’s thesis.">81</span>
+        <span id="verdict" class="up" style="font-size:15px;font-weight:600">Buy</span>
+      </div>
+      <div class="probeline" id="probeline"></div>
+      <div class="readings">
+        <div class="reading"><span class="eng">Screen</span><span class="val">86</span><span class="note">4th of 412 in your universe</span></div>
+        <div class="reading dis"><span class="eng">Quant</span><span class="val" id="qval">62</span><span class="note" id="qnote">dissents — entry price, not the business</span></div>
+        <div class="reading"><span class="eng">Fit</span><span class="val">58</span><span class="note">semis are already 11.2% of your book</span></div>
+        <div class="reading"><span class="eng">Quality</span><span class="val">90</span><span class="note">price-blind; not a buy/sell number</span></div>
+      </div>
+      <p style="margin-top:12px;font-size:12.5px;color:var(--dim)">The 24-point gap between Screen and Quant is the widest on anything you hold. <span class="att">The factor model’s call changes near 1,050 — drag the price and watch.</span></p>
+      <div style="margin-top:24px">
+        <h3 class="head"><span class="n">04</span>Your position</h3>
+        <div class="readings">
+          <div class="reading"><span class="eng">Held since</span><span class="val" style="font-weight:400">—</span><span class="note">14 Nov 2023 · 474.20 avg</span></div>
+          <div class="reading"><span class="eng">Weight</span><span class="val">9.4%</span><span class="note">largest position</span></div>
+          <div class="reading"><span class="eng">Unrealized</span><span class="val up">+150%</span><span class="note">$41,830</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+</main>
+
+<!-- ================= SCREEN ================= -->
+<main class="pg" id="p-screen">
+  <div class="content">
+  <div class="mast"><div class="toprow"><h1>Screen <span class="co">US equities</span></h1><div class="sess">FUNDAMENTALS FROM LAST CLOSE, 06:00<br/>PRICES LIVE · SCORES FOLLOW BOTH</div></div></div>
+  <div class="decide"><span class="tick none">NOTHING OPEN</span><p>Screens rarely demand decisions, and this page says so honestly. The one below is <b>quality-at-a-price</b>, saved 4 Feb.</p></div>
+
+  <div class="query">us <span class="op">·</span> market cap &gt; $10b <span class="op">·</span> <span class="bind">roe &gt; <span id="roeval" class="edit" data-m="the binding clause — the one doing most of the eliminating — turns amber automatically, with its cost stated beneath.">15%</span></span><span class="stepper" id="roeUp">▲</span><span class="stepper" id="roeDn">▼</span> <span class="op">·</span> fcf yield &gt; 3% <span class="op">·</span> net debt/ebitda &lt; 2</div>
+  <p class="query-note" id="qnote2"><b>412 of 3,184 pass.</b> The ROE filter does most of the work — alone it removes 2,214 names. If the list feels thin, that is the filter to argue with, not the other three.</p>
+
+  <div class="gt" id="sgrid" style="margin-top:20px">
+    <div class="hd" style="grid-template-columns:30px 200px 90px 60px 70px 60px 60px 60px 60px 1fr">
+      <span>#</span><span>NAME</span><span class="num">PRICE</span><span class="num">TODAY</span><span class="num">SCREEN</span><span class="num">QLTY</span><span class="num">VALUE</span><span class="num">MOM</span><span class="num">QUANT</span><span style="padding-left:20px">WORTH KNOWING</span>
+    </div>
+  </div>
+  <p style="margin-top:14px;font-size:12px;color:var(--dim);max-width:74ch">Change the threshold and rows don’t refresh — they <b style="color:var(--mut)">move</b>. Departing names compress to a rule and fade; arrivals unfold from one. Ten seconds of playing with a clause teaches which names are threshold-sensitive: they’re the ones that keep moving.</p>
+  </div>
+</main>
+
+<!-- ================= PORTFOLIO ================= -->
+<main class="pg" id="p-portfolio">
+  <div class="content">
+  <div class="mast"><div class="toprow"><h1>Portfolio <span class="co">14 positions · 2 accounts</span></h1><div class="sess">MARKED LIVE · COST BASIS FROM YOUR LOTS,<br/>NOT ESTIMATES</div></div></div>
+
+  <div class="decide" id="d-port">
+    <span class="tick" id="portTick">DECISION OPEN</span>
+    <p id="portLine">Semiconductors are <b id="semiPct">24.1%</b> of the book against your <b>15% limit</b> — the limit you set 12 Mar, in writing, for exactly this situation.</p>
+    <button class="go" id="openTrim">size the trims ↵</button>
+  </div>
+  <div class="redraw" id="redraw"></div>
+
+  <div class="trim" id="trim">
+    <div class="sc" style="margin-bottom:8px">THE TRIM SHEET — DRAG A WEIGHT AND WATCH THE POLICY SENTENCE COUNT DOWN</div>
+    <div class="rowline"><span class="sym">NVDA</span><input type="range" id="tNvda" min="40" max="94" value="94"/><span class="num" id="wNvda">9.4% weight</span><span class="num" id="pNvda" style="color:var(--dim)">raises $0</span></div>
+    <div class="rowline"><span class="sym">AVGO</span><input type="range" id="tAvgo" min="40" max="82" value="82"/><span class="num" id="wAvgo">8.2% weight</span><span class="num" id="pAvgo" style="color:var(--dim)">raises $0</span></div>
+    <div class="sum">Sector total <b id="secTot">24.1%</b> against the 15% cap · proceeds <b id="proceeds">$0</b><span id="compliant" style="display:none"> · <b class="up">inside the cap — filed to the journal</b></span></div>
+  </div>
+
+  <div class="figrow">
+    <div class="fig"><div class="v">$482,960</div><div class="k sc">Value</div></div>
+    <div class="fig"><div class="v up">+0.84%</div><div class="k sc">Today · +$4,012</div></div>
+    <div class="fig"><div class="v up">+11.2%</div><div class="k sc">YTD · bench +8.9%</div></div>
+    <div class="fig"><div class="v">+18.7%</div><div class="k sc">XIRR since 2021</div></div>
+    <div class="fig"><div class="v">6.2%</div><div class="k sc">Cash</div></div>
+    <div class="fig"><div class="v">74</div><div class="k sc">Health · weakest: income</div></div>
+  </div>
+
+  <div style="margin-top:30px">
+    <h3 class="head"><span class="n">02</span>Holdings</h3>
+    <div class="gt">
+      <div class="hd" style="grid-template-columns:190px 70px 80px 90px 80px 70px 60px 1fr">
+        <span>NAME</span><span class="num">WEIGHT</span><span class="num">AVG COST</span><span class="num">PRICE</span><span class="num">P&amp;L</span><span class="num">QUALITY</span><span class="num">FIT</span><span style="padding-left:20px">STANDING</span>
+      </div>
+      <div class="row" style="grid-template-columns:190px 70px 80px 90px 80px 70px 60px 1fr">
+        <span><span class="sym">NVDA</span> <span class="co">NVIDIA</span></span><span class="num" id="hNvdaW">9.4%</span><span class="num">474.20</span><span class="num">1,187.42</span><span class="num up">+150.4%</span><span class="num">90</span><span class="num">58</span><span class="note" style="padding-left:20px">Buy 81, quant dissents at 62. Decision open above.</span>
+      </div>
+      <div class="row" style="grid-template-columns:190px 70px 80px 90px 80px 70px 60px 1fr">
+        <span><span class="sym">AVGO</span> <span class="co">Broadcom</span></span><span class="num" id="hAvgoW">8.2%</span><span class="num">912.05</span><span class="num">1,402.10</span><span class="num up">+53.7%</span><span class="num">88</span><span class="num">51</span><span class="note" style="padding-left:20px">Engines agree at Buy. Fit is low because of the sector, not the name.</span>
+      </div>
+      <div class="row" style="grid-template-columns:190px 70px 80px 90px 80px 70px 60px 1fr">
+        <span><span class="sym">V</span> <span class="co">Visa</span></span><span class="num">7.8%</span><span class="num">231.40</span><span class="num">289.34</span><span class="num up">+25.0%</span><span class="num">95</span><span class="num">82</span><span class="note" style="padding-left:20px">The book’s quiet anchor. Nothing to do, which is the point.</span>
+      </div>
+      <div class="row" style="grid-template-columns:190px 70px 80px 90px 80px 70px 60px 1fr">
+        <span><span class="sym">BND</span> <span class="co">Vanguard Total Bond</span></span><span class="num">5.5%</span><span class="num">71.20</span><span class="num">72.85</span><span class="num up">+2.3%</span><span class="num" style="color:var(--dim)" data-m="equity engines don’t score bonds, and won’t invent a 50 to be polite. the absence of a number is data.">no basis</span><span class="num">88</span><span class="note" style="padding-left:20px">Fit 88 — it’s here to be boring, and it is.</span>
+      </div>
+      <div class="row flag" style="grid-template-columns:190px 70px 80px 90px 80px 70px 60px 1fr">
+        <span><span class="sym">SMCI</span> <span class="co">Super Micro</span></span><span class="num">2.1%</span><span class="num">1,042.00</span><span class="num">854.60</span><span class="num dn">−18.0%</span><span class="num">64</span><span class="num">44</span><span class="note att" style="padding-left:20px">No thesis on file. Write one or take the loss — both are respectable.</span>
+      </div>
+    </div>
+  </div>
+  </div>
+</main>
+
+<!-- ================= WATCHLIST ================= -->
+<main class="pg" id="p-watch">
+  <div class="content">
+  <div class="mast"><div class="toprow"><h1>Watchlist <span class="co">7 names</span></h1><div class="sess">ALERTS EVALUATED LOCALLY, EVERY TICK<br/>YOUR NOTES ARE PART OF THE DATA</div></div></div>
+  <div class="decide">
+    <span class="tick">DECISION OPEN</span>
+    <p><b>ASML closed under your line.</b> Your note of 12 May reads “buy under 900” — it closed at 897.40. This is the moment the note was written for.</p>
+    <button class="go">decide now ↵</button>
+  </div>
+
+  <div class="gt" style="margin-top:24px">
+    <div class="hd" style="grid-template-columns:170px 80px 90px 110px 1fr 80px">
+      <span>NAME</span><span class="num">PRICE</span><span class="num">SINCE ADDED</span><span class="num">CONVICTION</span><span style="padding-left:20px">WHAT YOU SAID · WHAT’S TRUE NOW</span><span></span>
+    </div>
+    <div class="row flag" style="grid-template-columns:170px 80px 90px 110px 1fr 80px">
+      <span><span class="sym">ASML</span> <span class="co">ASML Holding</span></span><span class="num">897.40</span><span class="num dn">−7.2%</span><span class="num" style="font-weight:600">76 <span class="up">Buy</span></span>
+      <span class="note" style="padding-left:20px;color:var(--mut)"><b style="color:var(--ink)">12 May — “buy under 900.”</b> It’s under 900. Deciding not to act is fine; not deciding is not.</span><span></span>
+    </div>
+    <div class="row" id="costRow" style="grid-template-columns:170px 80px 90px 110px 1fr 80px">
+      <span><span class="sym">COST</span> <span class="co">Costco</span></span><span class="num">812.30</span><span class="num up">+1.9%</span><span class="num">64 <span style="color:var(--mut)">Hold</span></span>
+      <span class="note" style="padding-left:20px"><span class="wnote" id="costNote">Alert set at 750. It hasn’t traded under 780 since February — alerts this far from the market are wishes.<span class="strike" id="costStrike"></span></span> <span class="retiredtag" id="costTag" style="display:none">RETIRED 27 MAY — PRICE NEVER CAME · FILED TO THE JOURNAL</span></span>
+      <span><button class="rbtn" id="retireBtn" data-m="in the real product this is the r key. retirement isn’t deletion — retired notes stay queryable and feed your calibration.">r · retire</button></span>
+    </div>
+    <div class="row" style="grid-template-columns:170px 80px 90px 110px 1fr 80px">
+      <span><span class="sym">TSM</span> <span class="co">Taiwan Semi</span></span><span class="num">158.72</span><span class="num up">+11.4%</span><span class="num">74 <span class="up">Buy</span></span>
+      <span class="note" style="padding-left:20px">Added 19 Feb without a target. Up 11% since. A watch without a number is a hope — set the price at which you’d act, or admit you wouldn’t.</span><span></span>
+    </div>
+    <div class="row" style="grid-template-columns:170px 80px 90px 110px 1fr 80px">
+      <span><span class="sym">RKLB</span> <span class="co">Rocket Lab</span></span><span class="num">7.94</span><span class="num dn">−22.6%</span><span class="num">38 <span class="dn">Sell</span></span>
+      <span class="note" style="padding-left:20px">8 Jan — “backlog converts by mid-year.” It is late May. The thesis now has a deadline problem, which is more useful to know than the price.</span><span></span>
+    </div>
+  </div>
+  <p style="margin-top:14px;font-size:12px;color:var(--dim)">Rows are ordered by how much they need you, not by ticker.</p>
+  </div>
+</main>
+
+<!-- ================= IC REPORT ================= -->
+<main class="pg" id="p-ic">
+  <div class="content">
+  <div class="mast"><div class="toprow"><h1>IC Report <span class="co">ASML Holding N.V.</span></h1><div class="sess">COMPLETED TUE 06:31 · 11M 42S · LOCAL<br/>NOTHING LEFT THIS MACHINE</div></div></div>
+  <div class="decide"><span class="tick none">VERDICT</span><p><b>Buy, with one reservation carried in full.</b> Eight of nine sections support ownership; Accounting does not concur, and its objection is printed with the verdict rather than beneath it.</p><button class="go">export pdf ↵</button></div>
+
+  <div class="doc">
+    <nav class="toc" id="toc" data-m="entries set from dim to ink as you actually spend reading time in each section. the export cover will say which sections you skipped.">
+      <a><b style="color:var(--mut)">ASML — 27 MAY</b></a>
+      <a data-s="s1">01 BUSINESS</a>
+      <a data-s="s2">03 COMPETITION</a>
+      <a data-s="s3" class="diss">06 ACCOUNTING — DISSENT</a>
+      <a data-s="s4">09 RISK</a>
+      <a data-s="s5">Σ THESIS</a>
+    </nav>
+    <div class="body">
+      <h4 style="border-top:0;padding-top:0;margin-top:0" id="s1"><span class="n">01</span>Business <span class="verd">SUPPORTS · CONF 0.86</span></h4>
+      <p>The EUV monopoly is intact and the business under it has quietly changed shape: installed-base service is now 24% of revenue and grows with the fleet, not the cycle. Each system shipped is a 20-year service annuity — <b>the cyclical company is becoming less cyclical with every delivery,</b> and the market still prices the old shape.</p>
+      <h4 id="s2"><span class="n">03</span>Competition <span class="verd">SUPPORTS · CONF 0.91</span></h4>
+      <p>No credible EUV second source exists before 2030. Nikon exited; the Chinese domestic effort remains at DUV. The moat is not patents — it is a 5,000-supplier optical chain that took three decades to assemble and cannot be bought, only rebuilt.</p>
+      <h4 id="s3"><span class="n">06</span>Accounting <span class="verd d">DISSENTS · CONF 0.77</span></h4>
+      <p>Cash conversion has trailed reported earnings for four consecutive quarters, and receivables are growing faster than revenue.</p>
+      <div class="inset"><p>The likeliest explanation is benign — High-NA systems invoiced ahead of acceptance — but benign is a hypothesis, and four quarters is a pattern. <b>This section will not concur until a filing confirms the timing story.</b></p></div>
+      <h4 id="s4"><span class="n">09</span>Risk <span class="verd">FLAGS · CONF 0.72</span></h4>
+      <p>China is 26% of revenue and the one exposure no spreadsheet can size: a policy variable, not a market one. The report treats it as a fat tail and notes that position size, not the thesis, is the correct instrument for managing it.</p>
+      <h4 id="s5"><span class="n">Σ</span>Thesis</h4>
+      <p>ASML is the rare monopoly whose customers fund its roadmap. The five-year case requires only that leading-edge nodes ship at all, from anyone, in any country. Every plausible owner of that capacity is already a customer. <b>The bet is on the toll road, not the traffic.</b></p>
+      <div class="readcount" id="readcount">YOU’VE READ <b>0 OF 5</b> SECTIONS SHOWN IN THIS SAMPLE. THE EXPORTED PDF’S COVER CARRIES THE SAME LINE.</div>
+    </div>
+  </div>
+  </div>
+</main>
+
+<!-- ================= RUN ================= -->
+<main class="pg" id="p-run">
+  <div class="content">
+  <div class="mast"><div class="toprow"><h1 id="runTitle">Run <span class="co">IC report · MU Micron Technology</span></h1><div class="sess">STARTED 09:31:04 · ELAPSED <span id="elapsed">00:00</span><br/>TIME COMPRESSED ~40× FOR THE SAMPLE</div></div></div>
+  <div class="decide"><span class="tick none" id="runTick">IN PROGRESS</span><p id="runLine">Nine sections run in parallel and file independently — <b>you can read the finished ones now.</b> No section sees another’s conclusion before writing its own.</p></div>
+
+  <div class="runlog" id="runlog">
+    <div class="step"><span class="ts">00:00</span><p class="what"><b>Filings pulled.</b> 10-K, three 10-Qs, two 8-Ks, Q2 transcript. 412 pages; the agents read all of it so that you can read 31.</p></div>
+    <div class="step"><span class="ts">00:41</span><p class="what"><b>Nine sections dispatched</b> — each cites its own sources and files alone.</p></div>
+    <div class="step"><span class="ts">02:58</span><p class="what">Business filed. <b>Supports, 0.82.</b> HBM is now 30% of DRAM revenue, from 12% a year ago.</p></div>
+    <div class="step"><span class="ts">05:52</span><p class="what">Accounting filed. <b>Concurs, 0.81</b> — the inventory writedown risk has left the balance sheet. First clean concurrence in three MU reports.</p></div>
+    <div class="step live"><span class="ts">07:12</span><p class="what"><b>Valuation is writing.</b> It reviews your DCF case of 30 Apr rather than inventing its own.</p></div>
+  </div>
+
+  <div class="stream">
+    <div class="attline" style="font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--dim);margin-bottom:10px">VALUATION · DRAFT · STREAMING AS IT WRITES — WATCH FOR THE SELF-CORRECTION</div>
+    <p id="stream"></p>
+  </div>
+  <button class="replay" id="replay">replay the run ↵</button>
+  </div>
+</main>
+
+<!-- ================= LIMITS ================= -->
+<main class="pg" id="p-limits">
+  <div class="content limits">
+  <div class="mast"><div class="toprow"><h1>What a sample can’t show <span class="co">and what to imagine instead</span></h1></div></div>
+  <p style="margin-top:18px">Everything you can click here is real interaction on canned data. These are the parts of the spec that only exist in the full build — listed so you can judge them on the description rather than assume they were forgotten.</p>
+  <div style="margin-top:16px">
+    <div class="r"><p><b style="color:var(--ink)">The command line doesn’t parse.</b> In the product it takes tickers, filter sentences, and commands like <span class="mono">why NVDA 81</span> or <span class="mono">wl ASML buy under 900</span>, answering in document flow below the line. Here it’s display only.</p></div>
+    <div class="r"><p><b style="color:var(--ink)">The margin only answers for marked elements.</b> Hover the price, the conviction number, the TOC, “no basis,” and a few others (they brighten). In the product, every figure on every page answers — source, age, method — after a 300ms hold.</p></div>
+    <div class="r"><p><b style="color:var(--ink)">Numbers settle from live data.</b> The tick-through-intermediates arrival happens here only where scripted (price probe, trim sheet, run). In the product it fires on every real market update, which is what makes a settling number read as news.</p></div>
+    <div class="r"><p><b style="color:var(--ink)">Compare’s physical columns aren’t here.</b> Dragging a ticker column to reorder, tearing it away to remove, typing into the empty header stub — pointer choreography worth building once, not twice. Judge it from the spec’s description.</p></div>
+    <div class="r"><p><b style="color:var(--ink)">Reading detection is approximated.</b> The IC report’s TOC fills after ~1.5 seconds of a section being in view. The product’s threshold is reading-speed honest — a fast scroll past a section does not count as reading it.</p></div>
+    <div class="r"><p><b style="color:var(--ink)">The run is compressed ~40×.</b> Real runs take minutes and survive a closed laptop lid, resuming with <span class="mono">PAUSED AT 07:12 — resumed</span> in the log. The self-correction you’ll see mid-stream is scripted here; in the product it happens when the grounding pass catches the model, roughly once per run.</p></div>
+    <div class="r"><p><b style="color:var(--ink)">No sounds.</b> The pen-cap tick on recording a decision and the low end-of-run tone are described in the spec; both ship off by default anyway.</p></div>
+    <div class="r"><p><b style="color:var(--ink)">Scale isn’t demonstrated.</b> The screener re-rank must stay smooth at 400+ rows; this sample proves the grammar at 9. Performance is an engineering promise, not a design one.</p></div>
+    <div class="r"><p><b style="color:var(--ink)">Mobile gestures.</b> Swipe-to-defer with the date stamping on is spec-only; a static mobile frame is in the earlier <span class="mono">/terminal/</span> sample.</p></div>
+    <div class="r"><p><b style="color:var(--ink)">Nothing persists.</b> Refresh resets the docket, the trims, and the retired note. The product’s whole point is that it never forgets; the sample’s whole point is that it always does.</p></div>
+  </div>
+  </div>
+</main>
+
+<!-- keyboard card -->
+<div class="kbd-ov" id="kbd">
+  <span class="close">ANY KEY DISMISSES</span>
+  <div class="card">
+    <div>
+      <h5>THE LINE</h5>
+      <div class="k"><span>any typing</span><span>focuses the command line</span></div>
+      <div class="k"><span>esc</span><span>returns to the line, always</span></div>
+      <div class="k"><span>.</span><span>repeat last command</span></div>
+      <div class="k"><span>g r · g p · g w</span><span>go: research, portfolio, watchlist</span></div>
+    </div>
+    <div>
+      <h5>THE PAGES</h5>
+      <div class="k"><span>j / k</span><span>move down / up rows</span></div>
+      <div class="k"><span>enter</span><span>open</span></div>
+      <div class="k"><span>d</span><span>decide the focused item</span></div>
+      <div class="k"><span>w</span><span>watch, note field first</span></div>
+      <div class="k"><span>r</span><span>retire a note (watchlist)</span></div>
+      <div class="k"><span>t</span><span>trim sheet (portfolio)</span></div>
+      <div class="k"><span>p</span><span>probe the price (research)</span></div>
+      <div class="k"><span>?</span><span>this card</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ---------- helpers ---------- */
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const fmt=n=>n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+function settle(el,to,decimals=0,prefix='',suffix=''){ /* tick through ≤3 intermediates over 180ms */
+  const from=parseFloat((el.dataset.v??el.textContent.replace(/[^0-9.-]/g,''))||0);
+  el.dataset.v=to; const steps=[from+(to-from)*.4,from+(to-from)*.75,to]; let i=0;
+  clearInterval(el._t); el._t=setInterval(()=>{ const v=steps[i++];
+    el.textContent=prefix+(decimals?v.toFixed(decimals):Math.round(v).toLocaleString())+suffix;
+    if(i>=steps.length)clearInterval(el._t); },60);
+}
+/* clock */
+setInterval(()=>{const d=new Date(),p=n=>String(n).padStart(2,'0'),t=p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+  $('#clock').textContent=t; const c2=$('#clk2'); if(c2)c2.textContent=t;},1000);
+
+/* ---------- nav ---------- */
+const lines={desk:'<b>desk</b><span class="cur"></span>&nbsp;&nbsp;— the docket. type a ticker to leave it.',
+research:'<b>NVDA</b><span class="cur"></span>&nbsp;&nbsp;— “why NVDA 81” prints the decomposition right here. drag the price above.',
+screen:'<b>screen quality-at-a-price</b><span class="cur"></span>&nbsp;&nbsp;— edit any clause · rows move, they don’t refresh',
+portfolio:'<b>port trims</b><span class="cur"></span>&nbsp;&nbsp;— the sizing sheet is one word away',
+watch:'<b>wl ASML buy under 900</b><span class="cur"></span>&nbsp;&nbsp;— a name, its price, its reason, one line',
+ic:'<b>ic ASML</b><span class="cur"></span>&nbsp;&nbsp;— “ic ASML §6” reads a single section back',
+run:'<b>run ic MU</b><span class="cur"></span>&nbsp;&nbsp;— close the lid, nothing is lost',
+limits:'<b>—</b>&nbsp;&nbsp;honesty section'};
+function goto(p){$$('.fn button').forEach(b=>b.classList.toggle('on',b.dataset.p===p));
+  $$('.pg').forEach(x=>x.classList.toggle('on',x.id==='p-'+p));
+  $('#cline').innerHTML=lines[p]||lines.desk; window.scrollTo({top:0});
+  if(p==='run')startRun();}
+$$('.fn button').forEach(b=>b.addEventListener('click',()=>goto(b.dataset.p)));
+$$('[data-goto]').forEach(b=>b.addEventListener('click',()=>goto(b.dataset.goto)));
+
+/* ---------- margin answers ---------- */
+let mnote=null,mt=null;
+$$('.pg').forEach(pg=>{const n=document.createElement('div');n.className='marginnote';pg.appendChild(n);});
+$$('[data-m]').forEach(el=>{
+  el.addEventListener('mouseenter',()=>{mt=setTimeout(()=>{
+    const pg=el.closest('.pg'),n=pg.querySelector('.marginnote');
+    const r=el.getBoundingClientRect(),pr=pg.getBoundingClientRect();
+    n.style.top=(r.top-pr.top)+'px'; n.innerHTML=el.dataset.m; n.classList.add('onn'); mnote=n;
+  },300);});
+  el.addEventListener('mouseleave',()=>{clearTimeout(mt); if(mnote)setTimeout(()=>mnote.classList.remove('onn'),600);});
+});
+
+/* ---------- decision-line docking ---------- */
+window.addEventListener('scroll',()=>{
+  const pg=$('.pg.on'),d=pg&&pg.querySelector('.decide'),dock=$('#dock');
+  if(!d){dock.classList.remove('onn');return;}
+  const past=d.getBoundingClientRect().bottom<68;
+  dock.classList.toggle('onn',past);
+  const open=d.querySelector('.tick')&&!d.querySelector('.tick').classList.contains('none');
+  dock.textContent=open?'◆ 1 OPEN':'◇ CLEAR'; dock.classList.toggle('clear',!open);
+},{passive:true});
+$('#dock').addEventListener('click',()=>window.scrollTo({top:0,behavior:'smooth'}));
+
+/* ---------- desk: empty state ---------- */
+$('#clearDesk').addEventListener('click',()=>{
+  $$('#docket .attn .it').forEach((it,i)=>setTimeout(()=>it.classList.add('gone'),i*120));
+  setTimeout(()=>{$('#docket').style.display='none';$('#deskEmpty').classList.add('onn');},700);
+});
+$('#restoreDesk').addEventListener('click',()=>{
+  $('#deskEmpty').classList.remove('onn');$('#docket').style.display='';
+  $$('#docket .attn .it').forEach(it=>it.classList.remove('gone'));
+});
+
+/* ---------- research: price probe ---------- */
+const px=$('#px'),conv=$('#conv'),verd=$('#verdict'),pe=$('#pe'),pl=$('#probeline'),qv=$('#qval'),qn=$('#qnote');
+const BASE=1187.42; let probing=false,startX=0,price=BASE;
+function applyPrice(p){
+  price=Math.max(700,Math.min(1400,p));
+  px.textContent=fmt(price);
+  const c=Math.max(20,Math.min(97,Math.round(81+(BASE-price)*0.045)));
+  conv.textContent=c;
+  verd.textContent=c>=60?'Buy':(c>=42?'Hold':'Sell');
+  verd.className=c>=60?'up':(c>=42?'':'dn'); verd.style.color=c>=60?'':(c>=42?'var(--mut)':'');
+  pe.textContent=(38.2*price/BASE).toFixed(1)+'×';
+  const q=Math.max(20,Math.min(90,Math.round(62+(BASE-price)*0.06)));
+  qv.textContent=q;
+  if(price<=1050){qn.textContent='withdraws its objection at this price';qn.style.color='var(--up)';}
+  else{qn.textContent='dissents — entry price, not the business';qn.style.color='';}
+  pl.textContent=probing?`AT ${Math.round(price).toLocaleString()}: CONVICTION ${c}${price<=1050?' · QUANT WITHDRAWS ITS OBJECTION':''}`:'';
+}
+px.addEventListener('pointerdown',e=>{probing=true;startX=e.clientX;px.classList.add('probing');px.setPointerCapture(e.pointerId);});
+px.addEventListener('pointermove',e=>{if(probing)applyPrice(BASE+(e.clientX-startX)*0.8);});
+px.addEventListener('pointerup',()=>{probing=false;px.classList.remove('probing');
+  /* release: settle home in 240ms */
+  const steps=[price+(BASE-price)*.5,BASE];let i=0;
+  const t=setInterval(()=>{applyPrice(steps[i++]);if(i>=steps.length){clearInterval(t);pl.textContent='';}},120);
+});
+
+/* ---------- screener re-rank (FLIP) ---------- */
+const NAMES=[
+ {r:1,s:'AVGO',c:'Broadcom',px:'1,402.10',d:'+0.8',du:1,sc:91,q:88,v:61,m:85,qq:84,roe:38,note:'Every engine agrees. That is rarer than it sounds.'},
+ {r:2,s:'LLY',c:'Eli Lilly',px:'881.55',d:'−0.3',du:0,sc:89,q:92,v:38,m:71,qq:76,roe:52,note:'Value 38 is the whole debate in one cell.'},
+ {r:3,s:'PLTR',c:'Palantir',px:'24.86',d:'+2.1',du:1,sc:84,q:74,v:22,m:93,qq:41,roe:19,flag:1,note:'Screen 84, Quant 41 — the widest gap in the universe.'},
+ {r:4,s:'NVDA',c:'NVIDIA',px:'1,187.42',d:'+1.2',du:1,sc:86,q:90,v:31,m:88,qq:62,roe:92,note:'You hold it. The open question is on Research.'},
+ {r:5,s:'V',c:'Visa',px:'289.34',d:'+0.2',du:1,sc:82,q:95,v:52,m:58,qq:74,roe:50,note:'Quality 95 — the highest in the universe.'},
+ {r:6,s:'ASML',c:'ASML Holding',px:'897.40',d:'−1.1',du:0,sc:79,q:89,v:44,m:49,qq:71,roe:49,note:'Crossed under your 900 line today.'},
+ {r:7,s:'TSM',c:'Taiwan Semi',px:'158.72',d:'−0.4',du:0,sc:74,q:83,v:58,m:52,qq:69,roe:28,note:''},
+ {r:8,s:'ADBE',c:'Adobe',px:'474.90',d:'+0.1',du:1,sc:66,q:84,v:57,m:31,qq:57,roe:36,note:'Growth falling for three quarters. The score is patient; it is not asleep.'},
+ {r:9,s:'MRK',c:'Merck',px:'128.10',d:'+0.4',du:1,sc:64,q:78,v:66,m:40,qq:60,roe:14,note:'Enters only when the ROE clause relaxes — a threshold name.'},
+];
+let ROE=15;
+const grid=$('#sgrid');const COLS='30px 200px 90px 60px 70px 60px 60px 60px 60px 1fr';
+function rowHTML(n,rank){return `<span class="num" style="color:var(--dim)">${rank}</span><span><span class="sym">${n.s}</span> <span class="co">${n.c}</span></span><span class="num">${n.px}</span><span class="num ${n.du?'up':'dn'}">${n.d}</span><span class="num" style="font-weight:600">${n.sc}</span><span class="num">${n.q}</span><span class="num">${n.v}</span><span class="num">${n.m}</span><span class="num ${n.qq<50?'att':''}" ${n.qq<50?'style="font-weight:600"':''}>${n.qq}</span><span class="note" style="padding-left:20px">${n.note}</span>`;}
+function renderScreen(first){
+  const pass=NAMES.filter(n=>n.roe>ROE).sort((a,b)=>b.sc-a.sc);
+  const old={}; grid.querySelectorAll('.row').forEach(r=>old[r.dataset.s]=r.getBoundingClientRect().top);
+  grid.querySelectorAll('.row').forEach(r=>{ if(!pass.find(n=>n.s===r.dataset.s)){ /* leave: compress to a rule */
+      r.classList.add('leaving'); r.style.transition='all .24s var(--ease)'; r.style.height=r.offsetHeight+'px';
+      requestAnimationFrame(()=>{r.style.height='1px';r.style.paddingTop='0';r.style.paddingBottom='0';r.style.opacity='0';});
+      setTimeout(()=>r.remove(),300);} });
+  pass.forEach((n,i)=>{ let r=grid.querySelector(`.row[data-s="${n.s}"]`);
+    if(!r){ r=document.createElement('div'); r.className='row'+(n.flag?' flag':''); r.dataset.s=n.s;
+      r.style.gridTemplateColumns=COLS; r.innerHTML=rowHTML(n,i+1);
+      if(!first){r.style.height='1px';r.style.opacity='0';r.style.overflow='hidden';}
+      grid.appendChild(r);
+      if(!first)requestAnimationFrame(()=>{r.style.transition='all .24s var(--ease)';r.style.height='35px';r.style.opacity='1';});
+    } else { r.querySelector('.num').textContent=i+1; }
+    grid.appendChild(r); /* reorder */
+  });
+  if(!first){ /* FLIP slide */
+    grid.querySelectorAll('.row').forEach((r,i)=>{ const o=old[r.dataset.s]; if(o==null)return;
+      const d=o-r.getBoundingClientRect().top; if(!d)return;
+      r.style.transition='none'; r.style.transform=`translateY(${d}px)`;
+      requestAnimationFrame(()=>{r.style.transition=`transform .24s var(--ease) ${i*12}ms`;r.style.transform='';});});
+  }
+  const counts={18:{n:'214 of 3,184',x:'At 18% the clause removes 2,412 alone — six of the nine sample names go with it.'},
+                15:{n:'412 of 3,184',x:'The ROE filter does most of the work — alone it removes 2,214 names. If the list feels thin, that is the filter to argue with, not the other three.'},
+                12:{n:'483 of 3,184',x:'At 12%, 71 names return that 15% was holding out — MRK arrives in the sample below. Watch which rows moved: those are the threshold-sensitive ones.'}};
+  const c=counts[ROE]||counts[15];
+  $('#qnote2').innerHTML=`<b>${c.n} pass.</b> ${c.x}`;
+  $('#roeval').textContent=ROE+'%';
+}
+renderScreen(true);
+$('#roeUp').addEventListener('click',()=>{ROE=ROE===12?15:18;renderScreen();});
+$('#roeDn').addEventListener('click',()=>{ROE=ROE===18?15:12;renderScreen();});
+
+/* ---------- portfolio trim sheet ---------- */
+$('#openTrim').addEventListener('click',()=>{$('#trim').classList.toggle('onn');});
+const BOOK=482960;
+function trimUpdate(){
+  const nv=$('#tNvda').value/10, av=$('#tAvgo').value/10;
+  const others=24.1-9.4-8.2; const tot=others+nv+av;
+  $('#wNvda').textContent=nv.toFixed(1)+'% weight'; $('#wAvgo').textContent=av.toFixed(1)+'% weight';
+  const pn=Math.round((9.4-nv)/100*BOOK), pa=Math.round((8.2-av)/100*BOOK);
+  $('#pNvda').textContent='raises $'+pn.toLocaleString(); $('#pAvgo').textContent='raises $'+pa.toLocaleString();
+  settle($('#proceeds'),pn+pa,0,'$');
+  $('#secTot').textContent=tot.toFixed(1)+'%'; $('#semiPct').textContent=tot.toFixed(1)+'%';
+  $('#hNvdaW').textContent=nv.toFixed(1)+'%'; $('#hAvgoW').textContent=av.toFixed(1)+'%';
+  const ok=tot<=15.05;
+  $('#portTick').textContent=ok?'RESOLVED':'DECISION OPEN';
+  $('#portTick').classList.toggle('none',ok);
+  $('#compliant').style.display=ok?'inline':'none';
+  $('#redraw').style.width=ok?'100%':'0'; /* the rule redraws itself when you come inside the cap */
+}
+$('#tNvda').addEventListener('input',trimUpdate); $('#tAvgo').addEventListener('input',trimUpdate);
+
+/* ---------- watchlist retire ---------- */
+$('#retireBtn').addEventListener('click',()=>{
+  $('#costStrike').style.width='100%';
+  setTimeout(()=>{$('#costRow').classList.add('retired');$('#costTag').style.display='inline';$('#retireBtn').style.display='none';},450);
+});
+
+/* ---------- ic report: toc fills as you read ---------- */
+const readSet=new Set(); const timers={};
+const io=new IntersectionObserver(es=>es.forEach(e=>{
+  const id=e.target.id;
+  if(e.isIntersecting){ timers[id]=setTimeout(()=>{ readSet.add(id);
+    const a=$(`#toc a[data-s="${id}"]`); if(a)a.classList.add('read');
+    $('#readcount').innerHTML=`YOU’VE READ <b>${readSet.size} OF 5</b> SECTIONS SHOWN IN THIS SAMPLE. THE EXPORTED PDF’S COVER CARRIES THE SAME LINE.`;
+  },1500);} else clearTimeout(timers[id]);
+}),{threshold:.6});
+['s1','s2','s3','s4','s5'].forEach(id=>io.observe($('#'+id)));
+
+/* ---------- run ---------- */
+let runStarted=false;
+const STREAM=[
+ {t:'Your April case assumed HBM pricing holds through FY26; the Q2 transcript supports that for four more quarters but not eight. '},
+ {t:'Moving the fade forward one year lowers the midpoint from '},
+ {t:'$152',corr:'$148'}, /* the self-correction: grounding pass catches the model */
+ {t:' to $131, which still clears today’s price by a margin the position size can respect.'}
+];
+function startRun(){ if(runStarted)return; runStarted=true; runRun(); }
+function runRun(){
+  const steps=$$('#runlog .step'); steps.forEach(s=>s.classList.remove('onn'));
+  $('#stream').innerHTML=''; $('#runTick').textContent='IN PROGRESS'; let el=0;
+  $('#runTitle').innerHTML='Run <span class="co">IC report · MU Micron Technology</span>';
+  const clock=setInterval(()=>{el++;$('#elapsed').textContent=String(Math.floor(el/60)).padStart(2,'0')+':'+String(el%60).padStart(2,'0');},110);
+  steps.forEach((s,i)=>setTimeout(()=>s.classList.add('onn'),600+i*1400));
+  setTimeout(()=>{ // stream with self-correction
+    const out=$('#stream'); let seg=0;
+    function next(){ if(seg>=STREAM.length){ out.querySelector('.cursor')?.remove();
+        setTimeout(()=>{clearInterval(clock);$('#runTick').textContent='COMPLETE';$('#runTick').classList.add('none');
+          $('#runTitle').style.transition='opacity .42s var(--ease)';$('#runTitle').style.opacity='0';
+          setTimeout(()=>{$('#runTitle').innerHTML='MU — Investment Committee Report <span class="co">31 pages · export ready</span>';$('#runTitle').style.opacity='1';},420);
+        },900); return;}
+      const s=STREAM[seg]; const span=document.createElement('span'); out.appendChild(span);
+      const cur=document.createElement('span'); cur.className='cursor'; out.appendChild(cur);
+      let i=0; const t=setInterval(()=>{ span.textContent=s.t.slice(0,++i); out.appendChild(cur);
+        if(i>=s.t.length){ clearInterval(t);
+          if(s.corr){ setTimeout(()=>{ span.innerHTML=`<s>${s.t}</s> <span class="corr">${s.corr}</span>`;
+            const pg=$('#p-run'),n=pg.querySelector('.marginnote'); const r=span.getBoundingClientRect(),pr=pg.getBoundingClientRect();
+            n.style.top=(r.top-pr.top)+'px'; n.innerHTML='corrected against 10-Q p.12 — the grounding pass catches the model, in public'; n.classList.add('onn');
+            setTimeout(()=>n.classList.remove('onn'),3800); seg++; next(); },700); }
+          else{ seg++; next(); } } },18);
+    } next();
+  },600+steps.length*1400);
+}
+$('#replay').addEventListener('click',()=>{runStarted=false;startRun();});
+
+/* ---------- keyboard ---------- */
+document.addEventListener('keydown',e=>{
+  const kb=$('#kbd');
+  if(kb.classList.contains('onn')){kb.classList.remove('onn');return;}
+  if(e.key==='?'){kb.classList.add('onn');return;}
+  if(e.key==='g'){document.addEventListener('keydown',function once(e2){
+    const m={r:'research',p:'portfolio',w:'watch',d:'desk',s:'screen',i:'ic'}; if(m[e2.key])goto(m[e2.key]);
+    document.removeEventListener('keydown',once);},{once:true}); return;}
+  const pg=$('.pg.on');
+  if(e.key==='j'||e.key==='k'){ const rows=[...pg.querySelectorAll('.gt .row')]; if(!rows.length)return;
+    let i=rows.findIndex(r=>r.classList.contains('focus'));
+    rows.forEach(r=>r.classList.remove('focus'));
+    i=e.key==='j'?Math.min(i+1,rows.length-1):Math.max(i-1,0); if(i<0)i=0;
+    rows[i].classList.add('focus'); rows[i].scrollIntoView({block:'nearest'});}
+  if(e.key==='r'&&pg.id==='p-watch'){$('#retireBtn').click();}
+  if(e.key==='t'&&pg.id==='p-portfolio'){$('#trim').classList.add('onn');window.scrollTo({top:0,behavior:'smooth'});}
+});
+</script>
+</body>
+</html>

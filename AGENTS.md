@@ -4,6 +4,12 @@ Quick reference for AI agents (Claude Code, standalone agents, etc.) working on 
 
 Read this before reading CLAUDE.md, ARCHITECTURE.md, or PROJECT_ROADMAP.md.
 
+> **ACTIVE REDESIGN IN PROGRESS.** A phased visual/IA transformation is underway.
+> Before any UI work, read `docs/redesign/PLAN.md` (phases, invariants, status log)
+> and `docs/brand-preview/terminal/SPEC.md` (the binding design spec). One phase per
+> session; update PLAN.md §6 before finishing. Deviations from SPEC.md require an
+> entry in PLAN.md §7.
+
 ---
 
 ## Mandatory Rules

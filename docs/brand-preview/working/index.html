@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>UAA — The Working · Working Paper No. 2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Instrument+Serif:ital@0;1&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #0b0c0f;          /* the sheet */
+    --sheet: #121317;          /* raised sheet */
+    --rule: #24262c;           /* printed rule */
+    --rule-strong: #383b44;
+    --ink-1: #f0f1f3;          /* fact        17.4:1 */
+    --ink-2: #b6bcc6;          /* derived      9.2:1 */
+    --ink-3: #8b93a0;          /* conjecture   5.5:1 */
+    --ink-0: #5b626e;          /* dormant — never for meaning */
+    --pencil: #8fc7e8;         /* non-photo blue, on carbon */
+    --pencil-dim: rgba(143,199,232,0.55);
+    --pencil-line: rgba(143,199,232,0.28);
+    --up: #4ade80; --down: #f87171;
+    --sans: "Instrument Sans", system-ui, sans-serif;
+    --serif: "Instrument Serif", Georgia, serif;
+    --mono: "Geist Mono", ui-monospace, monospace;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body {
+    background:var(--paper); color:var(--ink-2); font-family:var(--sans);
+    font-size:15.5px; line-height:1.6; -webkit-font-smoothing:antialiased;
+  }
+
+  /* ---------- page frame: text column + pencil margin ---------- */
+  .frame { max-width:1200px; margin:0 auto; padding:0 40px 140px; }
+  .row { display:grid; grid-template-columns:minmax(0,1fr) 264px; gap:56px; }
+  .row > .main { min-width:0; }
+  .marginalia {
+    font-family:var(--mono); font-size:11px; line-height:1.75; color:var(--pencil);
+    border-left:1px solid var(--pencil-line); padding-left:16px; align-self:start;
+    position:sticky; top:32px;
+  }
+  .marginalia::before { content:"‸"; display:block; font-size:13px; margin-bottom:6px; color:var(--pencil); }
+  .marginalia b { color:var(--pencil); font-weight:600; }
+  .marginalia .dim { color:var(--pencil-dim); }
+
+  section { padding-top:104px; }
+  .kicker { font-family:var(--mono); font-size:11px; letter-spacing:0.02em; color:var(--ink-3); }
+  .kicker .no { color:var(--pencil); }
+  h2 { font-family:var(--sans); font-weight:600; font-size:30px; letter-spacing:-0.015em; color:var(--ink-1); margin-top:10px; line-height:1.15; }
+  h2 .serif { font-family:var(--serif); font-style:italic; font-weight:400; letter-spacing:0; }
+  .lede { margin-top:18px; font-size:16.5px; color:var(--ink-2); max-width:62ch; }
+  .lede strong { color:var(--ink-1); font-weight:600; }
+  p + p { margin-top:14px; }
+  .rule-h { border:0; border-top:1px solid var(--rule); margin-top:22px; }
+
+  .fact { color:var(--ink-1); }
+  .derived { color:var(--ink-2); }
+  .conjecture { color:var(--ink-3); }
+  .mono { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+  .pencil { color:var(--pencil); font-family:var(--mono); }
+
+  /* ---------- sheets (no rounded corners; a top edge, like paper) ---------- */
+  .sheet {
+    background:var(--sheet); border:1px solid var(--rule);
+    border-top:1px solid var(--rule-strong);
+    box-shadow: 0 1px 0 rgba(255,255,255,0.045) inset, 0 14px 34px -24px rgba(0,0,0,0.9);
+  }
+
+  /* ---------- masthead ---------- */
+  .masthead { padding-top:44px; }
+  .mast-rule { display:flex; justify-content:space-between; align-items:baseline; padding-bottom:14px; border-bottom:1px solid var(--rule-strong); }
+  .wordmark { font-family:var(--mono); font-weight:600; font-size:13.5px; color:var(--ink-1); }
+  .wordmark .mk { color:var(--pencil); }
+  .wordmark .sl { color:var(--ink-0); }
+  .mast-no { font-family:var(--mono); font-size:11px; color:var(--ink-3); }
+  .mast-no b { color:var(--pencil); font-weight:500; }
+
+  .hero { padding:110px 0 30px; }
+  .hero h1 { font-family:var(--sans); font-weight:700; letter-spacing:-0.025em; color:var(--ink-1); font-size:clamp(44px,6.4vw,76px); line-height:1.02; }
+  .hero h1 .pencil-word { font-family:var(--serif); font-style:italic; font-weight:400; letter-spacing:-0.01em; color:var(--pencil); }
+  .hero .sub { margin-top:26px; font-size:17.5px; max-width:56ch; color:var(--ink-2); }
+  .hero .sub b { color:var(--ink-1); font-weight:600; }
+
+  /* ---------- ink specimen ---------- */
+  .ink-table { margin-top:34px; }
+  .ink-row { display:grid; grid-template-columns:150px 1fr 220px; align-items:baseline; padding:18px 22px; border-bottom:1px solid var(--rule); gap:20px; }
+  .ink-row:last-child { border-bottom:0; }
+  .ink-row .tag { font-family:var(--mono); font-size:10.5px; letter-spacing:0.06em; color:var(--ink-3); }
+  .ink-row .num { font-family:var(--mono); font-size:30px; font-weight:600; font-variant-numeric:tabular-nums; letter-spacing:-0.02em; }
+  .ink-row .law { font-size:12.5px; color:var(--ink-3); }
+  .ink-row.p-row .num { font-size:15px; font-weight:500; }
+
+  /* ---------- carets, daggers, marks ---------- */
+  .caret-btn {
+    display:inline-flex; align-items:center; gap:9px;
+    font-family:var(--sans); font-size:13px; font-weight:600;
+    background:var(--ink-1); color:var(--paper);
+    padding:9px 16px; border:0; cursor:pointer;
+  }
+  .caret-btn svg { display:block; }
+  .caret-btn.quiet { background:transparent; color:var(--ink-2); border:1px solid var(--rule-strong); font-weight:500; }
+  .caret-btn.quiet svg path { stroke:var(--pencil); }
+  .caret-btn.bare { background:transparent; color:var(--ink-3); border:0; }
+
+  sup.dg { font-family:var(--serif); color:var(--pencil); font-size:0.8em; cursor:default; }
+
+  .marks-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:1px; background:var(--rule); border:1px solid var(--rule); margin-top:34px; }
+  .mark-cell { background:var(--sheet); padding:28px 26px; }
+  .mark-cell .glyph { height:56px; display:flex; align-items:center; font-size:34px; color:var(--ink-1); font-family:var(--serif); }
+  .mark-cell h4 { font-size:13.5px; font-weight:600; color:var(--ink-1); margin-top:6px; }
+  .mark-cell p { font-size:12.5px; color:var(--ink-3); margin-top:6px; line-height:1.6; }
+  .hatch-demo { width:88px; height:34px; border:1px solid var(--pencil-line);
+    background:repeating-linear-gradient(45deg, transparent 0 5px, var(--pencil-line) 5px 6px); }
+
+  /* ---------- type ---------- */
+  .type-stage { padding:44px 40px; margin-top:34px; }
+  .verdict-word { font-family:var(--serif); font-style:italic; font-size:clamp(60px,9vw,104px); color:var(--ink-1); line-height:1; letter-spacing:-0.01em; }
+  .verdict-sub { font-family:var(--mono); font-size:12px; color:var(--ink-3); margin-top:18px; }
+  .verdict-sub .c { color:var(--pencil); }
+  .type-roles { display:grid; grid-template-columns:repeat(3,1fr); gap:1px; background:var(--rule); border:1px solid var(--rule); margin-top:22px; }
+  .type-role { background:var(--sheet); padding:22px; }
+  .type-role .demo { min-height:64px; color:var(--ink-1); }
+  .type-role .fname { font-family:var(--mono); font-size:10.5px; color:var(--pencil); margin-top:14px; }
+  .type-role .fuse { font-size:12px; color:var(--ink-3); margin-top:4px; line-height:1.55; }
+
+  /* ---------- chart ---------- */
+  .chart-sheet { padding:30px; margin-top:34px; }
+  .chart-cap { display:flex; gap:26px; margin-top:16px; font-family:var(--mono); font-size:10.5px; color:var(--ink-3); flex-wrap:wrap; }
+  .chart-cap .k { display:inline-flex; align-items:center; gap:8px; }
+  .lk { display:inline-block; width:20px; height:0; border-top:2px solid var(--ink-1); }
+  .lk.dash { border-top-style:dashed; border-top-color:var(--pencil); }
+  .lk.hatchk { width:20px; height:12px; border:1px solid var(--pencil-line);
+    background:repeating-linear-gradient(45deg, transparent 0 4px, var(--pencil-line) 4px 5px); }
+
+  /* ---------- mockups ---------- */
+  .mockups { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:34px; align-items:start; }
+  .mock-tag { font-family:var(--mono); font-size:10.5px; margin-bottom:10px; }
+  .mock-tag.b4 { color:var(--ink-0); }
+  .mock-tag.af { color:var(--pencil); }
+  .mock { border:1px solid var(--rule); font-size:12px; overflow:hidden; }
+  .mock .bar { display:flex; justify-content:space-between; align-items:center; padding:9px 14px; border-bottom:1px solid var(--rule); background:var(--sheet); font-family:var(--mono); font-size:10.5px; }
+  .mock .body { padding:18px; background:var(--paper); }
+  .mock table { width:100%; border-collapse:collapse; margin-top:14px; font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:11px; }
+  .mock th { text-align:left; font-family:var(--sans); font-size:9px; letter-spacing:0.1em; text-transform:uppercase; color:var(--ink-0); padding:6px 8px; border-bottom:1px solid var(--rule-strong); font-weight:600; }
+  .mock td { padding:7px 8px; border-bottom:1px solid var(--rule); }
+  .mock th:last-child,.mock td:last-child { text-align:right; }
+  .mock-note { font-size:12.5px; color:var(--ink-3); margin-top:12px; line-height:1.6; }
+
+  /* before mock — the current product */
+  .b4m { border-radius:12px; }
+  .b4m .bar { border-radius:0; }
+  .b4m .brandblue { color:#38bdf8; }
+  .b4m .headline { font-weight:600; font-size:16px; color:var(--ink-1); margin-top:8px; line-height:1.3; }
+  .b4m .pill { display:inline-block; border:1px solid rgba(74,222,128,0.4); color:var(--up); border-radius:999px; padding:2px 9px; font-size:8.5px; font-weight:600; letter-spacing:0.1em; text-transform:uppercase; margin-top:10px; }
+  .b4m .btn-b4 { display:inline-block; background:#0ea5e9; color:#06070a; font-size:10.5px; font-weight:600; padding:5px 11px; border-radius:6px; margin-top:12px; }
+  .b4m td, .b4m .val { color:var(--ink-1); }
+
+  /* after mock — the working */
+  .afm .body { display:grid; grid-template-columns:1fr 118px; gap:16px; }
+  .afm .headline { font-weight:600; font-size:16px; color:var(--ink-1); margin-top:8px; line-height:1.3; }
+  .afm .verdict-line { margin-top:10px; font-family:var(--serif); font-style:italic; font-size:20px; color:var(--ink-1); }
+  .afm .verdict-line .conf { font-family:var(--mono); font-style:normal; font-size:9.5px; color:var(--ink-3); margin-left:8px; }
+  .afm .m-margin { border-left:1px solid var(--pencil-line); padding-left:10px; font-family:var(--mono); font-size:9px; line-height:1.7; color:var(--pencil); }
+  .afm .m-margin .dim { color:var(--pencil-dim); }
+  .afm .btn-af { display:inline-flex; align-items:center; gap:6px; background:var(--ink-1); color:var(--paper); font-size:10.5px; font-weight:600; padding:5px 11px; margin-top:12px; }
+  .afm .f1 { color:var(--ink-1); } .afm .f2 { color:var(--ink-2); } .afm .f3 { color:var(--ink-3); }
+
+  /* ---------- house style ---------- */
+  .style-table { width:100%; border-collapse:collapse; margin-top:34px; font-size:13.5px; }
+  .style-table th { text-align:left; font-family:var(--mono); font-size:10px; letter-spacing:0.06em; color:var(--ink-0); padding:10px 16px; border-bottom:1px solid var(--rule-strong); font-weight:500; }
+  .style-table td { padding:14px 16px; border-bottom:1px solid var(--rule); vertical-align:top; }
+  .style-table td.ctx { font-family:var(--mono); font-size:10px; color:var(--ink-0); white-space:nowrap; }
+  .style-table td.no { color:var(--ink-0); }
+  .style-table td.no s { text-decoration-color:rgba(248,113,113,0.45); }
+  .style-table td.yes { color:var(--ink-1); }
+  .style-table td.yes .v { font-family:var(--serif); font-style:italic; }
+  .style-table td.yes .m { font-family:var(--mono); font-size:11.5px; color:var(--ink-2); }
+
+  .laws { margin-top:30px; border:1px solid var(--rule); }
+  .law-row { display:grid; grid-template-columns:52px 1fr; border-bottom:1px solid var(--rule); }
+  .law-row:last-child { border-bottom:0; }
+  .law-row .n { font-family:var(--mono); font-size:11px; color:var(--pencil); padding:16px 0 16px 18px; }
+  .law-row .t { padding:16px 20px 16px 0; color:var(--ink-2); font-size:14px; }
+  .law-row .t b { color:var(--ink-1); font-weight:600; }
+
+  /* ---------- everywhere ---------- */
+  .every { display:grid; grid-template-columns:repeat(2,1fr); gap:1px; background:var(--rule); border:1px solid var(--rule); margin-top:34px; }
+  .ev { background:var(--sheet); padding:24px; }
+  .ev .wh { font-family:var(--mono); font-size:10px; color:var(--ink-0); letter-spacing:0.06em; }
+  .ev .st { margin-top:8px; font-size:14px; color:var(--ink-1); line-height:1.55; }
+  .ev .st i { font-family:var(--serif); }
+  .ev .ex { margin-top:10px; font-size:12px; color:var(--ink-3); line-height:1.6; }
+
+  /* ---------- verdict section ---------- */
+  .costs { margin-top:30px; }
+  .cost { display:grid; grid-template-columns:22px 1fr; gap:14px; padding:14px 0; border-bottom:1px solid var(--rule); }
+  .cost:last-child { border-bottom:0; }
+  .cost .d { font-family:var(--serif); color:var(--pencil); }
+  .cost p { font-size:14px; color:var(--ink-2); }
+  .cost p b { color:var(--ink-1); font-weight:600; }
+
+  .closing { padding:120px 0 0; }
+  .closing .v { font-family:var(--serif); font-style:italic; font-size:clamp(30px,4.4vw,46px); color:var(--ink-1); line-height:1.25; max-width:24ch; }
+  .closing .after { margin-top:26px; font-family:var(--mono); font-size:11.5px; color:var(--ink-3); }
+
+  footer { margin-top:110px; border-top:1px solid var(--rule-strong); padding:20px 0 0; display:flex; justify-content:space-between; font-family:var(--mono); font-size:10.5px; color:var(--ink-0); }
+  footer .p { color:var(--pencil-dim); }
+
+  @media (max-width: 920px) {
+    .row { grid-template-columns:1fr; gap:22px; }
+    .marginalia { position:static; }
+    .mockups, .marks-grid, .type-roles, .every { grid-template-columns:1fr; }
+    .frame { padding:0 20px 100px; }
+    .ink-row { grid-template-columns:110px 1fr; }
+    .ink-row .law { grid-column:1/-1; }
+  }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <!-- ======================= MASTHEAD ======================= -->
+  <header class="masthead">
+    <div class="mast-rule">
+      <span class="wordmark"><span class="mk">◆</span> asset<span class="sl">/</span>analyzer</span>
+      <span class="mast-no">WORKING PAPER <b>No. 2</b> · IDENTITY · NOTHING HEREIN IS IMPLEMENTED</span>
+    </div>
+
+    <div class="row hero">
+      <div class="main">
+        <h1>Ink is earned.<br/>The rest is <span class="pencil-word">pencil.</span></h1>
+        <p class="sub">Every terminal on earth prints a guess in the same ink as a fact. A price, a fair value, a model's hunch — identical pixels, identical conviction. <b>UAA is the instrument that stopped doing that.</b> It prints what it knows at the strength it knows it, and keeps its working in the margin, where you can check it.</p>
+      </div>
+      <aside class="marginalia">
+        this page is set in its own system: four inks, one pencil, no rounded corners.<br/><br/>
+        the margin you are reading is not decoration. <b>it is the identity.</b>
+      </aside>
+    </div>
+  </header>
+
+  <!-- ======================= §1 PREMISE ======================= -->
+  <section id="premise">
+    <div class="row">
+      <div class="main">
+        <div class="kicker"><span class="no">§1</span> · PREMISE</div>
+        <h2>A screen that admits what it knows</h2>
+        <p class="lede">A price is a <strong>fact</strong>. A composite score is an <strong>argument</strong>. A twelve-month forecast is a <strong>bet</strong>. Software renders all three in identical type and calls it design. It is closer to lying by typesetting.</p>
+        <p>UAA cannot get away with that, because UAA actually knows better. Confidence runs through this codebase the way rebar runs through concrete: eighty-odd files in <span class="mono">lib/</span> carry a confidence field, the quant desk publishes P10/P90 bands and a probability of upside for every name, the regime model reports its own posterior, and the research copilot grades its own grounding. The machine holds a precise opinion of how much it should be believed.</p>
+        <p>The identity is what happens when the screen stops keeping that a secret. <strong class="fact">Certainty becomes visible. Doubt becomes visible. Nothing on the screen asks to be believed — it asks to be checked.</strong></p>
+        <hr class="rule-h"/>
+        <p style="margin-top:18px; font-size:13.5px; color:var(--ink-3);">A number you can't trace is a rumor with good posture. UAA doesn't print rumors.</p>
+      </div>
+      <aside class="marginalia">
+        <b>fact:</b> quote, filing, close.<br/>
+        <b>derived:</b> composite.ts, scoring.ts.<br/>
+        <b>conjecture:</b> forecast.py, monte_carlo.py, every AI verdict.<br/><br/>
+        <span class="dim">the taxonomy already exists in the code. the brand only stops hiding it.</span>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ======================= §2 INK ======================= -->
+  <section id="ink">
+    <div class="row">
+      <div class="main">
+        <div class="kicker"><span class="no">§2</span> · INK</div>
+        <h2>Four inks. Not a palette — a law.</h2>
+        <p class="lede">Color in UAA is not chosen; it is <strong>earned</strong>. Text and numbers are printed at one of four strengths, and the strength is set by epistemology, not by hierarchy, taste, or emphasis.</p>
+
+        <div class="sheet ink-table">
+          <div class="ink-row">
+            <span class="tag">INK I · FACT</span>
+            <span class="num fact">247,318.42</span>
+            <span class="law">Observed. A close, a filing, a fill. Full strength, always.</span>
+          </div>
+          <div class="ink-row">
+            <span class="tag">INK II · DERIVED</span>
+            <span class="num derived">247,318.42</span>
+            <span class="law">Computed from facts by a pure function. Strong, one step from the source.</span>
+          </div>
+          <div class="ink-row">
+            <span class="tag">INK III · CONJECTURE</span>
+            <span class="num conjecture">247,318.42</span>
+            <span class="law">A forecast, a fitted value, a model's belief. Printed lighter because it is lighter.</span>
+          </div>
+          <div class="ink-row p-row">
+            <span class="tag">PENCIL</span>
+            <span class="num pencil">composite.ts · quality 28 / value 24 / growth 24 · refreshed 09:42:07</span>
+            <span class="law">The machine's own working. Never a conclusion. Always checkable.</span>
+          </div>
+        </div>
+
+        <p style="margin-top:26px;"><strong class="fact">The one law of ink:</strong> the machine may not print what it believes as dark as what it observed. There is no override, no exception for marketing, no “emphasis.” If a designer wants something darker, the engine has to know it better. Ink strength stops being a style decision and becomes a claim the interface is making — one it can be held to.</p>
+        <p>Green and red keep their old jobs and stay out of everyone else's: gains and losses, nothing more. There is no brand accent. <strong class="fact">The absence of a hero color is the color system.</strong> What a competitor would spend on a gradient, UAA spends on being legible about doubt.</p>
+      </div>
+      <aside class="marginalia">
+        same number, four confidences.<br/>
+        reflow: none. only the ink moves.<br/><br/>
+        <b>measured, this sheet:</b><br/>
+        ink I — 17.31:1<br/>
+        ink II — 10.24:1<br/>
+        ink III — 6.31:1 · floor 4.5<br/><br/>
+        <span class="dim">faint is relative. it is never illegible — that would be a different kind of lie.</span>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ======================= §3 PENCIL ======================= -->
+  <section id="pencil">
+    <div class="row">
+      <div class="main">
+        <div class="kicker"><span class="no">§3</span> · PENCIL</div>
+        <h2>The blue the camera couldn't see</h2>
+        <p class="lede">Print shops kept a special blue — <strong>non-photo blue</strong> — for ruling margins and marking corrections. The process camera couldn't register it, so the working stayed on the paste-up and never reached the printed page. Every published page in the twentieth century sat on top of a layer of blue thinking that the reader was never allowed to see.</p>
+        <p><strong class="fact">UAA keeps the blue and prints it anyway.</strong> The pencil layer is the machine's own working — which engine, which weights, which timestamp, which cache — ruled into a margin beside every judgment. Other software buries provenance in a tooltip and calls it clean. UAA rules a margin for it and calls it honest.</p>
+        <p>The pencil never concludes. It cites, dates, attributes, and qualifies. It is the only voice on screen allowed to talk about the software itself — and the only color on screen that isn't ink or the market.</p>
+      </div>
+      <aside class="marginalia">
+        non-photo blue, set here at <b>#8FC7E8</b> on carbon.<br/><br/>
+        in print it marked what the camera must not see.<br/>
+        here it marks what you must.<br/><br/>
+        <span class="dim">one blue, one job. it never touches a button, a link, or a headline.</span>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ======================= §4 TYPE ======================= -->
+  <section id="type">
+    <div class="row">
+      <div class="main">
+        <div class="kicker"><span class="no">§4</span> · TYPE</div>
+        <h2>One face for the page. One for the machine. <span class="serif">One word for the judge.</span></h2>
+
+        <div class="sheet type-stage">
+          <div class="verdict-word">Hold.</div>
+          <div class="verdict-sub">conviction 81/100 · printed at <span class="c">74% strength</span> · scoring.ts, 1825-day window</div>
+        </div>
+
+        <div class="type-roles">
+          <div class="type-role">
+            <div class="demo" style="font-weight:600; font-size:19px; letter-spacing:-0.01em;">Concentration in semis is 2.4× your policy cap.</div>
+            <div class="fname">INSTRUMENT SANS · text &amp; display</div>
+            <div class="fuse">The whole page, headlines to labels. A grotesk with enough jaw to carry a verdict's evidence without borrowing a serif's costume.</div>
+          </div>
+          <div class="type-role">
+            <div class="demo mono" style="font-size:15px;">NVDA&nbsp;&nbsp;86&nbsp;&nbsp;+12.4%&nbsp;&nbsp;38.2×<br/><span class="pencil" style="font-size:11px;">yahoo · 09:42:07 · cache 24h</span></div>
+            <div class="fname">GEIST MONO · figures &amp; pencil</div>
+            <div class="fuse">Every number, tabular and right-aligned, and the entire pencil layer. The machine writes in monospace because the machine counts.</div>
+          </div>
+          <div class="type-role">
+            <div class="demo" style="font-family:var(--serif); font-style:italic; font-size:26px;">Trim. Add. Pass. Stet.</div>
+            <div class="fname">INSTRUMENT SERIF · italic · verdicts only</div>
+            <div class="fuse">The serif is permitted one word at a time. It appears where the machine hands down a call, and nowhere else. Scarcity is what makes it a gavel.</div>
+          </div>
+        </div>
+
+        <p style="margin-top:26px;">The typefaces are called <strong class="fact">Instrument</strong>. Some coincidences you accept. But the proprietary dimension of this system was never the faces — it's the ink they're printed in. Any product can license a font. No product without engines can print its type at the strength of its own confidence.</p>
+      </div>
+      <aside class="marginalia">
+        the serif budget is one word.<br/>
+        <b>“Hold.”</b> — spent.<br/><br/>
+        a serif paragraph is an essay.<br/>
+        a serif word is a ruling.<br/><br/>
+        <span class="dim">verdict words in the product: buy, add, hold, trim, sell, pass, and — in the journal — stet.</span>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ======================= §5 MARKS ======================= -->
+  <section id="marks">
+    <div class="row">
+      <div class="main">
+        <div class="kicker"><span class="no">§5</span> · MARKS</div>
+        <h2>The proofreader's toolbox</h2>
+        <p class="lede">The shape language comes from the desk where documents were checked, not the studio where they were styled. Four marks, each with one job, none decorative. Corners are square because sheets of paper are.</p>
+
+        <div class="marks-grid">
+          <div class="mark-cell">
+            <div class="glyph">‸</div>
+            <h4>The caret — where you act</h4>
+            <p>The proofreader's insertion mark. In UAA it points at the one place on a surface where your hand is wanted. Every primary action wears it; nothing else may.</p>
+            <div style="margin-top:16px; display:flex; gap:10px; flex-wrap:wrap;">
+              <button class="caret-btn"><svg width="10" height="7" viewBox="0 0 10 7"><path d="M1,6 L5,1 L9,6" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>Add position</button>
+              <button class="caret-btn quiet"><svg width="10" height="7" viewBox="0 0 10 7"><path d="M1,6 L5,1 L9,6" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>Open the working</button>
+            </div>
+          </div>
+          <div class="mark-cell">
+            <div class="glyph">†&nbsp;‡</div>
+            <h4>The dagger — where the proof lives</h4>
+            <p>Claims carry daggers; daggers carry you to the working. An AI sentence without a dagger is a sentence the grounding engine could not stand behind — and it prints in Ink III to say so.</p>
+            <p style="margin-top:10px; color:var(--ink-2);">Margins compressed for the sixth straight quarter<sup class="dg">†</sup> while guidance held.<sup class="dg">‡</sup></p>
+          </div>
+          <div class="mark-cell">
+            <div class="glyph"><span class="hatch-demo"></span></div>
+            <h4>The hatch — where we are not sure</h4>
+            <p>Engravers shaded doubt with parallel strokes; drafters hatched the section they'd cut open. UAA hatches uncertainty — forecast fans, low-coverage data, degraded signals. Texture, never fog: a solid fill would claim a confidence the model doesn't have.</p>
+          </div>
+          <div class="mark-cell">
+            <div class="glyph" style="font-style:italic;">stet</div>
+            <h4>Stet — let it stand</h4>
+            <p>The proofreader's verdict on a marked passage: reviewed, and kept. The decision journal borrows it whole. When you re-examine a position and choose not to act, that is not nothing — it is <i>stet</i>, dated and of record.</p>
+          </div>
+        </div>
+
+        <p style="margin-top:26px;">The diamond survives, demoted from logo to punctuation: the loading mark still resolves square-to-diamond, because <strong class="fact">a diamond is a caret that made up its mind</strong> — two carets, point to point. Work pending is an open square; work concluded, a set diamond. The mark you already shipped was this identity's first sentence.</p>
+      </div>
+      <aside class="marginalia">
+        four marks, four jobs:<br/>
+        <b>‸</b> act here<br/>
+        <b>†</b> proof here<br/>
+        <b>▨</b> doubt here<br/>
+        <b>stet</b> reviewed, kept<br/><br/>
+        <span class="dim">radius: 0. paper doesn't have rounded corners; neither does a working paper.</span>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ======================= §6 CHARTS ======================= -->
+  <section id="charts">
+    <div class="row">
+      <div class="main">
+        <div class="kicker"><span class="no">§6</span> · CHARTS</div>
+        <h2>The past in ink. The future in pencil.</h2>
+        <p class="lede">A chart is a sentence about time, and UAA conjugates it honestly: what happened is drawn in ink, what is computed from it in thinner ink, and what is merely expected in pencil — dashed, hatched, and exactly as light as its odds.</p>
+
+        <div class="sheet chart-sheet">
+          <div class="kicker" style="margin-bottom:16px;">NVDA · TRAILING YEAR, FORWARD QUARTER · <span class="pencil" style="font-size:10px;">forecast.py · P10–P90 · p(up) 0.63</span></div>
+          <svg viewBox="0 0 960 320" width="100%" style="display:block;">
+            <defs>
+              <pattern id="hatch" width="7" height="7" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+                <line x1="0" y1="0" x2="0" y2="7" stroke="rgba(143,199,232,0.30)" stroke-width="1"/>
+              </pattern>
+            </defs>
+            <!-- rules -->
+            <g stroke="#24262c" stroke-width="1">
+              <line x1="0" y1="70" x2="960" y2="70"/><line x1="0" y1="140" x2="960" y2="140"/><line x1="0" y1="210" x2="960" y2="210"/>
+            </g>
+            <!-- now line -->
+            <line x1="660" y1="30" x2="660" y2="290" stroke="#383b44" stroke-width="1" stroke-dasharray="1 4"/>
+            <!-- axis text -->
+            <g fill="#5b626e" font-family="Geist Mono, monospace" font-size="10">
+              <text x="8" y="306">AUG</text><text x="218" y="306">NOV</text><text x="428" y="306">FEB</text><text x="620" y="306">NOW</text><text x="880" y="306">+90D</text>
+              <text x="922" y="66">1,240</text><text x="922" y="136">1,080</text><text x="922" y="206">920</text>
+            </g>
+            <!-- history: ink I -->
+            <path d="M0,252 C40,244 70,258 110,240 C150,222 185,232 225,214 C265,196 300,206 340,186 C380,166 415,178 455,156 C495,134 530,146 570,122 C610,98 635,106 660,96"
+                  fill="none" stroke="#f0f1f3" stroke-width="2"/>
+            <!-- forecast band: hatched pencil -->
+            <path d="M660,96 C700,84 740,74 790,62 C840,50 900,42 950,36 L950,150 C900,142 840,136 790,130 C740,124 700,116 660,96 Z"
+                  fill="url(#hatch)" stroke="rgba(143,199,232,0.35)" stroke-width="1"/>
+            <!-- forecast median: dashed pencil -->
+            <path d="M660,96 C710,90 760,86 810,80 C860,74 910,70 950,66"
+                  fill="none" stroke="#8fc7e8" stroke-width="1.6" stroke-dasharray="5 5"/>
+            <!-- last observed: set diamond -->
+            <rect x="654" y="90" width="11" height="11" fill="#f0f1f3" transform="rotate(45 659.5 95.5)"/>
+            <!-- annotations -->
+            <text x="672" y="180" fill="#8fc7e8" font-family="Geist Mono, monospace" font-size="10">P10–P90, hatched — doubt is texture, not fog</text>
+            <text x="500" y="90" fill="#5b626e" font-family="Geist Mono, monospace" font-size="10">observed — full ink</text>
+          </svg>
+          <div class="chart-cap">
+            <span class="k"><span class="lk"></span> happened — ink</span>
+            <span class="k"><span class="lk dash"></span> expected — pencil, dashed</span>
+            <span class="k"><span class="lk hatchk"></span> P10–P90 — hatched</span>
+            <span class="k">◆ last observed close</span>
+          </div>
+        </div>
+
+        <p style="margin-top:26px;">No gradient under the line — a gradient is an opinion about mood. No glow — light is not evidence. The rule generalizes to every surface: backtests are pencil until they're walked forward, fitted values are pencil laid over inked actuals, and a signal the engine itself flags as degraded drops to hatched pencil in the conviction book. <strong class="fact">Tear the labels off a UAA chart and the epistemology is still legible.</strong> That is the screenshot test, passed at the level of meaning instead of styling.</p>
+      </div>
+      <aside class="marginalia">
+        the band is the engine's own P10–P90, not an artist's ribbon.<br/><br/>
+        hatch: 45°, 1px, pencil-blue.<br/>
+        median: dashed — <b>a dash is a line that admits gaps.</b><br/><br/>
+        <span class="dim">the last observed point is the only diamond: the working, set.</span>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ======================= §7 THE SHEET ======================= -->
+  <section id="sheet">
+    <div class="row">
+      <div class="main">
+        <div class="kicker"><span class="no">§7</span> · THE SHEET</div>
+        <h2>The same morning, told twice</h2>
+
+        <div class="mockups">
+          <div>
+            <div class="mock-tag b4">BEFORE — THE SHIPPED PRODUCT</div>
+            <div class="mock b4m">
+              <div class="bar"><span><span class="brandblue">◆</span> asset/analyzer</span><span style="color:var(--ink-0)">TODAY</span></div>
+              <div class="body">
+                <div style="font-size:8.5px; letter-spacing:0.14em; color:var(--ink-3); font-weight:600;">AI EXECUTIVE BRIEF · BULL REGIME</div>
+                <div class="headline">Calm tape, broad participation — your book is keeping pace with a narrowing market.</div>
+                <span class="pill">BUY · 81/100</span><br/>
+                <span class="btn-b4">Open Action Center</span>
+                <table>
+                  <tr><th>Symbol</th><th>Screen</th><th>Fwd P/E</th><th>Target</th></tr>
+                  <tr><td>NVDA</td><td class="brandblue">86</td><td class="val">38.2</td><td class="val">1,240</td></tr>
+                  <tr><td>ASML</td><td class="brandblue">79</td><td class="val">31.7</td><td class="val">985</td></tr>
+                  <tr><td>TSM</td><td class="brandblue">74</td><td class="val">22.4</td><td class="val">255</td></tr>
+                </table>
+              </div>
+            </div>
+            <div class="mock-note">Every figure at full strength: the measured price, the derived score, the analyst's guess at a target. Three species of claim, one ink. Provenance lives in a tooltip, if it lives at all.</div>
+          </div>
+
+          <div>
+            <div class="mock-tag af">AFTER — THE WORKING</div>
+            <div class="mock afm">
+              <div class="bar"><span style="color:var(--ink-1)"><span style="color:var(--pencil)">◆</span> asset/analyzer</span><span style="color:var(--ink-0)">TODAY · <span class="pencil" style="font-size:9.5px;">09:42:07</span></span></div>
+              <div class="body">
+                <div>
+                  <div style="font-size:8.5px; letter-spacing:0.14em; color:var(--ink-3); font-weight:600;">THE BRIEF · BULL REGIME <span class="pencil" style="font-size:8.5px; letter-spacing:0;">· hmm posterior 0.81</span></div>
+                  <div class="headline">Calm tape, broad participation — your book is keeping pace with a narrowing market.</div>
+                  <div class="verdict-line">Hold.<span class="conf">conviction 81/100 · 74% strength</span></div>
+                  <span class="btn-af"><svg width="9" height="6" viewBox="0 0 10 7"><path d="M1,6 L5,1 L9,6" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>Open the working</span>
+                  <table>
+                    <tr><th>Symbol</th><th>Screen</th><th>Fwd P/E</th><th>Target</th></tr>
+                    <tr><td class="f1">NVDA</td><td class="f2">86</td><td class="f1">38.2</td><td class="f3">1,240</td></tr>
+                    <tr><td class="f1">ASML</td><td class="f2">79</td><td class="f1">31.7</td><td class="f3">985</td></tr>
+                    <tr><td class="f1">TSM</td><td class="f2">74</td><td class="f1">22.4</td><td class="f3">255</td></tr>
+                  </table>
+                </div>
+                <div class="m-margin">
+                  brief: qwen3, grounded 9/9<sup>†</sup><br/><br/>
+                  screen: composite.ts, universe 412<br/><br/>
+                  targets: street consensus — <span class="dim">conjecture, printed as such</span><br/><br/>
+                  prices: live · scores: 24h cache
+                </div>
+              </div>
+            </div>
+            <div class="mock-note">Same layout, same density. The price is Ink I, the score Ink II, the street's target Ink III — the column tells the truth before you read a digit. The verdict is one serif word. The margin shows the working. Nothing was added; everything was attributed.</div>
+          </div>
+        </div>
+      </div>
+      <aside class="marginalia">
+        what changed is not the styling.<br/><br/>
+        <b>it is who the screen answers to.</b><br/><br/>
+        <span class="dim">before: the screen persuades you.<br/>after: the screen reports to you.</span>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ======================= §8 HOUSE STYLE ======================= -->
+  <section id="style">
+    <div class="row">
+      <div class="main">
+        <div class="kicker"><span class="no">§8</span> · HOUSE STYLE</div>
+        <h2>Written like the working papers of a careful desk</h2>
+        <p class="lede">The voice is not "institutional." It is a specific person: <strong>the analyst who checks their own arithmetic and expects you to check it too.</strong> Dry. Exact. Unhurried. Occasionally — when the facts permit — funny.</p>
+
+        <div class="laws">
+          <div class="law-row"><span class="n">i</span><p class="t"><b>Verdict first, working after.</b> The reader's time is the scarcest asset under management.</p></div>
+          <div class="law-row"><span class="n">ii</span><p class="t"><b>Numbers are exact or absent.</b> "About 40 seconds on a local model" is exact about its own precision. "Blazing fast" is a number that lost its nerve.</p></div>
+          <div class="law-row"><span class="n">iii</span><p class="t"><b>Every sentence must survive the question "says who?"</b> If the answer isn't a dagger, an engine, or a timestamp, the sentence prints in Ink III or not at all.</p></div>
+          <div class="law-row"><span class="n">iv</span><p class="t"><b>No exclamation marks. No apologies. No cheer.</b> The reader is a professional doing dangerous arithmetic with their own money; the correct register is the one used around loaded instruments.</p></div>
+          <div class="law-row"><span class="n">v</span><p class="t"><b>Teach in passing or not at all.</b> A caption that merely describes is blank space with better posture.</p></div>
+        </div>
+
+        <table class="style-table">
+          <tr><th>WHERE</th><th>NOT THIS</th><th>THIS</th></tr>
+          <tr>
+            <td class="ctx">verdict</td>
+            <td class="no"><s>Our AI has identified a potential opportunity you might want to consider!</s></td>
+            <td class="yes"><span class="v">Trim.</span> Semis are 2.4× your policy cap, and the cap was your idea.</td>
+          </tr>
+          <tr>
+            <td class="ctx">empty book</td>
+            <td class="no"><s>No holdings yet. Add your first position to get started!</s></td>
+            <td class="yes">Nothing is held. Nothing is at risk. Both of those end with your first entry.</td>
+          </tr>
+          <tr>
+            <td class="ctx">empty watchlist</td>
+            <td class="no"><s>Your watchlist is empty.</s></td>
+            <td class="yes">You are watching nothing. That is rarely deliberate.</td>
+          </tr>
+          <tr>
+            <td class="ctx">ollama down</td>
+            <td class="no"><s>Oops! Something went wrong with the AI service.</s></td>
+            <td class="yes">Ollama is not running. The pencil layer is down; ink still works.</td>
+          </tr>
+          <tr>
+            <td class="ctx">long task</td>
+            <td class="no"><s>Hang tight — this may take a few minutes…</s></td>
+            <td class="yes">Nine agents are reading. <span class="m">3–15 min on a local model.</span> The report is worth more than the wait; that is the arrangement.</td>
+          </tr>
+          <tr>
+            <td class="ctx">degraded signal</td>
+            <td class="no"><s>Data quality issues may affect results.</s></td>
+            <td class="yes">The momentum sleeve's live IC has been negative for 60 days. It is printed in pencil until it earns ink again.</td>
+          </tr>
+          <tr>
+            <td class="ctx">journal, no action</td>
+            <td class="no"><s>No changes were made.</s></td>
+            <td class="yes"><span class="v">Stet.</span> Reviewed against the thesis of 12 Mar; the thesis stands. On record.</td>
+          </tr>
+          <tr>
+            <td class="ctx">cached verdict</td>
+            <td class="no"><s>Showing cached results.</s></td>
+            <td class="yes">This verdict is from 09:42 and knows nothing since. The price does.</td>
+          </tr>
+          <tr>
+            <td class="ctx">boot</td>
+            <td class="no"><s>Loading your personalized dashboard…</s></td>
+            <td class="yes">Ruling the margins. Sharpening the pencil. Reading the wire.</td>
+          </tr>
+        </table>
+
+        <p style="margin-top:26px; font-size:13.5px; color:var(--ink-3);">Banned outright: intelligent, seamless, powerful, premium, elevate, unlock, supercharge, insights, and any sentence that would survive unchanged on another product's website. House style is enforced like lint, because it is lint.</p>
+      </div>
+      <aside class="marginalia">
+        the test for any line of copy:<br/><br/>
+        <b>could a competitor paste it?</b><br/>
+        if yes, it isn't ours yet.<br/><br/>
+        <span class="dim">"the pencil layer is down; ink still works" only parses inside this identity. that is the point.</span>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ======================= §9 EVERYWHERE ======================= -->
+  <section id="everywhere">
+    <div class="row">
+      <div class="main">
+        <div class="kicker"><span class="no">§9</span> · EVERYWHERE</div>
+        <h2>One system, every surface</h2>
+
+        <div class="every">
+          <div class="ev">
+            <div class="wh">SCREENER</div>
+            <div class="st">A missing value is not a small value — it prints hatched and sorts as unknown.</div>
+            <div class="ex">Rows with thin coverage go to pencil rather than pretending. "Worst first" surfaces the genuinely worst, not the merely unmeasured.</div>
+          </div>
+          <div class="ev">
+            <div class="wh">IC REPORT</div>
+            <div class="st">Nine agents, every claim daggered, every dagger landing in the working.</div>
+            <div class="ex">The accounting agent's doubts print in Ink III inside the valuation agent's case. Disagreement between agents is typeset, not averaged away.</div>
+          </div>
+          <div class="ev">
+            <div class="wh">JOURNAL</div>
+            <div class="st">Your calibration prints in the same four inks the machine holds itself to.</div>
+            <div class="ex">A "high conviction" that hits 48% of the time starts printing lighter. The identity applies to the user's beliefs too. Fair is fair.</div>
+          </div>
+          <div class="ev">
+            <div class="wh">EXPORTS</div>
+            <div class="st">The PDF keeps the margin. Your working travels with the verdict.</div>
+            <div class="ex">Forwarded to a friend, the report still shows its inks, daggers, and dates. The brand's best advertisement is a document that can be audited.</div>
+          </div>
+          <div class="ev">
+            <div class="wh">MARKETING</div>
+            <div class="st">The landing page is a specimen, not a pitch: one claim per rule, one dagger per claim.</div>
+            <div class="ex">"Runs entirely on your machine.†" — and the dagger resolves to the architecture note that proves it. Sales copy that survives "says who?"</div>
+          </div>
+          <div class="ev">
+            <div class="wh">THE MARK</div>
+            <div class="st">Four bars of working, converging; a square that turns diamond when the work is done.</div>
+            <div class="ex">Unchanged, and finally explained by its own brand: the loading mark was always a sentence in this language. Now the rest of the product speaks it.</div>
+          </div>
+        </div>
+      </div>
+      <aside class="marginalia">
+        the extension test:<br/>
+        every surface must answer<br/>
+        <b>"what do you know, and how hard?"</b><br/><br/>
+        <span class="dim">if a new feature can't be typeset in four inks and a pencil, the feature isn't finished thinking.</span>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ======================= §10 VERDICT ======================= -->
+  <section id="verdict">
+    <div class="row">
+      <div class="main">
+        <div class="kicker"><span class="no">§10</span> · VERDICT</div>
+        <h2>What this costs, and what it buys</h2>
+
+        <div class="costs">
+          <div class="cost"><span class="d">†</span><p><b>Faint ink will be called low contrast.</b> The floor is 4.5:1 and nothing meaningful ever sits below it — but the objection will come, and the answer must be the philosophy, said plainly: the lightness is information. If that answer embarrasses us, the identity is wrong.</p></div>
+          <div class="cost"><span class="d">†</span><p><b>The ink law demands engineering.</b> Every rendered figure needs a provenance class — fact, derived, conjecture. Most of the plumbing exists (the score kinds, the confidence fields, the grounding engine); the discipline of wiring ink to it does not, yet. This identity cannot be applied by a stylesheet alone. That is precisely why it cannot be stolen by one.</p></div>
+          <div class="cost"><span class="d">†</span><p><b>No hero color means no cheap recognition.</b> UAA gives up the thing a brand guideline usually leads with. In exchange, its recognition runs deeper than hue: the hatching, the margins, the one-word serif, the numbers that disagree about how dark to be. A competitor can copy any one of these in an afternoon. To copy all of them, they would have to mean it.</p></div>
+          <div class="cost"><span class="d">†</span><p><b>The wit must be rationed.</b> "You are watching nothing. That is rarely deliberate" works once per screen, not once per sentence. The default register is dry; the joke is the exception that proves the desk is human.</p></div>
+        </div>
+
+        <div class="closing">
+          <div class="v">Other terminals dress certainty up. This one undresses it — and turns out to be the only one with nothing to hide.</div>
+          <div class="after">If approved: ink classes → pencil margins → marks &amp; verdict words → charts → copy sweep. Phased, reversible, and — per the working paper's own rules — nothing touched until you say so.</div>
+        </div>
+      </div>
+      <aside class="marginalia">
+        submitted for review.<br/><br/>
+        working paper no. 1 — <b>the instrument of record</b> — remains on file at /docs/brand-preview/.<br/><br/>
+        <span class="dim">this paper supersedes it if, and only if, you say stet.</span>
+      </aside>
+    </div>
+  </section>
+
+  <footer>
+    <span>UAA · WORKING PAPER No. 2 · “THE WORKING” · SET IN ITS OWN SYSTEM</span>
+    <span class="p">four inks · one pencil · no rounded corners</span>
+  </footer>
+
+</div>
+</body>
+</html>
