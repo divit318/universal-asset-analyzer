@@ -60,5 +60,9 @@ export function formatFilingLabel(event: TimelineEvent): { short: string; full: 
 export function eventLabels(event: TimelineEvent): { short: string; full: string } {
   const filing = formatFilingLabel(event);
   if (filing) return filing;
-  return { short: clipLabel(event.title), full: event.title.trim() };
+  // Consistent labeling policy: every event label carries its symbol, so two
+  // symbols sharing one headline never render as identical nodes.
+  const title = event.title.trim();
+  const prefix = title.toUpperCase().startsWith(event.symbol.toUpperCase()) ? "" : `${event.symbol} · `;
+  return { short: `${prefix}${clipLabel(title, 44 - prefix.length)}`, full: `${prefix}${title}` };
 }

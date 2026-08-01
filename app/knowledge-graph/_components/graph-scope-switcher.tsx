@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { GraphScope } from "@/lib/knowledge-graph";
 import { SymbolSearch } from "@/app/_components/symbol-search";
 import { GICS_SECTORS } from "@/lib/gics-sectors";
@@ -23,19 +23,28 @@ export function GraphScopeSwitcher({
 }) {
   const [symbolInput, setSymbolInput] = useState(scope === "symbol" ? id : "");
 
+  // Keep the input in sync when the focus arrives via URL, back/forward, or a
+  // node click — the box must always show the symbol the graph is showing.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (scope === "symbol") setSymbolInput(id);
+  }, [scope, id]);
+
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap gap-1 rounded-lg border border-border bg-surface p-1">
+    <div className="flex flex-wrap items-center gap-3">
+      <div role="tablist" aria-label="Graph scope" className="flex flex-wrap gap-1 rounded-lg border border-border bg-surface p-1">
         {SCOPE_TABS.map((tab) => (
           <button
             key={tab.value}
             type="button"
+            role="tab"
+            aria-selected={scope === tab.value}
             onClick={() => {
               if (tab.value === "portfolio" || tab.value === "watchlist") onSelect(tab.value, tab.value);
               else if (tab.value === "sector") onSelect("sector", GICS_SECTORS[0]);
               else onSelect("symbol", symbolInput || id);
             }}
-            className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+            className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-accent ${
               scope === tab.value ? "bg-accent/10 text-accent" : "text-muted hover:bg-surface-2 hover:text-foreground"
             }`}
           >
@@ -45,7 +54,14 @@ export function GraphScopeSwitcher({
       </div>
 
       {scope === "symbol" && (
-        <SymbolSearch value={symbolInput} onChange={setSymbolInput} onSelect={(s) => onSelect("symbol", s.toUpperCase())} />
+        <div className="w-64">
+          <SymbolSearch
+            value={symbolInput}
+            onChange={setSymbolInput}
+            onSelect={(s) => onSelect("symbol", s.toUpperCase())}
+            placeholder="Ticker or company name"
+          />
+        </div>
       )}
 
       {scope === "sector" && (
@@ -54,10 +70,11 @@ export function GraphScopeSwitcher({
             <button
               key={sector}
               type="button"
+              aria-pressed={id === sector}
               onClick={() => onSelect("sector", sector)}
-              className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+              className={`rounded-full border px-3 py-1 text-xs transition-colors focus-visible:outline-2 focus-visible:outline-accent ${
                 scope === "sector" && id === sector
-                  ? "border-accent/50 bg-accent/10 text-accent"
+                  ? "border-accent bg-accent/15 font-medium text-accent"
                   : "border-border text-muted hover:border-border/80 hover:text-foreground"
               }`}
             >
