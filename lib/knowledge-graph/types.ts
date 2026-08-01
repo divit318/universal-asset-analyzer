@@ -1,14 +1,30 @@
 /**
- * Investment Knowledge Graph — type system.
+ * Investment Knowledge Graph — type system (v2).
  *
  * The graph is computed on-demand from existing UAA stores (portfolio,
- * watchlist, sector rotation, timeline events, cached scanner output) — it
- * is not a new source of truth. See build.ts for the "evidence provider"
- * composition and ARCHITECTURE.md's "Investment Knowledge Graph" section.
+ * watchlist, sector rotation, timeline events, cached scanner output). It is
+ * not a new source of truth. See build.ts for the "evidence provider"
+ * composition.
+ *
+ * v2 principles:
+ * - One normalized schema everywhere. Every node knows its instrument type,
+ *   canonical sector, provenance, and full (untruncated) label.
+ * - Confidence is `number | null`. Null means "unknown" and is a preferred,
+ *   honest output; nothing in this module fabricates a confidence score.
+ * - Zero orphans by construction: build.ts prunes degree-0 nodes (except the
+ *   focus node) before a graph leaves the builder.
  */
+
+import type { DataSourceId } from "../provenance";
 
 export type GraphScope = "symbol" | "portfolio" | "watchlist" | "sector";
 
+/**
+ * `company` is the node type for any tradeable asset (kept for backward
+ * compatibility with consumers that match on `company:*` ids — Research's
+ * graph preview card and the AI context builder). The `instrument` field is
+ * what distinguishes an FX pair from an ETF from a common stock.
+ */
 export type NodeType =
   | "company"
   | "sector"
@@ -21,10 +37,41 @@ export type NodeType =
   | "catalyst"
   | "risk";
 
+export type InstrumentType =
+  | "common_equity"
+  | "preferred"
+  | "etf_equity"
+  | "etf_bond"
+  | "etf_commodity"
+  | "etf_mixed"
+  | "mutual_fund"
+  | "fx_pair"
+  | "crypto"
+  | "future"
+  | "index"
+  | "unknown";
+
+export const INSTRUMENT_LABEL: Record<InstrumentType, string> = {
+  common_equity: "Common Equity",
+  preferred: "Preferred Share",
+  etf_equity: "Equity ETF",
+  etf_bond: "Bond ETF",
+  etf_commodity: "Commodity ETF",
+  etf_mixed: "Mixed-Asset ETF",
+  mutual_fund: "Mutual Fund",
+  fx_pair: "FX Pair",
+  crypto: "Digital Asset",
+  future: "Futures Contract",
+  index: "Index",
+  unknown: "Unclassified Instrument",
+};
+
 export type EdgeType =
   | "OWNS"
   | "WATCHES"
   | "OPERATES_IN"
+  /** Weighted fund-to-sector exposure derived from holdings composition. */
+  | "EXPOSED_TO"
   | "IMPACTS"
   | "GENERATES"
   | "SUPPORTED_BY"
@@ -34,17 +81,37 @@ export type EdgeType =
   | "ROTATES_FROM"
   | "DRIVES";
 
+/** How a node/edge came to exist, and how trustworthy it is. */
+export interface Provenance {
+  /** The upstream feed or engine the fact came from. */
+  source: DataSourceId;
+  /** "computed" = deterministic engine output; "ai" = Ollama-generated; "user" = user-entered. */
+  origin: "computed" | "ai" | "user";
+  /** When the underlying fact was produced/fetched. Null = unknown. */
+  asOf: string | null;
+}
+
 export interface GraphNode {
   id: string;
   type: NodeType;
+  /** Only meaningful for asset ("company") nodes; null elsewhere. */
+  instrument: InstrumentType | null;
+  /** Short display label (what the canvas draws). */
   label: string;
+  /** Untruncated label for tooltips/inspector; never elided. */
+  fullLabel: string;
   summary: string;
   /** 0-100, drives node size in the visualization. */
   importance: number;
-  /** 0-100, deterministic confidence in this node's evidence. */
-  confidence: number;
+  /** 0-100 when an engine computed one; null = unknown (never fabricated). */
+  confidence: number | null;
+  /** Canonical GICS-11 sector, or null = unclassified. */
+  sector: string | null;
+  /** Position weight in the current scope (0-1 share of book value), when known. */
+  weight: number | null;
   metrics: Record<string, string | number | null>;
-  /** Deep link into the existing page that owns this entity (Research, Timeline, Scanner, etc). */
+  provenance: Provenance;
+  /** Deep link into the page that owns this entity (Research, Timeline, Wire…). */
   href: string | null;
 }
 
@@ -54,10 +121,33 @@ export interface GraphEdge {
   target: string; // node id
   type: EdgeType;
   label: string;
-  confidence: number; // 0-100, deterministic
-  strength: number; // 0-100, drives edge thickness
+  /** 0-100 when an engine computed one; null = unknown. */
+  confidence: number | null;
+  /** 0-100, drives edge thickness. */
+  strength: number;
+  /** True when the relation is semantically directed source -> target. */
+  directed: boolean;
   evidence: string;
+  provenance: Provenance;
   timestamp: string | null;
+}
+
+/** What changed vs. the previous stored snapshot of the same scope. */
+export interface GraphChanges {
+  previousAt: string;
+  addedNodes: { id: string; label: string; type: NodeType }[];
+  removedNodes: { id: string; label: string; type: NodeType }[];
+  addedEdges: { id: string; label: string; sourceLabel: string; targetLabel: string }[];
+  removedEdges: { id: string; label: string; sourceLabel: string; targetLabel: string }[];
+}
+
+export interface GraphMeta {
+  /** The node the scope centers on (framed/kept even at degree 0). */
+  focusId: string;
+  /** Set when the builder capped a holdings list; honest counts, not silence. */
+  truncation: { shown: number; total: number } | null;
+  /** Degree-0 nodes dropped during finalization (visible in the isolates toggle). */
+  isolatesDropped: number;
 }
 
 export interface KnowledgeGraph {
@@ -66,14 +156,37 @@ export interface KnowledgeGraph {
   nodes: GraphNode[];
   edges: GraphEdge[];
   insights: GraphInsights;
+  meta: GraphMeta;
+  /** Null on first visit for a scope, or when the previous snapshot is unreadable. */
+  changes: GraphChanges | null;
   generatedAt: string;
 }
 
+export interface GraphStats {
+  nodes: number;
+  edges: number;
+  /** edges / possible edges, 0-1. */
+  density: number;
+  mostConnected: { nodeId: string; label: string; degree: number }[];
+}
+
 export interface GraphInsights {
-  concentrationRisks: { sector: string; nodeCount: number; symbols: string[] }[];
+  concentrationRisks: {
+    sector: string;
+    nodeCount: number;
+    symbols: string[];
+    /** Combined position weight (0-1) when position values are known; null otherwise. */
+    weight: number | null;
+  }[];
   hiddenOpportunities: { nodeId: string; label: string; reason: string }[];
   emergingRisks: { nodeId: string; label: string; reason: string }[];
-  correlationClusters: { classification: string; sectors: string[] }[];
+  correlationClusters: {
+    classification: string;
+    sectors: string[];
+    /** The lookback the rotation engine's classification is computed over. */
+    window: string;
+  }[];
+  stats: GraphStats;
 }
 
 export interface ConnectionExplanation {
@@ -82,8 +195,25 @@ export interface ConnectionExplanation {
   pathFound: boolean;
   path: { nodeId: string; label: string; type: NodeType }[];
   pathEdges: GraphEdge[];
+  /** Alternative paths (beyond the strongest), each as an ordered edge list. */
+  alternativePaths: { nodeIds: string[]; labels: string[]; strength: number }[];
   deterministicSummary: string;
   aiExplanation: string;
-  confidence: number;
+  /** Null when the model did not return a usable confidence. */
+  confidence: number | null;
+  generatedAt: string;
+}
+
+/** One claim in the AI narrative; every claim must cite nodes in the graph. */
+export interface NarrativeObservation {
+  text: string;
+  nodeIds: string[];
+}
+
+export interface GraphNarrative {
+  observations: NarrativeObservation[];
+  /** Always "ai" — surfaced so the UI can label the panel honestly. */
+  origin: "ai";
+  model: string | null;
   generatedAt: string;
 }

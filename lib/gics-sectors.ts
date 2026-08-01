@@ -20,6 +20,10 @@ export const GICS_SECTORS: string[] = [
  * It is NOT the primary join mechanism — see AGENTS.md on variant-map drift.
  */
 export const LEGACY_SECTOR_MAP: Record<string, string> = {
+  // Yahoo assetProfile sector names that differ from the canonical GICS-11
+  // labels above (the source of the knowledge graph's dual-taxonomy bug).
+  "basic materials": "Materials",
+  "consumer defensive": "Consumer Staples",
   "banking": "Financials",
   "banks": "Financials",
   "financial services": "Financials",

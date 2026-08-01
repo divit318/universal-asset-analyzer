@@ -8,6 +8,7 @@ import { isIdeaSource, type IdeaSource } from "./idea-source";
 import { isUsablePrice } from "./watchlist-metrics";
 import {
   coerceAssumptionSet, computeCaseResult, isValuationMethod, DEFAULT_VALUATION_METHOD,
+  versionKeyOf,
 } from "./valuation/case";
 import type {
   AssumptionSet, CaseAuthor, CaseEventKind, CaseResult, ValuationCase, ValuationEvent,
@@ -183,6 +184,11 @@ function getDb(): DatabaseSync {
       as_of      TEXT PRIMARY KEY,
       data       TEXT NOT NULL,
       created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS kg_snapshot (
+      scope_key    TEXT PRIMARY KEY,
+      graph        TEXT NOT NULL,
+      generated_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS timeline_event (
       id         TEXT PRIMARY KEY,
@@ -402,6 +408,16 @@ function getDb(): DatabaseSync {
   for (const col of ["method TEXT NOT NULL DEFAULT 'dcf_fcf'"]) {
     try { db.exec(`ALTER TABLE valuation_case ADD COLUMN ${col}`); } catch { /* already exists */ }
   }
+  // Which version of the symbol's valuation case a decision was committed
+  // against (the Judgment Ledger's join). Deliberately nullable and NOT
+  // backfilled: every decision logged before the Ledger existed was made
+  // against a case version nobody recorded, and possibly against no case at
+  // all. NULL therefore means "not recorded", which lib/ledger.ts renders as an
+  // approximation computed from the case's *current* assumptions and labels as
+  // such. Backfilling the newest version would silently claim the user held
+  // today's assumptions when they acted, which is exactly the false precision
+  // the rest of this module refuses to manufacture.
+  try { db.exec("ALTER TABLE decision ADD COLUMN case_version INTEGER"); } catch { /* already exists */ }
   // Migrate existing watchlist rows: add new columns if the DB predates them
   for (const col of ["target_price REAL", "alert_pct_drop REAL", "notes TEXT"]) {
     try { db.exec(`ALTER TABLE watchlist ADD COLUMN ${col}`); } catch { /* already exists */ }
@@ -2106,6 +2122,7 @@ interface DecisionRow {
   close_price: number | null;
   closed_at: string | null;
   created_at: string;
+  case_version: number | null;
 }
 
 function rowToDecision(r: DecisionRow): Decision {
@@ -2126,6 +2143,7 @@ function rowToDecision(r: DecisionRow): Decision {
     closePrice: r.close_price,
     closedAt: r.closed_at,
     createdAt: r.created_at,
+    caseVersion: r.case_version ?? null,
   };
 }
 
@@ -2141,6 +2159,8 @@ export interface CreateDecisionInput {
   horizon?: DecisionHorizon | null;
   fitScore?: number | null;
   fitTier?: string | null;
+  /** Version of the symbol's valuation case this call was made against. */
+  caseVersion?: number | null;
 }
 
 export function createDecision(input: CreateDecisionInput): Decision {
@@ -2148,8 +2168,8 @@ export function createDecision(input: CreateDecisionInput): Decision {
   const info = getDb()
     .prepare(
       `INSERT INTO decision
-        (symbol, name, action, conviction, thesis, price_at, currency, target_price, horizon, fit_score, fit_tier, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)`,
+        (symbol, name, action, conviction, thesis, price_at, currency, target_price, horizon, fit_score, fit_tier, status, created_at, case_version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)`,
     )
     .run(
       input.symbol.toUpperCase(),
@@ -2164,6 +2184,7 @@ export function createDecision(input: CreateDecisionInput): Decision {
       input.fitScore ?? null,
       input.fitTier ?? null,
       now,
+      input.caseVersion ?? null,
     );
   return getDecision(Number(info.lastInsertRowid))!;
 }
@@ -2436,6 +2457,34 @@ export function putScannerSnapshot(result: string, generatedAt: string): void {
        ON CONFLICT(id) DO UPDATE SET result = excluded.result, generated_at = excluded.generated_at`,
     )
     .run(result, generatedAt);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Knowledge Graph snapshots — the previous graph per scope, kept so a fresh  */
+/* build can report "what changed since your last visit". One row per scope   */
+/* key ("symbol:AAPL", "portfolio", …), no global prune (see scanner_snapshot */
+/* above for why scanner_cache is the wrong home for anything long-lived).    */
+/* -------------------------------------------------------------------------- */
+
+interface KgSnapshotRow {
+  graph: string;
+  generated_at: string;
+}
+
+export function getKgSnapshot(scopeKey: string): { graph: string; generatedAt: string } | null {
+  const row = getDb()
+    .prepare("SELECT graph, generated_at FROM kg_snapshot WHERE scope_key = ?")
+    .get(scopeKey) as unknown as KgSnapshotRow | undefined;
+  return row ? { graph: row.graph, generatedAt: row.generated_at } : null;
+}
+
+export function putKgSnapshot(scopeKey: string, graph: string, generatedAt: string): void {
+  getDb()
+    .prepare(
+      `INSERT INTO kg_snapshot (scope_key, graph, generated_at) VALUES (?, ?, ?)
+       ON CONFLICT(scope_key) DO UPDATE SET graph = excluded.graph, generated_at = excluded.generated_at`,
+    )
+    .run(scopeKey, graph, generatedAt);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2959,6 +3008,20 @@ export interface ValuationEventWrite {
   priceAt: number | null;
   triggerSource?: string | null;
   note?: string | null;
+  /**
+   * True for an event that records something which happened *alongside* the
+   * case without changing it — today, only `decision_committed`, where the user
+   * acted on the case but revised none of its assumptions.
+   *
+   * Annotations move neither freshness clock. This is not a nicety: `updated_at`
+   * drives the `stale` flag and `last_user_event_at` drives `untouched`, so
+   * treating a logged BUY as an ordinary write would mark an eight-month-old
+   * seeded case as freshly reviewed by the user the moment they traded it —
+   * silently emptying the two attention flags the Judgment Ledger exists to
+   * raise. The version still increments and the projection still matches the
+   * newest event, so the log remains the authority.
+   */
+  annotation?: boolean;
 }
 
 /**
@@ -2997,7 +3060,13 @@ export function appendValuationEvent(write: ValuationEventWrite): ValuationCase 
 
     // A user event stamps last_user_event_at; anything else preserves whatever
     // was there, so "you have not looked at this in eight months" stays true.
-    const userStamp = write.author === "user" ? now : null;
+    // An annotation never stamps it, however authored — see `annotation`.
+    const userStamp = write.author === "user" && !write.annotation ? now : null;
+    // Same reasoning for the review clock: an annotation leaves updated_at where
+    // it was, so acting on a stale case does not make it look current.
+    const updatedClause = write.annotation
+      ? "updated_at = valuation_case.updated_at"
+      : "updated_at = excluded.updated_at";
     database
       .prepare(
         `INSERT INTO valuation_case
@@ -3018,7 +3087,7 @@ export function appendValuationEvent(write: ValuationEventWrite): ValuationCase 
            margin_of_safety     = excluded.margin_of_safety,
            terminal_value_share = excluded.terminal_value_share,
            price_at             = excluded.price_at,
-           updated_at           = excluded.updated_at,
+           ${updatedClause},
            last_user_event_at   = COALESCE(excluded.last_user_event_at, valuation_case.last_user_event_at)`,
       )
       .run(
@@ -3067,6 +3136,41 @@ export function listValuationEvents(symbol: string, limit = 50): ValuationEvent[
       createdAt: r.created_at,
     }];
   });
+}
+
+/**
+ * The assumption snapshots behind a specific set of (symbol, version) pairs.
+ *
+ * This is the Judgment Ledger's join: a decision stores the case version it was
+ * committed against, and answering "what margin of safety did you actually
+ * believe when you acted?" requires the assumptions as they stood then, not as
+ * they stand now. Because `valuation_event` carries a full snapshot per version
+ * rather than a delta, that is a lookup rather than a reconstruction.
+ *
+ * One query for the whole set — a page's worth of decisions would otherwise be
+ * a query each. Pairs the caller asks for that do not exist are simply absent
+ * from the map, which the caller must treat as "unknown" rather than "zero".
+ */
+export function assumptionsAtVersions(
+  pairs: readonly { symbol: string; version: number }[],
+): Map<string, AssumptionSet> {
+  const out = new Map<string, AssumptionSet>();
+  if (pairs.length === 0) return out;
+
+  // Deduplicate: several decisions commonly share one case version.
+  const unique = new Map(pairs.map((p) => [versionKeyOf(p.symbol, p.version), p]));
+  const placeholders = [...unique.values()].map(() => "(symbol = ? AND version = ?)").join(" OR ");
+  const params = [...unique.values()].flatMap((p) => [p.symbol.toUpperCase(), p.version]);
+
+  const rows = getDb()
+    .prepare(`SELECT symbol, version, assumptions FROM valuation_event WHERE ${placeholders}`)
+    .all(...params) as unknown as { symbol: string; version: number; assumptions: string }[];
+
+  for (const r of rows) {
+    const assumptions = coerceAssumptionSet(JSON.parse(r.assumptions) as unknown);
+    if (assumptions) out.set(versionKeyOf(r.symbol, r.version), assumptions);
+  }
+  return out;
 }
 
 /**
