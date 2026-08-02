@@ -374,71 +374,25 @@ describe("POST /api/export/compare", () => {
 /* -------------------------------------------------------------------------- */
 
 describe("POST /api/export/ic-report", () => {
-  it("returns pdf magic bytes for a full report", async () => {
+  it("returns pdf magic bytes for a schema-v2 report", async () => {
     const { POST } = await import("@/app/api/export/ic-report/route");
+    const { makeReport } = await import("./ic-export-fixture");
 
-    const report = {
-      symbol: "RELIANCE",
-      companyName: "Reliance Industries Ltd.",
-      generatedAt: new Date().toISOString(),
-      model: "llama3.2",
-      questions: ["What is the revenue growth?", "How is the debt?"],
-      signals: [
-        { id: "s1", category: "growth", severity: "low" as const, description: "Accelerating revenue growth YoY" },
-        { id: "s2", category: "debt", severity: "medium" as const, description: "Net debt elevated but manageable" },
-      ],
-      agentFindings: [
-        {
-          agent: "fundamental",
-          agentLabel: "Fundamental Analyst",
-          questionsAnswered: 3,
-          findings: "Strong operating cash flow generation. Margins expanding.",
-          keyInsights: ["Revenue CAGR of 15% over 3Y", "Operating leverage kicking in"],
-          confidence: "high" as const,
-          dataLimitations: null,
-        },
-      ],
-      thesis: {
-        bull: "Jio and retail are secular growth engines with multi-year runway.",
-        bear: "Refining margins may compress under global oil oversupply.",
-        base: "Double-digit earnings growth likely over 3–5 years.",
-        variantPerception: "Market underappreciating Jio's platform economics.",
-        keyCatalysts: ["Jio IPO monetisation", "Green energy capex returns"],
-        keyRisks: ["Crude oil price volatility", "Regulatory changes in telecom"],
-      },
-      valuation: {
-        currentPrice: "₹2,850",
-        intrinsicValueRange: "₹3,100–₹3,500",
-        impliedUpside: "+12% to +23%",
-        approaches: [
-          { method: "DCF", priceTarget: "₹3,300", impliedUpside: "+16%", assumptions: "WACC 10%, TGR 4%", confidence: "Medium" },
-        ],
-        scenarios: [],
-        valuationVerdict: "Trading at a moderate discount to intrinsic value. Attractive entry.",
-      },
-      monitorables: [
-        "Jio ARPU quarterly trend",
-        "Refining gross margin vs Singapore complex",
-        "New energy capex deployment timeline",
-      ],
-      runHotCold: {
-        oneYearReturn: 22.4,
-        medianReturn: 18.1,
-        percentile: 62,
-        signal: "neutral" as const,
-      },
-    };
-
-    const res = await POST(makeRequest({ report }));
+    const res = await POST(makeRequest({ report: makeReport() }));
 
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("application/pdf");
-    expect(res.headers.get("Content-Disposition")).toContain("RELIANCE");
     expect(res.headers.get("Content-Disposition")).toContain(".pdf");
 
     const buf = await responseToUint8(res);
     expect(buf.length).toBeGreaterThan(5000);
     expect(isPdfMagic(buf)).toBe(true);
+  });
+
+  it("rejects pre-v2 report shapes instead of rendering wrong numbers", async () => {
+    const { POST } = await import("@/app/api/export/ic-report/route");
+    const res = await POST(makeRequest({ report: { symbol: "X", valuation: { intrinsicValueRange: "₹1–₹2" } } }));
+    expect(res.status).toBe(400);
   });
 
   it("returns 400 for missing report", async () => {

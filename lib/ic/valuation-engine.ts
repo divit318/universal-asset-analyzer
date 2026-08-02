@@ -295,10 +295,17 @@ export function runScenarios(
   // an already-justified base must not re-trip the justification invariant.
   const shift = (inputs: DcfInputs, gDelta: number, wDelta: number): DcfInputs => {
     const g = Math.min(BANDS.growthMax, Math.max(BANDS.growthMin, inputs.growthPath[0] + gDelta));
+    // The shifted WACC stays inside the band and strictly above terminal
+    // growth — a bull shift on a base WACC near the floor must not walk the
+    // scenario out of its own invariants.
+    const wacc = Math.min(
+      BANDS.waccMax,
+      Math.max(BANDS.waccMin, Math.max(inputs.terminalGrowth + BANDS.terminalGap + 1e-6, inputs.wacc + wDelta)),
+    );
     return {
       ...inputs,
       growthPath: buildFadePath(g, inputs.terminalGrowth, inputs.growthPath.length),
-      wacc: inputs.wacc + wDelta,
+      wacc,
       justifications: {
         ...inputs.justifications,
         growth: inputs.justifications?.growth

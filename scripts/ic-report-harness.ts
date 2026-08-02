@@ -200,6 +200,15 @@ async function runTicker(symbol: string, why: string | undefined, outRoot: strin
       const wacc = facts
         ? { value: facts.wacc.wacc, components: `CAPM (${facts.wacc.region})` }
         : { value: 0.10, components: "default 10%" };
+      // ADR-class currency mismatch: fetch the FX rate the same way the route does.
+      const financialCurrency = fundamentals?.snapshot?.financialCurrency ?? null;
+      let fxToTrading: number | null = null;
+      if (financialCurrency && quote?.currency && financialCurrency !== quote.currency) {
+        fxToTrading = await getQuote(`${financialCurrency}${quote.currency}=X`)
+          .then((fxq) => (fxq.price > 0 ? fxq.price : null))
+          .catch(() => null);
+      }
+
       const canonical = {
         symbol,
         quote,
@@ -209,6 +218,7 @@ async function runTicker(symbol: string, why: string | undefined, outRoot: strin
         statements: effectiveStatements,
         statementsProvider: (statements ? "sec-edgar" : "yahoo-timeseries") as "sec-edgar" | "yahoo-timeseries",
         screenerIn,
+        fxToTrading,
       };
 
       await timed(result, dir, "report-deterministic", async () => {

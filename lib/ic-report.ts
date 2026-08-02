@@ -135,7 +135,10 @@ export async function generateICReport(
     insider: input.canonical.insider ?? undefined,
     epsSurprises: input.canonical.analyst?.epsSurprises,
     screenerIn: input.canonical.screenerIn,
-    currency: facts.currency,
+    // Signal descriptions print raw snapshot figures, which for ADR-class
+    // names are in the FINANCIAL currency — label them with the currency
+    // they are actually in rather than the trading currency.
+    currency: input.canonical.snapshot?.financialCurrency ?? facts.currency,
     market: facts.market,
   }));
   const signals = signalChecks.map((c) => c.signal).filter((s): s is DetectedSignal => s !== null);

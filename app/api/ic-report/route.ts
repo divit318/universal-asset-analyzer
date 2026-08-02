@@ -88,11 +88,23 @@ async function executeRun(
       return;
     }
 
+    // ADR-class currency mismatch: fetch the FX rate so financial figures can
+    // be converted into the trading currency instead of silently mixed.
+    const financialCurrency = fundamentals?.snapshot?.financialCurrency ?? null;
+    const tradingCurrency = quote?.currency ?? null;
+    let fxToTrading: number | null = null;
+    if (financialCurrency && tradingCurrency && financialCurrency !== tradingCurrency) {
+      fxToTrading = await getQuote(`${financialCurrency}${tradingCurrency}=X`)
+        .then((fxq) => (fxq.price > 0 ? fxq.price : null))
+        .catch(() => null);
+    }
+
     // Seed a ValuationCase when none exists, with the delivered growth CLAMPED
     // into the engine's defensible band — an unclamped 68% delivered CAGR
     // compounding for a decade is how the old report printed 300x-spot values.
     let valuationCase = getValuationCase(symbol);
-    if (!valuationCase && vFacts && canValue(vFacts)) {
+    const seedSafe = !(financialCurrency && tradingCurrency && financialCurrency !== tradingCurrency);
+    if (!valuationCase && vFacts && canValue(vFacts) && seedSafe) {
       try {
         const clampedGrowth = vFacts.deliveredGrowth.value != null
           ? Math.max(-0.10, Math.min(0.25, vFacts.deliveredGrowth.value))
@@ -143,6 +155,7 @@ async function executeRun(
           statements,
           statementsProvider,
           screenerIn,
+          fxToTrading,
         },
         wacc,
         valuationCase,

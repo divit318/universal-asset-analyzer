@@ -137,13 +137,21 @@ export interface CanonicalFacts {
 export interface CanonicalInput {
   symbol: string;
   quote: Quote | null;
-  snapshot: FundamentalsSnapshot | null;
+  snapshot: (FundamentalsSnapshot & { financialCurrency?: string | null }) | null;
   analyst: AnalystConsensus | null;
   insider: InsiderActivity | null;
   statements: FinancialStatements | null;
   /** Which provider produced `statements` ("sec-edgar" | "yahoo-timeseries"). */
   statementsProvider?: Provider;
   screenerIn: ScreenerInCompany | null;
+  /**
+   * FX rate for ADR-class names whose financial statements are reported in a
+   * different currency than the listing trades in (e.g. TSM: TWD figures on a
+   * USD ADR): 1 unit of the financial currency in trading-currency units.
+   * Without it, mismatched currency figures are dropped as gaps rather than
+   * silently mixed.
+   */
+  fxToTrading?: number | null;
   now?: string;
 }
 
@@ -165,14 +173,41 @@ export function buildCanonicalFacts(input: CanonicalInput): CanonicalFacts {
   const market = resolveMarket(symbol, quote);
   const currency = quote?.currency ?? (market === "IN" ? "INR" : "USD");
 
+  // ADR-class currency mismatch: financialData figures in a different currency
+  // than the listing trades in. Convert when a rate was supplied; otherwise
+  // drop the figures as gaps — mixing TWD cash flows with a USD price is how
+  // a 10x-spot "intrinsic value" gets printed.
+  const financialCurrency = input.snapshot?.financialCurrency ?? null;
+  const currencyMismatch = financialCurrency != null && financialCurrency !== currency;
+  const fx = currencyMismatch && input.fxToTrading != null && Number.isFinite(input.fxToTrading) && input.fxToTrading > 0
+    ? input.fxToTrading
+    : null;
+  if (currencyMismatch && fx == null) {
+    validationIssues.push(
+      `Financial statements are reported in ${financialCurrency} while the listing trades in ${currency}, and no FX rate was available — cash-flow and balance-sheet figures are excluded rather than mixed across currencies.`,
+    );
+  }
+
   const q = (field: string, value: number | null | undefined, unit: DatumUnit, periodLabel: string): Datum | null =>
     value != null && Number.isFinite(value)
       ? { value, unit, currency: unit === "currency" || unit === "perShare" ? currency : undefined, periodLabel, source: { provider: "yahoo-quote", field }, asOf: now }
       : null;
-  const s = (field: string, value: number | null | undefined, unit: DatumUnit, periodLabel = "TTM"): Datum | null =>
-    value != null && Number.isFinite(value)
-      ? { value, unit, currency: unit === "currency" || unit === "perShare" ? currency : undefined, periodLabel, source: { provider: "yahoo-quoteSummary", field }, asOf: now }
-      : null;
+  const s = (field: string, value: number | null | undefined, unit: DatumUnit, periodLabel = "TTM"): Datum | null => {
+    if (value == null || !Number.isFinite(value)) return null;
+    const isMoney = unit === "currency" || unit === "perShare";
+    if (isMoney && currencyMismatch) {
+      if (fx == null) return null; // dropped: recorded as a gap by the caller
+      return {
+        value: value * fx,
+        unit,
+        currency,
+        periodLabel,
+        source: { provider: "yahoo-quoteSummary", field, ref: `converted from ${financialCurrency} at ${fx}` },
+        asOf: now,
+      };
+    }
+    return { value, unit, currency: isMoney ? currency : undefined, periodLabel, source: { provider: "yahoo-quoteSummary", field }, asOf: now };
+  };
   const derived = (field: string, value: number, unit: DatumUnit, periodLabel: string, ref: string): Datum => ({
     value, unit, currency: unit === "currency" || unit === "perShare" ? currency : undefined, periodLabel, source: { provider: "derived", field, ref }, asOf: now,
   });
@@ -216,7 +251,9 @@ export function buildCanonicalFacts(input: CanonicalInput): CanonicalFacts {
     validationIssues.push(...issues);
     canonicalStatements = {
       provider,
-      currency: provider === "sec-edgar" ? "USD" : currency,
+      // Yahoo timeseries reports in the FINANCIAL currency for ADR-class
+      // names; label the series with the currency it is actually in.
+      currency: provider === "sec-edgar" ? "USD" : currencyMismatch ? financialCurrency! : currency,
       fiscalYears: statements.fiscalYears,
       revenue: statements.revenue,
       netIncome: statements.netIncome,

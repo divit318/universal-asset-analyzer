@@ -67,6 +67,9 @@ interface RawFinancialData {
   totalCash?: number;
   totalDebt?: number;
   ebitda?: number;
+  /** Currency the financialData figures are reported in (differs from the
+   * trading currency for ADRs, e.g. TSM: TWD figures on a USD listing). */
+  financialCurrency?: string;
 }
 
 interface RawTrendPoint {
@@ -148,12 +151,18 @@ interface RawSummary {
 /* Mappers                                                                    */
 /* -------------------------------------------------------------------------- */
 
-export function mapSnapshot(symbol: string, raw: RawSummary): FundamentalsSnapshot {
+/** FundamentalsSnapshot plus the currency its financialData figures carry. */
+export interface FundamentalsSnapshotWithCurrency extends FundamentalsSnapshot {
+  financialCurrency: string | null;
+}
+
+export function mapSnapshot(symbol: string, raw: RawSummary): FundamentalsSnapshotWithCurrency {
   const fd = raw.financialData ?? {};
   const sd = raw.summaryDetail ?? {};
   const ks = raw.defaultKeyStatistics ?? {};
   return {
     symbol,
+    financialCurrency: typeof fd.financialCurrency === "string" ? fd.financialCurrency : null,
     price: n(fd.currentPrice),
     sector: raw.assetProfile?.sector ?? null,
     industry: raw.assetProfile?.industry ?? null,
@@ -326,7 +335,7 @@ export function mapOwnership(raw: RawSummary): OwnershipData {
 /* -------------------------------------------------------------------------- */
 
 export interface FundamentalsParts {
-  snapshot: FundamentalsSnapshot;
+  snapshot: FundamentalsSnapshotWithCurrency;
   analyst: AnalystConsensus;
   insider: InsiderActivity;
   earnings: EarningsData;

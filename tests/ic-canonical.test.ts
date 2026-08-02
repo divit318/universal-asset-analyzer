@@ -140,6 +140,32 @@ describe("buildCanonicalFacts", () => {
   });
 });
 
+describe("ADR currency mismatch (Phase 4)", () => {
+  it("converts financial figures into the trading currency when an FX rate is supplied", () => {
+    const f = buildCanonicalFacts(input({
+      snapshot: { ...snapshot(), financialCurrency: "TWD" },
+      fxToTrading: 0.033,
+      statements: null,
+    }));
+    expect(f.freeCashFlowTtm!.value).toBeCloseTo(40_000_000_000 * 0.033, 3);
+    expect(f.freeCashFlowTtm!.source.ref).toContain("converted from TWD");
+    expect(f.netDebt!.value).toBeCloseTo((10e9 - 30e9) * 0.033, 3);
+    // ratios are currency-neutral and untouched
+    expect(f.trailingPE!.value).toBe(25);
+  });
+
+  it("drops mismatched-currency figures as gaps when no FX rate exists, never mixes", () => {
+    const f = buildCanonicalFacts(input({
+      snapshot: { ...snapshot(), financialCurrency: "TWD" },
+      statements: null,
+    }));
+    expect(f.freeCashFlowTtm).toBeNull();
+    expect(f.totalDebt).toBeNull();
+    expect(f.validationIssues.some((i) => i.includes("TWD") && i.includes("excluded"))).toBe(true);
+    expect(f.gaps.some((g) => g.concept === "free cash flow (TTM)")).toBe(true);
+  });
+});
+
 describe("resolveMarket", () => {
   it("resolves by suffix, currency and exchange", () => {
     expect(resolveMarket("TCS.NS", null)).toBe("IN");

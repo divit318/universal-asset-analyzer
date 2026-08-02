@@ -11,6 +11,7 @@
 
 import type { CanonicalFacts } from "./canonical";
 import {
+  BANDS,
   buildFadePath,
   runDcf,
   runScenarios,
@@ -180,17 +181,30 @@ export function assembleValuationSuite(ctx: SuiteContext): ValuationSuiteResult 
   const { facts, proposal } = ctx;
   const spot = facts.spot?.value ?? null;
   const currency = facts.currency;
-  const wacc = ctx.wacc.value + proposal.waccAdjustmentBp.value / 10_000;
-
-  const profile = profileCompany(facts, ctx.sector, ctx.industry);
-  const applicability = methodApplicability(profile);
-  const applicableOf = (kind: MethodApplicability["kind"]) => applicability.find((a) => a.kind === kind)!;
 
   const blockingViolations: InvariantViolation[] = [];
   const warnings: InvariantViolation[] = [];
   const push = (vs: InvariantViolation[]) => {
     for (const v of vs) (v.severity === "blocking" ? blockingViolations : warnings).push(v);
   };
+
+  // Platform WACC arrives from CAPM inputs that can drift out of the
+  // defensible band (a 0.13 beta produces a 5.0% WACC); clamp to the band
+  // edge with an audit note instead of blocking the whole valuation on an
+  // upstream input.
+  const rawWacc = ctx.wacc.value + proposal.waccAdjustmentBp.value / 10_000;
+  const wacc = Math.min(BANDS.waccMax, Math.max(BANDS.waccMin, rawWacc));
+  if (wacc !== rawWacc) {
+    warnings.push({
+      invariant: "WACC band (input clamped)",
+      detail: `platform WACC ${(rawWacc * 100).toFixed(1)}% sits outside the defensible band [${BANDS.waccMin * 100}%, ${BANDS.waccMax * 100}%]; clamped to ${(wacc * 100).toFixed(1)}%`,
+      severity: "warning",
+    });
+  }
+
+  const profile = profileCompany(facts, ctx.sector, ctx.industry);
+  const applicability = methodApplicability(profile);
+  const applicableOf = (kind: MethodApplicability["kind"]) => applicability.find((a) => a.kind === kind)!;
 
   /* ── DCF ── */
   const dcfApp = applicableOf("dcf");

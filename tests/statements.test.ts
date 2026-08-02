@@ -19,9 +19,18 @@ describe("extractAnnual", () => {
       },
     });
     expect(series).toEqual([
-      { fy: 2023, value: 100 },
-      { fy: 2024, value: 120 },
+      { fy: 2023, value: 100, end: "2023-09-30" },
+      { fy: 2024, value: 120, end: "2024-09-28" },
     ]);
+  });
+
+  it("carries the period end date so a non-December fiscal label stays auditable", () => {
+    const series = extractAnnual({
+      units: {
+        USD: [{ form: "10-K", fp: "FY", fy: 2026, start: "2025-01-27", end: "2026-01-25", val: 42 }],
+      },
+    });
+    expect(series[0].end).toBe("2026-01-25");
   });
 });
 
@@ -64,13 +73,19 @@ describe("deriveStatements", () => {
   });
 
   it("derives margins per fiscal year", () => {
-    expect(result.grossMargin).toEqual([{ fy: 2023, value: 0.4 }, { fy: 2024, value: 0.5 }]);
+    expect(result.grossMargin).toEqual([
+      { fy: 2023, value: 0.4, end: null },
+      { fy: 2024, value: 0.5, end: null },
+    ]);
     expect(result.operatingMargin.at(-1)!.value).toBeCloseTo(0.25);
     expect(result.netMargin.at(-1)!.value).toBeCloseTo(0.2);
   });
 
   it("computes free cash flow as operating CF minus capex", () => {
-    expect(result.freeCashFlow).toEqual([{ fy: 2023, value: 25 }, { fy: 2024, value: 50 }]);
+    expect(result.freeCashFlow).toEqual([
+      { fy: 2023, value: 25, end: null },
+      { fy: 2024, value: 50, end: null },
+    ]);
   });
 
   it("computes revenue and FCF CAGR", () => {
