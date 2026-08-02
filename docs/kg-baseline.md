@@ -173,8 +173,8 @@ Other measured facts:
 
 ## 4. Copy baseline
 
-- Page subtitle: "How your names connect — companies, sectors, events, and
-  theses." Contains an em dash; "your names" is vague.
+- Page subtitle: "How your names connect [em dash] companies, sectors,
+  events, and theses." Contains an em dash; "your names" is vague.
 - Filing labels: "10-Q: 10-Q", "6-K: FORM 6-K" (duplicated form names, no
   issuer/date on the label).
 - Edge rationale for classification edges: "<SYM> is classified under

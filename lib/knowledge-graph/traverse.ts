@@ -129,7 +129,7 @@ function buildExplainPrompt(fromLabel: string, toLabel: string, deterministicSum
   return `You are an investment analyst explaining a connection discovered in a knowledge graph built from real portfolio, sector-rotation, and event data.
 
 CONNECTION: ${fromLabel} to ${toLabel}
-DETERMINISTIC PATH (each step is a real, computed relationship — do not invent facts beyond this):
+DETERMINISTIC PATH (each step is a real, computed relationship; do not invent facts beyond this):
 ${deterministicSummary}
 
 Explain this connection in plain English for an investor, and note how this kind of connection typically evolves over time. ${JSON_SCHEMA_LEAD_IN}
