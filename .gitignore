@@ -67,6 +67,12 @@ __pycache__/
 # Claude Code plugin-installed skill packages (vendored by the plugin manager, not project source)
 /.claude/skills/
 
+# Claude Code local git worktrees (machine-local checkouts, not project source)
+/.claude/worktrees/
+
+# benchmark harness output
+/bench-out/
+
 # one-off local scratch scripts
 /.scratch-capture.mjs
 
