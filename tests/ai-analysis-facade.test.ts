@@ -118,7 +118,7 @@ describe("text mode", () => {
         id: "ollama",
         async run() { return { data: { text: "plain prose answer" }, provider: "ollama" as const, meta: { durationMs: 1 } }; },
         async healthCheck() { return { reachable: true }; },
-      } } },
+      } as AnalysisProvider } },
     );
     expect((res.data as { text: string }).text).toBe("plain prose answer");
   });
