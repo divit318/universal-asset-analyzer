@@ -98,11 +98,30 @@ export function rankAll(
   universe: ScreenerCandidate[],
   assetClass: AssetClassId,
   factors: RankFactor[],
+  /**
+   * Precomputed class-wide percentiles (lib/screener/universe-stats.ts).
+   *
+   * When supplied, ranking becomes pure lookups: this function used to sort the
+   * entire universe once per factor on *every request* — three to five sorts of
+   * up to 1,540 rows, on every keystroke-triggered re-run — and now reuses the
+   * sort done once per 12-hour universe build. That is what makes soft
+   * preferences free: ten extra ranking factors add ten map lookups per row
+   * instead of ten universe sorts per request.
+   *
+   * A factor with a `direction` override still computes its own table, because
+   * the cached percentiles have the metric's default direction folded in and
+   * flipping a percentile is not the same as ranking by the opposite key when
+   * ties are involved.
+   */
+  cachedClassPercentiles?: Map<string, Map<string, number>>,
 ): Map<string, RankResult> {
-  const tables = factors.map((f) => ({
-    factor: f,
-    percentiles: percentileRank(universe, assetClass, f.metric, f.direction),
-  }));
+  const tables = factors.map((f) => {
+    const cached = f.direction == null ? cachedClassPercentiles?.get(f.metric) : undefined;
+    return {
+      factor: f,
+      percentiles: cached ?? percentileRank(universe, assetClass, f.metric, f.direction),
+    };
+  });
 
   const totalWeight = factors.reduce((s, f) => s + f.weight, 0);
   const out = new Map<string, RankResult>();

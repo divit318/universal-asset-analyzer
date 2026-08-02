@@ -166,6 +166,32 @@ const metrics: MetricDef[] = [
     options: ["Low", "Medium", "High"],
   },
 
+  {
+    key: "returnPerVol",
+    label: "Return / Volatility",
+    description:
+      "Trailing 1-year return per unit of annualised volatility. Commodity volatility spans an order of magnitude — natural gas against gold — so ranking on raw return ranks on violence instead of performance.",
+    group: "Risk",
+    unit: "x",
+    availability: "derived",
+    source: "yahoo",
+    formula: "1-year return ÷ annualised volatility",
+    better: "higher",
+    step: 0.1,
+  },
+  {
+    key: "carryQuality",
+    label: "Carry Quality",
+    description:
+      "Roll yield as a share of volatility. A 2% roll yield on a 15%-vol contract is a real edge; the same 2% on 60% vol is a rounding error you have to sit through.",
+    group: "Futures Curve",
+    unit: "x",
+    availability: "derived",
+    source: "yahoo",
+    formula: "roll yield ÷ annualised volatility",
+    better: "higher",
+    step: 0.05,
+  },
   // Declared-but-unscreenable.
   {
     key: "inventoryLevel",
@@ -208,6 +234,9 @@ export const commodityClass: AssetClassDefinition = {
   aliases: ["commodities", "futures", "oil", "gold", "metals", "grains"],
   validate: (s) => /=F$/i.test(s),
   capabilities: ["screen", "research", "compare", "watchlist", "chart", "news"],
+
+  /** Peer group for relative filters — energy and livestock curves behave nothing alike. */
+  peerGroupBy: "sector",
 
   metrics,
   filterGroups: ["Price & Trend", "Futures Curve", "Seasonality", "Risk", "Supply & Demand"],

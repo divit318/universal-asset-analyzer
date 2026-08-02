@@ -122,6 +122,84 @@ export function categoryStyle(category: string | null): string | null {
 /* -------------------------------------------------------------------------- */
 
 /* -------------------------------------------------------------------------- */
+/* Structure: what kind of vehicle is this, really                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The wrapper, as opposed to the exposure.
+ *
+ * This is the filter an institutional user reaches for first and no consumer
+ * screener offers: **exclude the leveraged and inverse products**. A 3x daily-reset
+ * fund is not a small-cap fund with more risk, it is a different instrument with
+ * path-dependent decay, and its presence in a ranked list of "small cap ETFs" is
+ * a category error rather than an aggressive option. Covered-call funds are
+ * flagged for the same reason in reverse: their yield is option premium, not
+ * income, and a dividend screen that ranks them alongside dividend payers is
+ * comparing a sold call to a cash flow.
+ *
+ * Derived from the fund's Morningstar category plus its name, both already
+ * fetched. Names are load-bearing here because Morningstar files many
+ * covered-call and buffer products under plain equity categories.
+ */
+export function fundStructure(category: string | null, name: string): string {
+  const haystack = `${category ?? ""} ${name}`.toLowerCase();
+
+  // Order matters: leverage and inversion dominate everything else about a
+  // vehicle, and a "-3x inverse" product must not be filed under "Inverse" only.
+  if (/\b(-?[23](\.\d)?x|ultrapro|ultrashort|triple|double)\b/.test(haystack) || /leveraged/.test(haystack)) {
+    return /\b(inverse|short|bear)\b/.test(haystack) ? "Leveraged Inverse" : "Leveraged";
+  }
+  if (/\b(inverse|bear)\b/.test(haystack)) return "Inverse";
+  if (/covered call|buywrite|premium income|option income/.test(haystack)) return "Covered Call";
+  if (/\bbuffer|defined outcome|target outcome\b/.test(haystack)) return "Buffered";
+  if (/currency hedged|\bhedged\b/.test(haystack)) return "Currency Hedged";
+  return "Plain";
+}
+
+/**
+ * Raw `fundProfile.family` → the canonical issuer name the filter offers.
+ *
+ * Necessary because the raw strings do not match anything a user would type, and
+ * a categorical filter compares against them exactly: Yahoo says "State Street
+ * Investment Management", "Dimensional Fund Advisors", "Global X Funds". Offering
+ * "Dimensional" as an option and storing "Dimensional Fund Advisors" as the
+ * attribute produces a filter that is present, selectable, and matches nothing —
+ * the worst of the three possible outcomes.
+ *
+ * iShares and BlackRock are folded together deliberately: they are one firm, and
+ * the question this filter answers ("issuers I have diligenced") is about the
+ * firm, not the brand. Verified against the live 447-fund universe; anything
+ * unrecognised becomes "Other" rather than fragmenting the option list.
+ */
+const ISSUER_PATTERNS: [RegExp, string][] = [
+  [/ishares|blackrock/i, "iShares / BlackRock"],
+  [/vanguard/i, "Vanguard"],
+  [/state street|spdr/i, "State Street"],
+  [/invesco/i, "Invesco"],
+  [/first trust/i, "First Trust"],
+  [/dimensional/i, "Dimensional"],
+  [/j\.?p\.? ?morgan/i, "JPMorgan"],
+  [/schwab/i, "Schwab"],
+  [/fidelity/i, "Fidelity"],
+  [/global x/i, "Global X"],
+  [/capital group/i, "Capital Group"],
+  [/avantis/i, "Avantis"],
+  [/vaneck/i, "VanEck"],
+  [/wisdomtree/i, "WisdomTree"],
+  [/franklin/i, "Franklin Templeton"],
+  [/proshares/i, "ProShares"],
+  [/goldman/i, "Goldman Sachs"],
+  [/direxion/i, "Direxion"],
+  [/pacer/i, "Pacer"],
+];
+
+export function fundIssuer(family: string | null): string | null {
+  if (!family) return null;
+  for (const [pattern, name] of ISSUER_PATTERNS) if (pattern.test(family)) return name;
+  return "Other";
+}
+
+/* -------------------------------------------------------------------------- */
 /* What is (and isn't) an ETF for this class                                   */
 /* -------------------------------------------------------------------------- */
 
@@ -218,10 +296,33 @@ export function toCandidate(
   // annualReportExpenseRatio is a fraction (0.0003) and fund-shared scales it.
   // Prefer the screener's, fall back to the enriched one.
   const expenseRatio = num(row.netExpenseRatio) ?? detail?.expenseRatio ?? null;
+  const name = str(row.longName) ?? str(row.shortName) ?? symbol;
+
+  /*
+   * Everything below is derived from fields already on the cached screener row —
+   * no additional request, and nothing computed at screen time. Coverage was
+   * measured across a live 250-fund page before each was added, because a filter
+   * backed by a 30%-populated field is worse than no filter: it silently deletes
+   * the other 70% of the universe.
+   *
+   *   firstTradeDateMilliseconds  100%   averageDailyVolume3Month  100%
+   *   fiftyTwoWeekHigh            100%   trailingThreeMonthReturns  99%
+   *   trailingPE                   78%
+   *
+   * Deliberately NOT added: `sharesOutstanding` (33%) and `priceToBook` (31%).
+   * The first is the input to the standard flows construction
+   * (Δshares × NAV), so ETF fund flows are not honestly derivable from this
+   * source — they stay declared-unavailable rather than shipped two-thirds empty.
+   */
+  const price = num(row.regularMarketPrice);
+  const avgVolume = num(row.averageDailyVolume3Month);
+  const fiftyTwoWeekHigh = num(row.fiftyTwoWeekHigh);
+  const firstTrade = num(row.firstTradeDateMilliseconds);
+  const tenDayVolume = num(row.averageDailyVolume10Day);
 
   return {
     symbol,
-    name: str(row.longName) ?? str(row.shortName) ?? symbol,
+    name,
     assetClass: "etf",
     price: num(row.regularMarketPrice),
     changePercent: num(row.regularMarketChangePercent),
@@ -237,11 +338,48 @@ export function toCandidate(
       top10Concentration: detail?.top10Concentration ?? null,
       topSectorWeight: detail?.topSectorWeight ?? null,
       equityWeight: detail?.equityWeight ?? null,
+
+      /* --- Liquidity: can I actually build a position in this? ------------- */
+      // Dollar volume, not share volume. 3m ADV of 500k shares means nothing
+      // until you know whether the shares are $4 or $600 — this is the number
+      // that decides whether a fund is tradeable at institutional size.
+      dollarVolume: price != null && avgVolume != null ? price * avgVolume : null,
+      // 10-day against 3-month volume: is interest in this fund building or
+      // fading? A fund whose recent volume is a third of its average is quietly
+      // being abandoned, which is the leading indicator of a closure.
+      liquidityTrend:
+        tenDayVolume != null && avgVolume != null && avgVolume > 0 ? tenDayVolume / avgVolume : null,
+
+      /* --- Size, age and diversification ---------------------------------- */
+      // Track record and closure risk. A fund launched eight months ago has no
+      // through-cycle behaviour to evaluate, however good its backtest looks.
+      fundAge: firstTrade != null ? (Date.now() - firstTrade) / (365.25 * 24 * 3600 * 1000) : null,
+      effectiveSectors: detail?.effectiveSectors ?? null,
+      cashWeight: detail?.cashWeight ?? null,
+      bondWeight: detail?.bondWeight ?? null,
+
+      /* --- Look-through valuation ----------------------------------------- */
+      // The fund's own trailing P/E *is* the weighted P/E of its holdings, which
+      // makes "show me cheap ETFs by what they actually own" answerable without
+      // a holdings feed. This is the one metric here an institutional user would
+      // normally need N-PORT ingestion or a vendor to get.
+      lookThroughPE: num(row.trailingPE),
+
+      /* --- Return path ---------------------------------------------------- */
+      threeMonthReturn: num(row.trailingThreeMonthReturns),
+      distanceFrom52WkHigh:
+        price != null && fiftyTwoWeekHigh != null && fiftyTwoWeekHigh > 0
+          ? ((price - fiftyTwoWeekHigh) / fiftyTwoWeekHigh) * 100
+          : null,
     },
     attributes: {
       region: categoryRegion(detail?.category ?? null),
       focus: categoryFocus(detail?.category ?? null, detail?.topSector ?? null),
       style: categoryStyle(detail?.category ?? null),
+      // The wrapper, so leveraged/inverse/covered-call products can be excluded
+      // outright rather than silently ranked against plain funds.
+      structure: fundStructure(detail?.category ?? null, name),
+      issuer: fundIssuer(detail?.family ?? null),
     },
     topHoldings: detail?.topHoldings ?? null,
   };

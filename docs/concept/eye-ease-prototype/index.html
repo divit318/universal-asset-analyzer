@@ -1,0 +1,1261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UAA — Eye-Ease</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Spline+Sans+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+/* ============ TOKENS ============ */
+:root{
+  --sheet:#E7ECE3; --rule:#C9D2C4; --ink:#1B1D1A; --annot:#2F4358;
+  --loss:#A02C2C; --stale:#8A9184; --lead:#CFE3C4;
+  --figures:"Spline Sans Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --text:Charter,"Bitstream Charter","Iowan Old Style",Georgia,serif;
+}
+body.night{
+  --sheet:#101511; --rule:#22301F; --ink:#D9DED4; --annot:#8FA8C4;
+  --loss:#C25E5E; --stale:#5B6357; --lead:#1D2E1A;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{
+  background:var(--sheet); color:var(--ink);
+  font-family:var(--figures); font-size:13px;
+  display:grid; grid-template-columns:1fr 30px; grid-template-rows:1fr 30px;
+  overflow:hidden; transition:background .25s;
+}
+::selection{background:var(--annot); color:var(--sheet)}
+
+/* ============ SHELL ============ */
+#sheet{grid-row:1;grid-column:1;overflow-y:auto;overflow-x:hidden;position:relative}
+#index{grid-column:2;grid-row:1/3;border-left:1px solid var(--rule);display:flex;flex-direction:column;align-items:stretch;background:var(--sheet);z-index:30}
+#trail{grid-row:2;grid-column:1;border-top:1px solid var(--rule);display:flex;align-items:center;gap:0;padding:0 14px;overflow:hidden;background:var(--sheet)}
+
+/* thumb index */
+.notch{writing-mode:vertical-rl;transform:rotate(180deg);font:500 10px var(--figures);letter-spacing:.18em;text-transform:uppercase;color:var(--stale);padding:14px 0;text-align:center;cursor:pointer;border-bottom:1px solid var(--rule);position:relative;transition:color .15s,transform .08s;user-select:none}
+.notch:hover{transform:rotate(180deg) translateY(2px);color:var(--ink)}
+.notch.active{color:var(--ink);font-weight:600}
+.notch.active::after{content:"";position:absolute;top:0;bottom:0;right:-1px;width:3px;background:var(--ink)}
+.notch .wear{position:absolute;left:2px;top:6px;bottom:6px;width:2px;background:var(--ink);opacity:.08}
+#index .gap{flex:1}
+.notch.util{border-bottom:none;border-top:1px solid var(--rule);padding:10px 0}
+#notchtip{position:fixed;right:34px;background:var(--sheet);border:1px solid var(--rule);border-right:2px solid var(--ink);padding:6px 10px;font:400 10.5px/1.5 var(--figures);color:var(--ink);display:none;z-index:60;max-width:240px;white-space:nowrap}
+
+/* trail */
+.ttick{width:22px;height:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;position:relative;flex:0 0 auto}
+.ttick i{display:block}
+.ttick.visit i{width:6px;height:6px;border:1px solid var(--ink);border-radius:50%}
+.ttick.judg i{width:5px;height:5px;background:var(--annot)}
+.ttick.ai i{width:6px;height:6px;background:transparent;border:1px solid var(--annot);transform:rotate(45deg)}
+.ttick.dim{opacity:.3}
+.ttick:hover i{transform:scale(1.5)}
+.ttick.ai:hover i{transform:rotate(45deg) scale(1.5)}
+.tsep{width:1px;height:12px;background:var(--rule);margin:0 8px;flex:0 0 auto}
+#trail .tlabel{margin-left:auto;font:400 10px var(--figures);letter-spacing:.12em;color:var(--stale);text-transform:uppercase;flex:0 0 auto;padding-left:16px}
+#trail .tlabel b{color:var(--annot);font-weight:500}
+
+/* global tooltip */
+#tip{position:fixed;background:var(--sheet);border:1px solid var(--rule);border-left:2px solid var(--ink);padding:6px 9px;font:400 10.5px/1.6 var(--figures);color:var(--ink);display:none;z-index:100;max-width:300px;pointer-events:none;white-space:pre-line}
+
+/* call line */
+#callwrap{position:absolute;top:0;left:0;right:0;background:var(--sheet);z-index:40;display:none;padding:18px 96px 10px 92px;border-bottom:1px solid var(--rule)}
+#callwrap.open{display:block}
+#callline{width:100%;background:transparent;border:none;border-bottom:1px solid var(--ink);font:400 15px/30px var(--figures);color:var(--annot);outline:none;caret-color:var(--annot)}
+#callhints{padding-top:4px}
+#callhints .h{font:400 12px/26px var(--figures);border-bottom:1px solid var(--rule);color:var(--ink);cursor:pointer;display:flex;gap:14px}
+#callhints .h:hover{color:var(--annot)}
+#callhints .h .k{color:var(--stale);width:170px}
+#callcap{font:400 9.5px var(--figures);letter-spacing:.14em;text-transform:uppercase;color:var(--stale);padding-top:8px}
+
+/* ============ FOLIO ============ */
+.folio{display:none;grid-template-columns:76px minmax(0,1fr);padding:26px 26px 90px 0;animation:none}
+.folio.active{display:grid}
+.folio.enter{animation:turn .14s ease-out}
+@keyframes turn{from{opacity:0;transform:translateX(8px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.fbody{grid-column:2;min-width:0}
+.fhead{font-family:var(--text);font-variant-caps:small-caps;letter-spacing:.06em;font-size:19px;color:var(--ink);padding-bottom:2px}
+.fmeta{font:400 10.5px var(--figures);letter-spacing:.1em;color:var(--stale);text-transform:uppercase;padding-bottom:14px;border-bottom:1px solid var(--rule)}
+.fmeta b{color:var(--ink);font-weight:500}
+
+/* the duplex: evidence | seam | judgment */
+.duplex{display:grid;grid-template-columns:minmax(0,1fr) minmax(270px,35%)}
+.duplex>.e{min-width:0;padding-right:22px;position:relative}
+.duplex>.j{position:relative;border-left:1px solid var(--rule);padding-left:20px}
+.duplex>.j::before{content:"";position:absolute;left:3px;top:0;bottom:0;width:1px;background:var(--rule)}
+
+.shead{font:600 10px var(--figures);letter-spacing:.16em;text-transform:uppercase;color:var(--ink);margin:24px 0 6px;display:flex;align-items:baseline;gap:10px}
+.shead .sub{font-weight:400;color:var(--stale);letter-spacing:.08em}
+.j .shead,.jhead{color:var(--annot)}
+.jhead{font:600 10px var(--figures);letter-spacing:.16em;text-transform:uppercase;margin:24px 0 6px}
+
+.prose{font-family:var(--text);font-size:14.5px;line-height:24px;color:var(--annot)}
+.prose i{font-style:italic}
+.prose .sent{cursor:pointer}
+.prose .sent:hover{text-decoration:underline;text-decoration-color:var(--rule);text-underline-offset:3px}
+
+/* ledger tables */
+table.ledger{border-collapse:collapse;width:100%;font-size:12.5px}
+.ledger td,.ledger th{border-bottom:1px solid var(--rule);height:22px;padding:0 8px 0 0;text-align:right;font-weight:400;white-space:nowrap;vertical-align:middle}
+.ledger th{font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--stale);text-align:right}
+.ledger td.l,.ledger th.l{text-align:left}
+.ledger td.name{color:var(--ink)}
+.ledger tr:hover td{background:color-mix(in srgb,var(--rule) 26%,transparent)}
+.ledger tr.total td{border-top:1px solid var(--ink);border-bottom:3px double var(--ink);font-weight:500}
+.ledger .mcell{width:22px;color:var(--stale);cursor:crosshair;text-align:center;padding:0}
+.ledger tr.selrow td{background:color-mix(in srgb,var(--annot) 12%,transparent)}
+.neg{color:var(--loss)}
+.stale{color:var(--stale)}
+.sup{font-size:8.5px;vertical-align:super;color:var(--stale);margin-left:2px}
+.annu{border-bottom:1px dashed var(--annot)}
+
+/* freshness margin marks */
+.fmark{position:absolute;left:-46px;width:30px;text-align:center;color:var(--stale);cursor:pointer;font-size:12px}
+.fmark:hover{color:var(--ink)}
+
+/* ruled empty area */
+.ruledblank{background:repeating-linear-gradient(to bottom,transparent 0 21px,var(--rule) 21px 22px);height:66px;margin-top:4px}
+
+/* peek underlay */
+.peekable{cursor:pointer}
+.underlay{background:var(--sheet);border:1px solid var(--rule);border-left:2px solid var(--ink);margin:6px 0 8px;padding:7px 10px;font:400 11px/18px var(--figures);color:var(--ink);transform-origin:top;animation:fold .12s ease-out}
+@keyframes fold{from{transform:scaleY(0);opacity:0}}
+.underlay .cap{font-size:8.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--stale);margin-bottom:4px}
+.underlay .row{border-bottom:1px solid color-mix(in srgb,var(--rule) 55%,transparent);padding:1px 0}
+.underlay .row:last-child{border-bottom:none}
+
+/* rule sweep */
+@keyframes sweep{from{background-size:0% 1px}to{background-size:100% 1px}}
+.sweep{background-image:linear-gradient(var(--ink),var(--ink));background-repeat:no-repeat;background-position:left bottom;animation:sweep .22s ease-out forwards}
+
+/* tickmark */
+.tk{display:inline-block;vertical-align:-4px;color:var(--ink);cursor:default}
+.tk svg{display:block}
+
+/* ============ TODAY ============ */
+.wirerow td.tcell{position:relative}
+.wirerow .touch{display:none;position:absolute;right:0;top:0;height:22px;line-height:22px;font-size:10px;color:var(--annot);background:var(--sheet);padding:0 6px;letter-spacing:.04em;white-space:nowrap}
+.wirerow:hover .touch{display:block}
+.wiredot{color:var(--annot);font-size:14px;line-height:1}
+#sectorstrip{display:flex;border-bottom:1px solid var(--rule);margin-top:2px}
+.scell{flex:1;border-right:1px solid var(--rule);padding:5px 7px 6px;cursor:pointer;position:relative;min-width:0}
+.scell:last-child{border-right:none}
+.scell .c{font:600 10px var(--figures);letter-spacing:.06em}
+.scell .r{font-size:9px;color:var(--stale);letter-spacing:.08em}
+.scell:hover{outline:1px solid var(--ink);outline-offset:-1px}
+.scell .expand{display:none;position:absolute;top:100%;left:-1px;min-width:170px;background:var(--sheet);border:1px solid var(--rule);border-top:2px solid var(--ink);z-index:20;padding:6px 9px;font-size:10.5px;line-height:19px}
+.scell:hover .expand{display:block}
+#readlist{font:400 10.5px/18px var(--figures);color:var(--stale);letter-spacing:.04em;min-height:18px;margin-bottom:6px}
+#readlist b{color:var(--ink);font-weight:500}
+.due .yours td{color:var(--ink)}
+.due .rest td{color:var(--stale)}
+
+/* ============ FIELD ============ */
+#strips{display:flex;gap:14px;margin-top:8px;flex-wrap:wrap}
+.strip{flex:1;min-width:170px;cursor:crosshair;user-select:none}
+.strip .slabel{font:500 9.5px var(--figures);letter-spacing:.12em;text-transform:uppercase;color:var(--ink);display:flex;justify-content:space-between;margin-bottom:3px}
+.strip .slabel .b{color:var(--annot);font-weight:400;text-transform:none;letter-spacing:0}
+.strip svg{display:block;border-bottom:1px solid var(--rule)}
+#censusline{font:400 11px var(--figures);letter-spacing:.06em;color:var(--stale);padding:10px 0 2px}
+#censusline b{color:var(--ink);font-weight:600;font-size:13px}
+tr.out{opacity:0;transform:translateY(6px);transition:all .24s}
+tr.res-row{transition:opacity .2s}
+.sculpt{font:400 12px/24px var(--figures);color:var(--annot);border-bottom:1px solid var(--rule);cursor:pointer;display:flex;gap:10px}
+.sculpt:hover{color:var(--ink)}
+.sculpt .n{color:var(--stale)}
+
+/* ============ DOSSIER ============ */
+.plate{display:flex;gap:18px;align-items:flex-start;padding:16px 0 10px}
+.plate .bigtk{flex:0 0 auto}
+.plate .pn{font-family:var(--text);font-size:17px}
+.plate .pn b{font-family:var(--figures);font-weight:600;font-size:18px;letter-spacing:.02em}
+.plate .vitals{font-size:11.5px;color:var(--stale);letter-spacing:.03em;line-height:20px}
+.plate .vitals b{color:var(--ink);font-weight:500}
+.lane{margin-top:2px}
+.lanelabel{font:400 8.5px var(--figures);letter-spacing:.14em;text-transform:uppercase;color:var(--stale)}
+.exm{position:relative;padding:10px 0 6px;border-bottom:1px solid var(--rule)}
+.exm .xh{font:600 9.5px var(--figures);letter-spacing:.16em;color:var(--annot);text-transform:uppercase;display:flex;gap:10px;align-items:center}
+.exm .conf{color:var(--stale);font-weight:400;letter-spacing:.06em}
+.exm .lim{font:400 10px var(--figures);color:var(--stale);margin-top:3px}
+.exm .prose{font-size:13.5px;line-height:21px;margin-top:3px}
+#tieline{position:absolute;left:-14px;top:0;width:14px;height:100%;overflow:visible;pointer-events:none}
+.tension{font:400 10px/15px var(--figures);color:var(--loss);border-left:2px solid var(--loss);padding:2px 0 2px 8px;margin:8px 0}
+.dcf .as{color:var(--annot);border-bottom:1px dashed var(--annot);cursor:text;padding:0 2px;outline:none}
+.dcf td.chg{animation:sweep .22s ease-out forwards;background-image:linear-gradient(var(--ink),var(--ink));background-repeat:no-repeat;background-position:left bottom}
+.sens td{width:44px;text-align:center!important;padding:0!important}
+.sens td.here{outline:1.5px solid var(--ink);outline-offset:-2px;font-weight:600}
+.evflag{cursor:pointer}
+.qstem{display:inline-block;margin-right:14px;text-align:center;font:500 9.5px var(--figures);letter-spacing:.1em;color:var(--stale)}
+.mspark{position:absolute;left:-70px;width:58px;height:18px;display:none;background:var(--sheet)}
+tr:hover .mspark{display:block}
+
+/* ============ BENCH ============ */
+.brow{display:grid;grid-template-columns:158px repeat(4,1fr);border-bottom:1px solid var(--rule);height:28px;align-items:center;transition:opacity .15s}
+.brow .bl{font:400 10px var(--figures);letter-spacing:.08em;text-transform:uppercase;color:var(--stale);white-space:nowrap;overflow:hidden}
+.brow .bl .scl{color:var(--rule)}
+.bcell{position:relative;height:28px}
+.bcell .ruler{position:absolute;left:6px;right:14px;top:19px;height:1px;background:var(--rule)}
+.bcell .dot{position:absolute;top:16px;width:7px;height:7px;border-radius:50%;background:var(--ink);transform:translateX(-3px)}
+.bcell .val{position:absolute;top:1px;font-size:10.5px;transform:translateX(-50%);white-space:nowrap}
+.bgrp{font:600 9.5px var(--figures);letter-spacing:.18em;text-transform:uppercase;color:var(--ink);border-bottom:1px solid var(--rule);padding:16px 0 4px;display:flex;justify-content:space-between}
+.bgrp .best{color:var(--stale);font-weight:400;letter-spacing:.06em;display:none}
+body.lens .bgrp .best{display:block}
+.bhead{display:grid;grid-template-columns:158px repeat(4,1fr);padding:8px 0 6px;border-bottom:1px solid var(--ink)}
+.bhead .hc{font:600 12px var(--figures)}
+.bhead .hc .x{color:var(--stale);cursor:pointer;font-weight:400;margin-left:8px}
+.bhead .hc .x:hover{color:var(--loss)}
+body.lens .brow.lowd{opacity:.22}
+body.lens .brow.maxd .bl{color:var(--ink)}
+body.lens .brow.maxd .bl::before{content:"▸ ";color:var(--annot)}
+.lenshint{font:400 10px var(--figures);letter-spacing:.1em;color:var(--stale);text-transform:uppercase;padding:10px 0}
+body.lens .lenshint{color:var(--annot)}
+
+/* ============ BOOK ============ */
+.jentry{border-bottom:1px solid var(--rule);padding:10px 0}
+.jentry .jh{font:500 10.5px var(--figures);letter-spacing:.1em;text-transform:uppercase;color:var(--ink);display:flex;gap:12px}
+.jentry .jh .d{color:var(--stale)}
+.jentry .prose{font-size:13.5px;line-height:21px;margin-top:2px}
+.jentry .minitrail{display:flex;gap:5px;align-items:center;margin-top:5px}
+.jentry .minitrail i{display:block}
+.mathbox{position:absolute;background:var(--sheet);border:1px solid var(--rule);border-left:2px solid var(--annot);padding:5px 9px;font:400 10.5px/17px var(--figures);color:var(--ink);z-index:20}
+.qitem{border-bottom:1px solid var(--rule);padding:9px 0}
+.qitem .qa{font:600 11px var(--figures);letter-spacing:.08em;color:var(--annot);text-transform:uppercase}
+.qitem .prose{font-size:13px;line-height:20px}
+
+/* ============ ATLAS ============ */
+#atlas-svg text{font-family:var(--figures)}
+.district{cursor:pointer}
+.district:hover .dshape{stroke:var(--ink);stroke-width:1.5}
+.route{cursor:pointer}
+.route:hover path{stroke-width:2.2}
+#atlas-readout{min-height:130px}
+.dimmed{opacity:.25}
+
+/* ============ LEGEND ============ */
+.laws{counter-reset:law}
+.laws .prose{padding:4px 0;border-bottom:1px solid var(--rule)}
+.laws .prose::before{counter-increment:law;content:counter(law) "  ";font-family:var(--figures);font-size:11px;color:var(--stale)}
+.keys td{font-size:12px}
+.keys td.k{font-weight:600;width:140px;white-space:nowrap}
+.inks span{display:inline-block;margin-right:22px}
+
+body.factsonly .duplex>.j{display:none}
+body.factsonly .duplex{grid-template-columns:1fr}
+</style>
+</head>
+<body>
+
+<div id="callwrap">
+  <input id="callline" autocomplete="off" spellcheck="false" placeholder="">
+  <div id="callhints"></div>
+  <div id="callcap">the call line — a symbol · “TSM v NVDA” · “field: fcf > 4” · “note: …” · esc dismisses</div>
+</div>
+
+<main id="sheet">
+
+<!-- ================= TODAY ================= -->
+<section class="folio active" id="f-today">
+  <div class="fbody">
+    <div class="fhead">Today</div>
+    <div class="fmeta">sunday 02 aug 2026 · pre-open · desk sheet · <b>since you left fri 16:02</b></div>
+    <div class="duplex">
+      <div class="e">
+        <div class="shead">Since you left <span class="sub">fri 16:02 → now</span></div>
+        <table class="ledger" id="syl"></table>
+        <div class="shead">The wire <span class="sub">fri close → sun</span></div>
+        <table class="ledger" id="wire"></table>
+        <div class="shead">Sector climate <span class="sub">relative strength · rrg state · rank of 11</span></div>
+        <div id="sectorstrip"></div>
+      </div>
+      <div class="j">
+        <div class="jhead">The brief</div>
+        <div id="readlist"></div>
+        <div class="prose" id="brief"></div>
+        <div class="jhead">Due <span style="font-weight:400;color:var(--stale)">· next 10 days · your names first</span></div>
+        <table class="ledger due" id="due"></table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= FIELD ================= -->
+<section class="folio" id="f-field">
+  <div class="fbody">
+    <div class="fhead">The Field</div>
+    <div class="fmeta">census · universe <b>S&amp;P 500</b> (prototype sample of 42) · drag on a distribution to bound it · click to clear</div>
+    <div class="duplex">
+      <div class="e">
+        <div id="strips"></div>
+        <div id="censusline"></div>
+        <table class="ledger" id="residue"></table>
+      </div>
+      <div class="j">
+        <div class="jhead">Readings</div>
+        <div class="prose" id="fieldread">
+          <span class="sent peekable" data-peek="EVIDENCE|sector counts of current residue|SEM 9 · SW 5 · FIN 5 · HC 2 · IND 3 · CS 2">Your bounds select for self-funding growth: the residue skews to semiconductors and payment networks, with almost nothing cyclical surviving the momentum cut.</span>
+          <span class="sent peekable" data-peek="EVIDENCE|median ev/ebit, residue vs universe|residue 22.9× · universe 24.4×|quality (roic proxy) residue ≫ universe">The screen is implicitly a bet that quality stays cheap relative to its own history — you are not paying up versus the field’s median.</span>
+          <span class="sent peekable" data-peek="EVIDENCE|earnings calendar join|61% of residue reports within 21 sessions">Note: most of this residue reports within three weeks; entries taken now are entries taken into event risk.</span>
+        </div>
+        <div class="jhead">Saved sculptures</div>
+        <div class="sculpt" data-tip="click to replay bounds — strips animate into place, residue diffs vs last run"><span>quality compounders, expensive-ok</span><span class="n">31 names · Δ+2 since tue</span></div>
+        <div class="sculpt" data-tip="click to replay bounds"><span>cash machines under 12× ev/ebit</span><span class="n">14 names · Δ−1</span></div>
+        <div class="sculpt" data-tip="click to replay bounds"><span>post-drawdown accumulation</span><span class="n">9 names · unchanged</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= DOSSIER ================= -->
+<section class="folio" id="f-dossier">
+  <div class="fbody">
+    <div class="fhead">Dossier — <span style="font-family:var(--figures);font-size:16px">TSM</span></div>
+    <div class="fmeta">case file · taiwan semiconductor manufacturing · nyse adr · <b>held 180 · thesis v2 on file</b></div>
+
+    <!-- identification plate -->
+    <div class="duplex">
+      <div class="e">
+        <div class="plate">
+          <div class="bigtk" id="bigtk"></div>
+          <div>
+            <div class="pn"><b>TSM</b> · Taiwan Semiconductor Mfg. · Semiconductors · TW/US</div>
+            <div class="vitals">
+              px <b>197.30</b> · day <span class="neg">−0.8%</span> · yr range 12↕88 pctile <b>81</b> · mcap <b>$1.02T</b> · adv <b>$2.9B</b><br>
+              stance <b>held 180 adr · 18.3% of book</b> · watch flags: strait-risk cap 8% <span class="stale">(at 18.3% — see book)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="j">
+        <div class="jhead">Standing thesis <span style="font-weight:400;color:var(--stale)">v2 · 2026-07-14 · 19d old</span></div>
+        <div class="prose" style="font-size:13.5px;line-height:21px">
+          Capex-digestion fear is structurally overdone; AI demand fills N3/N2 regardless of the smartphone cycle. Pay for the monopoly, size for the strait. <i>Sizing cap 8% — currently breached by drift, on the queue.</i>
+        </div>
+      </div>
+    </div>
+
+    <!-- price & regime -->
+    <div class="duplex">
+      <div class="e">
+        <div class="shead">Price &amp; regime <span class="sub">1y · daily · flags are your journal entries</span></div>
+        <div id="priceband"></div>
+      </div>
+      <div class="j">
+        <div class="jhead">Movement <span style="font-weight:400;color:var(--stale)">on request · e at cursor</span></div>
+        <div class="prose" style="font-size:13.5px;line-height:21px">
+          <span class="sent peekable" data-peek="EVIDENCE|jun 03 session|semis −3.1% on export-control draft|TSM −4.2% vs SOX −3.1% · no company news|volume 1.8× adv">The June drawdown was sector beta plus a tariff headline, not company news — TSM fell with the group on 1.8× volume and led the recovery.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- the record -->
+    <div class="duplex">
+      <div class="e">
+        <div class="shead">The record <span class="sub">fy18–fy25 · usd · superior figures are y/y · hover a row for its shape · drag the margin to compute</span></div>
+        <table class="ledger" id="record"></table>
+      </div>
+      <div class="j">
+        <div class="jhead">Quality reading <span style="font-weight:400;color:var(--stale)">composite 94 · press . on a stem</span></div>
+        <div style="padding:6px 0 2px" id="qstems"></div>
+        <div class="prose" style="font-size:13.5px;line-height:21px">
+          <span class="sent peekable" data-peek="EVIDENCE|computeScore terms (value)|ev/ebit 17.2× → pctile 38 of universe|fcf yield 3.4% → pctile 44|weight 0.35 → v 61">Value is the weak stem — the market already pays for the quality. The score is carried by the record’s consistency, not its price.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- the examination -->
+    <div class="duplex">
+      <div class="e">
+        <div class="shead">Raw materials <span class="sub">what the panel read · level with each examiner</span></div>
+        <table class="ledger" id="materials"></table>
+        <div class="ruledblank" style="height:440px"></div>
+        <div style="font:400 9.5px var(--figures);letter-spacing:.12em;color:var(--stale);text-transform:uppercase;padding-top:6px">the sources end here — rulings await the next filing (10-K due jan)</div>
+      </div>
+      <div class="j" style="position:relative">
+        <div class="jhead">The examination <span style="font-weight:400;color:var(--stale)">9 examiners · confidence in margin</span></div>
+        <div id="examiners" style="position:relative"></div>
+      </div>
+    </div>
+
+    <!-- the workings -->
+    <div class="duplex">
+      <div class="e">
+        <div class="shead">The workings <span class="sub">per adr · dashed figures are assumptions — edit them, the sheet recomputes</span></div>
+        <table class="ledger dcf" id="dcf"></table>
+        <div class="shead">Sensitivity <span class="sub">implied value per adr · ● you are here</span></div>
+        <table class="ledger sens" id="sens"></table>
+      </div>
+      <div class="j">
+        <div class="jhead">Reading</div>
+        <div class="prose" style="font-size:13.5px;line-height:21px">
+          <span class="sent peekable" data-peek="EVIDENCE|sensitivity spread by assumption|±1pt growth → ±11% value|±0.5pt wacc → ±14% value|±1pt fcf margin → ±4% value">The thesis lives or dies on the discount rate you believe the strait deserves — growth assumptions move the value less than the risk premium does.</span>
+          <div id="dcfgap" style="font:500 12px var(--figures);color:var(--annot);padding-top:8px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- paper trail -->
+    <div class="duplex">
+      <div class="e">
+        <div class="shead">Paper trail <span class="sub">filings · events · news · press . on a row for the excerpt</span></div>
+        <table class="ledger" id="ptrail"></table>
+      </div>
+      <div class="j">
+        <div class="jhead">Thesis evolution</div>
+        <div class="jentry"><div class="jh"><span class="d">2026-07-14</span><span>reaffirmed → v2</span></div><div class="prose">Added strait-risk sizing cap at 8%. Capex thesis strengthening — June revenue ahead of the digestion case.</div></div>
+        <div class="jentry"><div class="jh"><span class="d">2026-04-09</span><span>held through</span></div><div class="prose">Export-control drawdown −12%. No thesis touch: controls target customers’ customers. Added 40 ADR at 168.</div></div>
+        <div class="jentry"><div class="jh"><span class="d">2026-03-14</span><span>opened → v1</span></div><div class="prose">Capex digestion fear is overdone; AI demand fills N3/N2 regardless. Entered 140 ADR at 141.</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= BENCH ================= -->
+<section class="folio" id="f-bench">
+  <div class="fbody">
+    <div class="fhead">The Bench</div>
+    <div class="fmeta">specimen tray · 4 pinned · shared rulers · <b>hold d for the delta lens</b> — identical rows withdraw, divergence remains</div>
+    <div class="duplex">
+      <div class="e">
+        <div class="bhead" id="bhead"></div>
+        <div id="benchrows"></div>
+        <div class="lenshint" id="lenshint">hold d — delta lens</div>
+        <div class="shead">Five years, one axis <span class="sub">rebased to 100</span></div>
+        <div id="benchchart"></div>
+      </div>
+      <div class="j">
+        <div class="jhead">Verdict <span style="font-weight:400;color:var(--stale)">on request · r</span></div>
+        <div class="prose">
+          <span class="sent peekable" data-peek="EVIDENCE|rows summarized|rev cagr: AVGO 21.3 vs TSM 20.5|fcf yield: AVGO 3.1 vs TSM 3.4|customer conc: AVGO 35% vs TSM 25%">AVGO gives up almost nothing to TSM on growth, matches it on yield, and carries software gross margins — but its acquisition ledger is the thing you must underwrite.</span>
+          <span class="sent peekable" data-peek="EVIDENCE|rows summarized|roic: NVDA 68.2 · field max|ev/ebit: NVDA 34.1 · tray max|6m: +32.4 · tray max">NVDA is the tray’s best business at the tray’s worst price; every ruler says the same thing, which is itself information.</span>
+          <span class="sent peekable" data-peek="EVIDENCE|rows summarized|amd 6m −4.1 · rel strength 38|fcf margin 10.9 vs tray median 41.9">AMD is on the tray to discipline the others — it shows what the market pays when execution is merely good.</span>
+        </div>
+        <div class="jhead">Ghost specimen</div>
+        <div class="prose" style="font-size:13px;line-height:20px;color:var(--stale)">
+          Pin a saved sculpture’s median as a phantom column — compare candidates against the field’s typical survivor, not just each other. <i>(concept)</i>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= BOOK ================= -->
+<section class="folio" id="f-book">
+  <div class="fbody">
+    <div class="fhead">The Book</div>
+    <div class="fmeta">holdings register · watch register · the written record · <b>losses are the only colour on this sheet</b></div>
+    <div class="duplex">
+      <div class="e">
+        <div class="shead">Holdings <span class="sub">running balance · drag the margin to compute · hover a row for its thesis age</span></div>
+        <table class="ledger" id="holdings"></table>
+        <div class="shead">Watch register <span class="sub">every entry states why it exists · reasons met surface on today</span></div>
+        <table class="ledger" id="watchreg"></table>
+        <div class="shead">The written record</div>
+        <div id="journal"></div>
+      </div>
+      <div class="j">
+        <div class="jhead">Decision queue</div>
+        <div id="dqueue"></div>
+        <div class="jhead">Stress <span style="font-weight:400;color:var(--stale)">rotation-aware · what-if on the call line</span></div>
+        <table class="ledger" id="stress"></table>
+        <div class="jhead">CIO memo</div>
+        <div class="prose" style="font-size:13px;line-height:20px;color:var(--stale)">Ruled and waiting. <span style="color:var(--annot)">r</span> to request — the margin will show the reading list while the memo settles, sentence by sentence.</div>
+        <div class="ruledblank"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= ATLAS ================= -->
+<section class="folio" id="f-atlas">
+  <div class="fbody">
+    <div class="fhead">The Atlas</div>
+    <div class="fmeta">fixed geography · 11 districts, permanent · climate = relative strength · routes = supply chains · <b>your flags are settlements</b></div>
+    <div class="duplex">
+      <div class="e">
+        <div id="atlasmount"></div>
+      </div>
+      <div class="j">
+        <div class="jhead">Readout</div>
+        <div id="atlas-readout" class="prose" style="font-size:13px;line-height:20px">Hover a district for its climate and census. Hover a route to read it upstream → downstream. Press <span style="font-family:var(--figures)">.</span> on an edge for why it exists.</div>
+        <div class="jhead">Settlement pattern</div>
+        <div class="prose" style="font-size:13.5px;line-height:21px">
+          <span class="sent peekable" data-peek="EVIDENCE|book weights by district|info tech 5 names · 51.7% of book|health care 2 names · 14.1%|rotation ranks: info tech 11/11 · health 1/11">Five of your eleven positions settle in one district — and it is the one the climate has turned against. The map says what the table hides.</span>
+        </div>
+        <div class="jhead">Climate <span style="font-weight:400;color:var(--stale)">30d relative strength · rank</span></div>
+        <table class="ledger" id="climate"></table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= LEGEND ================= -->
+<section class="folio" id="f-legend">
+  <div class="fbody">
+    <div class="fhead">The Legend</div>
+    <div class="fmeta">one sheet · the whole system · press ? any time</div>
+    <div class="duplex">
+      <div class="e">
+        <div class="shead">The tickmark — one mark, four facts</div>
+        <div id="legendtk" style="padding:10px 0 6px"></div>
+        <div class="shead">The two inks</div>
+        <div class="inks" style="padding:8px 0;font-size:13px;line-height:26px">
+          <span style="color:var(--ink)">■ fact ink — evidence: prices, filings, ratios. true or false.</span><br>
+          <span style="color:var(--annot)">■ judgment ink — scores, synthesis, your notes. good or bad arguments.</span><br>
+          <span style="color:var(--loss)">■ red — the only warm colour. loss or breach. nothing else, ever. gains are black: this is a ledger.</span><br>
+          <span style="color:var(--stale)">■ faded ink — data past its freshness ttl. hover ∴ for source · click to refresh.</span>
+        </div>
+        <div class="shead">The seam</div>
+        <div class="prose" style="color:var(--ink)">Facts on the left of the double rule; judgment on the right, level with its evidence. Press <span style="font-family:var(--figures)">.</span> (or click) on any judgment to peel it back to what it was made from. Press <span style="font-family:var(--figures)">\</span> to withdraw all judgment and read facts alone.</div>
+        <div class="shead">Six laws</div>
+        <div class="laws">
+          <div class="prose">Facts in fact ink on rules; judgments in blue-black on plain ground; the seam is always visible.</div>
+          <div class="prose">Red is the only warm colour, and it only ever means loss or breach.</div>
+          <div class="prose">Every judgment peels to its evidence in one keypress.</div>
+          <div class="prose">Data shows its age; nothing pretends to be fresher than it is.</div>
+          <div class="prose">Motion only for causality; nothing moves to be admired.</div>
+          <div class="prose">No cards, no floating panels, no chrome beyond the four edge instruments.</div>
+        </div>
+      </div>
+      <div class="j">
+        <div class="jhead">The grammar</div>
+        <table class="ledger keys" id="keys"></table>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<nav id="index"></nav>
+<div id="notchtip"></div>
+<footer id="trail"></footer>
+<div id="tip"></div>
+
+<script>
+"use strict";
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const H=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e};
+function rng(seed){let a=seed>>>0;return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const NBSP="\u00A0", MINUS="\u2212";
+function num(n,d=1){return n.toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d})}
+function sgn(n,d=1,suf=""){return n<0?`<span class="neg">${MINUS}${num(-n,d)}${suf}</span>`:`+${num(n,d)}${suf}`}
+
+/* ---------- tickmark ---------- */
+function tickSVG(o,scale=1){
+  const s=o.s??50, st=o.st??null, th=o.th??false, tr=o.tr??0, fr=o.fr??1;
+  const fh=Math.round(s/100*14*10)/10;
+  const notch=b=>{const y=16-14*b/100;return `<line x1="12.6" y1="${y}" x2="14.4" y2="${y}" stroke="var(--rule)" stroke-width="0.8"/>`};
+  let flag="";
+  if(st==="h")flag=`<polygon points="12,3 19,5.5 12,8" fill="${th?"var(--annot)":"none"}" stroke="var(--annot)" stroke-width="1"/>`;
+  if(st==="w")flag=`<polygon points="9,3 2,5.5 9,8" fill="${th?"var(--annot)":"none"}" stroke="var(--annot)" stroke-width="1"/>`;
+  let trend="";
+  if(tr>0)trend=`<line x1="13" y1="16.5" x2="19" y2="13" stroke="currentColor" stroke-width="1.1"/>`;
+  else if(tr<0)trend=`<line x1="13" y1="13" x2="19" y2="16.5" stroke="currentColor" stroke-width="1.1"/>`;
+  else trend=`<line x1="13" y1="14.7" x2="19" y2="14.7" stroke="currentColor" stroke-width="1.1"/>`;
+  const fade=fr<1?`<rect x="8.4" y="2" width="4.2" height="${(1-fr)*14}" fill="var(--sheet)" opacity="0.78"/>`:"";
+  const w=22*scale,h=19*scale;
+  return `<svg width="${w}" height="${h}" viewBox="0 0 22 19">
+    <rect x="9" y="2" width="3" height="14" fill="none" stroke="var(--rule)" stroke-width="0.8"/>
+    <rect x="9" y="${16-fh}" width="3" height="${fh}" fill="currentColor"/>
+    ${notch(40)}${notch(60)}${notch(75)}${flag}${trend}${fade}</svg>`;
+}
+function tk(o){
+  const band=o.s>=75?"strong buy":o.s>=60?"buy":o.s>=40?"hold":"avoid";
+  const stance=o.st==="h"?(o.th?"held · thesis on file":"held"):o.st==="w"?(o.th?"watched · thesis on file":"watched"):"no relationship";
+  const tr=o.tr>0?"rising":o.tr<0?"falling":"flat";
+  const fresh=o.fr>=1?"inputs fresh":"inputs aging — refresh from dossier";
+  return `<span class="tk" data-tip="score ${o.s} · ${band} band\n${stance}\n30d trend ${tr}\n${fresh}">${tickSVG(o)}</span>`;
+}
+
+/* ---------- charts ---------- */
+function polyline(vals,w,h,opts={}){
+  const min=opts.min??Math.min(...vals),max=opts.max??Math.max(...vals);
+  const pts=vals.map((v,i)=>`${(i/(vals.length-1)*w).toFixed(1)},${(h-(v-min)/(max-min||1)*(h-2)-1).toFixed(1)}`).join(" ");
+  return `<polyline points="${pts}" fill="none" stroke="${opts.stroke||"currentColor"}" stroke-width="${opts.sw||1}" ${opts.dash?`stroke-dasharray="${opts.dash}"`:""}/>`;
+}
+function genSeries(seed,n,start,drift,vol,shocks=[]){
+  const r=rng(seed);const out=[start];
+  for(let i=1;i<n;i++){let d=drift+(r()-0.5)*vol;
+    for(const s of shocks)if(i>=s[0]&&i<s[0]+s[2])d+=s[1];
+    out.push(Math.max(1,out[i-1]*(1+d)));}
+  return out;
+}
+
+/* ---------- global tooltip ---------- */
+const tip=$("#tip");
+document.addEventListener("mouseover",e=>{
+  const t=e.target.closest("[data-tip]");
+  if(!t){tip.style.display="none";return}
+  tip.textContent=t.dataset.tip;tip.style.display="block";
+  const r=t.getBoundingClientRect();
+  let x=r.left,y=r.bottom+6;
+  tip.style.left="0px";tip.style.top="0px";
+  const tw=tip.offsetWidth,thh=tip.offsetHeight;
+  if(x+tw>innerWidth-40)x=innerWidth-tw-40;
+  if(y+thh>innerHeight-40)y=r.top-thh-6;
+  tip.style.left=x+"px";tip.style.top=y+"px";
+});
+
+/* ---------- peek ---------- */
+let hoverPeek=null,hoverSym=null;
+document.addEventListener("mouseover",e=>{
+  hoverPeek=e.target.closest(".peekable");
+  hoverSym=e.target.closest("[data-sym]");
+});
+function togglePeek(p){
+  const u=p.nextElementSibling;
+  if(u&&u.classList.contains("underlay")){u.remove();return}
+  const parts=(p.dataset.peek||"").split("|");
+  const cap=parts.shift()||"EVIDENCE";
+  const d=H("div","underlay",`<div class="cap">▲ ${cap} — what this was made from</div>`+parts.map(x=>`<div class="row">${x}</div>`).join(""));
+  p.after(d);
+}
+document.addEventListener("click",e=>{
+  const p=e.target.closest(".peekable");
+  if(p&&!e.target.closest(".underlay"))togglePeek(p);
+});
+
+/* ---------- folios / thumb index ---------- */
+const FOLIOS=[
+  ["today","TODAY","desk sheet · 2 items deserve minutes","1"],
+  ["field","FIELD","census 42 → held sculpture ‘quality compounders’","2"],
+  ["dossier","DOSSIER","TSM · thesis v2 · 2 tensions on file","3"],
+  ["bench","BENCH","4 pinned · TSM NVDA AVGO AMD","4"],
+  ["book","BOOK","11 positions · day +0.3% · 3 on the queue","5"],
+  ["atlas","ATLAS","tech 11/11 lagging · 2 routes drawn","6"],
+];
+const WEAR={today:.5,field:.3,dossier:.9,bench:.25,book:.7,atlas:.15,legend:.1};
+const idx=$("#index");
+FOLIOS.forEach(([id,label,status])=>{
+  const n=H("div","notch",label+`<span class="wear"></span>`);
+  n.id="n-"+id;n.dataset.status=status;
+  n.querySelector(".wear").style.opacity=WEAR[id]*0.28;
+  n.onclick=()=>go(id);
+  n.onmouseenter=ev=>{const t=$("#notchtip");t.textContent=status;t.style.display="block";t.style.top=(n.getBoundingClientRect().top+8)+"px"};
+  n.onmouseleave=()=>$("#notchtip").style.display="none";
+  idx.appendChild(n);
+});
+idx.appendChild(H("div","gap"));
+const legendN=H("div","notch util","?");legendN.onclick=()=>go("legend");legendN.dataset.tip="the legend — notation & grammar";idx.appendChild(legendN);
+const nightN=H("div","notch util","◐");nightN.dataset.tip="after-hours sheet · n";nightN.onclick=()=>document.body.classList.toggle("night");idx.appendChild(nightN);
+
+let current="today";
+function go(id,silent){
+  if(id===current)return;
+  $$(".folio").forEach(f=>f.classList.remove("active","enter"));
+  const f=$("#f-"+id);f.classList.add("active","enter");
+  $$(".notch").forEach(n=>n.classList.remove("active"));
+  const n=$("#n-"+id);if(n)n.classList.add("active");
+  $("#sheet").scrollTop=0;current=id;
+  if(!silent&&id!=="legend")addTrail("visit",id,folioTitle(id));
+}
+function folioTitle(id){return id[0].toUpperCase()+id.slice(1)}
+
+/* ---------- trail ---------- */
+const trail=$("#trail");
+const TRAIL0=[
+  ["visit","today","Fri — Today",1],["visit","field","Fri — Field: sculpted fcf>2.5",1],["judg","field","Fri — saved sculpture",1],["visit","dossier","Fri — Dossier ASML",1],["judg","dossier","Fri — annotated ASML capex",1],
+  ["sep"],
+  ["visit","today","06:41 Today — since you left",0],["visit","field","06:44 Field — sculpt fcf ≥ 2.5, mom > 0",0],["judg","field","06:49 pinned TSM to bench",0],["visit","dossier","06:52 Dossier TSM — record, workings",0],["ai","dossier","06:58 examination run — 9 examiners",0],["judg","dossier","07:01 annotated gross margin ¶",0],["visit","bench","07:03 Bench — tray of 4",0],["ai","bench","07:06 verdict requested",0],["judg","bench","07:08 watched AMD (reason: <25× fwd)",0],["visit","book","07:10 Book — queue reviewed",0],["judg","book","07:12 acknowledged TRIM NVDA",0],
+];
+function addTrail(kind,folio,label,dim){
+  if(kind==="sep"){trail.insertBefore(H("div","tsep"),trail.querySelector(".tlabel"));return}
+  const t=H("div","ttick "+kind+(dim?" dim":""),"<i></i>");
+  t.dataset.tip=label;
+  t.onclick=()=>go(folio,true);
+  trail.insertBefore(t,trail.querySelector(".tlabel"));
+}
+trail.appendChild(H("div","tlabel","the trail · [ ] to walk · <b>J</b> commit session → journal"));
+TRAIL0.forEach(t=>addTrail(...t));
+
+/* =========================================================
+   TODAY
+========================================================= */
+const SYL=[
+  ["S&P 500","6,412.20",0.4,"%","fri close → fut"],
+  ["Nasdaq 100","23,981.44",0.8,"%","fri close → fut"],
+  ["NIFTY 50","28,104.65",0.6,"%","fri close"],
+  ["US 10Y","3.92%",-3.2,"bp","on the week"],
+  ["Brent","73.84",-1.1,"%","sun elec"],
+  ["Your book","206,259",0.31,"%","day p&l +599"],
+];
+$("#syl").innerHTML=SYL.map((r,i)=>`<tr><td class="l name" style="width:130px">${r[0]}</td><td class="l" id="sylv${i}" style="width:90px">${r[1]}</td><td style="width:80px">${sgn(r[2],1,r[3])}</td><td class="l stale">${r[4]}</td></tr>`).join("");
+
+const WIRE=[
+  ["Sun 07:12","Nikkei Asia","TSMC July revenue +26% y/y; AI accelerators cited as N3 runs full","TSM",{touch:"touches: TSM thesis ¶1 — capex digestion",dot:1}],
+  ["Sun 05:40","Reuters","Samsung passes HBM4 qualification at NVIDIA, people familiar say","NVDA MU",{touch:"touches: memory route pricing assumption",dot:1}],
+  ["Sat 22:15","WSJ","Fed’s Waller: September cut is ‘live’ if July inflation cooperates","",{}],
+  ["Sat 18:03","Bloomberg","UnitedHealth names new CFO; guides FY26 below street","UNH",{touch:"touches: UNH — 3rd thesis breach in 90d",dot:1}],
+  ["Sat 12:44","ET Markets","SEBI eases FPI norms; NIFTY closes week at record","HDB",{touch:"touches: india sleeve",dot:0}],
+  ["Fri 21:30","Reuters","OPEC+ said to weigh quota pause; Brent slips below 74","",{}],
+  ["Fri 18:12","Press","Broadcom completes divestiture of VMware EUC unit","AVGO",{touch:"touches: AVGO — acquisition ledger",dot:0}],
+  ["Fri 17:05","Caixin","China updates gallium export licence guidance","",{}],
+];
+$("#wire").innerHTML=WIRE.map(r=>{
+  const syms=r[3]?r[3].split(" ").map(s=>`<b style="font-weight:600">${s}</b>`).join(" "):"";
+  return `<tr class="wirerow"><td class="mcell">${r[4].dot?'<span class="wiredot">•</span>':""}</td><td class="l stale" style="width:70px">${r[0]}</td><td class="l stale" style="width:80px">${r[1]}</td><td class="l name tcell">${r[2]}${r[4].touch?`<span class="touch">→ ${r[4].touch}</span>`:""}</td><td class="l" style="width:80px">${syms}</td></tr>`;
+}).join("");
+
+const SECTORS=[["HLT","Health",1,"LD"],["FIN","Financl",2,"LD"],["IND","Industr",3,"LD"],["COM","Comm",4,"LD"],["DSC","ConsDis",5,"IM"],["STP","Staples",6,"IM"],["UTL","Utilit",7,"IM"],["MAT","Materls",8,"WK"],["RES","RealEst",9,"WK"],["ENE","Energy",10,"LG"],["TEC","Tech",11,"LG"]];
+const MOVERS={HLT:"LLY +1.4 · ISRG +1.1 · UNH −1.4",FIN:"GS +1.2 · JPM +0.8 · V +0.5",IND:"GE +1.6 · ETN +0.9",COM:"META +0.9 · GOOGL +0.7",DSC:"MELI +2.1 · AMZN +0.6",STP:"COST +0.1 · WMT +0.4",UTL:"NEE +0.5",MAT:"LIN +0.3",RES:"PLD −0.2",ENE:"XOM −0.9 · CVX −0.7",TEC:"ASML +1.8 · NVDA +1.2 · TSM −0.8"};
+$("#sectorstrip").innerHTML=SECTORS.map(s=>{
+  const r=rng(s[2]*7+3);const vals=Array.from({length:16},(_,i)=>50+(r()-0.42+(6-s[2])*0.02)*8+i*(6-s[2])*0.28);
+  const tint=`color-mix(in srgb, var(--lead) ${Math.max(0,(12-s[2])*9-8)}%, transparent)`;
+  return `<div class="scell" style="background:${tint}"><div class="c">${s[0]}</div><svg width="100%" height="14" viewBox="0 0 60 14" preserveAspectRatio="none">${polyline(vals,60,14,{sw:1})}</svg><div class="r">${s[2]}/11 ${s[3]}</div><div class="expand"><b>${s[1]}</b> · rank ${s[2]} of 11 · ${({LD:"leading",IM:"improving",WK:"weakening",LG:"lagging"})[s[3]]}<br><span class="stale">${MOVERS[s[0]]}</span></div></div>`;
+}).join("");
+
+const BRIEF=[
+  ["Nothing overnight breaks a thesis; two items deserve minutes, not hours.","sources|wire 8 rows · journal 3 active theses · zero breach triggers fired"],
+  ["TSMC’s July revenue (+26% y/y) runs ahead of the rate your capex-digestion thesis assumes — the ¶1 risk is aging well.","sources|Nikkei wire row, sun 07:12|TSM monthly revenue table, dossier ¶paper-trail|thesis v2 ¶1 assumption: +18–22%"],
+  ["Samsung’s HBM4 qualification at NVIDIA is the first live threat to the memory route’s pricing assumption; Book exposure is direct via NVDA, indirect via TSM.","sources|Reuters wire row, sun 05:40|atlas: hbm memory route — MU NVDA TSM|bench: NVDA gross margin sensitivity"],
+  ["UnitedHealth’s guide-down is a third breach in ninety days; the position is on the decision queue with a full workup, and deserves the hour the others don’t.","sources|WSJ wire row|journal: UNH breaches 05-12, 06-27, 08-01|book: decision queue item 3"],
+  ["Sector climate is unchanged — Health, Financials, Industrials lead; Technology still ranks 11 of 11, and your book remains 52% settled in that district.","sources|rotation snapshot, sat close|atlas settlement pattern|book weights by district"],
+  ["September-cut odds firmed to 78%; the duration-sensitive names on your watch register move closer to their stated reasons.","sources|fed funds futures, fri settle|watch register: NEE reason ‘entry on cut path’"],
+];
+(function(){
+  const brief=$("#brief"),rl=$("#readlist");
+  const feeds=["rotation snapshot","wire · 8 rows","book deltas","journal ¶TSM ¶UNH","calendar 10d","fed funds futures"];
+  let fi=0;
+  const iv=setInterval(()=>{rl.innerHTML="reading — "+feeds.slice(0,++fi).map((f,i)=>i===fi-1?`<b>${f}</b>`:f).join(" · ");if(fi>=feeds.length)clearInterval(iv)},260);
+  BRIEF.forEach((s,i)=>{setTimeout(()=>{
+    const sp=H("span","sent peekable",s[0]+" ");sp.dataset.peek=s[1];sp.style.opacity=0;brief.appendChild(sp);
+    requestAnimationFrame(()=>{sp.style.transition="opacity .35s";sp.style.opacity=1});
+    if(i===BRIEF.length-1)setTimeout(()=>rl.innerHTML="6 sentences · every one peels — press <b>.</b> or click",600);
+  },900+i*700)});
+})();
+
+const DUE=[
+  ["Tue 12 Aug","CPI · july print","macro","yours"],
+  ["Thu 20 Aug","MSFT ex-div 0.83","MSFT","yours"],
+  ["Wed 26 Aug","NVDA earnings · q2","NVDA","yours"],
+  ["Thu 04 Sep","AVGO earnings · q3","AVGO","yours"],
+  ["Wed 10 Sep","TSM monthly revenue","TSM","yours"],
+  ["Tue 16 Sep","FOMC · two days","macro","yours"],
+  ["+ 14 more","non-book names, collapsed","","rest"],
+];
+$("#due").innerHTML=DUE.map(d=>`<tr class="${d[3]}"><td class="l stale" style="width:86px">${d[0]}</td><td class="l">${d[1]}</td><td class="l" style="width:50px">${d[2]!=="macro"&&d[2]?`<b>${d[2]}</b>`:`<span class="stale">${d[2]}</span>`}</td></tr>`).join("");
+
+/* live rule-sweep demo */
+setInterval(()=>{
+  const el=$("#sylv0");if(!el||current!=="today")return;
+  const v=6412.2+(Math.random()-0.5)*3;
+  el.textContent=v.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  el.classList.remove("sweep");void el.offsetWidth;el.classList.add("sweep");
+},6000);
+
+/* =========================================================
+   FIELD
+========================================================= */
+const UNIV=[
+["TSM","SEM",3.4,20.5,18.2,17.2,94,"h",1,1],["NVDA","SEM",1.6,69.2,32.4,34.1,88,"h",1,1],["AVGO","SEM",3.1,21.3,9.8,24.6,91,"h",1,0],["AMD","SEM",1.1,13.6,-4.1,30.8,76,"w",-1,0],
+["ASML","SEM",2.7,14.2,11.0,26.3,89,"h",1,0],["MU","SEM",4.8,28.9,22.7,9.8,82,null,1,0],["AMAT","SEM",4.2,11.8,7.4,18.9,84,"w",0,0],["LRCX","SEM",3.8,13.4,12.1,21.7,83,null,1,0],
+["KLAC","SEM",3.5,15.0,14.9,23.4,85,null,1,0],["TXN","SEM",2.4,6.2,3.1,27.9,71,null,0,0],["ADI","SEM",2.9,7.8,5.6,25.2,74,null,0,0],["MRVL","SEM",1.4,19.7,-8.3,33.6,68,null,-1,0],
+["MSFT","SW",2.6,15.1,12.4,28.4,90,"h",1,0],["GOOGL","SW",4.1,13.8,16.7,20.1,88,null,1,0],["META","SW",3.9,16.4,9.2,19.5,86,null,1,0],["ORCL","SW",1.8,11.9,24.6,31.2,72,null,1,0],
+["NOW","SW",1.2,21.5,6.3,48.7,70,null,0,0],["CRM","SW",4.4,9.6,-2.8,22.6,69,null,-1,0],["ADBE","SW",5.6,10.4,-11.5,18.2,73,"w",-1,0],["INTU","SW",2.8,12.7,4.4,30.5,75,null,0,0],
+["V","FIN",3.3,10.2,8.9,25.8,87,null,1,0],["MA","FIN",3.0,11.6,7.7,28.9,86,null,1,0],["JPM","FIN",6.8,5.4,11.2,11.4,80,null,1,0],["GS","FIN",5.9,7.9,15.8,10.7,78,null,1,0],
+["BRK.B","FIN",5.1,6.8,9.4,12.9,84,"h",1,0],["LLY","HC",1.9,24.8,6.1,39.4,85,"h",0,0],["UNH","HC",8.7,7.2,-28.4,9.1,58,"h",-1,1],["NVO","HC",4.6,18.9,-14.2,16.8,77,"w",-1,0],
+["ISRG","HC",1.5,16.3,10.8,52.3,79,null,1,0],["TMO","HC",4.3,4.9,2.2,19.8,72,null,0,0],["CAT","IND",5.2,4.1,13.6,15.7,76,null,1,0],["ETN","IND",3.2,9.8,8.1,24.1,81,null,1,0],
+["GE","IND",3.7,12.4,19.3,26.7,82,null,1,0],["UBER","IND",4.9,17.6,5.9,23.9,78,null,0,0],["COST","CS",2.1,8.4,7.2,34.8,83,"h",1,0],["WMT","CS",2.9,6.1,11.9,28.2,79,null,1,0],
+["PG","CS",3.8,3.2,1.4,21.6,70,null,0,0],["XOM","EN",7.4,-2.8,-6.7,8.9,64,null,-1,0],["CVX","EN",6.9,-4.1,-3.2,9.6,62,null,-1,0],["NEE","UT",4.7,8.9,4.8,17.4,71,null,0,0],
+["MELI","CD",2.3,31.4,21.6,41.2,84,"h",1,0],["AMZN","CD",3.6,11.2,13.8,29.7,85,null,1,0]];
+const METRICS=[
+  {id:"fcf",label:"fcf yield %",col:2,dom:[0,9.5]},
+  {id:"cagr",label:"rev cagr 3y %",col:3,dom:[-6,72]},
+  {id:"mom",label:"momentum 6m %",col:4,dom:[-32,36]},
+  {id:"ev",label:"ev / ebit ×",col:5,dom:[6,55]},
+];
+const bounds={};
+const stripsEl=$("#strips");
+function stripSVG(m){
+  const W=200,Hh=44,bins=18,[lo,hi]=m.dom,bw=W/bins;
+  const counts=Array(bins).fill(0);
+  UNIV.forEach(u=>{const v=u[m.col];let b=Math.floor((v-lo)/(hi-lo)*bins);b=Math.max(0,Math.min(bins-1,b));counts[b]++});
+  const mx=Math.max(...counts);
+  const bd=bounds[m.id];
+  let bars="";
+  counts.forEach((c,i)=>{
+    const x=i*bw,bh=c/mx*(Hh-6);
+    const bmidv=lo+(i+0.5)/bins*(hi-lo);
+    const inb=!bd||(bmidv>=bd[0]&&bmidv<=bd[1]);
+    bars+=`<rect x="${x+0.8}" y="${Hh-bh}" width="${bw-1.6}" height="${bh}" fill="${inb?"currentColor":"var(--stale)"}" opacity="${inb?0.95:0.35}"/>`;
+  });
+  let bl="";
+  if(bd){const x1=(bd[0]-lo)/(hi-lo)*W,x2=(bd[1]-lo)/(hi-lo)*W;
+    bl=`<line x1="${x1}" y1="0" x2="${x1}" y2="${Hh}" stroke="var(--ink)" stroke-width="1.2"/><line x1="${x2}" y1="0" x2="${x2}" y2="${Hh}" stroke="var(--ink)" stroke-width="1.2"/>`;}
+  return `<svg width="100%" height="${Hh}" viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="none" data-strip="${m.id}">${bars}${bl}<g class="marks"></g></svg>`;
+}
+function renderStrips(){
+  stripsEl.innerHTML=METRICS.map(m=>{
+    const bd=bounds[m.id];
+    return `<div class="strip" data-m="${m.id}"><div class="slabel"><span>${m.label}</span><span class="b">${bd?num(bd[0],1)+" — "+num(bd[1],1):"unbounded"}</span></div>${stripSVG(m)}</div>`;
+  }).join("");
+  $$(".strip").forEach(s=>{
+    const m=METRICS.find(x=>x.id===s.dataset.m);let x0=null;
+    s.onpointerdown=e=>{x0=e.clientX;s.setPointerCapture(e.pointerId)};
+    s.onpointerup=e=>{
+      if(x0==null)return;
+      const r=s.querySelector("svg").getBoundingClientRect();
+      const v=x=>m.dom[0]+Math.max(0,Math.min(1,(x-r.left)/r.width))*(m.dom[1]-m.dom[0]);
+      if(Math.abs(e.clientX-x0)<5){delete bounds[m.id]}
+      else{const a=v(Math.min(x0,e.clientX)),b=v(Math.max(x0,e.clientX));bounds[m.id]=[Math.round(a*10)/10,Math.round(b*10)/10]}
+      x0=null;renderStrips();renderResidue(true);
+      addTrail("judg","field","sculpted "+m.label);
+    };
+  });
+}
+function survives(u){return METRICS.every(m=>{const b=bounds[m.id];return !b||(u[m.col]>=b[0]&&u[m.col]<=b[1])})}
+function renderResidue(animate){
+  const tbl=$("#residue");
+  const live=UNIV.filter(survives).sort((a,b)=>b[6]-a[6]);
+  $("#censusline").innerHTML=`census <b>42</b> → <b id="ccount">${live.length}</b> survive · sorted by composite · <span class="stale">hover a row — it lights in every distribution</span>`;
+  if(animate){
+    $$("#residue tr.res-row").forEach(tr=>{if(!live.some(u=>u[0]===tr.dataset.sym))tr.classList.add("out")});
+    setTimeout(()=>paintResidue(live),240);
+  }else paintResidue(live);
+}
+function paintResidue(live){
+  const tbl=$("#residue");
+  tbl.innerHTML=`<tr><th class="l" style="width:26px"></th><th class="l">sym</th><th class="l">sect</th><th>score</th><th>fcf%</th><th>cagr</th><th>6m</th><th>ev/ebit</th></tr>`+
+  live.map(u=>`<tr class="res-row" data-sym="${u[0]}"><td class="l">${tk({s:u[6],st:u[7],tr:u[8],th:!!u[9],fr:1})}</td><td class="l name" style="font-weight:600">${u[0]}</td><td class="l stale">${u[1]}</td><td>${u[6]}</td><td>${num(u[2])}</td><td>${sgn(u[3])}</td><td>${sgn(u[4])}</td><td>${num(u[5])}</td></tr>`).join("");
+  $$("#residue tr.res-row").forEach(tr=>{
+    const u=UNIV.find(x=>x[0]===tr.dataset.sym);
+    tr.onmouseenter=()=>METRICS.forEach(m=>{
+      const svg=$(`svg[data-strip="${m.id}"]`);if(!svg)return;
+      const x=(u[m.col]-m.dom[0])/(m.dom[1]-m.dom[0])*200;
+      svg.querySelector(".marks").innerHTML=`<line x1="${x}" y1="0" x2="${x}" y2="44" stroke="var(--annot)" stroke-width="1.6"/><circle cx="${x}" cy="4" r="2.5" fill="var(--annot)"/>`;
+    });
+    tr.onmouseleave=()=>$$("#strips .marks").forEach(g=>g.innerHTML="");
+    tr.style.cursor="pointer";
+    tr.onclick=()=>{go("dossier")};
+  });
+}
+bounds.fcf=[2.5,9.5];bounds.mom=[0,36];
+renderStrips();renderResidue(false);
+
+/* =========================================================
+   DOSSIER
+========================================================= */
+$("#bigtk").innerHTML=`<span class="tk" style="color:var(--ink)">${tickSVG({s:94,st:"h",th:true,tr:1,fr:1},2.6)}</span>`;
+
+/* price band */
+(function(){
+  const W=640,Hh=170,n=252;
+  const raw=genSeries(42,n,131,0.0021,0.03,[[150,-0.011,14],[95,-0.004,10]]);
+  const k=197.3/raw[n-1];
+  const px=raw.map((v,i)=>v*(1+(k-1)*i/(n-1)));
+  const min=Math.min(...px)*0.98,max=Math.max(...px)*1.02;
+  const X=i=>i/(n-1)*W, Y=v=>14+(Hh-54)*(1-(v-min)/(max-min));
+  const r=rng(7);
+  let vol="";for(let i=0;i<n;i+=2){const h=3+r()*12*(i>148&&i<170?1.9:1);vol+=`<rect x="${X(i)-0.7}" y="${Hh-34-h}" width="1.4" height="${h}" fill="var(--stale)" opacity=".55"/>`}
+  const regimes=[[0,90,"calm"],[90,120,"stress"],[120,252,"trend"]];
+  let reg="";regimes.forEach(g=>{reg+=`<rect x="${X(g[0])}" y="${Hh-26}" width="${X(g[1])-X(g[0])}" height="6" fill="${g[2]==="stress"?"var(--loss)":"var(--ink)"}" opacity="${g[2]==="calm"?.18:g[2]==="stress"?.35:.5}"/>`});
+  const flags=[[118,"2026-03-14 — opened v1 · 140 adr @ 141"],[160,"2026-04-09 — held through drawdown · +40 adr @ 168"],[214,"2026-07-14 — reaffirmed v2 · strait cap 8%"]];
+  let fl="";flags.forEach(f=>{fl+=`<g class="evflag" data-tip="${f[1]}"><line x1="${X(f[0])}" y1="${Y(px[f[0]])-4}" x2="${X(f[0])}" y2="14" stroke="var(--annot)" stroke-width="1"/><polygon points="${X(f[0])},14 ${X(f[0])+7},16.5 ${X(f[0])},19" fill="var(--annot)"/></g>`});
+  const pts=px.map((v,i)=>`${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+  const rules=[140,160,180,200].map(v=>`<line x1="0" y1="${Y(v)}" x2="${W}" y2="${Y(v)}" stroke="var(--rule)" stroke-width="0.7"/><text x="${W-4}" y="${Y(v)-3}" text-anchor="end" font-size="9" fill="var(--stale)">${v}</text>`).join("");
+  $("#priceband").innerHTML=`<svg width="100%" viewBox="0 0 ${W} ${Hh}" style="display:block">
+    ${rules}${vol}${reg}
+    <polyline points="${pts}" fill="none" stroke="var(--ink)" stroke-width="1.1"/>${fl}
+    <text x="2" y="${Hh-36}" font-size="8" fill="var(--stale)" letter-spacing="1.5">VOLUME</text>
+    <text x="2" y="${Hh-16}" font-size="8" fill="var(--stale)" letter-spacing="1.5">REGIME · CALM ▏STRESS ▏TREND</text>
+    <text x="2" y="${Hh-2}" font-size="8" fill="var(--stale)" letter-spacing="1.5">AUG 25 ————————————————— AUG 26 · BLUE FLAGS = YOUR JOURNAL, ON THE AXIS</text>
+  </svg>`;
+})();
+
+/* record */
+const REC=[
+["Revenue $B",[34.2,35.8,45.5,56.8,75.9,69.3,87.1,115.6],1],
+["Rev growth %",[6.5,4.7,27.1,24.9,33.6,-8.7,25.7,32.7],1,true],
+["Gross margin %",[48.3,46.0,53.1,51.6,59.6,54.4,56.1,58.6],1],
+["Op margin %",[37.2,34.8,42.3,40.9,49.5,42.6,45.7,48.5],1],
+["Net income $B",[11.8,11.2,17.6,21.4,34.1,26.9,36.5,47.7],1],
+["EPS (adr) $",[2.27,2.16,3.39,4.12,6.57,5.19,7.04,9.20],2],
+["FCF $B",[5.2,8.1,12.6,13.9,14.2,10.1,26.3,34.9],1],
+["Capex $B",[10.5,14.9,17.2,30.0,36.3,30.4,29.8,41.6],1],
+["Capex / rev %",[30.7,41.6,37.8,52.8,47.8,43.9,34.2,36.0],1],
+["ROIC %",[21.9,18.6,24.7,24.1,32.5,21.5,24.0,26.2],1],
+["Net cash $B",[18.4,20.1,23.9,21.2,25.6,28.9,41.2,52.8],1],
+["Dividend / adr $",[1.30,1.55,1.70,1.84,2.02,2.17,2.42,2.75],2],
+["R&D % rev",[8.3,8.5,8.2,8.0,7.2,8.5,8.0,7.6],1],
+];
+(function(){
+  const yrs=["FY18","FY19","FY20","FY21","FY22","FY23","FY24","FY25"];
+  let html=`<tr><th class="mcell"></th><th class="l">line item</th>`+yrs.map(y=>`<th>${y}</th>`).join("")+`</tr>`;
+  REC.forEach((row,ri)=>{
+    html+=`<tr data-ri="${ri}" style="position:relative"><td class="mcell">·</td><td class="l name" style="position:relative">${row[0]}<span class="mspark" data-ri="${ri}"></span>${ri===2?'<span class="fmark" data-tip="annotation on file — ¶ ‘guide was 57–59, printed high end; mix, not price’ · 2026-08-02" style="color:var(--annot);left:-30px">‸</span>':""}</td>`;
+    row[1].forEach((v,i)=>{
+      const yoy=(i>0&&!row[3])?((v-row[1][i-1])/Math.abs(row[1][i-1])*100):null;
+      const cell=v<0?`<span class="neg">${MINUS}${num(-v,row[2])}</span>`:num(v,row[2]);
+      html+=`<td>${cell}${yoy!=null&&Math.abs(yoy)>=0.05?`<span class="sup">${yoy>0?"+":MINUS}${Math.abs(yoy)>=10?Math.round(Math.abs(yoy)):num(Math.abs(yoy),0)}</span>`:""}</td>`;
+    });
+    html+=`</tr>`;
+  });
+  $("#record").innerHTML=html;
+  $$("#record tr[data-ri]").forEach(tr=>{
+    const row=REC[+tr.dataset.ri];
+    tr.onmouseenter=()=>{const sp=tr.querySelector(".mspark");if(sp&&!sp.innerHTML)sp.innerHTML=`<svg width="58" height="18" viewBox="0 0 58 18">${polyline(row[1],58,18,{sw:1,stroke:"var(--annot)"})}</svg>`};
+  });
+})();
+
+/* quality stems */
+$("#qstems").innerHTML=[["V",61],["Q",96],["M",78]].map(x=>`<span class="qstem peekable" data-peek="EVIDENCE — ${x[0]==="V"?"value":x[0]==="Q"?"quality":"momentum"} stem|${x[0]==="V"?"ev/ebit 17.2× · pctile 38|fcf yield 3.4% · pctile 44":x[0]==="Q"?"roic 26.2% · pctile 97|gm stability σ 4.1 · pctile 92|net cash · pctile 88":"6m +18.2% · pctile 74|rel strength 62 · pctile 71"}|weight → ${x[0].toLowerCase()} ${x[1]}"><span class="tk" style="color:var(--annot)">${tickSVG({s:x[1],tr:0,fr:1},1.7)}</span><br>${x[0]}${NBSP}${x[1]}</span>`).join("");
+
+/* raw materials + examiners */
+const MATS=[
+["FIL-K","10-K fy25 · mgmt discussion ¶4 — capacity, arizona"],["FIL-Q","2q26 6-K · gm bridge, guide 57–59"],
+["REV-M","monthly revenue series · 36 months"],["CALL","2q26 transcript — wei on n2 volume, ai revenue"],
+["INS","form filings · insider net −12k adr, planned"],["RAT","ratio history fy18–fy25 · this record, above"],
+["NEWS","8 stories, 30d · hbm4, arizona, tariff draft"],["ROT","rotation snapshot · tech 11/11 lagging"],
+["PRC","price/volume 5y · accumulation profile"]];
+$("#materials").innerHTML=MATS.map(m=>`<tr><td class="l stale" style="width:56px">${m[0]}</td><td class="l name">${m[1]}</td></tr>`).join("");
+const EXAMS=[
+["BUSINESS",82,"Leading-edge foundry share is effectively a monopoly rented to the world’s richest customers; pricing power is real and exercised politely, roughly once a year.",null],
+["INDUSTRY",74,"WFE and advanced packaging remain the binding constraints; N2 ramp timing is the single most-watched variable in the industry’s calendar.",null],
+["COMPETITION",78,"Intel 18A is credible on paper for the first time in a decade; Samsung’s yield discount persists. Neither threatens N2-era share before 2028.",null],
+["MANAGEMENT",71,"Succession after Wei is unresolved. Capital discipline has held under AI demand pressure — the capex answer has been ‘no’ more often than the market notices.",null],
+["CAPITAL ALLOCATION",80,"Capex intensity at 36% of revenue is the bet; ROIC above 24% through two cycles says the bet keeps paying. Dividend growth is a governor, not a promise.",null],
+["ACCOUNTING",88,"Clean. Depreciation schedules are conservative against tool lives; receivables and related parties unremarkable.","tw gaap ↔ ifrs bridge partly estimated"],
+["VALUATION",63,"At 21.4× forward the market prices flawless N2 execution and zero strait risk; the workings’ base case leaves +19%, which is thin for the risk actually carried.",null],
+["GOVERNANCE",76,"Board independence is adequate; the live governance question is sovereign, not corporate.",null],
+["RISK",58,"Concentration is the file: one island, one lithography supplier, two customers above 35% of revenue. Accumulation continues regardless — the market is not charging for this risk today.","insider data 12d stale ∴"],
+];
+(function(){
+  const box=$("#examiners");
+  let html="";
+  EXAMS.forEach((x,i)=>{
+    html+=`<div class="exm" data-x="${i}">
+      <div class="xh"><span class="tk" style="color:var(--annot)" data-tip="examiner confidence ${x[1]}/100">${tickSVG({s:x[1],tr:0,fr:1},0.95)}</span>${x[0]}<span class="conf">${x[1]}</span></div>
+      <div class="prose">${x[2]}</div>${x[3]?`<div class="lim">limitation — ${x[3]}</div>`:""}
+      ${x[0]==="RISK"?`<div class="tension">tension — valuation calls the price thin for the risk; risk notes the market persistently refuses to price it. one of them is wrong about the clearing price of strait risk.</div>`:""}
+    </div>`;
+  });
+  box.innerHTML=html+`<svg id="tieline"></svg>`;
+  requestAnimationFrame(()=>{
+    const v=box.querySelector('[data-x="6"]'),r=box.querySelector('[data-x="8"]'),svg=$("#tieline");
+    if(!v||!r)return;
+    const y1=v.offsetTop+14,y2=r.offsetTop+14;
+    svg.setAttribute("viewBox",`0 0 14 ${box.offsetHeight}`);svg.style.height=box.offsetHeight+"px";
+    svg.innerHTML=`<path d="M13 ${y1} H5 V${y2} H13" fill="none" stroke="var(--loss)" stroke-width="1" stroke-dasharray="1 2"/><circle cx="13" cy="${y1}" r="1.8" fill="var(--loss)"/><circle cx="13" cy="${y2}" r="1.8" fill="var(--loss)"/>`;
+  });
+})();
+
+/* workings (dcf) */
+const A={g:16,fm:30,w:8.5,tg:3.5};
+function dcfCompute(){
+  const rev=22.2;let f=rev*A.fm/100,pv=0,fs=[];
+  for(let y=1;y<=5;y++){f*=(1+A.g/100);fs.push(f);pv+=f/Math.pow(1+A.w/100,y)}
+  const term=fs[4]*(1+A.tg/100)/((A.w-A.tg)/100)/Math.pow(1+A.w/100,5);
+  return{fs,pv,term,val:pv+term};
+}
+function dcfRender(chg){
+  const d=dcfCompute();
+  const px=197.3,gap=(d.val/px-1)*100;
+  $("#dcf").innerHTML=`
+  <tr><th class="l">line</th><th>y1</th><th>y2</th><th>y3</th><th>y4</th><th>y5</th><th>value</th></tr>
+  <tr><td class="l name">revenue / adr · grows at <span class="as" contenteditable data-a="g">${num(A.g)}</span>%</td>${[1,2,3,4,5].map(y=>`<td>${num(22.2*Math.pow(1+A.g/100,y))}</td>`).join("")}<td class="stale">—</td></tr>
+  <tr><td class="l name">fcf margin <span class="as" contenteditable data-a="fm">${num(A.fm)}</span>% → fcf / adr</td>${d.fs.map(f=>`<td class="${chg?"chg":""}">${num(f,2)}</td>`).join("")}<td class="stale">—</td></tr>
+  <tr><td class="l name">discounted at wacc <span class="as" contenteditable data-a="w">${num(A.w)}</span>%</td>${d.fs.map((f,i)=>`<td class="${chg?"chg":""}">${num(f/Math.pow(1+A.w/100,i+1),2)}</td>`).join("")}<td class="${chg?"chg":""}">${num(d.pv,1)}</td></tr>
+  <tr><td class="l name">terminal · g <span class="as" contenteditable data-a="tg">${num(A.tg)}</span>% forever</td><td colspan="5" class="stale l" style="text-align:left">fcf₅ × (1+g) ÷ (wacc − g), discounted 5y</td><td class="${chg?"chg":""}">${num(d.term,1)}</td></tr>
+  <tr class="total"><td class="l name">implied value / adr</td><td colspan="5" class="l stale" style="text-align:left">vs px 197.30</td><td>${num(d.val,0)}</td></tr>`;
+  $("#dcfgap").innerHTML=`base case: implied ${num(d.val,0)} vs 197.30 → ${gap>=0?"+"+num(gap,0):`<span class="neg">${MINUS}${num(-gap,0)}</span>`}% ${Math.abs(gap)<25?"— thin for the risk carried (see risk examiner)":""}`;
+  const ws=[7.5,8,8.5,9,9.5],gs=[2.5,3,3.5,4,4.5];
+  let sh=`<tr><th class="l">wacc \\ g</th>${gs.map(g=>`<th>${num(g)}</th>`).join("")}</tr>`;
+  ws.forEach(w0=>{sh+=`<tr><td class="l stale">${num(w0)}</td>`+gs.map(g0=>{
+    const sw=A.w,sg=A.tg;A.w=w0;A.tg=g0;const v=dcfCompute().val;A.w=sw;A.tg=sg;
+    const here=Math.abs(w0-A.w)<0.26&&Math.abs(g0-A.tg)<0.26;
+    return `<td class="${here?"here":""}">${here?"●"+NBSP:""}${num(v,0)}</td>`;
+  }).join("")+"</tr>"});
+  $("#sens").innerHTML=sh;
+  $$("#dcf .as").forEach(a=>{
+    a.onblur=()=>{const v=parseFloat(a.textContent.replace(",","."));if(isFinite(v)&&v>0&&v<80){A[a.dataset.a]=v;dcfRender(true);addTrail("judg","dossier","edited assumption "+a.dataset.a)}else dcfRender(false)};
+    a.onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();a.blur()}};
+  });
+}
+dcfRender(false);
+
+/* paper trail */
+const PT=[
+["07-17","FIL-Q","2Q26 report — gm 58.6% vs guide 57–59; n2 volume confirmed 4q","¶GM bridge: “gross margin of 58.6%, above the midpoint of guidance, on n3 mix and utilization” — 6-K p.4"],
+["07-17","CALL","wei: ai revenue ‘to double again’ fy26; capex envelope unchanged","transcript ¶: “we now expect ai accelerator revenue to more than double again this year” — q&a, morgan stanley"],
+["07-10","REV-M","june revenue nt$263.7b · +26.9% y/y","monthly series, 36 mo · 3-mo run-rate +24.8% vs thesis assumption +18–22%"],
+["06-24","INS-S","insider sale — svp 12k adr, 10b5-1 planned","form 144 · scheduled program, 4th tranche of 6 · not a signal in isolation"],
+["06-03","PRC-DD","drawdown −12% from may high on tariff draft headlines","session evidence: −4.2% vs sox −3.1%, volume 1.8× adv, no company news"],
+["05-21","NWS","arizona fab 3 timeline pulled forward to 2h27","press + supply-chain corroboration (2 sources)"],
+["04-17","FIL-Q","1q26 report — gm 57.9%, guide raised","6-K p.3"],
+["04-02","EVT","sector: semis −9% on export-control draft week","market event, 28-category taxonomy: policy/export"],
+];
+$("#ptrail").innerHTML=PT.map(p=>`<tr><td class="l stale" style="width:52px">${p[0]}</td><td class="l stale" style="width:56px">${p[1]}</td><td class="l name peekable" data-peek="EXCERPT|${p[3]}">${p[2]}</td></tr>`).join("");
+
+/* =========================================================
+   BENCH
+========================================================= */
+const SPEC=["TSM","NVDA","AVGO","AMD"];
+const STK={TSM:{s:94,st:"h",th:1,tr:1},NVDA:{s:88,st:"h",th:1,tr:1},AVGO:{s:91,st:"h",tr:1},AMD:{s:76,st:"w",tr:-1}};
+$("#bhead").innerHTML=`<div></div>`+SPEC.map(s=>`<div class="hc">${tk({...STK[s],fr:1})}${NBSP}${s}<span class="x" data-tip="x — remove from tray">×</span></div>`).join("");
+const BGROUPS=[
+["QUALITY",[["gross margin %",[58.6,75.0,74.7,49.3],[40,80]],["roic %",[26.2,68.2,21.0,7.4],[0,75]],["fcf margin %",[32.4,49.3,41.9,10.9],[0,55]]]],
+["GROWTH",[["rev cagr 3y %",[20.5,69.2,21.3,13.6],[0,75]],["eps cagr 3y %",[22.8,88.0,19.5,24.0],[0,95]]]],
+["VALUATION",[["ev / ebit ×",[17.2,34.1,24.6,30.8],[5,40]],["fcf yield %",[3.4,1.6,3.1,1.1],[0,5]],["p/e fwd ×",[21.4,32.9,27.5,29.6],[15,40]]]],
+["MOMENTUM",[["6m return %",[18.2,32.4,9.8,-4.1],[-10,40]],["rel strength",[62,81,55,38],[0,100]]]],
+["RISK",[["max dd 1y %",[-22,-27,-19,-35],[-40,0]],["customer conc %",[25,46,35,22],[0,55]]]],
+];
+(function(){
+  const box=$("#benchrows");let html="";
+  BGROUPS.forEach(g=>{
+    let maxSpread=-1,maxIdx=-1;
+    g[1].forEach((row,i)=>{const sp=(Math.max(...row[1])-Math.min(...row[1]))/(row[2][1]-row[2][0]);row.spread=sp;if(sp>maxSpread){maxSpread=sp;maxIdx=i}});
+    html+=`<div class="bgrp"><span>${g[0]}</span><span class="best">▸ largest divergence kept</span></div>`;
+    g[1].forEach((row,i)=>{
+      const maxd=i===maxIdx,low=row.spread<0.5&&!maxd;
+      html+=`<div class="brow${low?" lowd":""}${maxd?" maxd":""}"><div class="bl">${row[0]} <span class="scl">${row[2][0]}—${row[2][1]}</span></div>`+
+      row[1].map(v=>{
+        const p=(v-row[2][0])/(row[2][1]-row[2][0])*100;
+        const disp=v<0?`<span class="neg">${MINUS}${num(-v,Math.abs(v)>=10?0:1)}</span>`:num(v,Math.abs(v)>=10?0:1);
+        return `<div class="bcell"><div class="ruler"></div><div class="dot" style="left:${Math.max(2,Math.min(96,p))}%"></div><div class="val" style="left:${Math.max(10,Math.min(88,p))}%">${disp}</div></div>`;
+      }).join("")+`</div>`;
+    });
+  });
+  box.innerHTML=html;
+  const W=640,Hh=130;
+  const cfg=[["TSM",11,100,0.0016,0.028,"",1.4],["NVDA",23,100,0.0031,0.045,"",1.0],["AVGO",31,100,0.0022,0.034,"4 3",1.0],["AMD",47,100,0.0009,0.05,"1 3",1.0]];
+  const all=cfg.map(c=>genSeries(c[1],260,c[2],c[3],c[4]));
+  const mn=Math.min(...all.flat()),mx=Math.max(...all.flat());
+  let lines=all.map((s,i)=>polyline(s,W,Hh,{min:mn,max:mx,sw:cfg[i][6],dash:cfg[i][5],stroke:"var(--ink)"})).join("");
+  let labels=cfg.map((c,i)=>{const last=all[i][259];const y=Math.max(9,Math.min(Hh-3,Hh-(last-mn)/(mx-mn)*(Hh-2)-1));return `<text x="${W-2}" y="${y}" text-anchor="end" font-size="9" fill="var(--ink)">${c[0]} ${Math.round(last)}</text>`}).join("");
+  $("#benchchart").innerHTML=`<svg width="100%" viewBox="0 0 ${W} ${Hh}" style="display:block">${[100,200,400].map(v=>`<line x1="0" y1="${(Hh-(v-mn)/(mx-mn)*(Hh-2)-1)}" x2="${W}" y2="${(Hh-(v-mn)/(mx-mn)*(Hh-2)-1)}" stroke="var(--rule)" stroke-width="0.7"/>`).join("")}${lines}${labels}</svg>
+  <div style="font:400 9px var(--figures);letter-spacing:.1em;color:var(--stale);padding-top:4px">SOLID HEAVY = TSM · SOLID = NVDA · DASH = AVGO · DOT = AMD · ONE AXIS, NO EXCEPTIONS</div>`;
+})();
+
+/* =========================================================
+   BOOK
+========================================================= */
+const HOLD=[
+["TSM",{s:94,st:"h",th:1,tr:1},180,141.00,197.30,-0.8,"thesis v2 · 19d old · reaffirmed 19d ago","A"],
+["MSFT",{s:90,st:"h",tr:1},60,388.20,512.80,0.3,"thesis · 412d old · reaffirmed 88d ago","A"],
+["BRK.B",{s:84,st:"h",tr:1},45,398.70,476.20,0.2,"thesis · 511d old · reaffirmed 122d ago","B"],
+["NVDA",{s:88,st:"h",th:1,tr:1},120,61.20,172.44,1.2,"thesis · 638d old · ON QUEUE: trim","B"],
+["LLY",{s:85,st:"h",tr:0},25,742.10,801.40,-0.2,"thesis · 204d old · reaffirmed 61d ago","A"],
+["MELI",{s:84,st:"h",tr:1},6,1450.00,2381.50,2.1,"thesis · 322d old · reaffirmed 30d ago","A"],
+["COST",{s:83,st:"h",tr:1},12,812.00,969.20,0.1,"thesis · 289d old · never reaffirmed ⚠","B"],
+["ASML",{s:89,st:"h",tr:1},15,690.50,745.60,1.8,"thesis · 44d old · fresh","A"],
+["HDB",{s:81,st:"h",tr:1},150,58.40,71.25,0.9,"thesis · 156d old · reaffirmed 12d ago","B"],
+["UNH",{s:58,st:"h",th:1,tr:-1},30,512.30,302.10,-1.4,"thesis BREACHED ×3 · on queue: full workup","D"],
+["AVGO",{s:91,st:"h",tr:1},40,168.40,214.15,0.6,"thesis · 92d old · reaffirmed 9d ago","A"],
+];
+(function(){
+  let bal=0,tval=0,tcost=0,dpl=0;
+  let html=`<tr><th class="mcell"></th><th class="l"></th><th class="l">sym</th><th>qty</th><th>basis</th><th>px</th><th>day</th><th>value</th><th>running bal</th><th>wt</th><th>p&l</th><th class="l">fit</th></tr>`;
+  const rows=HOLD.map(h=>{const val=h[2]*h[4];tval+=val;tcost+=h[2]*h[3];dpl+=val*h[5]/100;return{...{h},val}});
+  const total=tval+12400;
+  rows.forEach(({h,val})=>{
+    bal+=val;
+    const pl=(h[4]/h[3]-1)*100;
+    html+=`<tr data-sym="${h[0]}" data-tip="${h[6]}"><td class="mcell">·</td><td class="l">${tk({...h[1],fr:h[0]==="UNH"?0.5:1})}</td><td class="l name" style="font-weight:600">${h[0]}</td><td>${h[2]}</td><td>${num(h[3],2)}</td><td>${num(h[4],2)}</td><td>${sgn(h[5],1,"%")}</td><td>${num(val,0)}</td><td>${num(bal,0)}</td><td>${num(val/total*100,1)}</td><td>${pl<0?`<span class="neg">${MINUS}${num(-pl,0)}%</span>`:"+"+num(pl,0)+"%"}</td><td class="l ${h[7]==="D"?"neg":"stale"}">${h[7]}</td></tr>`;
+  });
+  html+=`<tr><td class="mcell"></td><td></td><td class="l stale">cash</td><td></td><td></td><td></td><td></td><td>12 400</td><td>${num(bal+12400,0)}</td><td>${num(12400/total*100,1)}</td><td></td><td></td></tr>`;
+  html+=`<tr class="total"><td class="mcell"></td><td></td><td class="l">the book</td><td></td><td></td><td></td><td>${sgn(dpl/total*100,2,"%")}</td><td>${num(tval,0)}</td><td>${num(total,0)}</td><td>100.0</td><td>+${num((tval/tcost-1)*100,0)}%</td><td></td></tr>`;
+  html+=`<tr><td class="mcell"></td><td></td><td class="l stale" colspan="6">by district — tec 51.7 · hlt 14.1 · fin 15.6 · dsc 6.9 · stp 5.6 · cash 6.0</td><td colspan="5" class="l stale">tec ranks 11/11 — see atlas</td></tr>`;
+  $("#holdings").innerHTML=html;
+})();
+const WATCH=[
+["AMD",{s:76,st:"w",tr:-1},"await < 25× fwd on a pullback","28.3× — not met",0,0],
+["ADBE",{s:73,st:"w",tr:-1},"arr growth stabilizes 2 consecutive qtrs","q2 +11.2% after q1 +11.0% — MET","met",0],
+["NVO",{s:77,st:"w",tr:-1},"glp-1 pricing floor confirmed in medicare round","pending — sep round",0,0],
+["AMAT",{s:84,st:"w",tr:0},"wfe guide reset at next print","reports aug 14",0,0],
+["NEE",{s:71,st:"w",tr:0},"entry on confirmed cut path","sept odds 78% — approaching",0,0],
+["PG",{s:70,st:"w",tr:0},"(no reason on file · 96d idle — prune?)","",0,1],
+];
+$("#watchreg").innerHTML=`<tr><th class="l" style="width:26px"></th><th class="l">sym</th><th class="l">reason this watch exists</th><th class="l">state</th></tr>`+WATCH.map(w=>`<tr${w[5]?' style="opacity:.45"':""}><td class="l">${tk({...w[1],fr:w[5]?0.3:1})}</td><td class="l name" style="font-weight:600;width:60px">${w[0]}${w[4]?'<span class="wiredot" style="margin-left:6px" data-tip="reason met — surfaced on today">•</span>':""}</td><td class="l">${w[2]}</td><td class="l stale">${w[3]}</td></tr>`).join("");
+
+const JOUR=[
+["2026-07-28","TRIM NVDA — decision","Reduced 40 adr at 171.20. Position had drifted to 12.4% against a 10% cap; rotation has tech 11/11 and the queue flagged concentration twice. Thesis intact — this is sizing, not doubt.",["visit","judg","visit","ai","judg"]],
+["2026-07-14","THESIS TSM → v2","Reaffirmed with the June revenue run-rate ahead of the digestion case. Added the strait-risk sizing cap at 8% — the risk examiner is right that nobody is charging for it, including me.",["visit","ai","judg"]],
+["2026-06-30","PASS ORCL","The backlog is real but the capex to serve it is somebody else’s margin. At 31× ev/ebit I am paying for the backlog and donating the execution. Revisit at 24×.",["visit","visit","judg"]],
+];
+$("#journal").innerHTML=JOUR.map(j=>`<div class="jentry"><div class="jh"><span class="d">${j[0]}</span><span>${j[1]}</span></div><div class="prose">${j[2]}</div><div class="minitrail">${j[3].map(k=>`<div class="ttick ${k}" style="width:14px;height:14px"><i></i></div>`).join("")}<span style="font:400 9.5px var(--figures);color:var(--stale);letter-spacing:.08em">· committed trail — click any tick to replay the state</span></div></div>`).join("");
+
+const DQ=[
+["TRIM NVDA 9.9% → 7.5%","Concentration: two districts carry 66% of the book; NVDA alone breaches the single-name cap after the July run. Rotation context: technology 11/11, lagging.","EVIDENCE|weight 9.9% vs cap 10% (drift)|tech rank 11/11 · lagging 34d|peg 1.9 vs 5y median 1.4"],
+["ADD TSM below 190","Thesis v2 headroom: the sizing cap allows +2.1% at a price the workings call +19% cheap; entries now are entries into monthly-revenue event risk (sep 10).","EVIDENCE|workings base case 234 vs 197|cap 8% vs current 18.3% of equity — wait, of book: 17.2%|due: rev print sep 10"],
+["UNH — full workup, decide by fri","Third breach in 90 days. The file wants a decision, not a hope: re-underwrite at the new guide or close the case and take the red ink on the sheet.","EVIDENCE|breaches 05-12 06-27 08-01|guide fy26 below street −8%|fit grade D · momentum −28.4% 6m"],
+];
+$("#dqueue").innerHTML=DQ.map(q=>`<div class="qitem"><div class="qa">${q[0]}</div><div class="prose peekable" data-peek="${q[2]}">${q[1]}</div></div>`).join("");
+
+$("#stress").innerHTML=`<tr><th class="l">scenario</th><th>shock</th><th>book</th></tr>`+[
+["technology −25% (amplified ×1.15 — lagging)","−25%","−26.2%"],
+["rates +100bp, duration names","−12%","−8.4%"],
+["strait event, semis −40% gap","−40%","−19.7%"],
+["inr −8%, india sleeve","−8%","−1.9%"],
+].map(s=>`<tr><td class="l name">${s[0]}</td><td><span class="neg">${s[1].replace("-",MINUS)}</span></td><td><span class="neg">${s[2].replace("-",MINUS)}</span></td></tr>`).join("")+
+`<tr><td class="l stale" colspan="3">what if… <span style="color:var(--annot);border-bottom:1px dashed var(--annot)">energy −15</span> → type it on the call line ( / )</td></tr>`;
+
+/* margin math (holdings + record) */
+(function(){
+  let selecting=false,sel=[],box=null;
+  function clear(){$$(".selrow").forEach(r=>r.classList.remove("selrow"));if(box)box.remove();box=null;sel=[]}
+  document.addEventListener("pointerdown",e=>{
+    const mc=e.target.closest(".mcell");
+    if(!mc){if(!e.target.closest(".mathbox"))clear();return}
+    const tr=mc.closest("tr");if(!tr||!tr.dataset.sym&&!tr.dataset.ri)return;
+    clear();selecting=true;sel=[tr];tr.classList.add("selrow");e.preventDefault();
+  });
+  document.addEventListener("pointerover",e=>{
+    if(!selecting)return;
+    const tr=e.target.closest("tr");
+    if(tr&&(tr.dataset.sym||tr.dataset.ri)&&!sel.includes(tr)){sel.push(tr);tr.classList.add("selrow")}
+  });
+  document.addEventListener("pointerup",()=>{
+    if(!selecting)return;selecting=false;
+    if(sel.length<2){clear();return}
+    let vals;
+    if(sel[0].dataset.sym)vals=sel.map(tr=>{const h=HOLD.find(x=>x[0]===tr.dataset.sym);return h?h[2]*h[4]:0});
+    else vals=sel.map(tr=>REC[+tr.dataset.ri][1][7]);
+    vals.sort((a,b)=>a-b);
+    const sum=vals.reduce((a,b)=>a+b,0),mean=sum/vals.length,med=vals[Math.floor(vals.length/2)];
+    const last=sel[sel.length-1];
+    box=H("div","mathbox",`n ${vals.length} · Σ ${num(sum,0)} · x̄ ${num(mean,1)} · med ${num(med,1)} · spread ${num(vals[vals.length-1]-vals[0],1)}<br><span class="stale">margin math — drag the · column</span>`);
+    last.style.position="relative";last.querySelector("td").appendChild(box);
+    box.style.left="26px";box.style.top="22px";
+  });
+})();
+
+/* =========================================================
+   ATLAS
+========================================================= */
+(function(){
+  const W=860,Hh=470;
+  const D=[
+    ["ENERGY",20,20,150,120,10],["MATERIALS",190,20,150,120,8],["INDUSTRIALS",360,20,210,120,3],["UTILITIES",590,20,120,120,7],["REAL ESTATE",730,20,110,120,9],
+    ["INFO TECH",20,160,330,170,11],["COMM SVCS",370,160,180,170,4],["FINANCIALS",570,160,270,170,2],
+    ["CONS DISC",20,350,220,100,5],["CONS STAPLES",260,350,180,100,6],["HEALTH CARE",460,350,380,100,1],
+  ];
+  const tint=r=>`color-mix(in srgb, var(--lead) ${Math.max(4,(12-r)*8.5-4)}%, var(--sheet))`;
+  const SETTLE={["INFO TECH"]:[["TSM",70,255,"h",1],["NVDA",150,225,"h",1],["MSFT",240,225,"h",0],["AVGO",110,290,"h",0],["ASML",210,290,"h",0]],
+    ["HEALTH CARE"]:[["LLY",560,400,"h",0],["UNH",660,415,"h",1]],["FINANCIALS"]:[["BRK.B",640,230,"h",0],["HDB",700,280,"h",0]],
+    ["CONS DISC"]:[["MELI",90,405,"h",0]],["CONS STAPLES"]:[["COST",330,405,"h",0]]};
+  let dsvg="";
+  D.forEach(d=>{
+    dsvg+=`<g class="district" data-d="${d[0]}"><rect class="dshape" x="${d[1]}" y="${d[2]}" width="${d[3]}" height="${d[4]}" fill="${tint(d[5])}" stroke="var(--rule)" stroke-width="1"/>
+    <text x="${d[1]+8}" y="${d[2]+16}" font-size="9" letter-spacing="2" fill="var(--ink)">${d[0]}</text>
+    <text x="${d[1]+8}" y="${d[2]+28}" font-size="8" fill="var(--stale)">${d[5]}/11 ${d[5]<=4?"LEADING":d[5]<=7?"MID":d[5]<=9?"WEAK":"LAGGING"}</text></g>`;
+  });
+  let marks="";
+  Object.values(SETTLE).flat().forEach(m=>{
+    marks+=`<g data-tip="${m[0]} — settled here · held${m[4]?" · thesis on file":""}" style="cursor:default">
+    <rect x="${m[1]}" y="${m[2]-8}" width="2.4" height="10" fill="var(--ink)"/>
+    <polygon points="${m[1]+2.4},${m[2]-8} ${m[1]+8.4},${m[2]-6} ${m[1]+2.4},${m[2]-4}" fill="${m[4]?"var(--annot)":"none"}" stroke="var(--annot)" stroke-width="0.9"/>
+    <text x="${m[1]+11}" y="${m[2]}" font-size="8.5" fill="var(--ink)">${m[0]}</text></g>`;
+  });
+  const routes=[
+    {name:"HBM MEMORY",dash:"5 3",path:"M 355 100 V 145 H 300 V 232 H 200 V 262 H 84",
+     stations:[["LIN",355,100],["MU",300,232]],
+     legend:"upstream → downstream: LIN (gases) · MU (hbm) · NVDA (accel) · TSM (cowos)",why:"EVIDENCE — why this route exists|MU→NVDA: hbm supply agreement, 10-K fy25 exhibit|NVDA→TSM: cowos capacity reservation, call 2q26|pricing assumption now contested — samsung hbm4 qual (wire, sun)"},
+    {name:"INDIA CAPEX",dash:"1 3",path:"M 700 275 V 330 H 470 V 105 H 440",
+     stations:[["L&T",440,105]],
+     legend:"HDB (credit) → L&T (build) — nse leg abridged in prototype",why:"EVIDENCE|credit growth → capex orders, rbi series|fpi easing wire row, sat"},
+  ];
+  let rsvg="";
+  routes.forEach(r=>{
+    const st=r.stations.map(s=>`<circle cx="${s[1]}" cy="${s[2]}" r="3" fill="var(--sheet)" stroke="var(--annot)" stroke-width="1.2"/><text x="${s[1]+7}" y="${s[2]+3}" font-size="8.5" fill="var(--annot)">${s[0]}</text>`).join("");
+    rsvg+=`<g class="route" data-r="${r.name}"><path d="${r.path}" fill="none" stroke="var(--annot)" stroke-width="1.5" stroke-dasharray="${r.dash}"/>${st}</g>`;
+  });
+  $("#atlasmount").innerHTML=`<svg id="atlas-svg" width="100%" viewBox="0 0 ${W} ${Hh}" style="display:block;margin-top:10px">${dsvg}${rsvg}${marks}
+  <text x="20" y="${Hh-6}" font-size="8" letter-spacing="1.5" fill="var(--stale)">FIXED GEOGRAPHY — DISTRICTS NEVER MOVE · GROUND TINT = RELATIVE STRENGTH · DASHED = ROUTES · FLAGS = YOUR SETTLEMENTS</text></svg>`;
+  const ro=$("#atlas-readout");
+  const DINFO={"INFO TECH":"rank 11/11 · lagging 34d · your settlement: 5 names, 51.7% of book · census 8 survivors in current sculpture","HEALTH CARE":"rank 1/11 · leading · LLY holding + UNH on the queue","FINANCIALS":"rank 2/11 · leading · BRK.B, HDB settled","ENERGY":"rank 10/11 · lagging · no settlements","INDUSTRIALS":"rank 3/11 · leading · no settlements — the map’s emptiest strong district","COMM SVCS":"rank 4/11 · leading edge of improving","CONS DISC":"rank 5/11 · MELI settled","CONS STAPLES":"rank 6/11 · COST settled","UTILITIES":"rank 7/11 · NEE watched, reason approaching","MATERIALS":"rank 8/11 · weakening"};
+  $$("#atlas-svg .district").forEach(d=>{
+    d.addEventListener("mouseenter",()=>{ro.innerHTML=`<b style="font-family:var(--figures);font-size:11px;letter-spacing:.14em">${d.dataset.d}</b><br>${DINFO[d.dataset.d]||""}`});
+  });
+  $$("#atlas-svg .route").forEach((rt,i)=>{
+    rt.addEventListener("mouseenter",()=>{$$("#atlas-svg .district").forEach(d=>d.classList.add("dimmed"));ro.innerHTML=`<b style="font-family:var(--figures);font-size:11px;letter-spacing:.14em">ROUTE — ${routes[i].name}</b><br>${routes[i].legend}<br><span class="stale">press . for why each edge exists</span>`});
+    rt.addEventListener("mouseleave",()=>$$("#atlas-svg .district").forEach(d=>d.classList.remove("dimmed")));
+    rt.classList.add("peekable");rt.dataset.peek=routes[i].why;
+    rt.addEventListener("click",()=>{ro.innerHTML=`<div class="underlay" style="margin:0"><div class="cap">▲ ${routes[i].why.split("|")[0]}</div>`+routes[i].why.split("|").slice(1).map(x=>`<div class="row">${x}</div>`).join("")+`</div>`});
+  });
+  const CLIM=[["Health Care",1,3.8],["Financials",2,2.9],["Industrials",3,2.1],["Comm Svcs",4,1.6],["Cons Disc",5,0.8],["Cons Staples",6,0.2],["Utilities",7,-0.3],["Materials",8,-1.1],["Real Estate",9,-1.8],["Energy",10,-2.6],["Info Tech",11,-3.4]];
+  $("#climate").innerHTML=CLIM.map(c=>`<tr><td class="l stale" style="width:26px">${c[1]}</td><td class="l name">${c[0]}</td><td>${sgn(c[2],1,"%")}</td><td class="l stale" style="width:70px">${c[1]<=4?"leading":c[1]<=7?"mid":c[1]<=9?"weak":"lagging"}</td></tr>`).join("");
+})();
+
+/* =========================================================
+   LEGEND
+========================================================= */
+$("#legendtk").innerHTML=`
+<div style="display:flex;gap:40px;align-items:flex-start">
+  <div style="text-align:center"><span class="tk">${tickSVG({s:94,st:"h",th:true,tr:1,fr:1},4)}</span><div style="font:400 10px/16px var(--figures);color:var(--stale);padding-top:6px">TSM — score 94, held,<br>thesis on file, rising, fresh</div></div>
+  <div style="text-align:center"><span class="tk">${tickSVG({s:76,st:"w",th:false,tr:-1,fr:1},4)}</span><div style="font:400 10px/16px var(--figures);color:var(--stale);padding-top:6px">AMD — 76, watched,<br>no thesis, falling</div></div>
+  <div style="text-align:center"><span class="tk">${tickSVG({s:58,st:"h",th:true,tr:-1,fr:0.45},4)}</span><div style="font:400 10px/16px var(--figures);color:var(--stale);padding-top:6px">UNH — 58, held, breached,<br>falling, inputs aging (top fades)</div></div>
+  <div class="prose" style="max-width:300px;font-size:13px;line-height:20px;color:var(--ink)">
+    The stem fills with the composite score; the notches are the recommendation bands (40 · 60 · 75).
+    A right flag means held, a left flag watched; a filled flag means a thesis is on file.
+    The slash beneath is the 30-day trend. The tip fades as the inputs age.
+    <i>Hover any tickmark, anywhere, forever — it always explains itself.</i>
+  </div>
+</div>`;
+document.querySelectorAll("#keys").forEach(k=>k.style.width="100%");
+$("#keys").innerHTML=[["/","the call line — symbol, tray, sculpt, note"],["1–6","go to folio"],["g + t f d b k a","go, spoken"],["[ ]","walk the trail"],[".","peek — peel judgment to evidence"],["\\","facts only — withdraw all judgment"],[";","annotate the datum under the cursor"],["w","watch hovered symbol"],["p","pin hovered symbol to bench"],["d (hold)","delta lens on the bench"],["r","request the local reading"],["J","commit session trail → journal"],["n","after-hours sheet"],["?","this legend"]].map(k=>`<tr><td class="l k">${k[0]}</td><td class="l">${k[1]}</td></tr>`).join("");
+
+/* =========================================================
+   KEYS
+========================================================= */
+let gPending=false;
+document.addEventListener("keydown",e=>{
+  if(e.target.matches("input,[contenteditable]")){if(e.key==="Escape")e.target.blur();return}
+  const k=e.key;
+  if(k==="/"){e.preventDefault();openCall();return}
+  if(k==="Escape"){closeCall();return}
+  if(gPending){gPending=false;const map={t:"today",f:"field",d:"dossier",b:"bench",k:"book",a:"atlas"};if(map[k])go(map[k]);return}
+  if(k==="g"){gPending=true;setTimeout(()=>gPending=false,900);return}
+  const nmap={"1":"today","2":"field","3":"dossier","4":"bench","5":"book","6":"atlas"};
+  if(nmap[k]){go(nmap[k]);return}
+  if(k==="?"){go("legend");return}
+  if(k==="n"){document.body.classList.toggle("night");return}
+  if(k==="\\"){document.body.classList.toggle("factsonly");return}
+  if(k==="."){if(hoverPeek)togglePeek(hoverPeek);return}
+  if(k==="d"&&current==="bench"&&!e.repeat){document.body.classList.add("lens");return}
+  if(k==="["||k==="]"){
+    const order=["today","field","dossier","bench","book","atlas"];
+    let i=order.indexOf(current);i=k==="["?(i+order.length-1)%order.length:(i+1)%order.length;go(order[i],true);return}
+  if(k==="w"&&hoverSym){addTrail("judg",current,"watched "+hoverSym.dataset.sym);flash(hoverSym);return}
+  if(k==="p"&&hoverSym){addTrail("judg",current,"pinned "+hoverSym.dataset.sym+" to bench");flash(hoverSym);return}
+  if(k==="J"){addTrail("judg","book","session committed → journal");go("book");return}
+});
+document.addEventListener("keyup",e=>{if(e.key==="d")document.body.classList.remove("lens")});
+function flash(el){el.style.transition="background .15s";el.style.background="color-mix(in srgb,var(--annot) 18%,transparent)";setTimeout(()=>el.style.background="",300)}
+
+/* call line */
+const SYMS=UNIV.map(u=>u[0]);
+function openCall(){
+  $("#callwrap").classList.add("open");
+  const c=$("#callline");c.value="";c.focus();renderHints("");
+}
+function closeCall(){$("#callwrap").classList.remove("open")}
+$("#callline").addEventListener("input",e=>renderHints(e.target.value));
+$("#callline").addEventListener("keydown",e=>{
+  if(e.key==="Enter"){
+    const q=e.target.value.trim().toUpperCase();
+    closeCall();
+    if(q.includes(" V "))go("bench");
+    else if(q.startsWith("FIELD")||q.startsWith("NOTE"))go(q.startsWith("F")?"field":"book");
+    else if(q.startsWith("WHAT IF")||q.startsWith("ENERGY"))go("book");
+    else if(SYMS.some(s=>s.startsWith(q))&&q)go("dossier");
+  }
+});
+function renderHints(q){
+  const Q=q.trim().toUpperCase();
+  let out=[];
+  if(!Q)out=[["TSM","open the dossier"],["TSM v NVDA v AVGO","lay a tray on the bench"],["field: fcf > 4, mom > 0","sculpt the census"],["note: …","append to the journal, from anywhere"],["what if energy −15","custom stress scenario"],["due","today’s due column"]];
+  else if(Q.startsWith("NOTE"))out=[["note: "+q.slice(5),"↵ appends to the journal, timestamped, anchored to this sheet"]];
+  else if(Q.startsWith("FIELD"))out=[[q,"↵ opens the field with these bounds sculpted"]];
+  else if(Q.includes(" V "))out=[[q,"↵ pins these to the bench on shared rulers"]];
+  else out=SYMS.filter(s=>s.startsWith(Q)).slice(0,5).map(s=>{const u=UNIV.find(x=>x[0]===s);return[s,`${tk({s:u[6],st:u[7],tr:u[8],th:!!u[9],fr:1})}${NBSP}score ${u[6]} · ${u[1]} · ↵ dossier`]});
+  $("#callhints").innerHTML=out.map(h=>`<div class="h"><span class="k">${h[0]}</span><span>${h[1]}</span></div>`).join("");
+  $$("#callhints .h").forEach(h=>h.onclick=()=>{closeCall();go("dossier")});
+}
+
+/* wire symbols hover targets */
+$$("#wire b, #residue .name").forEach(b=>{b.closest("td,tr")?.setAttribute("data-sym",b.textContent)});
+</script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 import { buildCompanyContext } from "@/lib/ai/context";
 import { normalizeSymbol } from "@/lib/market";
-import { checkHealth } from "@/lib/ai/ollama";
+import { checkPlatformHealth } from "@/lib/ai/platform-health";
 import { buildModelOptions, pickDefaultModel } from "@/lib/ai/models";
 
 export const runtime = "nodejs";
@@ -10,9 +10,9 @@ export const dynamic = "force-dynamic";
  * GET /api/research/context?symbol=AAPL
  *
  * Warms the company context cache and returns the copilot's readiness state:
- * Ollama health, the available/default models for the picker, and which data
- * sources came up short — so the UI can render an honest "ready" panel before
- * the first question.
+ * AI-platform health across every provider, the available/default models for
+ * the picker, and which data sources came up short — so the UI can render an
+ * honest "ready" panel before the first question.
  */
 export async function GET(request: Request) {
   const symbol = normalizeSymbol(new URL(request.url).searchParams.get("symbol"));
@@ -21,7 +21,7 @@ export async function GET(request: Request) {
   }
 
   const [health, ctxResult] = await Promise.all([
-    checkHealth(),
+    checkPlatformHealth(),
     buildCompanyContext(symbol).then(
       (ctx) => ({ ctx, error: null as string | null }),
       (err: unknown) => ({ ctx: null, error: err instanceof Error ? err.message : "lookup failed" }),

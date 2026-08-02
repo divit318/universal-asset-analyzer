@@ -15,6 +15,7 @@
 import { AGENT_LABELS } from "../ic-questions";
 import PDFDocument from "pdfkit";
 import path from "node:path";
+import { drawBrandMark } from "../brand/pdf";
 import type { ICReport } from "../ic-report";
 import type { MethodEntry } from "./valuation-suite";
 import type { InvariantViolation } from "./valuation-engine";
@@ -264,6 +265,10 @@ export async function reportToPdf(report: ICReport): Promise<Buffer> {
 
   /* ── Cover ── */
   doc.rect(0, 0, doc.page.width, doc.page.height).fill("#0f172a");
+  // The mark, not just the wordmark: this PDF is the one artefact of the product
+  // that gets handed to another person. `scheme: "dark"` is the light-ink pair,
+  // which is what reads on this navy cover. Centred above the wordmark.
+  drawBrandMark(doc, { x: M + W / 2 - 14, y: 28, size: 28, scheme: "dark" });
   doc.fillColor("#60a5fa").font(BOLD).fontSize(10).text("UNIVERSAL ASSET ANALYZER", M, 70, { width: W, align: "center" });
   doc.fillColor("#ffffff").font(BOLD).fontSize(30).text("Investment Committee Report", M, 110, { width: W, align: "center" });
   doc.fillColor("#93c5fd").font(BOLD).fontSize(22).text(report.symbol, M, 175, { width: W, align: "center" });

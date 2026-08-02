@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BrandLockup } from "@/app/_components/brand";
 import { LANDING_HOME, APP_ENTRY, NAV_SECTIONS } from "../landing-config";
 
 /**
@@ -13,15 +14,13 @@ export function LandingFooter() {
   return (
     <footer className="border-t border-border bg-surface">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-6 py-12 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex flex-col gap-2">
-          <Link href={LANDING_HOME} className="font-mono text-sm font-semibold tracking-tight">
-            <span className="text-brand">◆</span>{" "}
-            <span className="text-foreground">asset</span>
-            <span className="text-faint">/</span>
-            <span className="text-foreground">analyzer</span>
-          </Link>
+        <div className="flex flex-col gap-2.5">
+          {/* The footer is the one place the logo is allowed to be large — it is
+              the sign-off, so `lg` rather than the header's `md`. */}
+          <BrandLockup href={LANDING_HOME} size="lg" />
           <p className="max-w-xs text-caption text-muted">
-            Institutional-grade equity research, powered by local AI — all on your computer.
+            Universal Asset Analyzer — institutional-grade equity research, powered by local AI, all
+            on your computer.
           </p>
         </div>
 

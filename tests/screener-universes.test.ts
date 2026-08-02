@@ -325,6 +325,8 @@ describe("etf: is this fund actually an ETF for this class?", () => {
   const detail = (over: Partial<FundDetail>): FundDetail => ({
     available: true,
     category: null,
+    family: null,
+    effectiveSectors: null,
     expenseRatio: null,
     top10Concentration: null,
     topHoldings: null,

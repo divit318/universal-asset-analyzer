@@ -7,12 +7,14 @@
  *
  *   AI_MAX_MODEL_GB      — memory ceiling for a routable model (default: 75% of RAM)
  *   AI_DISABLED_MODELS   — comma-separated model ids to take out of routing
+ *   AI_PROVIDER_ORDER    — provider chain, best first (default: "devin,ollama")
  *   AI_TASK_<TASK>       — pin one task to an ordered model list, e.g.
  *                          AI_TASK_NL_SCREENER="mistral:latest,qwen3:14b"
  *                          (task name upper-cased, '-' → '_')
  */
 
 import { totalmem } from "node:os";
+import type { ProviderId } from "./models";
 import type { TaskType } from "./task-registry";
 
 /**
@@ -43,6 +45,36 @@ function envNumber(key: string): number | null {
  */
 export function memoryBudgetGb(): number {
   return envNumber("AI_MAX_MODEL_GB") ?? (totalmem() / 1e9) * DEFAULT_MEMORY_FRACTION;
+}
+
+const KNOWN_PROVIDERS: readonly ProviderId[] = ["devin", "ollama"];
+
+/**
+ * The provider chain the Router walks, best first.
+ *
+ * Devin leads by default. It is not a close call: on this project's own
+ * prompts the hosted models answer in 4-8s against Ollama's 28-115s, and nine
+ * concurrent calls finish in 5.3s where Ollama serializes them into minutes.
+ *
+ * Ollama stays in the chain rather than being deleted, and that is the whole
+ * reason this is a *chain*: UAA's premise is that a user owns their research
+ * offline. On a plane, behind a captive portal, or simply logged out, the
+ * local models still answer. Losing that would be a real regression, not a
+ * cleanup.
+ *
+ * Unknown names are dropped rather than throwing — a typo in an env var
+ * should not take the whole platform down — and an order that names nothing
+ * valid falls back to the default.
+ */
+export function providerOrder(): ProviderId[] {
+  const raw = process.env.AI_PROVIDER_ORDER;
+  if (!raw) return [...KNOWN_PROVIDERS];
+  const seen = new Set<ProviderId>();
+  for (const part of raw.split(",").map((s) => s.trim().toLowerCase())) {
+    const match = KNOWN_PROVIDERS.find((p) => p === part);
+    if (match) seen.add(match);
+  }
+  return seen.size > 0 ? [...seen] : [...KNOWN_PROVIDERS];
 }
 
 /** Model ids taken out of routing entirely, via AI_DISABLED_MODELS. */

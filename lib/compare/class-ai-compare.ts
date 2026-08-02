@@ -21,6 +21,7 @@ import { computeHoldingsOverlap } from "./holdings-overlap";
 import type { AssetClassId } from "../assets/types";
 import type { ClassCompareEntry } from "./types";
 import type { RankedAsset } from "../ai-compare";
+import { AI_NARRATIVE_UNAVAILABLE, AI_RECOVERY_HINT } from "../ai/availability";
 
 export interface KeyQuestionAnswer {
   label: string;
@@ -276,7 +277,7 @@ export async function compareClassAssets(
   const keyQuestions = sanitizeKeyQuestions(Array.isArray(flat.keyQuestions) ? flat.keyQuestions : [], questions);
 
   const executiveSummary = flat.executiveSummary ?? (aiUnavailable
-    ? "AI analysis unavailable — run `ollama serve` to enable the written verdict. Composite scores and metrics below are always computed."
+    ? `${AI_NARRATIVE_UNAVAILABLE} ${AI_RECOVERY_HINT}`
     : "");
 
   const grounding = aiUnavailable

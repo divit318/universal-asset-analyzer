@@ -20,6 +20,7 @@ import { listWatchlist } from "./db";
 import type { Quote, WatchlistItem, WatchlistAlert } from "./types";
 import { formatCurrency, formatPercent, formatMarketCap } from "./format";
 import { getLatestSectorRotation, findSectorRotationEntry } from "./sector-rotation";
+import { aiUnavailableMessage } from "./ai/availability";
 
 export interface WatchlistPortfolioContext {
   objective: string;
@@ -172,7 +173,7 @@ export async function generateWatchlistDigest(
   const prompt = buildDigestPrompt(summaries, portfolio);
 
   const defaults = {
-    summary: "AI digest unavailable. Run `ollama serve` and pull a model.",
+    summary: aiUnavailableMessage("the watchlist digest"),
     actionItems: [] as string[],
     concentrationRisks: [] as string[],
     topPicks: [] as string[],

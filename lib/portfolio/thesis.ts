@@ -25,6 +25,7 @@ import { PORTFOLIO_CLASS_LABEL } from "./model/types";
 import type { PortfolioEvaluation } from "./engines/simulate";
 import type { ReturnAttribution } from "./engines/attribution";
 import type { ChangeOutcome } from "./history";
+import { AI_NARRATIVE_UNAVAILABLE, AI_RECOVERY_HINT } from "../ai/availability";
 
 /**
  * ── What this asks the model for, and why it changed ──────────────────────────
@@ -103,7 +104,7 @@ export function fallbackThesis(evaluation: PortfolioEvaluation): string {
     ? `concentrated in ${topLabel.toLowerCase()} (${risk.topAssetClassWeight.toFixed(0)}% of value)`
     : `spread across ${allocation.byAssetClass.slices.length} asset classes with no single one dominating`;
   return `A ${formatCurrency(totalValue)} portfolio ${concentrationNote}. Health scores ${health.total}/100 (${health.grade}). ` +
-    `AI-generated narrative is unavailable right now — start Ollama for a fuller thesis; this line is generated directly from measured allocation and health data.`;
+    `${AI_NARRATIVE_UNAVAILABLE} ${AI_RECOVERY_HINT}`;
 }
 
 export function fallbackIdentity(evaluation: PortfolioEvaluation): string[] {

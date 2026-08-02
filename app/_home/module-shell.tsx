@@ -51,7 +51,7 @@ const UNMET: Record<Capability, { message: string; href: string; cta: string }> 
     cta: "Run The Wire",
   },
   ollama: {
-    message: "Start Ollama to enable AI narration.",
+    message: "Connect an AI provider to enable AI narration.",
     href: "/settings",
     cta: "Setup",
   },

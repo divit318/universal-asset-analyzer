@@ -23,6 +23,7 @@ import { verifyGrounding, collectClaimText, type GroundingReport } from "./ai/gr
 import { computeEntryBenchmarks, peerGroupOf, loadBenchmarkUniverse, type PeerBenchmark } from "./compare/benchmarks";
 import type { EntryFreshness } from "./compare/types";
 import type { FundamentalsData, Quote } from "./types";
+import { AI_NARRATIVE_UNAVAILABLE, AI_RECOVERY_HINT } from "./ai/availability";
 
 export interface CompareStock {
   symbol: string;
@@ -512,7 +513,17 @@ export function finalizeComparison(
   const aiUnavailable = model === "unavailable";
 
   const sections: ComparisonResult["sections"] = flat.sections ?? {
-    overview: flat.overview ?? (aiFailure ? aiFailure.message : ""),
+    overview:
+      flat.overview ??
+      // A classified failure carries the specific cause, which is strictly more
+      // actionable than the generic copy; the generic line is the fallback for
+      // "unavailable with no classified error". Both now end in the recovery
+      // hint, which names the hosted AND local paths (see lib/ai/availability).
+      (aiFailure
+        ? `${aiFailure.message} ${AI_RECOVERY_HINT}`
+        : aiUnavailable
+          ? `${AI_NARRATIVE_UNAVAILABLE} ${AI_RECOVERY_HINT}`
+          : ""),
     valuation: flat.valuation ?? "",
     quality: flat.quality ?? "",
     growth: flat.growth ?? "",

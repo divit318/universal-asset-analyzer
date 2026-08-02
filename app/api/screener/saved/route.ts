@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { deleteSavedScreen, listSavedScreens, saveScreen } from "@/lib/db";
+import { deleteSavedScreen, listSavedScreens, recordScreenRun, saveScreen } from "@/lib/db";
 import { getAssetClass, isAssetClassId } from "@/lib/assets/registry";
 import { parseFilters } from "@/lib/screener/filter-engine";
 
@@ -71,4 +71,30 @@ export async function DELETE(request: Request) {
   if (!id) return NextResponse.json({ error: "An id is required" }, { status: 400 });
   deleteSavedScreen(id);
   return NextResponse.json({ ok: true });
+}
+
+/**
+ * PATCH /api/screener/saved?id=<id> — record what this screen just matched.
+ * Body: { symbols: string[] }
+ *
+ * Separate from POST because it writes a *derived* snapshot rather than the
+ * user's definition: loading a saved screen should update its baseline without
+ * touching `updated_at` or looking like an edit in any future audit of the row.
+ */
+export async function PATCH(request: Request) {
+  const id = new URL(request.url).searchParams.get("id");
+  if (!id) return NextResponse.json({ error: "An id is required" }, { status: 400 });
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const symbols = Array.isArray(body.symbols)
+    ? body.symbols.filter((s): s is string => typeof s === "string")
+    : [];
+  recordScreenRun(id, symbols);
+  return NextResponse.json({ ok: true, recorded: symbols.length });
 }

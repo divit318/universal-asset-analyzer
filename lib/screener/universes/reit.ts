@@ -132,6 +132,29 @@ export function toCandidate(m: StockMetrics): ScreenerCandidate {
       netDebt: m.netDebt,
       oneYearReturn: m.oneYearReturn,
       distanceFrom52WkHigh: m.distanceFrom52WkHigh,
+
+      /*
+       * Distribution coverage: how many times the FFO proxy covers the dividend.
+       *
+       * `payoutRatio` already says what share of cash flow is paid out, but a
+       * REIT investor asks the question the other way round — "how much room is
+       * there before the distribution is at risk" — and a coverage multiple is
+       * the form that answer takes. Below 1.0x the dividend is being funded from
+       * something other than operations. Pure arithmetic on the existing proxy,
+       * and gated by the same rule: a mortgage REIT has no FFO to cover with.
+       */
+      distributionCoverage:
+        payoutRatio != null && payoutRatio > 0 ? 100 / payoutRatio : null,
+      /*
+       * Dividend yield less the 10-year Treasury would be the ideal spread, but
+       * this class has no rate feed. Yield per unit of leverage is the available
+       * honest version: it separates a REIT yielding 6% on 4x debt from one
+       * yielding 6% on 9x, which the raw yield ranks identically.
+       */
+      yieldPerTurnOfDebt:
+        m.dividendYield != null && m.netDebtToEbitda != null && m.netDebtToEbitda > 0
+          ? m.dividendYield / m.netDebtToEbitda
+          : null,
     },
     attributes: {
       propertyType: type,

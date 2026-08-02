@@ -70,13 +70,34 @@ describe("fitsInMemory", () => {
 });
 
 describe("MODEL_REGISTRY", () => {
-  it("declares a measured speed and a size for every model", () => {
+  it("declares a measured speed and a quality band for every model", () => {
     for (const spec of MODEL_REGISTRY) {
       expect(spec.tokensPerSecond, `${spec.id} has no measured speed`).toBeGreaterThan(0);
-      expect(spec.sizeGb, `${spec.id} has no declared size`).toBeGreaterThan(0);
       expect(spec.quality).toBeGreaterThanOrEqual(1);
       expect(spec.quality).toBeLessThanOrEqual(10);
     }
+  });
+
+  it("declares a weights size for local models and none for hosted ones", () => {
+    // Size is what the memory gate reads, so it must be real for anything that
+    // loads into this machine's RAM — and must be absent for anything that does
+    // not, so a hosted model can never be excluded for "not fitting".
+    for (const spec of MODEL_REGISTRY) {
+      if (spec.provider === "ollama") {
+        expect(spec.sizeGb, `${spec.id} has no declared size`).toBeGreaterThan(0);
+      } else {
+        expect(spec.sizeGb, `${spec.id} is hosted and must not claim a size`).toBe(0);
+      }
+    }
+  });
+
+  it("never memory-gates a hosted model, however small the budget", () => {
+    process.env.AI_MAX_MODEL_GB = "0.001";
+    for (const spec of MODEL_REGISTRY.filter((m) => m.provider === "devin")) {
+      expect(fitsInMemory(spec), `${spec.id} was memory-gated`).toBe(true);
+    }
+    // The gate still bites for local models — this is not a blanket disable.
+    expect(fitsInMemory(specForInstalled("qwen3:14b"))).toBe(false);
   });
 
   it("no longer references models that are not installed", () => {

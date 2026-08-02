@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useRef, useState } from "react";
 import { Menu, X, Search, ChevronDown, Sparkles } from "lucide-react";
+import { BrandLockup, BrandMark } from "./brand";
 import { OllamaStatusBadge } from "./ollama-status";
 import { ThemeToggle } from "./theme";
 import { NotificationBell } from "./notification-bell";
@@ -101,16 +102,10 @@ export function SiteHeader() {
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-surface/85 backdrop-blur-xl">
       <nav className="mx-auto flex h-14 w-full max-w-7xl items-center gap-2 px-6">
-        {/* Logo */}
-        <Link
-          href="/"
-          className="mr-2 shrink-0 font-mono text-sm font-semibold tracking-tight outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-brand/40"
-        >
-          <span className="text-brand">◆</span>{" "}
-          <span className="text-foreground">asset</span>
-          <span className="text-faint">/</span>
-          <span className="text-foreground">analyzer</span>
-        </Link>
+        {/* The app's one lockup. `sm-up` because below 640px the right cluster
+            is six controls wide and something has to give — the wordmark, never
+            the mark. See app/_components/brand.tsx for the placement rules. */}
+        <BrandLockup href="/" size="md" wordmark="sm-up" className="mr-2" />
 
         {/* Desktop nav — 4 objectives */}
         <div className="hidden items-center gap-0.5 md:flex">
@@ -173,6 +168,16 @@ export function SiteHeader() {
           id="mobile-nav"
           className="animate-menu-drop overflow-hidden border-t border-border bg-surface md:hidden"
         >
+          {/* On mobile the bar's lockup is mark-only (see above), so the open menu
+              is the one place that states the product's full name. Not a second
+              lockup — it is the first complete one this width gets. At the TOP of
+              the sheet: the nav is five sections and ~16 links tall, so anything
+              below it needs scrolling to see, which defeats the point. */}
+          <div className="mx-auto flex max-w-7xl items-center gap-2.5 px-6 pb-1 pt-4">
+            <BrandMark size="sm" className="text-muted" />
+            <span className="text-caption text-faint">Universal Asset Analyzer</span>
+          </div>
+
           {/* Any nav click closes the menu (delegated, so no route-change effect). */}
           <div className="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-4" onClick={() => setMobileOpen(false)}>
               {NAV.map((o) => (

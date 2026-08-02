@@ -44,6 +44,7 @@ import { computeCommodityScore } from "../commodity-scoring";
 import { COMMODITY_BENCHMARK_SYMBOL } from "../research-engines/commodity";
 import { computeForexScore, DOLLAR_INDEX_SYMBOL } from "../forex-scoring";
 import type { NewsItem } from "../types";
+import { AI_RECOVERY_HINT } from "./availability";
 
 export interface InvestmentVerdict {
   verdict: "bullish" | "bearish" | "neutral";
@@ -118,14 +119,14 @@ function defaultFields(plan: VerdictPlan): VerdictFields {
 export function offlineVerdict(plan: VerdictPlan): InvestmentVerdict {
   return {
     verdict: plan.fallback.verdict,
-    headline: `${plan.fallback.name}: Start Ollama to generate the AI investment verdict`,
-    thesis: `Run \`ollama serve\` in your terminal, then refresh to generate the AI analysis for this ${plan.fallback.subject}.`,
+    headline: `${plan.fallback.name}: connect an AI provider to generate the investment verdict`,
+    thesis: `${AI_RECOVERY_HINT} Then refresh to generate the AI analysis for this ${plan.fallback.subject}.`,
     catalysts: [
-      "Ollama offline — start with `ollama serve`",
-      "Refresh page after Ollama starts",
-      "AI verdict generates automatically",
+      "No AI provider reachable",
+      AI_RECOVERY_HINT,
+      "The verdict generates automatically once one is available",
     ],
-    risks: ["AI analysis unavailable", plan.fallback.reviewHint, "Check Ollama status badge in the header"],
+    risks: ["AI analysis unavailable", plan.fallback.reviewHint, "Check the AI status badge in the header"],
     confidence: "low",
     timeHorizon: "medium-term",
     keyMetrics: [],

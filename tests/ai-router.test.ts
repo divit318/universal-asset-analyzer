@@ -262,7 +262,9 @@ describe("route", () => {
     );
     expect(res.content).toBe("fallback answer");
     expect(res.model).toBe("mistral:latest");
-    expect(res.errors).toEqual(["qwen3:14b: timeout"]);
+    // Errors are prefixed with the provider that produced them: once the chain
+    // spans backends, "qwen3:14b: timeout" no longer says where it timed out.
+    expect(res.errors).toEqual(["fake/qwen3:14b: timeout"]);
     expect(provider.calls).toEqual(["qwen3:14b", "mistral:latest"]);
   });
 

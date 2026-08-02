@@ -135,8 +135,10 @@ export function RunConsole({
       </div>
 
       <p className="text-caption text-faint">
-        Fast run skips the quantile-forecast stage (~2–5 min); the full run adds it (~10–20 min).
-        Either way the desk above updates as each stage publishes — you never have to wait for the end.
+        Fast run scores the universe on factors, regime and Monte Carlo valuation (seconds once
+        prices are current). The full run adds the quantile-forecast stage, which is the slow part
+        (a few minutes). Either way the desk above updates as each stage publishes — you never have
+        to wait for the end.
       </p>
 
       {(running || log) && (

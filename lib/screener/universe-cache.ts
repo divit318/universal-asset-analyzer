@@ -101,9 +101,25 @@ export function createUniverseCache({ assetClass, ttlMs, build }: CacheOptions):
 
     async load() {
       ensureBuild();
-      // Nothing cached at all: wait for the first build rather than returning
-      // an empty table that looks like "no matches".
-      if (candidates.length === 0 && inFlight) await inFlight;
+      /*
+       * Never block a screen on a cold build.
+       *
+       * This used to `await inFlight` when nothing was cached, so that an empty
+       * table couldn't be mistaken for "no matches". The reasoning was right and
+       * the mechanism was wrong: the bond universe issues 21 category queries
+       * plus enrichment and history for 645 funds, and a user unlucky enough to
+       * ask first paid for all of it inside their request — measured at **84
+       * seconds**. A screener that hangs for a minute and a half is worse than
+       * one that says "still building".
+       *
+       * The concern it was guarding against is now handled properly by the
+       * caller: `status.stage` is returned as "building" with a ready/total
+       * count, the results table renders that as explicit progress rather than
+       * as an empty result (ResultsEmptyState "building"), and the page polls
+       * until it completes and then re-runs the screen. So the honest answer is
+       * available immediately and the expensive work stays in the background,
+       * which is where it belongs.
+       */
       return { status, candidates };
     },
 

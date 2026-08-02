@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { getAssetClass, getMetric, isAssetClassId } from "@/lib/assets/registry";
 import type { AssetClassId } from "@/lib/assets/types";
-import { parseFilters } from "@/lib/screener/filter-engine";
+import { parseFilters, parsePreferences } from "@/lib/screener/filter-engine";
 import { refreshUniverse, runScreen } from "@/lib/screener/pipeline";
 import { getUniverseProvider } from "@/lib/screener/universes";
+import { getUniverseStats } from "@/lib/screener/universe-stats";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,16 +30,38 @@ function isSortable(assetClass: AssetClassId, key: string): boolean {
   return BUILTIN_SORT_KEYS.has(key) || getMetric(assetClass, key) != null;
 }
 
-/** GET /api/screener?class=<id> — universe build status, for polling while it warms. */
+/**
+ * GET /api/screener?class=<id>[&stats=1] — universe build status, for polling
+ * while it warms, plus (on request) the per-metric distributions the filter UI
+ * needs to show a user what they're aiming at.
+ *
+ * The distributions are behind a flag and served here rather than on the POST
+ * because they are per *universe*, not per screen: fetching them once when the
+ * asset class changes is correct, and attaching ~1,000 numbers to every screen
+ * response would tax the hot path to redeliver something that only changes every
+ * twelve hours.
+ */
 export async function GET(request: Request) {
-  const raw = new URL(request.url).searchParams.get("class");
+  const url = new URL(request.url);
+  const raw = url.searchParams.get("class");
   const assetClass = resolveClass(raw);
   if (!assetClass) {
     return NextResponse.json({ error: `Unknown asset class: ${raw}` }, { status: 400 });
   }
 
-  const { status } = await getUniverseProvider(assetClass).load();
-  return NextResponse.json({ assetClass, status });
+  const { status, candidates } = await getUniverseProvider(assetClass).load();
+  if (url.searchParams.get("stats") !== "1") {
+    return NextResponse.json({ assetClass, status });
+  }
+
+  // Already computed and cached for this build — this is a map read, not a scan.
+  const stats = getUniverseStats(assetClass, candidates, status.builtAt);
+  return NextResponse.json({
+    assetClass,
+    status,
+    peerGroupBy: getAssetClass(assetClass).peerGroupBy ?? null,
+    distributions: Object.fromEntries(stats.distributions),
+  });
 }
 
 /**
@@ -124,6 +147,7 @@ export async function POST(request: Request) {
       assetClass,
       templateId,
       filters,
+      preferences: parsePreferences(assetClass, body.preferences),
       sortKey,
       sortDir,
       size,

@@ -7,13 +7,15 @@
  * doesn't know the difference.
  */
 
-import { Fragment, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import Link from "next/link";
 import { getAssetClass, getMetric } from "@/lib/assets/registry";
 import type { AssetClassId } from "@/lib/assets/types";
 import { formatMetricValue } from "@/lib/screener/format";
+import { MARGINAL_SLACK } from "@/lib/screener/filter-engine";
 import type { RankedCandidate } from "@/lib/screener/types";
 import { Badge } from "@/app/_components/ui";
+import { BrandEmptyState } from "@/app/_components/brand";
 import { HoldingsTable } from "@/app/_components/holdings-table";
 
 interface Props {
@@ -24,6 +26,11 @@ interface Props {
   onSort: (key: string) => void;
   watchlisted: Set<string>;
   onWatch: (row: RankedCandidate) => void;
+  /** Symbols already held, so a screen can't re-suggest what you own. */
+  owned: Set<string>;
+  /** Symbols staged for a batch action. */
+  staged: Set<string>;
+  onToggleStaged: (symbol: string) => void;
   /** Why the table would be empty — drives an accurate empty state. */
   emptyState?: ResultsEmptyState;
 }
@@ -94,6 +101,14 @@ function MatchDetail({ row }: { row: RankedCandidate }) {
     <div className="grid gap-4 border-t border-border bg-surface-2/50 px-4 py-3 text-xs md:grid-cols-3">
       <div>
         <p className="mb-1.5 font-medium">Why it matched</p>
+        {row.binding ? (
+          <p className="mb-1.5 text-[11px] leading-relaxed text-muted">
+            Closest to failing:{" "}
+            <span className="font-medium text-fg">{row.binding.label}</span>{" "}
+            ({row.binding.detail})
+            {row.binding.slack < MARGINAL_SLACK ? " — only just cleared it." : "."}
+          </p>
+        ) : null}
         {passed.length === 0 ? (
           <p className="text-muted">
             No filters were active — this is the full ranked universe, not a filtered screen.
@@ -175,7 +190,14 @@ export type ResultsEmptyState =
   /** Universe is ready, no filters set, and the screen has not been run yet. */
   | { kind: "not-run" }
   /** Universe is ready and the filters genuinely excluded everything. */
-  | { kind: "no-matches"; activeFilterCount: number };
+  | { kind: "no-matches"; activeFilterCount: number }
+  /**
+   * Excluded everything, *and* the engine worked out which filter is responsible
+   * — so the WhyEmpty panel above is already saying it, with a one-click fix.
+   * Repeating a generic "try loosening the tightest one" underneath would be
+   * noise directly below a button that names the exact threshold.
+   */
+  | { kind: "diagnosed" };
 
 function EmptyResults({
   def,
@@ -204,6 +226,8 @@ function EmptyResults({
           title: `Ready — pick a template or set a filter`,
           detail: `The ${def.label} universe is loaded. Start from a template above, or set any filter and run the screen.`,
         };
+      case "diagnosed":
+        return null;
       case "no-matches":
         return {
           title: "Nothing matched",
@@ -215,12 +239,16 @@ function EmptyResults({
     }
   })();
 
+  if (!body) return null;
+
+  // A screen with no rows is the largest expanse of nothing in the app and the
+  // first thing a new user sees (the universe takes ~13 minutes to build). It
+  // gets the mark — animating for "building", resolved for every other kind,
+  // because the resolved diamond means "done" (see BrandEmptyState).
   return (
-    <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
-      <p className="text-sm font-medium">{body.title}</p>
-      <p className="max-w-md text-xs text-muted">{body.detail}</p>
+    <BrandEmptyState title={body.title} detail={body.detail} loading={state.kind === "building"}>
       <Badge variant="neutral">{def.label}</Badge>
-    </div>
+    </BrandEmptyState>
   );
 }
 
@@ -232,12 +260,72 @@ export function ResultsTable({
   onSort,
   watchlisted,
   onWatch,
+  owned,
+  staged,
+  onToggleStaged,
   emptyState = { kind: "no-matches", activeFilterCount: 0 },
 }: Props) {
   const def = getAssetClass(assetClass);
   const [expanded, setExpanded] = useState<string | null>(null);
+  /**
+   * Keyboard cursor. -1 = nothing focused, which is the resting state: the table
+   * must not steal arrow keys from the page until the user opts in by pressing
+   * j/k or clicking into it.
+   */
+  const [cursor, setCursor] = useState(-1);
+  const bodyRef = useRef<HTMLTableSectionElement>(null);
 
   const arrow = (key: string) => (sortKey === key ? (sortDir === "desc" ? " ↓" : " ↑") : "");
+
+  /*
+   * Keyboard-first review, which is how anyone works through a ranked list at
+   * volume: j/k to move, space to stage, x to expand, w to watch, Enter to open
+   * Research. Bound on the tbody rather than the document so it can never
+   * hijack typing in a filter input — the single most common way keyboard
+   * shortcuts go wrong in a screener.
+   */
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (rows.length === 0) return;
+    const move = (delta: number) => {
+      e.preventDefault();
+      const next = Math.min(rows.length - 1, Math.max(0, (cursor < 0 ? -1 : cursor) + delta));
+      setCursor(next);
+      bodyRef.current?.querySelectorAll("tr[data-row]")[next]?.scrollIntoView({ block: "nearest" });
+    };
+
+    switch (e.key) {
+      case "j":
+      case "ArrowDown":
+        return move(1);
+      case "k":
+      case "ArrowUp":
+        return move(-1);
+      case " ": {
+        if (cursor < 0) return;
+        e.preventDefault();
+        return onToggleStaged(rows[cursor].symbol);
+      }
+      case "x": {
+        if (cursor < 0) return;
+        e.preventDefault();
+        const sym = rows[cursor].symbol;
+        return setExpanded((cur) => (cur === sym ? null : sym));
+      }
+      case "w": {
+        if (cursor < 0) return;
+        e.preventDefault();
+        return onWatch(rows[cursor]);
+      }
+      case "Enter": {
+        if (cursor < 0) return;
+        e.preventDefault();
+        window.location.href = `/research?symbol=${encodeURIComponent(rows[cursor].symbol)}`;
+        return;
+      }
+      default:
+        return;
+    }
+  };
 
   return (
     <div className="overflow-x-auto rounded-xl border border-border">
@@ -266,14 +354,28 @@ export function ResultsTable({
           </tr>
         </thead>
 
-        <tbody>
-          {rows.map((row) => {
+        <tbody
+          ref={bodyRef}
+          tabIndex={0}
+          onKeyDown={onKeyDown}
+          aria-label="Screen results. Press j and k to move, space to stage, x to expand, w to watch, Enter to research."
+          className="outline-none focus-visible:ring-1 focus-visible:ring-brand/40"
+        >
+          {rows.map((row, rowIndex) => {
             const isOpen = expanded === row.symbol;
+            const isCursor = rowIndex === cursor;
+            const isStaged = staged.has(row.symbol);
             const hasWarnings = row.match.warnings.length > 0;
 
             return (
               <Fragment key={row.symbol}>
-                <tr className="border-b border-border transition-colors hover:bg-surface-2/50">
+                <tr
+                  data-row
+                  onClick={() => setCursor(rowIndex)}
+                  className={`border-b border-border transition-colors hover:bg-surface-2/50 ${
+                    isCursor ? "bg-brand/[0.07] ring-1 ring-inset ring-brand/25" : ""
+                  } ${isStaged ? "bg-brand/[0.04]" : ""}`}
+                >
                   <td className="px-3 py-2 text-xs text-muted">{row.rank}</td>
 
                   <td className="px-3 py-2">
@@ -307,6 +409,34 @@ export function ResultsTable({
                             ⚠
                           </span>
                         ) : null}
+                        {/*
+                          * Marginal pass. A name sitting on your ROIC floor is one
+                          * quarter from leaving the screen, and a name clearing
+                          * every bound by miles is a different proposition — the
+                          * table said "matched" for both. Only shown when it's
+                          * actually close, so it means something when it appears.
+                          */}
+                        {/*
+                          * Already held. A screener that keeps surfacing what you
+                          * own is wasting the scarcest thing in the process —
+                          * attention — and this is the cheapest possible fix.
+                          */}
+                        {owned.has(row.symbol) ? (
+                          <span
+                            className="rounded border border-positive/40 bg-positive/10 px-1 text-[9px] font-semibold uppercase tracking-wide text-positive"
+                            title="You already hold this"
+                          >
+                            held
+                          </span>
+                        ) : null}
+                        {row.binding && row.binding.slack < MARGINAL_SLACK ? (
+                          <span
+                            className="rounded border border-warning/40 bg-warning/10 px-1 text-[9px] font-semibold uppercase tracking-wide text-warning"
+                            title={`Only just cleared your ${row.binding.label} filter — ${row.binding.detail}`}
+                          >
+                            marginal
+                          </span>
+                        ) : null}
                       </span>
                       <span className="max-w-[220px] truncate text-xs text-muted">{row.name}</span>
                     </div>
@@ -333,6 +463,19 @@ export function ResultsTable({
                       >
                         Research
                       </Link>
+                      <button
+                        type="button"
+                        onClick={() => onToggleStaged(row.symbol)}
+                        aria-pressed={isStaged}
+                        title={isStaged ? "Unstage" : "Stage for a batch action (space)"}
+                        className={`rounded-md border px-2 py-1 text-xs transition-colors ${
+                          isStaged
+                            ? "border-brand/50 bg-brand/10 text-brand"
+                            : "border-border text-muted hover:border-brand hover:text-brand"
+                        }`}
+                      >
+                        {isStaged ? "✓" : "+"}
+                      </button>
                       <button
                         type="button"
                         onClick={() => onWatch(row)}

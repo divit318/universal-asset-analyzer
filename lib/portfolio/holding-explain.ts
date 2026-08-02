@@ -21,6 +21,7 @@ import { PORTFOLIO_CLASS_LABEL } from "./model/types";
 import type { Holding } from "./model/types";
 import type { PortfolioEvaluation } from "./engines/simulate";
 import type { Recommendation } from "./engines/recommend";
+import { AI_NARRATIVE_UNAVAILABLE, AI_RECOVERY_HINT } from "../ai/availability";
 
 export interface HoldingExplanation {
   explanation: string;
@@ -77,7 +78,7 @@ export function fallbackExplanation(holding: Holding, evaluation: PortfolioEvalu
   if (activeRec) {
     parts.push(`The decision engine currently recommends: ${activeRec.title.toLowerCase()} — ${activeRec.rationale}`);
   }
-  parts.push("AI-generated narrative is unavailable right now — start Ollama for a fuller explanation; this is generated directly from measured portfolio data.");
+  parts.push(`${AI_NARRATIVE_UNAVAILABLE} ${AI_RECOVERY_HINT}`);
   return parts.join(" ");
 }
 

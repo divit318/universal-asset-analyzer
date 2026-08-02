@@ -35,6 +35,7 @@ import { searchSymbols } from "./yahoo";
 import { isAssetClassId } from "./assets/registry";
 import type { AssetClassId, FilterValues } from "./assets/types";
 import { parseNlFilters } from "./screener/nl-filters";
+import { AI_RECOVERY_HINT } from "./ai/availability";
 
 export interface AppAssistantTurn {
   question: string;
@@ -78,7 +79,7 @@ export interface AppAssistantResult {
   model: string;
 }
 
-const APP_SUMMARY = `Universal Asset Analyzer (UAA) is a local, institutional-grade equity research platform. Modules: Home (daily brief), Research (deep single-stock research + AI copilot + charting), Screener (fundamental screening/ranking across equities, ETFs, REITs, crypto, commodities, bonds, forex), Wire (event-driven signals/scanning, news, portfolio headlines), Compare (multi-asset comparison), Portfolio (holdings, P&L, risk), Watchlist, DCF (intrinsic value), Calendar (earnings dates), IC Report (multi-agent institutional research), Engine (quant scorecard), Thematic (theme/supply-chain analysis), Decision Journal. All AI runs on a local Ollama model — no cloud, no accounts, no subscriptions.`;
+const APP_SUMMARY = `Universal Asset Analyzer (UAA) is a local, institutional-grade equity research platform. Modules: Home (daily brief), Research (deep single-stock research + AI copilot + charting), Screener (fundamental screening/ranking across equities, ETFs, REITs, crypto, commodities, bonds, forex), Wire (event-driven signals/scanning, news, portfolio headlines), Compare (multi-asset comparison), Portfolio (holdings, P&L, risk), Watchlist, DCF (intrinsic value), Calendar (earnings dates), IC Report (multi-agent institutional research), Engine (quant scorecard), Thematic (theme/supply-chain analysis), Decision Journal. AI runs through hosted frontier models via the Devin CLI, falling back to local Ollama models when offline.`;
 
 // Kept intentionally separate from app/_components/nav-config.ts (the header
 // nav + ⌘K palette's source of truth): lib/ is domain logic consumed by
@@ -347,13 +348,16 @@ export async function runAppAssistant(
 export function failureAnswer(err: unknown): string {
   const name = err instanceof Error ? err.name : "";
   if (name === "OllamaUnavailableError") {
-    return "I couldn't reach the local model. Start Ollama with `ollama serve` and try again, or use ⌘K to jump straight to a tool.";
+    // Names both providers, not just Ollama: with a hosted provider in the
+    // chain, "start Ollama" is at best half the fix and is irrelevant advice
+    // for a user who never installed it. See lib/ai/availability.ts.
+    return `I couldn't reach any AI provider. ${AI_RECOVERY_HINT} Or use ⌘K to jump straight to a tool.`;
   }
   if (name === "ModelMissingError") {
     return `${err instanceof Error ? err.message : "A required model isn't installed."} Then try again, or use ⌘K to jump straight to a tool.`;
   }
   if (name === "TimeoutError" || name === "AbortError" || name === "AllModelsFailedError") {
-    return "Ollama is running but took too long to answer — usually the machine is low on free memory, so the model is paging. Close some apps or set `AI_MAX_MODEL_GB` lower in `.env.local` to route to a smaller model. ⌘K still works.";
+    return "Every provider took too long to answer — for the local model this is usually the machine being low on free memory, so it's paging. Close some apps or set `AI_MAX_MODEL_GB` lower in `.env.local` to route to a smaller model. ⌘K still works.";
   }
   return "I hit an error generating that answer. Try rephrasing, or use ⌘K to jump straight to a tool.";
 }

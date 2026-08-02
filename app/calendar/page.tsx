@@ -7,6 +7,7 @@ import { formatCompactCurrency, formatPerShare } from "@/lib/format";
 import { EventDrawer } from "./_components/event-drawer";
 import { PageShell, Skeleton } from "@/app/_components/ui";
 import { Reveal } from "@/app/_components/reveal";
+import { AI_RECOVERY_HINT } from "@/lib/ai/availability";
 
 // ─── Style constants ────────────────────────────────────────────────────────
 
@@ -518,8 +519,8 @@ function AiBriefSection({ events, autoGenerate }: { events: CalendarEvent[]; aut
           )}
           {error && (
             <div className="rounded-lg border border-negative/30 bg-negative/8 px-4 py-3 text-sm text-negative">
-              {error.includes("Ollama") || error.includes("fetch") || error.includes("ECONNREFUSED")
-                ? "Ollama is not running. Start it with `ollama serve` to generate AI briefs."
+              {error.includes("Ollama") || error.includes("provider") || error.includes("fetch") || error.includes("ECONNREFUSED")
+                ? `No AI provider is reachable, so briefs cannot be generated. ${AI_RECOVERY_HINT}`
                 : error}
             </div>
           )}

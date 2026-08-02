@@ -28,13 +28,23 @@ warnings.filterwarnings("ignore")
 
 
 def _yf_close(ticker: str, period: str = "3mo") -> np.ndarray | None:
-    """Fetch closing prices for a ticker via yfinance. Returns None on failure."""
+    """
+    Fetch closing prices for a ticker via yfinance. Returns None on failure.
+
+    yfinance returns MultiIndex columns (field, ticker) even for a single
+    ticker, so `df["Close"]` is a one-column DataFrame and `.to_numpy()` gives
+    an (n, 1) array. Every caller then did `float(arr[-1])` on a 1-element array
+    and raised "only 0-dimensional arrays can be converted to Python scalars" —
+    caught by the callers' bare excepts, which is why the entire macro feature
+    set has silently been empty rather than visibly broken. Flatten to 1-D here.
+    """
     try:
         import yfinance as yf
         df = yf.download(ticker, period=period, progress=False, auto_adjust=True)
         if df.empty or "Close" not in df.columns:
             return None
-        arr = df["Close"].dropna().to_numpy().astype(np.float64)
+        arr = np.asarray(df["Close"].to_numpy(), dtype=np.float64).reshape(-1)
+        arr = arr[np.isfinite(arr)]
         return arr if len(arr) >= 5 else None
     except Exception:
         return None

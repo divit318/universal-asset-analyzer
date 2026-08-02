@@ -202,6 +202,32 @@ const metrics: MetricDef[] = [
     better: "higher",
   },
 
+  {
+    key: "distributionCoverage",
+    label: "Distribution Coverage",
+    description:
+      "How many times the FFO proxy covers the dividend. Below 1.0x the distribution is being funded from something other than operations — the question a payout ratio answers backwards.",
+    group: "Income",
+    unit: "x",
+    availability: "derived",
+    source: "yahoo",
+    formula: "100 ÷ payout ratio (FFO-proxy based; null for mortgage REITs and real-estate services)",
+    better: "higher",
+    step: 0.1,
+  },
+  {
+    key: "yieldPerTurnOfDebt",
+    label: "Yield per Turn of Debt",
+    description:
+      "Dividend yield divided by net debt / EBITDA. Separates a REIT yielding 6% on 4x leverage from one yielding 6% on 9x — the raw yield ranks them identically.",
+    group: "Leverage",
+    unit: "x",
+    availability: "derived",
+    source: "yahoo",
+    formula: "dividend yield ÷ net debt/EBITDA",
+    better: "higher",
+    step: 0.1,
+  },
   // Declared-but-unscreenable. These four are the heart of real REIT analysis
   // and none of them exist in any free feed — they live in supplemental
   // packages (quarterly PDFs/XLS), not in structured market data.
@@ -269,6 +295,9 @@ export const reitClass: AssetClassDefinition = {
   providers: ["yahoo", "sec_edgar"],
   aliases: ["reit", "reits", "real estate", "property", "landlords"],
   capabilities: ["screen", "research", "compare", "portfolio", "watchlist", "chart", "news", "fundamentals"],
+
+  /** Peer group for relative filters — a retail REIT and a data-centre REIT are not the same business. */
+  peerGroupBy: "propertyType",
 
   metrics,
   filterGroups: ["Size & Type", "Income", "Valuation", "Growth", "Leverage", "Momentum", "Property Fundamentals"],

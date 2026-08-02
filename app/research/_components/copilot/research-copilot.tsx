@@ -2,10 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { RESEARCH_ACTIONS } from "@/lib/ai/actions";
+import { BrandMark } from "@/app/_components/brand";
 import { Message } from "./message";
 import { useCopilot } from "./use-copilot";
 import type { PortfolioContextForAI } from "@/lib/ai/types";
 import type { AskAIPayload } from "../pattern-analysis-panel";
+import { AI_RECOVERY_HINT } from "@/lib/ai/availability";
 
 /**
  * The persistent AI Equity Research Copilot. It stays attached to the currently
@@ -74,7 +76,10 @@ export function ResearchCopilot({
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">
-          <span className="text-accent">◆</span>
+          {/* Was a Unicode `◆` — a stand-in for the logo, in whatever symbol font
+              the OS substituted. The Copilot is a UAA agent, so it signs with the
+              real mark; ink inherits this row's colour automatically. */}
+          <BrandMark size="xs" />
           <h2 className="text-sm font-semibold">AI Research Copilot</h2>
           <span className="hidden text-xs text-muted sm:inline">· {symbol}</span>
         </div>
@@ -134,9 +139,7 @@ export function ResearchCopilot({
           <div className="rounded-lg border border-negative/40 bg-negative/10 px-4 py-3 text-sm text-negative">
             {error}
             {!reachable ? (
-              <p className="mt-1 text-xs text-muted">
-                Start Ollama with <code className="font-mono">ollama serve</code>, then try again.
-              </p>
+              <p className="mt-1 text-xs text-muted">{AI_RECOVERY_HINT}</p>
             ) : null}
           </div>
         ) : null}
@@ -194,9 +197,9 @@ function HealthBadge({ reachable, status }: { reachable: boolean; status: string
     return <span className="text-xs text-muted">Preparing…</span>;
   }
   return (
-    <span className="flex items-center gap-1.5 text-xs text-muted" title={reachable ? "Ollama connected" : "Ollama unavailable"}>
+    <span className="flex items-center gap-1.5 text-xs text-muted" title={reachable ? "AI provider connected" : AI_RECOVERY_HINT}>
       <span className={`h-2 w-2 rounded-full ${reachable ? "bg-positive" : "bg-negative"}`} />
-      {reachable ? "Local" : "Offline"}
+      {reachable ? "Ready" : "Offline"}
     </span>
   );
 }
@@ -312,7 +315,7 @@ function Hero({
       ) : null}
 
       {!reachable ? (
-        <p className="text-xs text-negative">Ollama isn&apos;t running. Start it with <code className="font-mono">ollama serve</code>.</p>
+        <p className="text-xs text-negative">No AI provider is reachable. {AI_RECOVERY_HINT}</p>
       ) : (
         <div className="flex max-w-lg flex-wrap justify-center gap-2">
           {starters.map((s) => (

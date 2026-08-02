@@ -185,6 +185,32 @@ export function toCandidate(
       expenseRatio: num(row.netExpenseRatio) ?? detail?.expenseRatio ?? null,
       aum: num(row.netAssets),
       oneYearReturn,
+
+      /*
+       * Carry per unit of rate risk — the number a fixed-income investor actually
+       * ranks on, and one no consumer screener exposes.
+       *
+       * A 5% yield from a 2-year fund and a 5% yield from a 20-year fund are
+       * completely different propositions: the second is being paid for taking
+       * ten times the duration. Yield alone therefore sorts a bond list by how
+       * much rate risk each fund happens to carry, which is not a ranking of
+       * value. Dividing by duration puts them on comparable footing, and it is
+       * pure arithmetic over two metrics already computed above — no new data.
+       */
+      yieldPerDuration: yieldPct != null && duration != null && duration > 0 ? yieldPct / duration : null,
+      /*
+       * Spread per unit of duration: the same idea applied to the *credit* leg.
+       * Isolates funds being paid for credit risk from funds being paid for
+       * sitting on the long end of the curve.
+       */
+      spreadPerDuration: spread != null && duration != null && duration > 0 ? spread / duration : null,
+      /** Net of fees, because a 12bp expense ratio is a real haircut on a 4% carry. */
+      netYield: yieldPct != null ? yieldPct - (num(row.netExpenseRatio) ?? detail?.expenseRatio ?? 0) : null,
+      cashWeight: detail?.cashWeight ?? null,
+      fundAge:
+        num(row.firstTradeDateMilliseconds) != null
+          ? (Date.now() - (num(row.firstTradeDateMilliseconds) as number)) / (365.25 * 24 * 3600 * 1000)
+          : null,
     },
     attributes: {
       issuerType: issuerType(detail?.category ?? null),

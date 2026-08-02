@@ -23,7 +23,11 @@ FII flow augmentation (fix 8.2):
 
 from __future__ import annotations
 
+import hashlib
+import pickle
 import warnings
+from pathlib import Path
+
 import numpy as np
 import polars as pl
 from hmmlearn.hmm import GaussianHMM
@@ -39,6 +43,14 @@ N_STATES = 5
 _BIC_CANDIDATES = [3, 4, 5, 6]
 
 
+def _trailing_mean(x: np.ndarray, w: int) -> np.ndarray:
+    """Mean of the trailing <=w values at each index (expanding until w is reached)."""
+    cs = np.concatenate(([0.0], np.cumsum(x)))
+    idx = np.arange(len(x))
+    lo = np.maximum(0, idx - w + 1)
+    return (cs[idx + 1] - cs[lo]) / (idx - lo + 1)
+
+
 def _make_obs(close: np.ndarray, volume: np.ndarray) -> np.ndarray:
     """
     Build 3-feature observation matrix:
@@ -46,21 +58,28 @@ def _make_obs(close: np.ndarray, volume: np.ndarray) -> np.ndarray:
 
     Zero-volume handling: replace zeros with median volume before computing log ratio
     to avoid log(0) = -inf which propagates NaN into HMM startprob_.
+
+    The two rolling windows are computed by cumulative sums rather than a Python
+    comprehension per index. On a 1250-bar index series the comprehensions were
+    ~40% of this function; it runs once per HMM fit and once per prediction, so
+    they showed up directly in run time.
     """
     ret = np.diff(np.log(close), prepend=np.nan)
-    vol5 = np.array([
-        ret[max(0, i - 4) : i + 1].std() * np.sqrt(252) if i >= 4 else np.nan
-        for i in range(len(ret))
-    ])
+
+    # vol5[i] = population std of ret[i-4..i] * sqrt(252), NaN for i < 4.
+    # ret[0] is NaN, so windows touching index 0 stay NaN — matching the
+    # previous np.std() behaviour on a NaN-containing slice.
+    vol5 = np.full(len(ret), np.nan)
+    if len(ret) >= 5:
+        win = np.lib.stride_tricks.sliding_window_view(ret, 5)
+        vol5[4:] = win.std(axis=1) * np.sqrt(252)
+
     # Replace zero/negative volume with median to avoid log(0) = -inf
     vol_clean = volume.copy()
     median_vol = np.median(vol_clean[vol_clean > 0]) if np.any(vol_clean > 0) else 1.0
     vol_clean[vol_clean <= 0] = median_vol
 
-    vol_ma20 = np.array([
-        vol_clean[max(0, i - 19) : i + 1].mean() if i >= 19 else vol_clean[:i + 1].mean()
-        for i in range(len(vol_clean))
-    ])
+    vol_ma20 = _trailing_mean(vol_clean, 20)
     log_vol_ratio = np.log(vol_clean / (vol_ma20 + 1e-10))
 
     obs = np.column_stack([ret, vol5, log_vol_ratio])
@@ -241,10 +260,32 @@ def predict_regimes(
     )
 
 
+_HMM_CACHE_DIR = Path(__file__).parents[2] / "data" / "hmm_cache"
+
+
+def _hmm_cache_key(index_key: str, index_df: pl.DataFrame, n_iter: int,
+                   macro_features: dict[str, float | None] | None) -> str:
+    """
+    Fingerprint the inputs `train_hmm` would consume.
+
+    Macro scalars are rounded to 2dp: they are broadcast as constant columns, so
+    a third-decimal drift between two intraday quotes moves the fitted model by
+    nothing an operator could observe, and fingerprinting at full precision
+    would miss the cache on every single run.
+    """
+    last_date = index_df["date"][-1] if len(index_df) else "empty"
+    macro = sorted(
+        (k, round(float(v), 2)) for k, v in (macro_features or {}).items() if v is not None
+    )
+    raw = f"{index_key}|{last_date}|{len(index_df)}|{n_iter}|{macro}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:20]
+
+
 def fit_market_regime(
     index_df: pl.DataFrame,
     n_iter: int = 200,
     macro_features: dict[str, float | None] | None = None,
+    cache_key: str | None = None,
 ) -> GaussianHMM | None:
     """
     Train a single HMM on the market index price series with BIC state selection (fix 3.3).
@@ -265,6 +306,21 @@ def fit_market_regime(
     df = index_df.sort("date").filter(pl.col("close").is_not_null() & pl.col("close").gt(0))
     if len(df) < 252:
         return None
+
+    # BIC selection trains 12 HMMs (4 candidate state counts x 3 seeds) over the
+    # full index history. That is deterministic given the same bars, n_iter and
+    # macro inputs — so within a session it is the same ~5s of work every run.
+    # Cached on disk under that exact fingerprint; a new bar invalidates it.
+    cache_path: Path | None = None
+    if cache_key:
+        cache_path = _HMM_CACHE_DIR / f"{_hmm_cache_key(cache_key, df, n_iter, macro_features)}.pkl"
+        if cache_path.exists():
+            try:
+                with open(cache_path, "rb") as fh:
+                    return pickle.load(fh)
+            except Exception:
+                cache_path.unlink(missing_ok=True)
+
     close  = df["close"].to_numpy().astype(np.float64)
     volume = df["volume"].fill_null(0).to_numpy().astype(np.float64)
 
@@ -280,9 +336,102 @@ def fit_market_regime(
             extra_obs = np.column_stack(macro_cols)
 
     try:
-        return train_hmm(close, volume, n_iter=n_iter, extra_obs=extra_obs)
+        model = train_hmm(close, volume, n_iter=n_iter, extra_obs=extra_obs)
     except Exception:
         return None
+
+    if cache_path is not None:
+        try:
+            _HMM_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            tmp = cache_path.with_suffix(".pkl.tmp")
+            with open(tmp, "wb") as fh:
+                pickle.dump(model, fh)
+            tmp.rename(cache_path)          # atomic: no half-written model is ever read
+        except Exception:
+            pass
+
+    return model
+
+
+_REGIME_SCHEMA = {
+    "symbol": pl.Utf8, "date": pl.Date,
+    "regime": pl.Int32, "regime_label": pl.Utf8,
+    "prob_bull": pl.Float64, "prob_bear": pl.Float64,
+    "prob_range": pl.Float64, "prob_crash": pl.Float64,
+    "prob_recovery": pl.Float64,
+}
+
+
+class IndexRegimePosteriors:
+    """
+    The index-level half of `predict_regimes_from_index`, computed once.
+
+    Regime states are market-level: for a given index and model, the posterior
+    at each date is the *same number* for every stock in that market. The only
+    per-stock input is beta, and it is applied afterwards. Before this class
+    existed, every symbol re-ran `_make_obs` over the full index history plus
+    `model.predict` and `model.predict_proba`, then rebuilt a 1250-entry dict of
+    dicts — identical work, once per symbol. On a 250-name US universe that was
+    ~27s of the ~48s regime stage, and it scaled linearly with universe size.
+
+    Build one per (index, model) pair per run and pass it to
+    `predict_regimes_from_index`.
+    """
+
+    __slots__ = ("dates", "regimes", "probs", "ok")
+
+    def __init__(self, index_model: GaussianHMM, index_df: pl.DataFrame):
+        self.ok = False
+        self.dates: list = []
+        self.regimes = np.empty(0, dtype=np.int32)
+        self.probs = np.empty((0, N_STATES))
+
+        idx_df = index_df.sort("date").filter(
+            pl.col("close").is_not_null() & pl.col("close").gt(0)
+        )
+        if len(idx_df) < 126:
+            return
+
+        idx_close  = idx_df["close"].to_numpy().astype(np.float64)
+        idx_volume = idx_df["volume"].fill_null(0).to_numpy().astype(np.float64)
+        idx_dates  = idx_df["date"].to_list()
+
+        obs, valid = _make_obs(idx_close, idx_volume)
+        obs_clean  = obs[valid]
+        if len(obs_clean) == 0:
+            return
+
+        # Pad with zeros if model was trained with extra macro dimensions (fix 8.2)
+        n_model_features = index_model.means_.shape[1]
+        if obs_clean.shape[1] < n_model_features:
+            pad = np.zeros((obs_clean.shape[0], n_model_features - obs_clean.shape[1]))
+            obs_clean = np.column_stack([obs_clean, pad])
+
+        try:
+            state_seq  = index_model.predict(obs_clean)
+            posteriors = index_model.predict_proba(obs_clean)
+        except Exception:
+            return
+
+        state_map = _map_states(index_model)
+        offset = len(idx_close) - len(obs_clean)
+
+        # Accumulate raw-state posteriors into semantic slots (BIC may map
+        # multiple raw states onto the same semantic state).
+        probs = np.zeros((len(obs_clean), N_STATES))
+        for raw_s, sem_s in state_map.items():
+            probs[:, sem_s] += posteriors[:, raw_s]
+
+        sem_of_raw = np.array(
+            [state_map[s] for s in range(index_model.n_components)], dtype=np.int32
+        )
+
+        # idx_dates is already ascending (sorted above), so this stays sorted —
+        # which is what makes the per-stock lookup a plain searchsorted.
+        self.dates   = idx_dates[offset:]
+        self.regimes = sem_of_raw[state_seq.astype(int)]
+        self.probs   = probs
+        self.ok = True
 
 
 def predict_regimes_from_index(
@@ -291,6 +440,8 @@ def predict_regimes_from_index(
     stock_df: pl.DataFrame,
     symbol: str,
     beta: float = 1.0,
+    posteriors: IndexRegimePosteriors | None = None,
+    max_rows: int | None = None,
 ) -> pl.DataFrame:
     """
     Derive stock-level regime signal from index HMM posteriors, scaled by beta.
@@ -303,116 +454,61 @@ def predict_regimes_from_index(
     Alignment: join stock and index on date, use index posteriors for matching
     dates. Stock-only dates not in index get the nearest prior index regime.
 
+    `posteriors` is the shared per-market index inference; pass one to avoid
+    recomputing it for every symbol. `max_rows` keeps only the most recent N
+    stock dates — the callers of regime_daily read at most the last 90 days.
+
     Returns the same schema as predict_regimes() for drop-in compatibility.
     """
-    _empty = pl.DataFrame(schema={
-        "symbol": pl.Utf8, "date": pl.Date,
-        "regime": pl.Int32, "regime_label": pl.Utf8,
-        "prob_bull": pl.Float64, "prob_bear": pl.Float64,
-        "prob_range": pl.Float64, "prob_crash": pl.Float64,
-        "prob_recovery": pl.Float64,
-    })
+    _empty = pl.DataFrame(schema=_REGIME_SCHEMA)
 
-    idx_df = index_df.sort("date").filter(pl.col("close").is_not_null() & pl.col("close").gt(0))
     stk_df = stock_df.sort("date").filter(pl.col("close").is_not_null() & pl.col("close").gt(0))
-    if len(idx_df) < 126 or len(stk_df) == 0:
+    if len(stk_df) == 0:
         return _empty
 
-    idx_close  = idx_df["close"].to_numpy().astype(np.float64)
-    idx_volume = idx_df["volume"].fill_null(0).to_numpy().astype(np.float64)
-    idx_dates  = idx_df["date"].to_list()
-
-    obs, valid = _make_obs(idx_close, idx_volume)
-    obs_clean  = obs[valid]
-    if len(obs_clean) == 0:
+    post = posteriors if posteriors is not None else IndexRegimePosteriors(index_model, index_df)
+    if not post.ok:
         return _empty
 
-    # Pad with zeros if model was trained with extra macro dimensions (fix 8.2)
-    n_model_features = index_model.means_.shape[1]
-    if obs_clean.shape[1] < n_model_features:
-        pad = np.zeros((obs_clean.shape[0], n_model_features - obs_clean.shape[1]))
-        obs_clean = np.column_stack([obs_clean, pad])
-
-    try:
-        state_seq  = index_model.predict(obs_clean)
-        posteriors = index_model.predict_proba(obs_clean)
-    except Exception:
-        return _empty
-
-    state_map = _map_states(index_model)
-
-    # Map index posteriors to date → {sem_state: prob}
-    n_total   = len(idx_close)
-    offset    = n_total - len(obs_clean)
-    date_to_regime: dict = {}
-    date_to_probs: dict  = {}
-
-    for i, raw in enumerate(state_seq):
-        sem = state_map[int(raw)]
-        d   = idx_dates[offset + i]
-        date_to_regime[d] = sem
-        # Accumulate posteriors into semantic slots (BIC may map multiple raws → same sem)
-        probs: dict[int, float] = {s: 0.0 for s in range(5)}
-        for raw_s, sem_s in state_map.items():
-            probs[sem_s] = probs.get(sem_s, 0.0) + float(posteriors[i, raw_s])
-        date_to_probs[d] = probs
-
-    # Build output for stock dates using index regimes
     stk_dates = stk_df["date"].to_list()
-    all_idx_dates_sorted = sorted(date_to_regime.keys())
+    if max_rows is not None and len(stk_dates) > max_rows:
+        stk_dates = stk_dates[-max_rows:]
 
-    def _lookup_regime(d):
-        """Return closest prior index regime date for stock date d."""
-        if d in date_to_regime:
-            return d
-        # Binary search for nearest prior date
-        lo, hi = 0, len(all_idx_dates_sorted) - 1
-        while lo < hi:
-            mid = (lo + hi + 1) // 2
-            if all_idx_dates_sorted[mid] <= d:
-                lo = mid
-            else:
-                hi = mid - 1
-        return all_idx_dates_sorted[lo] if all_idx_dates_sorted[lo] <= d else None
+    # Nearest prior index date for each stock date. searchsorted over the
+    # already-sorted index dates replaces a per-date binary search in Python.
+    pos = np.searchsorted(post.dates, stk_dates, side="right") - 1
+    keep = pos >= 0
+    if not keep.any():
+        return _empty
+    pos = pos[keep]
+    kept_dates = [d for d, k in zip(stk_dates, keep) if k]
 
-    # Beta scaling: adjust bull/crash probabilities by clipping beta effect
-    # High beta (>1) increases effective exposure in bull/crash states
+    # Beta scaling: bull/recovery/bear/crash amplified for high beta, range
+    # suppressed; renormalised so the posterior still sums to 1.
     beta_c = float(np.clip(beta, 0.1, 4.0))
+    weights = np.array([beta_c, beta_c, 1.0 / beta_c, beta_c, beta_c])
 
-    records = []
-    for d in stk_dates:
-        ref_date = _lookup_regime(d)
-        if ref_date is None:
-            continue
-        sem  = date_to_regime[ref_date]
-        prob = date_to_probs[ref_date]
+    scaled = post.probs[pos] * weights
+    totals = scaled.sum(axis=1)
+    totals[totals == 0.0] = 1.0
+    scaled = scaled / totals[:, None]
 
-        # Scale regime probabilities by beta: bull/recovery amplified for high-beta,
-        # bear/crash amplified; range remains unchanged. Re-normalise after.
-        beta_weights = {
-            0: beta_c,       # Bull — high beta amplifies upside regime
-            4: beta_c,       # Recovery
-            1: beta_c,       # Bear — high beta amplifies downside regime
-            3: beta_c,       # Crash
-            2: 1.0 / beta_c, # Range — high beta suppresses range regime
-        }
-        scaled = {s: prob.get(s, 0.0) * beta_weights.get(s, 1.0) for s in range(N_STATES)}
-        total  = sum(scaled.values()) or 1.0
-        scaled = {s: v / total for s, v in scaled.items()}
+    regimes = post.regimes[pos]
 
-        records.append({
-            "symbol":       symbol,
-            "date":         d,
-            "regime":       sem,
-            "regime_label": REGIME_LABELS[sem],
-            "prob_bull":     scaled.get(0),
-            "prob_bear":     scaled.get(1),
-            "prob_range":    scaled.get(2),
-            "prob_crash":    scaled.get(3),
-            "prob_recovery": scaled.get(4),
-        })
-
-    return pl.DataFrame(records, infer_schema_length=len(records)) if records else _empty
+    return pl.DataFrame(
+        {
+            "symbol":        [symbol] * len(kept_dates),
+            "date":          kept_dates,
+            "regime":        regimes.astype(np.int32),
+            "regime_label":  [REGIME_LABELS[int(r)] for r in regimes],
+            "prob_bull":     scaled[:, 0],
+            "prob_bear":     scaled[:, 1],
+            "prob_range":    scaled[:, 2],
+            "prob_crash":    scaled[:, 3],
+            "prob_recovery": scaled[:, 4],
+        },
+        schema=_REGIME_SCHEMA,
+    )
 
 
 def run_regime_detection(

@@ -11,7 +11,8 @@
  * in the Asset Registry, not encoded here.
  */
 
-import type { AssetClassId, FilterValues } from "../assets/types";
+import type { AssetClassId, FilterValues, SoftPreferences } from "../assets/types";
+import type { BindingConstraint, FilterDiagnostic } from "./filter-engine";
 import type { FundHolding } from "../types";
 
 /** One asset, normalized. Produced by a universe provider, consumed by everything downstream. */
@@ -46,6 +47,12 @@ export interface MatchExplanation {
 }
 
 export interface RankedCandidate extends ScreenerCandidate {
+  /**
+   * The active filter this row came closest to failing. Present only for rows in
+   * the returned page — computing it for a whole 1,540-name universe would be
+   * work for rows nobody is looking at.
+   */
+  binding?: BindingConstraint;
   /** 1-based position in the result set. */
   rank: number;
   /** 0-100 composite, from the class's (or template's) RankFactors. */
@@ -65,6 +72,11 @@ export interface ScreenerRequest {
   assetClass: AssetClassId;
   templateId: string | null;
   filters: FilterValues;
+  /**
+   * Metrics the user would *prefer*, without excluding anything that misses.
+   * Folded into the ranking for this run only — see pipeline.ts#withPreferences.
+   */
+  preferences?: SoftPreferences;
   sortKey: string;
   sortDir: "asc" | "desc";
   size: number;
@@ -89,4 +101,10 @@ export interface ScreenerResponse {
   universeReady: number;
   offset: number;
   rows: RankedCandidate[];
+  /**
+   * Present only when the screen matched nothing: which filter is responsible,
+   * and how far it would have to move to admit a name. An empty result is the
+   * one outcome where spending CPU on an explanation is obviously worth it.
+   */
+  diagnostics?: FilterDiagnostic[];
 }

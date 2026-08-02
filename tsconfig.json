@@ -11,6 +11,10 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
+    /* scripts/*.ts are run directly by Node's native type-stripping loader,
+       which (unlike a bundler) requires the real, on-disk ".ts" specifier in
+       relative imports. Safe with noEmit: nothing rewrites these paths. */
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "incremental": true,
     "plugins": [

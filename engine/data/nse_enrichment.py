@@ -28,11 +28,13 @@ import logging
 import math
 import random
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import polars as pl
 import requests
 
 logger = logging.getLogger(__name__)
@@ -492,50 +494,82 @@ def enrich_fundamentals(
         except Exception:
             market_caps = {}
 
-    updated = 0
-    for sym in symbols:
-        # Check 24h disk cache first
+    def _fetch_one(sym: str) -> tuple[str, dict, bool, bool]:
+        """
+        Network half for one symbol. Returns (symbol, enriched, fetch_ok, from_cache).
+        Pure I/O + dict building — no DuckDB access, so it is safe on a thread.
+        """
         cached = _read_cache(sym)
         if cached:
-            enriched = {k: v for k, v in cached.items() if not k.startswith("_")}
-            fetch_ok = True
-        else:
-            enriched = {}
-            fetch_ok = False
+            return sym, {k: v for k, v in cached.items() if not k.startswith("_")}, True, True
 
-            if sym.upper().endswith(".NS") or sym.upper().endswith(".BO"):
-                try:
-                    qr = fetch_quarterly_results(sym)
-                    enriched.update(qr)
-                    mktcap = market_caps.get(sym)
-                    bb = fetch_buyback_yield(sym, mktcap)
-                    enriched.update(bb)
-                    pp = fetch_promoter_pledging(sym)
-                    enriched.update(pp)
-                    yf_cagr = _yf_cagr_fallback(sym)
-                    for k, v in yf_cagr.items():
-                        if k not in enriched:
-                            enriched[k] = v
-                    fetch_ok = bool(enriched)
-                except Exception as e:
-                    logger.warning("[enrich] NSE fetch failed for %s: %s", sym, e)
-                    fetch_ok = False
-            else:
-                try:
-                    enriched = _yf_cagr_fallback(sym)
-                    fetch_ok = bool(enriched)
-                except Exception:
-                    fetch_ok = False
+        enriched: dict = {}
+        fetch_ok = False
 
-            # Institutional ownership — separate yfinance call, not NSE
+        if sym.upper().endswith(".NS") or sym.upper().endswith(".BO"):
             try:
-                inst = _yf_institutional_ownership(sym)
-                enriched.update(inst)
+                qr = fetch_quarterly_results(sym)
+                enriched.update(qr)
+                mktcap = market_caps.get(sym)
+                bb = fetch_buyback_yield(sym, mktcap)
+                enriched.update(bb)
+                pp = fetch_promoter_pledging(sym)
+                enriched.update(pp)
+                yf_cagr = _yf_cagr_fallback(sym)
+                for k, v in yf_cagr.items():
+                    if k not in enriched:
+                        enriched[k] = v
+                fetch_ok = bool(enriched)
+            except Exception as e:
+                logger.warning("[enrich] NSE fetch failed for %s: %s", sym, e)
+                fetch_ok = False
+        else:
+            try:
+                enriched = _yf_cagr_fallback(sym)
+                fetch_ok = bool(enriched)
             except Exception:
-                pass
+                fetch_ok = False
 
-            if fetch_ok:
-                _write_cache(sym, enriched)
+        # Institutional ownership — separate yfinance call, not NSE
+        try:
+            inst = _yf_institutional_ownership(sym)
+            enriched.update(inst)
+        except Exception:
+            pass
+
+        return sym, enriched, fetch_ok, False
+
+    # Two-plus blocking HTTP calls per symbol, previously issued one symbol at a
+    # time: 50s for a 250-name US universe. yfinance/requests release the GIL
+    # while waiting, so the fetch half parallelizes; the DuckDB writes below stay
+    # sequential on the caller's connection, and the status/failure bookkeeping
+    # still runs in the caller's `symbols` order so its results are unchanged.
+    _n_workers = min(12, max(1, len(symbols)))
+    with ThreadPoolExecutor(max_workers=_n_workers) as ex:
+        fetched = list(ex.map(_fetch_one, symbols))
+
+    # Record that these symbols were attempted, whether or not anything came
+    # back. Callers select candidates on "field is still NULL", which is a
+    # condition a symbol with no upstream data can never clear — without an
+    # attempt timestamp those symbols are re-fetched on every run forever.
+    try:
+        conn.register("_enrich_attempted", pl.DataFrame({"symbol": symbols}).to_arrow())
+        conn.execute(
+            "INSERT OR IGNORE INTO fundamentals (symbol) "
+            "SELECT symbol FROM _enrich_attempted"
+        )
+        conn.execute("""
+            UPDATE fundamentals f SET enrichment_attempted_at = now()
+            FROM _enrich_attempted t WHERE f.symbol = t.symbol
+        """)
+        conn.unregister("_enrich_attempted")
+    except Exception as e:
+        logger.warning("[enrich] could not record attempt timestamps: %s", e)
+
+    updated = 0
+    for sym, enriched, fetch_ok, from_cache in fetched:
+        if fetch_ok and not from_cache:
+            _write_cache(sym, enriched)
 
         # Update consecutive failure counter and set status
         is_india = sym.upper().endswith(".NS") or sym.upper().endswith(".BO")

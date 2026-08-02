@@ -87,6 +87,23 @@ export function toCandidate(row: RawQuoteRow, stats: HistoryStats | undefined): 
       distanceFrom52WkHigh: distanceFrom52Wk(row),
       volatility: stats?.volatility ?? null,
       maxDrawdown: stats?.maxDrawdown ?? null,
+
+      /*
+       * Supply overhang: the share of eventual supply *not* yet circulating.
+       *
+       * `mcapToFdv` already says how much of the cap is priced in; this states the
+       * same fact the way it actually bears on a holder — as future dilution
+       * arriving on a vesting schedule. A token with 70% overhang has to absorb
+       * more than three times its float in new supply, and no amount of protocol
+       * revenue changes that arithmetic. Derived from the supply fields
+       * computeFdv already reads, so it costs nothing.
+       */
+      supplyOverhang:
+        marketCap != null && fdv != null && fdv > 0
+          ? Math.max(0, (1 - Math.min(marketCap / fdv, 1)) * 100)
+          : null,
+      /** 24h dollar turnover — the practical exit-liquidity number, not a ratio. */
+      dollarVolume24h: volume24h,
     },
     attributes: {
       sector: cryptoSector(symbol),

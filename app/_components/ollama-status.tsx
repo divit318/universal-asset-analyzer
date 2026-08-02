@@ -1,24 +1,42 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AI_RECOVERY_HINT } from "@/lib/ai/availability";
 
+interface ActiveModel {
+  id: string;
+  label: string;
+  provider: string;
+}
+
+/**
+ * Header badge for AI readiness.
+ *
+ * Named for Ollama because that was the only backend when it was written; it
+ * now reports whichever provider the Router would actually use, and says which
+ * one, because "AI offline" meant two very different fixes depending on
+ * whether the user is on the hosted or the local path.
+ */
 export function OllamaStatusBadge() {
   const [status, setStatus] = useState<"checking" | "live" | "offline">("checking");
   const [model, setModel] = useState<string>("");
+  const [hosted, setHosted] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     fetch("/api/screener/nl")
       .then((r) => r.json())
-      .then((d: { models?: string[] }) => {
+      .then((d: { active?: ActiveModel | null }) => {
         if (cancelled) return;
-        const models = d.models ?? [];
-        if (models.length > 0) {
-          setStatus("live");
-          setModel(models[0].split(":")[0]); // e.g. "mistral" from "mistral:latest"
-        } else {
+        if (!d.active) {
           setStatus("offline");
+          return;
         }
+        setStatus("live");
+        setHosted(d.active.provider === "devin");
+        // "mistral" from "mistral:latest"; the registry label for hosted ids,
+        // which are not colon-tagged and read badly when truncated.
+        setModel(d.active.provider === "devin" ? d.active.label : d.active.id.split(":")[0]);
       })
       .catch(() => { if (!cancelled) setStatus("offline"); });
     return () => { cancelled = true; };
@@ -29,7 +47,7 @@ export function OllamaStatusBadge() {
   return status === "live" ? (
     <span
       className="flex items-center gap-1.5 rounded-full border border-positive/30 bg-positive/10 px-2.5 py-0.5 text-xs font-medium text-positive"
-      title={`Ollama running · model: ${model}`}
+      title={`AI ready via ${hosted ? "Devin (hosted)" : "Ollama (local)"} · model: ${model}`}
     >
       <span className="h-1.5 w-1.5 rounded-full bg-positive" />
       AI · {model}
@@ -37,7 +55,7 @@ export function OllamaStatusBadge() {
   ) : (
     <span
       className="flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-xs font-medium text-muted"
-      title="Ollama is offline — AI features unavailable. Run `ollama serve` to start it."
+      title={`No AI provider available. ${AI_RECOVERY_HINT}`}
     >
       <span className="h-1.5 w-1.5 rounded-full bg-muted" />
       AI offline

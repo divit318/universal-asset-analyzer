@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import type { AppAssistantAction, AppAssistantPageContext, AppAssistantTurn } from "@/lib/ai-app-assistant";
 import type { ProactiveInsight } from "@/lib/ai-proactive-insights";
+import { BrandMark } from "./brand";
 import { LoadingMark } from "./loading-mark";
 import { PENDING_SCREEN_KEY } from "./screener-handoff";
 
@@ -258,6 +259,9 @@ export function AppAssistant() {
         <div ref={scrollRef} className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-4">
           {turns.length === 0 ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
+              {/* The assistant answers questions *about UAA*, so its resting
+                  state is the one place in the panel that should say so. */}
+              <BrandMark size="xl" className="text-muted" />
               <p className="max-w-xs text-xs text-muted">
                 Ask how to use UAA or where to find something. For research on a specific stock, use the Research Copilot instead — I don&apos;t have live market data.
               </p>

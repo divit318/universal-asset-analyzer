@@ -6,7 +6,7 @@ This file provides comprehensive guidance to Claude Code when working with the U
 
 **UAA is an institutional-grade equity research platform** that runs entirely locally, powered by:
 - **Live market data** (Yahoo Finance for US equities, screener.in for Indian markets)
-- **Offline AI** (Ollama for local inference — no external LLM APIs). Feature code names a *task*, never a model; the AI Platform (`lib/ai/`) routes it to the best local model that fits in memory. See `lib/ai/ARCHITECTURE.md`.
+- **Hosted-first AI with a local fallback**. Feature code names a *task*, never a model or a provider; the AI Platform (`lib/ai/`) routes it down a provider chain — Devin CLI (hosted frontier models) first, Ollama (local) second. Reorder with `AI_PROVIDER_ORDER`. Offline operation still works, on the local models. See `lib/ai/ARCHITECTURE.md`.
 - **Quant scoring** (Python DuckDB engine for systematic signal generation)
 - **User-owned state** (SQLite database, no cloud sync, no subscriptions)
 
@@ -56,7 +56,7 @@ The design philosophy is **transparency over convenience**: users see the resear
 | **Styling** | Tailwind CSS v4 | Utility classes only; no component library |
 | **Data** | SQLite (node:sqlite) + DuckDB | Single app database at `data/app.db`; quant engine uses separate `data/engine.duckdb` |
 | **Market data** | yahoo-finance2 (US), screener.in API (India) | Live quotes, fundamentals, history, filings |
-| **AI/Inference** | Ollama (local), via `lib/ai/` orchestration layer | Task-routed to the best local model per task; see `lib/ai/ARCHITECTURE.md` |
+| **AI/Inference** | Devin CLI (hosted) → Ollama (local), via `lib/ai/` orchestration layer | Task-routed per task down a provider chain; see `lib/ai/ARCHITECTURE.md` |
 | **Exports** | ExcelJS (server-side) + PDFKit | Never import in client components |
 | **Charting** | Recharts | Real-time interactive charts with multi-line, candlestick, heatmap patterns |
 
@@ -152,7 +152,7 @@ The design philosophy is **transparency over convenience**: users see the resear
 - `lib/thematic-engine.ts` — 10-stage thematic analysis framework
 
 **AI/Inference**
-- `lib/ai/` — the orchestration layer: task registry, model registry, router (auto-selects + falls back per task), provider interface, response normalizer. See `lib/ai/ARCHITECTURE.md`. Every AI call goes through `runPrompt(taskType, prompt, opts)` in `lib/ai.ts` — never call Ollama directly.
+- `lib/ai/` — the orchestration layer: task registry, model registry, router (auto-selects + falls back per task), provider interface, response normalizer. See `lib/ai/ARCHITECTURE.md`. Every AI call goes through `runPrompt(taskType, prompt, opts)` in `lib/ai.ts` — never call a provider (Ollama or the Devin CLI) directly.
 - `lib/ai-research.ts`, `lib/ai-compare.ts`, `lib/ai-watchlist.ts` — feature-specific prompt builders, all calling `runPrompt()` with the task type that matches what they do
 - `lib/ic-agents.ts` — 9 agent domains (business, industry, competition, management, capitalAllocation, accounting, valuation, governance, risk) run in parallel, each routed to its own task (accounting/valuation/risk get the reasoning-heavy route). Results streamed via `ReadableStream`.
 
@@ -418,7 +418,7 @@ npx vitest run tests/composite.test.ts  # single file
 | **Direct DB calls** | Page imports DatabaseSync | Use `lib/db.ts` CRUD functions | Single schema source of truth |
 | **Server-only imports in client** | Client imports ExcelJS/PDFKit | Use `app/api/` routes only | Listed in `next.config.ts` as serverExternalPackages |
 | **Hardcoded endpoints** | `fetch("http://localhost:11434/...")` | Use `process.env.OLLAMA_HOST` | Enables configuration via env vars |
-| **Direct Ollama calls** | Feature imports `lib/ai/ollama.ts` and calls `generate()`/`streamChat()` itself | `runPrompt(taskType, prompt, opts)` from `lib/ai.ts`; `runTaskChat()` for multi-turn/streaming | Task routing, retry/fallback, memory-feasibility, and thinking control all live in the Router — see `lib/ai/ARCHITECTURE.md` |
+| **Direct provider calls** | Feature imports `lib/ai/ollama.ts` or `lib/ai/devin-cli.ts` and calls it itself | `runPrompt(taskType, prompt, opts)` from `lib/ai.ts`; `runTaskChat()` for multi-turn/streaming | Task routing, retry/fallback, memory-feasibility, and thinking control all live in the Router — see `lib/ai/ARCHITECTURE.md` |
 | **Naming a model in feature code** | `preferredModels: ["qwen3"]`, `model: "mistral"` | Declare what the task *needs* in `lib/ai/task-registry.ts`; pin in `lib/ai/config.ts` if you must override | The registry drifted to preferring models that weren't installed precisely because policy was duplicated per task |
 | **Missing data handling** | `quote.peRatio / quote.roe` without null check | `if (x == null) return 0` before division | Financial data is frequently incomplete |
 | **Mixing logic & UI** | Page component contains scoring logic | Move to `lib/`, expose via `app/api/` | Decouples testing, reuse, server/client |

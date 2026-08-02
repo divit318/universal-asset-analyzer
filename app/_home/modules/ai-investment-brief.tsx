@@ -56,7 +56,7 @@ export function AiInvestmentBriefModule({
       defaultCollapsed={defaultCollapsed}
       minHeight={200}
       onRefresh={refreshBrief}
-      emptyMessage="The long-form note needs a running local model. Start Ollama and refresh."
+      emptyMessage="The long-form note needs a reachable AI provider. Connect one and refresh."
     >
       {(note) => (
         <div className="flex flex-col gap-5">

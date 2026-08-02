@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BrandMark } from "@/app/_components/brand";
 import { Badge } from "@/app/_components/ui";
 import { APP_ENTRY, type LandingSection } from "../../landing-config";
 
@@ -26,7 +27,14 @@ export function Hero({ section }: { section: LandingSection }) {
       <div className="mx-auto flex w-full max-w-5xl flex-col items-center gap-8 px-6 pb-20 pt-20 text-center sm:pt-28">
         {/* On-load staged entrance — pure CSS (works without JS), one-shot, and
             neutralized under prefers-reduced-motion by globals.css. */}
+        {/* The mark, alone and large — the marketing site's one place to simply
+            show the logo. Not a lockup: the header 20px above already carries
+            the wordmark, and the <h1> is the message. */}
         <div className="animate-fade-rise" style={{ animationDuration: "500ms" }}>
+          <BrandMark size="hero" className="text-foreground" label="Universal Asset Analyzer" />
+        </div>
+
+        <div className="animate-fade-rise" style={{ animationDuration: "500ms", animationDelay: "60ms" }}>
           <Badge variant="brand">Runs 100% on your computer</Badge>
         </div>
 

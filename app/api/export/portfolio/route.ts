@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import PDFDocument from "pdfkit";
+import { drawBrandMark } from "@/lib/brand/pdf";
 import { listPortfolio } from "@/lib/db";
 import { getQuotes } from "@/lib/yahoo";
 import type { PortfolioPosition, Quote } from "@/lib/types";
@@ -195,11 +196,14 @@ async function buildPdf(positions: EnrichedPosition[], totalCost: number, totalV
     const dateStr = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 
     // ── Cover header ──
+    // The mark sits on the dark banner, so it needs the light-ink scheme; the
+    // title indents past it rather than the logo floating in the margin.
     doc.rect(0, 0, doc.page.width, 90).fill("#0f172a");
+    drawBrandMark(doc, { x: L, y: 26, size: 38, scheme: "dark" });
     doc.fill("#ffffff").font("Helvetica-Bold").fontSize(20)
-      .text("Portfolio Report", L, 24, { width: W });
+      .text("Portfolio Report", L + 52, 24, { width: W - 52 });
     doc.fill("#94a3b8").font("Helvetica").fontSize(10)
-      .text(`Universal Asset Analyzer  ·  Generated ${dateStr}`, L, 50, { width: W });
+      .text(`Universal Asset Analyzer  ·  Generated ${dateStr}`, L + 52, 50, { width: W - 52 });
     doc.y = 110;
 
     // ── Summary cards ──

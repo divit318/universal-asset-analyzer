@@ -23,10 +23,15 @@ import { getAssetClass, getMetric, isAssetClassId, listAssetClasses } from "@/li
 import type { AssetClassId } from "@/lib/assets/types";
 import { PENDING_SCREEN_KEY, type PendingScreenHandoff } from "@/app/_components/screener-handoff";
 import type { RankedCandidate, ScreenerResponse, UniverseStatus } from "@/lib/screener/types";
+import type { FilterDiagnostic } from "@/lib/screener/filter-engine";
+import type { MetricDistribution } from "@/lib/screener/universe-stats";
 import type { SavedScreen } from "@/lib/db";
 import { FilterPanel } from "./_components/filter-panel";
 import { ResultsTable, type ResultsEmptyState } from "./_components/results-table";
 import { SavedScreens } from "./_components/saved-screens";
+import { WhyEmpty } from "./_components/why-empty";
+import { FilterChips } from "./_components/filter-chips";
+import { ScreenDiff } from "./_components/screen-diff";
 import {
   countActive,
   draftFromTemplate,
@@ -132,10 +137,36 @@ export default function ScreenerPage() {
     draft: emptyDraft(),
     templateId: null,
   });
+  /**
+   * Soft preferences: metric → weight. Deliberately separate from `draft` because
+   * they are not filters — they never remove a row, so they don't belong to the
+   * applied/unapplied filter bookkeeping and they take effect on the next run
+   * like a sort does.
+   */
+  const [preferences, setPreferences] = useState<Record<string, number>>({});
   const [sortKey, setSortKey] = useState("rankScore");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const [rows, setRows] = useState<RankedCandidate[] | null>(null);
+  /** Present only when a screen matched nothing — see the Nothing-matched panel. */
+  const [diagnostics, setDiagnostics] = useState<FilterDiagnostic[] | null>(null);
+  /**
+   * Per-metric universe distributions, for the histograms under each filter.
+   * Fetched once per asset class rather than per screen: they describe the
+   * universe, which changes every twelve hours, not the query.
+   */
+  const [distributions, setDistributions] = useState<Record<string, MetricDistribution> | null>(null);
+  /**
+   * Entries/exits for the saved screen just loaded, against the snapshot from its
+   * previous run. Set once, when a screen is opened — a standing definition
+   * reports what changed, and that question only has an answer at load time.
+   */
+  const [screenDiff, setScreenDiff] = useState<{
+    name: string;
+    since: string | null;
+    entered: string[];
+    exited: string[];
+  } | null>(null);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [status, setStatus] = useState<UniverseStatus | null>(null);
@@ -147,6 +178,14 @@ export default function ScreenerPage() {
   const [saved, setSaved] = useState<SavedScreen[]>([]);
   const [saving, setSaving] = useState(false);
   const [watchlisted, setWatchlisted] = useState<Set<string>>(new Set());
+  /** Symbols already held, so the screen can mark what you own. */
+  const [owned, setOwned] = useState<Set<string>>(new Set());
+  /**
+   * Symbols staged for a batch action. Deliberately not persisted: a staging set
+   * is a scratchpad for the next thirty seconds of work, and a stale one silently
+   * carried across sessions would be worse than none.
+   */
+  const [staged, setStaged] = useState<Set<string>>(new Set());
 
   const [summary, setSummary] = useState<{ text: string; model: string } | null>(null);
   const [summarizing, setSummarizing] = useState(false);
@@ -162,6 +201,7 @@ export default function ScreenerPage() {
     assetClass: AssetClassId;
     templateId: string | null;
     draft: Draft;
+    preferences: Record<string, number>;
     sortKey: string;
     sortDir: "asc" | "desc";
     offset: number;
@@ -201,6 +241,7 @@ export default function ScreenerPage() {
           assetClass: opts.assetClass,
           templateId: opts.templateId,
           filters: toFilterValues(opts.assetClass, opts.draft),
+          preferences: opts.preferences,
           sortKey: opts.sortKey,
           sortDir: opts.sortDir,
           size: PAGE_SIZE,
@@ -216,6 +257,7 @@ export default function ScreenerPage() {
       if (json.assetClass !== opts.assetClass) return;
 
       setRows(json.rows);
+      setDiagnostics(json.diagnostics ?? null);
       setTotal(json.total);
       setOffset(json.offset);
       setStatus(json.status);
@@ -258,6 +300,16 @@ export default function ScreenerPage() {
     };
   }, [status, run]);
 
+  const loadDistributions = useCallback(async (forClass: AssetClassId) => {
+    try {
+      const res = await fetch(`/api/screener?class=${forClass}&stats=1`);
+      const json = (await res.json()) as { distributions?: Record<string, MetricDistribution> };
+      setDistributions(json.distributions ?? null);
+    } catch {
+      // Histograms are an aid, not a dependency — the filters work without them.
+    }
+  }, []);
+
   const loadSaved = useCallback(async (forClass: AssetClassId) => {
     try {
       const res = await fetch(`/api/screener/saved?class=${forClass}`);
@@ -289,6 +341,8 @@ export default function ScreenerPage() {
     // Cleared alongside the draft so the results header never describes the
     // previous class's filters while the new class's screen is in flight.
     setApplied({ draft: fresh, templateId: null });
+    // Preferences name metrics, and metric keys are class-specific.
+    setPreferences({});
     setSortKey(next.defaultSort.key);
     setSortDir(next.defaultSort.dir);
     setSummary(null);
@@ -305,11 +359,13 @@ export default function ScreenerPage() {
       assetClass: id,
       templateId: null,
       draft: fresh,
+      preferences: {},
       sortKey: next.defaultSort.key,
       sortDir: next.defaultSort.dir,
       offset: 0,
     });
     void loadSaved(id);
+    void loadDistributions(id);
   };
 
   /**
@@ -331,6 +387,7 @@ export default function ScreenerPage() {
       assetClass: "equity",
       templateId: null,
       draft: emptyDraft(),
+      preferences: {},
       sortKey: getAssetClass("equity").defaultSort.key,
       sortDir: getAssetClass("equity").defaultSort.dir,
       offset: 0,
@@ -346,6 +403,7 @@ export default function ScreenerPage() {
             assetClass: handoff.assetClass,
             templateId: handoff.templateId,
             draft: fromFilterValues(handoff.assetClass, handoff.filters),
+            preferences: {},
             sortKey: handoffClass.defaultSort.key,
             sortDir: handoffClass.defaultSort.dir,
             offset: 0,
@@ -364,6 +422,7 @@ export default function ScreenerPage() {
 
     void run(initial);
     void loadSaved(initial.assetClass);
+    void loadDistributions(initial.assetClass);
 
     void (async () => {
       try {
@@ -375,21 +434,32 @@ export default function ScreenerPage() {
       }
     })();
 
+    void (async () => {
+      try {
+        const res = await fetch("/api/portfolio");
+        const json = (await res.json()) as { holdings?: { symbol: string }[] };
+        setOwned(new Set((json.holdings ?? []).map((h) => h.symbol)));
+      } catch {
+        // Non-fatal — "held" badges are an aid, not a dependency.
+      }
+    })();
+
     return () => {
       if (pollRef.current) clearTimeout(pollRef.current);
     };
-  }, [run, loadSaved]);
+  }, [run, loadSaved, loadDistributions]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* ---------------------------------------------------------------------- */
   /* Handlers                                                                */
   /* ---------------------------------------------------------------------- */
 
-  const rerun = (next: Partial<{ templateId: string | null; draft: Draft; sortKey: string; sortDir: "asc" | "desc"; offset: number }>) => {
+  const rerun = (next: Partial<{ templateId: string | null; draft: Draft; preferences: Record<string, number>; sortKey: string; sortDir: "asc" | "desc"; offset: number }>) => {
     const merged = {
       assetClass,
       templateId: next.templateId !== undefined ? next.templateId : templateId,
       draft: next.draft ?? draft,
+      preferences: next.preferences ?? preferences,
       sortKey: next.sortKey ?? sortKey,
       sortDir: next.sortDir ?? sortDir,
       offset: next.offset ?? 0,
@@ -431,6 +501,21 @@ export default function ScreenerPage() {
    * clicking a cheapness column is asking for. Registry-driven, so it's right
    * for every metric on every class without a per-column list.
    */
+  /**
+   * Preferences are weighted 2 when on: enough to visibly tilt a ranking whose
+   * default factors carry weights of 1-3, without swamping the class's own model.
+   * A single toggle rather than a weight slider — the value is in expressing
+   * "care about this at all", and a slider invites fiddling with a number nobody
+   * can calibrate by eye.
+   */
+  const togglePreference = (key: string) => {
+    const next = { ...preferences };
+    if (next[key]) delete next[key];
+    else next[key] = 2;
+    setPreferences(next);
+    rerun({ preferences: next });
+  };
+
   const toggleSort = (key: string) => {
     const preferred: "asc" | "desc" = getMetric(assetClass, key)?.better === "lower" ? "asc" : "desc";
     const dir: "asc" | "desc" =
@@ -440,9 +525,49 @@ export default function ScreenerPage() {
     rerun({ sortKey: key, sortDir: dir });
   };
 
+  /**
+   * Apply a relaxation the solver suggested. Converts back out of the metric's
+   * storage units into the draft's display units (AUM and market cap are entered
+   * in billions), so the number that lands in the input is the number the user
+   * would have typed.
+   */
+  const relaxFilter = (key: string, bound: "min" | "max", value: number) => {
+    const metric = getMetric(assetClass, key);
+    const existing = draft[key];
+    const current = existing?.kind === "range" ? existing : { kind: "range" as const, min: "", max: "" };
+    const framed = (current.frame ?? "absolute") !== "absolute";
+    const scale = framed ? 1 : (metric?.scale ?? 1);
+    // Round outward so the suggestion can't fail on a floating-point hair.
+    const shown = value / scale;
+    const rounded = bound === "min" ? Math.floor(shown * 100) / 100 : Math.ceil(shown * 100) / 100;
+
+    const next: Draft = {
+      ...draft,
+      [key]: { ...current, kind: "range", [bound]: String(rounded) } as DraftValue,
+    };
+    setDraft(next);
+    rerun({ draft: next });
+  };
+
+  /** Drop one filter from the applied screen and re-run immediately. */
+  const removeFilter = (key: string) => {
+    const next = { ...draft };
+    delete next[key];
+    setDraft(next);
+    rerun({ draft: next });
+  };
+
+  const removePreference = (key: string) => {
+    const next = { ...preferences };
+    delete next[key];
+    setPreferences(next);
+    rerun({ preferences: next });
+  };
+
   const clearAll = () => {
     setTemplateId(null);
     setDraft(emptyDraft());
+    setPreferences({});
     setSummary(null);
     // Picking a template can change the sort, so clearing one has to put the
     // sort back too — otherwise "Clear all" left the table ordered by a
@@ -452,6 +577,7 @@ export default function ScreenerPage() {
     rerun({
       templateId: null,
       draft: emptyDraft(),
+      preferences: {},
       sortKey: def.defaultSort.key,
       sortDir: def.defaultSort.dir,
     });
@@ -467,6 +593,7 @@ export default function ScreenerPage() {
       });
     } finally {
       rerun({});
+      void loadDistributions(assetClass);
     }
   };
 
@@ -491,7 +618,7 @@ export default function ScreenerPage() {
     }
   };
 
-  const loadScreen = (screen: SavedScreen) => {
+  const loadScreen = async (screen: SavedScreen) => {
     // A saved screen's filters were validated against the registry when saved,
     // and are re-validated by the API on the next run — so a filter whose metric
     // has since lost its data provider simply disappears rather than breaking.
@@ -501,12 +628,61 @@ export default function ScreenerPage() {
     setSortKey(screen.sortKey);
     setSortDir(screen.sortDir);
     setSummary(null);
+    setScreenDiff(null);
     rerun({
       templateId: screen.templateId,
       draft: nextDraft,
       sortKey: screen.sortKey,
       sortDir: screen.sortDir,
     });
+
+    /*
+     * The diff is computed against the *whole* match set, not the visible page,
+     * because "entered the screen" is a property of the definition rather than of
+     * page one. That's one extra request, on an explicit user action, and it never
+     * touches the filtering path.
+     */
+    try {
+      const res = await fetch("/api/screener", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          assetClass,
+          templateId: screen.templateId,
+          filters: toFilterValues(assetClass, nextDraft),
+          sortKey: screen.sortKey,
+          sortDir: screen.sortDir,
+          size: 200,
+          offset: 0,
+        }),
+      });
+      const json = (await res.json()) as ScreenerResponse & { error?: string };
+      if (!res.ok || json.error) return;
+      const now = json.rows.map((r) => r.symbol);
+
+      const previous = new Set(screen.lastSymbols);
+      // No baseline yet means this is the first run, not "everything is new" —
+      // showing 200 entries on a screen's first open would be noise.
+      if (previous.size > 0) {
+        const current = new Set(now);
+        setScreenDiff({
+          name: screen.name,
+          since: screen.lastRunAt,
+          entered: now.filter((sym) => !previous.has(sym)).slice(0, 24),
+          exited: screen.lastSymbols.filter((sym) => !current.has(sym)).slice(0, 24),
+        });
+      }
+
+      // Re-baseline, so the next open diffs against this run.
+      await fetch(`/api/screener/saved?id=${encodeURIComponent(screen.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbols: now }),
+      });
+      await loadSaved(assetClass);
+    } catch {
+      // A failed diff must never stop the screen itself from loading.
+    }
   };
 
   const removeScreen = async (id: string) => {
@@ -536,6 +712,43 @@ export default function ScreenerPage() {
         return next;
       });
     }
+  };
+
+  const toggleStaged = (symbol: string) => {
+    setStaged((prev) => {
+      const next = new Set(prev);
+      if (next.has(symbol)) next.delete(symbol);
+      else next.add(symbol);
+      return next;
+    });
+  };
+
+  /**
+   * Batch hand-off into the rest of the platform. The screener's job ends at a
+   * decision to spend attention, so the useful verbs are the ones that move a set
+   * of names *out* of here: into a comparison, onto the watchlist, or into the
+   * research queue.
+   */
+  const compareStaged = () => {
+    const symbols = [...staged];
+    if (symbols.length < 2) return;
+    window.location.href = `/compare?symbols=${encodeURIComponent(symbols.join(","))}`;
+  };
+
+  const watchStaged = async () => {
+    const rowsBySymbol = new Map((rows ?? []).map((r) => [r.symbol, r]));
+    const targets = [...staged].filter((sym) => !watchlisted.has(sym));
+    setWatchlisted((prev) => new Set([...prev, ...targets]));
+    await Promise.all(
+      targets.map((sym) =>
+        fetch("/api/watchlist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ symbol: sym, name: rowsBySymbol.get(sym)?.name ?? sym }),
+        }).catch(() => null),
+      ),
+    );
+    setStaged(new Set());
   };
 
   const exportXlsx = async () => {
@@ -601,7 +814,11 @@ export default function ScreenerPage() {
         ? { kind: "building", ready: status.ready, total: status.total }
         : appliedCount === 0
           ? { kind: "not-run" }
-          : { kind: "no-matches", activeFilterCount: appliedCount };
+          : diagnostics && diagnostics.length > 0
+            ? // The WhyEmpty panel above is naming the binding filter and offering
+              // the threshold that fixes it; the table stays quiet.
+              { kind: "diagnosed" }
+            : { kind: "no-matches", activeFilterCount: appliedCount };
 
   /*
    * Revealed at section granularity — the four blocks a user actually perceives
@@ -679,7 +896,7 @@ export default function ScreenerPage() {
         </div>
       </Reveal>
 
-      <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
+      <div className="grid gap-6 lg:grid-cols-[350px_1fr]">
         {/* 3. Filters — entirely registry-driven. */}
         <Reveal index={2} as="aside" className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
@@ -695,7 +912,14 @@ export default function ScreenerPage() {
             </p>
           ) : null}
 
-          <FilterPanel assetClass={assetClass} draft={draft} onChange={changeFilter} />
+          <FilterPanel
+            assetClass={assetClass}
+            draft={draft}
+            onChange={changeFilter}
+            preferences={preferences}
+            onTogglePreference={togglePreference}
+            distributions={distributions}
+          />
 
           <SavedScreens
             screens={saved}
@@ -766,6 +990,69 @@ export default function ScreenerPage() {
             </Card>
           ) : null}
 
+          {screenDiff ? (
+            <ScreenDiff
+              screenName={screenDiff.name}
+              since={screenDiff.since}
+              entered={screenDiff.entered}
+              exited={screenDiff.exited}
+              onDismiss={() => setScreenDiff(null)}
+            />
+          ) : null}
+
+          {staged.size > 0 ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-brand/30 bg-brand/5 px-3 py-2">
+              <span className="text-xs font-medium">
+                {staged.size} staged
+              </span>
+              <button
+                type="button"
+                onClick={compareStaged}
+                disabled={staged.size < 2}
+                title={staged.size < 2 ? "Stage at least two to compare" : "Compare the staged assets"}
+                className="rounded-md border border-border bg-surface px-2 py-1 text-xs transition-colors hover:border-brand hover:text-brand disabled:opacity-40"
+              >
+                Compare
+              </button>
+              <button
+                type="button"
+                onClick={() => void watchStaged()}
+                className="rounded-md border border-border bg-surface px-2 py-1 text-xs transition-colors hover:border-brand hover:text-brand"
+              >
+                Add to watchlist
+              </button>
+              <button
+                type="button"
+                onClick={() => setStaged(new Set())}
+                className="ml-auto text-xs text-muted underline underline-offset-2 hover:text-fg"
+              >
+                Clear
+              </button>
+              <span className="w-full text-[10px] text-muted/70">
+                Keyboard: <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>space</kbd> stage ·{" "}
+                <kbd>x</kbd> expand · <kbd>w</kbd> watch · <kbd>enter</kbd> research
+              </span>
+            </div>
+          ) : null}
+
+          {/* The applied screen, in one readable line. */}
+          <FilterChips
+            assetClass={assetClass}
+            filters={toFilterValues(assetClass, applied.draft)}
+            preferences={preferences}
+            onRemoveFilter={removeFilter}
+            onRemovePreference={removePreference}
+          />
+
+          {rows != null && rows.length === 0 && diagnostics && diagnostics.length > 0 ? (
+            <WhyEmpty
+              diagnostics={diagnostics}
+              metricFor={(key) => getMetric(assetClass, key)}
+              onRelax={relaxFilter}
+              onClearAll={clearAll}
+            />
+          ) : null}
+
           {rows == null ? (
             <Card className="p-12 text-center text-sm text-muted">Loading {def.noun}…</Card>
           ) : (
@@ -778,6 +1065,9 @@ export default function ScreenerPage() {
                 onSort={toggleSort}
                 watchlisted={watchlisted}
                 onWatch={watch}
+                owned={owned}
+                staged={staged}
+                onToggleStaged={toggleStaged}
                 emptyState={emptyState}
               />
 

@@ -1,7 +1,9 @@
 import { isValidSymbol } from "@/lib/market";
 import { detectAssetClass } from "@/lib/asset-class";
 import { buildCompanyContext } from "@/lib/ai/context";
-import { ModelMissingError, OllamaUnavailableError, checkHealth } from "@/lib/ai/ollama";
+import { ModelMissingError, OllamaUnavailableError } from "@/lib/ai/ollama";
+import { DevinUnavailableError } from "@/lib/ai/devin-cli";
+import { checkPlatformHealth, unavailableMessage } from "@/lib/ai/platform-health";
 import { specForInstalled } from "@/lib/ai/models";
 import { pickModel } from "@/lib/ai/router";
 import { runTaskChat } from "@/lib/ai/orchestrator";
@@ -405,10 +407,10 @@ export async function POST(request: Request) {
   }
 
   // Resolve a model up-front so we can fail with a clean status before streaming.
-  const { reachable, models } = await checkHealth();
+  const { reachable, models } = await checkPlatformHealth();
   if (!reachable) {
     return Response.json(
-      { error: new OllamaUnavailableError().message, code: "ollama_unavailable" },
+      { error: unavailableMessage("the research copilot"), code: "ai_unavailable" },
       { status: 503 },
     );
   }
@@ -417,7 +419,7 @@ export async function POST(request: Request) {
   const model = pinnedModel ?? (await pickModel("company-research"));
   if (!model) {
     return Response.json(
-      { error: "No Ollama models are installed. Run `ollama pull qwen3` (or mistral).", code: "model_missing" },
+      { error: unavailableMessage("the research copilot"), code: "model_missing" },
       { status: 503 },
     );
   }
@@ -541,8 +543,8 @@ export async function POST(request: Request) {
           // Client navigated away / cancelled — just close.
         } else {
           const code =
-            err instanceof OllamaUnavailableError
-              ? "ollama_unavailable"
+            err instanceof OllamaUnavailableError || err instanceof DevinUnavailableError
+              ? "ai_unavailable"
               : err instanceof ModelMissingError
                 ? "model_missing"
                 : "internal";

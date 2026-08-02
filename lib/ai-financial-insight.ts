@@ -14,6 +14,7 @@ import { runAnalysis } from "./ai/analysis";
 import { TextAnalysisSchema, TextWireSchema, TEXT_SCHEMA_VERSION } from "./ai/schemas/text";
 import { getScannerCache, putScannerCache } from "./db";
 import type { FinancialStatements, FundamentalsSnapshot, ScoreResult } from "./types";
+import { aiUnavailableMessage } from "./ai/availability";
 
 export interface FinancialInsightInput {
   symbol: string;
@@ -109,7 +110,7 @@ export async function generateFinancialInsight(input: FinancialInsightInput): Pr
     model = result.meta.model ?? result.provider;
     insight = result.data.text;
   } catch {
-    insight = "AI insight unavailable. Run `ollama serve` and pull a model.";
+    insight = aiUnavailableMessage("financial insights");
   }
 
   const result: FinancialInsightResult = { insight, model };

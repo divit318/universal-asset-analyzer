@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { ChatMessage } from "@/lib/ai/types";
+import { BrandMark } from "@/app/_components/brand";
 import { GroundingBadge } from "@/app/_components/grounding-badge";
 import { LoadingLine } from "@/app/_components/loading-panel";
 import { Markdown } from "./markdown";
@@ -26,7 +27,8 @@ export function Message({ message, streaming, symbol }: { message: ChatMessage; 
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2 text-xs text-muted">
-        <span className="text-accent">◆</span>
+        {/* The agent's byline signs with the real mark, not a Unicode `◆`. */}
+        <BrandMark size="xs" />
         <span className="font-medium">Research Copilot</span>
       </div>
 

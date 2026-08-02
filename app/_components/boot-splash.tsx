@@ -138,7 +138,17 @@ function SplashMark({
       aria-live="polite"
       aria-busy={phase !== "exiting"}
     >
-      <LoadingMark state={phase === "loading" ? "loading" : "done"} size={96} label="Loading Universal Asset Analyzer" />
+      {/* Mark and wordmark are one unit (`.boot-lockup`, tight gap) so the
+          status line below reads as a caption to the logo rather than a third
+          equally-spaced element. The splash used to show the animating mark and
+          a rotating status line and never once name the product — the app's
+          single most branded moment was anonymous. */}
+      <div className="boot-lockup">
+        <LoadingMark state={phase === "loading" ? "loading" : "done"} size={96} label="Loading Universal Asset Analyzer" />
+        <p className="boot-wordmark">
+          asset<span>/</span>analyzer
+        </p>
+      </div>
       <div className="boot-message-line">
         <span key={message} className="boot-message-text">{message}</span>
       </div>

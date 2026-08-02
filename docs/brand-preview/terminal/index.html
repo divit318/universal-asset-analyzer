@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>UAA — Product Redesign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   UAA redesign. Rules, not boxes. Type, not chrome.
+   One accent (amber) and it always means "a decision is open."
+   Green/red belong to the market. Nothing else is colored.
+   ============================================================ */
+:root{
+  --bg:#101113; --bg2:#16171a;
+  --ink:#e9ebee; --mut:#9aa1ab; --dim:#5e646d;
+  --rule:#2b2e34; --rule2:#3c4048;
+  --up:#4bd587; --dn:#f0716b; --att:#e2a336;
+  --sans:"Geist",system-ui,sans-serif;
+  --mono:"Geist Mono",ui-monospace,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13.5px;line-height:1.55;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;border-radius:0}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.up{color:var(--up)}.dn{color:var(--dn)}.att{color:var(--att)}
+.sc{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:500}
+
+/* ---------- command line + function row ---------- */
+.cmd{display:flex;align-items:center;gap:0;border-bottom:1px solid var(--rule2);background:var(--bg);position:sticky;top:0;z-index:50}
+.cmd .brand{font-family:var(--mono);font-weight:600;font-size:12px;padding:10px 18px;border-right:1px solid var(--rule);color:var(--ink)}
+.cmd .line{flex:1;font-family:var(--mono);font-size:12px;color:var(--dim);padding:10px 18px}
+.cmd .line b{color:var(--ink);font-weight:500}
+.cmd .line .cur{display:inline-block;width:7px;height:13px;background:var(--mut);vertical-align:-2px;margin-left:2px;animation:blink 1.1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.cmd .stat{font-family:var(--mono);font-size:10.5px;color:var(--dim);padding:10px 18px;border-left:1px solid var(--rule);white-space:nowrap}
+.cmd .stat .on{color:var(--up)}
+.fn{display:flex;border-bottom:1px solid var(--rule);background:var(--bg);position:sticky;top:37px;z-index:50;overflow-x:auto}
+.fn button{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;color:var(--dim);padding:8px 18px;white-space:nowrap}
+.fn button:hover{color:var(--mut)}
+.fn button.on{color:var(--ink);box-shadow:inset 0 -2px 0 var(--ink)}
+.fn .gap{flex:1}
+.fn button.aux{color:var(--dim);letter-spacing:.08em}
+
+/* ---------- page scaffold ---------- */
+.pg{display:none;max-width:1360px;margin:0 auto;padding:0 36px 120px}
+.pg.on{display:block}
+
+/* masthead: identity of the page, set in type alone */
+.mast{padding:26px 0 0}
+.mast .toprow{display:flex;align-items:baseline;gap:18px;flex-wrap:wrap}
+.mast h1{font-size:21px;font-weight:600;letter-spacing:-.01em}
+.mast h1 .co{color:var(--mut);font-weight:400}
+.mast .px{font-family:var(--mono);font-size:30px;font-weight:600;letter-spacing:-.02em}
+.mast .chg{font-family:var(--mono);font-size:14px}
+.mast .sess{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--dim);text-align:right;line-height:1.7}
+
+/* the decision line — UAA's first sentence on every page */
+.decide{display:flex;gap:12px;align-items:baseline;margin:18px 0 0;padding:12px 0;border-top:1px solid var(--rule2);border-bottom:1px solid var(--rule)}
+.decide .tick{font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--att);white-space:nowrap}
+.decide .tick.none{color:var(--dim)}
+.decide p{font-size:13.5px;color:var(--mut)}
+.decide p b{color:var(--ink);font-weight:600}
+.decide .go{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink);white-space:nowrap;border-bottom:1px solid var(--rule2);padding-bottom:1px}
+.decide .go:hover{border-color:var(--mut)}
+
+/* standfirst — the page's lead, written not summarized */
+.stand{margin:22px 0 0;font-size:16.5px;line-height:1.5;color:var(--ink);max-width:66ch;font-weight:400}
+.stand .qual{color:var(--mut)}
+
+/* figure row — numbers in a line, rules above and below, no cards */
+.figrow{display:flex;margin:26px 0 0;border-top:1px solid var(--rule2);border-bottom:1px solid var(--rule)}
+.fig{padding:14px 28px 12px 0;margin-right:28px}
+.fig+.fig{border-left:1px solid var(--rule);padding-left:28px}
+.fig .v{font-family:var(--mono);font-size:19px;font-weight:600;letter-spacing:-.01em}
+.fig .k{margin-top:2px}
+
+/* editorial columns with rules between */
+.colset{display:grid;gap:0;margin-top:30px}
+.colset.r-3{grid-template-columns:minmax(0,7fr) minmax(0,3.2fr) minmax(0,2.8fr)}
+.colset.r-2{grid-template-columns:minmax(0,7fr) minmax(0,4fr)}
+.colset>div{min-width:0;padding:0 28px}
+.colset>div:first-child{padding-left:0}
+.colset>div:last-child{padding-right:0}
+.colset>div+div{border-left:1px solid var(--rule)}
+.sect{margin-bottom:6px}
+.sect+p, .sect+div{margin-top:10px}
+
+h3.head{font-size:13px;font-weight:600;letter-spacing:0;padding-bottom:8px;border-bottom:1px solid var(--rule);margin-bottom:12px}
+h3.head .n{color:var(--dim);font-family:var(--mono);font-size:10px;margin-right:8px}
+
+/* readings — the six engines, set as a ledger of text */
+.readings{font-size:13px}
+.reading{display:grid;grid-template-columns:86px 44px 1fr;gap:10px;padding:7px 0;border-bottom:1px solid var(--rule);align-items:baseline}
+.reading:last-child{border-bottom:0}
+.reading .eng{color:var(--mut)}
+.reading .val{font-family:var(--mono);font-weight:600;text-align:right}
+.reading .note{color:var(--dim);font-size:12px}
+.reading.dis .note{color:var(--att)}
+.reading .call{font-weight:600}
+
+/* open tables */
+table.t{width:100%;border-collapse:collapse;font-size:12.5px}
+table.t th{text-align:left;font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--dim);font-weight:500;padding:8px 14px 8px 0;border-bottom:1px solid var(--rule2);white-space:nowrap}
+table.t td{padding:8px 14px 8px 0;border-bottom:1px solid var(--rule);vertical-align:baseline}
+table.t tr:last-child td{border-bottom:0}
+table.t .num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right}
+table.t th.num{text-align:right}
+table.t .sym{font-family:var(--mono);font-weight:600}
+table.t .co{color:var(--mut)}
+table.t td.note{color:var(--dim);font-size:12px}
+table.t tr.flag td{background:linear-gradient(90deg,rgba(226,163,54,.06),transparent 70%)}
+
+/* wire list */
+.wire{font-size:12.5px}
+.wire .it{display:grid;grid-template-columns:52px 1fr;gap:12px;padding:7px 0;border-bottom:1px solid var(--rule)}
+.wire .it:last-child{border-bottom:0}
+.wire .d{font-family:var(--mono);font-size:10px;color:var(--dim);padding-top:2px}
+.wire .h{color:var(--ink)}
+.wire .s{color:var(--dim);font-size:11.5px;margin-top:1px}
+
+/* analyst note — prose, attributed, no chrome */
+.analyst{max-width:70ch}
+.analyst .att-line{font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--dim);margin-bottom:10px}
+.analyst p{color:var(--mut);margin-top:10px}
+.analyst p:first-of-type{margin-top:0}
+.analyst p b{color:var(--ink);font-weight:600}
+.analyst .sources{margin-top:14px;font-family:var(--mono);font-size:10px;color:var(--dim);border-top:1px solid var(--rule);padding-top:10px}
+
+/* numbered attention items */
+.attn{counter-reset:a;max-width:74ch}
+.attn .it{display:grid;grid-template-columns:34px 1fr auto;gap:14px;padding:13px 0;border-bottom:1px solid var(--rule);align-items:baseline}
+.attn .it::before{counter-increment:a;content:counter(a,decimal-leading-zero);font-family:var(--mono);font-size:11px;color:var(--att)}
+.attn .it.quiet::before{color:var(--dim)}
+.attn p{color:var(--mut)}
+.attn p b{color:var(--ink);font-weight:600}
+.attn .go{font-family:var(--mono);font-size:11px;color:var(--ink);white-space:nowrap;border-bottom:1px solid var(--rule2);padding-bottom:1px}
+
+/* query line (screener) */
+.query{margin-top:24px;font-family:var(--mono);font-size:13px;padding:12px 0;border-top:1px solid var(--rule2);border-bottom:1px solid var(--rule);color:var(--ink)}
+.query .op{color:var(--dim)}
+.query .bind{color:var(--att)}
+.query-note{margin-top:10px;font-size:12.5px;color:var(--dim);max-width:74ch}
+.query-note b{color:var(--mut);font-weight:500}
+
+/* compare matrix */
+.matrix{margin-top:26px}
+.matrix table.t th.tick{font-family:var(--mono);font-size:12px;letter-spacing:0;text-transform:none;color:var(--ink);font-weight:600}
+.matrix td .small{font-size:10.5px;color:var(--dim)}
+
+/* ic report: document with margin toc */
+.doc{display:grid;grid-template-columns:190px minmax(0,1fr);gap:0;margin-top:30px}
+.doc .toc{padding-right:26px;border-right:1px solid var(--rule);position:sticky;top:110px;align-self:start;font-size:12px}
+.doc .toc a{display:block;color:var(--dim);padding:4px 0;text-decoration:none;font-family:var(--mono);font-size:10.5px}
+.doc .toc a b{color:var(--mut);font-weight:500}
+.doc .body{padding-left:34px;max-width:76ch}
+.doc .body h4{font-size:13.5px;font-weight:600;margin-top:30px;padding-top:16px;border-top:1px solid var(--rule)}
+.doc .body h4 .n{font-family:var(--mono);color:var(--dim);font-size:10px;margin-right:10px}
+.doc .body h4 .verd{float:right;font-family:var(--mono);font-size:10px;color:var(--dim);font-weight:400}
+.doc .body h4 .verd.d{color:var(--att)}
+.doc .body p{color:var(--mut);margin-top:8px;font-size:13px}
+.doc .body p b{color:var(--ink);font-weight:600}
+.inset{margin:14px 0 0 0;padding:2px 0 2px 18px;border-left:2px solid var(--att)}
+.inset p{color:var(--mut)}
+
+/* run log */
+.runlog{margin-top:26px;max-width:900px}
+.runlog .step{display:grid;grid-template-columns:64px 1fr;gap:18px;padding:9px 0;border-bottom:1px solid var(--rule)}
+.runlog .ts{font-family:var(--mono);font-size:11px;color:var(--dim);padding-top:1px}
+.runlog .what{color:var(--mut);font-size:13px}
+.runlog .what b{color:var(--ink);font-weight:600}
+.runlog .live .ts{color:var(--att)}
+.stream{margin-top:20px;padding:16px 0 0;border-top:1px solid var(--rule2);max-width:74ch}
+.stream p{color:var(--mut)}
+.stream .cursor{display:inline-block;width:7px;height:13px;background:var(--mut);vertical-align:-2px;animation:blink 1.1s steps(1) infinite}
+
+/* charts: bare svg, no frame */
+.chartwrap{margin-top:4px}
+.chartcap{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10px;color:var(--dim);margin-top:6px}
+
+/* mobile frame */
+.phones{display:flex;gap:40px;margin-top:34px;flex-wrap:wrap}
+.phone{width:390px;border:1px solid var(--rule2);background:var(--bg);flex:none}
+.phone .ph-cmd{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10px;color:var(--dim);padding:9px 14px;border-bottom:1px solid var(--rule)}
+.phone .ph-body{padding:16px 14px 26px}
+.phone-cap{max-width:280px;font-size:12.5px;color:var(--dim);align-self:center}
+.phone-cap b{color:var(--mut);font-weight:500}
+
+/* notes page */
+.notes{max-width:74ch;margin-top:8px}
+.notes h4{font-size:13.5px;font-weight:600;margin-top:28px}
+.notes p{color:var(--mut);margin-top:6px}
+.notes p b{color:var(--ink);font-weight:600}
+.notes .rulebook{margin-top:10px}
+.notes .rulebook .r{display:grid;grid-template-columns:30px 1fr;gap:14px;padding:10px 0;border-bottom:1px solid var(--rule)}
+.notes .rulebook .r::before{content:"—";color:var(--dim);font-family:var(--mono)}
+.notes .rulebook p{margin:0}
+
+@media(max-width:1080px){
+  .colset.r-3,.colset.r-2{grid-template-columns:1fr}
+  .colset>div{padding:0 0 22px 0;border-left:0!important;border-bottom:1px solid var(--rule);margin-bottom:22px}
+  .doc{grid-template-columns:1fr}
+  .doc .toc{display:none}
+  .doc .body{padding-left:0}
+  .figrow{flex-wrap:wrap}
+  .pg{padding:0 18px 90px}
+}
+</style>
+</head>
+<body>
+
+<!-- ================= COMMAND LINE ================= -->
+<div class="cmd">
+  <span class="brand">UAA</span>
+  <span class="line" id="cmdline"><b>NVDA</b><span class="cur"></span>&nbsp;&nbsp;— a ticker opens research · two or more compares them · “roe &gt; 15” starts a screen</span>
+  <span class="stat"><span class="on">●</span> LOCAL · OLLAMA UP · PRICES LIVE 09:42:07</span>
+</div>
+<div class="fn" id="fnrow">
+  <button data-p="research" class="on">RESEARCH</button>
+  <button data-p="screen">SCREEN</button>
+  <button data-p="compare">COMPARE</button>
+  <button data-p="portfolio">PORTFOLIO</button>
+  <button data-p="watch">WATCHLIST</button>
+  <button data-p="ic">IC&nbsp;REPORT</button>
+  <button data-p="run">RUN</button>
+  <span class="gap"></span>
+  <button data-p="mobile" class="aux">MOBILE</button>
+  <button data-p="notes" class="aux">DESIGN&nbsp;NOTES</button>
+</div>
+
+<!-- ============================================================
+     RESEARCH
+============================================================ -->
+<main class="pg on" id="p-research">
+  <div class="mast">
+    <div class="toprow">
+      <h1>NVDA <span class="co">NVIDIA Corporation · Nasdaq</span></h1>
+      <span class="px">1,187.42</span>
+      <span class="chg up">+14.55&nbsp;&nbsp;+1.24%</span>
+      <div class="sess">VOL 41.2M · MKT CAP 2.92T<br/>SESSION OPEN · 09:42:07 ET</div>
+    </div>
+  </div>
+
+  <div class="decide">
+    <span class="tick">DECISION OPEN</span>
+    <p>Your note of 12 Mar: <b>“trim above 1,150 unless data-center re-accelerates.”</b> The price is 1,187. The re-acceleration print is due 28 May. Hold to the note, or amend it — either is fine, but do it in writing.</p>
+    <button class="go">journal ↵</button>
+  </div>
+
+  <p class="stand">Priced for two more perfect quarters. Consensus wants $28.4B of data-center revenue on 28 May and a gross margin that starts with a 7; <span class="qual">the multiple assumes both arrive.</span></p>
+
+  <div class="figrow">
+    <div class="fig"><div class="v">+122.4%</div><div class="k sc">Revenue yoy</div></div>
+    <div class="fig"><div class="v">78.4%</div><div class="k sc">Gross margin</div></div>
+    <div class="fig"><div class="v">$39.3B</div><div class="k sc">FCF ttm</div></div>
+    <div class="fig"><div class="v">38.2×</div><div class="k sc">P/E fwd</div></div>
+    <div class="fig"><div class="v">21.7×</div><div class="k sc">EV/Sales</div></div>
+    <div class="fig"><div class="v up">net cash</div><div class="k sc">Balance sheet</div></div>
+  </div>
+
+  <div class="colset r-3">
+    <div>
+      <div class="sect sc">One year · daily close · 200-day in gray</div>
+      <div class="chartwrap">
+        <svg viewBox="0 0 760 240" width="100%" style="display:block">
+          <g fill="#5e646d" font-family="Geist Mono" font-size="9">
+            <text x="726" y="30">1,200</text><text x="734" y="120">950</text><text x="734" y="210">700</text>
+          </g>
+          <line x1="0" y1="26" x2="716" y2="26" stroke="#2b2e34" stroke-width="1" stroke-dasharray="1 6"/>
+          <path d="M0,196 C55,190 100,198 155,186 C210,174 255,180 310,166 C365,152 410,160 465,140 C520,120 565,128 620,102 C660,86 700,76 716,64" fill="none" stroke="#5e646d" stroke-width="1.1"/>
+          <path d="M0,208 C40,196 75,210 125,190 C175,170 215,184 265,158 C315,132 355,146 405,120 C455,94 495,108 545,82 C595,56 635,72 685,48 C700,42 710,38 716,34" fill="none" stroke="#e9ebee" stroke-width="1.7"/>
+          <line x1="716" y1="34" x2="760" y2="34" stroke="#2b2e34" stroke-width="1"/>
+          <circle cx="716" cy="34" r="2.6" fill="#e9ebee"/>
+        </svg>
+        <div class="chartcap"><span>JUL ─────── OCT ─────── JAN ─────── APR ── now</span><span>52-WK RANGE 674.10 – 1,192.88</span></div>
+      </div>
+
+      <div style="margin-top:30px">
+        <h3 class="head"><span class="n">02</span>What moved the score this quarter</h3>
+        <div class="wire">
+          <div class="it"><span class="d">+6</span><div><div class="h">FY26 consensus EPS revised up 4.1% — 28 analysts, no cuts</div><div class="s">The single largest contributor. Revision breadth matters more to the score than magnitude.</div></div></div>
+          <div class="it"><span class="d">+3</span><div><div class="h">Gross margin held above 78% for a third quarter</div><div class="s">The score treats the third occurrence as a level, not an event.</div></div></div>
+          <div class="it"><span class="d">−4</span><div><div class="h">First inventory build in four quarters — +9.8% qoq</div><div class="s">Probably deliberate ahead of Blackwell. The accounting screen flags it anyway; deliberate is a hypothesis, not a fact.</div></div></div>
+        </div>
+      </div>
+
+      <div style="margin-top:34px">
+        <h3 class="head"><span class="n">03</span>The analyst’s note</h3>
+        <div class="analyst">
+          <div class="att-line">WRITTEN LOCALLY · QWEN3 · 41S · EVERY FIGURE BELOW TRACED TO A FILING OR A FEED — 9 OF 9</div>
+          <p>The 81 is a fundamentals-and-revisions score; the momentum inside it is modest, and momentum is precisely the part the factor model disputes. Nothing in the quarter argues with the business. <b>The argument is entirely about the price of admission.</b></p>
+          <p>What would change the answer: data-center growth below 80%, or a second consecutive inventory build. Neither is in evidence. Your March note anticipated exactly this situation — it is rare that a note ages this well, and it would be a shame to ignore it now.</p>
+          <div class="sources">10-Q p.12 · Q1 CALL TRANSCRIPT · CONSENSUS TABLE (28) · YOUR JOURNAL, 12 MAR</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <h3 class="head"><span class="n">01</span>The readings</h3>
+      <div class="readings">
+        <div class="reading"><span class="eng">Conviction</span><span class="val">81</span><span class="note"><span class="call up">Buy</span> — worth owning at 1,187, narrowly</span></div>
+        <div class="reading"><span class="eng">Screen</span><span class="val">86</span><span class="note">4th of 412 in your universe</span></div>
+        <div class="reading dis"><span class="eng">Quant</span><span class="val">62</span><span class="note">dissents — entry price, not the business</span></div>
+        <div class="reading"><span class="eng">Fit</span><span class="val">58</span><span class="note">semis are already 11.2% of your book</span></div>
+        <div class="reading"><span class="eng">Quality</span><span class="val">90</span><span class="note">not a buy/sell number; price-blind</span></div>
+      </div>
+      <p style="margin-top:14px;font-size:12.5px;color:var(--dim)">Five engines, five questions — they are allowed to disagree, and today two of them do. The 24-point gap between Screen and Quant is the widest on anything you hold. <span class="att">The factor model’s call changes near 1,050.</span></p>
+
+      <div style="margin-top:28px">
+        <h3 class="head"><span class="n">04</span>Your position</h3>
+        <div class="readings">
+          <div class="reading"><span class="eng">Held since</span><span class="val" style="font-weight:400">—</span><span class="note">14 Nov 2023 · 474.20 avg</span></div>
+          <div class="reading"><span class="eng">Weight</span><span class="val">9.4%</span><span class="note">largest position</span></div>
+          <div class="reading"><span class="eng">Unrealized</span><span class="val up">+150%</span><span class="note">$41,830</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <h3 class="head"><span class="n">05</span>On file</h3>
+      <div class="wire">
+        <div class="it"><span class="d">23 MAY</span><div><div class="h">Form 4 — EVP sold $14.2M</div><div class="s">Under a 10b5-1 plan set in January. Scheduled selling is noise; the screen only flags the unscheduled kind.</div></div></div>
+        <div class="it"><span class="d">20 MAY</span><div><div class="h">TSMC lifts CoWoS capacity 60%</div><div class="s">Supply, not demand. It removes the ceiling; it says nothing about the floor.</div></div></div>
+        <div class="it"><span class="d">16 MAY</span><div><div class="h">10-Q filed</div><div class="s">The inventory build lives on p.12. Worth the four minutes.</div></div></div>
+        <div class="it"><span class="d">14 MAY</span><div><div class="h">Consensus revision +4.1%</div><div class="s">Breadth: 28 up, 0 down.</div></div></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- ============================================================
+     SCREEN
+============================================================ -->
+<main class="pg" id="p-screen">
+  <div class="mast"><div class="toprow"><h1>Screen <span class="co">US equities</span></h1><div class="sess">FUNDAMENTALS FROM LAST CLOSE, 06:00<br/>PRICES LIVE · SCORES FOLLOW BOTH</div></div></div>
+
+  <div class="decide"><span class="tick none">NOTHING OPEN</span><p>No saved screen has changed its top ten since yesterday. The one below is <b>quality-at-a-price</b>, saved 4 Feb.</p></div>
+
+  <div class="query">us <span class="op">·</span> market cap &gt; $10b <span class="op">·</span> <span class="bind">roe &gt; 15%</span> <span class="op">·</span> fcf yield &gt; 3% <span class="op">·</span> net debt/ebitda &lt; 2</div>
+  <p class="query-note"><b>412 of 3,184 pass.</b> The ROE filter does most of the work — alone it removes 2,214 names. If the list feels thin, that is the filter to argue with, not the other three.</p>
+
+  <table class="t" style="margin-top:22px">
+    <tr>
+      <th style="width:36px">#</th><th>NAME</th><th class="num">PRICE</th><th class="num">TODAY</th>
+      <th class="num">SCREEN</th><th class="num">QUALITY</th><th class="num">VALUE</th><th class="num">GROWTH</th><th class="num">MOM</th><th class="num">QUANT</th><th style="padding-left:24px">WORTH KNOWING</th>
+    </tr>
+    <tr>
+      <td class="num" style="color:var(--dim)">1</td><td><span class="sym">AVGO</span> <span class="co">Broadcom</span></td>
+      <td class="num">1,402.10</td><td class="num up">+0.8</td>
+      <td class="num" style="font-weight:600">91</td><td class="num">88</td><td class="num">61</td><td class="num">79</td><td class="num">85</td><td class="num">84</td>
+      <td class="note" style="padding-left:24px">Every engine agrees. That is rarer than it sounds.</td>
+    </tr>
+    <tr>
+      <td class="num" style="color:var(--dim)">2</td><td><span class="sym">LLY</span> <span class="co">Eli Lilly</span></td>
+      <td class="num">881.55</td><td class="num dn">−0.3</td>
+      <td class="num" style="font-weight:600">89</td><td class="num">92</td><td class="num">38</td><td class="num">90</td><td class="num">71</td><td class="num">76</td>
+      <td class="note" style="padding-left:24px">Value 38 is the whole debate in one cell.</td>
+    </tr>
+    <tr class="flag">
+      <td class="num" style="color:var(--dim)">3</td><td><span class="sym">PLTR</span> <span class="co">Palantir</span></td>
+      <td class="num">24.86</td><td class="num up">+2.1</td>
+      <td class="num" style="font-weight:600">84</td><td class="num">74</td><td class="num">22</td><td class="num">88</td><td class="num">93</td><td class="num att" style="font-weight:600">41</td>
+      <td class="note att" style="padding-left:24px">Screen 84, Quant 41 — the widest gap in the universe. Read before buying the rank.</td>
+    </tr>
+    <tr>
+      <td class="num" style="color:var(--dim)">4</td><td><span class="sym">NVDA</span> <span class="co">NVIDIA</span></td>
+      <td class="num">1,187.42</td><td class="num up">+1.2</td>
+      <td class="num" style="font-weight:600">86</td><td class="num">90</td><td class="num">31</td><td class="num">95</td><td class="num">88</td><td class="num">62</td>
+      <td class="note" style="padding-left:24px">You hold it. The open question is on Research.</td>
+    </tr>
+    <tr>
+      <td class="num" style="color:var(--dim)">5</td><td><span class="sym">V</span> <span class="co">Visa</span></td>
+      <td class="num">289.34</td><td class="num up">+0.2</td>
+      <td class="num" style="font-weight:600">82</td><td class="num">95</td><td class="num">52</td><td class="num">64</td><td class="num">58</td><td class="num">74</td>
+      <td class="note" style="padding-left:24px">Quality 95 — the highest in the universe.</td>
+    </tr>
+    <tr>
+      <td class="num" style="color:var(--dim)">6</td><td><span class="sym">ASML</span> <span class="co">ASML Holding</span></td>
+      <td class="num">897.40</td><td class="num dn">−1.1</td>
+      <td class="num" style="font-weight:600">79</td><td class="num">89</td><td class="num">44</td><td class="num">72</td><td class="num">49</td><td class="num">71</td>
+      <td class="note" style="padding-left:24px">Crossed under your 900 line today. Watchlist has the note.</td>
+    </tr>
+    <tr>
+      <td class="num" style="color:var(--dim)">7</td><td><span class="sym">TSM</span> <span class="co">Taiwan Semi</span></td>
+      <td class="num">158.72</td><td class="num dn">−0.4</td>
+      <td class="num" style="font-weight:600">74</td><td class="num">83</td><td class="num">58</td><td class="num">69</td><td class="num">52</td><td class="num">69</td>
+      <td class="note" style="padding-left:24px"></td>
+    </tr>
+    <tr>
+      <td class="num" style="color:var(--dim)">8</td><td><span class="sym">ADBE</span> <span class="co">Adobe</span></td>
+      <td class="num">474.90</td><td class="num up">+0.1</td>
+      <td class="num" style="font-weight:600">66</td><td class="num">84</td><td class="num">57</td><td class="num">48</td><td class="num">31</td><td class="num">57</td>
+      <td class="note" style="padding-left:24px">Growth 48 and falling for three quarters. The score is patient; it is not asleep.</td>
+    </tr>
+  </table>
+  <p style="margin-top:14px;font-size:12px;color:var(--dim);max-width:74ch">Quant is shown beside Screen because they answer different questions — rank on fundamentals versus endorsement by the factor model — and the difference is more useful than either number alone. Sorting by the gap is one keystroke: <span class="mono" style="color:var(--mut)">sort gap</span>.</p>
+</main>
+
+<!-- ============================================================
+     COMPARE
+============================================================ -->
+<main class="pg" id="p-compare">
+  <div class="mast"><div class="toprow"><h1>Compare <span class="co">three of five slots</span></h1><div class="sess">SAME ENGINE, SAME INPUTS, SAME WINDOW —<br/>DIFFERENCES HERE ARE REAL, NOT ARTIFACTS</div></div></div>
+
+  <div class="decide"><span class="tick none">NOTHING OPEN</span><p>You compared these three on 2 May. Since then AVGO’s conviction rose 4 points; the other two are within noise of where you left them.</p></div>
+
+  <div class="matrix">
+    <table class="t">
+      <tr><th style="width:230px"></th><th class="tick">NVDA</th><th class="tick">AMD</th><th class="tick">AVGO</th></tr>
+      <tr><td class="note">Price · today</td>
+        <td><span class="mono">1,187.42</span> <span class="mono up" style="font-size:11px">+1.2%</span></td>
+        <td><span class="mono">162.38</span> <span class="mono dn" style="font-size:11px">−0.6%</span></td>
+        <td><span class="mono">1,402.10</span> <span class="mono up" style="font-size:11px">+0.8%</span></td></tr>
+      <tr><td class="note">Conviction — own it at this price?</td>
+        <td><span class="mono" style="font-size:16px;font-weight:600">81</span> <span class="up" style="font-weight:600">Buy</span></td>
+        <td><span class="mono" style="font-size:16px;font-weight:600">57</span> <span style="color:var(--mut);font-weight:600">Hold</span> <span class="att mono" style="font-size:10px">· engines split</span></td>
+        <td><span class="mono" style="font-size:16px;font-weight:600">83</span> <span class="up" style="font-weight:600">Buy</span></td></tr>
+      <tr><td class="note">Screen · Quant</td>
+        <td class="mono">86 · 62</td>
+        <td class="mono">71 · <span class="att">44</span></td>
+        <td class="mono">91 · 84</td></tr>
+      <tr><td class="note">Revenue growth yoy</td><td class="mono up">+122.4%</td><td class="mono up">+9.0%</td><td class="mono up">+34.2%</td></tr>
+      <tr><td class="note">Gross margin</td><td class="mono">78.4%</td><td class="mono">52.3%</td><td class="mono">74.7%</td></tr>
+      <tr><td class="note">ROE</td><td class="mono">91.5%</td><td class="mono">4.2%</td><td class="mono">28.9%</td></tr>
+      <tr><td class="note">FCF yield</td><td class="mono">1.3%</td><td class="mono">1.9%</td><td class="mono">3.4%</td></tr>
+      <tr><td class="note">P/E forward</td><td class="mono">38.2×</td><td class="mono">41.6×</td><td class="mono">29.8×</td></tr>
+      <tr><td class="note">Net debt / EBITDA</td><td class="mono">net cash</td><td class="mono">0.3×</td><td class="mono">1.8×</td></tr>
+      <tr><td class="note">Dividend</td><td class="mono">0.02%</td><td class="mono">—</td><td class="mono">1.5%</td></tr>
+      <tr><td class="note">Fit — in your book, today</td>
+        <td class="mono">58 <span class="small">semis heavy</span></td>
+        <td class="mono">52 <span class="small">same reason</span></td>
+        <td class="mono">51 <span class="small">same reason</span></td></tr>
+    </table>
+  </div>
+
+  <div style="margin-top:26px;max-width:70ch">
+    <h3 class="head"><span class="n">Σ</span>Reading the table</h3>
+    <div class="analyst">
+      <div class="att-line">WRITTEN LOCALLY · 12 OF 12 FIGURES TRACED</div>
+      <p><b>AVGO is the conservative way in:</b> nine-tenths of NVDA’s conviction at 30× instead of 38×, with a dividend and the only genuine leverage of the three — 1.8× is fine for a business this contracted, but it is the number to reread in a downturn.</p>
+      <p><b>AMD is the disagreement.</b> The fundamentals rank it a near-Buy; the factor model reads decelerating revisions and a crowded trade and won’t come along. Buying it here means siding with the story against the tape. Defensible — but decide it on purpose, and write the thesis down so future-you knows it was a decision and not a drift.</p>
+      <p>Fit scores all three in the low 50s for one reason: semiconductors are already 24% of your book. <b>This table can’t fix that; only selling something can.</b></p>
+    </div>
+  </div>
+</main>
+
+<!-- ============================================================
+     PORTFOLIO
+============================================================ -->
+<main class="pg" id="p-portfolio">
+  <div class="mast"><div class="toprow"><h1>Portfolio <span class="co">14 positions · 2 accounts</span></h1><div class="sess">MARKED LIVE · BENCHMARK S&amp;P 500 TR<br/>COST BASIS FROM YOUR LOTS, NOT ESTIMATES</div></div></div>
+
+  <div class="figrow">
+    <div class="fig"><div class="v">$482,960</div><div class="k sc">Value</div></div>
+    <div class="fig"><div class="v up">+0.84%</div><div class="k sc">Today · +$4,012</div></div>
+    <div class="fig"><div class="v up">+11.2%</div><div class="k sc">YTD · bench +8.9%</div></div>
+    <div class="fig"><div class="v">+18.7%</div><div class="k sc">XIRR since 2021</div></div>
+    <div class="fig"><div class="v">1.21</div><div class="k sc">Beta · 1y</div></div>
+    <div class="fig"><div class="v">6.2%</div><div class="k sc">Cash</div></div>
+    <div class="fig"><div class="v">74</div><div class="k sc">Health · weakest: income</div></div>
+  </div>
+
+  <div style="margin-top:30px">
+    <h3 class="head"><span class="n">01</span>Requires a decision <span style="float:right;font-family:var(--mono);font-size:10px;color:var(--dim);font-weight:400">3 OPEN · OLDEST 11 WEEKS</span></h3>
+    <div class="attn">
+      <div class="it">
+        <p><b>Semiconductors are 24.1% of the book against your 15% limit</b> — the limit you set on 12 Mar, in writing, for exactly this situation. Trimming NVDA to 6% and AVGO to 5% clears it and raises $44,700.</p>
+        <button class="go">size the trims ↵</button>
+      </div>
+      <div class="it">
+        <p><b>NVDA is 3.2% above your trim line.</b> The note that set the line has a condition attached — data-center re-acceleration — and that answer arrives 28 May. Waiting is consistent with the note. Silence isn’t.</p>
+        <button class="go">open research ↵</button>
+      </div>
+      <div class="it quiet">
+        <p><b>SMCI has no thesis on file.</b> Bought 4 Feb, down 18%, and not one written sentence about why it’s here. Write the thesis now or take the loss — both are respectable. Holding without a reason is the only option that isn’t.</p>
+        <button class="go">write or close ↵</button>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:34px">
+    <h3 class="head"><span class="n">02</span>Holdings</h3>
+    <table class="t">
+      <tr><th>NAME</th><th class="num">WEIGHT</th><th class="num">AVG COST</th><th class="num">PRICE</th><th class="num">P&amp;L</th><th class="num">QUALITY</th><th class="num">FIT</th><th style="padding-left:24px">STANDING</th></tr>
+      <tr>
+        <td><span class="sym">NVDA</span> <span class="co">NVIDIA</span></td>
+        <td class="num">9.4%</td><td class="num">474.20</td><td class="num">1,187.42</td><td class="num up">+150.4%</td>
+        <td class="num">90</td><td class="num">58</td>
+        <td class="note" style="padding-left:24px">Buy 81, quant dissents at 62. Decision open above.</td>
+      </tr>
+      <tr>
+        <td><span class="sym">AVGO</span> <span class="co">Broadcom</span></td>
+        <td class="num">8.2%</td><td class="num">912.05</td><td class="num">1,402.10</td><td class="num up">+53.7%</td>
+        <td class="num">88</td><td class="num">51</td>
+        <td class="note" style="padding-left:24px">Engines agree at Buy. Fit is low only because of the sector, not the name.</td>
+      </tr>
+      <tr>
+        <td><span class="sym">V</span> <span class="co">Visa</span></td>
+        <td class="num">7.8%</td><td class="num">231.40</td><td class="num">289.34</td><td class="num up">+25.0%</td>
+        <td class="num">95</td><td class="num">82</td>
+        <td class="note" style="padding-left:24px">The book’s quiet anchor. Nothing to do, which is the point.</td>
+      </tr>
+      <tr>
+        <td><span class="sym">LLY</span> <span class="co">Eli Lilly</span></td>
+        <td class="num">6.4%</td><td class="num">602.11</td><td class="num">881.55</td><td class="num up">+46.4%</td>
+        <td class="num">92</td><td class="num">77</td>
+        <td class="note" style="padding-left:24px">Held through the February drawdown per your note. The note was right.</td>
+      </tr>
+      <tr>
+        <td><span class="sym">BND</span> <span class="co">Vanguard Total Bond</span></td>
+        <td class="num">5.5%</td><td class="num">71.20</td><td class="num">72.85</td><td class="num up">+2.3%</td>
+        <td class="num" style="color:var(--dim)">no basis</td><td class="num">88</td>
+        <td class="note" style="padding-left:24px">Equity engines don’t score bonds, and say so rather than inventing a 50.</td>
+      </tr>
+      <tr class="flag">
+        <td><span class="sym">SMCI</span> <span class="co">Super Micro</span></td>
+        <td class="num">2.1%</td><td class="num">1,042.00</td><td class="num">854.60</td><td class="num dn">−18.0%</td>
+        <td class="num">64</td><td class="num">44</td>
+        <td class="note att" style="padding-left:24px">No thesis on file. See item 03 above.</td>
+      </tr>
+    </table>
+    <p style="margin-top:12px;font-size:12px;color:var(--dim)">Quality is price-blind and carries no Buy/Sell coloring — a 95 can still be a bad purchase at the wrong price. Fit measures the book, not the asset: it is allowed to punish a great company for arriving at the wrong time.</p>
+  </div>
+</main>
+
+<!-- ============================================================
+     WATCHLIST
+============================================================ -->
+<main class="pg" id="p-watch">
+  <div class="mast"><div class="toprow"><h1>Watchlist <span class="co">7 names</span></h1><div class="sess">ALERTS EVALUATED LOCALLY, EVERY TICK<br/>YOUR NOTES ARE PART OF THE DATA</div></div></div>
+
+  <div class="decide">
+    <span class="tick">DECISION OPEN</span>
+    <p><b>ASML closed under your line.</b> Your note of 12 May reads “buy under 900” — it closed at 897.40, and Tuesday’s IC report reads Buy with one reservation. This is the moment the note was written for.</p>
+    <button class="go">decide now ↵</button>
+  </div>
+
+  <table class="t" style="margin-top:26px">
+    <tr><th>NAME</th><th class="num">PRICE</th><th class="num">SINCE ADDED</th><th class="num">CONVICTION</th><th style="padding-left:24px;width:46%">WHAT YOU SAID · WHAT’S TRUE NOW</th></tr>
+    <tr class="flag">
+      <td><span class="sym">ASML</span> <span class="co">ASML Holding</span></td>
+      <td class="num">897.40</td><td class="num dn">−7.2%</td><td class="num" style="font-weight:600">76 <span class="up" style="font-weight:600">Buy</span></td>
+      <td class="note" style="padding-left:24px;color:var(--mut)"><b style="color:var(--ink)">12 May — “buy under 900.”</b> It’s under 900. The only new fact since you wrote that is a favorable IC report. Deciding not to act is fine; not deciding is not.</td>
+    </tr>
+    <tr>
+      <td><span class="sym">MU</span> <span class="co">Micron</span></td>
+      <td class="num">118.26</td><td class="num up">+3.1%</td><td class="num">68 <span style="color:var(--mut)">Hold</span></td>
+      <td class="note" style="padding-left:24px">8 Apr — “decide after earnings, not before.” Earnings are Wednesday. Until then this row needs nothing from you.</td>
+    </tr>
+    <tr>
+      <td><span class="sym">TSM</span> <span class="co">Taiwan Semi</span></td>
+      <td class="num">158.72</td><td class="num up">+11.4%</td><td class="num">74 <span class="up">Buy</span></td>
+      <td class="note" style="padding-left:24px">Added 19 Feb without a target. It’s up 11% since. A watch without a number is a hope — set the price at which you’d act, or admit you wouldn’t.</td>
+    </tr>
+    <tr>
+      <td><span class="sym">RKLB</span> <span class="co">Rocket Lab</span></td>
+      <td class="num">7.94</td><td class="num dn">−22.6%</td><td class="num">38 <span class="dn">Sell</span></td>
+      <td class="note" style="padding-left:24px">8 Jan — “backlog converts by mid-year.” It is late May and conversion hasn’t shown up in a filing. The thesis now has a deadline problem, which is more useful to know than the price.</td>
+    </tr>
+    <tr>
+      <td><span class="sym">COST</span> <span class="co">Costco</span></td>
+      <td class="num">812.30</td><td class="num up">+1.9%</td><td class="num">64 <span style="color:var(--mut)">Hold</span></td>
+      <td class="note" style="padding-left:24px">Alert set at 750. It hasn’t traded under 780 since February. Alerts this far from the market are wishes; move it or retire it.</td>
+    </tr>
+  </table>
+  <p style="margin-top:14px;font-size:12px;color:var(--dim);max-width:72ch">Rows are ordered by how much they need you, not by ticker. A watchlist that only stores symbols is a bookmarks folder — this one holds each name against what you said when you added it.</p>
+</main>
+
+<!-- ============================================================
+     IC REPORT
+============================================================ -->
+<main class="pg" id="p-ic">
+  <div class="mast"><div class="toprow"><h1>IC Report <span class="co">ASML Holding N.V.</span></h1><div class="sess">COMPLETED TUESDAY 06:31 · 11M 42S · LOCAL<br/>31 PAGES · EXPORTABLE · NOTHING LEFT THIS MACHINE</div></div></div>
+
+  <div class="decide">
+    <span class="tick none">VERDICT</span>
+    <p><b>Buy, with one reservation carried in full.</b> Eight of nine sections support ownership over a five-year horizon. Accounting does not concur, and its objection is printed with the verdict rather than beneath it.</p>
+    <button class="go">export pdf ↵</button>
+  </div>
+
+  <div class="doc">
+    <nav class="toc">
+      <a href="#"><b>ASML — 27 MAY</b></a>
+      <a href="#">01 BUSINESS</a>
+      <a href="#">02 INDUSTRY</a>
+      <a href="#">03 COMPETITION</a>
+      <a href="#">04 MANAGEMENT</a>
+      <a href="#">05 CAPITAL ALLOCATION</a>
+      <a href="#" class="att" style="color:var(--att)">06 ACCOUNTING — DISSENT</a>
+      <a href="#">07 VALUATION</a>
+      <a href="#">08 GOVERNANCE</a>
+      <a href="#">09 RISK</a>
+      <a href="#">Σ THESIS &amp; VERDICT</a>
+    </nav>
+    <div class="body">
+      <h4 style="border-top:0;padding-top:0;margin-top:0"><span class="n">01</span>Business <span class="verd">SUPPORTS · CONF 0.86</span></h4>
+      <p>The EUV monopoly is intact and the business under it has quietly changed shape: installed-base service is now 24% of revenue and grows with the fleet, not the cycle. Each system shipped is a 20-year service annuity — <b>the cyclical company is becoming less cyclical with every delivery,</b> and the market still prices the old shape.</p>
+
+      <h4><span class="n">03</span>Competition <span class="verd">SUPPORTS · CONF 0.91</span></h4>
+      <p>No credible EUV second source exists before 2030 at the earliest. Nikon exited the segment; the Chinese domestic effort remains at DUV. The moat here is not patents — it is a 5,000-supplier optical chain that took three decades to assemble and cannot be bought, only rebuilt.</p>
+
+      <h4><span class="n">06</span>Accounting <span class="verd d">DISSENTS · CONF 0.77</span></h4>
+      <p>Cash conversion has trailed reported earnings for four consecutive quarters, and receivables are growing faster than revenue.</p>
+      <div class="inset">
+        <p>The likeliest explanation is benign — High-NA systems invoiced ahead of customer acceptance — but benign is a hypothesis, and four quarters is a pattern. <b>This section will not concur until a filing confirms the timing story.</b> The next 20-F should settle it one way or the other.</p>
+      </div>
+
+      <h4><span class="n">09</span>Risk <span class="verd">FLAGS · CONF 0.72</span></h4>
+      <p>China is 26% of revenue and the one exposure no spreadsheet can size: it is a policy variable, not a market one. The report treats it as a fat tail — small probability of a large permanent loss — and notes that the position size, not the thesis, is the correct instrument for managing it.</p>
+
+      <h4><span class="n">Σ</span>Thesis</h4>
+      <p>ASML is the rare monopoly whose customers fund its roadmap. The five-year case does not require a semiconductor boom — it requires only that leading-edge nodes ship at all, from anyone, in any country. Every plausible owner of that capacity is already a customer. <b>The bet is on the toll road, not the traffic.</b></p>
+      <p style="font-family:var(--mono);font-size:10.5px;color:var(--dim);border-top:1px solid var(--rule);padding-top:12px;margin-top:18px">READ FOR THIS REPORT: 20-F · FOUR 6-KS · Q1 TRANSCRIPT · YOUR VALUATION CASE OF 4 FEB · 214 MINUTES OF MODEL TIME, ALL OF IT ON YOUR HARDWARE</p>
+    </div>
+  </div>
+</main>
+
+<!-- ============================================================
+     RUN — the research workflow, live
+============================================================ -->
+<main class="pg" id="p-run">
+  <div class="mast"><div class="toprow"><h1>Run <span class="co">IC report · MU Micron Technology</span></h1><div class="sess">STARTED 09:31:04 · ELAPSED 07:12<br/>ESTIMATE 11–14 MIN ON THIS MACHINE</div></div></div>
+
+  <div class="decide"><span class="tick none">IN PROGRESS</span><p>Nine sections run in parallel and file independently — <b>you can read the finished ones now.</b> The verdict assembles only after all nine are in; no section sees another’s conclusion before writing its own.</p></div>
+
+  <div class="runlog">
+    <div class="step"><span class="ts">00:00</span><p class="what"><b>Filings pulled.</b> 10-K, three 10-Qs, two 8-Ks, Q2 transcript. 412 pages; the agents read all of it so that you can read 31.</p></div>
+    <div class="step"><span class="ts">00:41</span><p class="what"><b>Nine sections dispatched</b> — business, industry, competition, management, capital allocation, accounting, valuation, governance, risk. Each cites its own sources and files alone.</p></div>
+    <div class="step"><span class="ts">02:58</span><p class="what">Business filed. <b>Supports, 0.82.</b> HBM mix shift is the finding — 30% of DRAM revenue, from 12% a year ago.</p></div>
+    <div class="step"><span class="ts">04:15</span><p class="what">Competition filed. <b>Supports, 0.74.</b> Three-player DRAM oligopoly holding; capex discipline intact for a second cycle.</p></div>
+    <div class="step"><span class="ts">05:52</span><p class="what">Accounting filed. <b>Concurs, 0.81</b> — inventory writedown risk has left the balance sheet. First clean concurrence in three MU reports.</p></div>
+    <div class="step live"><span class="ts">07:12</span><p class="what"><b>Valuation is writing.</b> It reviews your DCF case of 30 Apr rather than inventing its own — if it disagrees with your numbers, it will say where, not just by how much.</p></div>
+    <div class="step"><span class="ts" style="color:var(--rule2)">—</span><p class="what" style="color:var(--dim)">Waiting: industry, management, capital allocation, governance, risk · then the thesis, then the verdict.</p></div>
+  </div>
+
+  <div class="stream">
+    <div class="att-line" style="font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--dim);margin-bottom:10px">VALUATION · DRAFT · STREAMING FROM THE MODEL AS IT WRITES</div>
+    <p>Your April case assumed HBM pricing holds through FY26; the Q2 transcript supports that for four more quarters but not eight. Moving the fade forward one year lowers the midpoint from $148 to $131, which still clears today’s price by<span class="cursor"></span></p>
+  </div>
+
+  <p style="margin-top:26px;font-size:12px;color:var(--dim);max-width:70ch">Runs happen on your hardware and touch no network after the filings are pulled. Close the laptop and the run pauses; nothing is lost. The report will be waiting, along with the reasons for every sentence in it.</p>
+</main>
+
+<!-- ============================================================
+     MOBILE
+============================================================ -->
+<main class="pg" id="p-mobile">
+  <div class="mast"><div class="toprow"><h1>Mobile <span class="co">the phone is for deciding, not researching</span></h1></div></div>
+  <p class="stand" style="max-width:70ch">On a phone UAA shows exactly three things: what needs deciding, what changed, and the readings for anything you tap. Charts, filings and reports wait for a bigger screen — <span class="qual">a 390-pixel DCF is a novelty, not a tool.</span></p>
+
+  <div class="phones">
+    <div class="phone">
+      <div class="ph-cmd"><span>UAA</span><span>09:42 · LIVE</span></div>
+      <div class="ph-body">
+        <div class="sc" style="margin-bottom:10px">NEEDS DECIDING · 2</div>
+        <div style="border-top:1px solid var(--rule2);padding:12px 0;border-bottom:1px solid var(--rule)">
+          <div style="display:flex;justify-content:space-between;align-items:baseline"><span class="mono" style="font-weight:600">ASML</span><span class="mono">897.40 <span class="dn" style="font-size:11px">−1.1%</span></span></div>
+          <p style="font-size:12.5px;color:var(--mut);margin-top:6px">Closed under your 900 line. Your note of 12 May says buy. <b style="color:var(--ink)">Decide, defer to a date, or retire the note.</b></p>
+          <div style="display:flex;gap:18px;margin-top:10px;font-family:var(--mono);font-size:11px">
+            <span style="color:var(--ink);border-bottom:1px solid var(--rule2)">decide</span>
+            <span style="color:var(--dim)">defer ▸ 28 may</span>
+            <span style="color:var(--dim)">retire note</span>
+          </div>
+        </div>
+        <div style="padding:12px 0;border-bottom:1px solid var(--rule)">
+          <div style="display:flex;justify-content:space-between;align-items:baseline"><span class="mono" style="font-weight:600">NVDA</span><span class="mono">1,187.42 <span class="up" style="font-size:11px">+1.2%</span></span></div>
+          <p style="font-size:12.5px;color:var(--mut);margin-top:6px">3.2% above your trim line. The note’s condition resolves 28 May — waiting is consistent with it.</p>
+        </div>
+        <div class="sc" style="margin:18px 0 8px">CHANGED SINCE LAST NIGHT</div>
+        <div style="font-size:12.5px;color:var(--mut);display:grid;gap:8px">
+          <div style="display:flex;justify-content:space-between"><span><span class="mono" style="color:var(--ink)">MU</span> — reports Wednesday</span><span class="mono up">+3.1%</span></div>
+          <div style="display:flex;justify-content:space-between"><span><span class="mono" style="color:var(--ink)">PLTR</span> — screen/quant gap widened to 43</span><span class="mono up">+2.1%</span></div>
+          <div style="display:flex;justify-content:space-between"><span><span class="mono" style="color:var(--ink)">Book</span> — +$4,012 today</span><span class="mono up">+0.84%</span></div>
+        </div>
+      </div>
+    </div>
+    <p class="phone-cap">No tab bar, no cards, no pull-to-refresh theatrics. The phone screen is the <b>decision line, expanded</b> — the same first sentence the desktop leads with, given the whole viewport. Everything is reachable by search; nothing needs to be.</p>
+  </div>
+</main>
+
+<!-- ============================================================
+     DESIGN NOTES
+============================================================ -->
+<main class="pg" id="p-notes">
+  <div class="mast"><div class="toprow"><h1>Design notes <span class="co">what changed and why</span></h1></div></div>
+  <div class="notes">
+    <p style="margin-top:18px">This is a redesign of the product’s structure, not a reskin. The test applied to every element: does it carry information a professional would miss if it were gone? If not, it went. What follows is the short version of the argument.</p>
+
+    <h4>Navigation is a sentence, not a sidebar</h4>
+    <p>The fastest financial software ever built runs on a command line, and there is a reason no trader asks for it to be replaced with icons. UAA follows: one line at the top takes a ticker, several tickers, a filter expression, or a question. The function row beneath it is the entire site map — seven words. There is no sidebar. Nothing is more than one keystroke of intent away, and the interface never has to guess which of six panels you meant.</p>
+
+    <h4>The decision line comes first on every page</h4>
+    <p>Every page opens with the same rule under the masthead: what here needs deciding, if anything. Most days, most pages honestly answer “nothing” — and printing that is as valuable as printing an alert, because it lets you close the laptop. This is the product’s one non-negotiable ritual, and the thing a user should miss most in any other software.</p>
+
+    <h4>Rules instead of boxes</h4>
+    <p>There are no cards. Content is separated the way a broadsheet separates it: a hairline where two columns of different kinds meet, whitespace where the same kind continues, and nothing at all where the type already makes the boundary obvious. Removing the boxes bought back roughly a fifth of every screen, and the density went up while the clutter went down. Borders were doing the job hierarchy should have been doing.</p>
+
+    <h4>One accent, one meaning</h4>
+    <p>Amber marks exactly one thing: a decision that is open. It never decorates, never brands, never says “new.” Green and red belong to the market and are never borrowed for interface moods. Everything else is set in three grays. When a screen has no amber on it, that is the interface saying you can leave.</p>
+
+    <h4>Numbers behave like numbers</h4>
+    <p>Every figure is tabular, right-aligned, and set in the mono — including inside sentences. Scores never appear without their question (“Fit — in your book, today”), because a bare 58 is a Rorschach test. Where an engine has nothing to say, it prints <b>no basis</b> rather than a fabricated midpoint. The absence of a number is data.</p>
+
+    <h4>The writing is part of the interface</h4>
+    <p>Table cells get findings, not descriptions — “Value 38 is the whole debate in one cell” tells you where to look next; “Palantir Technologies Inc.” tells you nothing you didn’t know. Empty states say what would fill them. Alerts quote the user’s own note back with its date, because the strongest argument with any investor is the one they wrote themselves. No sentence congratulates, apologizes, or sells.</p>
+
+    <h4>What was deliberately not designed</h4>
+    <p>Onboarding tours, achievement states, AI sparkle icons, skeleton shimmer, hover lifts, and the settings page as a personality statement. A professional tool earns affection by being fast and right, and by leaving the user alone at every moment when it has nothing to add.</p>
+  </div>
+</main>
+
+<script>
+const bs=document.querySelectorAll('.fn button');
+const ps=document.querySelectorAll('.pg');
+const cmdline=document.getElementById('cmdline');
+const cmds={
+  research:'<b>NVDA</b><span class="cur"></span>&nbsp;&nbsp;— a ticker opens research · two or more compares them · “roe &gt; 15” starts a screen',
+  screen:'<b>screen quality-at-a-price</b><span class="cur"></span>&nbsp;&nbsp;— edit any clause inline · “sort gap” orders by screen−quant',
+  compare:'<b>NVDA AMD AVGO</b><span class="cur"></span>&nbsp;&nbsp;— up to five · add a ticker to the line to add a column',
+  portfolio:'<b>port</b><span class="cur"></span>&nbsp;&nbsp;— “port trims” goes straight to the sizing sheet',
+  watch:'<b>wl</b><span class="cur"></span>&nbsp;&nbsp;— “wl ASML buy under 900” adds a name with its note in one line',
+  ic:'<b>ic ASML</b><span class="cur"></span>&nbsp;&nbsp;— reports read back with “ic ASML §6” for a single section',
+  run:'<b>run ic MU</b><span class="cur"></span>&nbsp;&nbsp;— runs queue locally · close the lid, nothing is lost',
+  mobile:'<b>—</b>&nbsp;&nbsp;the phone build of the same system',
+  notes:'<b>—</b>&nbsp;&nbsp;the reasoning, kept short'
+};
+bs.forEach(b=>b.addEventListener('click',()=>{
+  bs.forEach(x=>x.classList.toggle('on',x===b));
+  ps.forEach(p=>p.classList.toggle('on',p.id==='p-'+b.dataset.p));
+  cmdline.innerHTML=cmds[b.dataset.p]||cmds.research;
+  window.scrollTo({top:0});
+}));
+</script>
+</body>
+</html>

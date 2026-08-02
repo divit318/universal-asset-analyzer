@@ -287,3 +287,49 @@ export const DEFAULT_CONSTRAINTS: PortfolioConstraints = {
   requireDividend: false,
   marketCapFilter: "any",
 };
+
+/* -------------------------------------------------------------------------- */
+/* A NEW position the user does not hold yet                                  */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * Lives here for the same reason the objective and constraints above do: it is
+ * the shape of an IDEA ranked against the portfolio, which is the IOS's job.
+ * It previously sat in lib/portfolio-analytics.ts next to the deleted report
+ * builder (see the note above), which is why it arrived here rather than being
+ * restored there.
+ *
+ * Distinct from `PortfolioFitAnalysis`, which scores an asset the user has
+ * ALREADY named. This is the output of asking "what should I look at that I
+ * don't own", so it carries the sourcing provenance — `fromWatchlist` and
+ * `autoQualified` — that a fit score has no reason to.
+ */
+export interface NewPositionRecommendation {
+  symbol: string;
+  name: string;
+  currentPrice: number | null;
+  marketCap: string | null;
+  sector: string;
+  reason: string;
+  weaknessAddressed: string;
+  expectedImpact: {
+    diversification: "improves" | "neutral" | "reduces";
+    risk: "reduces" | "neutral" | "increases";
+    growthPotential: "high" | "medium" | "low";
+    incomePotential: "high" | "medium" | "low";
+  };
+  suggestedAllocationPct: number;
+  suggestedDollarAmount: number;
+  confidenceScore: number;
+  breakdown: {
+    portfolioFitScore: number;
+    fundamentalScore: number;
+    technicalScore: number;
+    valuationScore: number;
+    momentumScore: number;
+  };
+  supportingFactors: string[];
+  fromWatchlist: boolean;
+  /** Watchlist Intelligence auto-promotion: crossed the "new opportunity" threshold before the AI was even asked. */
+  autoQualified: boolean;
+}
