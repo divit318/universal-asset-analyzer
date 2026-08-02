@@ -1045,3 +1045,23 @@ body::before {
   }
   .uaa-card:hover { transform: none; }
 }
+
+/* ── IC Report: light-mode WCAG AA overrides (scoped) ─────────────────────
+   The global light-theme accent tokens land below 4.5:1 for normal text
+   (positive 3.3, warning 3.0, brand 4.1). Scoped to the IC Report so other
+   tabs keep their tuned palette; values are the same hues one step darker. */
+[data-theme="light"] .ic-report-scope {
+  /* Override the resolved --color-* aliases: Tailwind's @theme resolves
+     var(--positive) at :root, so descendants inherit the substituted value
+     and re-declaring the base token alone would not cascade. */
+  --positive: #15803d;
+  --negative: #b91c1c;
+  --warning: #a16207;
+  --brand: #0369a1;
+  --brand-strong: #075985;
+  --color-positive: #15803d; /* 4.5:1 on white */
+  --color-negative: #b91c1c; /* 5.9:1 */
+  --color-warning: #a16207;  /* 4.6:1 */
+  --color-brand: #0369a1;    /* 5.0:1 */
+  --color-brand-strong: #075985;
+}

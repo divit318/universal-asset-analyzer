@@ -103,14 +103,14 @@ export function validateDcfInputs(inputs: DcfInputs, spot: number | null): Invar
   if (!(terminalGrowth < wacc - BANDS.terminalGap)) {
     v.push({
       invariant: "terminal growth < WACC",
-      detail: `terminal growth ${(terminalGrowth * 100).toFixed(1)}% is not at least ${(BANDS.terminalGap * 100).toFixed(1)}pp below WACC ${(wacc * 100).toFixed(1)}% — perpetuity value is undefined or explosive`,
+      detail: `terminal growth ${(terminalGrowth * 100).toFixed(1)}% is not at least ${(BANDS.terminalGap * 100).toFixed(1)}pp below WACC ${(wacc * 100).toFixed(1)}%: perpetuity value is undefined or explosive`,
       severity: "blocking",
     });
   }
   if (terminalGrowth > BANDS.terminalGrowthMax || terminalGrowth < BANDS.terminalGrowthMin) {
     v.push({
       invariant: "terminal growth ceiling",
-      detail: `terminal growth ${(terminalGrowth * 100).toFixed(1)}% outside [${BANDS.terminalGrowthMin * 100}%, ${BANDS.terminalGrowthMax * 100}%] — no business outgrows the economy forever`,
+      detail: `terminal growth ${(terminalGrowth * 100).toFixed(1)}% outside [${BANDS.terminalGrowthMin * 100}%, ${BANDS.terminalGrowthMax * 100}%]: no business outgrows the economy forever`,
       severity: "blocking",
     });
   }
@@ -165,7 +165,7 @@ export function validateDcfInputs(inputs: DcfInputs, spot: number | null): Invar
   if (inputs.baseFcf <= 0) {
     v.push({
       invariant: "positive base cash flow",
-      detail: "base FCF is zero or negative — a growth-and-fade DCF on today's FCF is not meaningful; use the loss-maker path (reverse DCF on required future FCF, or relative methods)",
+      detail: "base FCF is zero or negative: a growth-and-fade DCF on today's FCF is not meaningful; use the loss-maker path (reverse DCF on required future FCF, or relative methods)",
       severity: "blocking",
     });
   }
@@ -345,13 +345,13 @@ export function runScenarios(
       if (ratio > BANDS.spotSanityMultiple) {
         violations.push({
           invariant: "scenario within sane multiple of spot",
-          detail: `${s.label} value ${s.result.perShare.toFixed(2)} is ${ratio.toFixed(1)}x spot — above ${BANDS.spotSanityMultiple}x; this is a validation failure, not a result`,
+          detail: `${s.label} value ${s.result.perShare.toFixed(2)} is ${ratio.toFixed(1)}x spot: above ${BANDS.spotSanityMultiple}x; this is a validation failure, not a result`,
           severity: "blocking",
         });
       } else if (ratio < 1 / BANDS.spotSanityMultiple) {
         violations.push({
           invariant: "scenario far below spot",
-          detail: `${s.label} value ${s.result.perShare.toFixed(2)} is ${(ratio * 100).toFixed(0)}% of spot — either the market prices growth outside the defensible band (see reverse DCF) or an input is wrong`,
+          detail: `${s.label} value ${s.result.perShare.toFixed(2)} is ${(ratio * 100).toFixed(0)}% of spot: either the market prices growth outside the defensible band (see reverse DCF) or an input is wrong`,
           severity: "warning",
         });
       }
@@ -361,7 +361,7 @@ export function runScenarios(
     if (s.result.terminalShare > BANDS.terminalShareWarn) {
       violations.push({
         invariant: "terminal value share",
-        detail: `${s.label}: terminal value carries ${(s.result.terminalShare * 100).toFixed(0)}% of EV (> ${(BANDS.terminalShareWarn * 100).toFixed(0)}%) — the answer is mostly assumption`,
+        detail: `${s.label}: terminal value carries ${(s.result.terminalShare * 100).toFixed(0)}% of EV (> ${(BANDS.terminalShareWarn * 100).toFixed(0)}%): the answer is mostly assumption`,
         severity: "warning",
       });
     }

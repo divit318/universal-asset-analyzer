@@ -14,6 +14,7 @@ import {
   relativeChange,
   currencySymbol,
   NOT_AVAILABLE,
+  ordinal,
 } from "@/lib/ic/format";
 
 describe("ic/format money", () => {
@@ -111,5 +112,13 @@ describe("ic/format numbers", () => {
   it("groups per locale", () => {
     expect(fmtNumber(1234567, { currency: "INR", digits: 0 })).toBe("12,34,567");
     expect(fmtNumber(1234567, { currency: "USD", digits: 0 })).toBe("1,234,567");
+  });
+});
+
+describe("ordinal", () => {
+  it("handles English ordinal suffixes including the teens", () => {
+    expect((["1st","2nd","3rd","4th","11th","12th","13th","21st","92nd","33rd","100th","101st"])).toEqual(
+      [1,2,3,4,11,12,13,21,92,33,100,101].map((n) => ordinal(n)),
+    );
   });
 });

@@ -251,7 +251,7 @@ export default function ICReportPage() {
   };
 
   return (
-    <PageShell py="py-10">
+    <PageShell py="py-10" width="wide" className="ic-report-scope">
       {/* Header */}
       <Reveal index={0} as="header" className="flex flex-col gap-1.5">
         <div className="flex items-center gap-2">
@@ -295,7 +295,7 @@ export default function ICReportPage() {
             Generate report
           </button>
         )}
-        <span className="text-label text-muted/70">Shortcuts: G generate · E export PDF · 1–6 tabs</span>
+        <span className="text-label text-muted">Shortcuts: G generate · E export PDF · 1–6 tabs</span>
       </Reveal>
 
       {state.error && (
@@ -455,7 +455,7 @@ export default function ICReportPage() {
                 {AGENT_COUNT} agents investigate the company: business model, industry, competition, management, capital allocation, accounting, valuation, governance, and risk. A deterministic engine computes every valuation figure.
               </p>
             </div>
-            <p className="text-xs text-muted/60">Sections render as they complete; a full run takes 3 to 15 minutes on a local model.</p>
+            <p className="text-xs text-muted">Sections render as they complete; a full run takes 3 to 15 minutes on a local model.</p>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

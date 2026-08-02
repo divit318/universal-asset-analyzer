@@ -39,6 +39,20 @@ export const AGENT_DOMAINS: AgentDomain[] = [
 /** One constant, one source, every surface (Phase 3.1). */
 export const AGENT_COUNT = AGENT_DOMAINS.length;
 
+/** Display labels for agent domains — the single source for every surface
+ * (UI, exports, prompts). Domain keys are identifiers, not labels. */
+export const AGENT_LABELS: Record<AgentDomain, string> = {
+  business: "Business Analyst",
+  industry: "Industry Analyst",
+  competition: "Competitive Intelligence Analyst",
+  management: "Management Quality Analyst",
+  capitalAllocation: "Capital Allocation Analyst",
+  accounting: "Forensic Accounting Analyst",
+  valuation: "Valuation Analyst",
+  governance: "Governance & Ownership Analyst",
+  risk: "Risk Analyst",
+};
+
 /** Questions handed to a single agent are capped to keep prompts bounded. */
 export const MAX_QUESTIONS_PER_AGENT = 6;
 

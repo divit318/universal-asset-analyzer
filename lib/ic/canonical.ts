@@ -184,7 +184,7 @@ export function buildCanonicalFacts(input: CanonicalInput): CanonicalFacts {
     : null;
   if (currencyMismatch && fx == null) {
     validationIssues.push(
-      `Financial statements are reported in ${financialCurrency} while the listing trades in ${currency}, and no FX rate was available — cash-flow and balance-sheet figures are excluded rather than mixed across currencies.`,
+      `Financial statements are reported in ${financialCurrency} while the listing trades in ${currency}, and no FX rate was available: cash-flow and balance-sheet figures are excluded rather than mixed across currencies.`,
     );
   }
 
@@ -232,10 +232,10 @@ export function buildCanonicalFacts(input: CanonicalInput): CanonicalFacts {
 
   const enterpriseValue = marketCap
     ? derived("enterpriseValue", marketCap.value + (netDebt?.value ?? 0), "currency", "spot",
-        netDebt ? "marketCap + netDebt" : "marketCap (net debt unavailable, assumed 0 — see gaps)")
+        netDebt ? "marketCap + netDebt" : "marketCap (net debt unavailable, assumed 0: see gaps)")
     : null;
   if (marketCap && !netDebt) {
-    validationIssues.push("Enterprise value computed without net debt (debt/cash unavailable) — treat EV-based multiples as approximate.");
+    validationIssues.push("Enterprise value computed without net debt (debt/cash unavailable): treat EV-based multiples as approximate.");
   }
 
   /* Cash flow / earnings power — one value per concept, variants named. */
@@ -267,11 +267,11 @@ export function buildCanonicalFacts(input: CanonicalInput): CanonicalFacts {
     };
     if (provider === "sec-edgar" && currency !== "USD") {
       validationIssues.push(
-        `Statement series is in USD (SEC EDGAR) while the stock trades in ${currency} — do not mix the two without conversion.`,
+        `Statement series is in USD (SEC EDGAR) while the stock trades in ${currency}: do not mix the two without conversion.`,
       );
     }
   } else if (market === "IN") {
-    gaps.push({ concept: "annual statements", reason: "SEC EDGAR covers US filers only; Indian filings are not integrated — annual trends come from screener.in where available" });
+    gaps.push({ concept: "annual statements", reason: "SEC EDGAR covers US filers only; Indian filings are not integrated: annual trends come from screener.in where available" });
   } else {
     gaps.push({ concept: "annual statements", reason: "no annual statement data from SEC EDGAR or Yahoo" });
   }
@@ -294,7 +294,7 @@ export function buildCanonicalFacts(input: CanonicalInput): CanonicalFacts {
     const drift = Math.abs(implied - marketCap.value) / marketCap.value;
     if (drift > 0.05) {
       validationIssues.push(
-        `Market cap (${marketCap.value.toExponential(2)}) disagrees with spot × shares (${implied.toExponential(2)}) by ${(drift * 100).toFixed(0)}% — share count may be stale.`,
+        `Market cap (${marketCap.value.toExponential(2)}) disagrees with spot × shares (${implied.toExponential(2)}) by ${(drift * 100).toFixed(0)}%: share count may be stale.`,
       );
     }
   }
@@ -378,7 +378,7 @@ export function validateStatements(st: FinancialStatements): string[] {
       const e0 = series[i - 1].end;
       const e1 = series[i].end;
       if (e0 && e1 && new Date(e1) <= new Date(e0)) {
-        issues.push(`${name}: FY${series[i].fy} period end (${e1}) is not after FY${series[i - 1].fy} (${e0}) — fiscal labels and period dates disagree`);
+        issues.push(`${name}: FY${series[i].fy} period end (${e1}) is not after FY${series[i - 1].fy} (${e0}): fiscal labels and period dates disagree`);
       }
     }
     for (const p of series) {
@@ -389,7 +389,7 @@ export function validateStatements(st: FinancialStatements): string[] {
     // A pre-revenue company can post a −7,000% margin legitimately; only a
     // value that looks like a currency amount indicates a field collision.
     if (Math.abs(p.value) > 1e6) {
-      issues.push(`operatingMargin FY${p.fy} = ${p.value} — not a plausible margin fraction; a raw currency figure may have landed in a ratio field`);
+      issues.push(`operatingMargin FY${p.fy} = ${p.value}: not a plausible margin fraction; a raw currency figure may have landed in a ratio field`);
     }
   }
   /* Revenue-in-FCF collision check (Phase 1.3): identical value in the same FY
@@ -402,7 +402,7 @@ export function validateStatements(st: FinancialStatements): string[] {
     if (rev != null && rev !== 0 && p.value === rev) collisions++;
   }
   if (collisions >= 2) {
-    issues.push(`freeCashFlow equals revenue in ${collisions} fiscal years — field mapping collision at ingest`);
+    issues.push(`freeCashFlow equals revenue in ${collisions} fiscal years: field mapping collision at ingest`);
   }
   return issues;
 }

@@ -7,6 +7,7 @@
  * statement, never as silence or zero. Exactly one disclaimer, at the end.
  */
 
+import { AGENT_LABELS } from "../ic-questions";
 import type { ICReport } from "../ic-report";
 import type { CanonicalFacts, Datum } from "./canonical";
 import type { MethodEntry } from "./valuation-suite";
@@ -21,6 +22,7 @@ import {
   fmtDateTime,
   fmtFiscalPeriod,
   NOT_AVAILABLE,
+  ordinal,
 } from "./format";
 
 /** UTC date (YYYY-MM-DD) of the generation timestamp — the single derivation
@@ -183,7 +185,7 @@ export function reportToMarkdown(report: ICReport): string {
   if (report.questions.length === 0) push(`${NOT_AVAILABLE}: no questions were generated.`, "");
   else {
     for (const q of report.questions) {
-      push(`- **[${q.kind}]** ${q.question} (priority: ${q.priority}; agents: ${q.assignedAgents.join(", ")}${q.sourceSignals.length > 0 ? `; from signals: ${q.sourceSignals.join(", ")}` : ""})`);
+      push(`- **[${q.kind}]** ${q.question} (priority: ${q.priority}; agents: ${q.assignedAgents.map((a) => AGENT_LABELS[a]).join(", ")}${q.sourceSignals.length > 0 ? `; from signals: ${q.sourceSignals.join(", ")}` : ""})`);
     }
     push("");
   }
@@ -385,7 +387,7 @@ export function reportToMarkdown(report: ICReport): string {
       "",
     );
     if (h.verdict) {
-      push(`**Verdict (${h.verdict.windowYears}y window):** ${h.verdict.signal.replace("_", " ")} at the ${h.verdict.percentile}th percentile of its own rolling history (CAGR ${fmtPercent(h.verdict.cagr, { signed: true })} vs median ${fmtPercent(h.verdict.medianCagr, { signed: true })}, ${h.verdict.observations} observations).`, "");
+      push(`**Verdict (${h.verdict.windowYears}y window):** ${h.verdict.signal.replace("_", " ")} at the ${ordinal(h.verdict.percentile)} percentile of its own rolling history (CAGR ${fmtPercent(h.verdict.cagr, { signed: true })} vs median ${fmtPercent(h.verdict.medianCagr, { signed: true })}, ${h.verdict.observations} observations).`, "");
     } else push(`Verdict: ${NOT_AVAILABLE} (no window has enough rolling observations).`, "");
     if (h.sinceListing) push(`Since listing: ${fmtPercent(h.sinceListing.totalReturn, { signed: true })} total return over ${h.sinceListing.years} years.`, "");
   }

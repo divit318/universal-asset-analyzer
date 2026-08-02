@@ -74,13 +74,13 @@ export function methodApplicability(profile: CompanyProfile): MethodApplicabilit
     reason: profile.isFinancial
       ? "free-cash-flow DCF is not meaningful for a financial institution (cash flow is working capital); P/E and P/B carry the weight instead"
       : !profile.hasPositiveFcf
-        ? "base FCF is zero or negative — a growth-and-fade DCF has nothing to compound; see reverse DCF and relative methods"
+        ? "base FCF is zero or negative: a growth-and-fade DCF has nothing to compound; see reverse DCF and relative methods"
         : null,
   });
   out.push({
     kind: "pe",
     applicable: profile.hasPositiveEarnings,
-    reason: profile.hasPositiveEarnings ? null : "earnings are negative — a P/E target would be meaningless",
+    reason: profile.hasPositiveEarnings ? null : "earnings are negative: a P/E target would be meaningless",
   });
   out.push({
     kind: "ev_ebitda",
@@ -102,7 +102,7 @@ export function methodApplicability(profile: CompanyProfile): MethodApplicabilit
     kind: "p_b",
     applicable: profile.hasPositiveBook && (profile.isFinancial || profile.isReit),
     reason: !profile.hasPositiveBook
-      ? "book equity is negative — P/B is meaningless"
+      ? "book equity is negative: P/B is meaningless"
       : profile.isFinancial || profile.isReit
         ? null
         : "P/B is only used where book value drives economics (financials, REITs)",
@@ -272,7 +272,7 @@ export function assembleValuationSuite(ctx: SuiteContext): ValuationSuiteResult 
         notApplicableReason: multiple == null
           ? "no defensible multiple available"
           : metric != null && metric.value <= 0
-            ? `${metric.label} is zero or negative — a positive multiple on a negative metric is meaningless`
+            ? `${metric.label} is zero or negative: a positive multiple on a negative metric is meaningless`
             : "required metric unavailable",
         perShare: null, vsSpot: null, assumptions: "input unavailable", workings: null, confidence: "low", inputSource, role: null,
       });
@@ -311,20 +311,26 @@ export function assembleValuationSuite(ctx: SuiteContext): ValuationSuiteResult 
   const ebitda = facts.ebitdaTtm ? { value: facts.ebitdaTtm.value, label: "EBITDA (TTM)" } : null;
   const fcf = facts.freeCashFlowTtm ? { value: facts.freeCashFlowTtm.value, label: "FCF (TTM)" } : null;
 
+  // Rationale must describe who actually chose the input: a model-proposed
+  // multiple that arrived without a justification says so, instead of
+  // borrowing the default's description.
+  const rationaleFor = (field: { source: "model" | "default"; justification?: string }, defaultText: string): string =>
+    field.justification ?? (field.source === "model" ? "model-proposed multiple (no justification supplied)" : defaultText);
+
   addMethod("pe", proposal.peMultiple.value, proposal.peMultiple.source, epsTtm, {
     confidence: "medium",
-    rationale: proposal.peMultiple.justification ?? "own forward multiple held (default)",
+    rationale: rationaleFor(proposal.peMultiple, "own forward multiple held (default)"),
     role: proposal.peMultiple.source === "model" ? "estimate" : "anchor",
   });
   addMethod("ev_ebitda", proposal.evEbitdaMultiple.value, proposal.evEbitdaMultiple.source, ebitda, {
     netDebt: facts.netDebt?.value ?? 0,
     confidence: facts.netDebt ? "medium" : "low",
-    rationale: proposal.evEbitdaMultiple.justification ?? "current EV/EBITDA held (default)",
+    rationale: rationaleFor(proposal.evEbitdaMultiple, "current EV/EBITDA held (default)"),
     role: proposal.evEbitdaMultiple.source === "model" ? "estimate" : "anchor",
   });
   addMethod("fcf_yield", proposal.fcfRequiredYield.value, proposal.fcfRequiredYield.source, fcf, {
     confidence: "medium",
-    rationale: proposal.fcfRequiredYield.justification ?? "4% required equity FCF yield (default)",
+    rationale: rationaleFor(proposal.fcfRequiredYield, "4% required equity FCF yield (default)"),
     role: "estimate", // a required yield is an independent view even when defaulted
   });
   addMethod("p_b", facts.priceToBook?.value != null ? facts.priceToBook.value : null, "default", bvps, {
@@ -360,7 +366,7 @@ export function assembleValuationSuite(ctx: SuiteContext): ValuationSuiteResult 
       label: "Analyst consensus",
       applicable: false,
       notApplicableReason: analyst && (analyst.numberOfOpinions ?? 0) > 0
-        ? "fewer than 3 analyst targets — too thin to treat as an estimate"
+        ? "fewer than 3 analyst targets: too thin to treat as an estimate"
         : "no analyst coverage reported for this name",
       perShare: null,
       vsSpot: null,
@@ -419,7 +425,7 @@ export function assembleValuationSuite(ctx: SuiteContext): ValuationSuiteResult 
     wacc: { value: wacc, components: ctx.wacc.components },
     dcf: {
       ran: dcfBase != null,
-      skippedReason: dcfBase == null ? (dcfApp.reason ?? "blocked by input validation — see violations") : null,
+      skippedReason: dcfBase == null ? (dcfApp.reason ?? "blocked by input validation: see violations") : null,
       inputs: dcfInputs,
       base: dcfBase,
       scenarios,

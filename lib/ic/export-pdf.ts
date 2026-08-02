@@ -12,6 +12,7 @@
  *   label, and values are coloured by their numeric sign, not string matching.
  */
 
+import { AGENT_LABELS } from "../ic-questions";
 import PDFDocument from "pdfkit";
 import path from "node:path";
 import type { ICReport } from "../ic-report";
@@ -27,6 +28,7 @@ import {
   fmtDateTime,
   fmtFiscalPeriod,
   NOT_AVAILABLE,
+  ordinal,
 } from "./format";
 import { reportUtcDate } from "./export-markdown";
 
@@ -368,7 +370,7 @@ export async function reportToPdf(report: ICReport): Promise<Buffer> {
     doc.font(FONT).fontSize(8.5).fillColor(INK).text(q.question, M + cw + 6, y, { width: W - cw - 6, lineGap: 2 });
     doc.x = M;
     doc.moveDown(0.15);
-    w.para(`Priority: ${q.priority}  ·  Agents: ${q.assignedAgents.join(", ")}${q.sourceSignals.length > 0 ? `  ·  From signals: ${q.sourceSignals.join(", ")}` : ""}`, { size: 7, color: MUTED, indent: 6 });
+    w.para(`Priority: ${q.priority}  ·  Agents: ${q.assignedAgents.map((a) => AGENT_LABELS[a]).join(", ")}${q.sourceSignals.length > 0 ? `  ·  From signals: ${q.sourceSignals.join(", ")}` : ""}`, { size: 7, color: MUTED, indent: 6 });
   }
 
   /* ── Agent findings ── */
@@ -615,7 +617,7 @@ export async function reportToPdf(report: ICReport): Promise<Buffer> {
       ]),
     );
     if (h.verdict) {
-      w.para(`Verdict (${h.verdict.windowYears}y window): ${h.verdict.signal.replace("_", " ")} at the ${h.verdict.percentile}th percentile of its own rolling history (CAGR ${fmtPercent(h.verdict.cagr, { signed: true })} vs median ${fmtPercent(h.verdict.medianCagr, { signed: true })}, ${h.verdict.observations} observations).`, { font: BOLD });
+      w.para(`Verdict (${h.verdict.windowYears}y window): ${h.verdict.signal.replace("_", " ")} at the ${ordinal(h.verdict.percentile)} percentile of its own rolling history (CAGR ${fmtPercent(h.verdict.cagr, { signed: true })} vs median ${fmtPercent(h.verdict.medianCagr, { signed: true })}, ${h.verdict.observations} observations).`, { font: BOLD });
     } else w.para(`Verdict: ${NOT_AVAILABLE} (no window has enough rolling observations).`, { color: MUTED });
     if (h.sinceListing) w.para(`Since listing: ${fmtPercent(h.sinceListing.totalReturn, { signed: true })} total return over ${h.sinceListing.years} years.`);
   }

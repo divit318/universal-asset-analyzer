@@ -87,7 +87,7 @@ export function ThesisTab({
           <h3 className="mb-2 text-sm font-semibold">Cross-agent synthesis</h3>
           <p className="text-sm leading-6 text-muted">{synthesis.crossAgentSummary}</p>
           {synthesis.duplicatesRemoved > 0 && (
-            <p className="mt-2 text-label text-muted/70">
+            <p className="mt-2 text-label text-muted">
               {synthesis.duplicatesRemoved} repeated insight{synthesis.duplicatesRemoved === 1 ? "" : "s"} across agents folded into single attributed findings.
             </p>
           )}

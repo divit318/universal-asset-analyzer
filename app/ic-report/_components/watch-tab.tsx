@@ -53,7 +53,7 @@ export function WatchTab({
                     {m.kind === "signal" ? "from a fired signal" : "thesis driver"}
                   </span>
                   {m.trigger && <span>Next step: {m.trigger}. </span>}
-                  <span className="text-muted/70">Source: {m.source}</span>
+                  <span className="text-muted">Source: {m.source}</span>
                 </p>
               </div>
             </li>

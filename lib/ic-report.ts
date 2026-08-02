@@ -27,6 +27,7 @@ import {
 } from "./ic-valuation";
 import { VALUATION_INPUT_PROMPT_VERSION } from "./ic/valuation-inputs";
 import { computeHistoryStats, type HistoryStats } from "./ic/history-stats";
+import { ordinal } from "./ic/format";
 import { summarizeCase, type ValuationCase } from "./valuation/case";
 import { pickModel } from "./ai/router";
 import { getHistory } from "./yahoo";
@@ -176,7 +177,7 @@ export async function generateICReport(
   const historyStats = computeHistoryStats(await historyPromise);
   if (historyStats?.verdict) {
     const v = historyStats.verdict;
-    emit("valuation", `Run hot/cold (${v.windowYears}y window): ${v.signal.replace("_", " ")} at the ${v.percentile}th percentile of its own rolling history`, { historyStats });
+    emit("valuation", `Run hot/cold (${v.windowYears}y window): ${v.signal.replace("_", " ")} at the ${ordinal(v.percentile)} percentile of its own rolling history`, { historyStats });
   }
 
   /* Stage 4: Agent network */

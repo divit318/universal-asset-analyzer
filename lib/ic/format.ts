@@ -194,6 +194,14 @@ export function fmtFiscalPeriod(p: FiscalPeriodRef): string {
   return `FY${p.fy}`;
 }
 
+/** English ordinal: 92 → "92nd", 33 → "33rd", 11 → "11th". */
+export function ordinal(n: number): string {
+  const abs = Math.abs(Math.round(n));
+  const mod100 = abs % 100;
+  const suffix = mod100 >= 11 && mod100 <= 13 ? "th" : ["th", "st", "nd", "rd"][abs % 10] ?? "th";
+  return `${Math.round(n)}${suffix}`;
+}
+
 /* ── Explicit not-available rendering (Phase 1.7) ───────────────────────── */
 
 /** Render a missing value with its reason, never as zero or silence. */

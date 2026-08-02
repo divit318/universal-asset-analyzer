@@ -10,7 +10,7 @@
  */
 
 import type { SignalCheck } from "@/lib/ic-signals";
-import type { InvestigativeQuestion } from "@/lib/ic-questions";
+import { AGENT_LABELS, type InvestigativeQuestion } from "@/lib/ic-questions";
 import { Card, SeverityChip, EmptyState } from "./shared";
 
 export function SignalsTab({
@@ -66,7 +66,7 @@ export function SignalsTab({
                       <div>
                         <dt className="inline font-medium">Investigated by: </dt>
                         <dd className="inline">
-                          {[...new Set(qs.flatMap((q) => q.assignedAgents))].join(", ")} ({qs.length} question{qs.length === 1 ? "" : "s"})
+                          {[...new Set(qs.flatMap((q) => q.assignedAgents))].map((a) => AGENT_LABELS[a]).join(", ")} ({qs.length} question{qs.length === 1 ? "" : "s"})
                         </dd>
                       </div>
                     )}
@@ -129,7 +129,7 @@ export function SignalsTab({
                 </div>
                 <div className="min-w-0">
                   <p className="text-muted">{q.question}</p>
-                  <p className="mt-1 text-label text-muted/70">→ {q.assignedAgents.join(", ")}</p>
+                  <p className="mt-1 text-label text-muted">→ {q.assignedAgents.map((a) => AGENT_LABELS[a]).join(", ")}</p>
                 </div>
               </div>
             ))}

@@ -20,7 +20,7 @@ import { runPrompt } from "./ai";
 import { taskForAgentDomain } from "./ai/task-registry";
 import { extractJsonObject } from "./json-extract";
 import { verifyGrounding, collectClaimText, type GroundingReport } from "./ai/grounding";
-import { MAX_QUESTIONS_PER_AGENT, type InvestigativeQuestion, type AgentDomain } from "./ic-questions";
+import { MAX_QUESTIONS_PER_AGENT, AGENT_LABELS, type InvestigativeQuestion, type AgentDomain } from "./ic-questions";
 import type { ScreenerInCompany } from "./screener-in";
 import type { DetectedSignal } from "./ic-signals";
 import type { CanonicalFacts } from "./ic/canonical";
@@ -117,7 +117,7 @@ function insiderLines(f: CanonicalFacts): string[] {
   if (!ins || ins.transactions.length === 0) return ["Insider transactions: none reported for this name."];
   return [
     `Insider activity: ${ins.buyCount} buys, ${ins.sellCount} sells, net ${fmtMoneyCompact(ins.netValue, f.currency)}`,
-    `Recent transactions (as filed): ${ins.transactions.slice(0, 3).map((t) => `${t.name} — ${t.type}${t.shares ? `, ${Math.round(t.shares / 1000)}K shares` : ""}`).join("; ")}`,
+    `Recent transactions (as filed): ${ins.transactions.slice(0, 3).map((t) => `${t.name}: ${t.type}${t.shares ? `, ${Math.round(t.shares / 1000)}K shares` : ""}`).join("; ")}`,
   ];
 }
 
@@ -207,51 +207,51 @@ export function buildDataContext(ctx: AgentContext, domain: AgentDomain): string
 
 export const AGENT_CONFIG: Record<AgentDomain, { label: string; persona: string; notYours: string }> = {
   business: {
-    label: "Business Analyst",
+    label: AGENT_LABELS.business,
     persona: "You analyse how this company makes money: unit economics, revenue drivers, pricing power, and what the margin structure says about the business model's durability.",
-    notYours: "Do not discuss valuation multiples, industry lifecycle, or management quality — other agents own those.",
+    notYours: "Do not discuss valuation multiples, industry lifecycle, or management quality: other agents own those.",
   },
   industry: {
-    label: "Industry Analyst",
+    label: AGENT_LABELS.industry,
     persona: "You analyse the industry, not the company: sector growth rate, lifecycle stage, regulatory environment, technology disruption, and whether industry tailwinds or headwinds dominate the next 3-5 years.",
-    notYours: "Do not restate company-level margins or valuation — assess only the environment the company operates in.",
+    notYours: "Do not restate company-level margins or valuation: assess only the environment the company operates in.",
   },
   competition: {
-    label: "Competitive Intelligence Analyst",
+    label: AGENT_LABELS.competition,
     persona: "You benchmark this company against its competitors: relative margin position, share trends visible in the data, moat type and durability, and threat from entrants and substitutes.",
-    notYours: "Do not evaluate industry attractiveness in the abstract or the company's own business model — compare, always against named or implied peers.",
+    notYours: "Do not evaluate industry attractiveness in the abstract or the company's own business model: compare, always against named or implied peers.",
   },
   management: {
-    label: "Management Quality Analyst",
+    label: AGENT_LABELS.management,
     persona: "You assess the delivery record: EPS surprises vs consensus as evidence of guidance credibility, estimate revision direction, and what insider transactions say about conviction. Use role-level language for individuals; make no claims about a named person beyond the transactions listed in your data.",
-    notYours: "Do not analyse capital allocation returns or governance structure — separate agents own those.",
+    notYours: "Do not analyse capital allocation returns or governance structure: separate agents own those.",
   },
   capitalAllocation: {
-    label: "Capital Allocation Analyst",
+    label: AGENT_LABELS.capitalAllocation,
     persona: "You judge where the cash went: FCF generation vs debt change, evidence of reinvestment intensity, and whether the balance-sheet trajectory shows discipline or drift.",
-    notYours: "Do not evaluate management's guidance record or the business model — judge only the capital decisions visible in the numbers.",
+    notYours: "Do not evaluate management's guidance record or the business model: judge only the capital decisions visible in the numbers.",
   },
   accounting: {
-    label: "Forensic Accounting Analyst",
+    label: AGENT_LABELS.accounting,
     persona: "You test earnings quality: does profit convert to cash (net income vs FCF, year by year), are margins and working-capital trends internally consistent, and where could the reported numbers flatter reality?",
-    notYours: "Do not opine on valuation or strategy — confine yourself to the integrity of the reported numbers.",
+    notYours: "Do not opine on valuation or strategy: confine yourself to the integrity of the reported numbers.",
   },
   valuation: {
     // Deliberately a critic, not a producer: the deterministic engine owns all
     // computed values; the user's ValuationCase owns the persisted estimate.
-    label: "Valuation Analyst",
+    label: AGENT_LABELS.valuation,
     persona: "You review the valuation evidence handed to you. Do NOT produce your own fair value, price target or upside. State where the case's or engine's assumptions are supported by the data and where they are not, name the single weakest assumption and what evidence would change it, and flag any internal inconsistency (growth without reinvestment, terminal value dominance, discount rate ignoring leverage).",
-    notYours: "Do not emit any price target, fair value, or upside percentage — the deterministic engine computes every number.",
+    notYours: "Do not emit any price target, fair value, or upside percentage: the deterministic engine computes every number.",
   },
   governance: {
-    label: "Governance & Ownership Analyst",
+    label: AGENT_LABELS.governance,
     persona: "You analyse who owns and controls the company: ownership concentration and its quarterly direction, promoter/insider behaviour as filed, and minority shareholder protection. Use role-level language; no claims about named individuals beyond the filed records provided.",
-    notYours: "Do not assess management skill or capital allocation — only structure, ownership and conduct.",
+    notYours: "Do not assess management skill or capital allocation: only structure, ownership and conduct.",
   },
   risk: {
-    label: "Risk Analyst",
+    label: AGENT_LABELS.risk,
     persona: "You identify and SIZE the risks that could cause permanent capital loss: leverage, valuation air pockets, concentration, macro and regulatory exposure. Rank them; a risk list without ranking is noise.",
-    notYours: "Do not re-litigate the bull case or business quality — assume the other agents' work and stress it.",
+    notYours: "Do not re-litigate the bull case or business quality: assume the other agents' work and stress it.",
   },
 };
 
@@ -289,8 +289,8 @@ ${questionList}
 IMPORTANT: Reply with ONLY a raw JSON object. No markdown, no code fences, no explanation before or after. Start your reply with { and end with }.
 
 {
-  "findings": "2-4 paragraphs of integrated findings. Be specific — cite the numbers from DATA. Write for a senior investment committee.",
-  "keyInsights": ["3-5 bullet points — the most important actionable insights, each grounded in a figure from DATA"],
+  "findings": "2-4 paragraphs of integrated findings. Be specific: cite the numbers from DATA. Write for a senior investment committee.",
+  "keyInsights": ["3-5 bullet points: the most important actionable insights, each grounded in a figure from DATA"],
   "confidence": "high|medium|low",
   "dataLimitations": "null or a sentence describing missing data"
 }`;

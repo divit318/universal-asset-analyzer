@@ -66,8 +66,8 @@ export function reconcileWithCase(
     spread,
     divergent,
     explanation: divergent
-      ? `Your valuation case (v${vcase.version}, ${fmtMoney(caseFairValue, c)}) sits ${fmtPercent(spread)} ${direction} this report's blended estimate (${fmtMoney(engineHeadline, c)}). A spread this wide means the two disagree on growth or discount assumptions — compare the case's assumptions against the engine inputs in the valuation tab before trusting either.`
-      : `Your valuation case (v${vcase.version}, ${fmtMoney(caseFairValue, c)}) is ${fmtPercent(spread)} ${direction} this report's blended estimate (${fmtMoney(engineHeadline, c)}) — within the 30% agreement band.`,
+      ? `Your valuation case (v${vcase.version}, ${fmtMoney(caseFairValue, c)}) sits ${fmtPercent(spread)} ${direction} this report's blended estimate (${fmtMoney(engineHeadline, c)}). A spread this wide means the two disagree on growth or discount assumptions: compare the case's assumptions against the engine inputs in the valuation tab before trusting either.`
+      : `Your valuation case (v${vcase.version}, ${fmtMoney(caseFairValue, c)}) is ${fmtPercent(spread)} ${direction} this report's blended estimate (${fmtMoney(engineHeadline, c)}): within the 30% agreement band.`,
   };
 }
 
@@ -105,7 +105,7 @@ export function reconcileWithPrior(
     engineHeadline,
     spread,
     divergent,
-    explanation: `${divergent ? "Divergence: " : ""}this report's blended estimate (${fmtMoney(engineHeadline, c)}) is ${fmtPercent(spread)} ${direction} the quant engine's Monte Carlo median (${fmtMoney(mcP50, c)})${divergent ? " — the systematic prior and this report disagree materially; the difference is in the growth and discount inputs, which are inspectable in the valuation tab" : " — within the 30% agreement band"}.`,
+    explanation: `${divergent ? "Divergence: " : ""}this report's blended estimate (${fmtMoney(engineHeadline, c)}) is ${fmtPercent(spread)} ${direction} the quant engine's Monte Carlo median (${fmtMoney(mcP50, c)})${divergent ? ": the systematic prior and this report disagree materially; the difference is in the growth and discount inputs, which are inspectable in the valuation tab" : ": within the 30% agreement band"}.`,
   };
 }
 

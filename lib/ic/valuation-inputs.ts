@@ -112,7 +112,9 @@ const RULES: Record<string, FieldRule> = {
   exitMultiple: { min: BANDS.exitMultipleMin, max: BANDS.exitMultipleMax, reason: "outside exit multiple band" },
   peMultiple: { min: 2, max: 80, reason: "P/E multiple outside 2–80x" },
   evEbitdaMultiple: { min: 2, max: 50, reason: "EV/EBITDA outside 2–50x" },
-  fcfRequiredYield: { min: 0.02, max: 0.15, reason: "required FCF yield outside 2–15%" },
+  // Above 10% is a distressed-credit yield, not an equity FCF target — a
+  // model that proposes it is reaching for the band edge, not reasoning.
+  fcfRequiredYield: { min: 0.02, max: 0.10, reason: "required FCF yield outside 2–10%" },
   bearGrowthDelta: { min: 0.01, max: 0.25, reason: "bear delta outside 1–25pp" },
   bullGrowthDelta: { min: 0.01, max: 0.25, reason: "bull delta outside 1–25pp" },
 };

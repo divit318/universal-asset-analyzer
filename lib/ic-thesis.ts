@@ -56,7 +56,7 @@ function buildSignalSummary(signals: DetectedSignal[]): string {
  */
 export function buildEstablishedConclusions(v: ValuationSuiteResult): string {
   const c = v.currency;
-  const lines: string[] = ["ESTABLISHED CONCLUSIONS (computed deterministically — do not contradict, do not restate different numbers):"];
+  const lines: string[] = ["ESTABLISHED CONCLUSIONS (computed deterministically: do not contradict, do not restate different numbers):"];
   if (v.spot != null) lines.push(`- Spot price: ${fmtMoney(v.spot, c)}`);
   if (v.headline) {
     lines.push(`- Blended value estimate: ${fmtMoney(v.headline.perShare, c)}${v.headline.vsSpot != null ? ` (${fmtPercent(v.headline.vsSpot, { signed: true })} vs spot)` : ""}`);
@@ -82,7 +82,7 @@ export function buildEstablishedConclusions(v: ValuationSuiteResult): string {
 /** Exported for unit testing — pure, no I/O. */
 export function parseThesis(raw: string): Thesis {
   const parsed = extractJsonObject(raw, {
-    bull: "Thesis formation unavailable — AI response could not be parsed.",
+    bull: "Thesis formation unavailable: AI response could not be parsed.",
     bear: "",
     base: "",
     variantPerception: "",
@@ -101,7 +101,7 @@ export function parseThesis(raw: string): Thesis {
 }
 
 const EMPTY_THESIS: Thesis = {
-  bull: "Thesis formation unavailable — the model did not return a usable response.",
+  bull: "Thesis formation unavailable: the model did not return a usable response.",
   bear: "",
   base: "",
   variantPerception: "",
@@ -125,7 +125,7 @@ export async function formThesis(
   const signalSummary = buildSignalSummary(signals);
   const established = buildEstablishedConclusions(valuation);
   const disagreementBlock = synthesis && synthesis.disagreements.length > 0
-    ? `\nAGENT DISAGREEMENTS (surface these, do not resolve them silently):\n${synthesis.disagreements.map((d) => `- ${d.topic}: ${d.positions.map((p) => `${p.agent} — ${p.position}`).join(" | ")}`).join("\n")}\n`
+    ? `\nAGENT DISAGREEMENTS (surface these, do not resolve them silently):\n${synthesis.disagreements.map((d) => `- ${d.topic}: ${d.positions.map((p) => `${p.agent}: ${p.position}`).join(" | ")}`).join("\n")}\n`
     : "";
 
   const prompt = `You are the head of an investment committee. You have received research from ${agentFindings.length} specialist agents on ${companyName} (${symbol}). Synthesise it into a formal investment thesis.
@@ -145,20 +145,27 @@ Rules:
 
 Reply with ONLY a raw JSON object:
 {
-  "bull": "The bull case in 3-4 sentences — the world in which the bull scenario value is earned. Cite specific metrics and catalysts.",
-  "bear": "The bear case in 3-4 sentences — what goes wrong to produce the bear scenario value.",
-  "base": "The base case — most probable outcome over 12-18 months, consistent with the base scenario value.",
+  "bull": "The bull case in 3-4 sentences: the world in which the bull scenario value is earned. Cite specific metrics and catalysts.",
+  "bear": "The bear case in 3-4 sentences: what goes wrong to produce the bear scenario value.",
+  "base": "The base case: most probable outcome over 12-18 months, consistent with the base scenario value.",
   "variantPerception": "2-3 sentences: what the market appears to be missing or mispricing, grounded in the reverse-DCF gap between implied and delivered growth.",
-  "marketExpectations": "2 sentences: what growth, margin and return assumptions the current price embeds — use the reverse DCF conclusion.",
+  "marketExpectations": "2 sentences: what growth, margin and return assumptions the current price embeds: use the reverse DCF conclusion.",
   "keyCatalysts": ["3-5 specific events or milestones that could close the gap between price and value, with timeframes where possible"],
   "keyRisks": ["3-5 specific risks that could cause permanent capital loss, not just price volatility"],
   "keyDrivers": ["3-5 fundamental metrics investors should monitor most closely going forward"]
 }`;
 
-  try {
-    const raw = await runPrompt("investment-thesis", prompt, { maxTokens: 1500, json: true, model });
-    return parseThesis(raw);
-  } catch {
-    return EMPTY_THESIS;
+  // One retry: a long synthesis can truncate mid-JSON on the first attempt
+  // (observed with qwen3.5:9b at 1500 tokens), and a single failed parse
+  // should not cost the report its thesis.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const raw = await runPrompt("investment-thesis", prompt, { maxTokens: 2000, json: true, model });
+      const parsed = parseThesis(raw);
+      if (parsed.bull && !parsed.bull.startsWith("Thesis formation unavailable")) return parsed;
+    } catch {
+      /* fall through to retry */
+    }
   }
+  return EMPTY_THESIS;
 }

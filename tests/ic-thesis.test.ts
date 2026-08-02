@@ -20,7 +20,7 @@ describe("parseThesis", () => {
 
   it("never throws on total garbage and returns the unavailable-message default", () => {
     const thesis = parseThesis("the model refused to answer");
-    expect(thesis.bull).toBe("Thesis formation unavailable — AI response could not be parsed.");
+    expect(thesis.bull).toBe("Thesis formation unavailable: AI response could not be parsed.");
     expect(thesis.keyCatalysts).toEqual([]);
   });
 });

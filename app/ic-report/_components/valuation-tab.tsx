@@ -14,7 +14,7 @@ import { Fragment, useState } from "react";
 import type { ValuationSuiteResult, CaseReconciliation, PriorReconciliation } from "@/lib/ic-valuation";
 import type { HistoryStats } from "@/lib/ic/history-stats";
 import type { InvariantViolation } from "@/lib/ic/valuation-engine";
-import { fmtMoney, fmtMoneyCompact, fmtPercent, fmtMultiple } from "@/lib/ic/format";
+import { fmtMoney, fmtMoneyCompact, fmtPercent, fmtMultiple, ordinal } from "@/lib/ic/format";
 import { Card, DirectionValue, EmptyState, ConfidenceChip } from "./shared";
 
 export function ValuationTab({
@@ -125,7 +125,7 @@ export function ValuationTab({
                       <p className="text-xs leading-5 text-muted">
                         {m.applicable ? m.assumptions : m.notApplicableReason}
                         {m.workings && (
-                          <span className="mt-0.5 block font-mono text-label text-muted/80">{m.workings}</span>
+                          <span className="mt-0.5 block font-mono text-label text-muted">{m.workings}</span>
                         )}
                       </p>
                     </td>
@@ -139,10 +139,10 @@ export function ValuationTab({
           <div className="mt-3 rounded-lg bg-surface-2 px-3 py-2 text-xs text-muted">
             <span className="font-medium text-foreground">Blend weights: </span>
             {v.blend.components.map((c) => `${c.label} ${(c.weight * 100).toFixed(0)}%`).join(" · ")}
-            {" — "}weights favour the method with inspected assumptions; anchors excluded.
+            {": "}weights favour the method with inspected assumptions; anchors excluded.
           </div>
         )}
-        <p className="mt-2 text-label text-muted/80">
+        <p className="mt-2 text-label text-muted">
           Inputs: {v.modelProposedInputs ? "model-proposed within validation bands" : "history-derived defaults (model proposal unavailable or rejected)"} · WACC {fmtPercent(v.wacc.value)} ({v.wacc.components}) · prompt {v.promptVersion}
         </p>
       </Card>
@@ -439,7 +439,7 @@ function HistoryStatsCard({ stats }: { stats: HistoryStats }) {
               Over the {v.windowYears}-year window: current CAGR{" "}
               <strong className="text-foreground">{fmtPercent(v.cagr, { signed: true })}</strong> vs a rolling median of{" "}
               <strong className="text-foreground">{fmtPercent(v.medianCagr, { signed: true })}</strong>, placing it at the{" "}
-              <strong className="text-foreground">{v.percentile}th percentile</strong> of {v.observations} rolling observations of the same window.
+              <strong className="text-foreground">{ordinal(v.percentile)} percentile</strong> of {v.observations} rolling observations of the same window.
             </p>
           ) : stats.sinceListing ? (
             <p className="text-sm text-muted">
@@ -476,7 +476,7 @@ function HistoryStatsCard({ stats }: { stats: HistoryStats }) {
                 </span>
                 <span className="text-label text-muted">med {w.medianCagr != null ? fmtPercent(w.medianCagr) : "n/a"}</span>
                 <span className={`mt-0.5 text-label font-semibold ${w.signal === "run_hot" ? "text-warning" : w.signal === "run_cold" ? "text-brand" : "text-muted"}`}>
-                  {w.percentile != null ? `${w.percentile}th pct (${w.observations} obs)` : `no distribution (${w.observations} obs)`}
+                  {w.percentile != null ? `${ordinal(w.percentile)} pct (${w.observations} obs)` : `no distribution (${w.observations} obs)`}
                 </span>
               </div>
             ))}

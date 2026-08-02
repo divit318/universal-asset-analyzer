@@ -99,7 +99,7 @@ export function ProgressPanel({
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
-                  <span className={`text-sm font-medium ${isActive ? "text-foreground" : isDone ? "text-muted" : "text-muted/50"}`}>
+                  <span className={`text-sm font-medium ${isActive ? "text-foreground" : isDone ? "text-muted" : "text-muted"}`}>
                     {STAGE_LABELS[s]}
                   </span>
                   {isAgents && agentsSettled > 0 && (
@@ -135,7 +135,7 @@ export function ProgressPanel({
             >
               {events.slice(-30).map((e, i) => (
                 <div key={`${e.at}-${i}`} className="flex gap-2 leading-4">
-                  <span className="shrink-0 font-mono tabular-nums text-muted/60">
+                  <span className="shrink-0 font-mono tabular-nums text-muted">
                     {e.at.slice(11, 19)}
                   </span>
                   <span className="min-w-0">
@@ -149,7 +149,7 @@ export function ProgressPanel({
         )}
 
         {running && (
-          <p className="border-t border-border pt-2 text-label leading-4 text-muted/70">
+          <p className="border-t border-border pt-2 text-label leading-4 text-muted">
             Stop detaches this view only: the run continues on the server and the finished report is saved to history.
           </p>
         )}
