@@ -5,12 +5,14 @@ build in this pass and why.
 
 ## Build next (highest leverage first)
 
-1. ETF overlap and hidden exposure engine. The substrate is now in place
-   (fund holdings composition already fetched for EXPOSED_TO edges). Extend
-   it to top-10 constituent holdings per fund and compute look-through
-   exposure: "you own AAPL directly and again through VOO and VTI; total
-   effective weight 9.2%". This is the single most valuable insight the tab
-   could add and it is a pure aggregation over data Yahoo already returns.
+1. SHIPPED (2026-08-02): the look-through overlap engine
+   (lib/knowledge-graph/overlap.ts). Per-security effective weight =
+   direct + sum(fund book weight x disclosed holding weight), fund/fund
+   overlap pairs, HOLDS edges in the portfolio graph, an inspector section
+   with the floors-not-totals caveat, and a curated cross-listing identity
+   map (2330.TW -> TSM etc.) so international fund disclosures match ADR
+   positions. Remaining extension: per-sector look-through aggregation and
+   a deeper-than-top-10 holdings source.
 2. Contagion / blast radius. "If TSM breaks, what moves?" needs pairwise
    return correlations. lib/portfolio-analytics.ts already computes
    correlation; wire it into edges (CORRELATES_WITH, weight = coefficient,

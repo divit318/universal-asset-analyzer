@@ -61,8 +61,8 @@ export async function getKnowledgeGraph(scope: GraphScope, id: string): Promise<
     }
   }
 
-  const { nodes, edges, meta } = await buildGraph(scope, id);
-  const insights = computeGraphInsights(nodes, edges, ROTATION_WINDOW_LABEL);
+  const { nodes, edges, meta, lookThrough } = await buildGraph(scope, id);
+  const insights = computeGraphInsights(nodes, edges, ROTATION_WINDOW_LABEL, lookThrough);
   const generatedAt = new Date().toISOString();
   const changes = computeChanges(key, { nodes, edges, generatedAt });
   const graph: KnowledgeGraph = { scope, id, nodes, edges, insights, meta, changes, generatedAt };

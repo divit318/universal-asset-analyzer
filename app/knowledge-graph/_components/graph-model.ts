@@ -29,6 +29,7 @@ export const EDGE_VISUAL: Record<EdgeType, { color: string; dash: string | undef
   WATCHES: { color: "var(--chart-5)", dash: "4 3", label: "watches" },
   OPERATES_IN: { color: "var(--chart-1)", dash: undefined, label: "operates in" },
   EXPOSED_TO: { color: "var(--chart-1)", dash: "4 3", label: "exposed to" },
+  HOLDS: { color: "var(--chart-5)", dash: "1 3", label: "holds" },
   IMPACTS: { color: "var(--chart-4)", dash: undefined, label: "impacts" },
   GENERATES: { color: "var(--positive)", dash: "2 3", label: "generates" },
   SUPPORTED_BY: { color: "var(--positive)", dash: undefined, label: "supported by" },

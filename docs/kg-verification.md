@@ -5,6 +5,36 @@ positions, 61 watchlist rows, 1,900+ timeline events). Baseline numbers from
 docs/kg-baseline.md; v2 numbers from `scripts/kg-baseline-audit.mjs` against
 a fresh build (cache cleared).
 
+Measurement setup for the runtime numbers below: v1 = commit d30021a served
+by `next dev` in a throwaway worktree, instrumented with a render counter in
+the GraphCanvas body and a timestamp on the d3 simulation "end" event; v2 =
+the same instrumentation on this branch. Both driven by Playwright in the
+same Chromium instance. Label collisions counted as overlapping bounding
+boxes of rendered `svg text` elements at default zoom after settle.
+
+## Hard numbers summary (remeasured after the hardening pass)
+
+| Metric | v1 (measured) | v2 (measured) |
+|---|---|---|
+| Orphan nodes: symbol:AAPL / SKHY / sector:Tech / portfolio / watchlist | 16 / 10 / 10 / 0 / 0 | 0 / 0 / 0 / 0 / 0 |
+| Duplicate node IDs (all scopes) | 0 | 0 |
+| GraphCanvas re-renders per keystroke (6 keystrokes typed) | 12 renders = 2.0/keystroke | 2 renders = 0.33/keystroke (1 after the 180ms debounce settles) |
+| Time to settled layout: symbol / portfolio / watchlist / sector | 4995 / 4985 / 5355 / 4983 ms | 1848 / 3.5 / 9.6 / 1850 ms (radial layouts are computed, not simulated) |
+| Label collisions at default zoom: symbol / portfolio / watchlist / sector | 0 / 1 / 0 / 1 | 0 / 0 / 0 / 0 (greedy occlusion pass; suppressed labels remain on hover and in the table) |
+| Frame rate, pan / zoom / drag at 55 nodes (1x current max) | not measured on v1 | 60 / 60 / 60 fps |
+| Frame rate at 110 nodes (2x) | n/a | 60 / 60 / 60 fps |
+| Frame rate at 165 nodes (3x) | n/a | 60 / 60 / 60 fps |
+| /knowledge-graph client JS (all route chunks, production build) | 1013 KB raw, 311 KB gzip | 1041 KB raw, 318 KB gzip (delta +28 KB raw, +7 KB gzip, +2.3%) |
+
+Contrast ratios (dark / light), AA threshold 4.5:1 for text under 18px:
+
+| Text | v1 | v2 |
+|---|---|---|
+| Node labels | 15.4:1 (but 10px mono, suppressed for most nodes) | 15.87 / 17.98 PASS |
+| Dimmed-state labels | ~2.9:1 FAIL (0.2 opacity) | 7.17 / 6.37 PASS (muted token, no opacity fade) |
+| Hint text | ~3.4:1 FAIL (muted at 70%) | 7.17 / 6.37 PASS |
+| Legend text | ~4.6:1 marginal | 15.87 / 17.98 PASS (foreground token) |
+
 ## Structural integrity
 
 | Metric | v1 | v2 |
@@ -100,6 +130,21 @@ fetch is platform-cached and deduplicated.
   light theme, 390px viewport, AI narrative end-to-end against local Ollama
   (qwen3.5:4b, citations enforced), multi-path explanation with
   alternatives.
+
+## Look-through overlap engine (added 2026-08-02, measured on the live book)
+
+- TSM: 5.93% direct + 0.61% via VXUS (disclosed as 2330.TW, matched through
+  the cross-listing identity map) = 6.53% effective, the book's largest
+  look-through position.
+- AAPL: 4.87% direct + 0.95% via VOO = 5.82% effective.
+- O: 3.24% direct + 0.10% via VNQ = 3.33% effective.
+- Fund/fund top-10 overlap pairs on this book: none (VOO/VXUS/VNQ/bond
+  funds disclose disjoint top-10s).
+- 10 unit tests on the pure engine (tests/kg-overlap.test.ts), including
+  identity-map matching and the no-guessing rules.
+- Sector scope enriched the same way: sector:Technology went from 9 nodes /
+  10 edges to 18 / 25 by including tracked funds with measured exposure
+  (VOO 39%, VTI 36%, VXUS 23%, VEA 18%, VB 18%, VTV 15%).
 
 ## Mission exit criteria
 

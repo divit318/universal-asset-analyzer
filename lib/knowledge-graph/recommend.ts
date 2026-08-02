@@ -13,7 +13,7 @@
  * v1's correlation clusters byte-identical across scopes.
  */
 
-import type { GraphNode, GraphEdge, GraphInsights, GraphStats } from "./types";
+import type { GraphNode, GraphEdge, GraphInsights, GraphStats, LookThroughResult } from "./types";
 
 /**
  * Portfolio/watchlist sector concentration from classification edges off
@@ -120,8 +120,14 @@ export function computeGraphStats(nodes: GraphNode[], edges: GraphEdge[]): Graph
   };
 }
 
-export function computeGraphInsights(nodes: GraphNode[], edges: GraphEdge[], windowLabel: string): GraphInsights {
+export function computeGraphInsights(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  windowLabel: string,
+  lookThrough: LookThroughResult | null = null,
+): GraphInsights {
   return {
+    lookThrough,
     concentrationRisks: computeConcentration(nodes, edges),
     hiddenOpportunities: computeHiddenOpportunities(nodes, edges),
     emergingRisks: computeEmergingRisks(nodes, edges),

@@ -159,6 +159,51 @@ export function GraphSummaryPanel({
         )}
       </div>
 
+      {insights.lookThrough && insights.lookThrough.exposures.length > 0 && (
+        <div>
+          <SectionLabel>Look-through exposure</SectionLabel>
+          <p className="mt-1 text-[11px] text-muted/90">Positions your book holds more than once, directly and through funds.</p>
+          <ul className="mt-1.5 flex flex-col gap-1.5">
+            {insights.lookThrough.exposures.slice(0, 6).map((e) => {
+              const nodeId = `company:${e.symbol}`;
+              const inGraph = graph.nodes.some((n) => n.id === nodeId);
+              const routeText = [
+                e.directWeight > 0 ? `direct ${(e.directWeight * 100).toFixed(1)}%` : null,
+                ...e.routes.slice(0, 3).map((r) => `${r.via} ${(r.contribution * 100).toFixed(2)}%`),
+                e.routes.length > 3 ? `+${e.routes.length - 3} more` : null,
+              ]
+                .filter(Boolean)
+                .join(" + ");
+              return (
+                <li key={e.symbol}>
+                  <button
+                    type="button"
+                    onClick={() => inGraph && onSelectNode(nodeId)}
+                    className={`w-full rounded-md px-2 py-1 text-left text-xs transition-colors ${inGraph ? "hover:bg-surface-2" : "cursor-default"}`}
+                  >
+                    <span className="font-medium text-foreground">{e.symbol}</span>
+                    <span className="font-mono text-warning"> {(e.effectiveWeight * 100).toFixed(1)}%</span>
+                    <span className="text-muted"> via {e.routeCount} routes</span>
+                    <span className="block truncate text-[11px] text-muted">{routeText}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          {insights.lookThrough.fundOverlaps.length > 0 && (
+            <ul className="mt-1.5 flex flex-col gap-1">
+              {insights.lookThrough.fundOverlaps.slice(0, 3).map((o) => (
+                <li key={`${o.fundA}-${o.fundB}`} className="px-2 text-[11px] text-muted">
+                  <span className="text-foreground">{o.fundA} + {o.fundB}</span> share {o.sharedSymbols.length} top holdings
+                  ({(o.sharedWeight * 100).toFixed(0)}% of disclosed weight)
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-1.5 px-2 text-[10px] text-muted/90">{insights.lookThrough.basis}</p>
+        </div>
+      )}
+
       {insights.concentrationRisks.length > 0 && (
         <div>
           <SectionLabel>Concentration</SectionLabel>

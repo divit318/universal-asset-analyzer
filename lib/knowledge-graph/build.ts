@@ -47,6 +47,8 @@ import {
   isSingleIssuer,
   type ResolvedInstrument,
 } from "./instrument";
+import { computeLookThrough, fetchFundHoldings, type FundHolding } from "./overlap";
+import type { LookThroughResult } from "./types";
 import { eventLabels, formatEventDate } from "./label";
 import { INSTRUMENT_LABEL } from "./types";
 import type { GraphNode, GraphEdge, GraphMeta, GraphScope, NodeType, Provenance } from "./types";
@@ -71,6 +73,8 @@ interface BuildResult {
   nodes: GraphNode[];
   edges: GraphEdge[];
   meta: GraphMeta;
+  /** Portfolio scope only: the look-through overlap analysis. */
+  lookThrough: LookThroughResult | null;
 }
 
 /** Exported for unit tests — the pruning/dedup invariants are pure. */
@@ -134,6 +138,7 @@ export class GraphBuilder {
       nodes,
       edges: [...edges.values()],
       meta: { focusId: this.focusId, truncation, isolatesDropped },
+      lookThrough: null,
     };
   }
 }
@@ -701,7 +706,56 @@ async function buildHoldingsGraph(
     addTimelineEvents(builder, holding.symbol, timelineBySymbol.get(holding.symbol) ?? []);
   }
 
-  return builder.build(truncation);
+  // Look-through overlap: portfolio scope only (it needs real book weights).
+  let lookThrough: LookThroughResult | null = null;
+  if (isPortfolio) {
+    const isFund = (r: ResolvedInstrument) => r.instrument.startsWith("etf_") || r.instrument === "mutual_fund";
+    const positionInputs = capped.map((h, i) => ({
+      symbol: resolvedAll[i].symbol,
+      name: resolvedAll[i].name,
+      weight: totalValue > 0 && values[i] ? values[i]!.value / totalValue : 0,
+      isFund: isFund(resolvedAll[i]),
+    }));
+    const funds = resolvedAll.filter(isFund);
+    const holdingsByFund = new Map<string, FundHolding[]>(
+      await Promise.all(
+        funds.map(async (f) => [f.symbol, await fetchFundHoldings(f.symbol)] as [string, FundHolding[]]),
+      ),
+    );
+    const result = computeLookThrough(positionInputs, holdingsByFund);
+    if (result.exposures.length > 0 || result.fundOverlaps.length > 0) {
+      lookThrough = result;
+      // Draw the overlap: HOLDS edges from each fund to every underlying the
+      // book reaches at least twice. Underlyings not otherwise in the graph
+      // enter as unresolved asset nodes (no quote fetch for a name that only
+      // exists inside a fund's disclosure).
+      for (const exposure of result.exposures.slice(0, 10)) {
+        const underlyingId = companyId(exposure.symbol);
+        if (!builder.hasNode(underlyingId)) {
+          const node = bareAssetNode(exposure.symbol, Math.round(30 + exposure.effectiveWeight * 400));
+          node.summary = exposure.name;
+          node.fullLabel = exposure.name !== exposure.symbol ? `${exposure.symbol} (${exposure.name})` : exposure.symbol;
+          builder.upsertNode(node);
+        }
+        for (const route of exposure.routes) {
+          builder.addEdge({
+            source: companyId(route.via),
+            target: underlyingId,
+            type: "HOLDS",
+            label: `holds ${(route.holdingWeight * 100).toFixed(1)}%`,
+            confidence: null,
+            strength: Math.max(10, Math.min(100, Math.round(route.holdingWeight * 300))),
+            directed: true,
+            evidence: `${exposure.name} is ${(route.holdingWeight * 100).toFixed(1)}% of ${route.via}'s disclosed holdings, contributing ${(route.contribution * 100).toFixed(2)}% of the book`,
+            provenance: PROV.yahoo(),
+            timestamp: null,
+          });
+        }
+      }
+    }
+  }
+
+  return { ...builder.build(truncation), lookThrough };
 }
 
 export async function buildPortfolioGraph(): Promise<BuildResult> {
@@ -740,26 +794,12 @@ export async function buildSectorGraph(sector: string): Promise<BuildResult> {
     }),
   );
 
-  for (const resolved of resolvedAll) {
-    if (resolved.sector !== canonical) continue;
-    const node = builder.upsertNode(assetNode(resolved, 55));
-    builder.addEdge({
-      source: node.id,
-      target: sectorId(canonical),
-      type: "OPERATES_IN",
-      label: "operates in",
-      confidence: null,
-      strength: 60,
-      directed: true,
-      evidence: `Yahoo Finance classifies ${resolved.symbol} under ${canonical}`,
-      provenance: PROV.yahoo(),
-      timestamp: null,
-    });
+  const addMembership = (resolved: ResolvedInstrument, nodeId: string) => {
     const isHeld = portfolio.some((p) => p.symbol === resolved.symbol);
     builder.upsertNode(isHeld ? portfolioSingletonNode() : watchlistSingletonNode());
     builder.addEdge({
       source: isHeld ? "portfolio:main" : "watchlist:main",
-      target: node.id,
+      target: nodeId,
       type: isHeld ? "OWNS" : "WATCHES",
       label: isHeld ? "owns" : "watches",
       confidence: null,
@@ -769,6 +809,46 @@ export async function buildSectorGraph(sector: string): Promise<BuildResult> {
       provenance: PROV.db(),
       timestamp: null,
     });
+  };
+
+  for (const resolved of resolvedAll) {
+    if (resolved.sector === canonical) {
+      const node = builder.upsertNode(assetNode(resolved, 55));
+      builder.addEdge({
+        source: node.id,
+        target: sectorId(canonical),
+        type: "OPERATES_IN",
+        label: "operates in",
+        confidence: null,
+        strength: 60,
+        directed: true,
+        evidence: `Yahoo Finance classifies ${resolved.symbol} under ${canonical}`,
+        provenance: PROV.yahoo(),
+        timestamp: null,
+      });
+      addMembership(resolved, node.id);
+      continue;
+    }
+    // Tracked funds with measured exposure to this sector belong in its
+    // graph too: a 39%-Technology VOO position IS Technology exposure.
+    if (resolved.instrument.startsWith("etf_") || resolved.instrument === "mutual_fund") {
+      const exposure = (await fundSectorExposures(resolved.symbol)).find((e) => e.sector === canonical);
+      if (!exposure) continue;
+      const node = builder.upsertNode(assetNode(resolved, 45));
+      builder.addEdge({
+        source: node.id,
+        target: sectorId(canonical),
+        type: "EXPOSED_TO",
+        label: `${Math.round(exposure.weight * 100)}% exposed to`,
+        confidence: null,
+        strength: Math.round(exposure.weight * 100),
+        directed: true,
+        evidence: `${Math.round(exposure.weight * 100)}% of ${resolved.symbol}'s holdings are ${canonical} (Yahoo holdings composition)`,
+        provenance: PROV.yahoo(),
+        timestamp: null,
+      });
+      addMembership(resolved, node.id);
+    }
   }
 
   // Scanner events that touch this sector (edges to the sector node, plus any

@@ -72,6 +72,8 @@ export type EdgeType =
   | "OPERATES_IN"
   /** Weighted fund-to-sector exposure derived from holdings composition. */
   | "EXPOSED_TO"
+  /** Fund-to-underlying-security edge from the fund's disclosed top holdings. */
+  | "HOLDS"
   | "IMPACTS"
   | "GENERATES"
   | "SUPPORTED_BY"
@@ -170,7 +172,52 @@ export interface GraphStats {
   mostConnected: { nodeId: string; label: string; degree: number }[];
 }
 
+/* -------------------------------------------------------------------------- */
+/* Look-through overlap (see overlap.ts for the engine; types live here so    */
+/* client components can import them without pulling in lib/yahoo.ts)         */
+/* -------------------------------------------------------------------------- */
+
+export interface LookThroughRoute {
+  /** Fund ticker the exposure flows through. */
+  via: string;
+  /** Book weight of the fund position, 0-1. */
+  fundWeight: number;
+  /** The underlying's weight inside the fund, 0-1. */
+  holdingWeight: number;
+  /** fundWeight x holdingWeight, 0-1 of the whole book. */
+  contribution: number;
+}
+
+export interface LookThroughExposure {
+  symbol: string;
+  name: string;
+  /** Book weight held directly, 0-1 (0 when only reached through funds). */
+  directWeight: number;
+  routes: LookThroughRoute[];
+  /** directWeight + all route contributions, 0-1. */
+  effectiveWeight: number;
+  /** Number of distinct ways the book holds this: direct counts as one. */
+  routeCount: number;
+}
+
+export interface FundOverlapPair {
+  fundA: string;
+  fundB: string;
+  sharedSymbols: string[];
+  /** Mean shared disclosed weight across the two funds, 0-1. */
+  sharedWeight: number;
+}
+
+export interface LookThroughResult {
+  exposures: LookThroughExposure[];
+  fundOverlaps: FundOverlapPair[];
+  /** Rendered verbatim in the UI: the floor-not-estimate caveat travels with the data. */
+  basis: string;
+}
+
 export interface GraphInsights {
+  /** Portfolio scope only; null elsewhere or when the book holds no funds. */
+  lookThrough: LookThroughResult | null;
   concentrationRisks: {
     sector: string;
     nodeCount: number;
