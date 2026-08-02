@@ -1,684 +1,254 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+/**
+ * IC Report page.
+ *
+ * Progressive rendering: each tab unlocks the moment its stage completes
+ * (Phase 5.1). One container grid for the whole lifecycle (5.3). URL state
+ * for symbol and active tab (5.17). ARIA tab pattern with arrow keys (8.3),
+ * keyboard shortcuts (5.24), sticky tab bar with the action cluster (5.17).
+ */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { downloadBlob } from "@/lib/download";
-import type { ICReport, ICProgressEvent, ICReportStage } from "@/lib/ic-report";
+import type { ICReport } from "@/lib/ic-report";
+import { AGENT_COUNT } from "@/lib/ic-questions";
+import { signalLibrarySize } from "@/lib/ic-signals";
 import type { AgentFinding } from "@/lib/ic-agents";
-import type { DetectedSignal } from "@/lib/ic-signals";
 import { SymbolSearch } from "@/app/_components/symbol-search";
 import { Reveal } from "@/app/_components/reveal";
 import { PageShell } from "@/app/_components/ui";
-import { GroundingBadge } from "@/app/_components/grounding-badge";
 import { useTaskSplash } from "@/app/_components/boot-context";
 import { useFocusSafe } from "@/lib/focus-context";
+import { useReportStream } from "./_components/use-report-stream";
+import { ProgressPanel } from "./_components/progress-panel";
+import { HeaderSummary } from "./_components/header-summary";
+import { ValuationTab } from "./_components/valuation-tab";
+import { ThesisTab } from "./_components/thesis-tab";
+import { AgentsTab } from "./_components/agents-tab";
+import { SignalsTab } from "./_components/signals-tab";
+import { WatchTab } from "./_components/watch-tab";
+import { DataTab } from "./_components/data-tab";
+import { SkeletonCard, EmptyState } from "./_components/shared";
 
-/* -------------------------------------------------------------------------- */
-/* Types                                                                      */
-/* -------------------------------------------------------------------------- */
-
-type StreamEvent = ICProgressEvent & { report?: ICReport };
-
-const STAGE_LABELS: Record<ICReportStage, string> = {
-  signals: "Signal Detection",
-  questions: "Question Generation",
-  agents: "Investigation Agents",
-  agent_complete: "Agent Network",
-  thesis: "Thesis Formation",
-  valuation: "Valuation Engine",
-  done: "Complete",
-  error: "Error",
+const TABS = ["thesis", "valuation", "agents", "signals", "watch", "data"] as const;
+type Tab = (typeof TABS)[number];
+const TAB_LABELS: Record<Tab, string> = {
+  thesis: "Thesis",
+  valuation: "Valuation",
+  agents: "Agents",
+  signals: "Signals",
+  watch: "Watch Items",
+  data: "Data",
 };
 
-const STAGE_ORDER: ICReportStage[] = [
-  "signals",
-  "questions",
-  "agents",
-  "thesis",
-  "valuation",
-  "done",
-];
-
-/* -------------------------------------------------------------------------- */
-/* Severity + domain styles                                                   */
-/* -------------------------------------------------------------------------- */
-
-const SEV_STYLE = {
-  high: "border-negative/40 bg-negative/10 text-negative",
-  medium: "border-warning/40 bg-warning/10 text-warning",
-  low: "border-positive/40 bg-positive/10 text-positive",
-};
-
-const CONF_STYLE = {
-  high: "text-positive",
-  medium: "text-warning",
-  low: "text-negative",
-};
-
-/* -------------------------------------------------------------------------- */
-/* Sub-components                                                             */
-/* -------------------------------------------------------------------------- */
-
-function SectionHeading({ children }: { children: React.ReactNode }) {
-  return (
-    <h2 className="mb-4 text-lg font-semibold tracking-tight border-b border-border pb-2">
-      {children}
-    </h2>
-  );
+function readUrlState(): { symbol: string; tab: Tab } {
+  if (typeof window === "undefined") return { symbol: "", tab: "valuation" };
+  const params = new URLSearchParams(window.location.search);
+  const tab = params.get("tab") as Tab | null;
+  return {
+    symbol: (params.get("symbol") ?? "").toUpperCase(),
+    tab: tab && TABS.includes(tab) ? tab : "valuation",
+  };
 }
-
-function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return (
-    <div className={`rounded-xl border border-border bg-surface p-5 ${className}`}>
-      {children}
-    </div>
-  );
-}
-
-function SignalsGrid({ signals }: { signals: DetectedSignal[] }) {
-  if (!signals.length) return <p className="text-sm text-muted">No material signals detected.</p>;
-  return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      {signals.map((s) => (
-        <div key={s.id} className={`rounded-lg border p-3 text-sm ${SEV_STYLE[s.severity]}`}>
-          <div className="mb-1 flex items-center justify-between gap-2">
-            <span className="font-medium text-foreground">{s.category.replace(/_/g, " ")}</span>
-            <span className="rounded-full border px-1.5 py-0.5 text-label font-semibold uppercase">{s.severity}</span>
-          </div>
-          <p className="leading-5">{s.description}</p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-const CONF_TOOLTIP: Record<"high" | "medium" | "low", string> = {
-  high: "High confidence: data was sufficient and the AI's analysis is consistent with primary sources.",
-  medium: "Medium confidence: some data gaps or conflicting signals; take with appropriate caution.",
-  low: "Low confidence: limited data available; AI is extrapolating more than analyzing. Verify independently.",
-};
-
-function AgentGrid({ findings }: { findings: AgentFinding[] }) {
-  const [expanded, setExpanded] = useState<string | null>(null);
-
-  return (
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-      {findings.map((f) => (
-        <Card key={f.agent} className="cursor-pointer" >
-          <button
-            className="w-full text-left"
-            onClick={() => setExpanded(expanded === f.agent ? null : f.agent)}
-          >
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <span className="font-medium">{f.agentLabel}</span>
-              <span
-                className={`text-xs font-semibold uppercase ${CONF_STYLE[f.confidence]}`}
-                title={CONF_TOOLTIP[f.confidence]}
-              >
-                {f.confidence} conf.
-              </span>
-            </div>
-            <ul className="space-y-1">
-              {f.keyInsights.slice(0, expanded === f.agent ? undefined : 2).map((ins, i) => (
-                <li key={i} className="flex gap-2 text-xs text-muted">
-                  <span className="mt-0.5 shrink-0 text-brand">→</span>
-                  <span>{ins}</span>
-                </li>
-              ))}
-            </ul>
-            {f.keyInsights.length > 2 && (
-              <span className="mt-2 block text-xs text-brand">
-                {expanded === f.agent ? "Show less" : `+${f.keyInsights.length - 2} more`}
-              </span>
-            )}
-          </button>
-          {expanded === f.agent && (
-            <div className="mt-3 border-t border-border pt-3">
-              <p className="text-xs leading-5 text-muted">{f.findings}</p>
-              {f.dataLimitations && (
-                <p className="mt-2 rounded-md bg-surface-2 px-2 py-1.5 text-xs text-warning">
-                  ⚠ {f.dataLimitations}
-                </p>
-              )}
-              {f.grounding && <GroundingBadge grounding={f.grounding} className="mt-2" />}
-            </div>
-          )}
-        </Card>
-      ))}
-    </div>
-  );
-}
-
-function ThesisSection({ thesis }: { thesis: ICReport["thesis"] }) {
-  const [tab, setTab] = useState<"bull" | "bear" | "base">("base");
-  const tabs = [
-    { key: "base" as const, label: "Base Case", color: "text-brand" },
-    { key: "bull" as const, label: "Bull Case", color: "text-positive" },
-    { key: "bear" as const, label: "Bear Case", color: "text-negative" },
-  ];
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex gap-1 rounded-lg border border-border bg-surface p-1">
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={`flex-1 rounded-md py-1.5 text-sm font-medium transition-colors ${
-              tab === t.key ? "bg-surface-2 " + t.color : "text-muted hover:text-foreground"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      <Card>
-        <p className="text-sm leading-6">{thesis[tab]}</p>
-      </Card>
-
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <h3 className="mb-3 text-sm font-semibold">Variant Perception</h3>
-          <p className="text-sm leading-5 text-muted">{thesis.variantPerception}</p>
-        </Card>
-        <Card>
-          <h3 className="mb-3 text-sm font-semibold">Market Expectations</h3>
-          <p className="text-sm leading-5 text-muted">{thesis.marketExpectations}</p>
-        </Card>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-3">
-        {[
-          { title: "Key Catalysts", items: thesis.keyCatalysts, color: "text-positive" },
-          { title: "Key Drivers", items: thesis.keyDrivers, color: "text-brand" },
-          { title: "Key Risks", items: thesis.keyRisks, color: "text-negative" },
-        ].map(({ title, items, color }) => (
-          <Card key={title}>
-            <h3 className={`mb-3 text-sm font-semibold ${color}`}>{title}</h3>
-            <ul className="space-y-2">
-              {items.map((item, i) => (
-                <li key={i} className="flex gap-2 text-xs text-muted">
-                  <span className={`mt-0.5 shrink-0 ${color}`}>•</span>
-                  <span>{item}</span>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ValuationSection({ valuation, runHotCold }: { valuation: ICReport["valuation"]; runHotCold: ICReport["runHotCold"] }) {
-  return (
-    <div className="flex flex-col gap-4">
-      {/* Header summary */}
-      <div className="grid grid-cols-3 gap-4">
-        {[
-          { label: "Current Price", value: valuation.currentPrice },
-          { label: "Intrinsic Value", value: valuation.intrinsicValueRange },
-          { label: "Implied Upside", value: valuation.impliedUpside },
-        ].map(({ label, value }) => (
-          <Card key={label} className="text-center">
-            <div className="text-xs text-muted">{label}</div>
-            <div className={`mt-1 text-xl font-semibold ${
-              label === "Implied Upside"
-                ? value.startsWith("+") ? "text-positive" : value.startsWith("-") ? "text-negative" : ""
-                : ""
-            }`}>
-              {value}
-            </div>
-          </Card>
-        ))}
-      </div>
-
-      {/* Approach table */}
-      {valuation.approaches.length > 0 && (
-        <Card>
-          <h3 className="mb-3 text-sm font-semibold">Valuation Methods</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-xs uppercase tracking-wide text-muted">
-                <tr>
-                  <th className="pb-2 text-left font-medium">Method</th>
-                  <th className="pb-2 text-right font-medium">Target</th>
-                  <th className="pb-2 text-right font-medium">Upside</th>
-                  <th className="pb-2 text-right font-medium">Confidence</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {valuation.approaches.map((a) => (
-                  <tr key={a.method} className="group">
-                    <td className="py-2.5 font-medium">{a.method}</td>
-                    <td className="py-2.5 text-right font-mono">{a.priceTarget}</td>
-                    <td className={`py-2.5 text-right font-mono ${
-                      a.impliedUpside.startsWith("+") ? "text-positive" : "text-negative"
-                    }`}>{a.impliedUpside}</td>
-                    <td className={`py-2.5 text-right text-xs uppercase ${CONF_STYLE[a.confidence]}`}>{a.confidence}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {/* Assumptions per method */}
-          <div className="mt-4 space-y-2">
-            {valuation.approaches.map((a) => (
-              <details key={`${a.method}-details`} className="group">
-                <summary className="cursor-pointer text-xs text-muted hover:text-foreground">
-                  {a.method} assumptions
-                </summary>
-                <p className="mt-1 rounded-md bg-surface-2 p-2 text-xs leading-5 text-muted">
-                  {a.assumptions}
-                </p>
-              </details>
-            ))}
-          </div>
-        </Card>
-      )}
-
-      {/* Scenarios */}
-      {valuation.scenarios.length > 0 && (
-        <div className="grid gap-4 md:grid-cols-3">
-          {valuation.scenarios.map((s) => {
-            const isPos = s.impliedUpside.startsWith("+");
-            const isNeg = s.impliedUpside.startsWith("-");
-            return (
-              <Card key={s.label}>
-                <div className="mb-2 flex items-center justify-between">
-                  <h3 className="text-sm font-semibold">{s.label}</h3>
-                  <span className={`font-mono text-sm font-semibold ${isPos ? "text-positive" : isNeg ? "text-negative" : ""}`}>
-                    {s.priceTarget}
-                  </span>
-                </div>
-                <div className={`mb-3 text-xs ${isPos ? "text-positive" : isNeg ? "text-negative" : "text-muted"}`}>
-                  {s.impliedUpside}
-                </div>
-                <ul className="space-y-1">
-                  {s.keyAssumptions.map((a, i) => (
-                    <li key={i} className="flex gap-2 text-xs text-muted">
-                      <span className="shrink-0">·</span>
-                      <span>{a}</span>
-                    </li>
-                  ))}
-                </ul>
-              </Card>
-            );
-          })}
-        </div>
-      )}
-
-      {/* DCF sensitivity + verdict */}
-      {(valuation.dcfSensitivity || valuation.valuationVerdict) && (
-        <div className="grid gap-4 md:grid-cols-2">
-          {valuation.dcfSensitivity && (
-            <Card>
-              <h3 className="mb-2 text-sm font-semibold">DCF Sensitivity</h3>
-              <p className="text-sm leading-5 text-muted">{valuation.dcfSensitivity}</p>
-            </Card>
-          )}
-          {valuation.valuationVerdict && (
-            <Card>
-              <h3 className="mb-2 text-sm font-semibold">Valuation Verdict</h3>
-              <p className="text-sm leading-5 text-muted">{valuation.valuationVerdict}</p>
-            </Card>
-          )}
-        </div>
-      )}
-
-      {/* Run Hot / Cold */}
-      {runHotCold && (
-        <Card className={`border ${
-          runHotCold.signal === "run_hot" ? "border-warning/40 bg-warning/5" :
-          runHotCold.signal === "run_cold" ? "border-brand/40 bg-brand/5" : ""
-        }`}>
-          <div className="flex flex-col gap-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h3 className="mb-1 text-sm font-semibold">
-                  Run Hot / Cold — Historical Return Percentile
-                </h3>
-                <p className="text-sm text-muted">
-                  Current 1-year return of <strong className="text-foreground">{runHotCold.oneYearReturn.toFixed(1)}%</strong> is at the{" "}
-                  <strong className="text-foreground">{runHotCold.percentile}th percentile</strong> of its own return history
-                  (median: {runHotCold.medianReturn.toFixed(1)}%).
-                </p>
-                <p className="mt-1 text-xs text-muted">
-                  {runHotCold.signal === "run_hot"
-                    ? "RUN HOT — stock is in its top 20% historical return band. Counter-cyclical caution: mean reversion is the higher-probability outcome."
-                    : runHotCold.signal === "run_cold"
-                    ? "RUN COLD — stock is in its bottom 20% historical return band. Counter-cyclical opportunity: returns are historically at their most attractive."
-                    : "NEUTRAL — current returns are within the normal historical range."}
-                </p>
-              </div>
-              <span className={`shrink-0 rounded-full border px-3 py-1 text-xs font-semibold uppercase ${
-                runHotCold.signal === "run_hot" ? "border-warning/40 text-warning" :
-                runHotCold.signal === "run_cold" ? "border-brand/40 text-brand" : "border-border text-muted"
-              }`}>
-                {runHotCold.signal.replace("_", " ")}
-              </span>
-            </div>
-            {/* Multi-year CAGR windows */}
-            {runHotCold.historicalWindows && runHotCold.historicalWindows.filter((w) => w.available).length > 0 && (
-              <div>
-                <div className="mb-2 text-xs uppercase tracking-wider text-muted">Long-Run CAGR Windows — Percentile vs Own History</div>
-                <div className="flex flex-wrap gap-2">
-                  {runHotCold.historicalWindows.filter((w) => w.available).map((w) => {
-                    const hotBorder = w.signal === "run_hot" ? "border-warning/50 bg-warning/5" : w.signal === "run_cold" ? "border-brand/50 bg-brand/5" : "border-border bg-surface-2";
-                    const pctColor = w.signal === "run_hot" ? "text-warning" : w.signal === "run_cold" ? "text-brand" : "text-muted";
-                    return (
-                      <div key={w.years} className={`flex flex-col items-center rounded-lg border px-3 py-2 ${hotBorder}`}>
-                        <span className="text-xs font-semibold text-muted">{w.years}Y</span>
-                        <span className={`font-mono text-sm font-semibold ${w.return > 0 ? "text-positive" : "text-negative"}`}>
-                          {w.return > 0 ? "+" : ""}{w.return.toFixed(1)}%
-                        </span>
-                        <span className="text-label text-muted">CAGR</span>
-                        {w.percentile != null && (
-                          <span className={`mt-0.5 text-label font-semibold ${pctColor}`}>
-                            {w.percentile}th pct
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-                <p className="mt-2 text-xs text-muted">
-                  Amber = run hot (≥80th pct of own N-year CAGR history) · Blue = run cold (≤20th pct) · Primary signal uses longest available window.
-                </p>
-              </div>
-            )}
-          </div>
-        </Card>
-      )}
-    </div>
-  );
-}
-
-function ProgressTracker({
-  completedAgents,
-  totalAgents,
-  currentStage,
-}: {
-  completedAgents: number;
-  totalAgents: number;
-  currentStage: ICReportStage | null;
-}) {
-  const activeIdx = currentStage ? STAGE_ORDER.indexOf(currentStage) : -1;
-
-  return (
-    <Card>
-      <div className="flex flex-col gap-3">
-        {STAGE_ORDER.filter((s) => s !== "agent_complete").map((stage, i) => {
-          const isDone = activeIdx > i || currentStage === "done";
-          const isActive = activeIdx === i;
-          const isAgents = stage === "agents";
-          // Once past the agents stage, a completed count short of the total
-          // means some (or all) agents failed — don't show a false green check.
-          const agentsShort = isAgents && isDone && totalAgents > 0 && completedAgents < totalAgents;
-          const agentsFailed = agentsShort && completedAgents === 0;
-
-          return (
-            <div key={stage} className="flex items-center gap-3">
-              <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${
-                agentsFailed ? "border-negative bg-negative/20 text-negative" :
-                agentsShort ? "border-warning bg-warning/20 text-warning" :
-                isDone ? "border-positive bg-positive/20 text-positive" :
-                isActive ? "border-brand bg-brand/20 text-brand animate-pulse" :
-                "border-border text-muted"
-              }`}>
-                {agentsShort ? "!" : isDone ? "✓" : i + 1}
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center justify-between">
-                  <span className={`text-sm font-medium ${isActive ? "text-foreground" : isDone ? "text-muted" : "text-muted/50"}`}>
-                    {STAGE_LABELS[stage]}
-                  </span>
-                  {isAgents && totalAgents > 0 && (
-                    <span className="text-xs text-muted">{completedAgents}/{totalAgents} agents</span>
-                  )}
-                </div>
-                {isAgents && totalAgents > 0 && (
-                  <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-surface-2">
-                    <div
-                      className="h-full rounded-full bg-brand transition-all"
-                      style={{ width: `${(completedAgents / totalAgents) * 100}%` }}
-                    />
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </Card>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Main page                                                                  */
-/* -------------------------------------------------------------------------- */
 
 export default function ICReportPage() {
   const focus = useFocusSafe();
-  const [symbol, setSymbol] = useState("");
-  const [exchange, setExchange] = useState<"US" | "IN">("US");
-  const [running, setRunning] = useState(false);
-  const [currentStage, setCurrentStage] = useState<ICReportStage | null>(null);
-  const [completedAgents, setCompletedAgents] = useState(0);
-  const [totalAgents, setTotalAgents] = useState(0);
-  const [events, setEvents] = useState<StreamEvent[]>([]);
-  const [report, setReport] = useState<ICReport | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [exportErr, setExportErr] = useState<string | null>(null);
-  const [elapsedSecs, setElapsedSecs] = useState(0);
   const taskSplash = useTaskSplash();
-  const abortRef = useRef<AbortController | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const startTimeRef = useRef<number>(0);
-  // Set when the deep-link below carries autorun=1 (the AI Assistant's "generate
-  // a report on X" action) — consumed by the effect after this one, since `run()`
-  // closes over `symbol`, which is still "" in THIS effect until setSymbol lands.
+  const { state, start, stop, restore, loadHistoric } = useReportStream();
+  const [symbol, setSymbol] = useState("");
+  const [activeTab, setActiveTab] = useState<Tab>("valuation");
+  const [exportErr, setExportErr] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<string | null>(null);
+  const [previousReport, setPreviousReport] = useState<ICReport | null>(null);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
   const autoRunRef = useRef(false);
+  const restoredRef = useRef(false);
+  const tabListRef = useRef<HTMLDivElement>(null);
 
-  // Restore last saved report from sessionStorage on mount; also read ?symbol= deep-link
+  /* ── URL state: shareable, bookmarkable, survives refresh (5.17) ── */
   useEffect(() => {
-    // Deep-link from the Wire or the AI Assistant: /ic-report?symbol=TICKER[&autorun=1]
-    const params = new URLSearchParams(window.location.search);
-    const urlSymbol = params.get("symbol");
-    if (urlSymbol) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setSymbol(urlSymbol.toUpperCase());
-      focus?.recordFocus(urlSymbol);
-      // Detect Indian exchange by suffix
-      if (urlSymbol.toUpperCase().endsWith(".NS") || urlSymbol.toUpperCase().endsWith(".BO")) {
-
-        setExchange("IN");
-      }
-      if (params.get("autorun") === "1") autoRunRef.current = true;
-      return; // don't restore stale cached report when deep-linking
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+    const url = readUrlState();
+     
+    setActiveTab(url.tab);
+    if (url.symbol) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- deep-link symbol lands after mount by design
+      setSymbol(url.symbol);
+      focus?.recordFocus(url.symbol);
+      if (new URLSearchParams(window.location.search).get("autorun") === "1") autoRunRef.current = true;
+      else void restore(url.symbol);
+    } else if (focus?.mostRecent) {
+       
+      setSymbol(focus.mostRecent);
     }
-    try {
-      const saved = sessionStorage.getItem("uaa_ic_last_report");
-      if (saved) {
-        const parsed = JSON.parse(saved) as { symbol: string; exchange: "US" | "IN"; report: ICReport };
-        if (parsed.symbol && parsed.report) {
-          setSymbol(parsed.symbol);
-          setExchange(parsed.exchange ?? "US");
-          setReport(parsed.report);
-        }
-      }
-    } catch { /* ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Fires the auto-run queued above exactly once, as soon as `symbol` has
-  // actually landed from that effect — `run()` bails immediately on an empty
-  // symbol, so this can't fire prematurely.
+  const syncUrl = useCallback((sym: string, tab: Tab) => {
+    const params = new URLSearchParams(window.location.search);
+    if (sym) params.set("symbol", sym);
+    else params.delete("symbol");
+    params.set("tab", tab);
+    params.delete("autorun");
+    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+  }, []);
+
   useEffect(() => {
-    if (autoRunRef.current && symbol.trim()) {
+    if (restoredRef.current) syncUrl(symbol.trim().toUpperCase(), activeTab);
+  }, [symbol, activeTab, syncUrl]);
+
+  /* ── Export cluster ── */
+  const doExport = async (format: "pdf" | "md" | "json") => {
+    if (!state.report) return;
+    setExportErr(null);
+    setExporting(format);
+    const date = state.report.generatedAt.slice(0, 10);
+    const ext = format === "md" ? "md" : format;
+    try {
+      await downloadBlob("/api/export/ic-report", `ic-report-${state.report.symbol}-${date}.${ext}`, "POST", {
+        report: state.report,
+        format,
+      });
+    } catch (e) {
+      setExportErr(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const copyMarkdown = async () => {
+    if (!state.report) return;
+    try {
+      const res = await fetch("/api/export/ic-report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ report: state.report, format: "md" }),
+      });
+      if (!res.ok) throw new Error(`Copy failed (${res.status})`);
+      await navigator.clipboard.writeText(await res.text());
+    } catch (e) {
+      setExportErr(e instanceof Error ? e.message : "Copy failed");
+    }
+  };
+
+  /* ── Run ── */
+  const run = useCallback(async () => {
+    const sym = symbol.trim().toUpperCase();
+    if (!sym || state.running) return;
+    focus?.recordFocus(sym);
+    setPreviousReport(state.report);
+    setExportErr(null);
+    setStartedAt(Date.now());
+    taskSplash.show("ic-report");
+    const done = start(sym);
+    // Dismiss the splash as soon as the stream is live; the progress panel takes over.
+    setTimeout(() => taskSplash.reportReady(), 1200);
+    await done;
+    taskSplash.hide();
+  }, [symbol, state.running, state.report, focus, start, taskSplash]);
+
+  useEffect(() => {
+    if (autoRunRef.current && symbol.trim() && !state.running) {
       autoRunRef.current = false;
       void run();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- run() is a plain
-    // function recreated each render (not memoized); depending on it here
-    // would re-fire on every render instead of once when symbol lands.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol]);
 
-  // Prefill the symbol input from the focus spine when the page opens without a
-  // symbol of its own (§4.4). Seeds the input only — the report is still run
-  // manually; a URL param or this page's own restored report wins.
-  const prefilledRef = useRef(false);
+  /* ── Page title ── */
   useEffect(() => {
-    if (prefilledRef.current || !focus?.mostRecent) return;
-    if (new URLSearchParams(window.location.search).get("symbol") || symbol) {
-      prefilledRef.current = true;
-      return;
-    }
-    prefilledRef.current = true;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSymbol(focus.mostRecent);
-  }, [focus?.mostRecent, symbol]);
-
-  // Dynamic page title
-  useEffect(() => {
-    document.title = symbol
-      ? `${symbol.toUpperCase()} IC Report · UAA`
-      : "IC Report · UAA";
-    return () => { document.title = "Universal Asset Analyzer"; };
+    document.title = symbol ? `${symbol.toUpperCase()} IC Report · UAA` : "IC Report · UAA";
+    return () => {
+      document.title = "Universal Asset Analyzer";
+    };
   }, [symbol]);
 
-  const addEvent = useCallback((event: StreamEvent) => {
-    setEvents((prev) => [...prev, event]);
-  }, []);
-
-  async function run() {
-    if (!symbol.trim()) return;
-    focus?.recordFocus(symbol);
-    abortRef.current?.abort();
-    abortRef.current = new AbortController();
-
-    // Start elapsed timer
-    startTimeRef.current = Date.now();
-    setElapsedSecs(0);
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      setElapsedSecs(Math.floor((Date.now() - startTimeRef.current) / 1000));
-    }, 1000);
-
-    setRunning(true);
-    setError(null);
-    setReport(null);
-    setEvents([]);
-    setCurrentStage(null);
-    setCompletedAgents(0);
-    setTotalAgents(0);
-
-    // A run is 3-15 minutes — the full-screen splash must cover only the
-    // kickoff, then hand off to the progress sidebar/live feed below, never
-    // the whole run (that would be exactly the "frozen" feeling this is
-    // meant to avoid).
-    taskSplash.show("ic-report");
-
-    try {
-      const res = await fetch("/api/ic-report", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          symbol: symbol.trim().toUpperCase(),
-          exchange,
-        }),
-        signal: abortRef.current.signal,
-      });
-
-      if (!res.ok || !res.body) {
-        throw new Error("Request failed");
+  /* ── Keyboard shortcuts (5.24): 1-6 tabs, g generate, e export PDF ── */
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const idx = Number.parseInt(e.key, 10);
+      if (idx >= 1 && idx <= TABS.length) {
+        setActiveTab(TABS[idx - 1]);
+      } else if (e.key === "g" && !state.running && symbol.trim()) {
+        void run();
+      } else if (e.key === "e" && state.report) {
+        void doExport("pdf");
       }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.running, state.report, symbol, run]);
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let dispatchSeen = false;
-      let firstEventSeen = false;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const event = JSON.parse(line.slice(6)) as StreamEvent;
-            addEvent(event);
-
-            if (!firstEventSeen) {
-              // Proof the pipeline is actually producing signal — let the
-              // splash finish its resolve sequence and dissolve into the
-              // progress sidebar/live feed, which already has this event.
-              firstEventSeen = true;
-              taskSplash.reportReady();
-            }
-
-            if (event.stage !== "agent_complete") {
-              setCurrentStage(event.stage);
-            }
-
-            if (event.stage === "agents" && !dispatchSeen) {
-              const match = event.message.match(/(\d+) agents/);
-              if (match) {
-                dispatchSeen = true;
-                setTotalAgents(parseInt(match[1]));
-              }
-            }
-
-            if (event.stage === "agent_complete") {
-              setCompletedAgents((c) => c + 1);
-            }
-
-            if (event.stage === "done" && event.report) {
-              setReport(event.report);
-              // Persist to sessionStorage for restore on next page load
-              try {
-                sessionStorage.setItem("uaa_ic_last_report", JSON.stringify({
-                  symbol: symbol.trim().toUpperCase(),
-                  exchange,
-                  report: event.report,
-                }));
-              } catch { /* ignore */ }
-            }
-
-            if (event.stage === "error") {
-              setError(event.message);
-            }
-          } catch {
-            // Malformed SSE line — skip
-          }
-        }
-      }
-    } catch (err) {
-      if (err instanceof Error && err.name !== "AbortError") {
-        setError(err.message);
-      }
-    } finally {
-      // Safety net: if the request failed before a single event arrived,
-      // reportReady() never fired — dismiss the splash immediately rather
-      // than leaving it to its 20s failsafe.
-      taskSplash.hide();
-      setRunning(false);
-      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+  /* ── ARIA tabs with arrow keys (8.3) ── */
+  const onTabKeyDown = (e: React.KeyboardEvent) => {
+    const idx = TABS.indexOf(activeTab);
+    let next: number | null = null;
+    if (e.key === "ArrowRight") next = (idx + 1) % TABS.length;
+    else if (e.key === "ArrowLeft") next = (idx - 1 + TABS.length) % TABS.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = TABS.length - 1;
+    if (next != null) {
+      e.preventDefault();
+      setActiveTab(TABS[next]);
+      const buttons = tabListRef.current?.querySelectorAll<HTMLButtonElement>("[role=tab]");
+      buttons?.[next]?.focus();
     }
-  }
+  };
 
-  function stop() {
-    abortRef.current?.abort();
-    setRunning(false);
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-  }
+  /* ── Patch a retried agent finding into the displayed report ── */
+  const onAgentRetried = useCallback((finding: AgentFinding) => {
+    // The stream state is authoritative during a run; after a run we patch the report copy.
+    if (state.report) {
+      const patched: ICReport = {
+        ...state.report,
+        agentFindings: [...state.report.agentFindings.filter((f) => f.agent !== finding.agent), finding],
+        agentFailures: state.report.agentFailures.filter((f) => f.agent !== finding.agent),
+      };
+      // useReportStream owns report state; simplest is a full restore via loadHistoric-like set.
+      // We refetch from the server, which persisted the patched report.
+      void restore(patched.symbol);
+    }
+  }, [state.report, restore]);
 
-  const [activeTab, setActiveTab] = useState<"signals" | "agents" | "thesis" | "valuation" | "monitorables">("thesis");
+  /* ── Derived view state: progressive data from partial or final report ── */
+  const view = useMemo(() => {
+    const r = state.report;
+    const p = state.partial;
+    return {
+      facts: r?.facts ?? p.facts,
+      signalChecks: r?.signalChecks ?? p.signalChecks,
+      questions: r?.questions ?? p.questions,
+      valuation: r?.valuation ?? p.valuation,
+      caseReconciliation: r?.caseReconciliation ?? p.caseReconciliation,
+      priorReconciliation: r?.priorReconciliation ?? p.priorReconciliation,
+      historyStats: r?.historyStats ?? p.historyStats,
+      agentFindings: r?.agentFindings ?? p.agentFindings,
+      agentFailures: r?.agentFailures ?? p.agentFailures ?? [],
+      synthesis: r?.synthesis ?? p.synthesis,
+      thesis: r?.thesis ?? p.thesis,
+      monitorables: r?.monitorables,
+      currency: r?.currency ?? p.facts?.currency ?? "USD",
+    };
+  }, [state.report, state.partial]);
+
+  const hasAnything = state.running || state.report != null || state.events.length > 0;
+  const trimmedSymbol = symbol.trim().toUpperCase();
+  const market = trimmedSymbol.endsWith(".NS") || trimmedSymbol.endsWith(".BO") ? "IN" : "US";
+
+  const tabReady: Record<Tab, boolean> = {
+    thesis: !!view.thesis?.bull || view.agentFindings.length > 0,
+    valuation: !!view.valuation,
+    agents: view.agentFindings.length > 0 || view.agentFailures.length > 0,
+    signals: !!view.signalChecks,
+    watch: !!view.monitorables,
+    data: !!state.report,
+  };
 
   return (
     <PageShell py="py-10">
@@ -691,318 +261,237 @@ export default function ICReportPage() {
           </span>
         </div>
         <p className="max-w-3xl text-sm text-muted">
-          Signal detection → question generation → 9-agent investigation → thesis → valuation → exportable IC report. Fully local.
+          Signal detection, question generation, a {AGENT_COUNT}-agent investigation, a deterministic valuation engine, and an exportable committee report. Runs fully on local models.
         </p>
       </Reveal>
 
-      {/* Input */}
-      <Reveal index={1} className="flex flex-wrap gap-3">
-        <div className="w-80">
+      {/* Input row */}
+      <Reveal index={1} className="flex flex-wrap items-center gap-3">
+        <div className="w-80 max-w-full">
           <SymbolSearch
             value={symbol}
             onChange={setSymbol}
             onSelect={(sym) => setSymbol(sym)}
             loading={false}
+            placeholder="Ticker or company name (e.g. NVDA, TCS.NS)"
           />
         </div>
-        <select
-          value={exchange}
-          onChange={(e) => setExchange(e.target.value as "US" | "IN")}
-          className="rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand"
-        >
-          <option value="US">US Markets</option>
-          <option value="IN">Indian Markets (NSE/BSE)</option>
-        </select>
-        {/* Model selection is the Router's job, not the user's.
-            This used to be a dropdown of every installed Ollama model, defaulted
-            to whichever happened to be listed first — which meant a code model
-            (`qwen2.5-coder`, `qwen3-coder`) could be pinned for a nine-agent
-            equity analysis, and pinning ANY model bypasses the Router's
-            per-task selection, memory-fit gate, and failure fallback entirely.
-            The task registry already routes each of the nine agent domains to an
-            appropriate model; the report header reports which one answered. */}
-        <span
-          className="self-center rounded-full bg-brand/10 px-2.5 py-1 text-xs font-medium text-brand"
-          title="Each agent is routed to the best-fitting installed model for its task."
-        >
-          Local AI
+        <span className="rounded-full border border-border px-2.5 py-1 text-xs text-muted" title="Market is resolved from the ticker: .NS/.BO for NSE/BSE, plain symbols for US exchanges.">
+          {trimmedSymbol ? (market === "IN" ? "Indian market (NSE/BSE)" : "US market") : "US and Indian markets"}
         </span>
-        {running ? (
-          <div className="flex items-center gap-3">
-            <button
-              onClick={stop}
-              className="rounded-lg border border-border px-5 py-2.5 text-sm transition-colors hover:bg-surface-2"
-            >
-              Stop
-            </button>
-            <span className="font-mono text-sm text-muted tabular-nums">
-              {Math.floor(elapsedSecs / 60).toString().padStart(2, "0")}:{(elapsedSecs % 60).toString().padStart(2, "0")} elapsed
-            </span>
-            <span className="text-xs text-muted">
-              (IC reports typically take 3–15 min on a local model)
-            </span>
-          </div>
+        {state.running ? (
+          <button
+            onClick={stop}
+            className="min-h-[44px] rounded-lg border border-border px-5 text-sm transition-colors hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"
+          >
+            Stop watching
+          </button>
         ) : (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={run}
-              disabled={!symbol.trim()}
-              className="rounded-lg bg-brand-strong px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
-            >
-              Generate Report
-            </button>
-            {report && !running && (
-              <span className="text-xs text-muted">
-                Last report restored from cache ·{" "}
-                <button
-                  className="text-brand hover:underline"
-                  onClick={() => { setReport(null); setEvents([]); }}
-                >
-                  Clear
-                </button>
-              </span>
-            )}
-          </div>
+          <button
+            onClick={() => void run()}
+            disabled={!symbol.trim()}
+            className="min-h-[44px] rounded-lg bg-brand-strong px-5 text-sm font-medium text-background transition-opacity hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand disabled:opacity-50"
+          >
+            Generate report
+          </button>
         )}
+        <span className="text-label text-muted/70">Shortcuts: G generate · E export PDF · 1–6 tabs</span>
       </Reveal>
 
-      {error && (
-        <div className="rounded-lg border border-negative/40 bg-negative/10 px-4 py-3 text-sm text-negative">
-          {error}
+      {state.error && (
+        <div className="rounded-lg border border-negative/40 bg-negative/10 px-4 py-3 text-sm text-negative" role="alert">
+          {state.error}
         </div>
       )}
 
-      {/* Two-column layout during/after run */}
-      {(running || report || events.length > 0) && (
-        <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
-          {/* Progress sidebar */}
-          <div className="flex flex-col gap-4">
-            <ProgressTracker
-              completedAgents={completedAgents}
-              totalAgents={totalAgents}
-              currentStage={currentStage}
+      {/* One grid for the whole lifecycle (5.3) */}
+      {hasAnything ? (
+        <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
+          <div className="flex flex-col gap-4 lg:sticky lg:top-4 lg:self-start">
+            <ProgressPanel
+              running={state.running}
+              stage={state.stage}
+              events={state.events}
+              completedAgents={view.agentFindings.length}
+              failedAgents={view.agentFailures.length}
+              startedAt={startedAt}
             />
-            {running && (
-              <div className="rounded-lg border border-border bg-surface px-4 py-3 text-xs text-muted">
-                <div className="mb-2 font-medium text-foreground">Live updates</div>
-                <div className="max-h-48 overflow-y-auto space-y-1">
-                  {events.slice(-12).map((e, i) => (
-                    <div key={i} className="leading-4">
-                      <span className="text-brand">{STAGE_LABELS[e.stage]}: </span>
-                      {e.message}
-                    </div>
+          </div>
+
+          <div className="min-w-0">
+            <div className="flex flex-col gap-5">
+              {state.report && (
+                <HeaderSummary
+                  report={state.report}
+                  previous={previousReport}
+                  history={state.history}
+                  restoredFromCache={state.restoredFromCache}
+                  onSelectHistoric={(generatedAt) => void loadHistoric(state.report!.symbol, generatedAt)}
+                  actions={
+                    <>
+                      <button
+                        onClick={() => void doExport("pdf")}
+                        disabled={exporting !== null}
+                        className="min-h-[36px] rounded-lg border border-border px-3 text-xs font-medium transition-colors hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand disabled:opacity-50"
+                      >
+                        {exporting === "pdf" ? "Exporting…" : "Export PDF"}
+                      </button>
+                      <button
+                        onClick={() => void doExport("md")}
+                        disabled={exporting !== null}
+                        className="min-h-[36px] rounded-lg border border-border px-3 text-xs font-medium transition-colors hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand disabled:opacity-50"
+                      >
+                        Markdown
+                      </button>
+                      <button
+                        onClick={() => void doExport("json")}
+                        disabled={exporting !== null}
+                        className="min-h-[36px] rounded-lg border border-border px-3 text-xs font-medium transition-colors hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand disabled:opacity-50"
+                      >
+                        JSON
+                      </button>
+                      <button
+                        onClick={() => void copyMarkdown()}
+                        className="min-h-[36px] rounded-lg border border-border px-3 text-xs font-medium transition-colors hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"
+                      >
+                        Copy
+                      </button>
+                      {exportErr && <span className="text-xs text-negative">{exportErr}</span>}
+                    </>
+                  }
+                />
+              )}
+
+              {/* Sticky ARIA tab bar (5.17 / 8.3) */}
+              <div className="sticky top-0 z-10 -mx-1 bg-background/95 px-1 py-1 backdrop-blur">
+                <div
+                  ref={tabListRef}
+                  role="tablist"
+                  aria-label="Report sections"
+                  className="flex gap-1 overflow-x-auto rounded-lg border border-border bg-surface p-1"
+                  onKeyDown={onTabKeyDown}
+                >
+                  {TABS.map((tab) => (
+                    <button
+                      key={tab}
+                      role="tab"
+                      id={`tab-${tab}`}
+                      aria-selected={activeTab === tab}
+                      aria-controls={`panel-${tab}`}
+                      tabIndex={activeTab === tab ? 0 : -1}
+                      onClick={() => setActiveTab(tab)}
+                      className={`min-h-[40px] shrink-0 rounded-md px-4 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand ${
+                        activeTab === tab
+                          ? "bg-brand/15 text-brand shadow-[inset_0_-2px_0_var(--brand)]"
+                          : "text-muted hover:text-foreground"
+                      }`}
+                    >
+                      {TAB_LABELS[tab]}
+                      {!tabReady[tab] && state.running && (
+                        <span className="ml-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-warning align-middle" aria-label="loading" />
+                      )}
+                    </button>
                   ))}
                 </div>
               </div>
-            )}
-          </div>
 
-          {/* Report content */}
-          <div className="min-w-0">
-            {report ? (
-              <div className="flex flex-col gap-6">
-                {/* Report header */}
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h2 className="text-xl font-semibold">{report.companyName}</h2>
-                    <p className="text-sm text-muted">
-                      {report.symbol} · {new Date(report.generatedAt).toLocaleString()} · {report.model}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {report.signals.filter((s) => s.severity === "high").length > 0 && (
-                      <span className="rounded-full border border-negative/40 bg-negative/10 px-3 py-1 text-xs font-medium text-negative">
-                        {report.signals.filter((s) => s.severity === "high").length} high-severity signals
-                      </span>
-                    )}
-                    <span className="rounded-full border border-border px-3 py-1 text-xs text-muted">
-                      {report.agentFindings.length} agents · {report.questions.length} questions
-                    </span>
-                    {(report.agentFailures?.length ?? 0) > 0 && (
-                      <span className="rounded-full border border-warning/40 bg-warning/10 px-3 py-1 text-xs font-medium text-warning">
-                        {report.agentFailures.length} agent{report.agentFailures.length === 1 ? "" : "s"} failed
-                      </span>
-                    )}
-                    <button
-                      onClick={() => {
-                        setExportErr(null);
-                        void downloadBlob("/api/export/ic-report", `ic-report-${report.symbol}-${new Date().toISOString().slice(0, 10)}.pdf`, "POST", { report })
-                          .catch((e: unknown) => setExportErr(e instanceof Error ? e.message : "Export failed"));
-                      }}
-                      className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-surface-2"
-                    >
-                      ↓ Export PDF
-                    </button>
-                    {exportErr && <span className="text-xs text-negative">{exportErr}</span>}
-                  </div>
-                </div>
-
-                {(report.agentFailures?.length ?? 0) > 0 && (
-                  <div className="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning">
-                    <p className="font-medium">
-                      {report.agentFailures.length} of {report.agentFindings.length + report.agentFailures.length} agents failed — the thesis below was formed without their input.
-                    </p>
-                    <ul className="mt-1.5 space-y-0.5 text-xs">
-                      {report.agentFailures.map((f) => (
-                        <li key={f.agent}>
-                          <span className="font-medium">{f.agentLabel}:</span> {f.error}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {/* Tab nav */}
-                <div className="flex gap-1 overflow-x-auto rounded-lg border border-border bg-surface p-1">
-                  {(["thesis", "valuation", "agents", "signals", "monitorables"] as const).map((tab) => {
-                    const TAB_LABELS: Record<typeof tab, string> = {
-                      thesis: "Thesis",
-                      valuation: "Valuation",
-                      agents: "Agents",
-                      signals: "Signals",
-                      monitorables: "Watch Items",
-                    };
-                    return (
-                      <button
-                        key={tab}
-                        onClick={() => setActiveTab(tab)}
-                        className={`shrink-0 rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
-                          activeTab === tab ? "bg-surface-2 text-foreground" : "text-muted hover:text-foreground"
-                        }`}
-                      >
-                        {TAB_LABELS[tab]}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Tab content */}
-                {activeTab === "thesis" && (
-                  <section>
-                    <SectionHeading>Investment Thesis</SectionHeading>
-                    <ThesisSection thesis={report.thesis} />
-                  </section>
-                )}
-
+              {/* Tab panels — render the moment their stage data exists (5.1) */}
+              <div role="tabpanel" id={`panel-${activeTab}`} aria-labelledby={`tab-${activeTab}`}>
                 {activeTab === "valuation" && (
-                  <section>
-                    <SectionHeading>Valuation Engine</SectionHeading>
-                    <ValuationSection valuation={report.valuation} runHotCold={report.runHotCold} />
-                  </section>
+                  view.valuation ? (
+                    <ValuationTab
+                      valuation={view.valuation}
+                      caseReconciliation={view.caseReconciliation}
+                      priorReconciliation={view.priorReconciliation}
+                      historyStats={view.historyStats}
+                      currency={view.currency}
+                    />
+                  ) : (
+                    <PendingPanel running={state.running} label="Valuation runs within the first minute." />
+                  )
                 )}
-
+                {activeTab === "thesis" && (
+                  view.thesis?.bull || !state.running ? (
+                    <ThesisTab thesis={view.thesis} synthesis={view.synthesis} valuation={view.valuation} currency={view.currency} />
+                  ) : (
+                    <PendingPanel running={state.running} label={`The thesis forms after the ${AGENT_COUNT}-agent network completes.`} />
+                  )
+                )}
                 {activeTab === "agents" && (
-                  <section>
-                    <SectionHeading>Agent Investigation Network</SectionHeading>
-                    <AgentGrid findings={report.agentFindings} />
-                  </section>
+                  <AgentsTab
+                    findings={view.agentFindings}
+                    failures={view.agentFailures}
+                    symbol={state.report?.symbol ?? trimmedSymbol}
+                    onRetried={onAgentRetried}
+                  />
                 )}
-
-                {activeTab === "signals" && (
-                  <section>
-                    <SectionHeading>Detected Signals ({report.signals.length})</SectionHeading>
-                    <SignalsGrid signals={report.signals} />
-                    {report.questions.length > 0 && (
-                      <div className="mt-6">
-                        <h3 className="mb-3 text-sm font-semibold text-muted">Generated Questions ({report.questions.length})</h3>
-                        <div className="space-y-2">
-                          {report.questions.map((q) => (
-                            <div key={q.id} className="flex gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-sm">
-                              <span className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-label font-semibold uppercase ${
-                                q.priority === "high" ? "bg-negative/10 text-negative" :
-                                q.priority === "medium" ? "bg-warning/10 text-warning" :
-                                "bg-surface-2 text-muted"
-                              }`}>{q.priority}</span>
-                              <span className="text-muted">{q.question}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </section>
+                {activeTab === "signals" && <SignalsTab checks={view.signalChecks} questions={view.questions} />}
+                {activeTab === "watch" && (
+                  <WatchTab monitorables={view.monitorables} symbol={state.report?.symbol ?? trimmedSymbol} gaps={view.facts?.gaps} />
                 )}
-
-                {activeTab === "monitorables" && (
-                  <section>
-                    <SectionHeading>Watch Items</SectionHeading>
-                    <Card>
-                      <p className="mb-4 text-sm text-muted">
-                        Key metrics and events to track on an ongoing basis.
-                      </p>
-                      <ul className="space-y-3">
-                        {report.monitorables.map((item, i) => (
-                          <li key={i} className="flex gap-3 text-sm">
-                            <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand/20 text-xs font-semibold text-brand">
-                              {i + 1}
-                            </span>
-                            <span>{item}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </Card>
-                  </section>
+                {activeTab === "data" && (
+                  state.report ? <DataTab report={state.report} /> : <PendingPanel running={state.running} label="The provenance table renders when the run completes." />
                 )}
               </div>
-            ) : running ? (
-              // The full-screen splash already covered the kickoff; the sidebar's
-              // ProgressTracker + Live updates carry the rest of the run, so this
-              // pane stays quiet rather than duplicating a second spinner.
-              <Card className="flex items-center justify-center py-20 text-center text-sm text-muted">
-                {currentStage ? `${STAGE_LABELS[currentStage]}… track progress in the sidebar` : "Initialising…"}
-              </Card>
-            ) : null}
+            </div>
           </div>
         </div>
-      )}
-
-      {/* Landing state */}
-      {!running && !report && events.length === 0 && (
+      ) : (
+        /* Landing state */
         <Reveal index={2} className="flex flex-col gap-6">
           <div className="flex flex-col items-center gap-5 rounded-xl border border-border bg-surface py-14 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border bg-surface-2 text-muted">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border bg-surface-2 text-muted" aria-hidden="true">
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
             </div>
             <div className="flex flex-col gap-2">
-              {/* A deep link (/ic-report?symbol=AAPL) prefills the input, so
-                  "Enter a ticker" contradicted what the user could see. Report
-                  the actual next step instead. Generation stays explicit — it
-                  costs 3-15 minutes of local compute, which is not something to
-                  start on someone's behalf just because they followed a link. */}
               <p className="text-sm font-semibold">
                 {symbol.trim()
-                  ? `Ready — generate the IC report for ${symbol.trim().toUpperCase()}`
+                  ? `Ready: generate the IC report for ${trimmedSymbol}`
                   : "Enter a ticker to generate a full IC report"}
               </p>
-              <p className="max-w-sm text-xs leading-5 text-muted">
-                9 AI agents investigate your company: growth, valuation, competition, management, capital allocation,
-                accounting, governance, risks, and optionality.
+              <p className="max-w-md text-xs leading-5 text-muted">
+                {AGENT_COUNT} agents investigate the company: business model, industry, competition, management, capital allocation, accounting, valuation, governance, and risk. A deterministic engine computes every valuation figure.
               </p>
             </div>
-            <p className="text-xs text-muted/60">~3–15 minutes on a local model</p>
+            <p className="text-xs text-muted/60">Sections render as they complete; a full run takes 3 to 15 minutes on a local model.</p>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[
-              { step: "1", title: "Signal Detection", color: "text-negative", desc: "13 signal types including ROCE drops, margin compression, FII selling, and working capital issues" },
-              { step: "2", title: "Question Generation", color: "text-warning", desc: "Converts each signal into deep analytical questions for the agent network to investigate" },
-              { step: "3", title: "9-Agent Network", color: "text-brand", desc: "Business, Industry, Competition, Management, Capital Allocation, Accounting, Valuation, Governance, Risk" },
-              { step: "4", title: "Thesis + Valuation", color: "text-positive", desc: "Bull/Bear/Base thesis, DCF + SOTP, run hot/cold analysis, scenario analysis, exportable IC report" },
-            ].map(({ step, title, color, desc }) => (
-              <Card key={step}>
+              { step: "1", title: "Signal detection", tone: "text-negative", desc: `${signalLibrarySize("US")} US-market and ${signalLibrarySize("IN")} Indian-market checks, each reported pass or fail with its threshold` },
+              { step: "2", title: "Question generation", tone: "text-warning", desc: "Fired signals become signal-derived questions; a labelled baseline checklist covers the rest" },
+              { step: "3", title: `${AGENT_COUNT}-agent network`, tone: "text-brand", desc: "Each agent gets a distinct evidence slice and mandate; findings are traced back to the data they cite" },
+              { step: "4", title: "Engine and thesis", tone: "text-positive", desc: "Deterministic DCF with invariants, reverse DCF, sensitivity grid, and a thesis written from the computed numbers" },
+            ].map(({ step, title, tone, desc }) => (
+              <div key={step} className="rounded-xl border border-border bg-surface p-5">
                 <div className="mb-2 flex items-center gap-2">
-                  <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface-2 font-mono text-label font-semibold ${color}`}>
+                  <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface-2 font-mono text-label font-semibold ${tone}`}>
                     {step}
                   </span>
                   <h3 className="text-sm font-semibold">{title}</h3>
                 </div>
                 <p className="text-xs leading-5 text-muted">{desc}</p>
-              </Card>
+              </div>
             ))}
           </div>
         </Reveal>
       )}
     </PageShell>
+  );
+}
+
+function PendingPanel({ running, label }: { running: boolean; label: string }) {
+  if (!running) return <EmptyState title="Nothing here yet" detail={label} />;
+  return (
+    <div className="flex flex-col gap-4">
+      <p className="text-xs text-muted">{label}</p>
+      <SkeletonCard lines={4} />
+      <div className="grid gap-4 md:grid-cols-2">
+        <SkeletonCard lines={3} />
+        <SkeletonCard lines={3} />
+      </div>
+    </div>
   );
 }
