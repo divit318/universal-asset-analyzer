@@ -66,6 +66,14 @@ Read this before reading CLAUDE.md, ARCHITECTURE.md, or PROJECT_ROADMAP.md.
 - `lib/event-screener.ts` — Signals. Use for event-driven workflows.
 - `lib/thematic-engine.ts` — 10-stage thematic analysis framework.
 - `lib/ic-agents.ts` — 9-domain multi-agent pipeline. Use for institutional research.
+- `lib/ic/` — IC Report platform (2026-08-02 hardening): `canonical.ts` is the
+  validated, provenance-carrying data object every IC stage reads from;
+  `valuation-engine.ts`/`valuation-suite.ts` compute every valuation figure
+  deterministically (the model proposes inputs only, validated in
+  `valuation-inputs.ts`); `format.ts` is the ONLY formatter for IC surfaces
+  (INR lakh/crore aware, pp-vs-% branded types). Harness:
+  `npx tsx scripts/ic-report-harness.ts` (add `--llm` for full model runs).
+  Full map + decision log: `docs/ic-report/00-map.md`, `docs/ic-report/99-report.md`.
 - `lib/db.ts` — All SQLite operations. All reads/writes go here.
 - `lib/ollama.ts` — Local LLM inference. Never external APIs.
 
