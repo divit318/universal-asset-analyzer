@@ -50,31 +50,33 @@ export function memoryBudgetGb(): number {
 const KNOWN_PROVIDERS: readonly ProviderId[] = ["devin", "ollama"];
 
 /**
- * The provider chain the Router walks, best first.
+ * The DEFAULT chain is local-only — deliberately, and not on the merits.
  *
- * Devin leads by default. It is not a close call: on this project's own
- * prompts the hosted models answer in 4-8s against Ollama's 28-115s, and nine
- * concurrent calls finish in 5.3s where Ollama serializes them into minutes.
+ * Hosted-first measured dramatically better on this project's own prompts
+ * (4-8s vs 28-115s; nine concurrent calls in 5.3s where Ollama serializes
+ * them into minutes — see the prisha-work measurements). But making hosted
+ * the *default* is a product decision that was explicitly gated on two
+ * unresolved items (ai-migration/06-tranche2-blockers.md): the confidence-
+ * calibration decision (Blocker 1) and verified per-session cost (Blocker 2).
+ * Until those are signed off, hosted inference is OPT-IN:
  *
- * Ollama stays in the chain rather than being deleted, and that is the whole
- * reason this is a *chain*: UAA's premise is that a user owns their research
- * offline. On a plane, behind a captive portal, or simply logged out, the
- * local models still answer. Losing that would be a real regression, not a
- * cleanup.
+ *   AI_PROVIDER_ORDER=devin,ollama   # hosted first, local fallback
  *
  * Unknown names are dropped rather than throwing — a typo in an env var
  * should not take the whole platform down — and an order that names nothing
  * valid falls back to the default.
  */
+const DEFAULT_PROVIDER_ORDER: readonly ProviderId[] = ["ollama"];
+
 export function providerOrder(): ProviderId[] {
   const raw = process.env.AI_PROVIDER_ORDER;
-  if (!raw) return [...KNOWN_PROVIDERS];
+  if (!raw) return [...DEFAULT_PROVIDER_ORDER];
   const seen = new Set<ProviderId>();
   for (const part of raw.split(",").map((s) => s.trim().toLowerCase())) {
     const match = KNOWN_PROVIDERS.find((p) => p === part);
     if (match) seen.add(match);
   }
-  return seen.size > 0 ? [...seen] : [...KNOWN_PROVIDERS];
+  return seen.size > 0 ? [...seen] : [...DEFAULT_PROVIDER_ORDER];
 }
 
 /** Model ids taken out of routing entirely, via AI_DISABLED_MODELS. */

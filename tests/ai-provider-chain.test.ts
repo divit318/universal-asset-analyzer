@@ -181,11 +181,13 @@ describe("provider chain", () => {
 });
 
 describe("providerOrder", () => {
-  it("defaults to hosted-first with local as the fallback", () => {
-    expect(providerOrder()).toEqual(["devin", "ollama"]);
+  it("defaults to LOCAL-ONLY — hosted is opt-in until the Blocker-1/2 gates clear (ai-migration/06)", () => {
+    expect(providerOrder()).toEqual(["ollama"]);
   });
 
-  it("can be inverted, or reduced to a single provider, from the environment", () => {
+  it("hosted-first is an explicit opt-in via the environment", () => {
+    process.env.AI_PROVIDER_ORDER = "devin,ollama";
+    expect(providerOrder()).toEqual(["devin", "ollama"]);
     process.env.AI_PROVIDER_ORDER = "ollama,devin";
     expect(providerOrder()).toEqual(["ollama", "devin"]);
     process.env.AI_PROVIDER_ORDER = "ollama";
@@ -196,6 +198,6 @@ describe("providerOrder", () => {
     process.env.AI_PROVIDER_ORDER = "openai, ollama";
     expect(providerOrder()).toEqual(["ollama"]);
     process.env.AI_PROVIDER_ORDER = "nonsense";
-    expect(providerOrder()).toEqual(["devin", "ollama"]);
+    expect(providerOrder()).toEqual(["ollama"]);
   });
 });
