@@ -232,7 +232,7 @@ describe("buildCalibration", () => {
     return {
       id: 1, symbol: "AAA", name: null, action: "buy", conviction: 3, thesis: null, priceAt: 100,
       currency: "USD", targetPrice: null, horizon: null, fitScore: null, fitTier: null,
-      status: "closed", closePrice: 110, closedAt: "2026-01-01", createdAt: "2025-12-01",
+      status: "closed", closePrice: 110, closedAt: "2026-01-01", createdAt: "2025-12-01", caseVersion: null,
       ...overrides,
     };
   }

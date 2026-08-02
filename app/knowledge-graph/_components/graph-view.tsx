@@ -18,7 +18,10 @@ import type {
   GraphNode,
   NodeType,
   GraphScope,
-} from "@/lib/knowledge-graph";
+} from "@/lib/knowledge-graph/types";
+// Value import from the zero-I/O types module (never the package index, which
+// would pull node:sqlite into the client bundle).
+import { INSTRUMENT_LABEL } from "@/lib/knowledge-graph/types";
 import { GraphCanvas, type GraphCanvasHandle, type GraphLayout, type GraphSelection } from "./graph-canvas";
 import { GraphTable } from "./graph-table";
 import { Inspector } from "./inspector";
@@ -28,9 +31,15 @@ export interface GraphViewState {
   layout: GraphLayout | null; // null = scope default
   view: "graph" | "table";
   q: string;
-  hiddenTypes: NodeType[];
+  /** Hidden legend keys: a NodeType for non-asset kinds, "i:<instrument>" for assets. */
+  hiddenTypes: string[];
   minStrength: number;
   selected: string | null; // node id only (edges are session-local)
+}
+
+/** Legend/filter key for a node: assets split by instrument, others by kind. */
+function legendKey(node: GraphNode): string {
+  return node.type === "company" ? `i:${node.instrument ?? "unknown"}` : node.type;
 }
 
 interface Props {
@@ -69,7 +78,7 @@ export function GraphView({ scope, id, initialState, onViewStateChange, onFocusC
 
   const [searchText, setSearchText] = useState(initialState.q ?? "");
   const [debouncedSearch, setDebouncedSearch] = useState(initialState.q ?? "");
-  const [hiddenTypes, setHiddenTypes] = useState<Set<NodeType>>(new Set(initialState.hiddenTypes ?? []));
+  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set(initialState.hiddenTypes ?? []));
   const [minStrength, setMinStrength] = useState(initialState.minStrength ?? 0);
   const [layoutOverride, setLayoutOverride] = useState<GraphLayout | null>(initialState.layout ?? null);
   const [view, setView] = useState<"graph" | "table">(initialState.view ?? "graph");
@@ -130,7 +139,7 @@ export function GraphView({ scope, id, initialState, onViewStateChange, onFocusC
 
   const { filteredNodes, filteredEdges } = useMemo(() => {
     if (!graph) return { filteredNodes: [], filteredEdges: [] };
-    const keptNodes = graph.nodes.filter((n) => !hiddenTypes.has(n.type) || n.id === graph.meta.focusId);
+    const keptNodes = graph.nodes.filter((n) => !hiddenTypes.has(legendKey(n)) || n.id === graph.meta.focusId);
     const keptIds = new Set(keptNodes.map((n) => n.id));
     const keptEdges = graph.edges.filter(
       (e) => e.strength >= minStrength && keptIds.has(e.source) && keptIds.has(e.target),
@@ -162,10 +171,19 @@ export function GraphView({ scope, id, initialState, onViewStateChange, onFocusC
 
   const highlightedNodeIds = pathHighlight ?? searchMatches;
 
-  const typeCounts = useMemo(() => {
-    const counts = new Map<NodeType, number>();
-    for (const n of graph?.nodes ?? []) counts.set(n.type, (counts.get(n.type) ?? 0) + 1);
-    return counts;
+  // Legend entries: asset nodes are grouped by INSTRUMENT (Common Equity,
+  // Bond ETF, FX Pair...), everything else by node kind. The word "Company"
+  // never appears for a non-equity instrument.
+  const legendEntries = useMemo(() => {
+    const entries = new Map<string, { label: string; type: NodeType; count: number }>();
+    for (const n of graph?.nodes ?? []) {
+      const key = legendKey(n);
+      const label = n.type === "company" ? INSTRUMENT_LABEL[n.instrument ?? "unknown"] : NODE_VISUAL[n.type].label;
+      const existing = entries.get(key);
+      if (existing) existing.count += 1;
+      else entries.set(key, { label, type: n.type, count: 1 });
+    }
+    return [...entries.entries()];
   }, [graph]);
 
   /* ------------------------------- callbacks ------------------------------- */
@@ -255,11 +273,11 @@ export function GraphView({ scope, id, initialState, onViewStateChange, onFocusC
     });
   }, []);
 
-  const toggleType = useCallback((type: NodeType) => {
+  const toggleType = useCallback((key: string) => {
     setHiddenTypes((prev) => {
       const next = new Set(prev);
-      if (next.has(type)) next.delete(type);
-      else next.add(type);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }, []);
@@ -416,18 +434,19 @@ export function GraphView({ scope, id, initialState, onViewStateChange, onFocusC
         </div>
       </div>
 
-      {/* Legend doubles as the node-type filter: click to hide/show, with counts. */}
+      {/* Legend doubles as the filter: assets grouped by instrument, other
+          kinds by type. Click to hide/show, with live counts. */}
       <div role="group" aria-label="Node types (click to filter)" className="flex flex-wrap items-center gap-1.5">
-        {([...typeCounts.entries()] as [NodeType, number][]).map(([type, count]) => {
-          const visual = NODE_VISUAL[type];
-          const hidden = hiddenTypes.has(type);
+        {legendEntries.map(([key, entry]) => {
+          const visual = NODE_VISUAL[entry.type];
+          const hidden = hiddenTypes.has(key);
           return (
             <button
-              key={type}
+              key={key}
               type="button"
               aria-pressed={!hidden}
-              onClick={() => toggleType(type)}
-              title={hidden ? `Show ${visual.label} nodes` : `Hide ${visual.label} nodes`}
+              onClick={() => toggleType(key)}
+              title={hidden ? `Show ${entry.label} nodes` : `Hide ${entry.label} nodes`}
               className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
                 hidden
                   ? "border-border text-muted line-through opacity-60"
@@ -437,8 +456,8 @@ export function GraphView({ scope, id, initialState, onViewStateChange, onFocusC
               <svg width="10" height="10" viewBox="-8 -8 16 16" aria-hidden="true">
                 <path d={shapePath(visual.shape, 6)} fill={visual.color} fillOpacity={0.4} stroke={visual.color} strokeWidth={1.6} />
               </svg>
-              {visual.label}
-              <span className="font-mono text-[10px] text-muted">{count}</span>
+              {entry.label}
+              <span className="font-mono text-[10px] text-muted">{entry.count}</span>
             </button>
           );
         })}

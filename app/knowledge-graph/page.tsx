@@ -15,7 +15,7 @@
 import { Suspense, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect } from "react";
-import type { GraphScope, NodeType } from "@/lib/knowledge-graph";
+import type { GraphScope } from "@/lib/knowledge-graph/types";
 import { GraphView, type GraphViewState } from "./_components/graph-view";
 import { GraphScopeSwitcher } from "./_components/graph-scope-switcher";
 import { PageShell, PageHeader } from "@/app/_components/ui";
@@ -39,7 +39,7 @@ function KnowledgeGraphInner() {
         | null,
       view: searchParams.get("view") === "table" ? "table" : "graph",
       q: searchParams.get("q") ?? "",
-      hiddenTypes: (searchParams.get("hide")?.split(",").filter(Boolean) ?? []) as NodeType[],
+      hiddenTypes: searchParams.get("hide")?.split(",").filter(Boolean) ?? [],
       minStrength: Number(searchParams.get("min")) || 0,
       selected: searchParams.get("sel"),
     }),

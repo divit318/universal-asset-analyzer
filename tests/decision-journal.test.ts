@@ -20,6 +20,7 @@ function dec(o: Partial<Decision> & { action: Decision["action"] }): Decision {
     closePrice: null,
     closedAt: null,
     createdAt: "2026-01-01T00:00:00Z",
+    caseVersion: null,
     ...o,
   };
 }

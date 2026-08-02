@@ -146,6 +146,17 @@ export function isValuationMethod(value: unknown): value is ValuationMethod {
 }
 
 /**
+ * Identifies one event in the log. Lives here rather than beside the query that
+ * uses it because the Judgment Ledger builds these keys in the browser (to look
+ * up the snapshot behind a decision) while `lib/db.ts` builds them on the server
+ * to fill the map — and `db.ts` imports `node:sqlite`, so a client component
+ * reaching for its version of this helper would pull the driver into the bundle.
+ */
+export function versionKeyOf(symbol: string, version: number): string {
+  return `${symbol.toUpperCase()}@${version}`;
+}
+
+/**
  * Every kind is defined now, including the two only Phase 4 writes
  * (`earnings_revaluation`, `decision_committed`), so the append-only log never
  * needs migrating.
