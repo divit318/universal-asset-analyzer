@@ -295,5 +295,9 @@ tickers and browser sessions.
   field-level diff view would be a natural extension of the canonical model.
 - `.NS`/`.BO` resolution trusts the user's suffix; a resolver that offers the
   NSE listing when a bare Indian name is typed would close the last input gap.
+- ValuationCases auto-seeded by the OLD pipeline before this work (e.g. NVDA's
+  v1 at $67,267 with a 193.9% growth assumption) still sit in the database.
+  The report flags them as divergent rather than mutating user-owned case
+  history; correcting them is a one-click re-seed in the valuation workspace.
 - Windows/Linux portability of the PDF fonts is handled (fonts are committed),
   but `qlmanage`-style visual PDF checks in CI are macOS-only.

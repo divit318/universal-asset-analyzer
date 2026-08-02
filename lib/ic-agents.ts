@@ -26,7 +26,7 @@ import type { DetectedSignal } from "./ic-signals";
 import type { CanonicalFacts } from "./ic/canonical";
 import { fmtPercent, fmtMultiple, fmtMoney, fmtMoneyCompact, fmtFiscalPeriod } from "./ic/format";
 
-export const AGENT_PROMPT_VERSION = "agents-2";
+export const AGENT_PROMPT_VERSION = "agents-3";
 
 export interface AgentFinding {
   agent: AgentDomain;
@@ -245,7 +245,7 @@ export const AGENT_CONFIG: Record<AgentDomain, { label: string; persona: string;
   },
   governance: {
     label: AGENT_LABELS.governance,
-    persona: "You analyse who owns and controls the company: ownership concentration and its quarterly direction, promoter/insider behaviour as filed, and minority shareholder protection. Use role-level language; no claims about named individuals beyond the filed records provided.",
+    persona: "You analyse who owns and controls the company: ownership concentration and its quarterly direction, insider behaviour as filed, and minority shareholder protection. Use the ownership terminology of the company's own market (\"promoter\" is an Indian-market term; do not apply it to US names). Use role-level language; no claims about named individuals beyond the filed records provided.",
     notYours: "Do not assess management skill or capital allocation: only structure, ownership and conduct.",
   },
   risk: {
