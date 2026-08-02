@@ -6,7 +6,12 @@
  * concentration risks, and a portfolio-level summary.
  */
 
-import { runPromptWithMeta } from "./ai";
+import { runAnalysis } from "./ai/analysis";
+import {
+  WatchlistDigestSchema,
+  WatchlistDigestWireSchema,
+  WATCHLIST_DIGEST_SCHEMA_VERSION,
+} from "./ai/schemas/watchlist-digest";
 import { getQuote } from "./yahoo";
 import { getFundamentals } from "./fundamentals";
 import { computeScore, computeMomentum, assessRisks } from "./scoring";
@@ -15,7 +20,6 @@ import { listWatchlist } from "./db";
 import type { Quote, WatchlistItem, WatchlistAlert } from "./types";
 import { formatCurrency, formatPercent, formatMarketCap } from "./format";
 import { getLatestSectorRotation, findSectorRotationEntry } from "./sector-rotation";
-import { extractJsonObject } from "./json-extract";
 
 export interface WatchlistPortfolioContext {
   objective: string;
@@ -98,7 +102,8 @@ export async function summariseOne(item: WatchlistItem): Promise<WatchlistStockS
   }
 }
 
-function buildDigestPrompt(summaries: WatchlistStockSummary[], portfolio?: WatchlistPortfolioContext): string {
+/** Exported for the parity harness (scripts/ai-parity.ts) — pure, no I/O. */
+export function buildDigestPrompt(summaries: WatchlistStockSummary[], portfolio?: WatchlistPortfolioContext): string {
   const lines = summaries.map((s) => {
     const price = s.quote ? formatCurrency(s.quote.price, s.quote.currency) : "n/a";
     const chg = s.quote ? formatPercent(s.quote.changePercent) : "";
@@ -178,13 +183,27 @@ export async function generateWatchlistDigest(
   let parsed = defaults;
 
   try {
-    const { text: raw, model: usedModel } = await runPromptWithMeta(
-      "watchlist-intelligence",
+    // Migrated to the analysis seam (tranche 2). The tolerant parse schema
+    // reproduces extractJsonObject's defaults behavior; no caching (the panel
+    // is an explicit Generate/Regenerate button, and summaries change with
+    // live quotes anyway). No confidence field exists in this output — see
+    // the Blocker-1 audit in ai-migration/06.
+    const result = await runAnalysis({
+      taskType: "watchlist-intelligence",
+      subjectKey: `watchlist:${capped.map((i) => i.symbol).sort().join(",")}`,
       prompt,
-      { maxTokens: 1000, json: true },
-    );
-    model = usedModel;
-    parsed = extractJsonObject(raw, defaults);
+      schema: WatchlistDigestSchema,
+      wireSchema: WatchlistDigestWireSchema,
+      schemaVersion: WATCHLIST_DIGEST_SCHEMA_VERSION,
+    });
+    model = result.meta.model ?? result.provider;
+    parsed = {
+      summary: result.data.summary || defaults.summary,
+      actionItems: result.data.actionItems,
+      concentrationRisks: result.data.concentrationRisks,
+      topPicks: result.data.topPicks,
+      topConcerns: result.data.topConcerns,
+    };
   } catch {
     // parsed stays at defaults
   }

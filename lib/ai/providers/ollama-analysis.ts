@@ -33,17 +33,24 @@ export class OllamaAnalysisProvider implements AnalysisProvider {
 
   async run<T>(req: AnalysisRequest<T>): Promise<AnalysisResult<T>> {
     const t0 = Date.now();
+    const textMode = req.output === "text";
     const response = await runTask(req.taskType, req.prompt, {
-      json: true,
+      // Text-mode call sites (financial insight, calendar brief) never asked
+      // Ollama for JSON pre-migration; forcing it would change their output.
+      json: !textMode,
       timeoutMs: req.timeoutMs,
       signal: req.signal,
     });
 
     let raw: unknown;
-    try {
-      raw = extractJson<unknown>(response.content);
-    } catch {
-      throw new OllamaAnalysisError("invalid_response", "model response contained no parseable JSON");
+    if (textMode) {
+      raw = { text: response.content.trim() };
+    } else {
+      try {
+        raw = extractJson<unknown>(response.content);
+      } catch {
+        throw new OllamaAnalysisError("invalid_response", "model response contained no parseable JSON");
+      }
     }
     // Schemas encode the small-model tolerances (defaults, coercions) that
     // extractJsonObject used to provide per call site — see lib/ai/schemas/.

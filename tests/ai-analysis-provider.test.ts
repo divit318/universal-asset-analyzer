@@ -142,6 +142,22 @@ describe("MovementAnalysisSchema tolerances (Ollama-path parity)", () => {
   });
 });
 
+describe("text-mode schemas", () => {
+  it("TextWireSchema converts cleanly to Draft 7", async () => {
+    const { TextWireSchema } = await import("@/lib/ai/schemas/text");
+    const json = toStructuredOutputSchema(TextWireSchema);
+    expect(JSON.stringify(json)).toContain('"text"');
+  });
+
+  it("WatchlistDigest wire schema converts; parse schema tolerates missing arrays", async () => {
+    const { WatchlistDigestWireSchema, WatchlistDigestSchema } = await import("@/lib/ai/schemas/watchlist-digest");
+    expect(() => toStructuredOutputSchema(WatchlistDigestWireSchema)).not.toThrow();
+    const parsed = WatchlistDigestSchema.parse({ summary: "s", topPicks: "not-an-array" });
+    expect(parsed.topPicks).toEqual([]);
+    expect(parsed.actionItems).toEqual([]);
+  });
+});
+
 describe("sweeper epoch normalization", () => {
   it("treats seconds and milliseconds timestamps alike", () => {
     const ms = Date.UTC(2026, 7, 2);

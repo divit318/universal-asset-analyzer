@@ -38,6 +38,15 @@ export interface AnalysisRequest<T> {
    */
   wireSchema?: z.ZodType<unknown>;
   schemaVersion: number;
+  /**
+   * "json" (default): the model must emit the schema's JSON.
+   * "text": the task's prompt asks for prose (the pre-migration behavior of
+   * free-text call sites). The Ollama adapter runs WITHOUT json mode and
+   * wraps the answer as { text }, keeping those prompts byte-identical;
+   * Devin still delivers through structured output using the wire schema
+   * (canonically lib/ai/schemas/text.ts).
+   */
+  output?: "json" | "text";
   /** Defaults to hash(taskType, subjectKey, inputHash, schemaVersion). */
   idempotencyKey?: string;
   timeoutMs?: number;

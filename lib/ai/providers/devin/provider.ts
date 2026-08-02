@@ -105,10 +105,14 @@ export class DevinAnalysisProvider implements AnalysisProvider {
 
   async run<T>(req: AnalysisRequest<T>): Promise<AnalysisResult<T>> {
     const task = TASK_REGISTRY[req.taskType];
-    const timeoutMs =
-      req.timeoutMs ??
+    // Amendment 3: the Devin budget is tail-based and must never be strangled
+    // by a caller's Ollama-oriented timeoutMs (e.g. the calendar route's 50s,
+    // barely above the observed 48.8s session max). The task's declared
+    // devinTimeoutMs (or the defaults) is the FLOOR; a caller can only widen.
+    const floor =
       task.devinTimeoutMs ??
       (task.latency === "background" ? DEFAULT_TIMEOUT_BACKGROUND_MS : DEFAULT_TIMEOUT_STANDARD_MS);
+    const timeoutMs = Math.max(req.timeoutMs ?? 0, floor);
     const idemKey =
       req.idempotencyKey ??
       analysisIdempotencyKey(req.taskType, req.subjectKey, analysisInputHash(req.prompt), req.schemaVersion);

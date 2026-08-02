@@ -99,6 +99,31 @@ describe("runAnalysis", () => {
   });
 });
 
+describe("text mode", () => {
+  it("wraps a mock provider's text answer as { text } through the schema", async () => {
+    const { TextAnalysisSchema } = await import("@/lib/ai/schemas/text");
+    // Direct provider-shape test: the façade passes output:"text" through; the
+    // OllamaAnalysisProvider wraps raw content. Here we assert the seam accepts
+    // a text-mode request and validates through TextAnalysisSchema.
+    const res = await runAnalysis(
+      {
+        taskType: "quick-summary",
+        subjectKey: "text:TEST",
+        prompt: `text dossier ${Math.random()}`,
+        schema: TextAnalysisSchema as never,
+        schemaVersion: 1,
+        output: "text",
+      },
+      { providers: { ollama: {
+        id: "ollama",
+        async run() { return { data: { text: "plain prose answer" }, provider: "ollama" as const, meta: { durationMs: 1 } }; },
+        async healthCheck() { return { reachable: true }; },
+      } } },
+    );
+    expect((res.data as { text: string }).text).toBe("plain prose answer");
+  });
+});
+
 describe("enqueueAnalysis", () => {
   it("records a durable job row and completes it", async () => {
     const ollama = mockProvider("ollama");

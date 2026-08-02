@@ -10,7 +10,8 @@
  * cached via scanner_cache to avoid re-generating on every tab open.
  */
 
-import { runPromptWithMeta } from "./ai";
+import { runAnalysis } from "./ai/analysis";
+import { TextAnalysisSchema, TextWireSchema, TEXT_SCHEMA_VERSION } from "./ai/schemas/text";
 import { getScannerCache, putScannerCache } from "./db";
 import type { FinancialStatements, FundamentalsSnapshot, ScoreResult } from "./types";
 
@@ -89,13 +90,24 @@ export async function generateFinancialInsight(input: FinancialInsightInput): Pr
   let model = "unavailable";
   let insight: string;
   try {
-    const { text: raw, model: usedModel } = await runPromptWithMeta(
-      "quick-summary",
-      buildFinancialInsightPrompt(input),
-      { maxTokens: 300 },
+    // Migrated to the analysis seam (ai-migration/03 §9, tranche 2): text
+    // mode keeps the Ollama prompt/behavior identical (no json flag); the
+    // ai_result cache is content-keyed on the dossier, while the outer
+    // symbol-keyed 15-minute short-circuit above is unchanged.
+    const result = await runAnalysis(
+      {
+        taskType: "quick-summary",
+        subjectKey: `insight:${input.symbol}`,
+        prompt: buildFinancialInsightPrompt(input),
+        schema: TextAnalysisSchema,
+        wireSchema: TextWireSchema,
+        schemaVersion: TEXT_SCHEMA_VERSION,
+        output: "text",
+      },
+      { maxAgeMs: 15 * 60 * 1000 },
     );
-    model = usedModel;
-    insight = raw.trim();
+    model = result.meta.model ?? result.provider;
+    insight = result.data.text;
   } catch {
     insight = "AI insight unavailable. Run `ollama serve` and pull a model.";
   }

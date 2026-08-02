@@ -223,6 +223,9 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     latency: "standard",
     jsonMode: true,
     maxTokens: 1024,
+    // Tranche-2 migrated task: tail-based Devin budget (amendment 3), same
+    // movement-class sizing (~5x the observed 48.8s session max).
+    devinTimeoutMs: 240_000,
   },
   "opportunity-engine": {
     complexity: "standard",
@@ -255,7 +258,9 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
   "market-summary": { complexity: "light", latency: "standard", maxTokens: 800 },
   "daily-briefing": { complexity: "light", latency: "standard", maxTokens: 800 },
   "knowledge-graph-explain": { complexity: "light", latency: "interactive", maxTokens: 600 },
-  "calendar-brief": { complexity: "light", latency: "interactive", maxTokens: 600 },
+  // Tranche-2 migrated (text mode); interactive → stays on Ollama under a
+  // global AI_PROVIDER=devin unless pinned. devinTimeoutMs applies when pinned.
+  "calendar-brief": { complexity: "light", latency: "interactive", maxTokens: 600, devinTimeoutMs: 240_000 },
   "nl-screener": {
     // Parsing a search box into filters. The user is staring at a spinner and
     // there is no research quality to protect — pure latency play.
@@ -265,7 +270,7 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     maxTokens: 512,
     temperature: 0.1,
   },
-  "quick-summary": { complexity: "light", latency: "interactive", maxTokens: 400 },
+  "quick-summary": { complexity: "light", latency: "interactive", maxTokens: 400, devinTimeoutMs: 240_000 },
   // Simulator intake + generation — a human is in a live back-and-forth (or
   // watching a staged progress bar) with this exact task, so latency is
   // interactive; but choosing WHICH gap in an investor profile matters next,

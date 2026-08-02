@@ -1,40 +1,52 @@
 /**
- * Golden-output parity harness (ai-migration/03 §8, Phase 5 amendment 4).
+ * Golden-output parity harness (ai-migration/03 §8; Phase 5 amendments 4 + the
+ * semantic-agreement addition).
  *
- * Same inputs through BOTH providers, diff the structured fields. The symbol
- * set deliberately includes degenerate inputs — thin float, no SEC filings
- * (OTC ADR), non-US listings, a recent IPO with short history, and quiet
- * mega-caps where the dossier is genuinely ambiguous — because nine runs on
- * AAPL prove determinism, not correctness.
+ * Same inputs through BOTH providers, diff the structured fields, and check
+ * EVIDENCE DISCIPLINE: claims must be traceable to the dossier. Two checks:
+ *   - evidence grounding: `evidence` fields must token-overlap the dossier
+ *   - number grounding: numeric tokens in ANY output text must appear in the
+ *     dossier (this caught Ollama quoting "480,126 vehicles" that the cited
+ *     evidence line did not contain — descriptions are checked, not just
+ *     evidence fields)
+ * The full prompt is persisted in the record so divergences can be
+ * adjudicated later without rebuilding live dossiers.
  *
- * The check that matters most is EVIDENCE GROUNDING: every driver's
- * `evidence` field must be traceable to the dossier. A provider that starts
- * inventing drivers when evidence is thin fails parity regardless of how
- * fluent the output is.
- *
- * Usage:
- *   npx tsx scripts/ai-parity.ts                    # both providers, all symbols
- *   npx tsx scripts/ai-parity.ts --devin-only
- *   npx tsx scripts/ai-parity.ts --ollama-only
- *   npx tsx scripts/ai-parity.ts --symbols AAPL,KOSS
+ * Tasks:
+ *   npx tsx scripts/ai-parity.ts                          # movement, 15 symbols
+ *   npx tsx scripts/ai-parity.ts --task insight           # financial insight
+ *   npx tsx scripts/ai-parity.ts --task watchlist         # watchlist digest
+ *   npx tsx scripts/ai-parity.ts --task calendar          # calendar brief
+ *   … --devin-only | --ollama-only | --symbols AAPL,KOSS
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
+import type { z } from "zod";
 import { getQuote, getHistory } from "@/lib/yahoo";
 import { getCompanyNews } from "@/lib/news";
 import { windowReturn, volumeAnomaly } from "@/lib/movement-explainer";
+import { getFundamentals } from "@/lib/fundamentals";
+import { getFinancialStatements } from "@/lib/statements";
+import { computeScore } from "@/lib/scoring";
+import { buildFinancialInsightPrompt } from "@/lib/ai-financial-insight";
+import { buildDigestPrompt, summariseOne } from "@/lib/ai-watchlist";
+import { buildCalendarBriefPrompt } from "@/lib/ai-calendar-brief";
+import { getCalendarEvents } from "@/lib/calendar";
 import {
-  MovementAnalysisSchema,
-  MovementWireSchema,
-  MOVEMENT_SCHEMA_VERSION,
-  type MovementAnalysis,
+  MovementAnalysisSchema, MovementWireSchema, MOVEMENT_SCHEMA_VERSION,
 } from "@/lib/ai/schemas/movement";
+import { TextAnalysisSchema, TextWireSchema, TEXT_SCHEMA_VERSION } from "@/lib/ai/schemas/text";
+import {
+  WatchlistDigestSchema, WatchlistDigestWireSchema, WATCHLIST_DIGEST_SCHEMA_VERSION,
+} from "@/lib/ai/schemas/watchlist-digest";
 import type { AnalysisRequest } from "@/lib/ai/analysis-provider";
+import type { TaskType } from "@/lib/ai/task-registry";
 import { devinAnalysisProvider } from "@/lib/ai/providers/devin/provider";
 import { ollamaAnalysisProvider } from "@/lib/ai/providers/ollama-analysis";
 import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
+import type { WatchlistItem } from "@/lib/types";
 
 function loadEnvLocal(): void {
   const file = path.join(process.cwd(), ".env.local");
@@ -48,14 +60,87 @@ loadEnvLocal();
 
 const { values: args } = parseArgs({
   options: {
+    task: { type: "string", default: "movement" },
     symbols: { type: "string" },
     "devin-only": { type: "boolean", default: false },
     "ollama-only": { type: "boolean", default: false },
   },
 });
 
-/** 15 symbols; the label records WHY each is in the set. */
-const SYMBOL_SET: { symbol: string; label: string }[] = [
+/* ------------------------------ grounding -------------------------------- */
+
+/** Token-overlap: ≥60% of significant words (len>3) appear in the dossier. */
+export function isGrounded(evidence: string, dossier: string): boolean {
+  const words = evidence.toLowerCase().match(/[a-z0-9%$.]{4,}/g) ?? [];
+  if (words.length === 0) return false;
+  const hay = dossier.toLowerCase();
+  const hits = words.filter((w) => hay.includes(w)).length;
+  return hits / words.length >= 0.6;
+}
+
+/**
+ * Numbers appearing in output text that are absent from the dossier. Strips
+ * separators; ignores 1-digit numbers and list markers (too noisy) and
+ * percentages of the number itself. Conservative: flags only ≥3-significant-
+ * digit numbers, which is where invented facts (revenue, deliveries, price
+ * targets) live.
+ */
+export function ungroundedNumbers(text: string, dossier: string): string[] {
+  const clean = (s: string) => s.replace(/[,\s]/g, "");
+  const hay = clean(dossier);
+  // Values the dossier contains, for scaled-match checks ($108,807,000,000 →
+  // "$108.81bn" is reformatting, not invention).
+  const dossierValues = [...dossier.matchAll(/\d[\d,]*\.?\d*/g)]
+    .map((m) => Number(clean(m[0])))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const scaledMatch = (v: number) =>
+    dossierValues.some((d) =>
+      [1, 1e3, 1e6, 1e9].some((s) => Math.abs(d / s - v) / Math.max(v, 1e-9) < 0.006),
+    );
+  const out: string[] = [];
+  for (const m of text.matchAll(/\d[\d,]*\.?\d*/g)) {
+    const token = clean(m[0]).replace(/\.$/, "");
+    const digits = token.replace(/\D/g, "");
+    if (digits.length < 3) continue;
+    if (hay.includes(token) || hay.includes(digits)) continue;
+    const v = Number(token);
+    if (Number.isFinite(v) && scaledMatch(v)) continue;
+    out.push(m[0]);
+  }
+  return [...new Set(out)];
+}
+
+function collectStrings(value: unknown, into: string[] = []): string[] {
+  if (typeof value === "string") into.push(value);
+  else if (Array.isArray(value)) value.forEach((v) => collectStrings(v, into));
+  else if (value && typeof value === "object") Object.values(value).forEach((v) => collectStrings(v, into));
+  return into;
+}
+
+/* ------------------------------ task defs -------------------------------- */
+
+interface Subject {
+  key: string;
+  label: string;
+  prompt: string;
+  /** For semantic checks that need it (e.g. watchlist symbol whitelist). */
+  meta?: Record<string, unknown>;
+}
+
+interface TaskDef {
+  taskType: TaskType;
+  output: "json" | "text";
+  schema: z.ZodType<unknown>;
+  wireSchema: z.ZodType<unknown>;
+  schemaVersion: number;
+  buildSubjects(symbols: string[] | null): Promise<Subject[]>;
+  /** Task-specific semantic summary of one output for the report table. */
+  describe(output: unknown): string;
+  /** Task-specific hallucination checks beyond number grounding. */
+  extraChecks?(output: unknown, subject: Subject): string[];
+}
+
+const MOVEMENT_SYMBOLS: { symbol: string; label: string }[] = [
   { symbol: "AAPL", label: "mega-cap, heavy news" },
   { symbol: "MSFT", label: "mega-cap" },
   { symbol: "NVDA", label: "mega-cap, volatile" },
@@ -73,16 +158,9 @@ const SYMBOL_SET: { symbol: string; label: string }[] = [
   { symbol: "GLD", label: "DEGENERATE: commodity ETF (no company news)" },
 ];
 
-interface Dossier {
-  symbol: string;
-  prompt: string;
-  newsCount: number;
-  changePercent: number | null;
-  historyDays: number;
-  volumeAnomalyPct: number | null;
-}
+const INSIGHT_SYMBOLS = ["AAPL", "MSFT", "KOSS", "BGFV", "NSRGY", "RELIANCE.NS", "CRCL", "PG"];
 
-async function buildDossier(symbol: string): Promise<Dossier> {
+async function buildMovementPromptFor(symbol: string): Promise<{ prompt: string; note: string }> {
   const windowDays = 5;
   const [quote, history, news] = await Promise.all([
     getQuote(symbol).catch(() => null),
@@ -91,7 +169,6 @@ async function buildDossier(symbol: string): Promise<Dossier> {
   ]);
   const changePercent = windowReturn(history, windowDays) ?? quote?.changePercent ?? null;
   const volPct = volumeAnomaly(history);
-
   const moveDesc =
     changePercent != null
       ? `${changePercent >= 0 ? "+" : ""}${changePercent.toFixed(2)}% over the last ${windowDays} trading days`
@@ -101,7 +178,6 @@ async function buildDossier(symbol: string): Promise<Dossier> {
   const newsDesc = news.length
     ? news.map((n) => `• [${n.publishedAt.slice(0, 10)}] ${n.headline}${n.summary ? ` — ${n.summary}` : ""}`).join("\n")
     : "No recent company-specific news found.";
-
   const prompt = `You are an institutional equity analyst explaining a price movement to a client.
 
 SUBJECT: stock ${symbol}${quote?.name ? ` (${quote.name})` : ""}
@@ -132,54 +208,177 @@ ${JSON_SCHEMA_LEAD_IN}
 }
 
 Include 1-4 drivers, ranked most important first.`;
-
-  return { symbol, prompt, newsCount: news.length, changePercent, historyDays: history.length, volumeAnomalyPct: volPct };
+  return { prompt, note: `news=${news.length} move=${changePercent?.toFixed(2) ?? "n/a"}% history=${history.length}d` };
 }
 
-/**
- * Is a driver's `evidence` traceable to the dossier? Token overlap rather
- * than exact substring, because models quote with elisions: ≥60% of the
- * evidence's significant words (len>3) must appear in the dossier.
- */
-export function isGrounded(evidence: string, dossier: string): boolean {
-  const words = evidence.toLowerCase().match(/[a-z0-9%$.]{4,}/g) ?? [];
-  if (words.length === 0) return false;
-  const hay = dossier.toLowerCase();
-  const hits = words.filter((w) => hay.includes(w)).length;
-  return hits / words.length >= 0.6;
+const TASKS: Record<string, TaskDef> = {
+  movement: {
+    taskType: "explain-movement",
+    output: "json",
+    schema: MovementAnalysisSchema,
+    wireSchema: MovementWireSchema,
+    schemaVersion: MOVEMENT_SCHEMA_VERSION,
+    async buildSubjects(symbols) {
+      const set = symbols
+        ? symbols.map((s) => ({ symbol: s, label: "custom" }))
+        : MOVEMENT_SYMBOLS;
+      const out: Subject[] = [];
+      for (const { symbol, label } of set) {
+        const { prompt, note } = await buildMovementPromptFor(symbol);
+        out.push({ key: symbol, label: `${label} (${note})`, prompt });
+      }
+      return out;
+    },
+    describe(output) {
+      const o = output as z.infer<typeof MovementAnalysisSchema>;
+      return `conf=${o.confidence} drivers=${o.drivers.map((d) => `${d.category}:${d.direction[0]}`).join(",")} ${o.persistence}`;
+    },
+    extraChecks(output, subject) {
+      const o = output as z.infer<typeof MovementAnalysisSchema>;
+      return o.drivers
+        .filter((d) => !isGrounded(d.evidence, subject.prompt))
+        .map((d) => `ungrounded evidence (${d.category}): "${d.evidence.slice(0, 80)}"`);
+    },
+  },
+
+  insight: {
+    taskType: "quick-summary",
+    output: "text",
+    schema: TextAnalysisSchema,
+    wireSchema: TextWireSchema,
+    schemaVersion: TEXT_SCHEMA_VERSION,
+    async buildSubjects(symbols) {
+      const set = symbols ?? INSIGHT_SYMBOLS;
+      const out: Subject[] = [];
+      for (const symbol of set) {
+        try {
+          const [parts, statements] = await Promise.all([
+            getFundamentals(symbol),
+            getFinancialStatements(symbol).catch(() => null),
+          ]);
+          const score = computeScore(parts.snapshot, statements, parts.analyst);
+          const prompt = buildFinancialInsightPrompt({ symbol, snapshot: parts.snapshot, statements, score });
+          out.push({ key: symbol, label: `statements=${statements ? "yes" : "NO"}`, prompt });
+        } catch (err) {
+          console.log(`  ${symbol.padEnd(14)} SKIPPED — dossier build failed: ${err instanceof Error ? err.message : err}`);
+        }
+      }
+      return out;
+    },
+    describe(output) {
+      const o = output as z.infer<typeof TextAnalysisSchema>;
+      return `${o.text.length}ch: ${o.text.slice(0, 70)}…`;
+    },
+  },
+
+  watchlist: {
+    taskType: "watchlist-intelligence",
+    output: "json",
+    schema: WatchlistDigestSchema,
+    wireSchema: WatchlistDigestWireSchema,
+    schemaVersion: WATCHLIST_DIGEST_SCHEMA_VERSION,
+    async buildSubjects(symbols) {
+      const lists: { key: string; label: string; symbols: string[] }[] = symbols
+        ? [{ key: "custom", label: "custom", symbols }]
+        : [
+            { key: "mixed-8", label: "typical watchlist", symbols: ["AAPL", "MSFT", "NVDA", "JPM", "XOM", "PG", "GLD", "CRCL"] },
+            { key: "degenerate-2", label: "DEGENERATE: two thin microcaps", symbols: ["KOSS", "BGFV"] },
+          ];
+      const out: Subject[] = [];
+      for (const l of lists) {
+        const items = l.symbols.map((s) => ({ symbol: s }) as WatchlistItem);
+        const summaries = await Promise.all(items.map(summariseOne));
+        out.push({
+          key: l.key,
+          label: l.label,
+          prompt: buildDigestPrompt(summaries),
+          meta: { symbols: l.symbols },
+        });
+      }
+      return out;
+    },
+    describe(output) {
+      const o = output as z.infer<typeof WatchlistDigestSchema>;
+      return `picks=[${o.topPicks.map(firstSymbol).join(",")}] concerns=[${o.topConcerns.map(firstSymbol).join(",")}] actions=${o.actionItems.length}`;
+    },
+    extraChecks(output, subject) {
+      const o = output as z.infer<typeof WatchlistDigestSchema>;
+      const allowed = new Set((subject.meta?.symbols as string[]).map((s) => s.toUpperCase()));
+      const problems: string[] = [];
+      for (const [field, list] of [["topPicks", o.topPicks], ["topConcerns", o.topConcerns]] as const) {
+        for (const entry of list) {
+          const sym = firstSymbol(entry);
+          if (sym && !allowed.has(sym)) problems.push(`${field} references non-watchlist symbol "${sym}"`);
+        }
+      }
+      return problems;
+    },
+  },
+
+  calendar: {
+    taskType: "calendar-brief",
+    output: "text",
+    schema: TextAnalysisSchema,
+    wireSchema: TextWireSchema,
+    schemaVersion: TEXT_SCHEMA_VERSION,
+    async buildSubjects() {
+      const weekStart = new Date().toISOString().slice(0, 10);
+      const weekEnd = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+      const calendar = await getCalendarEvents();
+      const events = calendar.events.filter((e) => e.date >= weekStart && e.date <= weekEnd);
+      const prompt = buildCalendarBriefPrompt(events.slice(0, 200), weekStart, weekEnd);
+      return [
+        { key: `week-${weekStart}`, label: `${events.length} real events`, prompt },
+        // Degenerate: an empty calendar week — the brief must say "quiet", not invent events.
+        { key: "empty-week", label: "DEGENERATE: zero events", prompt: buildCalendarBriefPrompt([], weekStart, weekEnd) },
+      ];
+    },
+    describe(output) {
+      const o = output as z.infer<typeof TextAnalysisSchema>;
+      return `${o.text.length}ch: ${o.text.slice(0, 70)}…`;
+    },
+  },
+};
+
+function firstSymbol(entry: string): string | null {
+  const m = entry.match(/\b([A-Z]{2,6}(?:\.[A-Z]{1,3})?)\b/);
+  return m ? m[1] : null;
 }
+
+/* ------------------------------- runner ---------------------------------- */
 
 interface ProviderOutcome {
   ok: boolean;
   ms: number;
-  output?: MovementAnalysis;
-  ungroundedDrivers?: { category: string; evidence: string }[];
+  output?: unknown;
+  problems?: string[];
+  ungroundedNumbers?: string[];
   sessionUrl?: string;
   error?: string;
 }
 
-async function runProvider(kind: "ollama" | "devin", d: Dossier): Promise<ProviderOutcome> {
-  const req: AnalysisRequest<MovementAnalysis> = {
-    taskType: "explain-movement",
-    subjectKey: `parity:${d.symbol}`,
-    prompt: d.prompt,
-    schema: MovementAnalysisSchema,
-    wireSchema: MovementWireSchema,
-    schemaVersion: MOVEMENT_SCHEMA_VERSION,
-    idempotencyKey: `parity-${kind}-${d.symbol}-${Date.now()}`,
+async function runProvider(kind: "ollama" | "devin", task: TaskDef, s: Subject): Promise<ProviderOutcome> {
+  const req: AnalysisRequest<unknown> = {
+    taskType: task.taskType,
+    subjectKey: `parity:${s.key}`,
+    prompt: s.prompt,
+    schema: task.schema,
+    wireSchema: task.wireSchema,
+    schemaVersion: task.schemaVersion,
+    output: task.output,
+    idempotencyKey: `parity-${kind}-${task.taskType}-${s.key}-${Date.now()}`,
   };
   const t0 = performance.now();
   try {
     const provider = kind === "devin" ? devinAnalysisProvider : ollamaAnalysisProvider;
     const res = await provider.run(req);
-    const ungrounded = res.data.drivers
-      .filter((dr) => !isGrounded(dr.evidence, d.prompt))
-      .map((dr) => ({ category: dr.category, evidence: dr.evidence }));
+    const texts = collectStrings(res.data);
     return {
       ok: true,
       ms: performance.now() - t0,
       output: res.data,
-      ungroundedDrivers: ungrounded,
+      problems: task.extraChecks?.(res.data, s) ?? [],
+      ungroundedNumbers: ungroundedNumbers(texts.join("\n"), s.prompt),
       sessionUrl: res.meta.sessionUrl,
     };
   } catch (err) {
@@ -187,114 +386,77 @@ async function runProvider(kind: "ollama" | "devin", d: Dossier): Promise<Provid
   }
 }
 
-interface SymbolReport {
-  symbol: string;
-  label: string;
-  dossier: { newsCount: number; changePercent: number | null; historyDays: number; promptChars: number };
-  devin?: ProviderOutcome;
-  ollama?: ProviderOutcome;
-  diff?: {
-    persistenceAgree: boolean;
-    confidenceDelta: number | null;
-    driverCategoryOverlap: string[];
-    directionConflicts: string[];
-  };
-}
-
-function diffOutcomes(a?: ProviderOutcome, b?: ProviderOutcome): SymbolReport["diff"] | undefined {
-  if (!a?.output || !b?.output) return undefined;
-  const catsA = new Map(a.output.drivers.map((d) => [d.category, d.direction]));
-  const catsB = new Map(b.output.drivers.map((d) => [d.category, d.direction]));
-  const overlap = [...catsA.keys()].filter((c) => catsB.has(c));
-  return {
-    persistenceAgree: a.output.persistence === b.output.persistence,
-    confidenceDelta: a.output.confidence - b.output.confidence,
-    driverCategoryOverlap: overlap,
-    directionConflicts: overlap.filter((c) => catsA.get(c) !== catsB.get(c)),
-  };
-}
-
 async function main() {
-  const only = args["devin-only"] ? "devin" : args["ollama-only"] ? "ollama" : null;
-  const chosen = args.symbols
-    ? args.symbols.split(",").map((s) => ({ symbol: s.trim().toUpperCase(), label: "custom" }))
-    : SYMBOL_SET;
-
-  console.log(`[parity] ${chosen.length} symbols, providers: ${only ?? "both"}\n`);
-  console.log(`[parity] building dossiers from live data…`);
-  const dossiers: (Dossier & { label: string })[] = [];
-  for (const { symbol, label } of chosen) {
-    const d = await buildDossier(symbol);
-    dossiers.push({ ...d, label });
-    console.log(
-      `  ${symbol.padEnd(12)} news=${d.newsCount} move=${d.changePercent?.toFixed(2) ?? "n/a"}% history=${d.historyDays}d prompt=${d.prompt.length}ch  (${label})`,
-    );
+  const task = TASKS[args.task ?? "movement"];
+  if (!task) {
+    console.error(`[parity] unknown task "${args.task}" (know: ${Object.keys(TASKS).join(", ")})`);
+    process.exit(1);
   }
+  const only = args["devin-only"] ? "devin" : args["ollama-only"] ? "ollama" : null;
+  const symbols = args.symbols ? args.symbols.split(",").map((s) => s.trim().toUpperCase()) : null;
 
-  // Devin: concurrent (proven to 40-way with no penalty). Ollama: sequential
-  // (the daemon serializes generations anyway).
-  const reports = new Map<string, SymbolReport>(
-    dossiers.map((d) => [
-      d.symbol,
-      {
-        symbol: d.symbol,
-        label: d.label,
-        dossier: { newsCount: d.newsCount, changePercent: d.changePercent, historyDays: d.historyDays, promptChars: d.prompt.length },
-      },
-    ]),
-  );
+  console.log(`[parity] task=${args.task} providers=${only ?? "both"}`);
+  console.log(`[parity] building dossiers from live data…`);
+  const subjects = await task.buildSubjects(symbols);
+  for (const s of subjects) console.log(`  ${s.key.padEnd(14)} prompt=${s.prompt.length}ch  (${s.label})`);
+
+  const results: Record<string, { subject: Subject; devin?: ProviderOutcome; ollama?: ProviderOutcome }> = {};
+  for (const s of subjects) results[s.key] = { subject: s };
 
   if (only !== "ollama") {
-    console.log(`\n[parity] devin: ${dossiers.length} concurrent sessions…`);
-    const outcomes = await Promise.all(dossiers.map((d) => runProvider("devin", d)));
+    console.log(`\n[parity] devin: ${subjects.length} concurrent sessions…`);
+    const outcomes = await Promise.all(subjects.map((s) => runProvider("devin", task, s)));
     outcomes.forEach((o, i) => {
-      reports.get(dossiers[i].symbol)!.devin = o;
-      console.log(
-        `  devin  ${dossiers[i].symbol.padEnd(12)} ${o.ok ? "ok " : "FAIL"} ${(o.ms / 1000).toFixed(1)}s conf=${o.output?.confidence ?? "-"} drivers=${o.output?.drivers.length ?? "-"} ungrounded=${o.ungroundedDrivers?.length ?? "-"}${o.error ? ` err=${o.error.slice(0, 80)}` : ""}`,
-      );
+      results[subjects[i].key].devin = o;
+      logOutcome("devin", subjects[i], o, task);
     });
   }
   if (only !== "devin") {
-    console.log(`\n[parity] ollama: ${dossiers.length} sequential generations…`);
-    for (const d of dossiers) {
-      const o = await runProvider("ollama", d);
-      reports.get(d.symbol)!.ollama = o;
-      console.log(
-        `  ollama ${d.symbol.padEnd(12)} ${o.ok ? "ok " : "FAIL"} ${(o.ms / 1000).toFixed(1)}s conf=${o.output?.confidence ?? "-"} drivers=${o.output?.drivers.length ?? "-"} ungrounded=${o.ungroundedDrivers?.length ?? "-"}${o.error ? ` err=${o.error.slice(0, 80)}` : ""}`,
-      );
+    console.log(`\n[parity] ollama: ${subjects.length} sequential generations…`);
+    for (const s of subjects) {
+      const o = await runProvider("ollama", task, s);
+      results[s.key].ollama = o;
+      logOutcome("ollama", s, o, task);
     }
   }
 
-  for (const r of reports.values()) r.diff = diffOutcomes(r.devin, r.ollama);
-
-  /* ------------------------------ summary ------------------------------- */
-  console.log(`\n========== PARITY SUMMARY ==========`);
-  console.log(`symbol       | news | move%  | devin conf/drv/ungr | ollama conf/drv/ungr | pers agree | conf Δ | dir conflicts`);
-  for (const r of reports.values()) {
-    const dv = r.devin, ol = r.ollama;
-    const fmt = (o?: ProviderOutcome) =>
-      o?.output ? `${String(o.output.confidence).padStart(3)}/${o.output.drivers.length}/${o.ungroundedDrivers?.length ?? 0}` : o ? "FAIL" : "—";
-    console.log(
-      `${r.symbol.padEnd(12)} | ${String(r.dossier.newsCount).padStart(4)} | ${(r.dossier.changePercent?.toFixed(1) ?? "n/a").padStart(6)} | ${fmt(dv).padEnd(19)} | ${fmt(ol).padEnd(20)} | ${r.diff ? (r.diff.persistenceAgree ? "yes" : "NO ").padEnd(10) : "—".padEnd(10)} | ${r.diff?.confidenceDelta != null ? String(r.diff.confidenceDelta).padStart(5) : "    —"} | ${r.diff?.directionConflicts.join(",") || "none"}`,
-    );
-  }
-
-  const all = [...reports.values()];
-  const devinUngrounded = all.flatMap((r) => r.devin?.ungroundedDrivers ?? []);
-  const ollamaUngrounded = all.flatMap((r) => r.ollama?.ungroundedDrivers ?? []);
-  console.log(`\nEvidence discipline: devin ungrounded drivers=${devinUngrounded.length}, ollama ungrounded drivers=${ollamaUngrounded.length}`);
-  for (const [name, list] of [["devin", devinUngrounded], ["ollama", ollamaUngrounded]] as const) {
-    for (const u of list) console.log(`  [${name}] UNGROUNDED (${u.category}): "${u.evidence.slice(0, 100)}"`);
+  console.log(`\n========== PARITY SUMMARY (${args.task}) ==========`);
+  let anyFailure = false;
+  for (const { subject, devin, ollama } of Object.values(results)) {
+    for (const [name, o] of [["devin", devin], ["ollama", ollama]] as const) {
+      if (!o) continue;
+      if (!o.ok) anyFailure = true;
+      const flags = [...(o.problems ?? []), ...(o.ungroundedNumbers?.length ? [`ungrounded numbers: ${o.ungroundedNumbers.join(", ")}`] : [])];
+      console.log(
+        `${subject.key.padEnd(14)} ${name.padEnd(6)} ${o.ok ? "ok " : "FAIL"} ${(o.ms / 1000).toFixed(1).padStart(6)}s  ${o.ok ? task.describe(o.output) : o.error?.slice(0, 90)}`,
+      );
+      for (const f of flags) console.log(`${"".padEnd(22)}⚠ ${f}`);
+    }
   }
 
   const outDir = path.join(process.cwd(), "bench-out", "parity");
   fs.mkdirSync(outDir, { recursive: true });
-  const outFile = path.join(outDir, `parity-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
-  fs.writeFileSync(outFile, JSON.stringify([...reports.values()], null, 2));
-  console.log(`\n[parity] full record → ${outFile}`);
+  const outFile = path.join(outDir, `parity-${args.task}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+  fs.writeFileSync(
+    outFile,
+    JSON.stringify(
+      Object.values(results).map((r) => ({
+        subject: { key: r.subject.key, label: r.subject.label, prompt: r.subject.prompt, meta: r.subject.meta },
+        devin: r.devin,
+        ollama: r.ollama,
+      })),
+      null,
+      2,
+    ),
+  );
+  console.log(`\n[parity] full record (including prompts) → ${outFile}`);
+  process.exit(anyFailure ? 1 : 0);
+}
 
-  const failures = all.filter((r) => (r.devin && !r.devin.ok) || (r.ollama && !r.ollama.ok));
-  process.exit(failures.length > 0 ? 1 : 0);
+function logOutcome(name: string, s: Subject, o: ProviderOutcome, task: TaskDef): void {
+  console.log(
+    `  ${name.padEnd(6)} ${s.key.padEnd(14)} ${o.ok ? "ok " : "FAIL"} ${(o.ms / 1000).toFixed(1)}s ${o.ok ? task.describe(o.output) : (o.error ?? "").slice(0, 90)}`,
+  );
 }
 
 main().catch((err) => {
