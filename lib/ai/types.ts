@@ -196,4 +196,7 @@ export type ChatStreamEvent =
   | { type: "delta"; text: string }
   | { type: "reasoning"; text: string }
   | { type: "meta"; citations: Citation[]; suggestions: string[]; model: string; grounding: GroundingReport }
-  | { type: "error"; message: string; code: "ollama_unavailable" | "model_missing" | "internal" };
+  // `ai_unavailable` is provider-agnostic on purpose: it means "no backend
+  // could answer", which since the Devin provider landed is no longer the same
+  // statement as "Ollama is down".
+  | { type: "error"; message: string; code: "ai_unavailable" | "model_missing" | "internal" };

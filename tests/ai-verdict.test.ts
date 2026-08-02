@@ -127,7 +127,9 @@ describe("offlineVerdict", () => {
   it("is actionable rather than blank, and names the asset class", () => {
     const v = offlineVerdict(PLAN);
     expect(v.headline).toContain("Example Corp");
-    expect(v.headline).toContain("Ollama");
+    expect(v.headline).toContain("AI provider");
+    // Names both recovery paths, not just the local one.
+    expect(v.thesis).toContain("devin auth login");
     expect(v.thesis).toContain("ollama serve");
     expect(v.thesis).toContain("stock");
     expect(v.risks).toContain("Review metrics and score below");

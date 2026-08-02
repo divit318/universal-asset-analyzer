@@ -25,9 +25,16 @@
  * precisely when you least want a five-minute request.
  */
 
-import { disabledModels, pinnedModels } from "./config";
+import { disabledModels, pinnedModels, providerOrder } from "./config";
 import { isHealthy, markFailure, markSuccess } from "./health";
-import { fitsInMemory, specForInstalled, type ModelCapability, type ModelSpec } from "./models";
+import {
+  fitsInMemory,
+  specForInstalled,
+  type ModelCapability,
+  type ModelSpec,
+  type ProviderId,
+} from "./models";
+import { DevinProvider } from "./providers/devin-provider";
 import { OllamaProvider } from "./providers/ollama-provider";
 import type { AIProvider, ProviderChatTurn, ProviderModelInfo } from "./provider";
 import { normalizeResponse, type AIResponse } from "./response";
@@ -39,7 +46,34 @@ import {
   type TaskType,
 } from "./task-registry";
 
-const DEFAULT_PROVIDERS: AIProvider[] = [new OllamaProvider()];
+const PROVIDER_FACTORIES: Record<ProviderId, () => AIProvider> = {
+  devin: () => new DevinProvider(),
+  ollama: () => new OllamaProvider(),
+};
+
+let providerCache: { key: string; providers: AIProvider[] } | null = null;
+
+/**
+ * The provider chain, best first. Order comes from config so it is an env
+ * change, not a code change (AI_PROVIDER_ORDER).
+ *
+ * Instances are cached because providers hold caches of their own — Devin's
+ * model catalogue in particular costs a process spawn to populate, and a fresh
+ * instance per request would throw that away every time.
+ */
+export function defaultProviders(): AIProvider[] {
+  const order = providerOrder();
+  const key = order.join(",");
+  if (!providerCache || providerCache.key !== key) {
+    providerCache = { key, providers: order.map((id) => PROVIDER_FACTORIES[id]()) };
+  }
+  return providerCache.providers;
+}
+
+/** Test hook: drop cached provider instances so an env change takes effect. */
+export function resetProvidersForTests(): void {
+  providerCache = null;
+}
 
 export interface RouteRequest {
   messages: ProviderChatTurn[];
@@ -244,6 +278,45 @@ function settingsFor(task: TaskConfig, model: string, request: RouteRequest) {
 }
 
 /**
+ * The ordered (provider, model) attempts for a task.
+ *
+ * A generator, and that is the point: enumerating a provider costs a round
+ * trip — Ollama's `/api/tags` has a 4s timeout, Devin's catalogue a process
+ * spawn — and the whole reason Devin is first is that we want to *not* pay
+ * Ollama's when Devin answers. Building the full list eagerly would charge
+ * every request for a daemon that, on a working setup, is never used.
+ *
+ * An explicit `model` override is still honored strictly: it is matched
+ * against each provider in order and, if no provider claims it, attempted on
+ * the first provider anyway rather than silently substituted.
+ */
+async function* attemptOrder(
+  taskType: TaskType,
+  task: TaskConfig,
+  providers: AIProvider[],
+  explicitModel?: string,
+): AsyncGenerator<{ provider: AIProvider; model: string }, void, unknown> {
+  if (explicitModel) {
+    for (const provider of providers) {
+      const installed = await provider.listModels();
+      if (installed.some((m) => m.id === explicitModel)) {
+        yield { provider, model: explicitModel };
+        return;
+      }
+    }
+    if (providers[0]) yield { provider: providers[0], model: explicitModel };
+    return;
+  }
+
+  for (const provider of providers) {
+    const installed = await provider.listModels();
+    for (const model of candidateModels(taskType, task, installed)) {
+      yield { provider, model };
+    }
+  }
+}
+
+/**
  * Which model would be used for a task right now, without running anything —
  * for callers that need the model id up front (e.g. to label output).
  */
@@ -251,9 +324,21 @@ export async function pickModel(
   taskType: TaskType,
   opts: { providers?: AIProvider[]; installed?: ProviderModelInfo[] } = {},
 ): Promise<string | null> {
-  const installed = opts.installed ?? (await (opts.providers ?? DEFAULT_PROVIDERS)[0].listModels());
-  const candidates = candidateModels(taskType, TASK_REGISTRY[taskType], installed);
-  return candidates[0] ?? installed[0]?.id ?? null;
+  const task = TASK_REGISTRY[taskType];
+  if (opts.installed) {
+    return candidateModels(taskType, task, opts.installed)[0] ?? opts.installed[0]?.id ?? null;
+  }
+
+  const providers = opts.providers ?? defaultProviders();
+  for await (const { model } of attemptOrder(taskType, task, providers)) return model;
+
+  // No provider offered a candidate. Fall back to naming *something* installed
+  // so callers that label output ("analyzed by …") don't render a blank.
+  for (const provider of providers) {
+    const installed = await provider.listModels();
+    if (installed[0]) return installed[0].id;
+  }
+  return null;
 }
 
 /**
@@ -266,19 +351,18 @@ export async function route(
   request: RouteRequest,
   opts: RouteOptions = {},
 ): Promise<AIResponse> {
-  const provider = (opts.providers ?? DEFAULT_PROVIDERS)[0];
+  const providers = opts.providers ?? defaultProviders();
   const task = TASK_REGISTRY[taskType];
   const startedAt = Date.now();
 
-  const installed = await provider.listModels();
-  const candidates = opts.model ? [opts.model] : candidateModels(taskType, task, installed);
-
-  if (candidates.length === 0) {
-    throw new AllModelsFailedError(taskType, ["no compatible model is installed"]);
-  }
-
   const attemptErrors: string[] = [];
-  for (const model of candidates) {
+  let considered = 0;
+
+  for await (const { provider, model } of attemptOrder(taskType, task, providers, opts.model)) {
+    considered += 1;
+    // An abort is the caller's decision, not a model failure. Retrying the
+    // next candidate would keep spending on work nobody is waiting for.
+    if (request.signal?.aborted) break;
     try {
       const result = await provider.complete({
         model,
@@ -295,14 +379,18 @@ export async function route(
         startedAt,
         tokenUsage: result.tokenUsage,
         fallbackErrors: attemptErrors,
-        metadata: { taskType, candidatesConsidered: candidates.length },
+        metadata: { taskType, candidatesConsidered: considered },
       });
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
       markFailure(model);
-      attemptErrors.push(`${model}: ${err instanceof Error ? err.message : String(err)}`);
+      attemptErrors.push(`${provider.id}/${model}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
+  if (attemptErrors.length === 0) {
+    throw new AllModelsFailedError(taskType, ["no compatible model is available"]);
+  }
   throw new AllModelsFailedError(taskType, attemptErrors);
 }
 
@@ -318,19 +406,13 @@ export async function* routeStream(
   request: RouteRequest,
   opts: RouteOptions = {},
 ): AsyncGenerator<string, string, unknown> {
-  const provider = (opts.providers ?? DEFAULT_PROVIDERS)[0];
+  const providers = opts.providers ?? defaultProviders();
   const task = TASK_REGISTRY[taskType];
-
-  const installed = await provider.listModels();
-  const candidates = opts.model ? [opts.model] : candidateModels(taskType, task, installed);
-
-  if (candidates.length === 0) {
-    throw new AllModelsFailedError(taskType, ["no compatible model is installed"]);
-  }
 
   const attemptErrors: string[] = [];
 
-  for (const model of candidates) {
+  for await (const { provider, model } of attemptOrder(taskType, task, providers, opts.model)) {
+    if (request.signal?.aborted) break;
     let started = false;
     try {
       const stream = provider.stream(
@@ -351,8 +433,9 @@ export async function* routeStream(
       markSuccess(model);
       return model;
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
       markFailure(model);
-      attemptErrors.push(`${model}: ${err instanceof Error ? err.message : String(err)}`);
+      attemptErrors.push(`${provider.id}/${model}: ${err instanceof Error ? err.message : String(err)}`);
       // Mid-stream failure: the consumer already has partial output from THIS
       // model. Retrying another would append a second model's answer to the
       // first one's. Fail honestly instead.
@@ -360,5 +443,8 @@ export async function* routeStream(
     }
   }
 
+  if (attemptErrors.length === 0) {
+    throw new AllModelsFailedError(taskType, ["no compatible model is available"]);
+  }
   throw new AllModelsFailedError(taskType, attemptErrors);
 }

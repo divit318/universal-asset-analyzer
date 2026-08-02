@@ -215,6 +215,12 @@ def _migrate_schema(conn: duckdb.DuckDBPyConnection) -> None:
         conn.execute("ALTER TABLE fundamentals ADD COLUMN shares_outstanding DOUBLE")
     if "market_cap" not in fund_cols:
         conn.execute("ALTER TABLE fundamentals ADD COLUMN market_cap DOUBLE")
+    # When enrichment last *attempted* this symbol, as opposed to when it last
+    # succeeded. Selecting enrichment candidates on "CAGR is still NULL" alone
+    # meant every symbol whose upstream has no CAGR data was re-fetched on every
+    # single run, forever — the condition it waits on can never become false.
+    if "enrichment_attempted_at" not in fund_cols:
+        conn.execute("ALTER TABLE fundamentals ADD COLUMN enrichment_attempted_at TIMESTAMP")
 
     scorecard_cols = {r[0] for r in conn.execute(
         "SELECT column_name FROM information_schema.columns WHERE table_name='scorecard_daily'"
@@ -223,6 +229,49 @@ def _migrate_schema(conn: duckdb.DuckDBPyConnection) -> None:
         conn.execute("ALTER TABLE scorecard_daily ADD COLUMN low_vol_score DOUBLE")
     if "revision_score" not in scorecard_cols:
         conn.execute("ALTER TABLE scorecard_daily ADD COLUMN revision_score DOUBLE")
+
+
+def prune_derived_history(conn: duckdb.DuckDBPyConnection) -> dict[str, int]:
+    """
+    Drop derived rows that no reader consumes, and report how many went.
+
+    `features_daily` is read at exactly one date per symbol (its own MAX), by the
+    detail panel. The engine nonetheless wrote the full five-year long-format
+    expansion — about 70,000 rows per symbol per run — which grew the table to
+    15.4M rows and engine.duckdb to 1.1GB. The cost was not only disk: DuckDB's
+    checkpoint on close took ~25s, and the per-symbol scans it forced exhausted
+    the process file-descriptor limit and crashed 250-name runs outright.
+
+    `regime_daily` is read at most 90 days back (dashboard) / 60 rows (detail),
+    so anything past a year of per-symbol history is also dead weight.
+
+    Everything removed here is recomputed from price_daily on the next run, so
+    this is a cache eviction, not a data loss. Cheap and idempotent — running it
+    on an already-pruned database deletes nothing.
+    """
+    removed: dict[str, int] = {}
+
+    for table, sql in (
+        ("features_daily", """
+            DELETE FROM features_daily
+            WHERE (symbol, date) NOT IN (
+                SELECT symbol, MAX(date) FROM features_daily GROUP BY symbol
+            )
+        """),
+        ("regime_daily", """
+            DELETE FROM regime_daily
+            WHERE date < (SELECT MAX(date) FROM regime_daily) - INTERVAL 365 DAY
+        """),
+    ):
+        try:
+            before = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            conn.execute(sql)
+            after = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            removed[table] = before - after
+        except Exception:
+            removed[table] = 0
+
+    return removed
 
 
 def migrate_sqlite_to_duckdb(force: bool = False) -> int:
@@ -320,10 +369,16 @@ def fetch_ohlcv(
     symbols: list[str],
     period: str = "5y",
     interval: str = "1d",
+    fetch_share_counts: bool = True,
 ) -> int:
     """
     Download OHLCV from yfinance and upsert into price_daily.
     Returns total rows inserted.
+
+    `fetch_share_counts=False` skips the per-symbol `fast_info` round-trip that
+    refreshes shares_outstanding / market_cap. Those move on corporate-action
+    timescales, not daily, so a same-day price top-up has no reason to pay ~250
+    sequential HTTP requests for them. See `daily_run` for who opts out.
     """
     conn = get_db()
 
@@ -340,68 +395,47 @@ def fetch_ohlcv(
         conn.close()
         return 0
 
-    # yfinance multi-ticker returns MultiIndex columns: (field, symbol)
-    single = len(symbols) == 1
-    rows: list[dict] = []
+    # yfinance returns MultiIndex columns (field, symbol) even for a single
+    # ticker (confirmed on 1.5.2). The previous single-symbol branch read
+    # row.get("Open") against those tuple keys, got None for every field, and
+    # silently wrote a full history of NULL prices — which is why ^GSPC/^NSEI
+    # held 1254 all-NULL rows and the index-level HMM never trained.
+    frames: list[pl.DataFrame] = []
+    fields = ["Open", "High", "Low", "Close", "Volume"]
 
-    def _safe_float(v) -> float | None:
-        try:
-            f = float(v)
-            return f if f == f else None  # NaN check
-        except (TypeError, ValueError):
-            return None
-
-    def _safe_int(v) -> int | None:
-        f = _safe_float(v)
-        return int(f) if f is not None else None
-
-    if single:
-        sym = symbols[0]
-        for date, row in tickers.iterrows():
-            rows.append({
-                "symbol": sym,
-                "date": str(date.date()),
-                "open": _safe_float(row.get("Open")),
-                "high": _safe_float(row.get("High")),
-                "low": _safe_float(row.get("Low")),
-                "close": _safe_float(row.get("Close")),
-                "adj_close": _safe_float(row.get("Close")),
-                "volume": _safe_int(row.get("Volume")),
-            })
+    if tickers.columns.nlevels == 1:
+        per_symbol = [(symbols[0], tickers)] if len(symbols) == 1 else []
     else:
-        for sym in symbols:
-            try:
-                sub = tickers.xs(sym, axis=1, level=1)
-            except KeyError:
-                continue
-            for date, row in sub.iterrows():
-                rows.append({
-                    "symbol": sym,
-                    "date": str(date.date()),
-                    "open": _safe_float(row.get("Open")),
-                    "high": _safe_float(row.get("High")),
-                    "low": _safe_float(row.get("Low")),
-                    "close": _safe_float(row.get("Close")),
-                    "adj_close": _safe_float(row.get("Close")),
-                    "volume": _safe_int(row.get("Volume")),
-                })
+        available = set(tickers.columns.get_level_values(1))
+        per_symbol = [(s, tickers.xs(s, axis=1, level=1)) for s in symbols if s in available]
 
-    if not rows:
+    for sym, sub in per_symbol:
+        if sub.empty or not all(f in sub.columns for f in fields):
+            continue
+        # Vectorized: one Arrow-backed frame per symbol instead of a Python
+        # dict per (symbol, date). A 250-name 5y pull is ~310k rows, and
+        # building those dicts row by row cost more than the download.
+        dates = pl.Series("date", sub.index.strftime("%Y-%m-%d").to_numpy(), dtype=pl.Utf8)
+        frames.append(pl.DataFrame({
+            "symbol":    pl.Series("symbol", [sym] * len(sub), dtype=pl.Utf8),
+            "date":      dates,
+            "open":      pl.Series(sub["Open"].to_numpy(),   dtype=pl.Float64),
+            "high":      pl.Series(sub["High"].to_numpy(),   dtype=pl.Float64),
+            "low":       pl.Series(sub["Low"].to_numpy(),    dtype=pl.Float64),
+            "close":     pl.Series(sub["Close"].to_numpy(),  dtype=pl.Float64),
+            "adj_close": pl.Series(sub["Close"].to_numpy(),  dtype=pl.Float64),
+            "volume":    pl.Series(sub["Volume"].to_numpy(), dtype=pl.Float64),
+        }))
+
+    if not frames:
         conn.close()
         return 0
 
-    # Explicit schema prevents type-inference failures when yfinance returns
-    # mixed int/float volumes or nulls scattered across the batch.
-    df = pl.DataFrame(rows, schema={
-        "symbol":    pl.Utf8,
-        "date":      pl.Utf8,
-        "open":      pl.Float64,
-        "high":      pl.Float64,
-        "low":       pl.Float64,
-        "close":     pl.Float64,
-        "adj_close": pl.Float64,
-        "volume":    pl.Float64,   # cast to BIGINT in SQL; Float64 accepts int/float/null
-    })
+    # NaN → NULL so downstream null checks (and the >0 filters in regime/factor
+    # code) see missing bars as missing rather than as NaN floats.
+    df = pl.concat(frames).with_columns(
+        [pl.col(c).fill_nan(None) for c in ("open", "high", "low", "close", "adj_close", "volume")]
+    )
     conn.register("_price_tmp", df.to_arrow())
     conn.execute("""
         INSERT OR REPLACE INTO price_daily
@@ -413,26 +447,43 @@ def fetch_ohlcv(
     # Fetch shares_outstanding + market_cap and upsert into fundamentals.
     # Network I/O per symbol — threaded since yfinance's HTTP calls release
     # the GIL while waiting, so this parallelizes for real.
-    def _fetch_fast_info(sym: str) -> tuple[str, float | None, float | None]:
-        try:
-            fi = yf.Ticker(sym).fast_info
-            shares = getattr(fi, "shares", None)
-            mktcap = getattr(fi, "market_cap", None)
-            return sym, (float(shares) if shares else None), (float(mktcap) if mktcap else None)
-        except Exception:
-            return sym, None, None
+    if fetch_share_counts:
+        def _fetch_fast_info(sym: str) -> tuple[str, float | None, float | None]:
+            try:
+                fi = yf.Ticker(sym).fast_info
+                shares = getattr(fi, "shares", None)
+                mktcap = getattr(fi, "market_cap", None)
+                return sym, (float(shares) if shares else None), (float(mktcap) if mktcap else None)
+            except Exception:
+                return sym, None, None
 
-    with ThreadPoolExecutor(max_workers=min(16, max(1, len(symbols)))) as ex:
-        for sym, shares, mktcap in ex.map(_fetch_fast_info, symbols):
-            if shares or mktcap:
-                conn.execute("""
-                    UPDATE fundamentals
-                    SET shares_outstanding = ?, market_cap = ?
-                    WHERE symbol = ?
-                """, [shares, mktcap, sym])
+        updates: list[tuple[str, float | None, float | None]] = []
+        with ThreadPoolExecutor(max_workers=min(16, max(1, len(symbols)))) as ex:
+            for sym, shares, mktcap in ex.map(_fetch_fast_info, symbols):
+                if shares or mktcap:
+                    updates.append((sym, shares, mktcap))
+        if updates:
+            # One statement instead of one UPDATE per symbol.
+            upd = pl.DataFrame(
+                {
+                    "symbol": [u[0] for u in updates],
+                    "shares_outstanding": [u[1] for u in updates],
+                    "market_cap": [u[2] for u in updates],
+                },
+                schema={"symbol": pl.Utf8, "shares_outstanding": pl.Float64, "market_cap": pl.Float64},
+            )
+            conn.register("_fastinfo_tmp", upd.to_arrow())
+            conn.execute("""
+                UPDATE fundamentals f
+                SET shares_outstanding = t.shares_outstanding,
+                    market_cap         = t.market_cap
+                FROM _fastinfo_tmp t
+                WHERE f.symbol = t.symbol
+            """)
+            conn.unregister("_fastinfo_tmp")
 
     conn.close()
-    return len(rows)
+    return len(df)
 
 
 _FINANCIAL_SECTORS = frozenset({
@@ -787,62 +838,91 @@ def export_detail_snapshots(conn: duckdb.DuckDBPyConnection, symbols: list[str])
     Write per-symbol detail Parquet snapshots for all scored symbols.
     Each file: data/detail_snapshots/{symbol}.parquet
     Contains regime, forecasts, MC, features, factor history, prices, fundamentals.
+
+    Each of the eight tables is read once for the whole symbol list and
+    partitioned in-process. The previous shape was eight queries *per symbol* —
+    ~2,000 DuckDB round-trips for a 250-name universe, against a database large
+    enough that each scan was not free.
     """
     DETAIL_SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    if not symbols:
+        return
+
+    # Per-table batched query + how to trim each symbol's partition.
+    # `n` is the per-symbol row cap, matching the single-symbol LIMITs.
+    specs: list[tuple[str, str, int | None]] = [
+        ("fundamentals",
+         "SELECT * FROM fundamentals WHERE symbol IN (SELECT UNNEST(?))", None),
+        ("scorecard",
+         "SELECT * FROM scorecard_daily WHERE symbol IN (SELECT UNNEST(?)) "
+         "ORDER BY symbol, date DESC", 1),
+        ("regime",
+         "SELECT * FROM regime_daily WHERE symbol IN (SELECT UNNEST(?)) "
+         "ORDER BY symbol, date DESC", 90),
+        ("forecasts",
+         "SELECT * FROM forecasts WHERE symbol IN (SELECT UNNEST(?)) "
+         "ORDER BY symbol, date DESC, horizon_days", None),
+        ("mc",
+         "SELECT * FROM mc_valuation WHERE symbol IN (SELECT UNNEST(?)) "
+         "ORDER BY symbol, date DESC", 1),
+        ("factor_history",
+         "SELECT * FROM factors_daily WHERE symbol IN (SELECT UNNEST(?)) "
+         "ORDER BY symbol, date DESC", 90),
+        ("prices",
+         "SELECT symbol, date, close, volume FROM price_daily "
+         "WHERE symbol IN (SELECT UNNEST(?)) ORDER BY symbol, date DESC", 252),
+    ]
+
+    by_table: dict[str, dict[str, pl.DataFrame]] = {}
+    for tname, sql, cap in specs:
+        try:
+            df = conn.execute(sql, [symbols]).pl()
+        except Exception:
+            by_table[tname] = {}
+            continue
+        parts: dict[str, pl.DataFrame] = {}
+        if not df.is_empty():
+            # `prices` was selected without a symbol column when queried per
+            # symbol; keep the snapshot schema byte-for-byte the same.
+            drop_symbol = tname == "prices"
+            for part in df.partition_by("symbol", maintain_order=True):
+                sym = part["symbol"][0]
+                if cap is not None:
+                    part = part.head(cap)
+                parts[sym] = part.drop("symbol") if drop_symbol else part
+        by_table[tname] = parts
+
+    # features_daily is keyed on each symbol's own latest date, so it needs a
+    # per-symbol max rather than a flat row cap.
+    try:
+        feat = conn.execute("""
+            SELECT f.symbol, f.feature, f.value
+            FROM features_daily f
+            JOIN (SELECT symbol, MAX(date) AS d FROM features_daily
+                  WHERE symbol IN (SELECT UNNEST(?)) GROUP BY symbol) latest
+              ON f.symbol = latest.symbol AND f.date = latest.d
+            ORDER BY f.symbol, f.feature
+        """, [symbols]).pl()
+    except Exception:
+        feat = pl.DataFrame()
+    feat_parts: dict[str, pl.DataFrame] = {}
+    if not feat.is_empty():
+        for part in feat.partition_by("symbol", maintain_order=True):
+            feat_parts[part["symbol"][0]] = part.select(["feature", "value"])
+    by_table["features"] = feat_parts
+
+    order = ["fundamentals", "scorecard", "regime", "forecasts", "mc",
+             "features", "factor_history", "prices"]
 
     for sym in symbols:
         try:
-            tables: dict[str, pl.DataFrame] = {}
-
-            tables["fundamentals"] = conn.execute(
-                "SELECT * FROM fundamentals WHERE symbol = ?", [sym]
-            ).pl()
-
-            tables["scorecard"] = conn.execute(
-                "SELECT * FROM scorecard_daily WHERE symbol = ? ORDER BY date DESC LIMIT 1", [sym]
-            ).pl()
-
-            tables["regime"] = conn.execute(
-                "SELECT * FROM regime_daily WHERE symbol = ? ORDER BY date DESC LIMIT 90", [sym]
-            ).pl()
-
-            tables["forecasts"] = conn.execute(
-                "SELECT * FROM forecasts WHERE symbol = ? ORDER BY date DESC, horizon_days", [sym]
-            ).pl()
-
-            tables["mc"] = conn.execute(
-                "SELECT * FROM mc_valuation WHERE symbol = ? ORDER BY date DESC LIMIT 1", [sym]
-            ).pl()
-
-            tables["features"] = conn.execute(
-                "SELECT feature, value FROM features_daily WHERE symbol = ? "
-                "AND date = (SELECT MAX(date) FROM features_daily WHERE symbol = ?) "
-                "ORDER BY feature", [sym, sym]
-            ).pl()
-
-            tables["factor_history"] = conn.execute(
-                "SELECT * FROM factors_daily WHERE symbol = ? ORDER BY date DESC LIMIT 90", [sym]
-            ).pl()
-
-            tables["prices"] = conn.execute(
-                "SELECT date, close, volume FROM price_daily WHERE symbol = ? "
-                "ORDER BY date DESC LIMIT 252", [sym]
-            ).pl()
-
-            # Pack all tables into one Parquet using a metadata key column
-            parts = []
-            for tname, df in tables.items():
-                if df.is_empty():
-                    continue
-                df = df.with_columns(pl.lit(tname).alias("_table"))
-                parts.append(df)
-
-            if not parts:
+            tables = {t: by_table.get(t, {}).get(sym, pl.DataFrame()) for t in order}
+            if all(df.is_empty() for df in tables.values()):
                 continue
 
-            # Write each table as separate columns — use JSON packing for heterogeneous schemas
-            meta = {tname: df.to_pandas().to_json(orient="records", date_format="iso")
-                    for tname, df in tables.items()}
+            # JSON packing keeps heterogeneous schemas in one Parquet file.
+            meta = {t: df.to_pandas().to_json(orient="records", date_format="iso")
+                    for t, df in tables.items()}
             meta_df = pl.DataFrame({"key": list(meta.keys()), "json": list(meta.values())})
 
             tmp = DETAIL_SNAPSHOT_DIR / f"{sym}.parquet.tmp"

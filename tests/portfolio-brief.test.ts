@@ -42,12 +42,12 @@ describe("GET /api/ai/portfolio-brief", () => {
     expect(json.actionItems).toEqual([]);
   });
 
-  it("shows the Ollama-offline fallback when runPrompt throws", async () => {
-    runPromptMock.mockRejectedValue(new Error("Ollama unavailable"));
+  it("shows the provider-offline fallback when runPrompt throws", async () => {
+    runPromptMock.mockRejectedValue(new Error("no AI provider available"));
 
     const res = await GET(makeRequest());
     const json = await res.json();
-    expect(json.headline).toBe("Portfolio summary — start Ollama for AI intelligence");
+    expect(json.headline).toBe("Portfolio summary — connect an AI provider for intelligence");
     expect(json.actionItems).toEqual([]);
   });
 });

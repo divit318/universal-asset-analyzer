@@ -44,6 +44,7 @@ import { useBootReady } from "@/app/_components/boot-context";
 import { Reveal } from "@/app/_components/reveal";
 import { CountUp } from "@/app/_components/count-up";
 import { LoadingMark } from "@/app/_components/loading-mark";
+import { BrandEmptyState } from "@/app/_components/brand";
 
 type Tab = "dashboard" | "decisions" | "holdings" | "pipeline" | "risk" | "optimize";
 
@@ -146,16 +147,19 @@ function PortfolioPageInner() {
       )}
 
       {empty && (
-        <Card className="flex flex-col items-center gap-3 p-12 text-center">
-          <p className="text-sm font-semibold text-foreground">No holdings yet.</p>
-          <p className="max-w-md text-xs leading-relaxed text-muted">
-            Add equities, ETFs, bonds, crypto, commodities or cash here. Real estate,
-            private markets and alternatives are added through the Research Hub and
-            appear here automatically.
-          </p>
-          <Button variant="primary" size="md" onClick={() => setShowAdd(true)}>
-            Add your first holding →
-          </Button>
+        // The app's canonical first-run screen: a brand-new user's very first
+        // page with nothing on it. Branded rather than an anonymous paragraph.
+        // `padding="none"`: BrandEmptyState brings its own py-12, and Card's
+        // default p-6 on top of that is 72px of dead space above the mark.
+        <Card padding="none">
+          <BrandEmptyState
+            title="No holdings yet."
+            detail="Add equities, ETFs, bonds, crypto, commodities or cash here. Real estate, private markets and alternatives are added through the Research Hub and appear here automatically."
+          >
+            <Button variant="primary" size="md" onClick={() => setShowAdd(true)}>
+              Add your first holding →
+            </Button>
+          </BrandEmptyState>
         </Card>
       )}
 

@@ -77,7 +77,7 @@ export function ConvictionBreakdown({ score, loading, verdict, risks, onViewRisk
   if (!score) {
     return (
       <div className="rounded-xl border border-border bg-surface px-5 py-8 text-center text-sm text-muted">
-        Conviction breakdown unavailable — start Ollama and ensure fundamentals are loaded.
+        Conviction breakdown unavailable — connect an AI provider and ensure fundamentals are loaded.
       </div>
     );
   }

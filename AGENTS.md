@@ -4,11 +4,12 @@ Quick reference for AI agents (Claude Code, standalone agents, etc.) working on 
 
 Read this before reading CLAUDE.md, ARCHITECTURE.md, or PROJECT_ROADMAP.md.
 
-> **ACTIVE REDESIGN IN PROGRESS.** A phased visual/IA transformation is underway.
-> Before any UI work, read `docs/redesign/PLAN.md` (phases, invariants, status log)
-> and `docs/brand-preview/terminal/SPEC.md` (the binding design spec). One phase per
-> session; update PLAN.md §6 before finishing. Deviations from SPEC.md require an
-> entry in PLAN.md §7.
+> **The 2026-08 "terminal" redesign was ABANDONED** (owner decision, 2026-08-02 —
+> it drifted too close to Bloomberg's identity). The current committed UI IS the
+> product's visual identity; do not reintroduce the command-line chrome, The Desk,
+> the docket, or any `.tm-*` styling. The full implementation is archived on the
+> `redesign-terminal-archive` branch; `docs/redesign/PLAN.md` and
+> `docs/brand-preview/terminal/SPEC.md` are historical records, not guidance.
 
 ---
 
@@ -73,7 +74,10 @@ Read this before reading CLAUDE.md, ARCHITECTURE.md, or PROJECT_ROADMAP.md.
 - `lib/thematic-engine.ts` — 10-stage thematic analysis framework.
 - `lib/ic-agents.ts` — 9-domain multi-agent pipeline. Use for institutional research.
 - `lib/db.ts` — All SQLite operations. All reads/writes go here.
-- `lib/ollama.ts` — Local LLM inference. Never external APIs.
+- `lib/ai/` — All inference. Call `runPrompt(taskType, …)`; never a provider
+  directly. The Router walks a chain: Devin CLI (hosted) → Ollama (local).
+  `lib/ai/devin-cli.ts` is the only place that spawns a process;
+  `lib/ai/ollama.ts` the only place that talks HTTP to the daemon.
 
 **Caching**:
 - Fundamentals: 24h TTL in SQLite (refreshed on screener load)
@@ -84,7 +88,7 @@ Read this before reading CLAUDE.md, ARCHITECTURE.md, or PROJECT_ROADMAP.md.
 **Error Handling**:
 - API failures: Non-fatal. Return partial data + error message.
 - EDGAR/news/analyst data: Optional. UI renders without them.
-- Ollama offline: Fallback UI message, no crash.
+- Every AI provider offline: Fallback UI message, no crash. Never say "start Ollama" — use `AI_RECOVERY_HINT` from `lib/ai/availability.ts`, which names the hosted path too.
 
 ---
 
@@ -322,6 +326,58 @@ not as fact** — verify against the call graph.
 
 ---
 
+## Quant Engine Performance (2026-07-31)
+
+The Fast Run (`--no-forecast`) went from **~182-223s to ~9-13s** on `full_us`
+(248 names, warm). Profile before touching it: `engine/profiling.py` prints a
+per-stage breakdown at the end of every run (`UAA_ENGINE_TIMING=0` to silence).
+
+What was actually wrong — nearly all of it was **work whose output nobody read**,
+not slow algorithms:
+
+| Finding | Cost |
+|---|---|
+| `^GSPC`/`^NSEI` were never fetched, so the "one HMM per market" design (fix 3.1) silently fell back to **12 HMM fits per stock** | 47s |
+| `features_daily` wrote the full 5y long-format expansion (~70k rows/symbol/run); the only reader queries `MAX(date)` | 28s/run, 15.4M rows, 1.1GB |
+| `fetch_ohlcv`'s single-symbol branch read `row.get("Open")` against yfinance's MultiIndex columns → **wrote all-NULL prices** | silent data corruption |
+| `_yf_close` returned an (n,1) array, so every macro feature raised into a bare `except` | macro augmentation never ran, ever |
+| `fast_info` refetched per symbol on same-day price top-ups | 49s |
+| `forward_pe IS NULL` / `cagr IS NULL` as refetch conditions — a symbol whose upstream has no such data can never clear them | refetched forever |
+| One query per symbol for prices, regime, and 8x for detail snapshots | ~2,000 round-trips |
+| Universe resolution hit the Yahoo screener (10 paginated requests) every run | 3-9s |
+
+**Rules this produced:**
+
+- **A "NULL means retry" condition needs a recency guard.** If the upstream
+  genuinely has no value, the condition never clears and the fetch runs forever.
+  Pair it with an `*_attempted_at` timestamp, not just the value being absent.
+- **Derived tables must be written at the granularity they are read.** Check the
+  readers first (`grep` the table name) — `features_daily` is read at one date.
+  `prune_derived_history()` enforces this; `engine/compact_db.py` reclaims the
+  file, since DuckDB frees blocks on DELETE but never shrinks in place.
+- **"Latest session" is per market and should be the modal date, not the max.**
+  NSE closes before NYSE, and one index carrying a partial intraday bar will
+  otherwise mark an entire market stale.
+- **yfinance returns MultiIndex columns even for one ticker** (confirmed 1.5.2).
+  Any `row.get("Close")` or `float(arr[-1])` against it fails — and both places
+  it happened here were inside a bare `except`, so it looked like missing data
+  rather than a bug.
+- **Raise `RLIMIT_NOFILE` in any engine process** (`raise_fd_limit()`). macOS's
+  256 soft limit surfaced as "unable to open database file", a polars
+  `PanicException` mid-scan, and import errors from lazily-imported modules —
+  never as anything resembling FD exhaustion. Import at module top level, not
+  inside hot functions, for the same reason.
+- **Per-symbol loops around market-level work.** Index regime posteriors are
+  identical for every symbol in a market; check whether a loop body actually
+  depends on the loop variable before optimizing what is inside it.
+
+Equivalence is pinned by construction: every vectorized primitive in
+`engine/features/factory.py` and `engine/models/regime.py` was diffed against
+its original loop implementation (max |diff| 0.0 to 1e-13), and two consecutive
+`--no-fetch` runs produce bit-identical scorecards with 248/248 signal agreement.
+
+---
+
 ## Correctness Rules Learned The Hard Way
 
 **Never infer a unit from a value's magnitude.** `Math.abs(v) <= 1 ? v*100 : v`
@@ -353,6 +409,31 @@ makes two correct answers look like a contradiction. Use `<ScoreChip kind=…>`,
 and only band the kinds that are genuinely Buy/Hold/Sell calls.
 
 **A paragraph explaining a label means the label is wrong.** Rename instead.
+
+---
+
+## Branding
+
+**Never hand-roll the logo.** No `◆` glyph, no inline `<svg>`, no `h-[19px]`.
+Import `<BrandMark>` / `<BrandLockup>` / `<BrandEmptyState>` from
+`app/_components/brand.tsx`, and pick a size *token*. The mark's geometry has one
+definition — `lib/brand/mark.ts` — shared by the React components, the animated
+`<LoadingMark>`, the generated favicons, and the PDF exporter.
+
+The single non-negotiable semantic: the terminus is a **diamond when resolved**
+and an unrotated **square while work is in flight**. `<LoadingMark state="done">`
+is pixel-identical to `<BrandMark>`. So never show the static logo to mean
+"loading" — an empty state that is empty *because a fetch is running* takes
+`<BrandEmptyState loading>`.
+
+Placement is chrome + brand moments only: headers, footers, mobile nav, boot
+splash, command palette, assistant resting state, empty states, exports, icons.
+**Not** beside every page `<h1>`, not on cards or table rows, and never two
+lockups in one view.
+
+Full spec, including the size scale, spacing, hover/focus, responsive collapse
+and how to regenerate `favicon.ico`/`icon.svg`/`apple-icon.png`
+(`npm run brand:assets`): **`docs/BRAND.md`**.
 
 ---
 

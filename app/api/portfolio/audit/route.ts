@@ -1,4 +1,4 @@
-import { checkHealth } from "@/lib/ai/ollama";
+import { checkPlatformHealth, unavailableMessage } from "@/lib/ai/platform-health";
 import { runTaskChat } from "@/lib/ai/orchestrator";
 import { gatherPortfolioManagerEvidence, buildAuditEvidenceBlock } from "@/lib/ai-portfolio-manager";
 
@@ -18,10 +18,10 @@ export async function POST(request: Request) {
 
   const a = (body.analytics ?? body) as Record<string, unknown>;
 
-  const { reachable, models } = await checkHealth();
-  if (!reachable || models.length === 0) {
+  const { reachable } = await checkPlatformHealth();
+  if (!reachable) {
     return Response.json(
-      { error: "Ollama unavailable — start Ollama to enable AI audit", code: "ollama_unavailable" },
+      { error: unavailableMessage("the AI audit"), code: "ai_unavailable" },
       { status: 503 },
     );
   }

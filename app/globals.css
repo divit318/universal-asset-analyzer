@@ -811,6 +811,40 @@ body::before {
   }
 }
 
+.uaa-brand-mark .brand-bar {
+  opacity: var(--mark-rest, 1);
+}
+.uaa-brand-mark .brand-terminus {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: rotate(45deg);
+}
+.uaa-brand-lockup .brand-bar,
+.uaa-brand-lockup .brand-terminus {
+  transition: opacity 220ms var(--ease-out),
+    transform 320ms var(--ease-precise);
+}
+.uaa-brand-lockup:hover .brand-bar,
+.uaa-brand-lockup:focus-visible .brand-bar {
+  opacity: 1;
+}
+.uaa-brand-lockup:hover .brand-terminus,
+.uaa-brand-lockup:focus-visible .brand-terminus {
+  transform: rotate(45deg) scale(1.14);
+}
+@media (prefers-reduced-motion: reduce) {
+  .uaa-brand-lockup .brand-bar,
+  .uaa-brand-lockup .brand-terminus {
+    transition: none;
+  }
+  .uaa-brand-lockup:hover .brand-terminus,
+  .uaa-brand-lockup:focus-visible .brand-terminus {
+    transform: rotate(45deg);
+  }
+}
+
+
+
 /* ── Boot Splash — the app's one full-screen loading moment ────────────
    Overlays {children}, which is already fully mounted underneath — this is
    what makes "the page is already rendered, just visually covered" literally
@@ -855,6 +889,32 @@ body::before {
   from { transform: rotate(45deg); }
   to   { transform: rotate(0deg); }
 }
+
+.uaa-boot-splash .boot-lockup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+.uaa-boot-splash .boot-wordmark {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  color: var(--muted);
+  animation: boot-message-in 520ms var(--ease-out) 120ms both;
+}
+.uaa-boot-splash .boot-wordmark span {
+  color: var(--faint);
+}
+@media (prefers-reduced-motion: reduce) {
+  .uaa-boot-splash .boot-wordmark {
+    animation: none;
+  }
+}
+
+
 
 .uaa-boot-splash .boot-message-line {
   font-family: var(--font-geist-mono), ui-monospace, monospace;

@@ -35,6 +35,7 @@ import { searchSymbols } from "./yahoo";
 import { isAssetClassId } from "./assets/registry";
 import type { AssetClassId, FilterValues } from "./assets/types";
 import { parseNlFilters } from "./screener/nl-filters";
+import { AI_RECOVERY_HINT } from "./ai/availability";
 
 export interface AppAssistantTurn {
   question: string;
@@ -78,7 +79,7 @@ export interface AppAssistantResult {
   model: string;
 }
 
-const APP_SUMMARY = `Universal Asset Analyzer (UAA) is a local, institutional-grade equity research platform. Modules: Home (daily brief), Research (deep single-stock research + AI copilot + charting), Screener (fundamental screening/ranking across equities, ETFs, REITs, crypto, commodities, bonds, forex), Wire (event-driven signals/scanning, news, portfolio headlines), Compare (multi-asset comparison), Portfolio (holdings, P&L, risk), Watchlist, DCF (intrinsic value), Calendar (earnings dates), IC Report (multi-agent institutional research), Engine (quant scorecard), Thematic (theme/supply-chain analysis), Decision Journal. All AI runs on a local Ollama model — no cloud, no accounts, no subscriptions.`;
+const APP_SUMMARY = `Universal Asset Analyzer (UAA) is a local, institutional-grade equity research platform. Modules: Home (daily brief), Research (deep single-stock research + AI copilot + charting), Screener (fundamental screening/ranking across equities, ETFs, REITs, crypto, commodities, bonds, forex), Wire (event-driven signals/scanning, news, portfolio headlines), Compare (multi-asset comparison), Portfolio (holdings, P&L, risk), Watchlist, DCF (intrinsic value), Calendar (earnings dates), IC Report (multi-agent institutional research), Engine (quant scorecard), Thematic (theme/supply-chain analysis), Decision Journal. AI runs through hosted frontier models via the Devin CLI, falling back to local Ollama models when offline.`;
 
 // Kept intentionally separate from app/_components/nav-config.ts (the header
 // nav + ⌘K palette's source of truth): lib/ is domain logic consumed by
@@ -330,7 +331,7 @@ export async function runAppAssistant(
     return { answer, suggestions: sanitizeSuggestions(parsed.suggestions), action, model };
   } catch {
     return {
-      answer: "I couldn't reach the local model just now. Start Ollama with `ollama serve` and try again, or use ⌘K to jump straight to a tool.",
+      answer: `I couldn't reach any AI provider just now. ${AI_RECOVERY_HINT} Or use ⌘K to jump straight to a tool.`,
       model: "unavailable",
     };
   }

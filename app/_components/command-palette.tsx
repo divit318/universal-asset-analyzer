@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Search, CornerDownLeft, TrendingUp, Plus } from "lucide-react";
 import type { SymbolSuggestion } from "@/lib/types";
+import { BrandMark } from "./brand";
 import { ALL_TOOLS, type NavIcon } from "./nav-config";
 import { useFocus } from "@/lib/focus-context";
 import { useToast } from "./toast";
@@ -256,9 +257,12 @@ export function CommandPalette() {
         {/* Results */}
         <div ref={listRef} className="max-h-[52vh] overflow-y-auto p-2">
           {items.length === 0 && (
-            <p className="px-3 py-8 text-center text-sm text-muted">
-              {query.trim() ? `No matches for “${query}”.` : "Type a ticker or a tool name."}
-            </p>
+            <div className="flex flex-col items-center gap-3 px-3 py-8 text-center">
+              <BrandMark size="lg" className="text-faint" />
+              <p className="text-sm text-muted">
+                {query.trim() ? `No matches for “${query}”.` : "Type a ticker or a tool name."}
+              </p>
+            </div>
           )}
 
           {showTickerHeader && (
@@ -341,6 +345,18 @@ export function CommandPalette() {
               </div>
             );
           })}
+        </div>
+
+        {/* Signature strip. The palette is the app's most-used surface and the
+            one that covers the header, so it is the one modal that has to say
+            whose product it is — a 14px mark and the keys, nothing more. */}
+        <div className="flex items-center gap-2 border-t border-border bg-surface-2/50 px-4 py-2.5">
+          <BrandMark size="xs" className="text-muted" />
+          <span className="text-micro font-medium text-muted">UAA</span>
+          <span className="ml-auto flex items-center gap-3 text-micro text-faint">
+            <span className="hidden sm:inline">↑↓ navigate</span>
+            <span>↵ open</span>
+          </span>
         </div>
       </div>
     </div>,

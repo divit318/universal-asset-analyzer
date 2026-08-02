@@ -10,20 +10,31 @@ from __future__ import annotations
 
 import numpy as np
 import polars as pl
+from scipy.signal import lfilter
 
 
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def build_features(prices: pl.DataFrame, symbol: str) -> pl.DataFrame:
+_FEATURE_SCHEMA = {"symbol": pl.Utf8, "date": pl.Date, "feature": pl.Utf8, "value": pl.Float64}
+
+
+def build_features(prices: pl.DataFrame, symbol: str, emit_rows: int | None = None) -> pl.DataFrame:
     """
     Given a single-symbol price DataFrame with columns [date, close, volume, high, low, open],
     returns a long-format DataFrame [symbol, date, feature, value].
     All features are strictly backward-looking at every point in time.
+
+    `emit_rows=N` emits only the most recent N dates. Every feature is still
+    computed over the full history — the windows require it — but the long-format
+    output is truncated. The only consumer of features_daily reads
+    `WHERE date = (SELECT MAX(date) …)`, so a five-year emit wrote ~75,000 rows
+    per symbol to serve a query that reads ~60. Values for the emitted dates are
+    identical either way.
     """
     if len(prices) < 30:
-        return pl.DataFrame(schema={"symbol": pl.Utf8, "date": pl.Date, "feature": pl.Utf8, "value": pl.Float64})
+        return pl.DataFrame(schema=_FEATURE_SCHEMA)
 
     df = prices.sort("date")
     close = df["close"].to_numpy().astype(np.float64)
@@ -149,19 +160,31 @@ def build_features(prices: pl.DataFrame, symbol: str) -> pl.DataFrame:
         feat[f"ret_kurt_{w}d"] = _rolling_kurt_fast(ret, w)
 
     # --- Assemble long-format ---
-    records = []
-    for name, arr in feat.items():
-        if len(arr) != n:
-            continue
-        for i in range(n):
-            v = arr[i]
-            if np.isfinite(v):
-                records.append((symbol, dates[i], name, float(v)))
+    # Vectorized: stack the feature arrays and mask non-finite values in numpy.
+    # The previous nested Python loop ran len(features) * len(dates) iterations
+    # (~75,000 per symbol over 5y) and built a tuple per surviving cell.
+    names = [name for name, arr in feat.items() if len(arr) == n]
+    if not names:
+        return pl.DataFrame(schema=_FEATURE_SCHEMA)
+
+    start = 0 if emit_rows is None else max(0, n - emit_rows)
+
+    values = np.vstack([feat[name][start:] for name in names])   # (n_features, window)
+    finite = np.isfinite(values)
+    if not finite.any():
+        return pl.DataFrame(schema=_FEATURE_SCHEMA)
+
+    feat_idx, date_idx = np.nonzero(finite)
+    emitted_dates = dates[start:]
 
     return pl.DataFrame(
-        records,
-        schema={"symbol": pl.Utf8, "date": pl.Date, "feature": pl.Utf8, "value": pl.Float64},
-        orient="row",
+        {
+            "symbol":  pl.Series([symbol] * len(feat_idx), dtype=pl.Utf8),
+            "date":    pl.Series([emitted_dates[i] for i in date_idx], dtype=pl.Date),
+            "feature": pl.Series([names[i] for i in feat_idx], dtype=pl.Utf8),
+            "value":   pl.Series(values[feat_idx, date_idx], dtype=pl.Float64),
+        },
+        schema=_FEATURE_SCHEMA,
     )
 
 
@@ -179,55 +202,53 @@ def _rolling_mean_fast(x: np.ndarray, w: int) -> np.ndarray:
 
 
 def _rolling_std_fast(x: np.ndarray, w: int) -> np.ndarray:
-    """O(n) rolling std (ddof=1) via two-pass cumsum."""
-    out = np.full(len(x), np.nan)
+    """O(n) rolling std (ddof=1) via two-pass cumsum, fully vectorized."""
     n = len(x)
-    cs  = np.nancumsum(x)
-    cs2 = np.nancumsum(x ** 2)
-    for i in range(w - 1, n):
-        s  = cs[i]  - (cs[i - w] if i >= w else 0)
-        s2 = cs2[i] - (cs2[i - w] if i >= w else 0)
-        var = (s2 - s * s / w) / (w - 1)
-        out[i] = np.sqrt(max(var, 0.0))
+    out = np.full(n, np.nan)
+    if n < w:
+        return out
+    # Prepend a zero so window sums are a single shifted difference with no
+    # per-index branch on i >= w.
+    cs  = np.concatenate(([0.0], np.nancumsum(x)))
+    cs2 = np.concatenate(([0.0], np.nancumsum(x ** 2)))
+    s   = cs[w:]  - cs[:-w]
+    s2  = cs2[w:] - cs2[:-w]
+    var = (s2 - s * s / w) / (w - 1)
+    out[w - 1:] = np.sqrt(np.maximum(var, 0.0))
     return out
 
 
 def _rolling_max_fast(x: np.ndarray, w: int) -> np.ndarray:
-    from collections import deque
-    out = np.full(len(x), np.nan)
-    dq: deque[int] = deque()
-    for i in range(len(x)):
-        while dq and x[dq[-1]] <= x[i]:
-            dq.pop()
-        dq.append(i)
-        if dq[0] <= i - w:
-            dq.popleft()
-        if i >= w - 1:
-            out[i] = x[dq[0]]
+    """Rolling max. Asymptotically worse than the monotonic-deque version but
+    far faster in practice: the deque ran a Python loop over every bar, this is
+    one numpy reduction over a strided view."""
+    n = len(x)
+    out = np.full(n, np.nan)
+    if n < w:
+        return out
+    out[w - 1:] = np.lib.stride_tricks.sliding_window_view(x, w).max(axis=1)
     return out
 
 
 def _rolling_min_fast(x: np.ndarray, w: int) -> np.ndarray:
-    from collections import deque
-    out = np.full(len(x), np.nan)
-    dq: deque[int] = deque()
-    for i in range(len(x)):
-        while dq and x[dq[-1]] >= x[i]:
-            dq.pop()
-        dq.append(i)
-        if dq[0] <= i - w:
-            dq.popleft()
-        if i >= w - 1:
-            out[i] = x[dq[0]]
+    n = len(x)
+    out = np.full(n, np.nan)
+    if n < w:
+        return out
+    out[w - 1:] = np.lib.stride_tricks.sliding_window_view(x, w).min(axis=1)
     return out
 
 
 def _rolling_return(close: np.ndarray, w: int) -> np.ndarray:
-    out = np.full(len(close), np.nan)
+    n = len(close)
+    out = np.full(n, np.nan)
+    if n <= w:
+        return out
     valid = close > 0
-    for i in range(w, len(close)):
-        if valid[i] and valid[i - w]:
-            out[i] = close[i] / close[i - w] - 1.0
+    both = valid[w:] & valid[:-w]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ratio = close[w:] / close[:-w] - 1.0
+    out[w:] = np.where(both, ratio, np.nan)
     return out
 
 
@@ -294,46 +315,91 @@ def _rolling_reg_r2_fast(x: np.ndarray, w: int) -> np.ndarray:
     return out
 
 
-def _rolling_skew_fast(x: np.ndarray, w: int) -> np.ndarray:
-    out = np.full(len(x), np.nan)
-    for i in range(w - 1, len(x)):
-        s = x[i - w + 1 : i + 1]
-        valid = s[np.isfinite(s)]
+def _windows(x: np.ndarray, w: int) -> np.ndarray:
+    """Read-only (len(x)-w+1, w) sliding-window view. No copy."""
+    return np.lib.stride_tricks.sliding_window_view(x, w)
+
+
+def _rolling_moment(x: np.ndarray, w: int, power: int, offset: float) -> np.ndarray:
+    """
+    Rolling standardised central moment: mean((v-mean)^power) / std^power - offset.
+
+    Windows that are entirely finite are computed as one batched numpy expression.
+    Windows containing a non-finite value fall back to the original per-window
+    "drop the bad points, then require >= 4 survivors" rule, so results are
+    identical — that path only covers the leading ~w windows in practice.
+    """
+    n = len(x)
+    out = np.full(n, np.nan)
+    if n < w:
+        return out
+
+    win = _windows(x, w)
+    all_finite = np.isfinite(win).all(axis=1)
+
+    if all_finite.any():
+        good = win[all_finite]
+        m = good.mean(axis=1, keepdims=True)
+        dev = good - m
+        std = good.std(axis=1, ddof=1)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            vals = (dev ** power).mean(axis=1) / std ** power - offset
+        vals = np.where(std < 1e-10, np.nan, vals)
+        res = np.full(len(win), np.nan)
+        res[all_finite] = vals
+    else:
+        res = np.full(len(win), np.nan)
+
+    for j in np.nonzero(~all_finite)[0]:
+        valid = win[j][np.isfinite(win[j])]
         if len(valid) < 4:
             continue
-        m = valid.mean()
         std = valid.std(ddof=1)
         if std < 1e-10:
             continue
-        out[i] = float(((valid - m) ** 3).mean() / std ** 3)
+        res[j] = float(((valid - valid.mean()) ** power).mean() / std ** power - offset)
+
+    out[w - 1:] = res
     return out
+
+
+def _rolling_skew_fast(x: np.ndarray, w: int) -> np.ndarray:
+    return _rolling_moment(x, w, power=3, offset=0.0)
 
 
 def _rolling_kurt_fast(x: np.ndarray, w: int) -> np.ndarray:
-    out = np.full(len(x), np.nan)
-    for i in range(w - 1, len(x)):
-        s = x[i - w + 1 : i + 1]
-        valid = s[np.isfinite(s)]
-        if len(valid) < 4:
-            continue
-        m = valid.mean()
-        std = valid.std(ddof=1)
-        if std < 1e-10:
-            continue
-        out[i] = float(((valid - m) ** 4).mean() / std ** 4 - 3.0)  # excess kurtosis
-    return out
+    return _rolling_moment(x, w, power=4, offset=3.0)   # excess kurtosis
 
 
 def _ema(x: np.ndarray, span: int) -> np.ndarray:
+    """
+    Exponential moving average with NaN carry-forward.
+
+    The recurrence out[i] = a*x[i] + (1-a)*out[i-1] is a first-order IIR filter,
+    which scipy runs in C. Gaps (non-finite x) break that form because they hold
+    the previous output instead of consuming an input, so the filter is used only
+    when the tail from the first finite value is gap-free — the normal case for a
+    close series. Otherwise the original loop runs and the result is unchanged.
+    """
+    n = len(x)
+    out = np.full(n, np.nan)
+    finite = np.isfinite(x)
+    if not finite.any():
+        return out
+    start = int(np.argmax(finite))
     alpha = 2.0 / (span + 1)
-    out = np.full(len(x), np.nan)
-    start = int(np.argmax(np.isfinite(x)))
+
+    if finite[start:].all():
+        tail = x[start:]
+        # zi carries out[start] = x[start]: seeding with (1-a)*x[start] makes the
+        # filter's first output exactly x[start].
+        out[start:] = lfilter([alpha], [1.0, -(1.0 - alpha)], tail,
+                              zi=np.array([(1.0 - alpha) * tail[0]]))[0]
+        return out
+
     out[start] = x[start]
-    for i in range(start + 1, len(x)):
-        if np.isfinite(x[i]):
-            out[i] = alpha * x[i] + (1.0 - alpha) * out[i - 1]
-        else:
-            out[i] = out[i - 1]
+    for i in range(start + 1, n):
+        out[i] = alpha * x[i] + (1.0 - alpha) * out[i - 1] if finite[i] else out[i - 1]
     return out
 
 
@@ -378,12 +444,14 @@ def _drawdown(close: np.ndarray) -> np.ndarray:
 
 
 def _rolling_max_drawdown_fast(close: np.ndarray, w: int) -> np.ndarray:
-    """O(n·w) rolling max drawdown — unavoidably O(w) per window."""
-    out = np.full(len(close), np.nan)
-    for i in range(w - 1, len(close)):
-        sub  = close[i - w + 1 : i + 1]
-        peak = np.maximum.accumulate(sub)
-        out[i] = ((sub - peak) / (peak + 1e-10)).min()
+    """Rolling max drawdown, batched over all windows at once."""
+    n = len(close)
+    out = np.full(n, np.nan)
+    if n < w:
+        return out
+    win  = _windows(close, w)
+    peak = np.maximum.accumulate(win, axis=1)
+    out[w - 1:] = ((win - peak) / (peak + 1e-10)).min(axis=1)
     return out
 
 
@@ -392,39 +460,80 @@ def _variance_ratio(ret: np.ndarray, q: int, window: int = 63) -> np.ndarray:
     Rolling variance ratio VR(q) = Var(q-period ret) / (q * Var(1-period ret)).
     VR > 1: momentum; VR < 1: mean-reversion; VR ≈ 1: random walk.
     Computed on a rolling `window`-day lookback.
+
+    Batched over all windows. This was the single most expensive feature: the
+    per-index version rebuilt an inner list of q-sums with a Python loop, so it
+    ran ~O(n * window) list appends per symbol and accounted for roughly half of
+    build_features. Windows containing a non-finite return still take the
+    original drop-and-recheck path, so output is unchanged.
     """
     n = len(ret)
     out = np.full(n, np.nan)
-    for i in range(window + q - 1, n):
-        r1 = ret[i - window + 1 : i + 1]
-        r1 = r1[np.isfinite(r1)]
+    if n < window:
+        return out
+
+    win = _windows(ret, window)            # (n-window+1, window)
+    all_finite = np.isfinite(win).all(axis=1)
+    res = np.full(len(win), np.nan)
+
+    if all_finite.any() and window >= q + 10:
+        good = win[all_finite]
+        var1 = good.var(axis=1, ddof=1)
+        # q-period overlapping sums via cumulative sum along the window axis
+        cs = np.concatenate([np.zeros((len(good), 1)), np.cumsum(good, axis=1)], axis=1)
+        rq = cs[:, q:] - cs[:, :-q]
+        varq = rq.var(axis=1, ddof=1)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            vals = varq / (q * var1)
+        res[all_finite] = np.where(var1 < 1e-10, np.nan, vals)
+
+    for j in np.nonzero(~all_finite)[0]:
+        r1 = win[j][np.isfinite(win[j])]
         if len(r1) < q + 10:
             continue
         var1 = r1.var(ddof=1)
         if var1 < 1e-10:
             continue
-        rq = np.array([r1[j:j + q].sum() for j in range(len(r1) - q + 1)])
-        varq = rq.var(ddof=1)
-        out[i] = varq / (q * var1)
+        rq = np.array([r1[k:k + q].sum() for k in range(len(r1) - q + 1)])
+        res[j] = rq.var(ddof=1) / (q * var1)
+
+    out[window - 1:] = res
+    # The original skipped indices below window+q-1 entirely; preserve that.
+    out[: window + q - 1] = np.nan
     return out
 
 
 def _rolling_ou_halflife(log_price: np.ndarray, w: int) -> np.ndarray:
-    """Ornstein-Uhlenbeck mean-reversion half-life via backward OLS."""
+    """
+    Ornstein-Uhlenbeck mean-reversion half-life via backward OLS.
+
+    Batched: the OLS slope over each (w+1)-point window is a closed-form ratio of
+    demeaned dot products, so all windows are solved in one pass.
+    """
     n = len(log_price)
     out = np.full(n, np.nan)
-    for i in range(w, n):
-        sub = log_price[i - w : i + 1]
-        if np.any(np.isnan(sub)):
-            continue
-        y = np.diff(sub)      # Δlog_price
-        x = sub[:-1]          # lagged log_price
-        x_dm = x - x.mean()
-        y_dm = y - y.mean()
-        denom = (x_dm ** 2).sum()
-        if denom < 1e-10:
-            continue
-        slope = (x_dm * y_dm).sum() / denom
-        if slope < 0:
-            out[i] = -np.log(2.0) / slope
+    if n <= w:
+        return out
+
+    win = _windows(log_price, w + 1)        # (n-w, w+1); window ending at index i+w
+    ok  = ~np.isnan(win).any(axis=1)        # isnan, not isfinite — matches original
+    if not ok.any():
+        return out
+
+    good = win[ok]
+    y = np.diff(good, axis=1)               # Δlog_price, (m, w)
+    x = good[:, :-1]                        # lagged log_price, (m, w)
+    x_dm = x - x.mean(axis=1, keepdims=True)
+    y_dm = y - y.mean(axis=1, keepdims=True)
+    denom = (x_dm ** 2).sum(axis=1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        slope = (x_dm * y_dm).sum(axis=1) / denom
+    valid = (denom >= 1e-10) & (slope < 0)
+
+    res = np.full(len(win), np.nan)
+    good_res = np.full(len(good), np.nan)
+    good_res[valid] = -np.log(2.0) / slope[valid]
+    res[ok] = good_res
+
+    out[w:] = res
     return out

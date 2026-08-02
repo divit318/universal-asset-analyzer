@@ -314,6 +314,21 @@ function getDb(): DatabaseSync {
   for (const col of ["method TEXT NOT NULL DEFAULT 'dcf_fcf'"]) {
     try { db.exec(`ALTER TABLE valuation_case ADD COLUMN ${col}`); } catch { /* already exists */ }
   }
+  /*
+   * Standing definitions: a saved screen remembers the symbols it matched last
+   * time it was loaded, so the next load can say what *changed* rather than just
+   * restating the list.
+   *
+   * That difference is most of the value of saving a screen at all. A screen you
+   * re-run by hand is a query; a screen that tells you "PANW left, ROIC fell to
+   * 11.4" is a monitor. Stored as a JSON symbol array on the row rather than a
+   * separate table because it is strictly derived, per-screen, and worthless
+   * without its parent.
+   */
+  for (const col of ["last_symbols TEXT", "last_run_at TEXT"]) {
+    try { db.exec(`ALTER TABLE saved_screen ADD COLUMN ${col}`); } catch { /* already exists */ }
+  }
+
   // Migrate existing watchlist rows: add new columns if the DB predates them
   for (const col of ["target_price REAL", "alert_pct_drop REAL", "notes TEXT"]) {
     try { db.exec(`ALTER TABLE watchlist ADD COLUMN ${col}`); } catch { /* already exists */ }
@@ -1663,6 +1678,10 @@ export interface SavedScreen {
   sortDir: "asc" | "desc";
   createdAt: string;
   updatedAt: string;
+  /** Symbols this screen matched the last time it was run. Empty until then. */
+  lastSymbols: string[];
+  /** When that snapshot was taken, for "changes since…" copy. */
+  lastRunAt: string | null;
 }
 
 interface SavedScreenRow {
@@ -1675,6 +1694,8 @@ interface SavedScreenRow {
   sort_dir: string;
   created_at: string;
   updated_at: string;
+  last_symbols: string | null;
+  last_run_at: string | null;
 }
 
 function toSavedScreen(r: SavedScreenRow): SavedScreen {
@@ -1685,6 +1706,15 @@ function toSavedScreen(r: SavedScreenRow): SavedScreen {
     // A corrupted filter blob must not take down the whole saved-screens list;
     // the screen loads with no filters and the user can re-set them.
   }
+  let lastSymbols: string[] = [];
+  try {
+    const parsed = r.last_symbols ? (JSON.parse(r.last_symbols) as unknown) : [];
+    if (Array.isArray(parsed)) lastSymbols = parsed.filter((x): x is string => typeof x === "string");
+  } catch {
+    // Same tolerance as the filter blob: a corrupt snapshot means "no baseline",
+    // so the next load simply reports no changes instead of failing to open.
+  }
+
   return {
     id: r.id,
     name: r.name,
@@ -1695,7 +1725,22 @@ function toSavedScreen(r: SavedScreenRow): SavedScreen {
     sortDir: r.sort_dir === "asc" ? "asc" : "desc",
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    lastSymbols,
+    lastRunAt: r.last_run_at,
   };
+}
+
+/**
+ * Record what a saved screen matched, so the next load can diff against it.
+ *
+ * Capped at 500 symbols: the point is to detect entries and exits among names a
+ * human might act on, and a screen matching more than 500 is not a watchlist,
+ * it's a universe. Storing all of them would bloat every row for no decision.
+ */
+export function recordScreenRun(id: string, symbols: string[]): void {
+  getDb()
+    .prepare("UPDATE saved_screen SET last_symbols = ?, last_run_at = ? WHERE id = ?")
+    .run(JSON.stringify(symbols.slice(0, 500)), new Date().toISOString(), id);
 }
 
 export function listSavedScreens(assetClass?: string): SavedScreen[] {
@@ -1718,7 +1763,11 @@ export function getSavedScreen(id: string): SavedScreen | null {
 }
 
 /** Create or overwrite a saved screen. Reusing an id updates it in place, preserving created_at. */
-export function saveScreen(input: Omit<SavedScreen, "createdAt" | "updatedAt">): SavedScreen {
+export function saveScreen(
+  // The run snapshot is derived, written by recordScreenRun, and never supplied
+  // by a caller creating or editing a screen.
+  input: Omit<SavedScreen, "createdAt" | "updatedAt" | "lastSymbols" | "lastRunAt">,
+): SavedScreen {
   const now = new Date().toISOString();
   const existing = getSavedScreen(input.id);
   const createdAt = existing?.createdAt ?? now;
@@ -1748,7 +1797,10 @@ export function saveScreen(input: Omit<SavedScreen, "createdAt" | "updatedAt">):
       now,
     );
 
-  return { ...input, createdAt, updatedAt: now };
+  // An UPSERT preserves any existing run snapshot (the columns aren't in the
+  // statement above), so re-saving a screen doesn't wipe its baseline; re-reading
+  // is the honest way to report what's actually stored.
+  return getSavedScreen(input.id) ?? { ...input, createdAt, updatedAt: now, lastSymbols: [], lastRunAt: null };
 }
 
 export function deleteSavedScreen(id: string): void {

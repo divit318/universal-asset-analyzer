@@ -38,14 +38,24 @@ export type ThinkingMode =
   /** No reasoning channel; the `think` flag is never sent to it. */
   | "none";
 
+/** Which backend serves a model. */
+export type ProviderId =
+  /** Local Ollama daemon. Weights on disk, gated by RAM, serialized generation. */
+  | "ollama"
+  /** Hosted frontier models via the Devin CLI. No memory gate, genuinely parallel. */
+  | "devin";
+
+/** Backends whose models occupy local RAM and are therefore memory-gated. */
+const LOCAL_PROVIDERS: ReadonlySet<ProviderId> = new Set<ProviderId>(["ollama"]);
+
 /** What we know about a model, independent of whether it's installed. */
 export interface ModelSpec {
-  /** Provider-native id, exactly as `ollama list` names it. */
+  /** Provider-native id: an `ollama list` tag, or a Devin `model_uid`. */
   id: string;
   label: string;
-  family: "qwen" | "mistral" | "other";
-  /** Which provider serves this model. Local-only today. */
-  provider: "ollama";
+  family: "qwen" | "mistral" | "claude" | "gpt" | "swe" | "other";
+  /** Which provider serves this model. */
+  provider: ProviderId;
   /** Usable context window in tokens. */
   contextWindow: number;
   /** Chain-of-thought support. */
@@ -66,7 +76,7 @@ export interface ModelSpec {
   /**
    * Expected weights size in GB. A *fallback*: the provider reports the real
    * size from Ollama and that wins. Kept so routing still works when the daemon
-   * hasn't answered yet.
+   * hasn't answered yet. Always 0 for hosted models — nothing is loaded here.
    */
   sizeGb: number;
   /** Lower = tried first among models the scorer ranks equally. */
@@ -77,11 +87,16 @@ export interface ModelSpec {
   blurb: string;
 }
 
-/** Local Ollama daemon endpoint every "ollama" provider model is served from. */
-export function endpointForProvider(provider: ModelSpec["provider"]): string {
+/** Where a provider's models are served from — for display and diagnostics. */
+export function endpointForProvider(provider: ProviderId): string {
   switch (provider) {
     case "ollama":
       return process.env.OLLAMA_HOST ?? "http://localhost:11434";
+    case "devin":
+      // Not an endpoint UAA connects to: the CLI owns the transport and the
+      // credentials. Naming the binary is the honest answer to "where does
+      // this run", and it is what a user would need to debug.
+      return `${process.env.DEVIN_CLI_BIN ?? "devin"} -p (hosted)`;
   }
 }
 
@@ -95,6 +110,129 @@ export function endpointForProvider(provider: ModelSpec["provider"]): string {
  * tags, always.
  */
 export const MODEL_REGISTRY: ModelSpec[] = [
+  /* ---- Hosted (Devin CLI) ------------------------------------------------
+   *
+   * `tokensPerSecond` here is *effective end-to-end* throughput, measured on
+   * this project's NVDA verdict prompt (~150 output tokens): wall-clock time
+   * from spawn to parsed answer, divided by tokens. It therefore includes the
+   * ~2s fixed cost of starting the CLI process, which is why even the fastest
+   * entry reads slower than a raw API benchmark would. That is the right
+   * number for the Router to rank on — it is what the user actually waits.
+   *
+   * Measured: swe-1.6-fast 3.9s, sonnet-5-low 5.4s, opus-5-low 8.3s, against
+   * 28-115s for the local models below on the same prompt.
+   *
+   * Only this curated set is routable. `devin models list` offers ~170
+   * variants; DevinProvider intersects the catalogue with these entries so the
+   * Router scores six intentional choices rather than 170 unknown ones.
+   */
+  {
+    id: "claude-opus-5-medium",
+    label: "Claude Opus 5 (medium reasoning)",
+    family: "claude",
+    provider: "devin",
+    contextWindow: 1_000_000,
+    // Devin bakes the reasoning level into the model variant (-low/-medium/
+    // -high) rather than exposing a per-request toggle, so there is no `think`
+    // flag to send. "none" means "don't send one", not "cannot reason".
+    thinking: "none",
+    temperature: 0.4,
+    timeoutMs: 240_000,
+    capabilities: ["reasoning", "long-context", "structured-json", "coding"],
+    quality: 10,
+    tokensPerSecond: 12,
+    sizeGb: 0,
+    priority: 0,
+    enabled: true,
+    blurb: "Deepest reasoning. Routed to theses, filings, IC agents.",
+  },
+  {
+    id: "claude-opus-5-low",
+    label: "Claude Opus 5 (low reasoning)",
+    family: "claude",
+    provider: "devin",
+    contextWindow: 1_000_000,
+    thinking: "none",
+    temperature: 0.4,
+    timeoutMs: 180_000,
+    capabilities: ["reasoning", "long-context", "structured-json", "coding"],
+    quality: 9,
+    tokensPerSecond: 18,
+    sizeGb: 0,
+    priority: 1,
+    enabled: true,
+    blurb: "Opus quality at roughly half the latency. Deep-task fallback.",
+  },
+  {
+    id: "claude-sonnet-5-low",
+    label: "Claude Sonnet 5",
+    family: "claude",
+    provider: "devin",
+    contextWindow: 1_000_000,
+    thinking: "none",
+    temperature: 0.4,
+    timeoutMs: 180_000,
+    capabilities: ["reasoning", "long-context", "structured-json", "coding"],
+    quality: 9,
+    tokensPerSecond: 28,
+    sizeGb: 0,
+    priority: 2,
+    enabled: true,
+    blurb: "The standard-tier workhorse: frontier quality, 5s answers.",
+  },
+  {
+    id: "gpt-5-6-terra-low",
+    label: "GPT-5.6 Terra",
+    family: "gpt",
+    provider: "devin",
+    contextWindow: 1_000_000,
+    thinking: "none",
+    temperature: 0.4,
+    timeoutMs: 180_000,
+    capabilities: ["reasoning", "long-context", "structured-json", "coding"],
+    quality: 9,
+    tokensPerSecond: 28,
+    sizeGb: 0,
+    priority: 3,
+    enabled: true,
+    blurb: "Second frontier standard-tier model — a different house's judgment.",
+  },
+  {
+    id: "swe-1-6-fast",
+    label: "SWE-1.6 Fast",
+    family: "swe",
+    provider: "devin",
+    contextWindow: 200_000,
+    thinking: "none",
+    temperature: 0.3,
+    timeoutMs: 90_000,
+    capabilities: ["fast", "long-context", "structured-json", "coding"],
+    quality: 6,
+    tokensPerSecond: 38,
+    sizeGb: 0,
+    priority: 4,
+    enabled: true,
+    blurb: "Cheapest and fastest. Routed to parsing and one-line summaries.",
+  },
+  {
+    id: "gpt-5-6-luna-low",
+    label: "GPT-5.6 Luna",
+    family: "gpt",
+    provider: "devin",
+    contextWindow: 1_000_000,
+    thinking: "none",
+    temperature: 0.3,
+    timeoutMs: 90_000,
+    capabilities: ["fast", "long-context", "structured-json"],
+    quality: 6,
+    tokensPerSecond: 35,
+    sizeGb: 0,
+    priority: 5,
+    enabled: true,
+    blurb: "Light-tier alternate with a 1M window. Fallback for fast tasks.",
+  },
+
+  /* ---- Local (Ollama) ---------------------------------------------------- */
   {
     // Registered but not selectable on a 17GB host: the memory filter excludes
     // it. On a machine with the RAM to hold it, this becomes the best model here
@@ -112,7 +250,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     quality: 9,
     tokensPerSecond: 0.9, // measured while memory-starved; far higher when resident
     sizeGb: 18.6,
-    priority: 0,
+    priority: 10,
     enabled: true,
     blurb: "Strongest reasoning. Needs ~24GB+ RAM to be usable.",
   },
@@ -129,7 +267,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     quality: 8,
     tokensPerSecond: 5.0,
     sizeGb: 9.3,
-    priority: 1,
+    priority: 11,
     enabled: true,
     blurb: "Best reasoning that fits in memory. The analytical workhorse.",
   },
@@ -146,7 +284,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     quality: 5,
     tokensPerSecond: 10.5,
     sizeGb: 4.4,
-    priority: 2,
+    priority: 12,
     enabled: true,
     blurb: "2x faster, reliably valid JSON. The fast lane for short output.",
   },
@@ -163,7 +301,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     quality: 6,
     tokensPerSecond: 5.0,
     sizeGb: 9.0,
-    priority: 3,
+    priority: 13,
     enabled: true,
     blurb: "Code-specialized. The only coding model within the memory budget.",
   },
@@ -183,7 +321,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     quality: 7,
     tokensPerSecond: 0.9,
     sizeGb: 18.6,
-    priority: 9,
+    priority: 19,
     enabled: true,
     blurb: "Code-specialized MoE. Needs ~24GB+ RAM.",
   },
@@ -206,7 +344,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     quality: 6,
     tokensPerSecond: 2.5,
     sizeGb: 14.3,
-    priority: 10,
+    priority: 20,
     enabled: false, // no research use-case; safe to `ollama rm`
     blurb: "Agentic coding model. Unused by UAA.",
   },
@@ -263,8 +401,16 @@ export function specForInstalled(installedId: string): ModelSpec {
  *
  * `reportedSizeGb` (from Ollama's /api/tags) wins over the registry's declared
  * size when available, so the check reflects what is really installed.
+ *
+ * Hosted models are exempt by provider, not by having `sizeGb: 0`. Both routes
+ * return true today, but for opposite reasons — 0 otherwise means "size
+ * unknown, don't exclude on a guess", and a hosted model's size is not
+ * unknown, it is *irrelevant*. Conflating them would silently start gating
+ * Opus on local RAM the day someone gives the unknown-size branch a stricter
+ * default.
  */
 export function fitsInMemory(spec: ModelSpec, reportedSizeGb?: number): boolean {
+  if (!LOCAL_PROVIDERS.has(spec.provider)) return true;
   const size = reportedSizeGb && reportedSizeGb > 0 ? reportedSizeGb : spec.sizeGb;
   if (size <= 0) return true; // size unknown — don't exclude on a guess
   return size <= memoryBudgetGb();

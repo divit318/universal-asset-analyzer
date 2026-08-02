@@ -11,6 +11,7 @@ import { runPrompt } from "./ai";
 import { getQuote } from "./yahoo";
 import { extractJsonObject } from "./json-extract";
 import type { NewsItem, EventSignal, ScanResult, Quote } from "./types";
+import { aiUnavailableMessage } from "./ai/availability";
 
 /* -------------------------------------------------------------------------- */
 /* AI prompt                                                                  */
@@ -181,7 +182,7 @@ export async function runEventScan(
       themes: [],
       signals: [],
       newsItems,
-      aiSummary: "AI analysis unavailable. Run `ollama serve` and pull a model.",
+      aiSummary: aiUnavailableMessage("scanner summaries"),
     };
   }
 

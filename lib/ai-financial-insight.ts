@@ -13,6 +13,7 @@
 import { runPromptWithMeta } from "./ai";
 import { getScannerCache, putScannerCache } from "./db";
 import type { FinancialStatements, FundamentalsSnapshot, ScoreResult } from "./types";
+import { aiUnavailableMessage } from "./ai/availability";
 
 export interface FinancialInsightInput {
   symbol: string;
@@ -97,7 +98,7 @@ export async function generateFinancialInsight(input: FinancialInsightInput): Pr
     model = usedModel;
     insight = raw.trim();
   } catch {
-    insight = "AI insight unavailable. Run `ollama serve` and pull a model.";
+    insight = aiUnavailableMessage("financial insights");
   }
 
   const result: FinancialInsightResult = { insight, model };

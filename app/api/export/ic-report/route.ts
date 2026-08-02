@@ -1,4 +1,5 @@
 import PDFDocument from "pdfkit";
+import { drawBrandMark } from "@/lib/brand/pdf";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -72,8 +73,12 @@ function safeText(s: string | null | undefined): string {
 
 /** Draw a running page header */
 function pageHeader(doc: PDFKit.PDFDocument, symbol: string, companyName: string, L: number, W: number) {
+  // The mark on every page's running header, at 11pt so it sits on the same
+  // optical line as the 7pt rule text without becoming the loudest thing on a
+  // page of prose. Light scheme: this is white paper.
+  drawBrandMark(doc, { x: L, y: 25, size: 11, scheme: "light" });
   doc.fill("#9ca3af").font("Helvetica").fontSize(7)
-    .text(`${symbol} · ${companyName} · IC Research Report`, L, 28, { width: W - 60 });
+    .text(`${symbol} · ${companyName} · IC Research Report`, L + 16, 28, { width: W - 76 });
   doc.fill("#d1d5db").font("Helvetica").fontSize(7)
     .text(`Universal Asset Analyzer`, L, 28, { width: W, align: "right" });
   doc.moveTo(L, 38).lineTo(L + W, 38).lineWidth(0.5).strokeColor("#e5e7eb").stroke();
@@ -147,8 +152,13 @@ export async function POST(req: Request): Promise<Response> {
     ════════════════════════════════════════════ */
     doc.rect(0, 0, doc.page.width, doc.page.height).fill("#0f172a");
 
+    // The real mark, centred above the name. This was `"◆  UNIVERSAL ASSET
+    // ANALYZER"` — a Unicode diamond standing in for the logo on the cover of the
+    // product's flagship deliverable, rendered in whatever symbol font the PDF
+    // reader happened to substitute.
+    drawBrandMark(doc, { x: doc.page.width / 2 - 15, y: 56, size: 30, scheme: "dark" });
     doc.fill("#3b82f6").font("Helvetica-Bold").fontSize(10)
-      .text("◆  UNIVERSAL ASSET ANALYZER", L, 70, { width: W, align: "center" });
+      .text("UNIVERSAL ASSET ANALYZER", L, 94, { width: W, align: "center", characterSpacing: 1.2 });
 
     doc.fill("#ffffff").font("Helvetica-Bold").fontSize(34)
       .text("Investment Committee", L, 120, { width: W, align: "center" });

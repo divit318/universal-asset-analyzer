@@ -1,4 +1,11 @@
 import type { CSSProperties } from "react";
+import {
+  MARK_BARS,
+  MARK_BAR_HEIGHT,
+  MARK_BAR_RADIUS,
+  MARK_TERMINUS,
+  MARK_VIEWBOX,
+} from "@/lib/brand/mark";
 
 type LoadingMarkState = "loading" | "done";
 
@@ -17,23 +24,46 @@ interface LoadingMarkProps {
  * anywhere a page load, AI research run, or other long-running task needs
  * an indicator; drive `state` from whatever boolean already tracks that
  * work (see app/globals.css for the .uaa-loading-mark animation rules).
+ *
+ * Geometry comes from lib/brand/mark.ts — the same numbers `<BrandMark>` draws.
+ * That is deliberate and load-bearing: `state="done"` resolves to a shape that
+ * is pixel-identical to the logo in the header, which is the whole reason the
+ * boot splash's ending reads as "the product", not "a spinner finished". Do not
+ * inline coordinates here again.
  */
 export function LoadingMark({ state = "loading", size = 20, className, label }: LoadingMarkProps) {
   return (
     <svg
-      viewBox="0 0 32 32"
+      viewBox={`0 0 ${MARK_VIEWBOX} ${MARK_VIEWBOX}`}
       fill="none"
       width={size}
       height={size}
-      className={`uaa-loading-mark ${state === "loading" ? "is-loading" : "is-done"} ${className ?? ""}`}
+      className={`uaa-loading-mark shrink-0 ${state === "loading" ? "is-loading" : "is-done"} ${className ?? ""}`}
       role="status"
       aria-label={label ?? (state === "loading" ? "Loading" : "Loaded")}
     >
-      <rect className="mark-bar mark-bar1" x="4" y="5.4" width="24" height="2.4" rx="0.8" fill="currentColor" style={{ "--mark-rest": 0.5 } as CSSProperties} />
-      <rect className="mark-bar mark-bar2" x="6.5" y="9.8" width="19" height="2.4" rx="0.8" fill="currentColor" style={{ "--mark-rest": 0.65 } as CSSProperties} />
-      <rect className="mark-bar mark-bar3" x="9" y="13.8" width="14" height="2.4" rx="0.8" fill="currentColor" style={{ "--mark-rest": 0.8 } as CSSProperties} />
-      <rect className="mark-bar mark-bar4" x="11.5" y="17.4" width="9" height="2.4" rx="0.8" fill="currentColor" style={{ "--mark-rest": 1 } as CSSProperties} />
-      <rect className="mark-terminus" x="12.5" y="20.1" width="7" height="7" rx="1.2" fill="var(--brand)" />
+      {MARK_BARS.map((bar, i) => (
+        <rect
+          key={i}
+          className={`mark-bar mark-bar${i + 1}`}
+          x={bar.x}
+          y={bar.y}
+          width={bar.width}
+          height={MARK_BAR_HEIGHT}
+          rx={MARK_BAR_RADIUS}
+          fill="currentColor"
+          style={{ "--mark-rest": bar.opacity } as CSSProperties}
+        />
+      ))}
+      <rect
+        className="mark-terminus"
+        x={MARK_TERMINUS.x}
+        y={MARK_TERMINUS.y}
+        width={MARK_TERMINUS.size}
+        height={MARK_TERMINUS.size}
+        rx={MARK_TERMINUS.radius}
+        fill="var(--brand)"
+      />
     </svg>
   );
 }

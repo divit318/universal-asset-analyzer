@@ -173,7 +173,7 @@ export function useCopilot(symbol: string) {
               setSuggestions(ev.suggestions);
             } else if (ev.type === "error") {
               streamErr = ev.message;
-              if (ev.code === "ollama_unavailable") setReachable(false);
+              if (ev.code === "ai_unavailable") setReachable(false);
             }
           }
         }

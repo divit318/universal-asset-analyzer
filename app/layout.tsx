@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
+import { SiteFooter } from "./_components/site-footer";
 import { SiteHeader } from "./_components/site-header";
 import { CommandPalette } from "./_components/command-palette";
 import { AppAssistant } from "./_components/ai-assistant";
@@ -28,6 +29,18 @@ export const metadata: Metadata = {
   },
   description:
     "Institutional-grade equity research platform: AI-powered deep research, DCF modelling, quant screening, thematic analysis, and portfolio management — all running locally.",
+  applicationName: "Universal Asset Analyzer",
+  /*
+   * No `icons` key on purpose. Next's file conventions already emit the tab and
+   * home-screen icons from app/{favicon.ico,icon.svg,apple-icon.png}, all three
+   * generated from the mark's geometry by `node scripts/generate-brand-assets.ts`;
+   * declaring them here as well produces duplicate <link rel="icon"> tags whose
+   * order decides which one wins. Installed-app icons live in app/manifest.ts.
+   *
+   * Before this, app/favicon.ico was still the stock Next.js placeholder — the
+   * browser tab was the one surface where UAA's branding was not merely weak but
+   * someone else's.
+   */
 };
 
 export default function RootLayout({
@@ -67,6 +80,7 @@ export default function RootLayout({
                 <main id="main-content" className="flex flex-1 flex-col">
                   {children}
                 </main>
+                <SiteFooter />
               </AppShell>
             </ToastProvider>
           </FocusProvider>

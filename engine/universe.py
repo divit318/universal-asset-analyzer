@@ -32,7 +32,10 @@ SURVIVORSHIP BIAS WARNING:
 from __future__ import annotations
 
 import csv
+import json
 import logging
+import threading
+import time
 import warnings
 from datetime import date
 from pathlib import Path
@@ -122,6 +125,19 @@ _MF_FALLBACK = [
 # Screener-based discovery
 # ---------------------------------------------------------------------------
 
+_resolution = threading.local()
+
+
+def _mark_degraded() -> None:
+    """Record that this resolution fell back to a curated list rather than a
+    live screener response, so the caller knows not to cache it."""
+    _resolution.degraded = True
+
+
+def resolution_was_degraded() -> bool:
+    return getattr(_resolution, "degraded", False)
+
+
 def _screener_symbols(query_fn: Callable, count: int, fallback: list[str]) -> list[str]:
     """
     Run a screener query fn with pagination (yfinance caps at 25/page).
@@ -145,6 +161,7 @@ def _screener_symbols(query_fn: Callable, count: int, fallback: list[str]) -> li
             return syms
     except Exception as e:
         logger.warning("Screener failed, using fallback: %s", e)
+    _mark_degraded()
     return list(fallback[:count])
 
 
@@ -288,6 +305,7 @@ def get_us_growth(count: int = 80) -> list[str]:
             return syms
     except Exception as e:
         logger.warning("US growth screener failed: %s", e)
+    _mark_degraded()
     return list(_US_MIDCAP_FALLBACK[:count])
 
 
@@ -313,9 +331,13 @@ def get_etfs(count: int = 50) -> list[str]:
             if extra not in seen:
                 seen.add(extra)
                 syms.append(extra)
-        return syms[:count] if syms else list(_ETF_FALLBACK[:count])
+        if syms:
+            return syms[:count]
+        _mark_degraded()
+        return list(_ETF_FALLBACK[:count])
     except Exception as e:
         logger.warning("ETF screener failed: %s", e)
+    _mark_degraded()
     return list(_ETF_FALLBACK[:count])
 
 
@@ -334,9 +356,13 @@ def get_mutual_funds(count: int = 30) -> list[str]:
                     syms.append(s)
             if len(r.get("quotes", [])) < 25:
                 break
-        return syms if syms else list(_MF_FALLBACK[:count])
+        if syms:
+            return syms
+        _mark_degraded()
+        return list(_MF_FALLBACK[:count])
     except Exception as e:
         logger.warning("MF screener failed: %s", e)
+    _mark_degraded()
     return list(_MF_FALLBACK[:count])
 
 
@@ -514,8 +540,20 @@ def get_universe_by_name(name: str, as_of: date | None = None) -> list[str]:
             "Set USE_POINT_IN_TIME_UNIVERSE=True with a dated CSV to suppress.",
             name,
         )
-        fn, _ = _UNIVERSE_REGISTRY[name]
-        syms = fn()
+        cached = _read_universe_cache(name)
+        if cached is not None:
+            syms = cached
+        else:
+            _resolution.degraded = False
+            fn, _ = _UNIVERSE_REGISTRY[name]
+            syms = fn()
+            # Only a genuine live screener response is worth keeping. Caching a
+            # curated fallback would pin a degraded universe for the whole TTL
+            # after Yahoo recovered.
+            if resolution_was_degraded():
+                logger.warning("Universe '%s' resolved from curated fallback — not cached.", name)
+            else:
+                _write_universe_cache(name, syms)
 
     seen: set[str] = set()
     result: list[str] = []
@@ -524,6 +562,70 @@ def get_universe_by_name(name: str, as_of: date | None = None) -> list[str]:
             seen.add(s)
             result.append(s)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Screener result cache
+# ---------------------------------------------------------------------------
+
+# Resolving a universe is up to ten paginated Yahoo screener requests — 3-9s
+# before a single price is read, paid on every engine run. Index membership
+# moves on a monthly cadence at best, so re-deriving it several times an hour
+# buys nothing. This became the largest single cost of a warm Fast Run once the
+# compute stages were fixed.
+_UNIVERSE_CACHE_DIR = Path(__file__).parents[1] / "data" / "universe_cache"
+UNIVERSE_CACHE_TTL_HOURS: float = 12.0
+
+
+def _universe_cache_path(name: str) -> Path:
+    return _UNIVERSE_CACHE_DIR / f"{name}.json"
+
+
+def _read_universe_cache(name: str) -> list[str] | None:
+    """Cached membership if present and within TTL, else None."""
+    path = _universe_cache_path(name)
+    try:
+        if not path.exists():
+            return None
+        age_hours = (time.time() - path.stat().st_mtime) / 3600.0
+        if age_hours > UNIVERSE_CACHE_TTL_HOURS:
+            return None
+        syms = json.loads(path.read_text())
+        if isinstance(syms, list) and syms and all(isinstance(s, str) for s in syms):
+            logger.info("Universe '%s' from cache (%.1fh old, %d symbols)",
+                        name, age_hours, len(syms))
+            return syms
+    except Exception:
+        pass
+    return None
+
+
+def _write_universe_cache(name: str, syms: list[str]) -> None:
+    """Persist membership. Never caches an empty result — that would pin a
+    transient screener outage for the whole TTL."""
+    if not syms:
+        return
+    try:
+        _UNIVERSE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        path = _universe_cache_path(name)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(syms))
+        tmp.rename(path)
+    except Exception:
+        pass
+
+
+def clear_universe_cache(name: str | None = None) -> int:
+    """Drop cached membership for one universe, or all. Returns files removed."""
+    if not _UNIVERSE_CACHE_DIR.exists():
+        return 0
+    paths = [_universe_cache_path(name)] if name else list(_UNIVERSE_CACHE_DIR.glob("*.json"))
+    removed = 0
+    for p in paths:
+        if p.exists():
+            p.unlink()
+            removed += 1
+    return removed
 
 
 def list_universes() -> dict[str, str]:

@@ -5,6 +5,7 @@ import { runPrompt } from "@/lib/ai";
 import { extractJsonObject } from "@/lib/json-extract";
 import { formatCurrency } from "@/lib/format";
 import { gatherPortfolioManagerEvidence, buildBriefEvidenceSuffix } from "@/lib/ai-portfolio-manager";
+import { AI_RECOVERY_HINT } from "@/lib/ai/availability";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -120,11 +121,10 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
     });
   } catch {
     parsed = {
-      headline: "Portfolio summary — start Ollama for AI intelligence",
-      narrative:
-        "Run `ollama serve` in your terminal to enable AI portfolio analysis. Your holdings and P&L are shown below.",
-      topOpportunity: "AI analysis unavailable — Ollama offline",
-      biggestRisk: "AI analysis unavailable — Ollama offline",
+      headline: "Portfolio summary — connect an AI provider for intelligence",
+      narrative: `${AI_RECOVERY_HINT} Your holdings and P&L are shown below regardless.`,
+      topOpportunity: "AI analysis unavailable — no provider reachable",
+      biggestRisk: "AI analysis unavailable — no provider reachable",
       actionItems: [],
     };
   }

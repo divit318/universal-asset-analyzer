@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Menu, X } from "lucide-react";
+import { BrandLockup } from "@/app/_components/brand";
 import { ThemeToggle } from "@/app/_components/theme";
 import { LANDING_HOME, APP_ENTRY, NAV_SECTIONS } from "../landing-config";
 
@@ -23,16 +24,10 @@ export function LandingHeader() {
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-surface/85 backdrop-blur-xl">
       <nav aria-label="Primary" className="mx-auto flex h-14 w-full max-w-7xl items-center gap-2 px-6">
-        {/* Logo → marketing home (portable: LANDING_HOME becomes "/" post-migration) */}
-        <Link
-          href={LANDING_HOME}
-          className="mr-4 shrink-0 font-mono text-sm font-semibold tracking-tight outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-brand/40"
-        >
-          <span className="text-brand">◆</span>{" "}
-          <span className="text-foreground">asset</span>
-          <span className="text-faint">/</span>
-          <span className="text-foreground">analyzer</span>
-        </Link>
+        {/* Lockup → marketing home (portable: LANDING_HOME becomes "/" post-migration).
+            Same component, same size token as the app header, so crossing from
+            the marketing site into the product does not change the logo. */}
+        <BrandLockup href={LANDING_HOME} size="md" className="mr-4" />
 
         {/* Desktop anchor nav — generated from the IA registry */}
         <div className="hidden items-center gap-0.5 md:flex">

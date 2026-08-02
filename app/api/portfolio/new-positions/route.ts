@@ -3,13 +3,12 @@
  *
  * AI-powered new stock recommendations for the portfolio.
  * Analyzes current portfolio gaps, sector exposure, health dimensions,
- * and portfolio objective, then calls local Ollama to suggest NEW stocks
+ * and portfolio objective, then asks the AI platform to suggest NEW stocks
  * (not currently held) that would improve the portfolio.
- *
- * 100% local — all AI runs through Ollama. No paid API usage.
  */
 
 import { NextResponse } from "next/server";
+import { unavailableMessage } from "@/lib/ai/platform-health";
 import { listWatchlist } from "@/lib/db";
 import { runPrompt } from "@/lib/ai";
 import { AllModelsFailedError } from "@/lib/ai/router";
@@ -241,11 +240,11 @@ export async function POST(request: Request) {
   } catch (e) {
     if (e instanceof AllModelsFailedError) {
       return NextResponse.json(
-        { error: "Ollama unavailable — start Ollama to enable AI recommendations", code: "ollama_unavailable" },
+        { error: unavailableMessage("AI recommendations"), code: "ai_unavailable" },
         { status: 503 },
       );
     }
-    return NextResponse.json({ error: e instanceof Error ? e.message : "Ollama request failed" }, { status: 502 });
+    return NextResponse.json({ error: e instanceof Error ? e.message : "AI request failed" }, { status: 502 });
   }
 
   const parsed = parseRecommendations(responseText);

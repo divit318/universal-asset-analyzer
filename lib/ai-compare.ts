@@ -19,6 +19,7 @@ import { verifyGrounding, collectClaimText, type GroundingReport } from "./ai/gr
 import { computeEntryBenchmarks, peerGroupOf, loadBenchmarkUniverse, type PeerBenchmark } from "./compare/benchmarks";
 import type { EntryFreshness } from "./compare/types";
 import type { FundamentalsData, Quote } from "./types";
+import { AI_NARRATIVE_UNAVAILABLE, AI_RECOVERY_HINT } from "./ai/availability";
 
 export interface CompareStock {
   symbol: string;
@@ -463,7 +464,7 @@ export async function compareStocks(symbols: string[]): Promise<ComparisonResult
 
   // The prompt returns a flat object; normalise into sections shape.
   const sections: ComparisonResult["sections"] = flat.sections ?? {
-    overview: flat.overview ?? (aiUnavailable ? "AI analysis unavailable — run `ollama serve` to enable the written comparison. The metric table below is always computed." : ""),
+    overview: flat.overview ?? (aiUnavailable ? `${AI_NARRATIVE_UNAVAILABLE} ${AI_RECOVERY_HINT}` : ""),
     valuation: flat.valuation ?? "",
     quality: flat.quality ?? "",
     growth: flat.growth ?? "",
