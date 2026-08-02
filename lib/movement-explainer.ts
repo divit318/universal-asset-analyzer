@@ -18,7 +18,12 @@
 
 import { getQuote, getHistory } from "./yahoo";
 import { getCompanyNews } from "./news";
-import { runPrompt } from "./ai";
+import { runAnalysis } from "./ai/analysis";
+import {
+  MovementAnalysisSchema,
+  MovementWireSchema,
+  MOVEMENT_SCHEMA_VERSION,
+} from "./ai/schemas/movement";
 import { extractJsonObject } from "./json-extract";
 import { getLatestSectorRotation, findSectorRotationEntry } from "./sector-rotation";
 import { getScannerCache, putScannerCache } from "./db";
@@ -237,11 +242,28 @@ export async function explainMovement(
 
   let movement = MOVEMENT_DEFAULTS;
   try {
-    const raw = await runPrompt("explain-movement", buildMovementPrompt(input, evidence), {
-      maxTokens: 1200,
-      json: true,
-    });
-    movement = parseMovementResponse(raw);
+    // First migrated call site of the analysis seam (ai-migration/03 §9):
+    // AI_PROVIDER decides Ollama vs Devin; the tolerant parse schema encodes
+    // the same coercions parseMovementResponse applies, so the Ollama path is
+    // behavior-identical. The ai_result cache is content-keyed on the dossier;
+    // the subject-keyed 15-minute short-circuit above is unchanged.
+    const result = await runAnalysis(
+      {
+        taskType: "explain-movement",
+        subjectKey: `${subjectKind}:${subject}`,
+        prompt: buildMovementPrompt(input, evidence),
+        schema: MovementAnalysisSchema,
+        wireSchema: MovementWireSchema,
+        schemaVersion: MOVEMENT_SCHEMA_VERSION,
+      },
+      { maxAgeMs: 15 * 60 * 1000 },
+    );
+    movement = {
+      summary: result.data.summary || MOVEMENT_DEFAULTS.summary,
+      drivers: result.data.drivers,
+      confidence: result.data.confidence,
+      persistence: result.data.persistence,
+    };
   } catch {
     // movement stays at defaults
   }

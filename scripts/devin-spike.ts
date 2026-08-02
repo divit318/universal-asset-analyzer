@@ -238,6 +238,7 @@ async function runOnce(run: number, prompt: string): Promise<RunResult> {
   let error: string | undefined;
 
   const delays = [3000, 5000, 8000, 13000];
+  try {
   while (performance.now() - t0 < BUDGET_MS) {
     await new Promise((r) => setTimeout(r, delays[Math.min(polls, delays.length - 1)] ?? 15000));
     polls++;
@@ -306,12 +307,19 @@ async function runOnce(run: number, prompt: string): Promise<RunResult> {
     }
   }
 
-  if (outcome === "timeout") {
-    console.log(`[run ${run}] budget exhausted — terminating session`);
+  } catch (err) {
+    outcome = "error";
+    error = err instanceof Error ? err.message : String(err);
+  } finally {
+    // Amendment 1: terminate UNCONDITIONALLY — success, Zod failure, timeout,
+    // or a thrown error. A disposable analysis session must never outlive its
+    // harvest (structured_output arrives pre-`finished` and sessions do not
+    // self-terminate).
     await terminate(created.session_id);
-  } else {
-    // Disposable analysis session: clean up rather than leaving it to idle-sleep.
-    await terminate(created.session_id);
+    activeSessions.delete(created.session_id);
+  }
+
+  if (outcome === "ok") {
     // ACU accounting lags the output; one delayed re-read to capture it.
     await new Promise((r) => setTimeout(r, 3000));
     try {
@@ -321,7 +329,6 @@ async function runOnce(run: number, prompt: string): Promise<RunResult> {
       /* keep last observed value */
     }
   }
-  activeSessions.delete(created.session_id);
 
   return {
     run,
@@ -356,10 +363,17 @@ async function main() {
   console.log(`[spike] dossier: ${prompt.length} chars; schema: ${JSON.stringify(jsonSchema).length} bytes (limit 65536)\n`);
 
   const results: RunResult[] = [];
+  const safeRun = (i: number): Promise<RunResult> =>
+    runOnce(i, prompt).catch((err) => ({
+      run: i, sessionId: "-", sessionUrl: "-", createMs: 0, totalMs: 0, polls: 0, acus: null,
+      firstAttemptValid: false, validAfterRetry: false, outcome: "error" as const,
+      transitions: [], output: null, rawOutput: null,
+      error: err instanceof Error ? err.message : String(err),
+    }));
   if (args.sequential) {
-    for (let i = 1; i <= RUNS; i++) results.push(await runOnce(i, prompt));
+    for (let i = 1; i <= RUNS; i++) results.push(await safeRun(i));
   } else {
-    results.push(...(await Promise.all(Array.from({ length: RUNS }, (_, i) => runOnce(i + 1, prompt)))));
+    results.push(...(await Promise.all(Array.from({ length: RUNS }, (_, i) => safeRun(i + 1)))));
   }
 
   console.log(`\n========== STRUCTURED RESULT (run 1) ==========`);

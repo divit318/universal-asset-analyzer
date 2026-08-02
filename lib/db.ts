@@ -401,6 +401,47 @@ function getDb(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS idx_valuation_event_symbol
       ON valuation_event (symbol, version DESC);
+
+    /* AI analysis jobs (ai-migration/03-architecture.md §4): durable record of
+     * a provider-agnostic analysis run. The id IS the idempotency key —
+     * hash(task, subject, input, schema version) — so a restarted server
+     * re-attaches to the same Devin session instead of double-spawning. */
+    CREATE TABLE IF NOT EXISTS ai_job (
+      id             TEXT PRIMARY KEY,
+      task_type      TEXT NOT NULL,
+      subject_key    TEXT NOT NULL,
+      input_hash     TEXT NOT NULL,
+      schema_version INTEGER NOT NULL,
+      provider       TEXT NOT NULL,
+      status         TEXT NOT NULL CHECK (status IN
+                     ('pending','running','succeeded','failed','timeout','cancelled')),
+      session_id     TEXT,
+      session_url    TEXT,
+      error          TEXT,
+      acus           REAL,
+      created_at     INTEGER NOT NULL,
+      updated_at     INTEGER NOT NULL,
+      finished_at    INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_job_status ON ai_job (status, updated_at DESC);
+
+    /* AI analysis result cache (ai-migration/03-architecture.md §5), keyed
+     * exactly on (analysis_type, subject, input hash, schema version). The
+     * input_hash is the primary invalidator — same content-hash pattern as
+     * the portfolio thesis. Freshness windows stay the caller's policy. */
+    CREATE TABLE IF NOT EXISTS ai_result (
+      analysis_type  TEXT NOT NULL,
+      subject_key    TEXT NOT NULL,
+      input_hash     TEXT NOT NULL,
+      schema_version INTEGER NOT NULL,
+      provider       TEXT NOT NULL,
+      meta_json      TEXT,
+      result_json    TEXT NOT NULL,
+      created_at     INTEGER NOT NULL,
+      PRIMARY KEY (analysis_type, subject_key, input_hash, schema_version)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_result_subject
+      ON ai_result (analysis_type, subject_key, created_at DESC);
   `);
   // The valuation case names its methodology rather than leaving "DCF" implicit.
   // ADD COLUMN with a NOT NULL DEFAULT backfills every prior row to the only
@@ -3191,4 +3232,130 @@ export function resetValuationCase(symbol: string): void {
     database.exec("ROLLBACK");
     throw err;
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* AI analysis jobs + result cache (ai-migration/03-architecture.md §4–5)      */
+/* -------------------------------------------------------------------------- */
+
+export type AiJobStatus = "pending" | "running" | "succeeded" | "failed" | "timeout" | "cancelled";
+
+export interface AiJobRow {
+  id: string;
+  taskType: string;
+  subjectKey: string;
+  inputHash: string;
+  schemaVersion: number;
+  provider: string;
+  status: AiJobStatus;
+  sessionId: string | null;
+  sessionUrl: string | null;
+  error: string | null;
+  acus: number | null;
+  createdAt: number;
+  updatedAt: number;
+  finishedAt: number | null;
+}
+
+interface AiJobDbRow {
+  id: string; task_type: string; subject_key: string; input_hash: string;
+  schema_version: number; provider: string; status: AiJobStatus;
+  session_id: string | null; session_url: string | null; error: string | null;
+  acus: number | null; created_at: number; updated_at: number; finished_at: number | null;
+}
+
+function mapAiJob(r: AiJobDbRow): AiJobRow {
+  return {
+    id: r.id, taskType: r.task_type, subjectKey: r.subject_key, inputHash: r.input_hash,
+    schemaVersion: r.schema_version, provider: r.provider, status: r.status,
+    sessionId: r.session_id, sessionUrl: r.session_url, error: r.error, acus: r.acus,
+    createdAt: r.created_at, updatedAt: r.updated_at, finishedAt: r.finished_at,
+  };
+}
+
+export function upsertAiJob(job: {
+  id: string; taskType: string; subjectKey: string; inputHash: string;
+  schemaVersion: number; provider: string; status: AiJobStatus;
+}): void {
+  const now = Date.now();
+  getDb().prepare(
+    `INSERT INTO ai_job (id, task_type, subject_key, input_hash, schema_version, provider, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET status = excluded.status, provider = excluded.provider, updated_at = excluded.updated_at`,
+  ).run(job.id, job.taskType, job.subjectKey, job.inputHash, job.schemaVersion, job.provider, job.status, now, now);
+}
+
+export function updateAiJob(
+  id: string,
+  patch: Partial<Pick<AiJobRow, "status" | "sessionId" | "sessionUrl" | "error" | "acus">> & { finished?: boolean },
+): void {
+  const sets: string[] = ["updated_at = ?"];
+  const params: (string | number | null)[] = [Date.now()];
+  if (patch.status !== undefined) { sets.push("status = ?"); params.push(patch.status); }
+  if (patch.sessionId !== undefined) { sets.push("session_id = ?"); params.push(patch.sessionId); }
+  if (patch.sessionUrl !== undefined) { sets.push("session_url = ?"); params.push(patch.sessionUrl); }
+  if (patch.error !== undefined) { sets.push("error = ?"); params.push(patch.error); }
+  if (patch.acus !== undefined) { sets.push("acus = ?"); params.push(patch.acus); }
+  if (patch.finished) { sets.push("finished_at = ?"); params.push(Date.now()); }
+  params.push(id);
+  getDb().prepare(`UPDATE ai_job SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+}
+
+export function getAiJob(id: string): AiJobRow | null {
+  const row = getDb().prepare("SELECT * FROM ai_job WHERE id = ?").get(id) as unknown as AiJobDbRow | undefined;
+  return row ? mapAiJob(row) : null;
+}
+
+/** Jobs marked running whose in-memory driver died with the process — restart-recovery candidates. */
+export function listRunningAiJobs(): AiJobRow[] {
+  const rows = getDb().prepare("SELECT * FROM ai_job WHERE status IN ('pending','running') ORDER BY updated_at DESC")
+    .all() as unknown as AiJobDbRow[];
+  return rows.map(mapAiJob);
+}
+
+export interface AiResultRow {
+  provider: string;
+  metaJson: string | null;
+  resultJson: string;
+  createdAt: number;
+}
+
+/**
+ * Exact-key cache read: (analysis_type, subject, input hash, schema version).
+ * `maxAgeMs` is the caller's freshness policy (lib/platform/registry.ts owns
+ * the numbers); pass Infinity to accept any stored row (stale-while-refresh).
+ */
+export function getAiResult(
+  key: { analysisType: string; subjectKey: string; inputHash: string; schemaVersion: number },
+  maxAgeMs: number,
+): AiResultRow | null {
+  const row = getDb().prepare(
+    `SELECT provider, meta_json, result_json, created_at FROM ai_result
+     WHERE analysis_type = ? AND subject_key = ? AND input_hash = ? AND schema_version = ?`,
+  ).get(key.analysisType, key.subjectKey, key.inputHash, key.schemaVersion) as unknown as
+    { provider: string; meta_json: string | null; result_json: string; created_at: number } | undefined;
+  if (!row) return null;
+  if (Number.isFinite(maxAgeMs) && Date.now() - row.created_at > maxAgeMs) return null;
+  return { provider: row.provider, metaJson: row.meta_json, resultJson: row.result_json, createdAt: row.created_at };
+}
+
+export function putAiResult(
+  key: { analysisType: string; subjectKey: string; inputHash: string; schemaVersion: number },
+  value: { provider: string; metaJson?: string | null; resultJson: string },
+): void {
+  getDb().prepare(
+    `INSERT INTO ai_result (analysis_type, subject_key, input_hash, schema_version, provider, meta_json, result_json, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(analysis_type, subject_key, input_hash, schema_version) DO UPDATE SET
+       provider = excluded.provider, meta_json = excluded.meta_json,
+       result_json = excluded.result_json, created_at = excluded.created_at`,
+  ).run(key.analysisType, key.subjectKey, key.inputHash, key.schemaVersion,
+        value.provider, value.metaJson ?? null, value.resultJson, Date.now());
+  // Sweep rows past any plausible freshness window (30 days) plus superseded
+  // input hashes for the same (type, subject) older than 7 days.
+  const db = getDb();
+  db.prepare("DELETE FROM ai_result WHERE created_at < ?").run(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  db.prepare(
+    `DELETE FROM ai_result WHERE analysis_type = ? AND subject_key = ? AND input_hash != ? AND created_at < ?`,
+  ).run(key.analysisType, key.subjectKey, key.inputHash, Date.now() - 7 * 24 * 60 * 60 * 1000);
 }

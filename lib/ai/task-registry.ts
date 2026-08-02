@@ -96,6 +96,24 @@ export interface TaskConfig {
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
+  /**
+   * Which analysis backend runs this task ("ollama" | "devin" | "auto").
+   * Resolution order and the interactive-tier guardrail live in
+   * lib/ai/analysis-provider.ts:resolveProvider. Unset = "auto" (follow the
+   * AI_PROVIDER global default).
+   */
+  provider?: "ollama" | "devin" | "auto";
+  /**
+   * Total wall-clock budget for a Devin session running this task, AFTER
+   * which the session is terminated and the run marked timeout. Amendment 3
+   * (ai-migration/04): sized off the observed MAX, never the median — the
+   * spike's 84 runs peaked at 48.8s for a movement-class analysis, so a
+   * small-analysis budget of 240s is ~5x the worst case. Unset = 8 min for
+   * standard tasks, 15 min for latency:"background" tasks.
+   */
+  devinTimeoutMs?: number;
+  /** Hard per-session ACU cap for this task (default: DEVIN_MAX_ACU env or 4). */
+  devinMaxAcu?: number;
 }
 
 /**
@@ -228,6 +246,9 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     complexity: "standard",
     latency: "standard",
     maxTokens: 1024,
+    // First migrated call site (ai-migration/03 §9). Budget sized off the
+    // spike's observed MAX (48.8s across 84 runs), not the 22s median.
+    devinTimeoutMs: 240_000,
   },
 
   /* ---- Light: short output where latency is what the user actually feels -- */
