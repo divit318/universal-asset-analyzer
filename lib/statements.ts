@@ -52,8 +52,13 @@ interface Concept {
   units?: { USD?: ConceptUnit[] };
 }
 
+/** AnnualPoint carrying its period end date, so fiscal labels stay auditable. */
+export interface AnnualPointWithEnd extends AnnualPoint {
+  end?: string | null;
+}
+
 /** Extract annual (FY, 10-K, ~1yr period) values from a companyconcept payload. */
-export function extractAnnual(concept: Concept): AnnualPoint[] {
+export function extractAnnual(concept: Concept): AnnualPointWithEnd[] {
   const usd = concept.units?.USD ?? [];
   const byFy = new Map<number, ConceptUnit>();
   for (const e of usd) {
@@ -71,7 +76,7 @@ export function extractAnnual(concept: Concept): AnnualPoint[] {
   }
   return [...byFy.values()]
     .sort((a, b) => (a.fy ?? 0) - (b.fy ?? 0))
-    .map((e) => ({ fy: e.fy as number, value: e.val }));
+    .map((e) => ({ fy: e.fy as number, value: e.val, end: e.end ?? null }));
 }
 
 /** Pick the series that reaches the latest fiscal year (then the most points). */
@@ -99,22 +104,22 @@ export function cagr(points: AnnualPoint[]): number | null {
   return Math.pow(last.value / first.value, 1 / years) - 1;
 }
 
-function toMap(points: AnnualPoint[]): Map<number, number> {
-  return new Map(points.map((p) => [p.fy, p.value]));
+function toMap(points: AnnualPointWithEnd[]): Map<number, AnnualPointWithEnd> {
+  return new Map(points.map((p) => [p.fy, p]));
 }
 
 /** Build margins, FCF, and CAGRs from raw annual series. Pure / testable. */
 export function deriveStatements(
   symbol: string,
   raw: {
-    revenue: AnnualPoint[];
-    grossProfit: AnnualPoint[];
-    operatingIncome: AnnualPoint[];
-    netIncome: AnnualPoint[];
-    opCashFlow: AnnualPoint[];
-    capex: AnnualPoint[];
+    revenue: AnnualPointWithEnd[];
+    grossProfit: AnnualPointWithEnd[];
+    operatingIncome: AnnualPointWithEnd[];
+    netIncome: AnnualPointWithEnd[];
+    opCashFlow: AnnualPointWithEnd[];
+    capex: AnnualPointWithEnd[];
     /** Optional: pre-computed FCF; overrides opCashFlow − capex when provided. */
-    freeCashFlowOverride?: AnnualPoint[];
+    freeCashFlowOverride?: AnnualPointWithEnd[];
   },
   maxYears = 5,
 ): FinancialStatements {
@@ -126,19 +131,21 @@ export function deriveStatements(
   const ocf = toMap(raw.opCashFlow);
   const cx = toMap(raw.capex);
 
-  const series = (m: Map<number, number>): AnnualPoint[] =>
-    fiscalYears.filter((fy) => m.has(fy)).map((fy) => ({ fy, value: m.get(fy)! }));
-
-  const margin = (num: Map<number, number>): AnnualPoint[] =>
+  const series = (m: Map<number, AnnualPointWithEnd>): AnnualPointWithEnd[] =>
     fiscalYears
-      .filter((fy) => num.has(fy) && rev.has(fy) && rev.get(fy)! !== 0)
-      .map((fy) => ({ fy, value: num.get(fy)! / rev.get(fy)! }));
+      .filter((fy) => m.has(fy))
+      .map((fy) => ({ fy, value: m.get(fy)!.value, end: m.get(fy)!.end ?? null }));
 
-  const freeCashFlow: AnnualPoint[] = raw.freeCashFlowOverride
+  const margin = (num: Map<number, AnnualPointWithEnd>): AnnualPointWithEnd[] =>
+    fiscalYears
+      .filter((fy) => num.has(fy) && rev.has(fy) && rev.get(fy)!.value !== 0)
+      .map((fy) => ({ fy, value: num.get(fy)!.value / rev.get(fy)!.value, end: rev.get(fy)!.end ?? null }));
+
+  const freeCashFlow: AnnualPointWithEnd[] = raw.freeCashFlowOverride
     ? raw.freeCashFlowOverride.filter((p) => fiscalYears.includes(p.fy))
     : fiscalYears
         .filter((fy) => ocf.has(fy) && cx.has(fy))
-        .map((fy) => ({ fy, value: ocf.get(fy)! - cx.get(fy)! }));
+        .map((fy) => ({ fy, value: ocf.get(fy)!.value - cx.get(fy)!.value, end: ocf.get(fy)!.end ?? null }));
 
   const revenue = series(rev);
 
@@ -219,18 +226,22 @@ export async function getFinancialStatementsYahoo(
     const ts = await getFundamentalsTimeSeries(symbol);
     if (!ts.length) return null;
 
-    const toPoints = (field: string): AnnualPoint[] =>
+    const toPoints = (field: string): AnnualPointWithEnd[] =>
       ts
-        .flatMap((r): AnnualPoint[] => {
+        .flatMap((r): AnnualPointWithEnd[] => {
           const v = typeof r[field] === "number" ? (r[field] as number) : null;
           const rawDate = r["date"];
-          const fy =
+          const end =
             rawDate instanceof Date
-              ? rawDate.getFullYear()
+              ? rawDate.toISOString().slice(0, 10)
               : typeof rawDate === "string"
-              ? new Date(rawDate).getFullYear()
+              ? rawDate
               : null;
-          return v != null && fy != null ? [{ fy, value: v }] : [];
+          // FY label = calendar year of the period end. The end date is carried
+          // alongside so a non-December fiscal year renders with its actual end
+          // month instead of silently reading as a calendar year.
+          const fy = end ? new Date(end).getUTCFullYear() : null;
+          return v != null && fy != null && Number.isFinite(fy) ? [{ fy, value: v, end }] : [];
         })
         .sort((a, b) => a.fy - b.fy);
 
