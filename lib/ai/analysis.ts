@@ -21,7 +21,7 @@ import {
   type AnalysisRequest,
   type AnalysisResult,
 } from "./analysis-provider";
-import { ollamaAnalysisProvider } from "./providers/ollama-analysis";
+import { chainAnalysisProvider } from "./providers/chain-analysis";
 import { devinAnalysisProvider } from "./providers/devin/provider";
 import { sweepStaleSessions } from "./providers/devin/sweeper";
 import { dedupe } from "../platform/dedup";
@@ -29,16 +29,17 @@ import {
   getAiJob, getAiResult, putAiResult, updateAiJob, upsertAiJob,
   type AiJobRow,
 } from "../db";
+import type { AnalysisProviderId } from "./analysis-provider";
 
 export interface RunAnalysisOptions {
   /** Freshness window for the ai_result cache. Omit to skip cache reads. */
   maxAgeMs?: number;
   /** Test/DI hook. */
-  providers?: Partial<Record<"ollama" | "devin", AnalysisProvider>>;
+  providers?: Partial<Record<AnalysisProviderId, AnalysisProvider>>;
 }
 
-function providerFor(id: "ollama" | "devin", opts?: RunAnalysisOptions): AnalysisProvider {
-  return opts?.providers?.[id] ?? (id === "devin" ? devinAnalysisProvider : ollamaAnalysisProvider);
+function providerFor(id: AnalysisProviderId, opts?: RunAnalysisOptions): AnalysisProvider {
+  return opts?.providers?.[id] ?? (id === "sessions" ? devinAnalysisProvider : chainAnalysisProvider);
 }
 
 function cacheKeyOf<T>(req: AnalysisRequest<T>) {
@@ -62,7 +63,10 @@ export function readCachedAnalysis<T>(
     const parsed = req.schema.safeParse(JSON.parse(row.resultJson));
     if (!parsed.success) return null;
     const meta = row.metaJson ? (JSON.parse(row.metaJson) as AnalysisResult<T>["meta"]) : { durationMs: 0 };
-    return { data: parsed.data, provider: row.provider as "ollama" | "devin", meta };
+    // Rows written before the 2026-08-02 rename carry the legacy ids; map them.
+    const provider: AnalysisProviderId =
+      row.provider === "devin" || row.provider === "sessions" ? "sessions" : "chain";
+    return { data: parsed.data, provider, meta };
   } catch {
     return null;
   }
@@ -80,7 +84,7 @@ async function execute<T>(req: AnalysisRequest<T>, opts?: RunAnalysisOptions): P
     });
     return result;
   } finally {
-    if (providerId === "devin") void sweepStaleSessions().catch(() => {});
+    if (providerId === "sessions") void sweepStaleSessions().catch(() => {});
   }
 }
 

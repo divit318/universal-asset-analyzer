@@ -44,7 +44,7 @@ import {
 import type { AnalysisRequest } from "@/lib/ai/analysis-provider";
 import type { TaskType } from "@/lib/ai/task-registry";
 import { devinAnalysisProvider } from "@/lib/ai/providers/devin/provider";
-import { ollamaAnalysisProvider } from "@/lib/ai/providers/ollama-analysis";
+import { chainAnalysisProvider } from "@/lib/ai/providers/chain-analysis";
 import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
 import type { WatchlistItem } from "@/lib/types";
 
@@ -357,7 +357,7 @@ interface ProviderOutcome {
   error?: string;
 }
 
-async function runProvider(kind: "ollama" | "devin", task: TaskDef, s: Subject): Promise<ProviderOutcome> {
+async function runProvider(kind: "chain" | "sessions", task: TaskDef, s: Subject): Promise<ProviderOutcome> {
   const req: AnalysisRequest<unknown> = {
     taskType: task.taskType,
     subjectKey: `parity:${s.key}`,
@@ -370,7 +370,7 @@ async function runProvider(kind: "ollama" | "devin", task: TaskDef, s: Subject):
   };
   const t0 = performance.now();
   try {
-    const provider = kind === "devin" ? devinAnalysisProvider : ollamaAnalysisProvider;
+    const provider = kind === "sessions" ? devinAnalysisProvider : chainAnalysisProvider;
     const res = await provider.run(req);
     const texts = collectStrings(res.data);
     return {
@@ -392,7 +392,7 @@ async function main() {
     console.error(`[parity] unknown task "${args.task}" (know: ${Object.keys(TASKS).join(", ")})`);
     process.exit(1);
   }
-  const only = args["devin-only"] ? "devin" : args["ollama-only"] ? "ollama" : null;
+  const only = args["devin-only"] ? "sessions" : args["ollama-only"] ? "chain" : null;
   const symbols = args.symbols ? args.symbols.split(",").map((s) => s.trim().toUpperCase()) : null;
 
   console.log(`[parity] task=${args.task} providers=${only ?? "both"}`);
@@ -403,27 +403,27 @@ async function main() {
   const results: Record<string, { subject: Subject; devin?: ProviderOutcome; ollama?: ProviderOutcome }> = {};
   for (const s of subjects) results[s.key] = { subject: s };
 
-  if (only !== "ollama") {
+  if (only !== "chain") {
     console.log(`\n[parity] devin: ${subjects.length} concurrent sessions…`);
-    const outcomes = await Promise.all(subjects.map((s) => runProvider("devin", task, s)));
+    const outcomes = await Promise.all(subjects.map((s) => runProvider("sessions", task, s)));
     outcomes.forEach((o, i) => {
       results[subjects[i].key].devin = o;
-      logOutcome("devin", subjects[i], o, task);
+      logOutcome("sessions", subjects[i], o, task);
     });
   }
-  if (only !== "devin") {
+  if (only !== "sessions") {
     console.log(`\n[parity] ollama: ${subjects.length} sequential generations…`);
     for (const s of subjects) {
-      const o = await runProvider("ollama", task, s);
+      const o = await runProvider("chain", task, s);
       results[s.key].ollama = o;
-      logOutcome("ollama", s, o, task);
+      logOutcome("chain", s, o, task);
     }
   }
 
   console.log(`\n========== PARITY SUMMARY (${args.task}) ==========`);
   let anyFailure = false;
   for (const { subject, devin, ollama } of Object.values(results)) {
-    for (const [name, o] of [["devin", devin], ["ollama", ollama]] as const) {
+    for (const [name, o] of [["sessions", devin], ["chain", ollama]] as const) {
       if (!o) continue;
       if (!o.ok) anyFailure = true;
       const flags = [...(o.problems ?? []), ...(o.ungroundedNumbers?.length ? [`ungrounded numbers: ${o.ungroundedNumbers.join(", ")}`] : [])];

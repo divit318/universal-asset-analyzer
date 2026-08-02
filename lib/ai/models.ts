@@ -91,7 +91,7 @@ export interface ModelSpec {
   /** Provider-native id: an `ollama list` tag, or a Devin `model_uid`. */
   id: string;
   label: string;
-  family: "qwen" | "mistral" | "claude" | "gpt" | "swe" | "other";
+  family: "qwen" | "mistral" | "claude" | "gpt" | "swe" | "gemini" | "other";
   /** Which provider serves this model. */
   provider: ProviderId;
   /** Usable context window in tokens. */
@@ -180,8 +180,8 @@ export const MODEL_REGISTRY: ModelSpec[] = [
    * Router scores six intentional choices rather than 170 unknown ones.
    */
   {
-    id: "claude-opus-5-medium",
-    label: "Claude Opus 5 (medium reasoning)",
+    id: "claude-opus-5-low",
+    label: "Claude Opus 5 (low reasoning)",
     family: "claude",
     provider: "devin",
     contextWindow: 1_000_000,
@@ -190,18 +190,21 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     // flag to send. "none" means "don't send one", not "cannot reason".
     thinking: "none",
     temperature: 0.4,
-    timeoutMs: 240_000,
+    timeoutMs: 180_000,
     capabilities: ["reasoning", "long-context", "structured-json", "coding"],
-    quality: 10,
-    tokensPerSecond: 12,
+    quality: 9,
+    tokensPerSecond: 18,
     sizeGb: 0,
+    // Deep-tier PRIMARY by measurement (scripts/devin-model-bench.ts,
+    // 2026-08-02): 2/2 strict-schema-valid at 51.6s with quote-level evidence
+    // grounding, where opus-5-medium violated an array cap 1/2 runs.
     priority: 0,
     enabled: true,
-    blurb: "Deepest reasoning. Routed to theses, filings, IC agents.",
+    blurb: "Deep-tier primary: opus reasoning with measured schema discipline.",
   },
   {
-    id: "claude-opus-5-low",
-    label: "Claude Opus 5 (low reasoning)",
+    id: "claude-sonnet-5-medium",
+    label: "Claude Sonnet 5 (medium reasoning)",
     family: "claude",
     provider: "devin",
     contextWindow: 1_000_000,
@@ -210,11 +213,34 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     timeoutMs: 180_000,
     capabilities: ["reasoning", "long-context", "structured-json", "coding"],
     quality: 9,
-    tokensPerSecond: 18,
+    tokensPerSecond: 22,
     sizeGb: 0,
+    // Benched 2026-08-02: 2/2 strict-schema-valid deep theses at 47.1s —
+    // the deep-tier fallback behind opus-5-low.
     priority: 1,
     enabled: true,
-    blurb: "Opus quality at roughly half the latency. Deep-task fallback.",
+    blurb: "Deep-task fallback: sonnet with reasoning headroom.",
+  },
+  {
+    id: "claude-opus-5-medium",
+    label: "Claude Opus 5 (medium reasoning)",
+    family: "claude",
+    provider: "devin",
+    contextWindow: 1_000_000,
+    thinking: "none",
+    temperature: 0.4,
+    timeoutMs: 240_000,
+    capabilities: ["reasoning", "long-context", "structured-json", "coding"],
+    quality: 10,
+    tokensPerSecond: 12,
+    sizeGb: 0,
+    // DEMOTED behind opus-5-low and sonnet-5-medium (bench 2026-08-02): the
+    // highest quality tier but the weakest measured schema adherence — it
+    // over-generated past an array cap on 1/2 deep runs, and the CLI path has
+    // no corrective turn to recover with.
+    priority: 2,
+    enabled: true,
+    blurb: "Deepest reasoning; third in line after a measured schema slip.",
   },
   {
     id: "claude-sonnet-5-low",
@@ -229,7 +255,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     quality: 9,
     tokensPerSecond: 28,
     sizeGb: 0,
-    priority: 2,
+    priority: 3,
     enabled: true,
     blurb: "The standard-tier workhorse: frontier quality, 5s answers.",
   },
@@ -246,7 +272,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     quality: 9,
     tokensPerSecond: 28,
     sizeGb: 0,
-    priority: 3,
+    priority: 4,
     enabled: true,
     blurb: "Second frontier standard-tier model — a different house's judgment.",
   },
@@ -263,7 +289,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     quality: 6,
     tokensPerSecond: 38,
     sizeGb: 0,
-    priority: 4,
+    priority: 5,
     enabled: true,
     blurb: "Cheapest and fastest. Routed to parsing and one-line summaries.",
   },
@@ -280,9 +306,30 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     quality: 6,
     tokensPerSecond: 35,
     sizeGb: 0,
-    priority: 5,
+    priority: 6,
     enabled: true,
     blurb: "Light-tier alternate with a 1M window. Fallback for fast tasks.",
+  },
+  {
+    id: "gemini-3-6-flash-minimal",
+    label: "Gemini 3.6 Flash (minimal reasoning)",
+    family: "gemini",
+    provider: "devin",
+    contextWindow: 1_000_000,
+    thinking: "none",
+    temperature: 0.3,
+    timeoutMs: 90_000,
+    capabilities: ["fast", "long-context", "structured-json"],
+    quality: 6,
+    tokensPerSecond: 34,
+    sizeGb: 0,
+    // Earned its slot in the 2026-08-02 bench: 8.6s JSON / 13.3s prose, 4/4
+    // valid — a third light-tier house so one vendor incident can't take the
+    // whole fast lane down. (swe-1-7-lightning was tried and REJECTED: empty
+    // output on 1/2 JSON runs.)
+    priority: 7,
+    enabled: true,
+    blurb: "Light-tier third lane, different vendor. Benched 8.6-13.3s.",
   },
 
   /* ---- Local (Ollama) ---------------------------------------------------- */

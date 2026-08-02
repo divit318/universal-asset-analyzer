@@ -97,12 +97,13 @@ export interface TaskConfig {
   maxTokens?: number;
   timeoutMs?: number;
   /**
-   * Which analysis backend runs this task ("ollama" | "devin" | "auto").
-   * Resolution order and the interactive-tier guardrail live in
-   * lib/ai/analysis-provider.ts:resolveProvider. Unset = "auto" (follow the
-   * AI_PROVIDER global default).
+   * Which analysis RUNTIME runs this task at the seam ("chain" = one
+   * completion through the hosted-first provider chain; "sessions" = a Devin
+   * sessions-API run with platform-validated structured output). Resolution
+   * order lives in lib/ai/analysis-provider.ts:resolveProvider. Unset =
+   * "auto": background-latency tasks → sessions, everything else → chain.
    */
-  provider?: "ollama" | "devin" | "auto";
+  provider?: "chain" | "sessions" | "auto";
   /**
    * Total wall-clock budget for a Devin session running this task, AFTER
    * which the session is terminated and the run marked timeout. Amendment 3

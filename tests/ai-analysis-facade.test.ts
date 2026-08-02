@@ -29,7 +29,7 @@ function makeRequest(overrides: Partial<AnalysisRequest<{ answer: string }>> = {
   };
 }
 
-function mockProvider(id: "ollama" | "devin", impl?: () => Promise<{ answer: string }>): AnalysisProvider & { calls: number } {
+function mockProvider(id: "chain" | "sessions", impl?: () => Promise<{ answer: string }>): AnalysisProvider & { calls: number } {
   const p = {
     id,
     calls: 0,
@@ -50,47 +50,47 @@ afterAll(() => rmSync(path.dirname(process.env.DB_PATH!), { recursive: true, for
 
 describe("runAnalysis", () => {
   it("runs the resolved provider and validates through the schema", async () => {
-    const ollama = mockProvider("ollama");
-    const res = await runAnalysis(makeRequest(), { providers: { ollama } });
-    expect(res.data.answer).toBe("from-ollama");
+    const ollama = mockProvider("chain");
+    const res = await runAnalysis(makeRequest(), { providers: { chain: ollama } });
+    expect(res.data.answer).toBe("from-chain");
     expect(ollama.calls).toBe(1);
   });
 
   it("serves the second identical request from the ai_result cache", async () => {
-    const ollama = mockProvider("ollama");
+    const ollama = mockProvider("chain");
     const req = makeRequest();
-    await runAnalysis(req, { providers: { ollama }, maxAgeMs: 60_000 });
-    const second = await runAnalysis(req, { providers: { ollama }, maxAgeMs: 60_000 });
-    expect(second.data.answer).toBe("from-ollama");
+    await runAnalysis(req, { providers: { chain: ollama }, maxAgeMs: 60_000 });
+    const second = await runAnalysis(req, { providers: { chain: ollama }, maxAgeMs: 60_000 });
+    expect(second.data.answer).toBe("from-chain");
     expect(ollama.calls).toBe(1);
   });
 
   it("a different dossier misses the cache (input_hash keying)", async () => {
-    const ollama = mockProvider("ollama");
-    await runAnalysis(makeRequest({ prompt: "dossier A" }), { providers: { ollama }, maxAgeMs: 60_000 });
-    await runAnalysis(makeRequest({ prompt: "dossier B" }), { providers: { ollama }, maxAgeMs: 60_000 });
+    const ollama = mockProvider("chain");
+    await runAnalysis(makeRequest({ prompt: "dossier A" }), { providers: { chain: ollama }, maxAgeMs: 60_000 });
+    await runAnalysis(makeRequest({ prompt: "dossier B" }), { providers: { chain: ollama }, maxAgeMs: 60_000 });
     expect(ollama.calls).toBe(2);
   });
 
   it("a schemaVersion bump misses the cache", async () => {
-    const ollama = mockProvider("ollama");
+    const ollama = mockProvider("chain");
     const req = makeRequest({ prompt: "fixed dossier" });
-    await runAnalysis(req, { providers: { ollama }, maxAgeMs: 60_000 });
-    await runAnalysis({ ...req, schemaVersion: 2 }, { providers: { ollama }, maxAgeMs: 60_000 });
+    await runAnalysis(req, { providers: { chain: ollama }, maxAgeMs: 60_000 });
+    await runAnalysis({ ...req, schemaVersion: 2 }, { providers: { chain: ollama }, maxAgeMs: 60_000 });
     expect(ollama.calls).toBe(2);
   });
 
   it("coalesces concurrent identical requests into one provider call", async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
-    const ollama = mockProvider("ollama", async () => {
+    const ollama = mockProvider("chain", async () => {
       await gate;
       return { answer: "slow" };
     });
     const req = makeRequest({ prompt: "concurrent dossier" });
     const [a, b] = [
-      runAnalysis(req, { providers: { ollama } }),
-      runAnalysis(req, { providers: { ollama } }),
+      runAnalysis(req, { providers: { chain: ollama } }),
+      runAnalysis(req, { providers: { chain: ollama } }),
     ];
     release();
     expect((await a).data.answer).toBe("slow");
@@ -114,9 +114,9 @@ describe("text mode", () => {
         schemaVersion: 1,
         output: "text",
       },
-      { providers: { ollama: {
-        id: "ollama",
-        async run() { return { data: { text: "plain prose answer" }, provider: "ollama" as const, meta: { durationMs: 1 } }; },
+      { providers: { chain: {
+        id: "chain",
+        async run() { return { data: { text: "plain prose answer" }, provider: "chain" as const, meta: { durationMs: 1 } }; },
         async healthCheck() { return { reachable: true }; },
       } as AnalysisProvider } },
     );
@@ -126,8 +126,8 @@ describe("text mode", () => {
 
 describe("enqueueAnalysis", () => {
   it("records a durable job row and completes it", async () => {
-    const ollama = mockProvider("ollama");
-    const handle = enqueueAnalysis(makeRequest({ prompt: "job dossier" }), { providers: { ollama } });
+    const ollama = mockProvider("chain");
+    const handle = enqueueAnalysis(makeRequest({ prompt: "job dossier" }), { providers: { chain: ollama } });
     expect(["pending", "running"]).toContain(handle.status);
     await new Promise((r) => setTimeout(r, 50));
     const job = getAiJob(handle.jobId);
@@ -136,10 +136,10 @@ describe("enqueueAnalysis", () => {
   });
 
   it("marks the job failed (with the error) when the provider throws", async () => {
-    const ollama = mockProvider("ollama", async () => {
+    const ollama = mockProvider("chain", async () => {
       throw new Error("model exploded");
     });
-    const handle = enqueueAnalysis(makeRequest({ prompt: "failing dossier" }), { providers: { ollama } });
+    const handle = enqueueAnalysis(makeRequest({ prompt: "failing dossier" }), { providers: { chain: ollama } });
     await new Promise((r) => setTimeout(r, 50));
     const job = getAiJob(handle.jobId);
     expect(job?.status).toBe("failed");
@@ -147,10 +147,10 @@ describe("enqueueAnalysis", () => {
   });
 
   it("returns succeeded immediately on a fresh cache hit without re-running", async () => {
-    const ollama = mockProvider("ollama");
+    const ollama = mockProvider("chain");
     const req = makeRequest({ prompt: "cached job dossier" });
-    await runAnalysis(req, { providers: { ollama }, maxAgeMs: 60_000 });
-    const handle = enqueueAnalysis(req, { providers: { ollama }, maxAgeMs: 60_000 });
+    await runAnalysis(req, { providers: { chain: ollama }, maxAgeMs: 60_000 });
+    const handle = enqueueAnalysis(req, { providers: { chain: ollama }, maxAgeMs: 60_000 });
     expect(handle.status).toBe("succeeded");
     expect(ollama.calls).toBe(1);
   });

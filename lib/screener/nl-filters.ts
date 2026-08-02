@@ -65,7 +65,8 @@ function buildSchema(assetClass: AssetClassId): string {
   return `{\n${lines.join("\n")}\n}`;
 }
 
-function buildSystemPrompt(assetClass: AssetClassId): string {
+/** Exported for the model bench (scripts/devin-model-bench.ts) — pure. */
+export function buildSystemPrompt(assetClass: AssetClassId): string {
   const def = getAssetClass(assetClass);
 
   return `You are a screening assistant for ${def.label.toLowerCase()}. Given a plain-English description of what someone is looking for, output a valid JSON object encoding the screening filters.

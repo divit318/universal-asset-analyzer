@@ -50,23 +50,23 @@ export function memoryBudgetGb(): number {
 const KNOWN_PROVIDERS: readonly ProviderId[] = ["devin", "ollama"];
 
 /**
- * The DEFAULT chain is local-only — deliberately, and not on the merits.
+ * The DEFAULT chain is hosted-first: Devin primary, Ollama fallback.
  *
- * Hosted-first measured dramatically better on this project's own prompts
- * (4-8s vs 28-115s; nine concurrent calls in 5.3s where Ollama serializes
- * them into minutes — see the prisha-work measurements). But making hosted
- * the *default* is a product decision that was explicitly gated on two
- * unresolved items (ai-migration/06-tranche2-blockers.md): the confidence-
- * calibration decision (Blocker 1) and verified per-session cost (Blocker 2).
- * Until those are signed off, hosted inference is OPT-IN:
+ * This is the signed-off product decision (2026-08-02): Devin is the primary
+ * AI provider for all UAA work; Ollama remains in the chain as the offline
+ * fallback, not the default. The measured basis: hosted answers in 4-20s
+ * against 28-115s local on the same prompts, nine concurrent calls in 5.3s
+ * where Ollama serializes them into minutes, and the per-task bench in
+ * bench-out/model-bench/ (mapping + numbers in TASK_MODEL_PINS below).
+ * Local-only remains one env var away for offline work:
  *
- *   AI_PROVIDER_ORDER=devin,ollama   # hosted first, local fallback
+ *   AI_PROVIDER_ORDER=ollama         # local-only (plane / captive portal)
  *
  * Unknown names are dropped rather than throwing — a typo in an env var
  * should not take the whole platform down — and an order that names nothing
  * valid falls back to the default.
  */
-const DEFAULT_PROVIDER_ORDER: readonly ProviderId[] = ["ollama"];
+const DEFAULT_PROVIDER_ORDER: readonly ProviderId[] = ["devin", "ollama"];
 
 export function providerOrder(): ProviderId[] {
   const raw = process.env.AI_PROVIDER_ORDER;
@@ -95,12 +95,80 @@ export function disabledModels(): Set<string> {
  * entirely and is tried in the order given (still subject to the memory and
  * installed checks — a pin cannot conjure a model that can't run).
  *
- * Deliberately empty: the scorer derives good routing from each task's declared
- * requirements, and a hand-maintained list per task is exactly the duplication
- * that let the old registry drift out of sync with reality. Add an entry only to
- * override a specific scoring decision, and say why.
+ * ## The hosted mapping below is MEASURED, not assumed (2026-08-02)
+ *
+ * Bench: scripts/devin-model-bench.ts — real UAA prompts (the live
+ * nl-screener system prompt, the persisted AAPL movement dossier, the real
+ * calendar week, a deep thesis over the same dossiers) against the live
+ * catalogue (165 variants; `devin models list`). Means of 2 runs, wall-clock
+ * including the ~2s CLI spawn, strict wire-schema validation:
+ *
+ *   LIGHT     swe-1-6-fast 9.0s/11.5s (4/4 valid)   gpt-5-6-luna-low 7.8s json
+ *             but 17.6s prose (4/4)                 gemini-3-6-flash-minimal
+ *             8.6s/13.3s (4/4)
+ *             swe-1-7-lightning REJECTED: returned EMPTY output 1/2 on JSON
+ *             (44.9s mean) — newer is not better here.
+ *   STANDARD  claude-sonnet-5-low 21.8s (2/2, richest cross-evidence
+ *             synthesis: pulled the sector-wide shakeout headline the others
+ *             missed)                               gpt-5-6-terra-low 19.6s
+ *             (2/2, slightly more conservative)     claude-5-fable-low 30.9s,
+ *             gemini-3-6-flash-medium 36.6s — slower, no quality edge.
+ *   DEEP      claude-opus-5-low 51.6s (2/2, quote-level evidence grounding)
+ *             claude-sonnet-5-medium 47.1s (2/2)    claude-opus-5-medium
+ *             DEMOTED to third: violated the schema's array cap 1/2 runs
+ *             (7 risks > max 6) — highest quality tier, weakest adherence,
+ *             and the CLI path has no corrective turn.
+ *
+ * Order within each pin = primary, then fallback the Router walks on failure.
+ * Ollama models are deliberately NOT pinned here: when the chain falls
+ * through to the local provider (offline, hosted outage), the scorer picks
+ * the best installed local model exactly as before.
  */
-export const TASK_MODEL_PINS: Partial<Record<TaskType, string[]>> = {};
+const LIGHT_PIN = ["swe-1-6-fast", "gpt-5-6-luna-low", "gemini-3-6-flash-minimal"];
+const STANDARD_PIN = ["claude-sonnet-5-low", "gpt-5-6-terra-low"];
+const DEEP_PIN = ["claude-opus-5-low", "claude-sonnet-5-medium", "claude-opus-5-medium"];
+
+export const TASK_MODEL_PINS: Partial<Record<TaskType, string[]>> = {
+  /* ---- deep: institutional reasoning; quality then adherence ------------- */
+  "investment-thesis": DEEP_PIN,
+  "sec-filing-analysis": DEEP_PIN,
+  "risk-review": DEEP_PIN,
+  "accounting-red-flags": DEEP_PIN,
+  "scenario-analysis": DEEP_PIN,
+  "stress-testing": DEEP_PIN,
+  "ic-agent-analysis": DEEP_PIN,
+  "thematic-analysis": DEEP_PIN,
+
+  /* ---- standard: substantive JSON/narrative work -------------------------- */
+  "company-research": STANDARD_PIN,
+  "fund-research": STANDARD_PIN,
+  "crypto-research": STANDARD_PIN,
+  "commodity-research": STANDARD_PIN,
+  "forex-research": STANDARD_PIN,
+  "macro-research": STANDARD_PIN,
+  "manual-asset-research": STANDARD_PIN,
+  comparison: STANDARD_PIN,
+  "portfolio-intelligence": STANDARD_PIN,
+  "portfolio-audit": STANDARD_PIN,
+  "watchlist-intelligence": STANDARD_PIN,
+  "opportunity-engine": STANDARD_PIN,
+  "timeline-analysis": STANDARD_PIN,
+  "explain-movement": STANDARD_PIN,
+  "portfolio-construction": STANDARD_PIN,
+  // Interactive but standard-complexity: real judgment, and hosted sonnet's
+  // ~20s beats local qwen3:14b's 28-115s anyway.
+  "chart-qa": STANDARD_PIN,
+  "app-assistant": STANDARD_PIN,
+  coding: STANDARD_PIN,
+
+  /* ---- light: parsing and one-liners; latency is the product -------------- */
+  "market-summary": LIGHT_PIN,
+  "daily-briefing": LIGHT_PIN,
+  "knowledge-graph-explain": LIGHT_PIN,
+  "calendar-brief": LIGHT_PIN,
+  "nl-screener": LIGHT_PIN,
+  "quick-summary": LIGHT_PIN,
+};
 
 /** Env-var pin for a task, e.g. AI_TASK_NL_SCREENER="mistral:latest". */
 function envPin(taskType: TaskType): string[] | null {

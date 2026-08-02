@@ -1,15 +1,17 @@
 /**
  * AI façade for single-shot inference — the app-wide entry point.
  *
- * UAA's AI runs 100% on local Ollama by policy (see AGENTS.md): there is
- * deliberately no code path to any hosted/paid provider today. Every call
- * routes through the Orchestrator (lib/ai/orchestrator.ts), which asks the
- * Router (lib/ai/task-registry.ts + lib/ai/router.ts) which model best fits
- * the given TaskType and falls back automatically if it's unavailable —
- * feature code never names a model or talks to Ollama directly.
+ * Devin is the primary provider (hosted frontier models via the CLI), with
+ * local Ollama as the offline fallback — the Router walks that chain per
+ * request (AI_PROVIDER_ORDER; decision 2026-08-02). Every call routes through
+ * the Orchestrator (lib/ai/orchestrator.ts), which asks the Router
+ * (lib/ai/task-registry.ts + lib/ai/router.ts) which model best fits the
+ * given TaskType and falls back automatically if it's unavailable — feature
+ * code never names a model or talks to a backend directly.
  *
  * Env vars:
- *   OLLAMA_HOST   — local Ollama host (default: http://localhost:11434)
+ *   AI_PROVIDER_ORDER — provider chain, best first (default: "devin,ollama")
+ *   OLLAMA_HOST       — local Ollama host (default: http://localhost:11434)
  */
 
 import type { AiAnalysis } from "./types";

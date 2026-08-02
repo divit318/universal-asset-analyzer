@@ -97,7 +97,7 @@ async function findSessionByTag(idemTag: string): Promise<DevinSession | null> {
 }
 
 export class DevinAnalysisProvider implements AnalysisProvider {
-  readonly id = "devin" as const;
+  readonly id = "sessions" as const;
 
   async healthCheck(): Promise<{ reachable: boolean; detail?: string }> {
     return checkDevinHealth();
@@ -119,7 +119,7 @@ export class DevinAnalysisProvider implements AnalysisProvider {
     const idemTag = `idem:${idemKey}`;
     const t0 = Date.now();
 
-    logAiEvent({ category: "start", taskType: req.taskType, model: "devin" });
+    logAiEvent({ category: "start", taskType: req.taskType, model: "devin-sessions" });
 
     // Recover an in-flight session for this exact work (restart / double-enqueue).
     let session = await findSessionByTag(idemTag);
@@ -158,10 +158,10 @@ export class DevinAnalysisProvider implements AnalysisProvider {
           const parsed = req.schema.safeParse(s.structured_output);
           if (parsed.success) {
             const durationMs = Date.now() - t0;
-            logAiEvent({ category: "success", taskType: req.taskType, model: "devin", durationMs });
+            logAiEvent({ category: "success", taskType: req.taskType, model: "devin-sessions", durationMs });
             return {
               data: parsed.data,
-              provider: "devin",
+              provider: "sessions",
               meta: { sessionId, sessionUrl, durationMs, acus },
             };
           }
@@ -176,7 +176,7 @@ export class DevinAnalysisProvider implements AnalysisProvider {
             );
             continue;
           }
-          logAiEvent({ category: "invalid_response", taskType: req.taskType, model: "devin", message: issues });
+          logAiEvent({ category: "invalid_response", taskType: req.taskType, model: "devin-sessions", message: issues });
           throw new DevinAnalysisError("invalid_response", `Devin output failed schema validation: ${issues}`, sessionUrl);
         }
 
@@ -196,16 +196,16 @@ export class DevinAnalysisProvider implements AnalysisProvider {
         }
 
         if (s.status === "error" || ((s.status === "exit" || s.status === "suspended") && !s.structured_output)) {
-          logAiEvent({ category: "unknown", taskType: req.taskType, model: "devin", message: `session ${s.status}/${s.status_detail ?? ""} without output` });
+          logAiEvent({ category: "unknown", taskType: req.taskType, model: "devin-sessions", message: `session ${s.status}/${s.status_detail ?? ""} without output` });
           throw new DevinAnalysisError("unknown", `Devin session ended (${s.status}) without structured output`, sessionUrl);
         }
       }
 
-      logAiEvent({ category: "timeout", taskType: req.taskType, model: "devin", durationMs: Date.now() - t0 });
+      logAiEvent({ category: "timeout", taskType: req.taskType, model: "devin-sessions", durationMs: Date.now() - t0 });
       throw new DevinAnalysisError("timeout", `Devin session exceeded its ${Math.round(timeoutMs / 1000)}s budget`, sessionUrl);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
-        logAiEvent({ category: "cancelled", taskType: req.taskType, model: "devin", durationMs: Date.now() - t0 });
+        logAiEvent({ category: "cancelled", taskType: req.taskType, model: "devin-sessions", durationMs: Date.now() - t0 });
         throw new DevinAnalysisError("cancelled", "analysis cancelled by caller", sessionUrl);
       }
       throw err;

@@ -29,43 +29,33 @@ afterEach(() => {
   }
 });
 
-describe("resolveProvider", () => {
-  it("defaults to ollama with no configuration (today's behavior exactly)", () => {
-    for (const task of Object.keys(TASK_REGISTRY) as TaskType[]) {
-      expect(resolveProvider(task)).toBe("ollama");
+describe("resolveProvider (Devin-primary policy, 2026-08-02)", () => {
+  it("routes background tasks to the sessions runtime, everything else to the chain", () => {
+    for (const [task, cfg] of Object.entries(TASK_REGISTRY) as [TaskType, { latency: string }][]) {
+      expect(resolveProvider(task)).toBe(cfg.latency === "background" ? "sessions" : "chain");
     }
   });
 
-  it("routes standard/background tasks to devin under AI_PROVIDER=devin", () => {
-    process.env.AI_PROVIDER = "devin";
-    expect(resolveProvider("explain-movement")).toBe("devin"); // standard
-    expect(resolveProvider("investment-thesis")).toBe("devin"); // background
-  });
-
-  it("GUARDRAIL: interactive tasks stay on ollama under AI_PROVIDER=devin", () => {
-    process.env.AI_PROVIDER = "devin";
-    const interactive = (Object.entries(TASK_REGISTRY) as [TaskType, { latency: string }][])
-      .filter(([, cfg]) => cfg.latency === "interactive")
-      .map(([t]) => t);
-    expect(interactive.length).toBeGreaterThan(0);
-    for (const task of interactive) {
-      expect(resolveProvider(task)).toBe("ollama");
-    }
-  });
-
-  it("an explicit env pin beats the guardrail and the global flag", () => {
+  it("the retired AI_PROVIDER global flag no longer changes routing", () => {
     process.env.AI_PROVIDER = "ollama";
-    process.env.AI_TASK_EXPLAIN_MOVEMENT_PROVIDER = "devin";
-    expect(resolveProvider("explain-movement")).toBe("devin");
-
+    expect(resolveProvider("investment-thesis")).toBe("sessions");
+    expect(resolveProvider("explain-movement")).toBe("chain");
     process.env.AI_PROVIDER = "devin";
-    process.env.AI_TASK_NL_SCREENER_PROVIDER = "devin"; // interactive, pinned anyway
-    expect(resolveProvider("nl-screener")).toBe("devin");
+    expect(resolveProvider("explain-movement")).toBe("chain");
+  });
+
+  it("an explicit env pin overrides the policy, with legacy aliases accepted", () => {
+    process.env.AI_TASK_EXPLAIN_MOVEMENT_PROVIDER = "sessions";
+    expect(resolveProvider("explain-movement")).toBe("sessions");
+    process.env.AI_TASK_EXPLAIN_MOVEMENT_PROVIDER = "devin"; // legacy alias
+    expect(resolveProvider("explain-movement")).toBe("sessions");
+    process.env.AI_TASK_NL_SCREENER_PROVIDER = "ollama"; // legacy alias → chain
+    expect(resolveProvider("nl-screener")).toBe("chain");
   });
 
   it("ignores a garbage pin value", () => {
     process.env.AI_TASK_EXPLAIN_MOVEMENT_PROVIDER = "chatgpt";
-    expect(resolveProvider("explain-movement")).toBe("ollama");
+    expect(resolveProvider("explain-movement")).toBe("chain");
   });
 });
 
