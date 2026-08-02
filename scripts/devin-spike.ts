@@ -49,16 +49,32 @@ loadEnvLocal();
 
 const API_KEY = process.env.DEVIN_API_KEY;
 const ORG_ID = process.env.DEVIN_ORG_ID;
-const BASE = process.env.DEVIN_API_BASE ?? "https://api.devin.ai/v3";
 
-if (!API_KEY || !ORG_ID) {
+/**
+ * Both API generations are supported, keyed off the credential's prefix, so
+ * the spike runs with whichever kind of key the account's settings page
+ * offers:
+ *   cog_…       → v3 org-scoped API (needs DEVIN_ORG_ID; richer: devin_mode,
+ *                 acus_consumed on GET)
+ *   apk_[user_]…→ v1 legacy API (personal key from Settings > API Keys; no
+ *                 org id; no mode selection; no ACU field on GET — ACU is then
+ *                 read from Session Insights in the web app instead)
+ * Contracts: docs.devin.ai/api-reference/v3/sessions/* and /v1/sessions/*.
+ */
+const USE_V1 = (API_KEY ?? "").startsWith("apk_");
+
+if (!API_KEY || (!USE_V1 && !ORG_ID)) {
   console.error(
-    "DEVIN_API_KEY and/or DEVIN_ORG_ID missing from .env.local — cannot run the spike.\n" +
-      "Create a service user (Settings > Service users) with ManageOrgSessions + UseDevinSessions,\n" +
-      "then add both values to .env.local. Neither is ever printed by this script.",
+    "Cannot run the spike — missing credentials in .env.local (never printed by this script):\n" +
+      "  either DEVIN_API_KEY=cog_…  + DEVIN_ORG_ID=org-…   (service user, Settings > Service users)\n" +
+      "  or     DEVIN_API_KEY=apk_…                          (personal key, Settings > API Keys)",
   );
   process.exit(1);
 }
+
+const BASE = process.env.DEVIN_API_BASE ?? (USE_V1 ? "https://api.devin.ai/v1" : "https://api.devin.ai/v3");
+const SESSIONS_ROOT = USE_V1 ? "/sessions" : `/organizations/${ORG_ID}/sessions`;
+const MESSAGE_PATH = (id: string) => (USE_V1 ? `/sessions/${id}/message` : `/organizations/${ORG_ID}/sessions/${id}/messages`);
 
 /* --------------------------------- args ----------------------------------- */
 
@@ -110,11 +126,29 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 interface SessionState {
   session_id: string;
-  url: string;
+  url?: string;
   status: string;
+  /** v3 only */
   status_detail?: string | null;
+  /** v1 only: working|blocked|expired|finished|suspend_requested|… */
+  status_enum?: string | null;
   structured_output?: unknown;
+  /** v3 only — v1's GET has no ACU field (Session Insights covers it in-app). */
   acus_consumed?: number;
+}
+
+/** Collapse the two APIs' status vocabularies into what the spike acts on. */
+function classify(s: SessionState): "working" | "finished" | "waiting_for_user" | "error" {
+  if (USE_V1) {
+    const e = s.status_enum ?? "";
+    if (e === "finished" || e === "expired") return "finished";
+    if (e === "blocked") return "waiting_for_user";
+    return "working";
+  }
+  if (s.status === "error") return "error";
+  if (s.status_detail === "waiting_for_user" || s.status_detail === "waiting_for_approval") return "waiting_for_user";
+  if (s.status_detail === "finished" || s.status === "exit" || s.status === "suspended") return "finished";
+  return "working";
 }
 
 /* ------------------------------ the real task ----------------------------- */
@@ -156,16 +190,19 @@ interface RunResult {
 
 async function oneRun(run: number, prompt: string, schema: Record<string, unknown>): Promise<RunResult> {
   const t0 = Date.now();
-  const created = await api<SessionState>("POST", `/organizations/${ORG_ID}/sessions`, {
+  const body: Record<string, unknown> = {
     prompt,
     structured_output_schema: schema,
-    structured_output_required: true,
-    devin_mode: MODE,
     max_acu_limit: MAX_ACU,
-    resumable: true, // run N's session doubles as the --reuse target
     tags: ["uaa", "uaa-spike", `uaa-spike-v${VERDICT_SCHEMA_VERSION}`],
     title: `UAA spike: ${SYMBOL} verdict (run ${run})`,
-  });
+    // v3-only fields; the v1 schema rejects unknown members conservatively so
+    // they are only sent where they exist.
+    ...(USE_V1
+      ? { idempotent: false }
+      : { structured_output_required: true, devin_mode: MODE, resumable: true }),
+  };
+  const created = await api<SessionState>("POST", SESSIONS_ROOT, body);
   const createMs = Date.now() - t0;
   process.stdout.write(`  run ${run}: session ${created.session_id} created in ${(createMs / 1000).toFixed(1)}s `);
 
@@ -173,7 +210,7 @@ async function oneRun(run: number, prompt: string, schema: Record<string, unknow
   let delay = 3000;
   for (;;) {
     if (Date.now() - t0 > DEADLINE_MS) {
-      await api("DELETE", `/organizations/${ORG_ID}/sessions/${created.session_id}`).catch(() => {});
+      await api("DELETE", `${SESSIONS_ROOT}/${created.session_id}`).catch(() => {});
       console.log("— DEADLINE, session terminated");
       return {
         run, sessionId: created.session_id, createMs, totalMs: Date.now() - t0, polls,
@@ -183,23 +220,33 @@ async function oneRun(run: number, prompt: string, schema: Record<string, unknow
     await sleep(delay);
     delay = Math.min(15_000, Math.round(delay * 1.5 * (0.8 + Math.random() * 0.4)));
     polls += 1;
-    const s = await api<SessionState>("GET", `/organizations/${ORG_ID}/sessions/${created.session_id}`);
+    const s = await api<SessionState>("GET", `${SESSIONS_ROOT}/${created.session_id}`);
     process.stdout.write(".");
+    const phase = classify(s);
 
-    if (s.status === "error") {
-      console.log(` — status=error (${s.status_detail ?? "?"})`);
+    if (phase === "error") {
+      console.log(` — status=error (${s.status_detail ?? s.status_enum ?? "?"})`);
       return {
         run, sessionId: s.session_id, createMs, totalMs: Date.now() - t0, polls,
         acus: s.acus_consumed ?? null, firstAttemptValid: false,
-        zodIssues: [`session error: ${s.status_detail ?? "?"}`], verdict: "-", outcome: "session_error",
+        zodIssues: [`session error: ${s.status_detail ?? s.status_enum ?? "?"}`], verdict: "-", outcome: "session_error",
+      };
+    }
+    if (phase === "waiting_for_user") {
+      // Measured reliability, not repaired reliability: a session that needs a
+      // human mid-task has failed the spike's contract. Terminate and report.
+      await api("DELETE", `${SESSIONS_ROOT}/${created.session_id}`).catch(() => {});
+      console.log(" — agent asked for input; terminated");
+      return {
+        run, sessionId: s.session_id, createMs, totalMs: Date.now() - t0, polls,
+        acus: s.acus_consumed ?? null, firstAttemptValid: false,
+        zodIssues: ["waiting_for_user"], verdict: "-", outcome: "session_error",
       };
     }
 
-    const finished =
-      s.status_detail === "finished" || s.status === "exit" || s.status === "suspended";
-    if (finished || s.structured_output != null) {
+    if (phase === "finished" || s.structured_output != null) {
       if (s.structured_output == null) {
-        if (finished) {
+        if (phase === "finished") {
           console.log(` — finished with NO structured_output`);
           return {
             run, sessionId: s.session_id, createMs, totalMs: Date.now() - t0, polls,
@@ -234,11 +281,11 @@ async function reuseProbe(sessionId: string, schema: Record<string, unknown>): P
   // Let the session suspend first (sleep threshold is usage-based; give it a nudge of idle time).
   console.log("  waiting 90s for the session to go idle…");
   await sleep(90_000);
-  const before = await api<SessionState>("GET", `/organizations/${ORG_ID}/sessions/${sessionId}`);
+  const before = await api<SessionState>("GET", `${SESSIONS_ROOT}/${sessionId}`);
   console.log(`  pre-message status: ${before.status} (${before.status_detail ?? "-"})`);
 
   const t0 = Date.now();
-  await api("POST", `/organizations/${ORG_ID}/sessions/${sessionId}/messages`, {
+  await api("POST", MESSAGE_PATH(sessionId), {
     message:
       "Follow-up: rerun the same verdict but assume the price just fell 10% with no other change. " +
       "Call provide_structured_output again with is_final=true, conforming to the same schema.",
@@ -252,7 +299,7 @@ async function reuseProbe(sessionId: string, schema: Record<string, unknown>): P
     }
     await sleep(delay);
     delay = Math.min(10_000, delay * 1.5);
-    const s = await api<SessionState>("GET", `/organizations/${ORG_ID}/sessions/${sessionId}`);
+    const s = await api<SessionState>("GET", `${SESSIONS_ROOT}/${sessionId}`);
     if (s.structured_output != null && JSON.stringify(s.structured_output) !== firstOutput) {
       const parsed = VerdictSchema.safeParse(s.structured_output);
       console.log(
