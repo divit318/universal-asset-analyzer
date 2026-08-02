@@ -81,6 +81,8 @@ export interface CanonicalFacts {
   companyName: string;
   market: Market;
   exchange: string | null;
+  sector: string | null;
+  industry: string | null;
   /** Trading currency, ISO code. */
   currency: string;
   /** Retrieval timestamp for the whole object. */
@@ -272,6 +274,8 @@ export function buildCanonicalFacts(input: CanonicalInput): CanonicalFacts {
     companyName: quote?.name ?? screenerIn?.name ?? symbol,
     market,
     exchange: quote?.exchange ?? null,
+    sector: snapshot?.sector ?? screenerIn?.sector ?? null,
+    industry: snapshot?.industry ?? screenerIn?.industry ?? null,
     currency,
     asOf: now,
     spot,
@@ -345,7 +349,9 @@ export function validateStatements(st: FinancialStatements): string[] {
     }
   }
   for (const p of st.operatingMargin) {
-    if (Math.abs(p.value) > 1.5) {
+    // A pre-revenue company can post a −7,000% margin legitimately; only a
+    // value that looks like a currency amount indicates a field collision.
+    if (Math.abs(p.value) > 1e6) {
       issues.push(`operatingMargin FY${p.fy} = ${p.value} — not a plausible margin fraction; a raw currency figure may have landed in a ratio field`);
     }
   }

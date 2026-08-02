@@ -90,7 +90,7 @@ describe("assembleValuationSuite", () => {
     }
   });
 
-  it("financials: DCF and EV/EBITDA are suppressed with reasons; P/B activates", () => {
+  it("financials: DCF and EV/EBITDA are suppressed with reasons; P/B activates as an anchor", () => {
     const s = suiteFor({}, "Financial Services", "Banks - Diversified");
     const dcf = s.methods.find((m) => m.kind === "dcf")!;
     expect(dcf.applicable).toBe(false);
@@ -99,7 +99,38 @@ describe("assembleValuationSuite", () => {
     expect(ev.applicable).toBe(false);
     const pb = s.methods.find((m) => m.kind === "p_b")!;
     expect(pb.applicable).toBe(true);
-    expect(s.headline).not.toBeNull(); // still values via P/E + P/B
+    expect(pb.role).toBe("anchor");
+    // No model proposal and no analyst coverage: only market anchors exist,
+    // so there is honestly no independent estimate — headline stays null
+    // rather than laundering spot back as a "valuation".
+    expect(s.headline).toBeNull();
+  });
+
+  it("anchors never enter the blend; a defaulted current multiple cannot launder spot into the headline", () => {
+    const s = suiteFor();
+    const anchorLabels = s.methods.filter((m) => m.role === "anchor").map((m) => m.label);
+    expect(anchorLabels.length).toBeGreaterThan(0);
+    for (const c of s.blend!.components) {
+      expect(anchorLabels).not.toContain(c.label);
+    }
+  });
+
+  it("analyst consensus joins the blend as an estimate when coverage is real", () => {
+    const facts = buildCanonicalFacts({
+      symbol: "TEST", quote: quote(), snapshot: snapshot(),
+      analyst: {
+        targetMean: 250, targetHigh: 300, targetLow: 180, upsidePercent: 25,
+        recommendationKey: "buy", numberOfOpinions: 40, strongBuy: 10, buy: 20, hold: 8, sell: 2, strongSell: 0,
+        epsRevisionsUp30d: 5, epsRevisionsDown30d: 1, epsSurprises: [0.05, 0.02],
+      },
+      insider: null, statements: null, screenerIn: null, now: "2026-08-02T00:00:00.000Z",
+    });
+    const proposal = resolveProposal(null, defaultProposal(facts), true);
+    const s = assembleValuationSuite({ facts, proposal, wacc: WACC });
+    const analystMethod = s.methods.find((m) => m.kind === "analyst")!;
+    expect(analystMethod.applicable).toBe(true);
+    expect(analystMethod.perShare).toBe(250);
+    expect(s.blend!.components.some((c) => c.label === "Analyst consensus")).toBe(true);
   });
 
   it("REITs: EV/EBITDA suppressed, P/B used", () => {

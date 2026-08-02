@@ -25,9 +25,10 @@ import { getFinancialStatements, getFinancialStatementsYahoo } from "../lib/stat
 import { getScreenerInCompany } from "../lib/screener-in";
 import { detectAllSignals } from "../lib/ic-signals";
 import { generateQuestions, groupByAgent } from "../lib/ic-questions";
-import { computeRunHotCold } from "../lib/ic-valuation";
-import { fetchValuationFacts, canValue } from "../lib/valuation/prefill";
-import { seedAssumptions, computeCaseResult, type ValuationCase } from "../lib/valuation/case";
+import { computeHistoryStats } from "../lib/ic/history-stats";
+import { resolveMarket } from "../lib/ic/canonical";
+import { fetchValuationFacts, canValue, type ValuationFacts } from "../lib/valuation/prefill";
+import { seedAssumptions, computeCaseResult } from "../lib/valuation/case";
 import { generateICReport } from "../lib/ic-report";
 
 /* ── Adversarial baseline ticker set (Phase 4) ─────────────────────────── */
@@ -150,6 +151,7 @@ async function runTicker(symbol: string, why: string | undefined, outRoot: strin
     const effectiveStatements = statements ?? statementsYahoo ?? null;
 
     // Stage 1-2: deterministic
+    const market = resolveMarket(symbol, quote);
     const signals = await timed(result, dir, "signals", async () =>
       detectAllSignals({
         snapshot: fundamentals?.snapshot,
@@ -157,6 +159,8 @@ async function runTicker(symbol: string, why: string | undefined, outRoot: strin
         insider: fundamentals?.insider,
         epsSurprises: fundamentals?.analyst?.epsSurprises,
         screenerIn,
+        currency: quote?.currency ?? "USD",
+        market,
       }),
     (s) => ({ count: s.length, categories: s.map((x) => x.category) }));
 
@@ -166,14 +170,14 @@ async function runTicker(symbol: string, why: string | undefined, outRoot: strin
       return { questions: qs, agentDomains: [...byAgent.keys()], perAgentCounts: Object.fromEntries([...byAgent.entries()].map(([k, v]) => [k, v.length])) };
     }, (v) => ({ questions: v.questions.length, agents: v.agentDomains.length }));
 
-    // Run hot/cold on up to 20y history
+    // History statistics on up to 20y of closes
     const history = await timed(result, dir, "history", () => getHistory(symbol, 7300), (h) => ({ points: h.length }));
-    await timed(result, dir, "run-hot-cold", async () => computeRunHotCold(history ?? []), (r) => ({
-      percentile: r?.percentile ?? null, signal: r?.signal ?? null,
+    await timed(result, dir, "history-stats", async () => computeHistoryStats(history ?? []), (r) => ({
+      verdict: r?.verdict ?? null, windows: r?.windows.filter((w) => w.available).length ?? 0,
     }));
 
     // Valuation case maths (no DB writes — compute in memory)
-    await timed(result, dir, "valuation-case", async () => {
+    const vFacts = await timed(result, dir, "valuation-case", async () => {
       const facts = await fetchValuationFacts(symbol);
       if (!canValue(facts)) return { canValue: false, facts };
       const assumptions = seedAssumptions({
@@ -190,27 +194,51 @@ async function runTicker(symbol: string, why: string | undefined, outRoot: strin
       return { canValue: true, facts, assumptions, caseResult };
     }, (v) => ({ canValue: (v as { canValue: boolean }).canValue }));
 
-    // Full pipeline with LLM (optional, slow)
-    if (llm && (quote || fundamentals)) {
-      await timed(result, dir, "full-report-llm", async () => {
+    // Full pipeline — deterministic always; with model calls when --llm
+    if (quote || fundamentals) {
+      const facts: ValuationFacts | null = (vFacts as { facts?: ValuationFacts } | null)?.facts ?? null;
+      const wacc = facts
+        ? { value: facts.wacc.wacc, components: `CAPM (${facts.wacc.region})` }
+        : { value: 0.10, components: "default 10%" };
+      const canonical = {
+        symbol,
+        quote,
+        snapshot: fundamentals?.snapshot ?? null,
+        analyst: fundamentals?.analyst ?? null,
+        insider: fundamentals?.insider ?? null,
+        statements: effectiveStatements,
+        statementsProvider: (statements ? "sec-edgar" : "yahoo-timeseries") as "sec-edgar" | "yahoo-timeseries",
+        screenerIn,
+      };
+
+      await timed(result, dir, "report-deterministic", async () => {
         const events: { stage: string; message: string; at: string }[] = [];
         const report = await generateICReport(
-          {
-            symbol,
-            companyName: quote?.name ?? symbol,
-            currentPrice: quote?.price ?? null,
-            currency: quote?.currency === "INR" ? "₹" : "$",
-            snapshot: fundamentals?.snapshot,
-            statements: effectiveStatements,
-            analyst: fundamentals?.analyst,
-            insider: fundamentals?.insider,
-            screenerIn,
-            valuationCase: null,
-          },
-          (e) => events.push({ stage: e.stage, message: e.message, at: new Date().toISOString() }),
+          { symbol, canonical, wacc, skipModelCalls: true },
+          (e) => events.push({ stage: e.stage, message: e.message, at: e.at }),
         );
         return { report, events };
-      }, (v) => ({ agents: (v as { report: { agentFindings: unknown[] } }).report.agentFindings.length }));
+      }, (v) => {
+        const rep = (v as { report: { valuation: { headline: { perShare: number; vsSpot: number | null } | null; blockingViolations: unknown[]; warnings: unknown[] }; signalChecks: unknown[]; market: string } }).report;
+        return {
+          market: rep.market,
+          headline: rep.valuation.headline,
+          blocking: rep.valuation.blockingViolations.length,
+          warnings: rep.valuation.warnings.length,
+          checks: rep.signalChecks.length,
+        };
+      });
+
+      if (llm) {
+        await timed(result, dir, "full-report-llm", async () => {
+          const events: { stage: string; message: string; at: string }[] = [];
+          const report = await generateICReport(
+            { symbol, canonical, wacc },
+            (e) => events.push({ stage: e.stage, message: e.message, at: e.at }),
+          );
+          return { report, events };
+        }, (v) => ({ agents: (v as { report: { agentFindings: unknown[] } }).report.agentFindings.length }));
+      }
     }
   } finally {
     console.error = origError;

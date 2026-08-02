@@ -329,11 +329,23 @@ export function runScenarios(
   if (spot != null && spot > 0) {
     for (const s of [bear, baseR, bull]) {
       const ratio = s.result.perShare / spot;
-      if (ratio > BANDS.spotSanityMultiple || ratio < 1 / BANDS.spotSanityMultiple) {
+      // Upside beyond the band is a broken model (units, compounding) and
+      // blocks. Downside beyond the band is a warning, not a block: a
+      // conservative DCF on a name priced for growth outside the defensible
+      // band legitimately lands far below spot — the reverse DCF beside it
+      // explains the gap. Blocking that would mute exactly the report an IC
+      // most needs to see.
+      if (ratio > BANDS.spotSanityMultiple) {
         violations.push({
           invariant: "scenario within sane multiple of spot",
-          detail: `${s.label} value ${s.result.perShare.toFixed(2)} is ${ratio.toFixed(1)}x spot — outside [1/${BANDS.spotSanityMultiple}x, ${BANDS.spotSanityMultiple}x]; this is a validation failure, not a result`,
+          detail: `${s.label} value ${s.result.perShare.toFixed(2)} is ${ratio.toFixed(1)}x spot — above ${BANDS.spotSanityMultiple}x; this is a validation failure, not a result`,
           severity: "blocking",
+        });
+      } else if (ratio < 1 / BANDS.spotSanityMultiple) {
+        violations.push({
+          invariant: "scenario far below spot",
+          detail: `${s.label} value ${s.result.perShare.toFixed(2)} is ${(ratio * 100).toFixed(0)}% of spot — either the market prices growth outside the defensible band (see reverse DCF) or an input is wrong`,
+          severity: "warning",
         });
       }
     }

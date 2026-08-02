@@ -50,8 +50,8 @@ export interface CompanyProfile {
 }
 
 export function profileCompany(facts: CanonicalFacts, sector?: string | null, industry?: string | null): CompanyProfile {
-  const sec = (sector ?? facts.screenerIn?.sector ?? "").toLowerCase();
-  const ind = (industry ?? facts.screenerIn?.industry ?? "").toLowerCase();
+  const sec = (sector ?? facts.sector ?? "").toLowerCase();
+  const ind = (industry ?? facts.industry ?? "").toLowerCase();
   const isReit = ind.includes("reit") || sec.includes("real estate");
   const isFinancial = !isReit && (
     sec.includes("financial") || /bank|insurance|capital markets|credit services|asset management/.test(ind)
@@ -93,7 +93,9 @@ export function methodApplicability(profile: CompanyProfile): MethodApplicabilit
   out.push({
     kind: "fcf_yield",
     applicable: profile.hasPositiveFcf && !profile.isFinancial,
-    reason: profile.hasPositiveFcf ? (profile.isFinancial ? "FCF is not a meaningful concept for financials" : null) : "FCF is negative",
+    reason: profile.hasPositiveFcf
+      ? (profile.isFinancial ? "FCF is not a meaningful concept for financials" : null)
+      : "FCF is zero, negative, or unavailable",
   });
   out.push({
     kind: "p_b",
@@ -117,7 +119,7 @@ export function methodApplicability(profile: CompanyProfile): MethodApplicabilit
 /* ── Suite result ───────────────────────────────────────────────────────── */
 
 export interface MethodEntry {
-  kind: RelativeMethodKind | "dcf";
+  kind: RelativeMethodKind | "dcf" | "analyst";
   label: string;
   applicable: boolean;
   notApplicableReason: string | null;
@@ -128,6 +130,14 @@ export interface MethodEntry {
   workings: string | null;
   confidence: "high" | "medium" | "low";
   inputSource: "model" | "default";
+  /**
+   * "estimate": an independent view (DCF, required yield, model-proposed or
+   * peer multiple, analyst consensus) — participates in the blend.
+   * "anchor": reproduces the market's own current multiple — shown for
+   * context, EXCLUDED from the blend (blending it would launder spot into
+   * the headline and manufacture false agreement).
+   */
+  role: "estimate" | "anchor" | null;
 }
 
 export interface ValuationSuiteResult {
@@ -155,7 +165,7 @@ export interface ValuationSuiteResult {
   warnings: InvariantViolation[];
 }
 
-const clampWeight: Record<string, number> = { dcf: 0.4, pe: 0.25, ev_ebitda: 0.2, fcf_yield: 0.15, p_b: 0.3, p_s: 0.2 };
+const clampWeight: Record<string, number> = { dcf: 0.4, pe: 0.25, ev_ebitda: 0.2, fcf_yield: 0.15, p_b: 0.3, p_s: 0.2, analyst: 0.15 };
 
 export interface SuiteContext {
   facts: CanonicalFacts;
@@ -231,22 +241,26 @@ export function assembleValuationSuite(ctx: SuiteContext): ValuationSuiteResult 
     multiple: number | null,
     inputSource: "model" | "default",
     metric: { value: number; label: string } | null,
-    opts: { netDebt?: number; confidence: MethodEntry["confidence"]; rationale: string },
+    opts: { netDebt?: number; confidence: MethodEntry["confidence"]; rationale: string; role: "estimate" | "anchor" },
   ) => {
     const app = applicableOf(kind);
     if (!app.applicable) {
       methods.push({
         kind, label: labelFor(kind), applicable: false, notApplicableReason: app.reason,
         perShare: null, vsSpot: null, assumptions: app.reason ?? "not applicable",
-        workings: null, confidence: "low", inputSource,
+        workings: null, confidence: "low", inputSource, role: null,
       });
       return;
     }
-    if (multiple == null || metric == null || shares == null) {
+    if (multiple == null || metric == null || shares == null || metric.value <= 0) {
       methods.push({
         kind, label: labelFor(kind), applicable: false,
-        notApplicableReason: multiple == null ? "no defensible multiple available" : "required metric unavailable",
-        perShare: null, vsSpot: null, assumptions: "input unavailable", workings: null, confidence: "low", inputSource,
+        notApplicableReason: multiple == null
+          ? "no defensible multiple available"
+          : metric != null && metric.value <= 0
+            ? `${metric.label} is zero or negative — a positive multiple on a negative metric is meaningless`
+            : "required metric unavailable",
+        perShare: null, vsSpot: null, assumptions: "input unavailable", workings: null, confidence: "low", inputSource, role: null,
       });
       return;
     }
@@ -261,10 +275,12 @@ export function assembleValuationSuite(ctx: SuiteContext): ValuationSuiteResult 
       notApplicableReason: null,
       perShare: res.perShare,
       vsSpot: spot != null && spot > 0 ? res.perShare / spot - 1 : null,
-      assumptions: assumptionProse(kind, multiple, metric, opts.rationale, currency, opts.netDebt),
+      assumptions: assumptionProse(kind, multiple, metric, opts.rationale, currency, opts.netDebt)
+        + (opts.role === "anchor" ? " Anchor: this reproduces the market's own current multiple, so it is shown for context and excluded from the blend." : ""),
       workings: res.workings,
       confidence: opts.confidence,
       inputSource,
+      role: opts.role,
     });
   };
 
@@ -282,27 +298,65 @@ export function assembleValuationSuite(ctx: SuiteContext): ValuationSuiteResult 
   const fcf = facts.freeCashFlowTtm ? { value: facts.freeCashFlowTtm.value, label: "FCF (TTM)" } : null;
 
   addMethod("pe", proposal.peMultiple.value, proposal.peMultiple.source, epsTtm, {
-    confidence: proposal.peMultiple.source === "model" ? "medium" : "medium",
+    confidence: "medium",
     rationale: proposal.peMultiple.justification ?? "own forward multiple held (default)",
+    role: proposal.peMultiple.source === "model" ? "estimate" : "anchor",
   });
   addMethod("ev_ebitda", proposal.evEbitdaMultiple.value, proposal.evEbitdaMultiple.source, ebitda, {
     netDebt: facts.netDebt?.value ?? 0,
     confidence: facts.netDebt ? "medium" : "low",
     rationale: proposal.evEbitdaMultiple.justification ?? "current EV/EBITDA held (default)",
+    role: proposal.evEbitdaMultiple.source === "model" ? "estimate" : "anchor",
   });
   addMethod("fcf_yield", proposal.fcfRequiredYield.value, proposal.fcfRequiredYield.source, fcf, {
     confidence: "medium",
     rationale: proposal.fcfRequiredYield.justification ?? "4% required equity FCF yield (default)",
+    role: "estimate", // a required yield is an independent view even when defaulted
   });
-  addMethod("p_b", proposal.peMultiple.value != null && bvps != null && facts.priceToBook?.value != null
-    ? facts.priceToBook.value : null, "default", bvps, {
+  addMethod("p_b", facts.priceToBook?.value != null ? facts.priceToBook.value : null, "default", bvps, {
     confidence: "low",
-    rationale: "current P/B held — a relative anchor, not a target",
+    rationale: "current P/B held",
+    role: "anchor",
   });
   addMethod("p_s", facts.priceToSales?.value != null ? facts.priceToSales.value : null, "default", revenueTotal, {
     confidence: "low",
-    rationale: "current P/S held — loss-maker fallback anchor",
+    rationale: "current P/S held",
+    role: "anchor",
   });
+
+  // Analyst consensus target: an external estimate with real provenance.
+  const analyst = facts.analyst;
+  if (analyst && analyst.targetMean != null && (analyst.numberOfOpinions ?? 0) >= 3) {
+    methods.push({
+      kind: "analyst",
+      label: "Analyst consensus",
+      applicable: true,
+      notApplicableReason: null,
+      perShare: analyst.targetMean,
+      vsSpot: spot != null && spot > 0 ? analyst.targetMean / spot - 1 : null,
+      assumptions: `Mean of ${analyst.numberOfOpinions} analyst price targets (low ${fmtMoney(analyst.targetLow, currency)}, high ${fmtMoney(analyst.targetHigh, currency)}), as of ${analyst.asOf.slice(0, 10)}.`,
+      workings: `mean target as reported by provider`,
+      confidence: (analyst.numberOfOpinions ?? 0) >= 10 ? "medium" : "low",
+      inputSource: "default",
+      role: "estimate",
+    });
+  } else {
+    methods.push({
+      kind: "analyst",
+      label: "Analyst consensus",
+      applicable: false,
+      notApplicableReason: analyst && (analyst.numberOfOpinions ?? 0) > 0
+        ? "fewer than 3 analyst targets — too thin to treat as an estimate"
+        : "no analyst coverage reported for this name",
+      perShare: null,
+      vsSpot: null,
+      assumptions: "not available",
+      workings: null,
+      confidence: "low",
+      inputSource: "default",
+      role: null,
+    });
+  }
 
   // DCF as a method entry for the blend/table.
   methods.unshift({
@@ -316,22 +370,23 @@ export function assembleValuationSuite(ctx: SuiteContext): ValuationSuiteResult 
       ? dcfAssumptionProse(dcfInputs, proposal, wacc)
       : dcfApp.reason ?? "not run",
     workings: dcfBase
-      ? `PV(explicit ${dcfInputs!.growthPath.length}y) ${fmtMoneyCompact(dcfBase.pvExplicit, currency)} + PV(terminal) ${fmtMoneyCompact(dcfBase.pvTerminalPerp, currency)} − net debt ${fmtMoneyCompact(dcfBase.netDebt, currency)} = equity ${fmtMoneyCompact(dcfBase.equityValue, currency)} ÷ ${fmtMoneyCompact(facts.sharesOutstanding?.value ?? 0, null).replace(/^\$/, "")} shares`
+      ? `PV(explicit ${dcfInputs!.growthPath.length}y) ${fmtMoneyCompact(dcfBase.pvExplicit, currency)} + PV(terminal) ${fmtMoneyCompact(dcfBase.pvTerminalPerp, currency)} − net debt ${fmtMoneyCompact(dcfBase.netDebt, currency)} = equity ${fmtMoneyCompact(dcfBase.equityValue, currency)} over ${(facts.sharesOutstanding?.value ?? 0).toExponential(3)} shares`
       : null,
     confidence: dcfBase != null && (dcfBase.terminalShare <= 0.85) ? "medium" : "low",
     inputSource: proposal.growthY1.source,
+    role: dcfBase != null ? "estimate" : null,
   });
 
-  /* ── Blend (Phase 2.10) ── */
+  /* ── Blend (Phase 2.10): estimates only — anchors would launder spot in ── */
   const blend = blendValues(
     methods
-      .filter((m) => m.applicable && m.perShare != null && m.perShare > 0)
+      .filter((m) => m.applicable && m.role === "estimate" && m.perShare != null && m.perShare > 0)
       .map((m) => ({
         label: m.label,
         perShare: m.perShare!,
         weight: (clampWeight[m.kind] ?? 0.1) * (m.confidence === "high" ? 1.2 : m.confidence === "low" ? 0.6 : 1),
         rationale: m.kind === "dcf"
-          ? "anchor method — full cash-flow model with inspected assumptions"
+          ? "primary method: full cash-flow model with inspected assumptions"
           : `cross-check: ${m.assumptions.split(".")[0]}`,
       })),
   );

@@ -1,10 +1,26 @@
 import { describe, it, expect, vi } from "vitest";
 import type { InvestigativeQuestion, AgentDomain } from "@/lib/ic-questions";
+import { buildCanonicalFacts } from "@/lib/ic/canonical";
 
 const runPromptMock = vi.fn();
 vi.mock("@/lib/ai", () => ({ runPrompt: (...args: unknown[]) => runPromptMock(...args) }));
 
-const { runAgentNetwork, extractAgentJson } = await import("@/lib/ic-agents");
+const { runAgentNetwork, extractAgentJson, buildDataContext } = await import("@/lib/ic-agents");
+
+const facts = buildCanonicalFacts({
+  symbol: "TEST",
+  quote: {
+    symbol: "TEST", name: "Test Corp", price: 100, previousClose: 99, change: 1, changePercent: 1,
+    currency: "USD", marketCap: 1e12, peRatio: 25, dayHigh: null, dayLow: null,
+    fiftyTwoWeekHigh: null, fiftyTwoWeekLow: null, volume: null, exchange: "NMS",
+  },
+  snapshot: null,
+  analyst: null,
+  insider: null,
+  statements: null,
+  screenerIn: null,
+  now: "2026-08-02T00:00:00.000Z",
+});
 
 function question(domain: AgentDomain): InvestigativeQuestion {
   return {
@@ -12,6 +28,7 @@ function question(domain: AgentDomain): InvestigativeQuestion {
     question: `What about ${domain}?`,
     assignedAgents: [domain],
     sourceSignals: [],
+    kind: "baseline",
     priority: "high",
   };
 }
@@ -19,12 +36,7 @@ function question(domain: AgentDomain): InvestigativeQuestion {
 function baseInput(domains: AgentDomain[]) {
   const questionsByAgent = new Map<AgentDomain, InvestigativeQuestion[]>();
   for (const d of domains) questionsByAgent.set(d, [question(d)]);
-  return {
-    companyName: "Test Corp",
-    symbol: "TEST",
-    questionsByAgent,
-    signals: [],
-  };
+  return { facts, questionsByAgent, signals: [] };
 }
 
 describe("runAgentNetwork", () => {
@@ -44,17 +56,18 @@ describe("runAgentNetwork", () => {
       .mockResolvedValueOnce(
         JSON.stringify({ findings: "ok", keyInsights: [], confidence: "medium", dataLimitations: null }),
       )
-      .mockRejectedValueOnce(new Error("Ollama request timed out"));
+      .mockRejectedValue(new Error("Ollama request timed out"));
 
     const result = await runAgentNetwork(baseInput(["business", "risk"]));
 
     expect(result.findings).toHaveLength(1);
     expect(result.failures).toEqual([
-      { agent: "risk", agentLabel: "Risk Analyst", error: "Ollama request timed out" },
+      { agent: "risk", agentLabel: "Risk Analyst", error: "Ollama request timed out", retryable: true },
     ]);
   });
 
-  it("reports every agent as failed when all calls reject, without throwing", async () => {
+  it("reports every agent as failed when all calls reject, without throwing", { timeout: 15_000 }, async () => {
+    // Each agent retries once with backoff before failing, so this takes ~6s.
     runPromptMock.mockRejectedValue(new Error("model too slow"));
 
     const result = await runAgentNetwork(baseInput(["business", "risk", "valuation"]));
@@ -64,7 +77,7 @@ describe("runAgentNetwork", () => {
     expect(result.failures.every((f) => f.error === "model too slow")).toBe(true);
   });
 
-  it("dispatches agents sequentially, not concurrently", async () => {
+  it("dispatches agents sequentially by default, not concurrently", async () => {
     const active = { count: 0, maxConcurrent: 0 };
     runPromptMock.mockImplementation(async () => {
       active.count++;
@@ -77,6 +90,35 @@ describe("runAgentNetwork", () => {
     await runAgentNetwork(baseInput(["business", "risk", "valuation"]));
 
     expect(active.maxConcurrent).toBe(1);
+  });
+
+  it("downgrades confidence when figures cannot be traced to the data slice", async () => {
+    runPromptMock.mockResolvedValue(
+      JSON.stringify({
+        findings: "Revenue will grow 47.3% and margins reach 91.2% by 2030.",
+        keyInsights: ["Made-up figure: $123.4B pipeline"],
+        confidence: "high",
+        dataLimitations: null,
+      }),
+    );
+
+    const result = await runAgentNetwork(baseInput(["business"]));
+    expect(result.findings[0].confidence).toBe("medium");
+    expect(result.findings[0].confidenceDowngraded).toContain("could not be traced");
+  });
+});
+
+describe("buildDataContext produces distinct slices per domain", () => {
+  it("gives different agents different evidence", () => {
+    const ctx = { facts, signals: [] };
+    const business = buildDataContext(ctx, "business");
+    const governance = buildDataContext(ctx, "governance");
+    const management = buildDataContext(ctx, "management");
+    expect(business).not.toBe(governance);
+    expect(governance).not.toBe(management);
+    // management sees analyst/insider lines; business sees statement lines
+    expect(management).toContain("Analyst");
+    expect(business).toContain("Annual statements");
   });
 });
 
