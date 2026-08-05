@@ -24,7 +24,7 @@
  */
 
 import { runPrompt } from "../ai";
-import { verifyGrounding } from "../ai/grounding";
+import { verifyGroundingWithFacts, type GroundedFact } from "../ai/grounding";
 import { extractJsonObject } from "../json-extract";
 import { getScannerCache, putScannerCache } from "../db";
 import type { MissionControlContext } from "../mission-control";
@@ -160,6 +160,35 @@ Return ONLY valid JSON in exactly this shape:
 No preamble. No markdown fences. JSON only.`;
 }
 
+/**
+ * The brief's facts as TAGGED evidence (audit F-22f) — lets verification check
+ * not just that a number was transcribed but that it is used as the right
+ * quantity for the right period, including the as-of check on "today" claims.
+ * Exported for tests.
+ */
+export function buildBriefFacts(
+  ctx: MissionControlContext,
+  portfolio: BriefPortfolio | null,
+  now: number = Date.now(),
+): GroundedFact[] {
+  const d = new Date(now);
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  const today = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+
+  const facts: GroundedFact[] = [];
+  if (ctx.regime?.breadthPct != null) {
+    facts.push({ value: ctx.regime.breadthPct, kind: "percent", metric: "breadth", period: "day", sessionDate: today });
+  }
+  if (portfolio) {
+    facts.push(
+      { value: portfolio.todayChangePct, kind: "percent", metric: "portfolio day change", period: "day", sessionDate: today },
+      { value: portfolio.healthTotal, kind: "plain", metric: "health grade" },
+      { value: portfolio.alertCount, kind: "plain", metric: "concentration findings" },
+    );
+  }
+  return facts;
+}
+
 /* ------------------------------------------------------------------ */
 /* Generation                                                          */
 /* ------------------------------------------------------------------ */
@@ -252,7 +281,8 @@ export async function generateHomeBrief(
       // "up 0.77%" vs live 0.79% case) fails here and forces a regeneration.
       // The stamp stays the ORIGINAL generation time — re-stamping a cached
       // brief as fresh was its own small lie.
-      const stillGrounded = verifyGrounding(parsedCache.headline, prompt).level !== "low";
+      const stillGrounded =
+        verifyGroundingWithFacts(parsedCache.headline, buildBriefFacts(ctx, portfolio), { extraEvidence: prompt }).level !== "low";
       if (stillGrounded) return parsedCache;
     } catch {
       // Corrupt cache entry — fall through and regenerate.
@@ -271,10 +301,12 @@ export async function generateHomeBrief(
   const headline = str(parsed.headline);
   if (!headline) return fallback;
 
-  // The grounding verifier checks the model's claims against the facts we gave
-  // it. A low score means it invented something — in which case we throw the
-  // whole generation away rather than show a plausible-sounding fabrication.
-  const grounding = verifyGrounding(headline, prompt);
+  // The grounding verifier checks the model's claims against the TAGGED facts
+  // we gave it — transcription plus entity/direction/metric/period context
+  // (audit F-22f). A low score means it invented or misused something — in
+  // which case we throw the whole generation away rather than show a
+  // plausible-sounding fabrication.
+  const grounding = verifyGroundingWithFacts(headline, buildBriefFacts(ctx, portfolio), { extraEvidence: prompt });
   if (grounding.level === "low") return fallback;
 
   const brief: HomeBrief = {

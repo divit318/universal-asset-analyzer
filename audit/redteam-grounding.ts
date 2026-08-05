@@ -107,3 +107,40 @@ for (const c of CASES) {
   if (r.invalidCitations.length) console.log(`    invalidCitations: ${r.invalidCitations.join(", ")}`);
   console.log(`    why wrong: ${c.wrong}`);
 }
+
+/* ---- Second pass: the context-aware verifier (F-22f extension) ---- */
+import { verifyGroundingWithFacts, type GroundedFact } from "/Users/divit/universal-asset-analyzer/lib/ai/grounding";
+
+const FACTS: GroundedFact[] = [
+  { value: 309.38, kind: "magnitude", entity: "AAPL", metric: "price" },
+  { value: 1.96, kind: "percent", entity: "AAPL", metric: "price change", period: "day", sessionDate: "2026-08-05" },
+  { value: 4.52e12, kind: "magnitude", entity: "AAPL", metric: "market cap" },
+  { value: 32.5, kind: "multiple", entity: "AAPL", metric: "forward p/e" },
+  { value: 34.84, kind: "multiple", entity: "AAPL", metric: "trailing p/e" },
+  { value: 148.8, kind: "percent", entity: "AAPL", metric: "roe" },
+  { value: 32.6, kind: "percent", entity: "AAPL", metric: "operating margin" },
+  { value: 27.6, kind: "percent", entity: "AAPL", metric: "net margin" },
+  { value: 16.4, kind: "percent", entity: "AAPL", metric: "revenue growth", period: "yoy" },
+  { value: 28.7, kind: "percent", entity: "AAPL", metric: "eps growth", period: "yoy" },
+  { value: 107.7e9, kind: "magnitude", entity: "AAPL", metric: "free cash flow" },
+  { value: 320.89, kind: "magnitude", entity: "AAPL", metric: "price target" },
+  { value: 4, kind: "percent", entity: "AAPL", metric: "upside" },
+  { value: 12.1, kind: "percent", entity: "MSFT", metric: "revenue growth", period: "yoy" },
+  { value: 38.5, kind: "percent", entity: "MSFT", metric: "roe" },
+  { value: 205.59, kind: "magnitude", entity: "AAPL", metric: "52-week low" },
+  { value: 344.57, kind: "magnitude", entity: "AAPL", metric: "52-week high" },
+  { value: 0.36, kind: "percent", entity: "AAPL", metric: "dividend yield" },
+  { value: 465.2e9, kind: "magnitude", entity: "AAPL", metric: "revenue", period: "fy" },
+];
+
+console.log("\n=== PASS 2: verifyGroundingWithFacts (context-aware) ===");
+let bypasses = 0;
+for (const c of CASES) {
+  const r = verifyGroundingWithFacts(c.text, FACTS, { allowedTags: allowed, extraEvidence: EVIDENCE, now: Date.parse("2026-08-05T17:00:00"), entityAliases: { AAPL: ["Apple"], MSFT: ["Microsoft"] } });
+  const bypass = r.unsupportedNumbers.length === 0 && r.invalidCitations.length === 0 && r.contextViolations.length === 0;
+  if (bypass) bypasses++;
+  console.log(`${bypass ? "BYPASS " : "caught "} | score=${r.groundingScore} level=${r.level} | ${c.name}`);
+  if (r.contextViolations.length) console.log(`    context: ${r.contextViolations.join(" | ")}`);
+  if (r.unsupportedNumbers.length) console.log(`    unsupported: ${r.unsupportedNumbers.join(", ")}`);
+}
+console.log(`\nPASS 2 bypasses: ${bypasses}/${CASES.length}`);
