@@ -14,7 +14,7 @@ import type {
   AssumptionSet, CaseAuthor, CaseEventKind, CaseResult, ValuationCase, ValuationEvent,
   ValuationMethod,
 } from "./valuation/case";
-import type { AlertEvent } from "./alerts";
+import { renderAlertText, type AlertEvent, type AlertFacts } from "./alerts";
 import type { AttentionDismissal } from "./home/contracts";
 import type { Simulation, SimProfile, SimHolding, SimThesis, SimHeadline } from "./portfolio/simulator/types";
 import { normalizeStoredProfile } from "./portfolio/simulator/profile";
@@ -459,6 +459,11 @@ function getDb(): DatabaseSync {
   // today's assumptions when they acted, which is exactly the false precision
   // the rest of this module refuses to manufacture.
   try { db.exec("ALTER TABLE decision ADD COLUMN case_version INTEGER"); } catch { /* already exists */ }
+  // Structured alert facts (audit F-22c). Rows created before this column keep
+  // their frozen prose and render it as-is (with its date); rows with meta get
+  // their title/body re-rendered from facts at every read, so tense stays
+  // honest ("today" only while the session IS today).
+  try { db.exec("ALTER TABLE notification ADD COLUMN meta TEXT"); } catch { /* already exists */ }
   /*
    * Standing definitions: a saved screen remembers the symbols it matched last
    * time it was loaded, so the next load can say what *changed* rather than just
@@ -2090,19 +2095,42 @@ interface NotificationRow {
   body: string;
   read: number;
   created_at: string;
+  meta: string | null;
 }
 
 function rowToNotification(r: NotificationRow): Notification {
+  // Render prose from stored facts at READ time (audit F-22c): the same row
+  // says "today" while its session is today and "on Fri, Jul 31" afterwards.
+  // Legacy rows (meta NULL) keep their frozen strings — we cannot re-tense
+  // what was never stored structurally.
+  let title = r.title;
+  let body = r.body;
+  let sessionDate: string | null = null;
+  let observedAt: string | null = null;
+  if (r.meta) {
+    try {
+      const facts = JSON.parse(r.meta) as AlertFacts;
+      const rendered = renderAlertText(facts);
+      title = rendered.title;
+      body = rendered.body;
+      sessionDate = facts.sessionDate ?? null;
+      observedAt = facts.observedAt ?? null;
+    } catch {
+      /* unparseable meta — fall back to the stored strings */
+    }
+  }
   return {
     id: r.id,
     dedupKey: r.dedup_key,
     symbol: r.symbol,
     kind: r.kind,
     severity: r.severity === "warning" ? "warning" : "info",
-    title: r.title,
-    body: r.body,
+    title,
+    body,
     read: r.read === 1,
     createdAt: r.created_at,
+    sessionDate,
+    observedAt,
   };
 }
 
@@ -2119,14 +2147,17 @@ export function createNotifications(events: AlertEvent[], dedupHours = 24): numb
     "SELECT 1 FROM notification WHERE dedup_key = ? AND created_at > ? LIMIT 1",
   );
   const insert = db.prepare(
-    `INSERT INTO notification (dedup_key, symbol, kind, severity, title, body, read, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
+    `INSERT INTO notification (dedup_key, symbol, kind, severity, title, body, read, created_at, meta)
+     VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
   );
   const now = new Date().toISOString();
   let inserted = 0;
   for (const e of events) {
     if (exists.get(e.dedupKey, since)) continue;
-    insert.run(e.dedupKey, e.symbol, e.kind, e.severity, e.title, e.body, now);
+    // title/body stored as a write-time fallback only; read paths re-render
+    // from meta so the prose keeps honest tense as the row ages.
+    const rendered = renderAlertText(e.facts);
+    insert.run(e.dedupKey, e.symbol, e.kind, e.severity, rendered.title, rendered.body, now, JSON.stringify(e.facts));
     inserted++;
   }
   return inserted;

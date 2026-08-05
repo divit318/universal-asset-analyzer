@@ -9,6 +9,7 @@ import {
 } from "@/lib/db";
 import { getQuotes } from "@/lib/yahoo";
 import { evaluateAlerts, type QuoteLite } from "@/lib/alerts";
+import { dayChange, isCurrentSession } from "@/lib/day-change";
 import { resolveTargetDirection } from "@/lib/watchlist-metrics";
 
 export interface MonitorRunResult {
@@ -32,8 +33,26 @@ export async function runMonitor(): Promise<MonitorRunResult> {
   }
 
   const quotes = await getQuotes(symbols);
+  // Session metadata rides along so the evaluator can refuse to re-announce a
+  // finished session's move as news (the F-22 weekend re-alert bug), and so
+  // alert prose can date itself honestly at render time.
   const quoteMap = new Map<string, QuoteLite>(
-    quotes.map((q) => [q.symbol.toUpperCase(), { price: q.price, changePercent: q.changePercent, currency: q.currency }]),
+    quotes.map((q) => {
+      const dc = dayChange(q);
+      return [
+        q.symbol.toUpperCase(),
+        {
+          price: q.price,
+          changePercent: q.changePercent,
+          currency: q.currency,
+          sessionDate: dc.sessionDate,
+          observedAt: dc.asOf != null ? new Date(dc.asOf).toISOString() : null,
+          // Only gate when we positively know the session is over; missing
+          // metadata must not silence alerts.
+          isCurrentSession: dc.sessionDate == null ? undefined : isCurrentSession(dc, q.exchangeTimezone),
+        },
+      ];
+    }),
   );
 
   /**

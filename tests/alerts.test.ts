@@ -51,7 +51,9 @@ describe("evaluateWatchlistAlerts — price targets fire on a crossing, not a st
     );
     expect(events).toHaveLength(1);
     expect(events[0].kind).toBe("price_target");
-    expect(events[0].title).toBe("AAPL crossed your target");
+    expect(events[0].facts.targetPrice).toBe(200);
+    expect(events[0].facts.fromPrice).toBe(195);
+    expect(events[0].facts.toPrice).toBe(201);
   });
 
   it("fires when the price crosses DOWN through a 'below' target", () => {
@@ -255,6 +257,83 @@ describe("evaluatePortfolioAlerts", () => {
     const positions = [{ symbol: "AAPL", name: "Apple" }];
     expect(evaluatePortfolioAlerts(positions, new Map([["AAPL", q(200, 4)]]))).toEqual([]);
     expect(evaluatePortfolioAlerts(positions, new Map([["AAPL", q(200, 4)]]), { bigMovePct: 3 })).toHaveLength(1);
+  });
+});
+
+describe("session gating — audit F-22e (the weekend re-alert bug)", () => {
+  const positions = [{ symbol: "AAPL", name: "Apple" }];
+  const staleQ: QuoteLite = {
+    price: 308.91,
+    changePercent: -7.4,
+    currency: "USD",
+    sessionDate: "2026-07-31",
+    observedAt: "2026-07-31T20:00:00.000Z",
+    isCurrentSession: false, // a Saturday run seeing Friday's close
+  };
+
+  it("a big move from a finished session is not news", () => {
+    expect(evaluatePortfolioAlerts(positions, new Map([["AAPL", staleQ]]))).toEqual([]);
+  });
+
+  it("the same move IS news during its own session", () => {
+    const live = { ...staleQ, isCurrentSession: true };
+    expect(evaluatePortfolioAlerts(positions, new Map([["AAPL", live]]))).toHaveLength(1);
+  });
+
+  it("missing session metadata does not silence alerts (legacy callers)", () => {
+    expect(evaluatePortfolioAlerts(positions, new Map([["AAPL", q(200, -9)]]))).toHaveLength(1);
+  });
+
+  it("drop alerts are gated the same way", () => {
+    const items = [{ symbol: "AAPL", name: "Apple", targetPrice: null, alertPctDrop: 5 }];
+    const { events } = evaluateWatchlistAlerts(items, new Map([["AAPL", staleQ]]), new Map());
+    expect(events).toEqual([]);
+  });
+
+  it("target crossings still fire regardless of session (a level was crossed)", () => {
+    const items = AAPL(305, "below");
+    const { events } = evaluateWatchlistAlerts(items, new Map([["AAPL", { ...staleQ, price: 304 }]]), seen("AAPL", 310));
+    expect(events).toHaveLength(1);
+  });
+});
+
+describe("renderAlertText — prose is tensed at read time (audit F-22c)", () => {
+  const facts = {
+    kind: "big_move" as const,
+    symbol: "AAPL",
+    name: "Apple Inc.",
+    pct: -8.7,
+    price: 304.34,
+    currency: "USD",
+    observedAt: "2026-07-31T13:31:00.000Z",
+    sessionDate: "2026-07-31",
+  };
+
+  it("says 'today' only while the session is today", async () => {
+    const { renderAlertText } = await import("@/lib/alerts");
+    const during = renderAlertText(facts, Date.parse("2026-07-31T15:00:00"));
+    expect(during.body).toContain("today");
+    expect(during.body).not.toContain("Jul 31");
+  });
+
+  it("dates itself once the session has passed — the -8.7% row can never lie again", async () => {
+    const { renderAlertText } = await import("@/lib/alerts");
+    const later = renderAlertText(facts, Date.parse("2026-08-05T12:00:00"));
+    expect(later.body).not.toContain("today");
+    expect(later.body).toContain("Jul 31");
+    expect(later.body).toContain("$304.34");
+  });
+
+  it("titles state magnitude, not a double-signed 'down -8.7%'", async () => {
+    const { renderAlertText } = await import("@/lib/alerts");
+    expect(renderAlertText(facts).title).toBe("AAPL down 8.7%");
+  });
+
+  it("an unknown session renders 'as of last close', never 'today'", async () => {
+    const { renderAlertText } = await import("@/lib/alerts");
+    const t = renderAlertText({ ...facts, sessionDate: null });
+    expect(t.body).toContain("as of last close");
+    expect(t.body).not.toContain("today");
   });
 });
 

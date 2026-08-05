@@ -309,6 +309,10 @@ export interface Notification {
   body: string;
   read: boolean;
   createdAt: string;
+  /** Session day (exchange TZ) the alert describes; null for legacy rows. */
+  sessionDate?: string | null;
+  /** ISO time of the observation the alert describes; null for legacy rows. */
+  observedAt?: string | null;
 }
 
 
