@@ -34,6 +34,11 @@ yarn-error.log*
 .env*
 !.env.example
 
+# Anthropic API key file. Lives OUTSIDE the repo by default
+# (~/.uaa/anthropic_api_key; see lib/ai/anthropic-key.ts) — this pattern is a
+# belt-and-braces guard for a UAA_CONFIG_DIR pointed inside the tree.
+anthropic_api_key
+
 # vercel
 .vercel
 

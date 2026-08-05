@@ -5,6 +5,8 @@
   "scripts": {
     "predev": "scripts/ops/uaa preflight",
     "dev": "next dev",
+    "demo": "UAA_AUTH_GATE=on next dev",
+    "predemo": "scripts/ops/uaa preflight",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -19,6 +21,7 @@
     "host:stop": "scripts/ops/uaa stop"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "@sentry/nextjs": "^10.68.0",
     "@types/d3-force": "^3.0.10",
     "d3-force": "^3.0.0",
