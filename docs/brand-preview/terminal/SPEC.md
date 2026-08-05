@@ -168,9 +168,9 @@ NVDA▊   — a ticker opens research · two or more compares them · "roe > 15"
 ```
 
 The cursor is a 7×13px block, blinking at 1.1s in steps (no fade — terminals don't fade).
-Right side: session status in mono 10.5px dim — `● LOCAL · OLLAMA UP · PRICES LIVE
-09:42:07` — with the dot in green. When Ollama is down, the dot goes dim (not red — it's
-not a loss) and the text reads `OLLAMA DOWN · PROSE PAUSED · NUMBERS FINE`.
+Right side: session status in mono 10.5px dim — `● AI READY · PRICES LIVE
+09:42:07` — with the dot in green. When the AI is unavailable (no key), the dot goes dim
+(not red — it's not a loss) and the text reads `AI OFF · PROSE PAUSED · NUMBERS FINE`.
 
 **Autocomplete is a column, not a dropdown.** Typing opens a typeset list directly under
 the line — mono rows, matched characters in ink, the rest dim, source hints right-aligned
@@ -305,8 +305,8 @@ Full width below: `THE ANALYST'S NOTE` — two paragraphs, 70ch, with the attrib
 line above (`WRITTEN LOCALLY · QWEN3 · 41S · 9 OF 9 FIGURES TRACED`) and sources below a
 hairline. While the note is being written (first visit of the day), the attribution line
 reads `WRITING — 20–40S ON YOUR M3` and prose streams in *as typeset text* with a block
-cursor; there is no skeleton, no shimmer, no "thinking." If Ollama is down: "The analyst
-is offline (Ollama isn't running). Every number on this page is unaffected." — the page
+cursor; there is no skeleton, no shimmer, no "thinking." If the AI is unavailable: "The
+analyst is offline (add your API key in Settings). Every number on this page is unaffected." — the page
 demonstrably true to "AI explains, engines decide."
 
 **Signature moment — probing the price.** Click and hold the masthead price, and it
@@ -571,7 +571,7 @@ Filed honestly: some of these may never ship, all of them are in-character.
 5. **The second screen.** A companion mode that turns a spare display into pure wire —
    the tape, the docket marker, and nothing else, set at meeting-room-legible sizes. UAA
    as furniture.
-6. **Voice of the record.** `read ic ASML` — the local model reads the report aloud for
+6. **Voice of the record.** `read ic ASML` — the model reads the report aloud for
    the commute, generated on-device, in a flat professional register. The one feature
    where the product is allowed to be heard.
 

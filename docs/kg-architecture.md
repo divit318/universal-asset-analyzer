@@ -29,9 +29,9 @@
 | `label.ts` | Label policy: filing dedup ("AAPL 10-Q, filed 01 Aug 2025"), word-boundary clipping, symbol prefixes on shared headlines. | none |
 | `build.ts` | GraphBuilder + the four scope builders. | db, Yahoo, scanner snapshot |
 | `recommend.ts` | Pure insights: weighted concentration, hidden opportunities, emerging risks, windowed correlation clusters, graph stats. | none |
-| `traverse.ts` | BFS shortest path, ranked multi-path DFS (`findPaths`), AI path narration. | Ollama via runPrompt |
+| `traverse.ts` | BFS shortest path, ranked multi-path DFS (`findPaths`), AI path narration. | AI platform via runPrompt |
 | `diff.ts` | Pure snapshot diff (added/removed nodes and edges). | none |
-| `narrate.ts` | AI narrative with enforced citations: claims that do not cite in-graph node ids are dropped server-side. | Ollama via runPrompt |
+| `narrate.ts` | AI narrative with enforced citations: claims that do not cite in-graph node ids are dropped server-side. | AI platform via runPrompt |
 | `index.ts` | Entry point: cache (15 min, `kg2:` keys), daily snapshot + diff wiring. | db |
 
 ## Schema highlights
@@ -44,7 +44,7 @@ GraphEdge: `id, source, target, type, label, confidence (number|null),
 strength (width), directed, evidence, provenance, timestamp`.
 
 Provenance: `{ source: yahoo|sec_edgar|platform|..., origin:
-computed|ai|user, asOf }`. Anything Ollama-generated carries `origin: "ai"`
+computed|ai|user, asOf }`. Anything model-generated carries `origin: "ai"`
 and the UI labels it as such.
 
 `type: "company"` remains the node type for all tradeable assets to keep the

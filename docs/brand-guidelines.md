@@ -81,9 +81,9 @@ and built their own desk.*
 
 | Trait | We are | We are never |
 |-------|--------|--------------|
-| **Exact** | States numbers, sources, confidence. "Typically 20–40 s on a local model." | Vague, rounded, promotional |
+| **Exact** | States numbers, sources, confidence. "Typically 15–40 s, depending on reasoning depth." | Vague, rounded, promotional |
 | **Measured** | Speaks when it has a verdict. Silence is a feature. | Chatty, notification-hungry |
-| **Sovereign** | Answers to no cloud, no feed, no vendor. Quiet pride in self-sufficiency. | Defensive about being local; privacy-theater boilerplate |
+| **Sovereign** | Your data and every computed figure answer to no cloud and no vendor; the one external dependency — AI narration — runs on a key the user owns. | Defensive about locality; privacy-theater boilerplate; claiming zero egress |
 | **Candid** | Shows the work, admits low confidence, reports its own signal degradation. | Falsely certain; hiding methodology |
 | **Warm-metal** | Premium through craft: weight, finish, precision. | Gold-foil luxe, neon, gradients-as-glamour |
 
@@ -405,7 +405,7 @@ line, one brass diamond at the terminus.
 
 1. **Verdict first, evidence after.** Every summary leads with the call, then shows the
    work. ("Trim. Concentration in semis is 2.4× your policy cap." — then the numbers.)
-2. **Numbers are exact or absent.** "~3–15 minutes on a local model," never "blazing fast."
+2. **Numbers are exact or absent.** "A full run typically takes a few minutes," never "blazing fast."
 3. **Sentence case everywhere. No exclamation marks. No emoji. Ever.**
 4. **The product reports; it doesn't perform.** No "Great job!", no "Oops!". Errors state
    what failed and the next action.
@@ -426,9 +426,9 @@ Features are named as departments of the user's institution, not as SaaS feature
 | Context | Tone | Example |
 |---------|------|---------|
 | Verdicts | Declarative, then evidenced | "Hold. The price already carries the growth you're underwriting." |
-| Errors | Factual, next-action | "Ollama is offline. Start it to resume AI analysis." |
+| Errors | Factual, next-action | "AI is unavailable — add your Anthropic API key in Settings. Every computed figure is unaffected." |
 | Empty states | Standing order | "The book is empty. Add your first position to bring the desk online." |
-| Long tasks | Exact expectations | "Running the committee — typically 3–15 minutes on a local model." |
+| Long tasks | Exact expectations | "Running the committee — typically a few minutes." |
 | Marketing | Claims with mechanisms | "9 agents, run in parallel, on your hardware." |
 
 ### Prohibited Terms

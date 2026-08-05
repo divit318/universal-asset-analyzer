@@ -239,7 +239,7 @@ Registry: 6 `HomeModuleId`s (`todays-brief`, `book`, `attention-queue`, `radar`,
 
 **Radar:** populated; empty ("No new ideas today — run the Screener →"); scanner-snapshot-missing (same CTA, different copy).
 
-**Brief / Tape / Long read:** existing states unchanged (deterministic brief fallback when Ollama is down is already correct — keep).
+**Brief / Tape / Long read:** existing states unchanged (deterministic brief fallback when the AI is unavailable is already correct — keep).
 
 **Global:** first-ever-visit (no portfolio, no watchlist) → command row + radar + tape only; queue zone shows onboarding copy, not a fake-empty clear state.
 
@@ -340,7 +340,7 @@ Full compliance with the **Machined Instrument** language (see memory: matte pan
 5. One feeder throwing does not blank the queue (degraded footer renders, others paint).
 6. With no portfolio: no error cards; onboarding variants render as specified in §11.
 7. Full keyboard path: tab to queue, arrow through, Enter navigates, Delete dismisses, focus lands correctly after removal.
-8. Deterministic paint: with Ollama stopped, command row + queue + tape render completely.
+8. Deterministic paint: with the AI unavailable (no key), command row + queue + tape render completely.
 9. `graphify update .` run after the change; module count and retired files reflected.
 
 **Phase B (IA):** `/intelligence` redirects then is removed; `/knowledge-graph` reachable from Research dropdown; Engine + Backtest under Discover; `/comps` deleted with zero broken imports; every route reachable in ≤2 clicks or via ⌘K; no `navTarget` points at a dead route (add this as a registry validator check).
@@ -362,7 +362,7 @@ Full compliance with the **Machined Instrument** language (see memory: matte pan
 6. New modules: `book.tsx` (lift ring + stats from portfolio-pulse/performance), `attention-queue.tsx`, `radar.tsx` (lift from opportunity-feed + watchlist-intelligence buy list).
 7. Registry/types/module-map/layout: register 3 new ids, retire 11, rebuild `HOME_LAYOUT` per §9. Update `tests/home-registry.test.ts`.
 8. Delete retired module components; keep their lib engines (now feeder inputs). Add ResumeChip to the brief footer (reads the `continue` data path).
-9. States, interactions, animation, a11y per §11–§17. Verify with `/verify` against a running dev server: dismiss, clear state, keyboard path, Ollama-down paint.
+9. States, interactions, animation, a11y per §11–§17. Verify with `/verify` against a running dev server: dismiss, clear state, keyboard path, AI-unavailable paint.
 
 **Phase B — IA repair:** rewrite `NAV` in `nav-config.ts` per §4.3; create `app/knowledge-graph/page.tsx` hosting the existing components; `/intelligence` → redirect (one release); delete `app/comps/` after an import sweep; re-point registry `navTarget`s; add the dead-route validator check.
 

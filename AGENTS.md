@@ -1001,7 +1001,7 @@ and how to regenerate `favicon.ico`/`icon.svg`/`apple-icon.png`
 
 ## One More Thing
 
-This is a single-user, self-hosted equity research platform. All data stays local. No cloud APIs, no subscriptions, no selling data. Code quality and architectural clarity matter because there's no DevOps team to fix problems.
+This is a single-user, self-hosted equity research platform. All user data stays local; market data comes from public APIs and AI narration runs on the Anthropic API with the user's own key. No accounts, no subscriptions, no selling data. Code quality and architectural clarity matter because there's no DevOps team to fix problems.
 
 Keep things simple. Prefer existing patterns. Document as you go (update ARCHITECTURE.md). Future agents will thank you.
 
