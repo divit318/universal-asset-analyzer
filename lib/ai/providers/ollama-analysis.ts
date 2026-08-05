@@ -40,6 +40,7 @@ export class OllamaAnalysisProvider implements AnalysisProvider {
       // ollamaJsonMode preserves the same discipline for the one JSON call
       // site (home brief) that historically ran unconstrained.
       json: !textMode && (req.ollamaJsonMode ?? true),
+      model: req.model,
       timeoutMs: req.timeoutMs,
       signal: req.signal,
     });

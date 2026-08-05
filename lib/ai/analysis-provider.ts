@@ -57,6 +57,13 @@ export interface AnalysisRequest<T> {
    * enforces the wire schema server-side either way.
    */
   ollamaJsonMode?: boolean;
+  /**
+   * Explicit model override (the IC report's model picker). Honored by the
+   * token-stack adapter exactly as runPrompt honored it; the Devin provider
+   * ignores it — a session has no model knob, so pretending otherwise would
+   * be a lie the picker UI then repeats to the user.
+   */
+  model?: string;
   /** Defaults to hash(taskType, subjectKey, inputHash, schemaVersion). */
   idempotencyKey?: string;
   timeoutMs?: number;

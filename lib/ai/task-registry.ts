@@ -128,6 +128,7 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     jsonMode: true,
     maxTokens: 2048,
     timeoutMs: 300_000,
+    devinTimeoutMs: 300_000, // tranche 6 (IC pipeline) — tail-based
   },
   "sec-filing-analysis": {
     complexity: "deep",
@@ -143,6 +144,7 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     jsonMode: true,
     maxTokens: 1536,
     timeoutMs: 300_000,
+    devinTimeoutMs: 300_000, // tranche 6 (IC pipeline) — tail-based
   },
   "accounting-red-flags": {
     complexity: "deep",
@@ -150,6 +152,7 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     jsonMode: true,
     maxTokens: 1536,
     timeoutMs: 300_000,
+    devinTimeoutMs: 300_000, // tranche 6 (IC pipeline) — tail-based
   },
   "scenario-analysis": {
     complexity: "deep",
@@ -157,6 +160,7 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     jsonMode: true,
     maxTokens: 2048,
     timeoutMs: 300_000,
+    devinTimeoutMs: 300_000, // tranche 6 (IC pipeline) — tail-based
   },
   "stress-testing": {
     complexity: "deep",
@@ -171,6 +175,7 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     jsonMode: true,
     maxTokens: 1200,
     timeoutMs: 300_000,
+    devinTimeoutMs: 300_000, // tranche 6 (IC pipeline) — tail-based
   },
   "thematic-analysis": {
     complexity: "deep",

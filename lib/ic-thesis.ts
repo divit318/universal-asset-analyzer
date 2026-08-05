@@ -11,7 +11,9 @@
  * what world produces those numbers, not to invent its own.
  */
 
-import { runPrompt } from "./ai";
+import { runAnalysis } from "./ai/analysis";
+import { LooseObjectSchema } from "./ai/schemas/loose";
+import { ThesisWireSchema, IC_SCHEMA_VERSION } from "./ai/schemas/ic";
 import { extractJsonObject } from "./json-extract";
 import type { AgentFinding } from "./ic-agents";
 import type { DetectedSignal } from "./ic-signals";
@@ -81,16 +83,33 @@ export function buildEstablishedConclusions(v: ValuationSuiteResult): string {
 
 /** Exported for unit testing — pure, no I/O. */
 export function parseThesis(raw: string): Thesis {
-  const parsed = extractJsonObject(raw, {
-    bull: "Thesis formation unavailable: AI response could not be parsed.",
-    bear: "",
-    base: "",
-    variantPerception: "",
-    marketExpectations: "",
-    keyCatalysts: [] as string[],
-    keyRisks: [] as string[],
-    keyDrivers: [] as string[],
-  });
+  return parseThesisBag(
+    extractJsonObject(raw, {
+      bull: "Thesis formation unavailable: AI response could not be parsed.",
+      bear: "",
+      base: "",
+      variantPerception: "",
+      marketExpectations: "",
+      keyCatalysts: [] as string[],
+      keyRisks: [] as string[],
+      keyDrivers: [] as string[],
+    }),
+  );
+}
+
+/** The bag-shaped half of {@link parseThesis} — what the analysis seam feeds. */
+export function parseThesisBag(bag: Record<string, unknown>): Thesis {
+  const str = (v: unknown, dflt = ""): string => (typeof v === "string" ? v : dflt);
+  const parsed = {
+    bull: str(bag.bull, "Thesis formation unavailable: AI response could not be parsed."),
+    bear: str(bag.bear),
+    base: str(bag.base),
+    variantPerception: str(bag.variantPerception),
+    marketExpectations: str(bag.marketExpectations),
+    keyCatalysts: Array.isArray(bag.keyCatalysts) ? bag.keyCatalysts : [],
+    keyRisks: Array.isArray(bag.keyRisks) ? bag.keyRisks : [],
+    keyDrivers: Array.isArray(bag.keyDrivers) ? bag.keyDrivers : [],
+  };
   return {
     ...parsed,
     keyCatalysts: parsed.keyCatalysts.filter((x): x is string => typeof x === "string"),
@@ -160,8 +179,16 @@ Reply with ONLY a raw JSON object:
   // should not cost the report its thesis.
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const raw = await runPrompt("investment-thesis", prompt, { maxTokens: 2000, json: true, model });
-      const parsed = parseThesis(raw);
+      const analysis = await runAnalysis({
+        taskType: "investment-thesis",
+        subjectKey: `ic:thesis:${symbol}`,
+        prompt,
+        schema: LooseObjectSchema,
+        wireSchema: ThesisWireSchema,
+        schemaVersion: IC_SCHEMA_VERSION,
+        model,
+      });
+      const parsed = parseThesisBag(analysis.data as Record<string, unknown>);
       if (parsed.bull && !parsed.bull.startsWith("Thesis formation unavailable")) return parsed;
     } catch {
       /* fall through to retry */

@@ -2,8 +2,21 @@ import { describe, it, expect, vi } from "vitest";
 import type { InvestigativeQuestion, AgentDomain } from "@/lib/ic-questions";
 import { buildCanonicalFacts } from "@/lib/ic/canonical";
 
+// Migrated to the analysis seam (tranche 6). The mock keeps the old
+// runPromptMock recording surface — (taskType, prompt) — and wraps its JSON
+// string in the seam's AnalysisResult envelope, so every existing assertion
+// (including prompt-content checks) runs unchanged.
 const runPromptMock = vi.fn();
-vi.mock("@/lib/ai", () => ({ runPrompt: (...args: unknown[]) => runPromptMock(...args) }));
+vi.mock("@/lib/ai/analysis", () => ({
+  runAnalysis: async (req: { taskType: string; prompt: string }) => {
+    const raw = await runPromptMock(req.taskType, req.prompt);
+    return {
+      data: JSON.parse(String(raw)) as Record<string, unknown>,
+      provider: "ollama" as const,
+      meta: { durationMs: 1 },
+    };
+  },
+}));
 
 const { runAgentNetwork, extractAgentJson, buildDataContext } = await import("@/lib/ic-agents");
 
