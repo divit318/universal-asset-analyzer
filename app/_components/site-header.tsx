@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useRef, useState } from "react";
 import { Menu, X, Search, ChevronDown, Sparkles } from "lucide-react";
 import { BrandLockup, BrandMark } from "./brand";
-import { OllamaStatusBadge } from "./ollama-status";
+import { AiStatusBadge } from "./ai-status-badge";
 import { ThemeToggle } from "./theme";
 import { NotificationBell } from "./notification-bell";
 import { NAV, activeObjective, type NavObjective } from "./nav-config";
@@ -139,8 +139,12 @@ export function SiteHeader() {
             />
           </button>
           <NotificationBell />
-          <OllamaStatusBadge />
+          <AiStatusBadge />
           <ThemeToggle />
+          {/* HANDOFF (auth session): mount <AccountMenu /> here once
+              app/_components/account-menu.tsx lands — user chip with avatar
+              initial, display name, email, Settings → /settings/account, and
+              Sign out. See HANDOFF-LOGIN.md / HANDOFF-MIGRATION.md. */}
 
           {/* Mobile controls */}
           <button
