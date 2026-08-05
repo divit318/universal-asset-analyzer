@@ -405,7 +405,8 @@ function getDb(): DatabaseSync {
     /* AI analysis jobs (ai-migration/03-architecture.md §4): durable record of
      * a provider-agnostic analysis run. The id IS the idempotency key —
      * hash(task, subject, input, schema version) — so a restarted server
-     * re-attaches to the same Devin session instead of double-spawning. */
+     * re-attached to the same analysis run instead of double-spawning (a
+     * guarantee from the retired sessions runtime; column kept for old rows). */
     CREATE TABLE IF NOT EXISTS ai_job (
       id             TEXT PRIMARY KEY,
       task_type      TEXT NOT NULL,
@@ -442,6 +443,31 @@ function getDb(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS idx_ai_result_subject
       ON ai_result (analysis_type, subject_key, created_at DESC);
+
+    /* Local account (lib/auth.ts). This is a single-user, local-first product:
+     * the "account" exists so the terminal can greet its owner, protect the
+     * demo flow (UAA_AUTH_GATE=on), and hold profile fields — it is not a
+     * multi-tenant boundary. Credentials never leave this database, which is
+     * gitignored (/data). password_hash is scrypt, formatted
+     * "scrypt:N:r:p:salthex:keyhex"; the adapter owns that format. */
+    CREATE TABLE IF NOT EXISTS user (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      email         TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      display_name  TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL
+    );
+    /* Server-side sessions. The cookie carries an opaque random token; only
+     * its SHA-256 lands here, so a leaked database (or backup) cannot be
+     * replayed as a cookie. Expiry is enforced on read AND swept on write. */
+    CREATE TABLE IF NOT EXISTS auth_session (
+      token_hash TEXT PRIMARY KEY,
+      user_id    INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_auth_session_user ON auth_session (user_id);
   `);
   // The valuation case names its methodology rather than leaving "DCF" implicit.
   // ADD COLUMN with a NOT NULL DEFAULT backfills every prior row to the only
@@ -3441,4 +3467,97 @@ export function putAiResult(
   db.prepare(
     `DELETE FROM ai_result WHERE analysis_type = ? AND subject_key = ? AND input_hash != ? AND created_at < ?`,
   ).run(key.analysisType, key.subjectKey, key.inputHash, Date.now() - 7 * 24 * 60 * 60 * 1000);
+}
+
+/* ── Local account & sessions (lib/auth.ts is the only intended caller) ──── */
+
+export interface UserRow {
+  id: number;
+  email: string;
+  displayName: string;
+  passwordHash: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface UserDbRow {
+  id: number;
+  email: string;
+  display_name: string;
+  password_hash: string;
+  created_at: number;
+  updated_at: number;
+}
+
+function mapUser(row: UserDbRow): UserRow {
+  return {
+    id: row.id,
+    email: row.email,
+    displayName: row.display_name,
+    passwordHash: row.password_hash,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function getUserByEmail(email: string): UserRow | null {
+  const row = getDb().prepare("SELECT * FROM user WHERE email = ?").get(email.trim()) as
+    unknown as UserDbRow | undefined;
+  return row ? mapUser(row) : null;
+}
+
+export function getUserById(id: number): UserRow | null {
+  const row = getDb().prepare("SELECT * FROM user WHERE id = ?").get(id) as
+    unknown as UserDbRow | undefined;
+  return row ? mapUser(row) : null;
+}
+
+/** Throws on duplicate email (SQLite UNIQUE) — the API route maps that to 409. */
+export function createUser(email: string, displayName: string, passwordHash: string): UserRow {
+  const now = Date.now();
+  const res = getDb().prepare(
+    "INSERT INTO user (email, display_name, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+  ).run(email.trim(), displayName.trim(), passwordHash, now, now);
+  return getUserById(Number(res.lastInsertRowid))!;
+}
+
+export function updateUserProfile(id: number, patch: { email?: string; displayName?: string }): void {
+  const sets: string[] = ["updated_at = ?"];
+  const params: (string | number)[] = [Date.now()];
+  if (patch.email !== undefined) { sets.push("email = ?"); params.push(patch.email.trim()); }
+  if (patch.displayName !== undefined) { sets.push("display_name = ?"); params.push(patch.displayName.trim()); }
+  params.push(id);
+  getDb().prepare(`UPDATE user SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+}
+
+export function updateUserPassword(id: number, passwordHash: string): void {
+  getDb().prepare("UPDATE user SET password_hash = ?, updated_at = ? WHERE id = ?")
+    .run(passwordHash, Date.now(), id);
+}
+
+export function createAuthSession(tokenHash: string, userId: number, expiresAt: number): void {
+  const db = getDb();
+  db.prepare("INSERT INTO auth_session (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
+    .run(tokenHash, userId, Date.now(), expiresAt);
+  // Sweep on write: expired rows are dead weight nothing will ever read again.
+  db.prepare("DELETE FROM auth_session WHERE expires_at < ?").run(Date.now());
+}
+
+/** Resolves a session to its user, enforcing expiry at read time. */
+export function getAuthSessionUser(tokenHash: string): UserRow | null {
+  const row = getDb().prepare(
+    `SELECT u.* FROM auth_session s JOIN user u ON u.id = s.user_id
+     WHERE s.token_hash = ? AND s.expires_at >= ?`,
+  ).get(tokenHash, Date.now()) as unknown as UserDbRow | undefined;
+  return row ? mapUser(row) : null;
+}
+
+export function deleteAuthSession(tokenHash: string): void {
+  getDb().prepare("DELETE FROM auth_session WHERE token_hash = ?").run(tokenHash);
+}
+
+/** Password change invalidates every other session for the user. */
+export function deleteOtherAuthSessions(userId: number, keepTokenHash: string): void {
+  getDb().prepare("DELETE FROM auth_session WHERE user_id = ? AND token_hash != ?")
+    .run(userId, keepTokenHash);
 }
