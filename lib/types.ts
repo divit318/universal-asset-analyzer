@@ -52,6 +52,12 @@ export interface Quote {
   exchange: string | null;
   /** Yahoo Finance quoteType: "EQUITY", "ETF", "CRYPTOCURRENCY", "MUTUALFUND", etc. */
   assetType?: string | null;
+  /** Yahoo marketState at fetch time: "REGULAR" | "CLOSED" | "PRE" | "POST" | … */
+  marketState?: string | null;
+  /** ISO timestamp of the last regular-session trade this quote describes. */
+  regularMarketTime?: string | null;
+  /** IANA timezone of the listing exchange, e.g. "America/New_York". */
+  exchangeTimezone?: string | null;
 }
 
 export interface HistoryPoint {

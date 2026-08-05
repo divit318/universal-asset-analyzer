@@ -43,6 +43,19 @@ interface RawQuote {
   regularMarketVolume?: number;
   fullExchangeName?: string;
   quoteType?: string;
+  marketState?: string;
+  regularMarketTime?: Date | number | string;
+  exchangeTimezoneName?: string;
+}
+
+/** Normalize Yahoo's regularMarketTime (Date | epoch seconds | ISO) to ISO, or null. */
+function toIsoTime(t: Date | number | string | undefined): string | null {
+  if (t == null) return null;
+  if (t instanceof Date) return Number.isNaN(t.getTime()) ? null : t.toISOString();
+  // Yahoo's raw API reports epoch *seconds*; anything parseable as a string passes through.
+  if (typeof t === "number") return Number.isFinite(t) ? new Date(t * (t < 1e12 ? 1000 : 1)).toISOString() : null;
+  const parsed = Date.parse(t);
+  return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
 }
 
 /** Map a raw Yahoo quote into our domain Quote. Pure / testable. */
@@ -71,6 +84,9 @@ export function mapQuote(raw: RawQuote): Quote {
     volume: raw.regularMarketVolume ?? null,
     exchange: raw.fullExchangeName ?? null,
     assetType: raw.quoteType ?? null,
+    marketState: raw.marketState ?? null,
+    regularMarketTime: toIsoTime(raw.regularMarketTime),
+    exchangeTimezone: raw.exchangeTimezoneName ?? null,
   };
 }
 

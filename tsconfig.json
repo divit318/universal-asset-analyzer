@@ -63,6 +63,8 @@
     "playwright-report",
     "test-results",
     "e2e/.tmp",
+    // Standalone audit harnesses (run via tsx, not part of the app build).
+    "audit",
     ".next/cache",
     ".next/build",
     ".next/server",
