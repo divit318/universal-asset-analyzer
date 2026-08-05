@@ -8,7 +8,7 @@ export interface AnalysisInput {
 
 /**
  * Build the LLM prompt from structured market data. Pure so it can be tested
- * without contacting Ollama.
+ * without contacting a model.
  */
 export function buildAnalysisPrompt({ quote, filings }: AnalysisInput): string {
   const recentFilings =
@@ -36,5 +36,5 @@ export function buildAnalysisPrompt({ quote, filings }: AnalysisInput): string {
   ].join("\n");
 }
 
-// HTTP inference lives in lib/ai/ollama.ts (`generate`); the analyzeAsset
-// entry point is lib/ai.ts. This module only builds the prompt.
+// Inference lives behind the AI platform (lib/ai/); the analyzeAsset entry
+// point is lib/ai.ts. This module only builds the prompt.

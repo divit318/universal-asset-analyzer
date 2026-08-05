@@ -2,14 +2,20 @@
 
 Single entry point for every AI request in UAA. Feature code never talks to a
 backend and never names a model — it names a *task*, and the Router picks the
-best model that can actually run it here, falling back automatically if that
-model fails.
+best routable model for it, falling back automatically if that attempt fails.
 
-**Hosted-first, local-fallback.** The Router walks a chain of providers: Devin
-CLI (hosted frontier models) first, Ollama (local) second. Set
-`AI_PROVIDER_ORDER` to reorder or to run one only. The local path is not
-vestigial — it is what keeps UAA working on a plane or logged out, which is the
-product's premise.
+**One backend, bring your own key.** The provider is the Anthropic API
+(`api.anthropic.com`), the model is `claude-opus-5`, and the credential is the
+user's own key — `ANTHROPIC_API_KEY` env var first (demo/CI), then the local
+key file `~/.uaa/anthropic_api_key` saved from `/settings` (see
+`anthropic-key.ts` for the storage/egress guarantees). Per-task reasoning depth
+is expressed as three routable ids — `claude-opus-5-low|-medium|-high` — that
+the provider translates into `output_config.effort` on the wire.
+
+Every number in the product is computed by the deterministic engines; the model
+only narrates. No prompt asks the model to produce, transform, or round a
+figure that reaches the UI, and the grounding layer (`grounding.ts`) verifies
+generated figures against the evidence they were given.
 
 ## Request flow
 
@@ -22,79 +28,73 @@ Orchestrator                              lib/ai/orchestrator.ts
   ▼
 Router                                    lib/ai/router.ts
   │  for each provider, in order:
-  │  1. ELIGIBILITY  available ∧ enabled ∧ fits-in-memory ∧ has required caps
+  │  1. ELIGIBILITY  available ∧ enabled ∧ has required caps
   │  2. SCORE        quality vs speed, weighted by the task's own requirements
   │  3. TIEBREAK     registry priority, then id  (fully deterministic)
-  │  ← provider order lib/ai/config.ts  (AI_PROVIDER_ORDER)
-  │  ← config pins   lib/ai/config.ts  (env / static overrides beat the scorer)
-  │  ← task needs    lib/ai/task-registry.ts
-  │  ← model facts   lib/ai/models.ts
+  │  ← provider chain lib/ai/config.ts  (one entry: anthropic)
+  │  ← config pins    lib/ai/config.ts  (env / static overrides beat the scorer)
+  │  ← task needs     lib/ai/task-registry.ts
+  │  ← model facts    lib/ai/models.ts
   ▼
 AIProvider                                lib/ai/provider.ts
-  ├─ DevinProvider                        lib/ai/providers/devin-provider.ts
-  │    └─ `devin -p` subprocess           lib/ai/devin-cli.ts — the only spawn site
-  └─ OllamaProvider                       lib/ai/providers/ollama-provider.ts
-       └─ Ollama (localhost:11434)        lib/ai/ollama.ts — the only HTTP layer
+  └─ AnthropicProvider                    lib/ai/providers/anthropic-provider.ts
+       └─ api.anthropic.com              explicit baseURL; the user's key;
+                                          real token streaming
 ```
-
-Provider enumeration is **lazy**: Ollama's model list is never fetched when
-Devin answers, because that probe costs an HTTP round trip with a 4s timeout on
-every single request.
 
 ## What each tier routes to
 
-| Task complexity | Model | Measured | Cost |
-|---|---|---|---|
-| `deep` (thesis, filings, IC agents) | `claude-opus-5-medium` | 4-6s | $5/$25 per MTok |
-| `standard` (research, comparison, portfolio) | `claude-sonnet-5-low` | ~5s | $2/$10 |
-| `light` / `interactive` (nl-screener, summaries, chart-QA) | `swe-1-6-fast` | ~3s | $0.3/$1.5 |
+One model, three effort depths. The pin per task complexity
+(`config.ts:TASK_MODEL_PINS`):
 
-For reference, the local models answered the same prompts in 28-115s, and
-serialized: nine concurrent IC-agent calls take ~10s hosted against minutes
-locally. There is a one-off ~5s cost on the first spawn in a server process.
+| Task complexity | Pin (primary → fallback) |
+|---|---|
+| `deep` (thesis, filings, IC agents) | `claude-opus-5-high` → `-medium` |
+| `standard` (research, comparison, portfolio) | `claude-opus-5-medium` → `-low` |
+| `light` / `interactive` (nl-screener, summaries, chart-QA) | `claude-opus-5-low` |
+
+A failing high-effort attempt degrades to a shallower tier of the same model
+rather than to nothing.
 
 Responses are normalized (`response.ts`) into `{ content, confidence,
 reasoningSummary, executionTimeMs, model, provider, tokenUsage, errors,
 metadata }`. No feature code branches on which model answered.
 
-## Two rules that are not style preferences
+## Notes that are not style preferences
 
-**1. Memory is a hard gate, not a ranking penalty.**
-A model whose weights exceed the memory budget does not return a worse answer —
-it thrashes. Measured on a 17GB M4: `qwen3:30b-a3b` (18.6GB) ran at **0.9 tok/s,
-302s for a single completion**, while 4.4GB mistral answered the same prompt at
-10.5 tok/s. An MoE with 3.3B active params "should" have been the fast one;
-fitting in RAM matters more than parameter count does. The budget is derived from
-`os.totalmem()`, so the same registry is correct on a laptop and on a workstation.
+**1. Health checks are key-presence, not paid round trips.** The Router
+health-checks providers on hot paths; the provider answers from
+`resolveApiKey()` and lets the first real request surface auth/network
+failures, which produce far better errors than a probe would.
 
-**2. JSON mode and thinking are mutually exclusive.**
-Qwen3 under `format: "json"` with thinking on returns the literal string `{}` —
-two tokens, 0/3 valid across trials, versus 3/3 with thinking off. `{}` *parses*,
-so this failed completely silently: ~14 tasks were receiving an empty object and
-quietly rendering their fallback state. `router.ts:resolveThinking()` forces
-`think: false` whenever `json` is set, and a test asserts that no task config can
-combine the two.
+**2. JSON mode and thinking are mutually exclusive** at the request level
+(`router.ts:resolveThinking()`), a rule kept from the era of hybrid local
+reasoning models where the combination silently returned `{}`. The Claude
+effort tiers have no per-request thinking toggle — depth rides on the model id
+— so the rule is dormant but still asserted by tests.
 
-Thinking is off everywhere by default: it measured **143s vs 28s (5x)** on
-qwen3:14b for a comparable answer. It is a per-task knob (`thinking: true`), not
-a default.
+**3. The local-provider machinery (memory gate, generation gate, cold-start
+budgets, warm probes) is dormant, not deleted.** It keys off
+`isHostedProvider()` and never runs for the hosted chain. It is the
+provider-agnostic contract a future local runtime would need
+(`ProviderModelInfo.sizeGb`, `AIProvider.isModelWarm`), and the router tests
+exercise it with fake local providers.
 
 ## Where to change what
 
 | To do this... | Edit this | Not this |
 |---|---|---|
-| Change which model a task uses | `config.ts` (`TASK_MODEL_PINS`, or `AI_TASK_<NAME>` env) | any feature module |
+| Change which effort tier a task uses | `config.ts` (`TASK_MODEL_PINS`, or `AI_TASK_<NAME>` env) | any feature module |
 | Add a task | `task-registry.ts` — declare complexity/latency/context/output | — |
 | Add or re-tune a model | `models.ts` (`MODEL_REGISTRY`) | any feature module |
 | Bench a model | `AI_DISABLED_MODELS`, or `enabled: false` | deleting its entry |
-| Change the memory ceiling | `AI_MAX_MODEL_GB` | `router.ts` |
-| Add a provider | new `AIProvider` in `providers/`, added to `PROVIDER_FACTORIES` + `KNOWN_PROVIDERS` | orchestrator, feature code |
-| Reorder / disable a provider | `AI_PROVIDER_ORDER`, or `DEVIN_CLI_DISABLED=1` | `router.ts` |
+| Add a provider | new `AIProvider` in `providers/`, added to `PROVIDER_FACTORIES` (router.ts) + `PROVIDER_CHAIN` (config.ts) + `PROVIDER_LOCALITY` (models.ts) | orchestrator, feature code |
+| Manage the API key | `/settings` in-app, or `ANTHROPIC_API_KEY` | anything that would log it |
 
 A task declares what it *needs*; it never names a model. That indirection is the
 whole point: the previous registry hand-maintained a `preferredModels` list per
 task — 30 copies of one policy — and drifted so far that the top preference of
-every reasoning-heavy task (`deepseek-r1`) was **not even installed**.
+every reasoning-heavy task was **not even installed**.
 
 ## Call shapes
 
@@ -123,25 +123,20 @@ the Router will not silently substitute another one if it fails.
 evidence-grounded chat: context assembly, intent classification, token-budgeted
 retrieval, dossier prompting, session persistence, and post-hoc grounding
 verification. None of that is task routing, so it stays its own layer — but it
-gets its model from the Router and streams through `runTaskChat`, like everything
-else. It no longer calls Ollama directly.
+gets its model from the Router and streams through `runTaskChat`, like
+everything else. It never calls a provider directly.
 
 ## What this layer deliberately does not do
 
-- **No token streaming on the hosted path.** `devin -p` buffers the whole
-  answer, so `DevinProvider.stream()` yields exactly one chunk. It still beats
-  Ollama's *first* token by a wide margin. `devin acp` (JSON-RPC over stdio) is
-  the upgrade path if real deltas turn out to matter.
-- **No sampling controls on the hosted path.** Print mode exposes no
-  temperature, top-p or max-tokens. The Router still computes them; the Devin
-  provider accepts and ignores them rather than pretending otherwise.
-- **No chain-of-thought from hosted models.** Their reasoning never reaches
-  stdout, so `reasoning` is `""` — not a summary fabricated from the answer.
+- **No temperature on the wire.** `claude-opus-5` does not accept the field;
+  the provider accepts the Router's computed value and deliberately ignores it
+  rather than pretending otherwise.
 - **No mass prompt migration.** `prompts/` centralizes the shared JSON
   directives. The ~20 hand-tuned feature prompts stay next to their features:
   they are schema-specific, not duplicated templates, and rewording them is a
   quality-sensitive change that needs per-model evaluation.
-- **No two-phase reason-then-format.** Deep JSON tasks therefore cannot use
-  thinking at all. Doing it properly means reasoning in prose then formatting in
-  a second pass — roughly double the latency, and it needs its own evaluation.
 - **No persisted health state.** `health.ts` is in-memory, per-process.
+- **No key exposure.** The key is read by `anthropic-key.ts`, sent to
+  `api.anthropic.com` (explicit `baseURL` — a stray `ANTHROPIC_BASE_URL` env
+  var cannot redirect it), and appears in no log line, no error message, and
+  no API response (`/api/settings/ai-key` reports presence only).

@@ -10,9 +10,9 @@
  *   - **three concurrent `/api/ai/verdict` requests**, because the effect keyed
  *     on a portfolio-fit value that transitions `null → score` as the IOS
  *     profile loads, and nothing aborted the superseded requests;
- *   - **three full local inferences**, because Ollama serializes generations, so
- *     the duplicates did not race — they queued, and the total wait became the
- *     sum of all three (~4 minutes to first content);
+ *   - **three full inferences**, because the then-local backend serialized
+ *     generations, so the duplicates did not race — they queued, and the total
+ *     wait became the sum of all three (~4 minutes to first content);
  *   - a 210px shimmer in the most valuable position on the page for that entire
  *     time, with no partial output.
  *
@@ -240,7 +240,7 @@ export function useVerdictStream(
     ? {
         ...EMPTY_VERDICT,
         ...state.fields,
-        model: state.model ?? "ollama",
+        model: state.model ?? "unavailable",
         generatedAt: state.fields.generatedAt ?? new Date(0).toISOString(),
       }
     : null;

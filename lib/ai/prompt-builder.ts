@@ -3,8 +3,8 @@
  *
  * Separates system (identity/rules), developer (task-specific instructions
  * layered on top of the identity), and user (the actual request/data) so no
- * feature module concatenates ad hoc strings by hand. Ollama's wire protocol
- * only has system/user/assistant roles (no "developer" turn), so a developer
+ * feature module concatenates ad hoc strings by hand. Chat wire protocols
+ * typically have only system/user/assistant roles (no "developer" turn), so a developer
  * section is folded into the system turn, clearly delimited — templates
  * still author it separately, which is what keeps it reusable/testable
  * independent of a specific model's chat protocol.

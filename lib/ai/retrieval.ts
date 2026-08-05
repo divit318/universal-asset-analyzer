@@ -268,7 +268,7 @@ export function buildBlocks(ctx: CompanyContext): ContextBlock[] {
 
   // Movement Explainer — only if already cached (MovementExplainerCard's
   // autoLoad on Research already populates this); never trigger a fresh
-  // Ollama generation mid-chat just to populate context.
+  // model generation mid-chat just to populate context.
   try {
     const cached = getScannerCache(`movement:symbol:${ctx.symbol}:5`);
     if (cached) {

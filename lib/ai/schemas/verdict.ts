@@ -1,15 +1,15 @@
 /**
  * Investment Verdict — the first Zod-defined analysis schema.
  *
- * Single source of truth for the shape a Devin sessions-API verdict must
- * satisfy: the Zod object validates at runtime (client-side, belt over the
- * API's server-side braces) and compiles to the Draft-7 JSON Schema the
- * sessions API requires via `z.toJSONSchema(…, { target: "draft-7" })`.
+ * Single source of truth for the shape a structured verdict must satisfy:
+ * the Zod object validates at runtime, and the wire view compiles to Draft-7
+ * JSON Schema via `z.toJSONSchema(…, { target: "draft-7" })` should a
+ * structured-output wire format need it.
  *
  * Deliberately mirrors lib/ai/verdict.ts's InvestmentVerdict fields that the
- * UI renders, WITHOUT replacing that interface yet — the CLI/Ollama paths keep
- * their existing extractJsonObject defaults until Phase 5 migrates them. Keep
- * the two in sync; the golden harness diffs them field by field.
+ * UI renders, WITHOUT replacing that interface yet — the chain path keeps its
+ * existing extractJsonObject defaults. Keep
+ * the two in sync.
  *
  * SCHEMA_VERSION participates in every cache/idempotency key: bump it on ANY
  * shape change, or cached rows validated against the old shape would be served

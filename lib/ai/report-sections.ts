@@ -7,9 +7,9 @@
  * can be produced and streamed independently. I built that first and measured
  * it, and it is the wrong design *for this platform*:
  *
- *   - Local Ollama **serializes** requests (measured: three concurrent
- *     generations take as long as three sequential ones — 1.13x, not 3x). So
- *     nine independent section generations cost ~9x one generation.
+ *   - The then-local backend **serialized** requests (measured: three
+ *     concurrent generations took as long as three sequential ones — 1.13x,
+ *     not 3x). So nine independent section generations cost ~9x one.
  *   - In practice that turned a ~40s report into a 138s report, with the first
  *     section arriving at 32s — barely better than just waiting for the whole
  *     monolithic verdict.

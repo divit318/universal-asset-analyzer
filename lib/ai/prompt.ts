@@ -7,7 +7,7 @@
  * structure. Everything here is pure string assembly so it's fully testable.
  */
 
-import type { ChatTurn } from "./ollama";
+import type { ProviderChatTurn as ChatTurn } from "./provider";
 import type { ChatMessage, ContextBlock } from "./types";
 import type { ResearchAction } from "./actions";
 

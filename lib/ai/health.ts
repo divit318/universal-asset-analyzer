@@ -105,7 +105,7 @@ export function markSuccess(modelId: string): void {
  * Router's `/api/ps` residency probe: that probe is one HTTP round trip
  * taken at one instant, so it can race a genuinely concurrent use of the
  * same model (another request's completion lands right as this probe fires)
- * or simply lag Ollama's own bookkeeping by a beat. Our own very-recent
+ * or simply lag the daemon's own bookkeeping by a beat. Our own very-recent
  * success is stronger, cheaper evidence than a second network call, and
  * costs nothing to check.
  */

@@ -2,17 +2,14 @@
  * ChainAnalysisProvider — one completion through the Router's provider chain.
  *
  * A thin adapter: `runTask` (orchestrator → router → the provider chain) then
- * the shared JSON extraction, then the caller's Zod schema. Since the chain
- * default became hosted-first (2026-08-02), the completion this runs is
- * normally served by a Devin CLI model from TASK_MODEL_PINS, falling back to
- * local Ollama when hosted is unreachable — this adapter neither knows nor
- * cares; the model that answered is in `meta.model`.
+ * the shared JSON extraction, then the caller's Zod schema. The chain is the
+ * Anthropic API today; this adapter neither knows nor cares — the effort tier
+ * that answered is in `meta.model`.
  */
 
 import type { AnalysisProvider, AnalysisRequest, AnalysisResult } from "../analysis-provider";
 import { runTask } from "../orchestrator";
-import { checkHealth } from "../ollama";
-import { checkDevinHealth } from "../devin-cli";
+import { keyStatus } from "../anthropic-key";
 import { extractJson } from "../../json-extract";
 
 export class ChainAnalysisError extends Error {
@@ -29,11 +26,13 @@ export class ChainAnalysisProvider implements AnalysisProvider {
   readonly id = "chain" as const;
 
   async healthCheck(): Promise<{ reachable: boolean; detail?: string }> {
-    const [devin, ollama] = await Promise.all([checkDevinHealth(), checkHealth()]);
-    const reachable = devin.reachable || ollama.reachable;
+    // Key presence, not a paid round trip — the same policy as the provider's
+    // own healthCheck (see anthropic-provider.ts): the first real request
+    // surfaces auth/network failures with a far better error than a probe.
+    const { configured } = keyStatus();
     return {
-      reachable,
-      detail: reachable ? undefined : "neither the Devin CLI nor the Ollama daemon is reachable",
+      reachable: configured,
+      detail: configured ? undefined : "no Anthropic API key is configured (add one in Settings)",
     };
   }
 

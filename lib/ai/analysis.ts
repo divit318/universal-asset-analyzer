@@ -5,12 +5,11 @@
  *   enqueueAnalysis(req, opts)       async: job row → provider → cache; poll
  *                                    /api/ai/jobs/[id] for pending→ready UIs
  *
- * Provider choice is resolveProvider's job (env flag + guardrail); caching is
+ * Provider choice is resolveProvider's job (one runtime today); caching is
  * the ai_result table keyed (analysis_type, subject, input_hash,
  * schema_version); in-process single-flight is lib/platform/dedup.ts — the
  * same coalescer the orchestrator uses, so a concurrent identical request
- * attaches rather than re-running. After every Devin run the session sweeper
- * gets a (self-rate-limited) kick — amendment 1's backstop.
+ * attaches rather than re-running.
  */
 
 import {
@@ -22,8 +21,6 @@ import {
   type AnalysisResult,
 } from "./analysis-provider";
 import { chainAnalysisProvider } from "./providers/chain-analysis";
-import { devinAnalysisProvider } from "./providers/devin/provider";
-import { sweepStaleSessions } from "./providers/devin/sweeper";
 import { dedupe } from "../platform/dedup";
 import {
   getAiJob, getAiResult, putAiResult, updateAiJob, upsertAiJob,
@@ -39,7 +36,7 @@ export interface RunAnalysisOptions {
 }
 
 function providerFor(id: AnalysisProviderId, opts?: RunAnalysisOptions): AnalysisProvider {
-  return opts?.providers?.[id] ?? (id === "sessions" ? devinAnalysisProvider : chainAnalysisProvider);
+  return opts?.providers?.[id] ?? chainAnalysisProvider;
 }
 
 function cacheKeyOf<T>(req: AnalysisRequest<T>) {
@@ -63,10 +60,9 @@ export function readCachedAnalysis<T>(
     const parsed = req.schema.safeParse(JSON.parse(row.resultJson));
     if (!parsed.success) return null;
     const meta = row.metaJson ? (JSON.parse(row.metaJson) as AnalysisResult<T>["meta"]) : { durationMs: 0 };
-    // Rows written before the 2026-08-02 rename carry the legacy ids; map them.
-    const provider: AnalysisProviderId =
-      row.provider === "devin" || row.provider === "sessions" ? "sessions" : "chain";
-    return { data: parsed.data, provider, meta };
+    // Rows written by retired runtimes ("devin"/"sessions"/"ollama") stay
+    // readable; everything maps onto the one runtime left.
+    return { data: parsed.data, provider: "chain", meta };
   } catch {
     return null;
   }
@@ -75,17 +71,13 @@ export function readCachedAnalysis<T>(
 async function execute<T>(req: AnalysisRequest<T>, opts?: RunAnalysisOptions): Promise<AnalysisResult<T>> {
   const providerId = resolveProvider(req.taskType);
   const provider = providerFor(providerId, opts);
-  try {
-    const result = await provider.run(req);
-    putAiResult(cacheKeyOf(req), {
-      provider: result.provider,
-      metaJson: JSON.stringify(result.meta),
-      resultJson: JSON.stringify(result.data),
-    });
-    return result;
-  } finally {
-    if (providerId === "sessions") void sweepStaleSessions().catch(() => {});
-  }
+  const result = await provider.run(req);
+  putAiResult(cacheKeyOf(req), {
+    provider: result.provider,
+    metaJson: JSON.stringify(result.meta),
+    resultJson: JSON.stringify(result.data),
+  });
+  return result;
 }
 
 /** Blocking run: fresh cache hit → provider → persist. */
@@ -111,9 +103,7 @@ export interface JobHandle {
  * Async-first entry: record a durable job row, kick the work off in-process
  * (attached to the platform job registry), return immediately. UIs poll
  * GET /api/ai/jobs/[jobId]. Restart recovery: a `running` row whose driver
- * died re-executes on the next enqueue with the same idempotency key — the
- * Devin provider then re-attaches to the live tagged session instead of
- * creating a second one.
+ * died re-executes on the next enqueue with the same idempotency key.
  */
 export function enqueueAnalysis<T>(req: AnalysisRequest<T>, opts: RunAnalysisOptions = {}): JobHandle {
   const inputHash = analysisInputHash(req.prompt);
@@ -125,8 +115,7 @@ export function enqueueAnalysis<T>(req: AnalysisRequest<T>, opts: RunAnalysisOpt
   const existing = getAiJob(jobId);
   if (existing && (existing.status === "pending" || existing.status === "running")) {
     // Durable single-flight: dedupe coalesces in-process; if the driver died
-    // with a previous process, this re-kicks it and the Devin provider
-    // re-attaches to the live tagged session instead of creating a second.
+    // with a previous process, this re-kicks it under the same idempotency key.
     void dedupe(jobId, () => driveJob(jobId, req, opts)).catch(() => {});
     return { jobId, status: existing.status };
   }

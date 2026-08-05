@@ -30,7 +30,7 @@ import type { PortfolioFacts } from "./facts";
 import { collectClaimText, verifyGrounding, type GroundingReport } from "./grounding";
 import type { CompanyContext } from "./types";
 import type { TaskType } from "./task-registry";
-import { runPrompt } from "../ai";
+import { runPromptWithMeta } from "../ai";
 import { getDataset, peekDataset } from "../platform/data-layer";
 import { writeCache } from "../platform/cache";
 import { cacheKey } from "../platform/registry";
@@ -56,7 +56,7 @@ export interface InvestmentVerdict {
   timeHorizon: "short-term" | "medium-term" | "long-term";
   keyMetrics: Array<{ label: string; value: string; signal: "positive" | "negative" | "neutral" }>;
   /** Verification that the verdict's figures trace back to the source data.
-   *  Absent when Ollama was offline (nothing was generated to verify). */
+   *  Absent when the AI was unavailable (nothing was generated to verify). */
   grounding?: GroundingReport;
   model: string;
   generatedAt: string;
@@ -81,7 +81,7 @@ export interface VerdictPlan {
   prompt: string;
   /** The fact block the grounding check verifies generated claims against. */
   evidence: string;
-  /** Used verbatim when generation fails (Ollama offline, unparseable output). */
+  /** Used verbatim when generation fails (AI unavailable, unparseable output). */
   fallback: {
     verdict: InvestmentVerdict["verdict"];
     name: string;
@@ -243,9 +243,9 @@ export async function generateVerdict(
   opts: { signal?: AbortSignal } = {},
 ): Promise<InvestmentVerdict> {
   try {
-    const raw = await runPrompt(plan.task, plan.prompt, { json: true, maxTokens: 800 });
+    const { text: raw, model } = await runPromptWithMeta(plan.task, plan.prompt, { json: true });
     if (opts.signal?.aborted) return offlineVerdict(plan);
-    return assembleVerdict(plan, parseVerdictFields(raw), "ollama");
+    return assembleVerdict(plan, parseVerdictFields(raw), model);
   } catch {
     return offlineVerdict(plan);
   }
@@ -256,13 +256,13 @@ export async function generateVerdict(
 /* -------------------------------------------------------------------------- */
 
 /**
- * A verdict was generated while Ollama was unreachable.
+ * A verdict was generated while the AI was unavailable.
  *
  * Thrown so the cache layer treats it as a failure and does NOT persist it. The
  * platform's rule is "failures are never cached", and it matters more here than
- * anywhere else: caching the offline fallback would pin "Start Ollama to
- * generate the AI investment verdict" on screen for six hours after Ollama had
- * already come back up.
+ * anywhere else: caching the offline fallback would pin the "AI unavailable"
+ * verdict on screen for six hours after the user had already fixed the cause
+ * (e.g. added their API key).
  */
 class VerdictUnavailableError extends Error {
   constructor(readonly fallback: InvestmentVerdict) {

@@ -5,8 +5,8 @@
  * catch block commented "AI unavailable" in ai-compare.ts and friends) or
  * logged as a raw `console.error(err)` — a stack trace with no way to tell,
  * from the server log alone, whether a given failure was an environment
- * problem (Ollama unreachable, a model still cold-loading under memory
- * pressure), an application bug (a response that didn't parse), or expected
+ * problem (no API key configured, the AI service unreachable), an
+ * application bug (a response that didn't parse), or expected
  * degraded service (every candidate model exhausted). Grepping "AI" told you
  * something happened; it never told you what kind of thing.
  *
@@ -21,6 +21,9 @@ export type AiLogCategory =
   | "success"
   | "cancelled"
   | "timeout"
+  | "no_api_key"
+  | "bad_api_key"
+  | "rate_limited"
   | "network"
   | "model_missing"
   | "all_models_failed"
@@ -33,7 +36,7 @@ export interface AiLogEvent {
   /** The TaskType (e.g. "comparison") or a feature-level label when there's no TaskType (e.g. "grounding"). */
   taskType: string;
   model?: string;
-  /** Whether the model had to cold-load before answering — see lib/ai/ollama.ts's isModelResident. */
+  /** Whether the model had to cold-load before answering — local providers only; always false for hosted. */
   coldStart?: boolean;
   durationMs?: number;
   /** Time spent waiting at the generation gate before the attempt began — see lib/ai/gate.ts. */
@@ -44,8 +47,16 @@ export interface AiLogEvent {
 
 /** Categories that represent a real problem worth a server operator's attention. */
 const ERROR_LEVEL = new Set<AiLogCategory>(["all_models_failed", "invalid_response", "unknown"]);
-/** Categories that are informative but expected in normal operation (a slow host, a cold model). */
-const WARN_LEVEL = new Set<AiLogCategory>(["timeout", "network", "model_missing", "grounding"]);
+/** Categories that are informative but expected in normal operation (a slow host, a missing key). */
+const WARN_LEVEL = new Set<AiLogCategory>([
+  "timeout",
+  "no_api_key",
+  "bad_api_key",
+  "rate_limited",
+  "network",
+  "model_missing",
+  "grounding",
+]);
 
 /**
  * Emit one structured line. Deliberately synchronous `console.*` (no queue,

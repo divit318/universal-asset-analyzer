@@ -20,7 +20,7 @@
  * not just the copilot.
  *
  * Everything here is pure and dependency-free so it is trivially unit-testable
- * and runs offline (no Ollama, no network) as a regression net.
+ * and runs offline (no model, no network) as a regression net.
  *
  * Design bias: a *false* "unsupported" (flagging a correct number as fabricated)
  * erodes trust in the verifier itself, so the matcher is deliberately tolerant —

@@ -38,9 +38,8 @@ import {
   type ModelSpec,
   type ProviderId,
 } from "./models";
-import { isCallerAbort, isTimeout } from "./ollama";
-import { DevinProvider } from "./providers/devin-provider";
-import { OllamaProvider } from "./providers/ollama-provider";
+import { isCallerAbort, isTimeout } from "./aborts";
+import { AnthropicProvider } from "./providers/anthropic-provider";
 import type { AIProvider, ProviderChatTurn, ProviderModelInfo } from "./provider";
 import { normalizeResponse, type AIResponse } from "./response";
 import {
@@ -52,19 +51,17 @@ import {
 } from "./task-registry";
 
 const PROVIDER_FACTORIES: Record<ProviderId, () => AIProvider> = {
-  devin: () => new DevinProvider(),
-  ollama: () => new OllamaProvider(),
+  anthropic: () => new AnthropicProvider(),
 };
 
 let providerCache: { key: string; providers: AIProvider[] } | null = null;
 
 /**
- * The provider chain, best first. Order comes from config so it is an env
- * change, not a code change (AI_PROVIDER_ORDER).
+ * The provider chain, best first. Order comes from config (one entry today)
+ * so adding a provider is a config + factory change, not a Router change.
  *
- * Instances are cached because providers hold caches of their own — Devin's
- * model catalogue in particular costs a process spawn to populate, and a fresh
- * instance per request would throw that away every time.
+ * Instances are cached because a provider may hold caches of its own; a fresh
+ * instance per request would throw those away every time.
  */
 export function defaultProviders(): AIProvider[] {
   const order = providerOrder();
@@ -275,7 +272,7 @@ function settingsFor(task: TaskConfig, model: string, request: RouteRequest) {
     timeoutMs: request.timeoutMs ?? task.timeoutMs ?? spec.timeoutMs,
     json,
     // Only pay for a large KV cache on tasks that declared they need one;
-    // otherwise let Ollama use its default window. On a memory-tight host an
+    // otherwise let the provider use its default window. On a memory-tight host an
     // unnecessary 32k context is real RAM taken from the weights.
     numCtx: task.contextTokens ? Math.min(task.contextTokens, spec.contextWindow) : undefined,
     thinking: resolveThinking(task, spec, json),
@@ -316,19 +313,19 @@ function widenForColdStart(model: string, timeoutMs: number): number {
   return Math.min(Math.round(timeoutMs * COLD_START_MULTIPLIER), COLD_START_MAX_MS);
 }
 
-/** How recent a local success has to be to override a "cold" probe result — just under Ollama's 5-minute default `keep_alive`, so it can't outlive the window the model is actually likely to still be resident. */
+/** How recent a local success has to be to override a "cold" probe result — just under a local daemon's typical 5-minute default `keep_alive`, so it can't outlive the window the model is actually likely to still be resident. */
 const RECENT_SUCCESS_WINDOW_MS = 4 * 60_000;
 
 /**
  * Is `model` already resident? Combines two independent signals rather than
  * trusting either alone:
  *
- *   1. The provider's best-effort probe (Ollama's `/api/ps`) — one HTTP
- *      round trip at one instant.
+ *   1. The provider's best-effort probe ({@link AIProvider.isModelWarm}) —
+ *      one round trip at one instant.
  *   2. Whether THIS process itself completed a call to this exact model
  *      very recently (see health.ts's `recentSuccessWithinMs`) — free, and
  *      immune to the probe racing a genuinely concurrent use or lagging
- *      Ollama's own bookkeeping by a beat.
+ *      the daemon's own bookkeeping by a beat.
  *
  * "Assume warm" (`true`) whenever there's no real information at all — no
  * provider capability, or the probe itself failed — which is also what the
@@ -354,8 +351,8 @@ async function isWarm(provider: AIProvider, model: string): Promise<boolean> {
  * How long to keep the model resident after answering.
  *
  * Cold load, not generation, is what makes a local model feel broken: measured
- * on this host, a 4.4GB model took 69.6s to load and 0.4s to answer. Ollama
- * evicts after five idle minutes by default, so a task the user reaches
+ * on a 17GB host, a 4.4GB model took 69.6s to load and 0.4s to answer. A
+ * local daemon evicts after a few idle minutes by default, so a task the user reaches
  * occasionally pays that load almost every time — and an `interactive` task,
  * whose entire budget is 45s, then cannot finish however small the question.
  *
@@ -364,7 +361,7 @@ async function isWarm(provider: AIProvider, model: string): Promise<boolean> {
  * runs once an hour. This is the reason a warm assistant answers in ~1s.
  *
  * Background/standard work now holds the model for 10 minutes rather than
- * accepting Ollama's 5-minute default: a multi-stage pipeline (the Wire scan,
+ * accepting the typical 5-minute default: a multi-stage pipeline (the Wire scan,
  * an IC report) issues its calls back-to-back, but a single interleaved
  * interactive request on a memory-tight host evicts the pipeline's model and
  * the next stage pays a cold load mid-scan (observed 2026-07-31: a mid-scan
@@ -378,11 +375,11 @@ function keepAliveFor(task: TaskConfig): string | undefined {
 /**
  * The ordered (provider, model) attempts for a task.
  *
- * A generator, and that is the point: enumerating a provider costs a round
- * trip — Ollama's `/api/tags` has a 4s timeout, Devin's catalogue a process
- * spawn — and the whole reason Devin is first is that we want to *not* pay
- * Ollama's when Devin answers. Building the full list eagerly would charge
- * every request for a daemon that, on a working setup, is never used.
+ * A generator, and that is the point: enumerating a provider can cost a round
+ * trip, and with more than one provider in the chain the whole reason the
+ * first is first is that we want to *not* pay the second's enumeration when
+ * the first answers. Building the full list eagerly would charge every
+ * request for a backend that, on a working setup, is never used.
  *
  * An explicit `model` override is still honored strictly: it is matched
  * against each provider in order and, if no provider claims it, attempted on
@@ -483,7 +480,7 @@ export async function route(
     let attemptStartedAt = queuedAt;
     try {
       // Wait for the generation gate BEFORE starting the attempt's clock:
-      // Ollama serializes generations, so a deadline that starts at enqueue
+      // a local daemon serializes generations, so a deadline that starts at enqueue
       // races the queue rather than the model — measured burning a full 300s
       // budget while waiting, then aborting having never generated a token.
       const release = local ? await acquireGenerationSlot(request.signal) : null;
@@ -539,7 +536,7 @@ export async function route(
       // health (a cooldown here would penalize a perfectly good model for
       // the user having changed their mind) and never fall back (nobody is
       // waiting for any answer any more, and continuing would just occupy
-      // Ollama, which serializes generations and so delays everyone else's
+      // a serializing local daemon and so delay everyone else's
       // queue behind a zombie request).
       if (isCallerAbort(err)) throw err;
 
@@ -606,9 +603,9 @@ export async function* routeStream(
     let attemptStartedAt = queuedAt;
     try {
       // Same gate as route(): the deadline must race the model, not the queue.
-      // The slot is held for the whole stream — Ollama is busy until the last
-      // token, so releasing earlier would only let a second request pile up
-      // behind this one inside Ollama where its timeout can't see the queue.
+      // The slot is held for the whole stream — a local daemon is busy until the
+      // last token, so releasing earlier would only let a second request pile up
+      // behind this one inside the daemon where its timeout can't see the queue.
       const release = local ? await acquireGenerationSlot(request.signal) : null;
       try {
         if (local) warm = await isWarm(provider, model);

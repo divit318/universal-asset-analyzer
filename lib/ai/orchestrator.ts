@@ -35,7 +35,7 @@ export interface RunTaskOptions {
   /**
    * Test/DI hook: override which providers are considered. Mirrors the Router's
    * own `providers` option so orchestrator-level behaviour (coalescing) can be
-   * tested without a live Ollama.
+   * tested without a live provider.
    */
   providers?: AIProvider[];
 }
@@ -73,8 +73,8 @@ function fingerprint(taskType: TaskType, messages: ProviderChatTurn[], opts: Run
  * Identical concurrent work is **coalesced**: if the same task with the same
  * messages is already generating, this attaches to it rather than starting a
  * second inference. That matters far more here than for a normal HTTP cache,
- * because Ollama serializes generations — a duplicate does not run in parallel
- * and finish at the same time, it doubles the wall-clock wait for everyone
+ * a duplicate inference is pure spend — and on a serializing local backend it
+ * used to double the wall-clock wait for everyone
  * queued behind it. The research page alone was firing duplicate movement and
  * financial-insight generations that the verdict then had to wait behind.
  */
@@ -171,7 +171,7 @@ export async function runTaskText(
  *
  * Same routing, same fallback, same task registry as {@link runTask} — streaming
  * is a delivery choice, not a separate AI pipeline. Feature code still never
- * names a model or talks to Ollama directly.
+ * names a model or talks to a provider directly.
  *
  * Returns the model that answered (via the generator's return value).
  */
@@ -197,7 +197,7 @@ export async function* runTaskStream(
  *
  * This exists because the two features that needed it — the Research Copilot and
  * the Portfolio audit memo — previously reached past the platform and called
- * Ollama's `streamChat()` themselves, since `runTaskStream(prompt, system)` could
+ * the provider's streaming layer themselves, since `runTaskStream(prompt, system)` could
  * not express a conversation or a reasoning sink. They got model selection right
  * (both called `pickModel`) but skipped the Router's fallback chain and health
  * tracking entirely. Widening the API deleted the reason to bypass it.

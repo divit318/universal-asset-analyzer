@@ -9,7 +9,7 @@ export type ResponseConfidence = "high" | "medium" | "low";
 export interface AIResponse {
   /** The answer text, reasoning markup already stripped. */
   content: string;
-  /** Heuristic confidence — local models don't expose logprobs, so this is a coarse signal, not a probability. */
+  /** Heuristic confidence — providers don't expose logprobs here, so this is a coarse signal, not a probability. */
   confidence: ResponseConfidence;
   /** Truncated chain-of-thought trace, when the model produced one. Null when none. */
   reasoningSummary: string | null;

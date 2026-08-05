@@ -30,8 +30,8 @@ export interface ProviderCompleteRequest {
   numCtx?: number;
   /**
    * How long the provider should keep the model resident after answering.
-   * Provider-agnostic hint; Ollama maps it to `keep_alive`. Omit for the
-   * provider's default.
+   * Provider-agnostic hint for LOCAL runtimes (a daemon's `keep_alive`);
+   * hosted providers ignore it. Omit for the provider's default.
    */
   keepAlive?: string;
   signal?: AbortSignal;
@@ -70,8 +70,8 @@ export interface AIProvider {
    * Best-effort: is `model` already resident, or would this call have to
    * cold-load it first? Optional — a provider that can't answer this simply
    * omits the method, and the Router falls back to assuming every attempt is
-   * warm (today's behavior unchanged). Implemented by {@link OllamaProvider}
-   * via `/api/ps` so the Router can widen the timeout budget specifically for
+   * warm (today's behavior unchanged). Only meaningful for a local runtime
+   * that cold-loads weights; lets the Router widen the timeout budget for
    * a suspected cold load instead of killing a legitimate one prematurely.
    */
   isModelWarm?(model: string): Promise<boolean>;

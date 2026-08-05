@@ -1,8 +1,8 @@
 /**
  * Free-text analysis output (schema v1) — the shape for migrated call sites
  * whose product is prose (financial insight, calendar brief, audit memo…).
- * One field so both providers share a seam: Ollama's raw answer is wrapped
- * as { text }; Devin provides { text } via structured output.
+ * One field so every runtime shares a seam: a raw prose answer is wrapped
+ * as { text }.
  */
 
 import { z } from "zod";

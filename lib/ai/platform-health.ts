@@ -7,19 +7,18 @@
  *
  * ## Why this module exists
  *
- * Four routes used to import Ollama's `checkHealth()` directly and gate their
- * whole feature on it:
+ * Four routes used to import one backend's `checkHealth()` directly and gate
+ * their whole feature on it:
  *
  *   app/api/research/chat/route.ts, app/api/research/context/route.ts,
  *   app/api/portfolio/audit/route.ts, app/api/screener/nl/route.ts
  *
  * That was already a layering violation (they reached past the provider
- * interface to a specific backend), but it was harmless while Ollama was the
- * only backend. The moment a second provider exists it becomes a bug: with
- * Ollama stopped and Devin working perfectly, every one of those routes would
- * return 503 "start Ollama" while the Router sitting right next to them was
- * happily answering. Readiness is a property of the *platform*, not of one
- * daemon.
+ * interface to a specific backend), and the moment a second provider existed
+ * it became a bug: with one backend down and another working perfectly, every
+ * one of those routes returned 503 naming the wrong fix while the Router
+ * sitting right next to them was happily answering. Readiness is a property
+ * of the *platform*, not of one backend.
  */
 
 import { defaultProviders } from "./router";
@@ -43,14 +42,14 @@ export interface PlatformHealth {
 }
 
 /**
- * Health probes are not free (a process spawn for Devin, an HTTP round trip
- * with a 4s timeout for Ollama) and the copilot page fires several readiness
- * checks in quick succession, so results are memoized very briefly.
+ * The copilot page fires several readiness checks in quick succession, so
+ * results are memoized very briefly (the Anthropic check is a key-file read,
+ * but the seam stays probe-agnostic).
  *
  * Successes and failures get *different* lifetimes on purpose. Caching an
- * outage for as long as an all-clear is how "Start Ollama" ends up pinned on
- * screen for a full TTL after the user has already started it — the failure
- * window is therefore short enough that recovery looks immediate.
+ * outage for as long as an all-clear is how a stale "add your API key" ends
+ * up pinned on screen for a full TTL after the user has already added it —
+ * the failure window is therefore short enough that recovery looks immediate.
  */
 const OK_TTL_MS = 30_000;
 const FAIL_TTL_MS = 2_000;

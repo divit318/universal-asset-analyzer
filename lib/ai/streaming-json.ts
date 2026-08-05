@@ -6,9 +6,9 @@
  * before. This is what lets the AI report stream as finished sections without
  * changing anything about how the report is generated.
  *
- * Why this rather than generating each section with its own prompt: local Ollama
- * serializes requests (measured — three concurrent generations take as long as
- * three sequential ones). Nine independent section generations therefore cost
+ * Why this rather than generating each section with its own prompt: a local
+ * backend serializes requests (measured — three concurrent generations took as
+ * long as three sequential ones). Nine independent section generations therefore cost
  * ~9× one generation, which would make the report dramatically *slower* overall
  * while barely improving time-to-first-section. Streaming is only allowed to
  * improve perceived responsiveness, never to cost total quality or time.

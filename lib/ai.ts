@@ -1,22 +1,17 @@
 /**
  * AI façade for single-shot inference — the app-wide entry point.
  *
- * Devin is the primary provider (hosted frontier models via the CLI), with
- * local Ollama as the offline fallback — the Router walks that chain per
- * request (AI_PROVIDER_ORDER; decision 2026-08-02). Every call routes through
- * the Orchestrator (lib/ai/orchestrator.ts), which asks the Router
- * (lib/ai/task-registry.ts + lib/ai/router.ts) which model best fits the
- * given TaskType and falls back automatically if it's unavailable — feature
- * code never names a model or talks to a backend directly.
- *
- * Env vars:
- *   AI_PROVIDER_ORDER — provider chain, best first (default: "devin,ollama")
- *   OLLAMA_HOST       — local Ollama host (default: http://localhost:11434)
+ * The backend is the Anthropic API (claude-opus-5), reached with the user's
+ * own key (lib/ai/anthropic-key.ts). Every call routes through the
+ * Orchestrator (lib/ai/orchestrator.ts), which asks the Router
+ * (lib/ai/task-registry.ts + lib/ai/router.ts) which effort tier best fits
+ * the given TaskType and falls back automatically if it's unavailable —
+ * feature code never names a model or talks to a backend directly.
  */
 
 import type { AiAnalysis } from "./types";
-import type { AnalysisInput } from "./ollama";
-import { buildAnalysisPrompt } from "./ollama";
+import type { AnalysisInput } from "./analysis-prompt";
+import { buildAnalysisPrompt } from "./analysis-prompt";
 import { runTask, runTaskText, type RunTaskOptions } from "./ai/orchestrator";
 import type { TaskType } from "./ai/task-registry";
 
@@ -40,7 +35,7 @@ export async function runPrompt(
     timeoutMs: opts.timeoutMs,
     // Forwarded so a caller that abandons a long multi-stage pipeline (the
     // thematic engine's Cancel button) actually stops the generation instead
-    // of leaving the local model grinding through work nobody will read.
+    // of leaving the model grinding through work nobody will read.
     signal: opts.signal,
   });
 }
