@@ -127,6 +127,76 @@ export function parseModelId(id: string): { model: string; effort: Effort } {
   return { model: id, effort: "high" };
 }
 
+/** Escape hatch for benchmarking the cache's own effect. On unless "off". */
+function promptCacheEnabled(): boolean {
+  return process.env.AI_PROMPT_CACHE !== "off";
+}
+
+const EPHEMERAL = { type: "ephemeral" as const };
+
+type WireTextBlock = { type: "text"; text: string; cache_control?: typeof EPHEMERAL };
+type WireTurn = { role: "user" | "assistant"; content: string | WireTextBlock[] };
+
+/**
+ * Prompt-cache placement — the wire shape for system + turns, with up to two
+ * of the four allowed cache breakpoints:
+ *
+ *   1. The SYSTEM block, always. Below the API's cacheable minimum (~1024
+ *      tokens) a marked block is simply not cached — no write premium, so the
+ *      marker is free insurance; above it, one 1.25× write buys 0.1×-priced
+ *      reads for every request sharing the prefix within the TTL.
+ *   2. The LAST ASSISTANT turn, only in a real multi-turn conversation
+ *      (≥3 turns). In the Copilot layout (dossier → ack → history → question)
+ *      that pins the entire stable prefix — system, dossier, prior turns —
+ *      so each subsequent turn re-reads it at a tenth of the price instead of
+ *      re-paying prefill for the whole session. One-shot calls get NO turn
+ *      breakpoint: their prompts never recur, and a cache write with no
+ *      reader is a pure +25% on the written tokens.
+ *
+ * Marking never changes a single prompt byte — placement only. Exported for
+ * tests.
+ */
+export function buildCachedPrompt(messages: ProviderCompleteRequest["messages"]): {
+  system: WireTextBlock[] | undefined;
+  turns: WireTurn[];
+} {
+  const systemText = messages
+    .filter((m) => m.role === "system")
+    .map((m) => m.content)
+    .join("\n\n");
+  const turns: WireTurn[] = messages
+    .filter((m) => m.role !== "system")
+    .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+  if (turns.length === 0 || turns[0].role !== "user") {
+    turns.unshift({ role: "user", content: systemText ? "Proceed." : "Hello." });
+  }
+
+  if (!promptCacheEnabled()) {
+    return { system: systemText ? [{ type: "text", text: systemText }] : undefined, turns };
+  }
+
+  const system: WireTextBlock[] | undefined = systemText
+    ? [{ type: "text", text: systemText, cache_control: EPHEMERAL }]
+    : undefined;
+
+  if (turns.length >= 3) {
+    // Last assistant turn = end of the conversation's stable prefix (the final
+    // turn is the new question and changes every call).
+    for (let i = turns.length - 1; i >= 0; i--) {
+      const turn = turns[i];
+      if (turn.role === "assistant" && typeof turn.content === "string") {
+        turns[i] = {
+          role: "assistant",
+          content: [{ type: "text", text: turn.content, cache_control: EPHEMERAL }],
+        };
+        break;
+      }
+    }
+  }
+
+  return { system, turns };
+}
+
 export class AnthropicProvider implements AIProvider {
   readonly id = "anthropic" as const;
 
@@ -160,16 +230,8 @@ export class AnthropicProvider implements AIProvider {
 
   private buildParams(request: ProviderCompleteRequest) {
     const { model, effort } = parseModelId(request.model);
-    const system = request.messages
-      .filter((m) => m.role === "system")
-      .map((m) => m.content)
-      .join("\n\n");
-    const turns = request.messages
-      .filter((m) => m.role !== "system")
-      .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
-    if (turns.length === 0 || turns[0].role !== "user") {
-      turns.unshift({ role: "user", content: system ? "Proceed." : "Hello." });
-    }
+    // Prompt-cache breakpoints ride on the wire shape; see buildCachedPrompt.
+    const { system, turns } = buildCachedPrompt(request.messages);
 
     return {
       model,
