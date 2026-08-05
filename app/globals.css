@@ -53,6 +53,10 @@
 
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  /* The judgment serif (brand book §4, "--font-judgment"): marketing headlines
+     and judgment prose only — never UI chrome, never tables. Exposed as the
+     `font-serif` utility. */
+  --font-serif: var(--font-source-serif), Georgia, serif;
 
   /* Radius scale — named by role, not size */
   --radius-control: 0.5rem;   /* buttons, inputs, small chips */
