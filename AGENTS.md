@@ -302,10 +302,22 @@ Run these before considering any change complete:
 
 ```bash
 npx tsc --noEmit          # must be silent
-npx vitest run            # 1715 tests as of the 2026-07-28 watchlist Phase 2 audit
+npx vitest run            # 2719 tests as of the 2026-08-06 AI platform hardening
 npx eslint app lib        # see "known pre-existing" below
 npm run build             # catches Server/Client boundary errors tsc misses
 ```
+
+**For AI-layer changes specifically** (routing, prompts, provider, schemas):
+
+```bash
+npx tsx scripts/ai-eval.ts          # golden workflow cases, live (needs a key; ~$0.05/run)
+npx tsx scripts/ai-bench.ts --suite cache   # prompt-cache write→read + TTFT verification
+```
+
+A model swap or effort-tier repin must pass `ai-eval` (use `--model` to gate
+the candidate) BEFORE the pin changes. Live spend, latency, cache-hit rate
+and fallback depth are on `/dev/ai` (the `ai_call` ledger — see
+`lib/ai/ARCHITECTURE.md` "Instrumentation").
 
 **Known pre-existing lint issues** (do not "fix" as a drive-by, and do not treat
 as a regression you caused):
