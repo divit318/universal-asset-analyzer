@@ -192,7 +192,7 @@ test.describe("landing performance & SEO (Milestone 6)", () => {
   test("exposes landing-specific title and social meta", async ({ page }) => {
     await page.goto("/landing");
     await expect(page).toHaveTitle("Universal Asset Analyzer — The AI Terminal for Investors");
-    await expect(page.locator('head meta[name="description"]')).toHaveAttribute("content", /local AI/);
+    await expect(page.locator('head meta[name="description"]')).toHaveAttribute("content", /local database you own/);
     await expect(page.locator('head meta[property="og:title"]')).toHaveAttribute("content", /Universal Asset Analyzer/);
   });
 
@@ -223,7 +223,7 @@ test.describe("landing content finalization (Milestone 7)", () => {
     await page.goto("/landing");
 
     await expect(
-      page.locator("section#privacy").getByRole("heading", { name: "100% Local. 100% Private." }),
+      page.locator("section#privacy").getByRole("heading", { name: "Local-first. Your data stays yours." }),
     ).toBeVisible();
 
     const pricing = page.locator("section#pricing");
@@ -233,7 +233,9 @@ test.describe("landing content finalization (Milestone 7)", () => {
     // Comparison table has real table semantics and a highlighted UAA column.
     const comparison = page.locator("section#comparison");
     await expect(comparison.getByRole("columnheader", { name: "UAA" })).toBeVisible();
-    await expect(comparison.getByRole("rowheader", { name: "Runs 100% locally" })).toBeVisible();
+    await expect(
+      comparison.getByRole("rowheader", { name: "Local-first: your data on your device" }),
+    ).toBeVisible();
 
     await expect(
       page.locator("section#cta").getByRole("heading", { name: /Professional investing doesn.t require ten tools/ }),
@@ -244,7 +246,7 @@ test.describe("landing content finalization (Milestone 7)", () => {
     await page.goto("/landing");
     const faq = page.locator("section#faq");
 
-    const answer = faq.getByText(/Local models via Ollama/);
+    const answer = faq.getByText(/Claude \(Anthropic\) via your own API key/);
     await expect(answer).toBeHidden(); // closed <details> by default
     await faq.getByText("What AI does it use?").click();
     await expect(answer).toBeVisible();
@@ -254,7 +256,40 @@ test.describe("landing content finalization (Milestone 7)", () => {
     await page.goto("/landing");
     // Every IA section now has a real component — the skeleton marker is gone.
     await expect(page.getByText("Section placeholder")).toHaveCount(0);
-    // Copy was corrected to the local-Ollama reality (reconciliation §A3).
+    // Copy was corrected to what actually ships (Claude on the user's own key).
     await expect(page.getByText(/OpenAI/)).toHaveCount(0);
+  });
+
+  test("F-01 guard: every retired false-locality claim stays retired", async ({ page }) => {
+    // Each of these phrases shipped once (pre-demo audit F-01/F-03) while the
+    // app verifiably sent prompts to a hosted model. They were replaced with
+    // claims that are true — "local-first data, hosted AI on your own key" —
+    // and none may regress on any landing surface.
+    await page.goto("/landing");
+    const html = await page.content();
+    const RETIRED: RegExp[] = [
+      /never leaves your computer/i,
+      /never leaves the device/i,
+      /never leaves this machine/i,
+      /never uploads your data/i,
+      /Runs 100% on your computer/i,
+      /Runs 100% locally/i,
+      /100% Local\. 100% Private\./i,
+      /runs entirely on your machine/i,
+      /running entirely on your computer/i,
+      /powered by local AI/i,
+      /\ball on your computer\b/i,
+      /no cloud/i,
+      /no API keys? (required|to leak)/i,
+      /no cloud keys, no metering/i,
+      /local models? via Ollama/i,
+      /\bOllama\b/,
+      /\blocal AI analysis\b/i,
+      /offline AI/i,
+      /zero egress/i,
+    ];
+    for (const re of RETIRED) {
+      expect(html, `retired claim resurfaced: ${re}`).not.toMatch(re);
+    }
   });
 });

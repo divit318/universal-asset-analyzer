@@ -59,7 +59,7 @@ describe("buildCausalChains", () => {
       const idx = Number(match![1].slice(1));
       // Fail the 5th event (index 4) — this is what used to compute an
       // out-of-bounds index under the old i + enriched.length formula.
-      if (idx === 4) throw new Error("Ollama request timed out");
+      if (idx === 4) throw new Error("AI request timed out");
       return effectsJson(idx);
     });
 

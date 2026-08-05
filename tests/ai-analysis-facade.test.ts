@@ -1,7 +1,7 @@
 /**
  * The analysis façade: cache read/write on the ai_result table, provider
  * dispatch, single-flight coalescing, and the durable job path. Uses an
- * isolated on-disk SQLite (DB_PATH) and mock providers — no Ollama, no Devin.
+ * isolated on-disk SQLite (DB_PATH) and mock providers — no live backend.
  */
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -50,52 +50,52 @@ afterAll(() => rmSync(path.dirname(process.env.DB_PATH!), { recursive: true, for
 
 describe("runAnalysis", () => {
   it("runs the resolved provider and validates through the schema", async () => {
-    const ollama = mockProvider("chain");
-    const res = await runAnalysis(makeRequest(), { providers: { chain: ollama } });
+    const provider = mockProvider("chain");
+    const res = await runAnalysis(makeRequest(), { providers: { chain: provider } });
     expect(res.data.answer).toBe("from-chain");
-    expect(ollama.calls).toBe(1);
+    expect(provider.calls).toBe(1);
   });
 
   it("serves the second identical request from the ai_result cache", async () => {
-    const ollama = mockProvider("chain");
+    const provider = mockProvider("chain");
     const req = makeRequest();
-    await runAnalysis(req, { providers: { chain: ollama }, maxAgeMs: 60_000 });
-    const second = await runAnalysis(req, { providers: { chain: ollama }, maxAgeMs: 60_000 });
+    await runAnalysis(req, { providers: { chain: provider }, maxAgeMs: 60_000 });
+    const second = await runAnalysis(req, { providers: { chain: provider }, maxAgeMs: 60_000 });
     expect(second.data.answer).toBe("from-chain");
-    expect(ollama.calls).toBe(1);
+    expect(provider.calls).toBe(1);
   });
 
   it("a different dossier misses the cache (input_hash keying)", async () => {
-    const ollama = mockProvider("chain");
-    await runAnalysis(makeRequest({ prompt: "dossier A" }), { providers: { chain: ollama }, maxAgeMs: 60_000 });
-    await runAnalysis(makeRequest({ prompt: "dossier B" }), { providers: { chain: ollama }, maxAgeMs: 60_000 });
-    expect(ollama.calls).toBe(2);
+    const provider = mockProvider("chain");
+    await runAnalysis(makeRequest({ prompt: "dossier A" }), { providers: { chain: provider }, maxAgeMs: 60_000 });
+    await runAnalysis(makeRequest({ prompt: "dossier B" }), { providers: { chain: provider }, maxAgeMs: 60_000 });
+    expect(provider.calls).toBe(2);
   });
 
   it("a schemaVersion bump misses the cache", async () => {
-    const ollama = mockProvider("chain");
+    const provider = mockProvider("chain");
     const req = makeRequest({ prompt: "fixed dossier" });
-    await runAnalysis(req, { providers: { chain: ollama }, maxAgeMs: 60_000 });
-    await runAnalysis({ ...req, schemaVersion: 2 }, { providers: { chain: ollama }, maxAgeMs: 60_000 });
-    expect(ollama.calls).toBe(2);
+    await runAnalysis(req, { providers: { chain: provider }, maxAgeMs: 60_000 });
+    await runAnalysis({ ...req, schemaVersion: 2 }, { providers: { chain: provider }, maxAgeMs: 60_000 });
+    expect(provider.calls).toBe(2);
   });
 
   it("coalesces concurrent identical requests into one provider call", async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
-    const ollama = mockProvider("chain", async () => {
+    const provider = mockProvider("chain", async () => {
       await gate;
       return { answer: "slow" };
     });
     const req = makeRequest({ prompt: "concurrent dossier" });
     const [a, b] = [
-      runAnalysis(req, { providers: { chain: ollama } }),
-      runAnalysis(req, { providers: { chain: ollama } }),
+      runAnalysis(req, { providers: { chain: provider } }),
+      runAnalysis(req, { providers: { chain: provider } }),
     ];
     release();
     expect((await a).data.answer).toBe("slow");
     expect((await b).data.answer).toBe("slow");
-    expect(ollama.calls).toBe(1);
+    expect(provider.calls).toBe(1);
   });
 });
 
@@ -103,7 +103,7 @@ describe("text mode", () => {
   it("wraps a mock provider's text answer as { text } through the schema", async () => {
     const { TextAnalysisSchema } = await import("@/lib/ai/schemas/text");
     // Direct provider-shape test: the façade passes output:"text" through; the
-    // OllamaAnalysisProvider wraps raw content. Here we assert the seam accepts
+    // chain adapter wraps raw content. Here we assert the seam accepts
     // a text-mode request and validates through TextAnalysisSchema.
     const res = await runAnalysis(
       {
@@ -126,8 +126,8 @@ describe("text mode", () => {
 
 describe("enqueueAnalysis", () => {
   it("records a durable job row and completes it", async () => {
-    const ollama = mockProvider("chain");
-    const handle = enqueueAnalysis(makeRequest({ prompt: "job dossier" }), { providers: { chain: ollama } });
+    const provider = mockProvider("chain");
+    const handle = enqueueAnalysis(makeRequest({ prompt: "job dossier" }), { providers: { chain: provider } });
     expect(["pending", "running"]).toContain(handle.status);
     await new Promise((r) => setTimeout(r, 50));
     const job = getAiJob(handle.jobId);
@@ -136,10 +136,10 @@ describe("enqueueAnalysis", () => {
   });
 
   it("marks the job failed (with the error) when the provider throws", async () => {
-    const ollama = mockProvider("chain", async () => {
+    const provider = mockProvider("chain", async () => {
       throw new Error("model exploded");
     });
-    const handle = enqueueAnalysis(makeRequest({ prompt: "failing dossier" }), { providers: { chain: ollama } });
+    const handle = enqueueAnalysis(makeRequest({ prompt: "failing dossier" }), { providers: { chain: provider } });
     await new Promise((r) => setTimeout(r, 50));
     const job = getAiJob(handle.jobId);
     expect(job?.status).toBe("failed");
@@ -147,11 +147,11 @@ describe("enqueueAnalysis", () => {
   });
 
   it("returns succeeded immediately on a fresh cache hit without re-running", async () => {
-    const ollama = mockProvider("chain");
+    const provider = mockProvider("chain");
     const req = makeRequest({ prompt: "cached job dossier" });
-    await runAnalysis(req, { providers: { chain: ollama }, maxAgeMs: 60_000 });
-    const handle = enqueueAnalysis(req, { providers: { chain: ollama }, maxAgeMs: 60_000 });
+    await runAnalysis(req, { providers: { chain: provider }, maxAgeMs: 60_000 });
+    const handle = enqueueAnalysis(req, { providers: { chain: provider }, maxAgeMs: 60_000 });
     expect(handle.status).toBe("succeeded");
-    expect(ollama.calls).toBe(1);
+    expect(provider.calls).toBe(1);
   });
 });

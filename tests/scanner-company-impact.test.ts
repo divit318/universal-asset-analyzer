@@ -80,7 +80,7 @@ describe("buildCompanyOpportunities", () => {
     let call = 0;
     runPromptMock.mockImplementation(async () => {
       call++;
-      if (call === 1) throw new Error("Ollama request timed out");
+      if (call === 1) throw new Error("AI request timed out");
       return JSON.stringify({ matches: [{ symbol: "BBB", direction: "bullish", rationale: "r", timeframe: "medium", confidence: 80 }] });
     });
 

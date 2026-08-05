@@ -1,11 +1,10 @@
 /**
- * The provider chain: Devin first, Ollama as the offline fallback.
+ * The provider chain contract, tested with fake providers.
  *
- * These are the behaviours that were *documented* but not implemented before
- * the Devin provider landed. `route()` read `providers[0]` and ignored the
- * rest, so "no changes to the Router" was aspirational — a second provider
- * would have been silently unreachable. Each test below pins one half of the
- * contract the provider interface always claimed.
+ * Only one provider (anthropic) is registered today, but the Router still
+ * walks a list — these tests pin the multi-provider semantics (lazy
+ * enumeration, fall-through, aggregated failures, strict model pins) so that
+ * adding a second provider later is a config change, not a Router rewrite.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resetHealth } from "@/lib/ai/health";
@@ -53,14 +52,14 @@ class ChainProvider implements AIProvider {
   }
 }
 
-const hosted = () =>
-  new ChainProvider("devin", [{ id: "claude-sonnet-5-low", sizeGb: 0 }], {
-    "claude-sonnet-5-low": { content: "hosted answer", reasoning: "" },
+const primary = () =>
+  new ChainProvider("primary", [{ id: "alpha-model", sizeGb: 0 }], {
+    "alpha-model": { content: "primary answer", reasoning: "" },
   });
 
-const local = () =>
-  new ChainProvider("ollama", [{ id: "mistral:latest", sizeGb: 4.4 }], {
-    "mistral:latest": { content: "local answer", reasoning: "" },
+const secondary = () =>
+  new ChainProvider("secondary", [{ id: "beta-model", sizeGb: 0 }], {
+    "beta-model": { content: "secondary answer", reasoning: "" },
   });
 
 const ask = (providers: AIProvider[]) =>
@@ -68,58 +67,56 @@ const ask = (providers: AIProvider[]) =>
 
 beforeEach(() => {
   resetHealth();
-  process.env.AI_MAX_MODEL_GB = "12.75";
 });
 
 afterEach(() => {
   delete process.env.AI_MAX_MODEL_GB;
-  delete process.env.AI_PROVIDER_ORDER;
 });
 
 describe("provider chain", () => {
   it("prefers the first provider and never touches the second", async () => {
-    const devin = hosted();
-    const ollama = local();
-    const res = await ask([devin, ollama]);
+    const first = primary();
+    const second = secondary();
+    const res = await ask([first, second]);
 
-    expect(res.content).toBe("hosted answer");
-    expect(res.provider).toBe("devin");
-    // Laziness matters for latency, not just tidiness: enumerating Ollama costs
-    // an HTTP round trip with a 4s timeout, paid on EVERY request, for a daemon
-    // that a working hosted setup never reaches.
-    expect(ollama.listModelsCalls).toBe(0);
+    expect(res.content).toBe("primary answer");
+    expect(res.provider).toBe("primary");
+    // Laziness matters for latency, not just tidiness: enumerating a provider
+    // can cost a round trip, paid on EVERY request, for a backend that a
+    // working setup never reaches.
+    expect(second.listModelsCalls).toBe(0);
   });
 
-  it("falls through to the local provider when the hosted one fails", async () => {
-    const devin = new ChainProvider("devin", [{ id: "claude-sonnet-5-low", sizeGb: 0 }], {
-      "claude-sonnet-5-low": new Error("not authenticated"),
+  it("falls through to the second provider when the first one fails", async () => {
+    const first = new ChainProvider("primary", [{ id: "alpha-model", sizeGb: 0 }], {
+      "alpha-model": new Error("not authenticated"),
     });
-    const ollama = local();
+    const second = secondary();
 
-    const res = await ask([devin, ollama]);
-    expect(res.content).toBe("local answer");
-    expect(res.provider).toBe("ollama");
-    expect(res.errors).toEqual(["devin/claude-sonnet-5-low: not authenticated"]);
+    const res = await ask([first, second]);
+    expect(res.content).toBe("secondary answer");
+    expect(res.provider).toBe("secondary");
+    expect(res.errors).toEqual(["primary/alpha-model: not authenticated"]);
   });
 
-  it("falls through when the hosted provider offers no models at all (offline)", async () => {
-    const devin = new ChainProvider("devin", [], {});
-    const ollama = local();
+  it("falls through when the first provider offers no models at all (no key / offline)", async () => {
+    const first = new ChainProvider("primary", [], {});
+    const second = secondary();
 
-    const res = await ask([devin, ollama]);
-    expect(res.content).toBe("local answer");
-    expect(devin.completed).toEqual([]);
+    const res = await ask([first, second]);
+    expect(res.content).toBe("secondary answer");
+    expect(first.completed).toEqual([]);
   });
 
   it("streams through the same chain, not just single-shot calls", async () => {
-    const devin = new ChainProvider("devin", [{ id: "claude-sonnet-5-low", sizeGb: 0 }], {
-      "claude-sonnet-5-low": new Error("down"),
+    const first = new ChainProvider("primary", [{ id: "alpha-model", sizeGb: 0 }], {
+      "alpha-model": new Error("down"),
     });
-    const ollama = local();
+    const second = secondary();
 
     const chunks: string[] = [];
     const gen = routeStream("explain-movement", { messages: [{ role: "user", content: "hi" }] }, {
-      providers: [devin, ollama],
+      providers: [first, second],
     });
     let model = "";
     for (;;) {
@@ -130,72 +127,65 @@ describe("provider chain", () => {
       }
       chunks.push(next.value);
     }
-    expect(chunks.join("")).toBe("local answer");
-    expect(model).toBe("mistral:latest");
+    expect(chunks.join("")).toBe("secondary answer");
+    expect(model).toBe("beta-model");
   });
 
   it("reports every provider's failure when the whole chain is down", async () => {
-    const devin = new ChainProvider("devin", [{ id: "claude-sonnet-5-low", sizeGb: 0 }], {
-      "claude-sonnet-5-low": new Error("no auth"),
+    const first = new ChainProvider("primary", [{ id: "alpha-model", sizeGb: 0 }], {
+      "alpha-model": new Error("no auth"),
     });
-    const ollama = new ChainProvider("ollama", [{ id: "mistral:latest", sizeGb: 4.4 }], {
-      "mistral:latest": new Error("connection refused"),
+    const second = new ChainProvider("secondary", [{ id: "beta-model", sizeGb: 0 }], {
+      "beta-model": new Error("connection refused"),
     });
 
-    await expect(ask([devin, ollama])).rejects.toThrow(AllModelsFailedError);
+    await expect(ask([first, second])).rejects.toThrow(AllModelsFailedError);
     // Both failures must survive into the message: "everything is down" is far
-    // less actionable than "the hosted one rejected your auth AND the daemon
-    // is not running", which are two different fixes.
-    await expect(ask([devin, ollama])).rejects.toThrow(/devin\/claude-sonnet-5-low: no auth/);
-    await expect(ask([devin, ollama])).rejects.toThrow(/ollama\/mistral:latest: connection refused/);
+    // less actionable than two named causes, which are two different fixes.
+    await expect(ask([first, second])).rejects.toThrow(/primary\/alpha-model: no auth/);
+    await expect(ask([first, second])).rejects.toThrow(/secondary\/beta-model: connection refused/);
   });
 
   it("throws rather than hanging when no provider offers anything", async () => {
-    await expect(ask([new ChainProvider("devin", [], {}), new ChainProvider("ollama", [], {})])).rejects.toThrow(
-      AllModelsFailedError,
-    );
+    await expect(
+      ask([new ChainProvider("primary", [], {}), new ChainProvider("secondary", [], {})]),
+    ).rejects.toThrow(AllModelsFailedError);
   });
 
   it("honors an explicit model against whichever provider actually has it", async () => {
-    const devin = hosted();
-    const ollama = local();
+    const first = primary();
+    const second = secondary();
     const res = await route(
       "explain-movement",
       { messages: [{ role: "user", content: "hi" }] },
-      { providers: [devin, ollama], model: "mistral:latest" },
+      { providers: [first, second], model: "beta-model" },
     );
-    expect(res.provider).toBe("ollama");
-    expect(res.model).toBe("mistral:latest");
-    // A pin is a pin: the hosted model must not be substituted for it.
-    expect(devin.completed).toEqual([]);
+    expect(res.provider).toBe("secondary");
+    expect(res.model).toBe("beta-model");
+    // A pin is a pin: the first provider's model must not be substituted for it.
+    expect(first.completed).toEqual([]);
   });
 
   it("picks the model without running anything, across the chain", async () => {
-    expect(await pickModel("explain-movement", { providers: [hosted(), local()] })).toBe(
-      "claude-sonnet-5-low",
+    expect(await pickModel("explain-movement", { providers: [primary(), secondary()] })).toBe(
+      "alpha-model",
     );
-    expect(await pickModel("explain-movement", { providers: [new ChainProvider("devin", [], {}), local()] })).toBe(
-      "mistral:latest",
-    );
+    expect(
+      await pickModel("explain-movement", {
+        providers: [new ChainProvider("primary", [], {}), secondary()],
+      }),
+    ).toBe("beta-model");
   });
 });
 
 describe("providerOrder", () => {
-  it("defaults to Devin-primary with Ollama as the offline fallback (decision 2026-08-02)", () => {
-    expect(providerOrder()).toEqual(["devin", "ollama"]);
-  });
-
-  it("can be inverted, or reduced to local-only, from the environment", () => {
-    process.env.AI_PROVIDER_ORDER = "ollama,devin";
-    expect(providerOrder()).toEqual(["ollama", "devin"]);
-    process.env.AI_PROVIDER_ORDER = "ollama";
-    expect(providerOrder()).toEqual(["ollama"]);
-  });
-
-  it("ignores unknown names instead of taking the platform down over a typo", () => {
-    process.env.AI_PROVIDER_ORDER = "openai, ollama";
-    expect(providerOrder()).toEqual(["ollama"]);
-    process.env.AI_PROVIDER_ORDER = "nonsense";
-    expect(providerOrder()).toEqual(["devin", "ollama"]);
+  it("is the single anthropic backend, and ignores the retired AI_PROVIDER_ORDER env var", () => {
+    expect(providerOrder()).toEqual(["anthropic"]);
+    process.env.AI_PROVIDER_ORDER = "ollama,devin"; // stale .env.local value
+    try {
+      expect(providerOrder()).toEqual(["anthropic"]);
+    } finally {
+      delete process.env.AI_PROVIDER_ORDER;
+    }
   });
 });

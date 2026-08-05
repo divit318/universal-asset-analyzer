@@ -71,7 +71,7 @@ describe("buildTheses", () => {
     runPromptMock.mockImplementation(async (_task: string, prompt: string) => {
       const match = /COMPANY: (T\d) \(T\d\)/.exec(prompt);
       const idx = Number(match![1].slice(1));
-      if (idx === 4) throw new Error("Ollama request timed out");
+      if (idx === 4) throw new Error("AI request timed out");
       return thesisJson(`Headline for T${idx}`);
     });
 

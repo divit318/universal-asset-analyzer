@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAnalysisPrompt } from "@/lib/ollama";
+import { buildAnalysisPrompt } from "@/lib/analysis-prompt";
 import type { Filing, Quote } from "@/lib/types";
 
 const quote: Quote = {

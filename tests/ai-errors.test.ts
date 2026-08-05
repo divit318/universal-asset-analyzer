@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { classifyAiError } from "@/lib/ai/errors";
-import { ModelMissingError, OllamaUnavailableError } from "@/lib/ai/ollama";
+import { AnthropicKeyMissingError } from "@/lib/ai/providers/anthropic-provider";
 import { AllModelsFailedError } from "@/lib/ai/router";
 
 describe("classifyAiError", () => {
@@ -14,17 +14,19 @@ describe("classifyAiError", () => {
     const c = classifyAiError(new DOMException("timed out", "TimeoutError"));
     expect(c.category).toBe("timeout");
     expect(c.retryable).toBe(true);
-    expect(c.message).toMatch(/cold start|loading/i);
   });
 
-  it("classifies an unreachable daemon as network, with actionable advice", () => {
-    const c = classifyAiError(new OllamaUnavailableError());
-    expect(c.category).toBe("network");
-    expect(c.message).toMatch(/ollama serve/i);
+  it("classifies a missing API key as no_api_key, pointing at Settings, non-retryable", () => {
+    const c = classifyAiError(new AnthropicKeyMissingError());
+    expect(c.category).toBe("no_api_key");
+    expect(c.retryable).toBe(false);
+    expect(c.message).toMatch(/settings/i);
+    expect(c.message).toMatch(/computed locally/i);
   });
 
   it("classifies a missing model as model_missing, and marks it non-retryable", () => {
-    const c = classifyAiError(new ModelMissingError("qwen3:99b"));
+    const err = Object.assign(new Error("no such model"), { code: "model_missing" });
+    const c = classifyAiError(err);
     expect(c.category).toBe("model_missing");
     expect(c.retryable).toBe(false);
   });
@@ -45,17 +47,18 @@ describe("classifyAiError", () => {
     expect(classifyAiError(undefined).category).toBe("unknown");
   });
 
-  it("never returns an empty user-facing message", () => {
+  it("never returns an empty user-facing message, and never leaks the key", () => {
     for (const err of [
       new DOMException("x", "AbortError"),
       new DOMException("x", "TimeoutError"),
-      new OllamaUnavailableError(),
-      new ModelMissingError("m"),
+      new AnthropicKeyMissingError(),
       new AllModelsFailedError("comparison", []),
       new SyntaxError("x"),
       new Error("x"),
     ]) {
-      expect(classifyAiError(err).message.length).toBeGreaterThan(0);
+      const c = classifyAiError(err);
+      expect(c.message.length).toBeGreaterThan(0);
+      expect(c.message).not.toMatch(/sk-ant-/);
     }
   });
 });

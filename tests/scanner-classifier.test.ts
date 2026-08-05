@@ -58,7 +58,7 @@ describe("classifyEvents", () => {
   });
 
   it("returns events unmodified when the AI call throws", async () => {
-    runPromptMock.mockRejectedValue(new Error("Ollama request timed out"));
+    runPromptMock.mockRejectedValue(new Error("AI request timed out"));
 
     const result = await classifyEvents([event("e1")]);
     expect(result[0].category).toBe("company");

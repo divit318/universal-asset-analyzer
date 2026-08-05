@@ -12,6 +12,14 @@ export default defineConfig({
     port: 3111,
     timeout: 300_000,
     reuseExistingServer: false,
-    env: { DB_PATH: "e2e/.tmp/e2e.db", NODE_ENV: "production" },
+    env: {
+      DB_PATH: "e2e/.tmp/e2e.db",
+      NODE_ENV: "production",
+      // e2e is the designed AI-off environment: no key means AI panels must
+      // render their degrade state, and no run can ever spend on a developer's
+      // real Anthropic key that happens to be exported in the shell.
+      ANTHROPIC_API_KEY: "",
+      UAA_CONFIG_DIR: "e2e/.tmp/uaa-config",
+    },
   },
 });

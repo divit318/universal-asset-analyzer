@@ -50,7 +50,7 @@ describe("deduplicateIntoEvents", () => {
 
   it("falls back to naive per-headline dedup when the AI call fails — doesn't throw or drop all news", async () => {
     const items = [newsItem("Story A"), newsItem("Story A"), newsItem("Story B")];
-    runPromptMock.mockRejectedValue(new Error("Ollama request timed out"));
+    runPromptMock.mockRejectedValue(new Error("AI request timed out"));
 
     const result = await deduplicateIntoEvents(items);
 

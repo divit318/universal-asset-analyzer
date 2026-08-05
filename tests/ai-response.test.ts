@@ -7,7 +7,7 @@ describe("normalizeResponse", () => {
       content: "",
       reasoning: "",
       model: "qwen3",
-      provider: "ollama",
+      provider: "anthropic",
       startedAt: Date.now(),
     });
     expect(res.confidence).toBe("low");
@@ -19,7 +19,7 @@ describe("normalizeResponse", () => {
       content: "This company has strong fundamentals across every metric we checked.",
       reasoning: "Let me consider the P/E, ROE, and revenue growth in turn...",
       model: "deepseek-r1",
-      provider: "ollama",
+      provider: "anthropic",
       startedAt: Date.now(),
     });
     expect(res.confidence).toBe("high");
@@ -31,7 +31,7 @@ describe("normalizeResponse", () => {
       content: "This company has strong fundamentals across every metric we checked.",
       reasoning: "Reasoning trace here.",
       model: "llama3.1",
-      provider: "ollama",
+      provider: "anthropic",
       startedAt: Date.now(),
       fallbackErrors: ["qwen3: timeout"],
     });
@@ -44,7 +44,7 @@ describe("normalizeResponse", () => {
       content: "Short answer.",
       reasoning: "",
       model: "mistral",
-      provider: "ollama",
+      provider: "anthropic",
       startedAt: Date.now(),
     });
     expect(res.reasoningSummary).toBeNull();
@@ -56,12 +56,12 @@ describe("normalizeResponse", () => {
       content: "Answer.",
       reasoning: "",
       model: "qwen3",
-      provider: "ollama",
+      provider: "anthropic",
       startedAt,
       metadata: { taskType: "company-research" },
     });
     expect(res.model).toBe("qwen3");
-    expect(res.provider).toBe("ollama");
+    expect(res.provider).toBe("anthropic");
     expect(res.executionTimeMs).toBeGreaterThanOrEqual(0);
     expect(res.metadata).toEqual({ taskType: "company-research" });
   });

@@ -128,9 +128,9 @@ describe("offlineVerdict", () => {
     const v = offlineVerdict(PLAN);
     expect(v.headline).toContain("Example Corp");
     expect(v.headline).toContain("AI provider");
-    // Names both recovery paths, not just the local one.
-    expect(v.thesis).toContain("devin auth login");
-    expect(v.thesis).toContain("ollama serve");
+    // Names the one recovery path there is: the key, in Settings.
+    expect(v.thesis).toMatch(/API key/i);
+    expect(v.thesis).toMatch(/Settings/i);
     expect(v.thesis).toContain("stock");
     expect(v.risks).toContain("Review metrics and score below");
     expect(v.model).toBe("unavailable");
@@ -167,7 +167,7 @@ describe("parseVerdictFields", () => {
   });
 
   it("survives the round trip through assembleVerdict", () => {
-    const v = assembleVerdict(PLAN, parseVerdictFields(JSON.stringify(COMPLETE)), "ollama");
+    const v = assembleVerdict(PLAN, parseVerdictFields(JSON.stringify(COMPLETE)), "claude-opus-5-medium");
     expect(v.verdict).toBe("bullish");
     expect(v.thesis).toBe(COMPLETE.thesis);
     expect(v.catalysts).toEqual(COMPLETE.catalysts);
@@ -184,6 +184,6 @@ describe("parseVerdictFields", () => {
   it("degrades to an empty bag on unparseable output, so assembly defaults", () => {
     expect(parseVerdictFields("the model refused to answer")).toEqual({});
     expect(parseVerdictFields("[1,2,3]")).toEqual({});
-    expect(assembleVerdict(PLAN, parseVerdictFields("garbage"), "ollama").confidence).toBe("low");
+    expect(assembleVerdict(PLAN, parseVerdictFields("garbage"), "claude-opus-5-medium").confidence).toBe("low");
   });
 });

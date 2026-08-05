@@ -13,7 +13,7 @@ import type {
 /**
  * Concurrent identical AI work must run ONCE.
  *
- * This is not a micro-optimization on this platform: Ollama serializes
+ * This is not a micro-optimization on this platform: a duplicate inference is
  * generations, so a duplicate does not finish alongside the original — it
  * doubles the wall-clock wait for everything queued behind it. A single research
  * page load was measured firing duplicate movement and financial-insight

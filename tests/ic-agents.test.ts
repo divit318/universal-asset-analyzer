@@ -56,13 +56,13 @@ describe("runAgentNetwork", () => {
       .mockResolvedValueOnce(
         JSON.stringify({ findings: "ok", keyInsights: [], confidence: "medium", dataLimitations: null }),
       )
-      .mockRejectedValue(new Error("Ollama request timed out"));
+      .mockRejectedValue(new Error("AI request timed out"));
 
     const result = await runAgentNetwork(baseInput(["business", "risk"]));
 
     expect(result.findings).toHaveLength(1);
     expect(result.failures).toEqual([
-      { agent: "risk", agentLabel: "Risk Analyst", error: "Ollama request timed out", retryable: true },
+      { agent: "risk", agentLabel: "Risk Analyst", error: "AI request timed out", retryable: true },
     ]);
   });
 

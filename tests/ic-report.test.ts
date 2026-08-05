@@ -33,7 +33,7 @@ describe("generateICReport", () => {
     runAgentNetworkMock.mockResolvedValue({
       findings: [],
       failures: [
-        { agent: "business", agentLabel: "Business Analyst", error: "Ollama request timed out", retryable: true },
+        { agent: "business", agentLabel: "Business Analyst", error: "AI request timed out", retryable: true },
       ],
     });
 
