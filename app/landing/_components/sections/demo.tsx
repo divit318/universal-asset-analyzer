@@ -81,7 +81,7 @@ export function Demo({ section, index }: SectionProps) {
         <div className="flex max-w-2xl flex-col items-center gap-4">
           <p className="text-label font-semibold uppercase tracking-widest text-brand">{section.kicker}</p>
           <h2 id={headingId} className="text-balance text-2xl font-semibold tracking-tight text-foreground sm:text-4xl">
-            Ask UAA about any stock — no signup.
+            Ask UAA about any stock — right here, right now.
           </h2>
           <p className="text-pretty text-base leading-relaxed text-muted">
             Type a ticker and see the kind of instant, structured read UAA produces.

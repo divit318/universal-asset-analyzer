@@ -37,7 +37,7 @@ export const metadata: Metadata = {
     template: "%s · UAA",
   },
   description:
-    "Institutional-grade equity research platform: AI-powered deep research, DCF modelling, quant screening, thematic analysis, and portfolio management — all running locally.",
+    "Institutional-grade equity research platform: AI-assisted deep research, DCF modelling, quant screening, thematic analysis, and portfolio management — every figure computed locally, in a database you own.",
   applicationName: "Universal Asset Analyzer",
   /*
    * No `icons` key on purpose. Next's file conventions already emit the tab and

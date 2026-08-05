@@ -14,7 +14,7 @@ import { Reveal } from "../reveal";
 const FAQS: { q: string; a: string }[] = [
   {
     q: "Do I need an account?",
-    a: "No. UAA has no sign-up and no login. The only credential is your own Anthropic API key, for AI features.",
+    a: "Not to run it. UAA ships an optional local account — credentials live in your own database, never on a server — to protect shared machines and power the hosted demo; the sign-in gate is off by default. AI features additionally use your own Anthropic API key.",
   },
   {
     q: "Does UAA send my data anywhere?",
@@ -30,7 +30,7 @@ const FAQS: { q: string; a: string }[] = [
   },
   {
     q: "Is there a subscription?",
-    a: "No. The app is free; you’d only ever pay for optional premium data feeds.",
+    a: "The local product is free, and your only running cost is your own Anthropic API usage. A paid Pro tier — managed AI, licensed data, sync — is planned but not yet available; see Pricing to register interest.",
   },
 ];
 

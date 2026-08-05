@@ -14,7 +14,7 @@ import { LandingFooter } from "./_components/landing-footer";
  */
 const TITLE = "Universal Asset Analyzer — The AI Terminal for Investors";
 const DESCRIPTION =
-  "Professional investment research, analysis, and portfolio tools — your data in a local database you own, AI narration on your own Anthropic key. No accounts.";
+  "Professional investment research, analysis, and portfolio tools — your data in a local database you own, AI narration on your own Anthropic key.";
 
 /**
  * SEO for the marketing surface. All of this is native Next Metadata — plain

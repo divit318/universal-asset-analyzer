@@ -42,7 +42,7 @@ export function LandingFooter() {
 
       <div className="border-t border-border">
         <p className="mx-auto w-full max-w-7xl px-6 py-4 text-micro text-faint">
-          © {year} Universal Asset Analyzer. Local-first data. No accounts, no subscriptions.
+          © {year} Universal Asset Analyzer. Local-first data. No subscriptions.
         </p>
       </div>
     </footer>

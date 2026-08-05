@@ -1,12 +1,15 @@
 # Universal Asset Analyzer
 
 An institutional-grade research platform, local-first, across seven asset
-classes (equities, crypto, forex, commodities, funds/ETFs, derivatives, real
-estate, private markets) plus manual/macro tracking: live market data (Yahoo
+classes (equities, ETFs, REITs, crypto, commodities, bonds, forex — the
+registry in `lib/assets/types.ts`) plus derivatives views, manual assets
+(real estate, private markets) and macro tracking: live market data (Yahoo
 Finance for US equities, screener.in for Indian markets, RentCast for real
 estate), AI narration on Claude via the Anthropic API using **your own API
 key**, quant scoring (Python + DuckDB), and user-owned state (SQLite on your
-disk, no cloud sync, no accounts). Every metric, score, and valuation is
+disk, no cloud sync; an optional local account — credentials in your own
+database — protects shared machines, gated off by default via
+`UAA_AUTH_GATE`). Every metric, score, and valuation is
 computed locally by deterministic engines — the model only writes the
 narrative. Built on Next.js 16 (App Router, Turbopack, React 19).
 
