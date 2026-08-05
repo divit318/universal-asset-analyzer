@@ -69,26 +69,27 @@ test.describe("landing skeleton", () => {
 });
 
 test.describe("landing hero (Milestone 2)", () => {
-  test("shows the approved headline, subhead, CTAs and product placeholder", async ({ page }) => {
+  test("shows the approved headline, subhead, CTAs and hero art", async ({ page }) => {
     await page.goto("/landing");
 
-    // Exact approved headline copy (Creative Direction §9).
+    // Exact shipped headline copy (auth session's hero rewrite — two stacked
+    // spans render with no space between them in textContent).
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-      "Stop juggling a dozen investing tools.",
+      "Every figure computed.Every claim traced.",
     );
 
-    // Subhead names what actually ships.
+    // Subhead names what actually ships: deterministic engines + owned data.
     await expect(
-      page.getByText("combines market data, filings, valuation models", { exact: false }),
+      page.getByText("deterministic engines compute every metric", { exact: false }),
     ).toBeVisible();
 
-    // CTA hierarchy: primary into the app, secondary to the in-page demo.
+    // CTA hierarchy: primary opens the auth modal, secondary jumps to the demo.
     const hero = page.locator("section#hero");
-    await expect(hero.getByRole("link", { name: "Experience UAA" })).toBeVisible();
+    await expect(hero.getByRole("button", { name: /Get started/ })).toBeVisible();
     await expect(hero.locator('a[href="#demo"]')).toBeVisible();
 
-    // The product-reveal placeholder frame exists (real screenshot lands in M7).
-    await expect(hero.getByTestId("hero-product-reveal")).toBeVisible();
+    // The engraved-stipple hero art renders.
+    await expect(hero.getByTestId("hero-stipple")).toBeVisible();
   });
 });
 
