@@ -8,7 +8,16 @@
 
 import { formatPercent, formatCompact } from "@/lib/format";
 
-/** Signed percent, e.g. +1.2% / −0.5%. Uses a true minus sign for alignment. */
+/**
+ * Signed percent, e.g. +1.2% / −0.5%. Uses a true minus sign for alignment.
+ *
+ * RESTRICTED (audit F-22b): for NON-SESSION quantities only — XIRR, total
+ * return on cost, contribution shares, and animated count-up interpolations.
+ * Anything that describes a market session ("today's move", a quote change)
+ * must render through `MetricDelta` (../_viz/stamped.tsx), which carries the
+ * as-of stamp and staleness treatment. New bare-number day-change call sites
+ * are a regression.
+ */
 export function fmtSignedPct(value: number | null | undefined, digits = 1): string {
   if (value == null || Number.isNaN(value)) return "—";
   return formatPercent(value, digits).replace("-", "−");

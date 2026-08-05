@@ -18,6 +18,7 @@ import { ChevronDown } from "lucide-react";
 import { explainSentiment, type ScoreExplanation } from "@/lib/home/explain";
 import { getHomeModule } from "@/lib/home/registry";
 import type { MarketGroup, MarketTicker, MarketIntelligence } from "@/lib/home/contracts";
+import { MetricDelta } from "../_viz/stamped";
 import { Sparkline } from "../_viz/sparkline";
 import { ExplainableValue } from "../_atmosphere/explain-popover";
 import { ModuleShell } from "../module-shell";
@@ -89,6 +90,8 @@ interface TapeRowItem {
   label: string;
   value: string;
   changePct: number | null;
+  sessionDate: string | null;
+  asOf: number | null;
 }
 
 /** The §9 wireframe row: SPX · NDX · VIX · 10Y · WTI · DXY · BTC. */
@@ -107,23 +110,23 @@ function buildTapeRow(d: MarketIntelligence): TapeRowItem[] {
   for (const spec of TAPE_ROW) {
     const t = findTicker(d.groups, spec.symbol);
     if (!t) continue;
-    out.push({ key: spec.key, label: spec.label, value: spec.fmt(t), changePct: t.changePct });
+    out.push({ key: spec.key, label: spec.label, value: spec.fmt(t), changePct: t.changePct, sessionDate: t.sessionDate ?? null, asOf: t.asOf ?? null });
   }
   return out;
 }
 
-/** One instrument on the collapsed row: label · mono value · signed move. */
+/** One instrument on the collapsed row: label · mono value · stamped move. */
 function TapeItem({ item }: { item: TapeRowItem }) {
-  const tone = item.changePct == null ? "text-muted" : item.changePct >= 0 ? "text-positive" : "text-negative";
   return (
     <span className="inline-flex shrink-0 items-baseline gap-1.5 border-l border-border/40 pl-3 first:border-l-0 first:pl-0">
       <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">{item.label}</span>
       <span className="font-mono text-sm font-semibold tabular-nums text-foreground">{item.value}</span>
       {item.changePct != null ? (
-        <span className={`font-mono text-[11px] tabular-nums ${tone}`}>
-          {item.changePct >= 0 ? "+" : "−"}
-          {Math.abs(item.changePct).toFixed(2)}%
-        </span>
+        <MetricDelta
+          metric={{ value: item.changePct, basis: "day", asOf: item.asOf ?? 0, source: "yahoo", sessionDate: item.sessionDate }}
+          digits={2}
+          className="text-[11px]"
+        />
       ) : null}
     </span>
   );

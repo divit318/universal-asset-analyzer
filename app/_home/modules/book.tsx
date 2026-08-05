@@ -19,6 +19,7 @@ import type { PortfolioPulse } from "@/lib/home/contracts";
 import { explainHealth } from "@/lib/home/explain";
 import { getHomeModule } from "@/lib/home/registry";
 import { fmtSignedPct, fmtSignedMoney } from "../_viz/format";
+import { MetricDelta } from "../_viz/stamped";
 import { ExplainableValue } from "../_atmosphere/explain-popover";
 import { ModuleShell } from "../module-shell";
 import { useHome, useHomeSlice } from "../home-provider";
@@ -121,9 +122,10 @@ export function BookModule() {
                   </span>
                 ) : null}
                 <span className="text-[10px] uppercase tracking-wide text-muted">Day P&amp;L</span>
-                <span className={`font-mono text-xl font-semibold tabular-nums ${d.todayChangePct >= 0 ? "text-positive" : "text-negative"}`}>
-                  {fmtSignedPct(d.todayChangePct)}
-                </span>
+                <MetricDelta
+                  metric={{ value: d.todayChangePct, basis: "day", asOf: d.asOf, source: "yahoo", sessionDate: d.sessionDate }}
+                  className="text-xl font-semibold"
+                />
                 <span className="font-mono text-[11px] tabular-nums text-muted">{fmtSignedMoney(d.todayChangeDollar)}</span>
               </div>
             </div>

@@ -29,6 +29,7 @@ const EMPTY: PortfolioPulse = {
   worstPerformer: null,
   sessionNote: null,
   asOf: 0,
+  sessionDate: null,
   largestRisk: null,
   largestOpportunity: null,
   cashPct: null,
@@ -226,6 +227,12 @@ export function buildPortfolioPulse(report: UniversalPortfolioReport | null, now
     worstPerformer,
     sessionNote,
     asOf: Date.parse(report.generatedAt) || now,
+    // The session the aggregate "Today" figures describe: the current session
+    // when any mover is live, else the newest finished one.
+    sessionDate:
+      scored.find((m, i) => states[i] === "current")?.dayChange?.sessionDate ??
+      newestPrevious?.dayChange?.sessionDate ??
+      null,
     largestRisk: topConcern ? { title: topConcern.label, description: topConcern.message } : null,
     largestOpportunity: topRec ? { symbol: topRec.symbol as string, reason: topRec.rationale } : null,
     cashPct: cashSlice?.weight ?? 0,

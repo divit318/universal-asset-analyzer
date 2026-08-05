@@ -18,6 +18,7 @@
  */
 
 import { getQuotes, getHistory } from "../yahoo";
+import { dayChange } from "../day-change";
 import { computeSentiment } from "./sentiment";
 import type { MarketGroup, MarketGroupId, MarketIntelligence, MarketTicker, SectorAttentionChange } from "./contracts";
 import type { CardStatus } from "../mission-control";
@@ -150,11 +151,14 @@ export async function buildMarketIntelligence(inputs: MarketIntelInputs): Promis
     label: g.label,
     tickers: g.tickers.map<MarketTicker>((t) => {
       const q = bySymbol.get(t.symbol.toUpperCase());
+      const dc = q ? dayChange(q) : null;
       return {
         symbol: t.symbol,
         label: t.label,
         price: q?.price ?? null,
         changePct: q?.changePercent ?? null,
+        sessionDate: dc?.sessionDate ?? null,
+        asOf: dc?.asOf ?? null,
         series: sparks.get(t.symbol.toUpperCase()) ?? null,
       };
     }),

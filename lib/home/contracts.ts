@@ -31,6 +31,10 @@ export interface MarketTicker {
   label: string;
   price: number | null;
   changePct: number | null;
+  /** Session day (exchange TZ) `changePct` describes; null = unknown (lib/day-change). */
+  sessionDate?: string | null;
+  /** Epoch ms of the quote's last trade. */
+  asOf?: number | null;
   /**
    * A short recent-close series for the card's sparkline, oldest→newest.
    * Null when no history was fetched for this symbol (only the curated Market
@@ -148,6 +152,8 @@ export interface PortfolioPulse {
   sessionNote: string | null;
   /** Epoch ms the pulse's figures were assembled (report generation time). */
   asOf: number;
+  /** Session day the aggregate day-change figures describe; null = no movers. */
+  sessionDate: string | null;
   largestRisk: { title: string; description: string } | null;
   largestOpportunity: { symbol: string; reason: string } | null;
   cashPct: number | null;

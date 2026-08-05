@@ -83,6 +83,7 @@ function digestSource(overrides: Partial<FingerprintSource> = {}): FingerprintSo
       worstPerformer: null,
       sessionNote: null,
       asOf: 0,
+      sessionDate: null,
       largestRisk: null,
       largestOpportunity: null,
       cashPct: 5,

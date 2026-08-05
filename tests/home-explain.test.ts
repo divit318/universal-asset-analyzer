@@ -34,6 +34,7 @@ function pulse(overrides: Partial<PortfolioPulse> = {}): PortfolioPulse {
     worstPerformer: null,
     sessionNote: null,
     asOf: 0,
+    sessionDate: null,
     largestRisk: null,
     largestOpportunity: null,
     cashPct: 5,
