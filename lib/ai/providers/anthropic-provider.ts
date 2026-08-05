@@ -120,11 +120,19 @@ function usageFromMessage(usage: {
   };
 }
 
-/** "claude-opus-5-medium" → { model: "claude-opus-5", effort: "medium" }. */
-export function parseModelId(id: string): { model: string; effort: Effort } {
+/**
+ * "claude-opus-5-medium" → { model: "claude-opus-5", effort: "medium" }.
+ *
+ * An id with no effort suffix (e.g. `claude-haiku-4-5`) is a model whose wire
+ * contract we should not guess at: effort is `null` and {@link
+ * AnthropicProvider.buildParams} then omits `output_config.effort` and the
+ * thinking config entirely, letting the model run on its own defaults instead
+ * of receiving Opus-5-era request fields it may reject.
+ */
+export function parseModelId(id: string): { model: string; effort: Effort | null } {
   const m = id.match(/^(.*)-(low|medium|high)$/);
   if (m) return { model: m[1], effort: m[2] as Effort };
-  return { model: id, effort: "high" };
+  return { model: id, effort: null };
 }
 
 /** Escape hatch for benchmarking the cache's own effect. On unless "off". */
@@ -233,27 +241,30 @@ export class AnthropicProvider implements AIProvider {
     // Prompt-cache breakpoints ride on the wire shape; see buildCachedPrompt.
     const { system, turns } = buildCachedPrompt(request.messages);
 
+    // Native structured outputs when the caller supplied a schema: the API
+    // constrains decoding so the response IS valid against it — the JSON
+    // prompt directives stay in the prompt as the portable fallback for
+    // providers without the capability.
+    const format = request.jsonSchema
+      ? { format: { type: "json_schema" as const, schema: request.jsonSchema } }
+      : {};
+
     return {
       model,
       max_tokens: request.maxTokens ?? 16000,
       ...(system ? { system } : {}),
       messages: turns,
-      // Native structured outputs when the caller supplied a schema: the API
-      // constrains decoding so the response IS valid against it — the JSON
-      // prompt directives stay in the prompt as the portable fallback for
-      // providers without the capability.
-      output_config: {
-        effort,
-        ...(request.jsonSchema
-          ? { format: { type: "json_schema" as const, schema: request.jsonSchema } }
-          : {}),
-      },
-      // Thinking is adaptive by default on claude-opus-5. An explicit false
-      // disables it (valid at effort ≤ high); otherwise ask for summarized
-      // display so reasoning-listening callers get real deltas.
-      ...(request.thinking === false
-        ? { thinking: { type: "disabled" as const } }
-        : { thinking: { type: "adaptive" as const, display: "summarized" as const } }),
+      output_config: { ...(effort ? { effort } : {}), ...format },
+      // Thinking on the effort-tier models is adaptive by default: an explicit
+      // false disables it (valid at effort ≤ high); otherwise ask for
+      // summarized display so reasoning-listening callers get real deltas.
+      // A model with NO effort suffix (see parseModelId) gets no thinking
+      // config at all — its wire defaults, not Opus-5-era request fields.
+      ...(effort
+        ? request.thinking === false
+          ? { thinking: { type: "disabled" as const } }
+          : { thinking: { type: "adaptive" as const, display: "summarized" as const } }
+        : {}),
     };
   }
 
