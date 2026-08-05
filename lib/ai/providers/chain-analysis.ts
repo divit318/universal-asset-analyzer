@@ -7,10 +7,31 @@
  * that answered is in `meta.model`.
  */
 
+import { z } from "zod";
 import type { AnalysisProvider, AnalysisRequest, AnalysisResult } from "../analysis-provider";
 import { runTask } from "../orchestrator";
 import { keyStatus } from "../anthropic-key";
 import { extractJson } from "../../json-extract";
+
+/**
+ * Compile a request's wire schema (the clean, constraint-carrying Zod view —
+ * no transforms/catches) to JSON Schema for native structured outputs.
+ *
+ * Best-effort by design: a schema Zod cannot represent as JSON Schema, or a
+ * request without a wireSchema, returns undefined and the call proceeds
+ * exactly as before (JSON prompt directives + extraction + tolerant parse).
+ * The tolerant `schema` parse still runs REGARDLESS — constrained decoding
+ * guarantees syntax and structure, while the tolerant view also carries the
+ * semantic guards (min lengths, ranges) and the defaults old cached rows need.
+ */
+export function wireJsonSchema(wireSchema: z.ZodType<unknown> | undefined): Record<string, unknown> | undefined {
+  if (!wireSchema) return undefined;
+  try {
+    return z.toJSONSchema(wireSchema) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
 
 export class ChainAnalysisError extends Error {
   constructor(
@@ -43,6 +64,9 @@ export class ChainAnalysisProvider implements AnalysisProvider {
       // Text-mode call sites (financial insight, calendar brief) never asked
       // for JSON pre-migration; forcing it would change their output.
       json: !textMode,
+      // Native structured outputs whenever the call site supplied a clean wire
+      // schema. Prompt directives stay in the prompt as the portable fallback.
+      jsonSchema: textMode ? undefined : wireJsonSchema(req.wireSchema),
       timeoutMs: req.timeoutMs,
       signal: req.signal,
     });

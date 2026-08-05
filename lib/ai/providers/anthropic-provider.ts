@@ -238,7 +238,16 @@ export class AnthropicProvider implements AIProvider {
       max_tokens: request.maxTokens ?? 16000,
       ...(system ? { system } : {}),
       messages: turns,
-      output_config: { effort },
+      // Native structured outputs when the caller supplied a schema: the API
+      // constrains decoding so the response IS valid against it — the JSON
+      // prompt directives stay in the prompt as the portable fallback for
+      // providers without the capability.
+      output_config: {
+        effort,
+        ...(request.jsonSchema
+          ? { format: { type: "json_schema" as const, schema: request.jsonSchema } }
+          : {}),
+      },
       // Thinking is adaptive by default on claude-opus-5. An explicit false
       // disables it (valid at effort ≤ high); otherwise ask for summarized
       // display so reasoning-listening callers get real deltas.

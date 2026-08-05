@@ -84,6 +84,8 @@ export interface RouteRequest {
   maxTokens?: number;
   timeoutMs?: number;
   json?: boolean;
+  /** JSON Schema for native structured outputs — see ProviderCompleteRequest.jsonSchema. */
+  jsonSchema?: Record<string, unknown>;
   signal?: AbortSignal;
   /** Receives reasoning deltas when the chosen model is thinking. */
   onReasoning?: (delta: string) => void;
@@ -272,6 +274,7 @@ function settingsFor(task: TaskConfig, model: string, request: RouteRequest) {
     maxTokens: request.maxTokens ?? task.maxTokens,
     timeoutMs: request.timeoutMs ?? task.timeoutMs ?? spec.timeoutMs,
     json,
+    jsonSchema: request.jsonSchema,
     // Only pay for a large KV cache on tasks that declared they need one;
     // otherwise let the provider use its default window. On a memory-tight host an
     // unnecessary 32k context is real RAM taken from the weights.

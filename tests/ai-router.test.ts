@@ -194,6 +194,33 @@ describe("thinking control", () => {
   });
 });
 
+describe("native structured outputs pass-through", () => {
+  it("hands the caller's JSON Schema to the provider unchanged", async () => {
+    const provider = new FakeProvider([{ id: "claude-opus-5-low", sizeGb: 0 }], {
+      "claude-opus-5-low": { content: "{}", reasoning: "" },
+    });
+    const schema = { type: "object", properties: { a: { type: "string" } }, required: ["a"] };
+    await route(
+      "nl-screener",
+      { messages: [{ role: "user", content: "hi" }], jsonSchema: schema },
+      { providers: [provider] },
+    );
+    expect(provider.requests[0].jsonSchema).toEqual(schema);
+  });
+
+  it("sends no schema when the caller supplied none", async () => {
+    const provider = new FakeProvider([{ id: "claude-opus-5-low", sizeGb: 0 }], {
+      "claude-opus-5-low": { content: "{}", reasoning: "" },
+    });
+    await route(
+      "nl-screener",
+      { messages: [{ role: "user", content: "hi" }] },
+      { providers: [provider] },
+    );
+    expect(provider.requests[0].jsonSchema).toBeUndefined();
+  });
+});
+
 describe("route", () => {
   it("returns a normalized response from the first successful candidate", async () => {
     const provider = new FakeProvider([{ id: "claude-opus-5-medium", sizeGb: 0 }], {

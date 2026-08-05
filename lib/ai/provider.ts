@@ -37,6 +37,14 @@ export interface ProviderCompleteRequest {
   /** Ask the model to respond with JSON only. */
   json?: boolean;
   /**
+   * JSON Schema for NATIVE structured outputs (constrained decoding), when the
+   * provider supports it. Stronger than `json`: the wire format guarantees the
+   * response parses against this schema instead of asking nicely in the
+   * prompt. Providers without the capability ignore it — `json` + the prompt's
+   * own directives remain the portable fallback, so the two are sent together.
+   */
+  jsonSchema?: Record<string, unknown>;
+  /**
    * Toggle chain-of-thought on a reasoning model. `undefined` = the model has no
    * reasoning channel, so don't send the flag at all. The Router forces `false`
    * under `json` — the two cannot be combined (see router.ts:resolveThinking).

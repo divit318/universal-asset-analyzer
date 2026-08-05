@@ -27,6 +27,8 @@ export interface RunTaskOptions {
   timeoutMs?: number;
   /** Ask the model to respond with JSON only. */
   json?: boolean;
+  /** JSON Schema for native structured outputs — see ProviderCompleteRequest.jsonSchema. */
+  jsonSchema?: Record<string, unknown>;
   /** Explicit model override (e.g. a user-picked model in the copilot UI). Skips auto-routing/fallback. */
   model?: string;
   /** Receives reasoning deltas when the routed model is a thinking model. */
@@ -55,6 +57,8 @@ function fingerprint(taskType: TaskType, messages: ProviderChatTurn[], opts: Run
     taskType,
     opts.model ?? "",
     opts.json ?? false,
+    // A different wire schema is different work, even over identical messages.
+    opts.jsonSchema ?? null,
     opts.temperature ?? "",
     messages.map((m) => [m.role, m.content]),
   ]);
@@ -101,6 +105,7 @@ export async function runTask(
         maxTokens: opts.maxTokens,
         timeoutMs: opts.timeoutMs,
         json: opts.json,
+        jsonSchema: opts.jsonSchema,
         signal,
       },
       routeOpts,
@@ -227,6 +232,7 @@ export async function* runTaskChat(
       maxTokens: opts.maxTokens,
       timeoutMs: opts.timeoutMs,
       json: opts.json,
+      jsonSchema: opts.jsonSchema,
       onReasoning: opts.onReasoning,
       signal: opts.signal,
     },
