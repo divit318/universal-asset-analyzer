@@ -17,6 +17,7 @@
 import YahooFinance from "yahoo-finance2";
 import type { FundProfileData, FundSectorWeight, HistoryPoint, OptionContract, OptionsChainData, OptionsExpirationChain, Quote, SymbolSuggestion } from "./types";
 import { computeMacroSummary, YIELD_CURVE_SYMBOLS, type MacroSummary, type YieldLevels } from "./macro-analysis";
+import { getAmfiTerForFund } from "./amfi";
 import { getDataset } from "./platform/data-layer";
 import { countryForSuggestion } from "./market";
 import type { CacheMeta } from "./platform/types";
@@ -43,6 +44,8 @@ interface RawQuote {
   regularMarketVolume?: number;
   fullExchangeName?: string;
   quoteType?: string;
+  netAssets?: number;
+  ytdReturn?: number;
 }
 
 /** Map a raw Yahoo quote into our domain Quote. Pure / testable. */
@@ -71,6 +74,8 @@ export function mapQuote(raw: RawQuote): Quote {
     volume: raw.regularMarketVolume ?? null,
     exchange: raw.fullExchangeName ?? null,
     assetType: raw.quoteType ?? null,
+    netAssets: raw.netAssets ?? null,
+    ytdReturn: raw.ytdReturn ?? null,
   };
 }
 
@@ -302,6 +307,27 @@ export async function getQuote(symbol: string): Promise<Quote> {
   return result.data;
 }
 
+/**
+ * The display name to persist alongside a symbol (watchlist rows, portfolio
+ * lots). Callers that don't have a name — the command palette's quick-add
+ * POSTs `{ symbol }` alone — used to store the raw symbol, which for an
+ * Indian mutual fund is an opaque Morningstar ID ("0P0001BA9B.BO") that then
+ * appeared as the "name" on every later read. One quote lookup (cached by the
+ * platform, so usually free) resolves the real name; best-effort, so an
+ * offline provider degrades back to the symbol rather than failing the write.
+ */
+export async function resolveDisplayName(symbol: string, provided?: string | null): Promise<string> {
+  const clean = provided?.trim();
+  if (clean && clean.toUpperCase() !== symbol.toUpperCase()) return clean;
+  try {
+    const q = await getQuote(symbol);
+    if (q.name && q.name !== q.symbol) return q.name;
+  } catch {
+    /* provider unavailable — the symbol is still an honest fallback */
+  }
+  return clean || symbol.toUpperCase();
+}
+
 /** Cache metadata for the same quote call `getQuote` makes — see getQuoteSummaryMeta. */
 export async function getQuoteMeta(symbol: string): Promise<CacheMeta> {
   const result = await getQuoteResult(symbol);
@@ -530,7 +556,7 @@ export async function getNews(symbol: string, count = 8): Promise<RawNews[]> {
   }
 }
 
-/** Raw shapes read from the `fundProfile`/`topHoldings`/`fundPerformance` quoteSummary modules. */
+/** Raw shapes read from the fund-related quoteSummary modules. */
 interface RawFundProfile {
   family?: string | null;
   categoryName?: string | null;
@@ -555,6 +581,42 @@ interface RawFundPerformance {
   riskOverviewStatistics?: { riskStatistics?: { year: string; beta: number; alpha: number; stdDev?: number; sharpeRatio: number }[] };
   fundCategoryName?: string | null;
 }
+interface RawFundKeyStatistics {
+  annualReportExpenseRatio?: number;
+  annualHoldingsTurnover?: number;
+  totalAssets?: number;
+  morningStarOverallRating?: number;
+  fundInceptionDate?: string | Date;
+}
+interface RawFundSummaryDetail {
+  totalAssets?: number;
+  currency?: string | null;
+}
+interface RawFundPrice {
+  longName?: string | null;
+  shortName?: string | null;
+}
+
+/** The quoteSummary modules the fund profile is assembled from. */
+export interface RawFundBundle {
+  fundProfile?: RawFundProfile;
+  topHoldings?: RawTopHoldings;
+  fundPerformance?: RawFundPerformance;
+  defaultKeyStatistics?: RawFundKeyStatistics;
+  summaryDetail?: RawFundSummaryDetail;
+  /** Carries the fund's display name — the key for the AMFI scheme match. */
+  price?: RawFundPrice;
+}
+
+/**
+ * Yahoo's fund feed encodes "not reported" as a literal 0 — every Indian
+ * mutual fund returns 0 for annualReportExpenseRatio/netExpRatio/grossExpRatio,
+ * and the same funds' real TERs are 0.5–2%. A zero must therefore read as
+ * missing, not as free. Verified that the collision case is theoretical: even
+ * the genuinely-zero-fee Fidelity ZERO funds come back non-zero from Yahoo.
+ */
+const zeroAsMissing = (v: number | null | undefined): number | null =>
+  v == null || v === 0 || !Number.isFinite(v) ? null : v;
 
 const SECTOR_LABEL: Record<string, string> = {
   realestate: "Real Estate",
@@ -580,24 +642,23 @@ const SECTOR_LABEL: Record<string, string> = {
 export async function getFundProfile(symbol: string): Promise<FundProfileData> {
   const result = await getDataset<FundProfileData>(
     "fundProfile",
-    { symbol: symbol.toUpperCase() },
+    // v2: mapping changed shape + semantics (zero-as-missing expense ratio,
+    // summaryDetail AUM, currency/rating/inception). v3: AMFI TER enrichment
+    // + expenseRatioSource. Persisted older rows carry the exact numbers these
+    // fixes remove, so they must miss, not be served.
+    { symbol: symbol.toUpperCase(), v: 3 },
     () => buildFundProfile(symbol),
   );
   return result.data;
 }
 
-async function buildFundProfile(symbol: string): Promise<FundProfileData> {
-  // Reads through getQuoteSummary, so the underlying Yahoo call is itself
-  // cached/deduped one layer down — the mapping work is what this dataset caches.
-  const raw = (await getQuoteSummary(symbol, [
-    "fundProfile",
-    "topHoldings",
-    "fundPerformance",
-  ])) as { fundProfile?: RawFundProfile; topHoldings?: RawTopHoldings; fundPerformance?: RawFundPerformance };
-
+/** Map the raw quoteSummary fund modules into FundProfileData. Pure / testable. */
+export function mapFundProfile(raw: RawFundBundle): FundProfileData {
   const profile = raw.fundProfile ?? {};
   const holdings = raw.topHoldings ?? {};
   const perf = raw.fundPerformance ?? {};
+  const keyStats = raw.defaultKeyStatistics ?? {};
+  const summary = raw.summaryDetail ?? {};
 
   const sectorWeights: FundSectorWeight[] = (holdings.sectorWeightings ?? [])
     .flatMap((row) => Object.entries(row))
@@ -607,17 +668,47 @@ async function buildFundProfile(symbol: string): Promise<FundProfileData> {
 
   const latestRisk = perf.riskOverviewStatistics?.riskStatistics?.at(-1) ?? null;
 
+  // Category baselines are only real when at least one period is non-zero.
+  // Yahoo has no category data for Indian mutual funds and pads
+  // trailingReturnsCat with zeros instead of omitting it — diffing against that
+  // baseline turned a fund's own +10.3% absolute return into a fabricated
+  // "+10.3pp vs category" claim.
+  const cat = perf.trailingReturnsCat ?? {};
+  const catAvailable = [cat.ytd, cat.oneYear, cat.threeYear, cat.fiveYear].some(
+    (v) => typeof v === "number" && v !== 0,
+  );
+
+  const inception = keyStats.fundInceptionDate != null ? new Date(keyStats.fundInceptionDate) : null;
+
+  // fundProfile is the canonical source; defaultKeyStatistics repeats the
+  // figure and covers funds whose fundProfile module is missing entirely.
+  const expenseRatio =
+    zeroAsMissing(profile.feesExpensesInvestment?.annualReportExpenseRatio) ??
+    zeroAsMissing(keyStats.annualReportExpenseRatio);
+
   return {
     family: profile.family ?? null,
-    category: profile.categoryName ?? null,
+    category: profile.categoryName ?? perf.fundCategoryName ?? null,
     legalType: profile.legalType ?? null,
-    expenseRatio: profile.feesExpensesInvestment?.annualReportExpenseRatio ?? null,
-    turnoverPercent: profile.feesExpensesInvestment?.annualHoldingsTurnover ?? null,
-    // Yahoo reports this in millions (e.g. 486986.6 = $487B for SPY) —
-    // converted to raw dollars so every consumer's "$X" formatting is correct.
+    expenseRatio,
+    expenseRatioSource: expenseRatio != null ? "yahoo" : null,
+    turnoverPercent:
+      zeroAsMissing(profile.feesExpensesInvestment?.annualHoldingsTurnover) ??
+      zeroAsMissing(keyStats.annualHoldingsTurnover),
+    // summaryDetail.totalAssets is in raw currency units and live (SPY: $781B),
+    // where fundProfile's totalNetAssets is in millions and was observed ~$300B
+    // stale for the same fund. The millions figure stays as a last resort only.
     totalNetAssets:
-      profile.feesExpensesInvestment?.totalNetAssets != null
-        ? profile.feesExpensesInvestment.totalNetAssets * 1e6
+      zeroAsMissing(summary.totalAssets) ??
+      zeroAsMissing(keyStats.totalAssets) ??
+      (zeroAsMissing(profile.feesExpensesInvestment?.totalNetAssets) != null
+        ? (profile.feesExpensesInvestment!.totalNetAssets as number) * 1e6
+        : null),
+    currency: summary.currency ?? null,
+    morningstarRating: keyStats.morningStarOverallRating ?? null,
+    inceptionDate:
+      inception != null && !Number.isNaN(inception.getTime())
+        ? inception.toISOString().slice(0, 10)
         : null,
     holdings: (holdings.holdings ?? []).map((h) => ({
       symbol: h.symbol,
@@ -643,18 +734,53 @@ async function buildFundProfile(symbol: string): Promise<FundProfileData> {
     },
     categoryRelativeReturns: {
       oneYear:
-        perf.trailingReturns?.oneYear != null && perf.trailingReturnsCat?.oneYear != null
-          ? (perf.trailingReturns.oneYear - perf.trailingReturnsCat.oneYear) * 100
+        catAvailable && perf.trailingReturns?.oneYear != null && cat.oneYear != null
+          ? (perf.trailingReturns.oneYear - cat.oneYear) * 100
           : null,
       threeYear:
-        perf.trailingReturns?.threeYear != null && perf.trailingReturnsCat?.threeYear != null
-          ? (perf.trailingReturns.threeYear - perf.trailingReturnsCat.threeYear) * 100
+        catAvailable && perf.trailingReturns?.threeYear != null && cat.threeYear != null
+          ? (perf.trailingReturns.threeYear - cat.threeYear) * 100
           : null,
     },
     risk: latestRisk
       ? { beta: latestRisk.beta ?? null, alpha: latestRisk.alpha ?? null, stdDev: latestRisk.stdDev ?? null, sharpeRatio: latestRisk.sharpeRatio ?? null }
       : null,
   };
+}
+
+async function buildFundProfile(symbol: string): Promise<FundProfileData> {
+  // Reads through getQuoteSummary, so the underlying Yahoo call is itself
+  // cached/deduped one layer down — the mapping work is what this dataset caches.
+  // defaultKeyStatistics + summaryDetail are requested alongside the three fund
+  // modules because they carry the fields Yahoo omits from fundProfile for
+  // non-US funds (turnover, AUM, Morningstar rating, inception, currency);
+  // price carries the display name the AMFI scheme match keys on.
+  const raw = (await getQuoteSummary(symbol, [
+    "fundProfile",
+    "topHoldings",
+    "fundPerformance",
+    "defaultKeyStatistics",
+    "summaryDetail",
+    "price",
+  ])) as RawFundBundle;
+  const fund = mapFundProfile(raw);
+
+  // Yahoo/Morningstar carries no TER for Indian mutual funds (the zero-encoded
+  // gap mapFundProfile nulls out). AMFI — the industry body — publishes it
+  // monthly per scheme, so an INR fund with no expense ratio gets one more
+  // chance from the official source. Best-effort by construction: getAmfiTerForFund
+  // returns null on any failure, and an unfilled expense ratio stays null.
+  if (fund.expenseRatio == null && fund.currency === "INR") {
+    const name = raw.price?.longName ?? null;
+    if (name) {
+      const amfi = await getAmfiTerForFund(name, fund.family);
+      if (amfi) {
+        fund.expenseRatio = amfi.ter;
+        fund.expenseRatioSource = "amfi";
+      }
+    }
+  }
+  return fund;
 }
 
 interface RawOptionContract {

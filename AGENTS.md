@@ -340,6 +340,25 @@ not as fact** — verify against the call graph.
 
 ## Product Rules Learned The Hard Way
 
+**Yahoo's fund feed encodes "not reported" as a literal 0 — and pads missing
+category baselines with zeros.** Every Indian mutual fund (Morningstar `0P…` `.BO`
+symbols) returns `annualReportExpenseRatio: 0` / `netExpRatio: 0` / `grossExpRatio: 0`
+(real TERs are 0.5–2%) and `trailingReturnsCat` of all-zeros (Yahoo has no category
+data for them). Taken at face value this rendered "0.00% expense ratio" as a
+*strength*, scored it a perfect Cost factor, and fabricated "+10.3pp vs category"
+from the fund's own absolute return. `mapFundProfile` in lib/yahoo.ts nulls exact
+zeros and all-zero category baselines — verified safe because even genuinely
+zero-fee funds (Fidelity ZERO) never come back as 0. The real TER is then
+recovered from AMFI's official monthly table (lib/amfi.ts: per-AMC fetch,
+Yahoo→AMFI scheme-name matching, Regular/Direct plan detection; provenance in
+`FundProfileData.expenseRatioSource`). Related conventions, all
+verified live: `summaryDetail.totalAssets` is raw currency units and current;
+`fundProfile.feesExpensesInvestment.totalNetAssets` is in *millions* and can be
+hundreds of billions stale; for mutual funds Morningstar's net assets are per
+SHARE CLASS (plan/option), ~10x below scheme-level AUM on AMFI/Groww — label it.
+Mutual funds also have no market cap / day range / volume (NAV-priced, not
+exchange-traded): the research stat strip renders fund-shaped stats instead.
+
 **Never let the local model derive a directional verdict.** Given the numbers and
 asked for judgement, a 7B model asserted "USD Cash is fully hedged against
 inflation" (health had scored Inflation 32/100 for the opposite reason), read 11.3

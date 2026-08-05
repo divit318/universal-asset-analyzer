@@ -98,6 +98,13 @@ export const DATASETS: Record<DatasetId, CachePolicy> = {
   // invalidatable like everything else.
   screenerIn: { ttlMs: 6 * HOUR, swrMs: DAY, persist: true, source: "screener_in", label: "screener.in company", dependents: ["companyContext", "aiVerdict"] },
 
+  // One AMC's full scheme-level TER table for the latest published month
+  // (AMFI publishes TER monthly; a value can only change with a month's lag).
+  // Keyed per AMC, not per scheme: one ~1.5MB fetch covers every scheme the
+  // house runs, so researching three HDFC funds costs one AMFI round-trip.
+  // The fundProfile dataset consumes this, so it is declared as a dependent.
+  amfiTer: { ttlMs: 3 * DAY, swrMs: 7 * DAY, persist: true, source: "amfi", label: "AMFI scheme TER", dependents: ["fundProfile"] },
+
   /* ---------------------------------------------------------------- */
   /* Market-wide                                                        */
   /* ---------------------------------------------------------------- */

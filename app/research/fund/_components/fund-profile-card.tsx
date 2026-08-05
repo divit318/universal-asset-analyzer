@@ -1,5 +1,5 @@
 import type { FundProfileData } from "@/lib/types";
-import { formatCompact } from "@/lib/format";
+import { formatCompactCurrency, formatDate } from "@/lib/format";
 import { Reveal } from "@/app/_components/reveal";
 import { SegmentedBar } from "@/app/_components/value-bar";
 
@@ -10,14 +10,30 @@ const ALLOCATION_SLICES = [
   { key: "other", label: "Other", className: "bg-muted" },
 ] as const;
 
-export function FundProfileCard({ fund }: { fund: FundProfileData }) {
+/**
+ * `perShareClass`: Morningstar reports a mutual fund's net assets per share
+ * class (the plan/option being viewed), not per scheme — the label must say
+ * so or the figure reads ~10x low against scheme-level AUM on AMFI/Groww.
+ */
+export function FundProfileCard({ fund, perShareClass = false }: { fund: FundProfileData; perShareClass?: boolean }) {
   const rows: [string, string][] = [
     ["Category", fund.category ?? "—"],
     ["Family", fund.family ?? "—"],
-    ["Legal type", fund.legalType ?? "—"],
-    ["Expense ratio", fund.expenseRatio != null ? `${(fund.expenseRatio * 100).toFixed(2)}%` : "—"],
+    // Net assets travel in the fund's own reporting currency (₹ for Indian
+    // funds) — a hardcoded "$" would mislabel them by the FX rate.
+    [perShareClass ? "Net assets (this plan)" : "Total net assets", formatCompactCurrency(fund.totalNetAssets, fund.currency)],
+    // TER recovered from AMFI's official monthly table is badged, because it
+    // has a different provenance from the rest of this (Yahoo-sourced) card.
+    [
+      "Expense ratio",
+      fund.expenseRatio != null
+        ? `${(fund.expenseRatio * 100).toFixed(2)}%${fund.expenseRatioSource === "amfi" ? " · AMFI" : ""}`
+        : "—",
+    ],
     ["Portfolio turnover", fund.turnoverPercent != null ? `${(fund.turnoverPercent * 100).toFixed(0)}%` : "—"],
-    ["Total net assets", fund.totalNetAssets != null ? `$${formatCompact(fund.totalNetAssets)}` : "—"],
+    ["Morningstar rating", fund.morningstarRating != null ? "★".repeat(fund.morningstarRating) : "—"],
+    ["Inception", fund.inceptionDate != null ? formatDate(fund.inceptionDate) : "—"],
+    ["Legal type", fund.legalType ?? "—"],
   ];
 
   const allocation = fund.assetAllocation;

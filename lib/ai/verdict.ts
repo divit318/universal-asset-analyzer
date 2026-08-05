@@ -38,7 +38,7 @@ import { writeCache } from "../platform/cache";
 import { cacheKey } from "../platform/registry";
 import { extractJson } from "../json-extract";
 import { detectAssetClass } from "../asset-class";
-import { formatCurrency, formatMarketCap } from "../format";
+import { formatCompactCurrency, formatCurrency, formatMarketCap } from "../format";
 import { getFundProfile, getHistory, getMacroSummary } from "../yahoo";
 import { computeFundScore } from "../fund-scoring";
 import { computeCryptoScore } from "../crypto-scoring";
@@ -455,9 +455,11 @@ async function planFundVerdict(ctx: CompanyContext): Promise<VerdictPlan> {
   const facts = [
     `Fund: ${name} (${symbol})`,
     `Price: ${formatCurrency(quote.price, quote.currency)} (${quote.changePercent >= 0 ? "+" : ""}${quote.changePercent.toFixed(2)}% today)`,
-    `Total net assets: ${fund.totalNetAssets != null ? `$${(fund.totalNetAssets / 1e9).toFixed(1)}B` : "n/a"}`,
+    `Total net assets: ${fund.totalNetAssets != null ? formatCompactCurrency(fund.totalNetAssets, fund.currency) : "n/a"}`,
     `Category: ${fund.category ?? "n/a"}`,
-    `Expense ratio: ${fund.expenseRatio != null ? `${(fund.expenseRatio * 100).toFixed(2)}%` : "n/a"}`,
+    // "n/a" alone reads as "free" to a model told the fund is an index-style
+    // pool — the explicit instruction stops fee claims being invented.
+    `Expense ratio: ${fund.expenseRatio != null ? `${(fund.expenseRatio * 100).toFixed(2)}%` : "not reported by our data source — do NOT assume it is zero or low"}`,
     `Fund score: ${score.composite}/100 (${score.recommendation.replace(/_/g, " ")})`,
     ...scoreFacts(score),
     `Top holdings: ${fund.holdings.slice(0, 5).map((h) => `${h.symbol} ${h.weightPercent.toFixed(1)}%`).join(", ") || "n/a"}`,

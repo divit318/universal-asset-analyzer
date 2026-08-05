@@ -125,6 +125,12 @@ export function currencySymbol(currency: string | null | undefined): string {
  * own financial currency, so SK hynix's ₩84.1T revenue estimate was rendering
  * as "$84.12T" — off by ~1,400x and enough to discredit every other number
  * on the page. Pass the currency that travelled with the number.
+ *
+ * INR amounts use Indian units — crore (1e7) above ₹1 Cr, lakh (1e5) above
+ * ₹1 L — with Indian digit grouping, matching screener.in / AMFI / every
+ * Indian filing ("₹38,121 Cr", not "₹381.21B"). Same convention as
+ * lib/ic/format.ts's fmtMoneyCompact, which is IC-scoped; this is the
+ * app-wide counterpart.
  */
 export function formatCompactCurrency(
   value: number | null | undefined,
@@ -134,7 +140,17 @@ export function formatCompactCurrency(
   const code = (currency ?? "USD").toUpperCase();
   const symbol = CURRENCY_SYMBOLS[currency ?? ""] ?? CURRENCY_SYMBOLS[code];
   const sign = value < 0 ? "-" : "";
-  const amount = formatCompact(Math.abs(value));
+  const abs = Math.abs(value);
+  if (code === "INR") {
+    const amount =
+      abs >= 1e7
+        ? `${(abs / 1e7).toLocaleString("en-IN", { maximumFractionDigits: abs >= 1e12 ? 0 : 1 })} Cr`
+        : abs >= 1e5
+          ? `${(abs / 1e5).toLocaleString("en-IN", { maximumFractionDigits: 2 })} L`
+          : abs.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+    return `${sign}₹${amount}`;
+  }
+  const amount = formatCompact(abs);
   return symbol ? `${sign}${symbol}${amount}` : `${sign}${code} ${amount}`;
 }
 

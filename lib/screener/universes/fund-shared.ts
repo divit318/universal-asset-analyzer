@@ -120,6 +120,15 @@ const SECTOR_LABEL: Record<string, string> = {
 const pct = (v: number | null | undefined): number | null =>
   v == null || !Number.isFinite(v) ? null : v * 100;
 
+/**
+ * Yahoo encodes a missing expense ratio as a literal 0 (every Indian mutual
+ * fund, some thin closed-end funds) — the same convention lib/yahoo.ts's
+ * mapFundProfile documents and nulls. A 0 kept here would rank a fund with an
+ * unknown fee as the cheapest fund in the universe.
+ */
+const zeroAsMissing = (v: number | null | undefined): number | null =>
+  v == null || v === 0 || !Number.isFinite(v) ? null : v;
+
 function parseDetail(raw: RawFundDetail): FundDetail {
   const profile = raw.fundProfile ?? {};
   const holdings = raw.topHoldings ?? {};
@@ -174,7 +183,7 @@ function parseDetail(raw: RawFundDetail): FundDetail {
     available: raw.fundProfile != null || raw.topHoldings != null,
     category: profile.categoryName ?? null,
     family: profile.family ?? null,
-    expenseRatio: pct(profile.feesExpensesInvestment?.annualReportExpenseRatio),
+    expenseRatio: pct(zeroAsMissing(profile.feesExpensesInvestment?.annualReportExpenseRatio)),
     // Zero holdings reported means "Yahoo didn't tell us", not "the fund holds
     // nothing" — null so a concentration filter excludes it instead of ranking
     // it as perfectly diversified.

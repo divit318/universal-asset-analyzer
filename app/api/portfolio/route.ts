@@ -8,6 +8,7 @@
  */
 import { isValidSymbol } from "@/lib/market";
 import { NextResponse } from "next/server";
+import { resolveDisplayName } from "@/lib/yahoo";
 import { listPortfolio } from "@/lib/db";
 import { listRawHoldings, upsertHolding, upsertCash, removeHolding } from "@/lib/portfolio/store";
 import { hasClassAdapter, getClassAdapter } from "@/lib/portfolio/model/adapter";
@@ -108,9 +109,13 @@ export async function POST(request: Request) {
 
   try {
     const adapter = getClassAdapter(cls);
+    // Resolve a real display name when the caller has none — otherwise a
+    // holding added by symbol alone shows that symbol as its "name" forever
+    // (an opaque Morningstar ID, for Indian mutual funds).
+    const name = await resolveDisplayName(symbol, body.name);
     upsertHolding({
       symbol,
-      name: body.name?.trim() || symbol,
+      name,
       quantity,
       avgCost: body.avgCost,
       assetClass: cls,
