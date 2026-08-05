@@ -45,6 +45,8 @@ export interface ActionQueueItem {
   description: string;
   href: string;
   symbol?: string;
+  /** ISO time of the observation behind the item (notifications); ranking decays with it. */
+  observedAt?: string;
 }
 
 export interface OpportunitySnapshotItem {
@@ -166,6 +168,28 @@ export async function gatherContext(): Promise<MissionControlContext> {
 
 const SEVERITY_RANK: Record<"high" | "medium" | "low", number> = { high: 0, medium: 1, low: 2 };
 
+/** Alert kinds that describe a single session's price action. */
+const SESSION_BOUND_KINDS = new Set(["big_move", "drop_alert"]);
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * True when a session-bound alert's observation is older than the immediately
+ * previous session (>3 calendar days, weekend-tolerant — same policy as
+ * lib/metric.ts metricSessionState). Legacy rows without a session date fall
+ * back to their created date rather than living forever.
+ */
+export function isStaleSessionAlert(
+  n: Pick<Notification, "kind" | "sessionDate" | "createdAt">,
+  now: number = Date.now(),
+): boolean {
+  if (!SESSION_BOUND_KINDS.has(n.kind)) return false;
+  const day = n.sessionDate ?? n.createdAt.slice(0, 10);
+  const t = Date.parse(`${day}T00:00:00`);
+  if (Number.isNaN(t)) return true; // undated session data is untrusted by policy
+  return now - t > 3 * DAY_MS;
+}
+
 /** Exported for unit testing — pure, no I/O. */
 export function buildActionQueue(
   report: UniversalPortfolioReport | null,
@@ -216,6 +240,11 @@ export function buildActionQueue(
 
   for (const n of notifications) {
     if (n.read) continue;
+    // A price-move alert describes one session. Once that session is older
+    // than the immediately previous one (weekend-tolerant), it is history,
+    // not an action — it stays in the bell (retention) but leaves the queue
+    // (audit F-22d: the pre-purge queue led with a five-day-old -8.7%).
+    if (isStaleSessionAlert(n)) continue;
     items.push({
       id: `notification-${n.id}`,
       severity: n.severity === "warning" ? "high" : "low",
@@ -224,6 +253,7 @@ export function buildActionQueue(
       description: n.body,
       href: n.symbol ? `/research?symbol=${n.symbol}` : "/watchlist",
       symbol: n.symbol ?? undefined,
+      observedAt: n.observedAt ?? n.createdAt,
     });
   }
 

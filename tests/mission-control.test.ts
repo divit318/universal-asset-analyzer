@@ -101,6 +101,37 @@ describe("buildActionQueue", () => {
     expect(result.items).toEqual([]);
   });
 
+  it("excludes session-bound alerts whose session is stale (F-22d)", () => {
+    // The pre-purge queue: a big_move row from five days ago still ranked as an
+    // action titled "down -8.7%". Session-bound kinds leave the queue once
+    // older than the previous session; other kinds are untouched.
+    const old = notification({ id: 2, kind: "big_move", sessionDate: "2026-07-31", createdAt: "2026-07-31T13:31:00Z", title: "AAPL down 8.7%" });
+    const fresh = notification({ id: 3, kind: "big_move", sessionDate: "2026-08-05", createdAt: "2026-08-05T14:10:00Z", title: "NEM up 7.1%" });
+    const target = notification({ id: 4, kind: "price_target", createdAt: "2026-07-20T10:00:00Z", title: "APA crossed your target" });
+
+    const realNow = Date.now;
+    Date.now = () => Date.parse("2026-08-05T17:00:00Z");
+    try {
+      const result = buildActionQueue(null, [], [old, fresh, target]);
+      expect(result.items.map((i) => i.title)).toContain("NEM up 7.1%");
+      expect(result.items.map((i) => i.title)).toContain("APA crossed your target");
+      expect(result.items.map((i) => i.title)).not.toContain("AAPL down 8.7%");
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  it("legacy session-bound rows without sessionDate age out by created date", () => {
+    const legacy = notification({ id: 5, kind: "drop_alert", createdAt: "2026-07-28T10:00:00Z", title: "old drop" });
+    const realNow = Date.now;
+    Date.now = () => Date.parse("2026-08-05T17:00:00Z");
+    try {
+      expect(buildActionQueue(null, [], [legacy]).items).toEqual([]);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
   it("returns empty status with no sources", () => {
     const result = buildActionQueue(null, [], []);
     expect(result).toEqual({ status: "empty", items: [] });

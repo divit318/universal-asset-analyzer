@@ -52,6 +52,7 @@ function seed(partial: Partial<AttentionSeed>): AttentionSeed {
     urgency: partial.urgency ?? 0.5,
     confidence: partial.confidence ?? 0.5,
     occursAt: partial.occursAt ?? null,
+    observedAt: partial.observedAt ?? null,
     primaryAction: partial.primaryAction ?? { label: "Open", href: "/x" },
     source: partial.source ?? "signals",
   };
@@ -157,7 +158,7 @@ describe("buildAttentionQueue", () => {
     expect(KIND_PRECEDENCE.action).toBeLessThan(KIND_PRECEDENCE.signal);
   });
 
-  it("dedupes by story key, keeping the highest score and merging hrefs", () => {
+  it("dedupes by story key — score breaks ties between unstamped siblings, hrefs merge", () => {
     const q = buildAttentionQueue({
       feeders: [
         feeder("a", [seed({ id: "1", dedupeKey: "same", impact: 0.4, urgency: 0.5, confidence: 0.5, primaryAction: { label: "A", href: "/a" } })]),
@@ -167,8 +168,41 @@ describe("buildAttentionQueue", () => {
       now: NOW,
     });
     expect(q.items).toHaveLength(1);
-    expect(q.items[0].primaryAction.href).toBe("/b"); // higher score wins
+    expect(q.items[0].primaryAction.href).toBe("/b"); // higher score wins the tie
     expect(q.items[0].mergedHrefs).toEqual([{ label: "A", href: "/a" }]);
+  });
+
+  it("dedupe keeps the NEWEST observation, not the most extreme print (F-22d)", () => {
+    // The pre-purge homepage: a five-day-old "-8.7%" outscored the fresher
+    // "-7.4%" of the same story and squatted at the top of the queue. Recency
+    // must beat score for observation-backed siblings.
+    const q = buildAttentionQueue({
+      feeders: [
+        feeder("a", [
+          seed({ id: "old", dedupeKey: "same", impact: 0.9, urgency: 0.5, confidence: 0.5, observedAt: "2026-07-13T13:31:00Z", primaryAction: { label: "Old", href: "/old" } }),
+          seed({ id: "new", dedupeKey: "same", impact: 0.6, urgency: 0.5, confidence: 0.5, observedAt: "2026-07-17T13:33:00Z", primaryAction: { label: "New", href: "/new" } }),
+        ]),
+      ],
+      dismissals: [],
+      now: NOW,
+    });
+    expect(q.items).toHaveLength(1);
+    expect(q.items[0].id).toBe("new");
+    expect(q.items[0].mergedHrefs).toEqual([{ label: "Old", href: "/old" }]);
+  });
+
+  it("live engine output (no observedAt) outranks any stamped observation in dedupe", () => {
+    const q = buildAttentionQueue({
+      feeders: [
+        feeder("a", [
+          seed({ id: "stamped", dedupeKey: "same", impact: 0.9, observedAt: "2026-07-18T14:00:00Z" }),
+          seed({ id: "live", dedupeKey: "same", impact: 0.4 }),
+        ]),
+      ],
+      dismissals: [],
+      now: NOW,
+    });
+    expect(q.items[0].id).toBe("live");
   });
 
   it("isolates a throwing feeder — surviving items paint, feeder listed as degraded", () => {
@@ -271,6 +305,24 @@ describe("feeders", () => {
     const before = seedsFromActions([base])[0].dedupeKey;
     const after = seedsFromActions([{ ...base, decisionScore: 64 }])[0].dedupeKey;
     expect(before).not.toBe(after);
+  });
+
+  it("actions: confidence decays with observation age and zeroes when stale (F-22d)", () => {
+    const base: RecommendedAction = {
+      id: "n1", symbol: "AAPL", action: "REVIEW", title: "AAPL down 8.7%", reason: "x", decisionScore: null,
+      priority: 1, confidence: null, expectedImpact: null, expectedImprovement: null, severity: "high",
+      href: "/x", source: "queue", why: null, impact: null, alternativesEvaluated: null,
+    };
+    const fresh = seedsFromActions([{ ...base, observedAt: new Date(NOW - 2 * HOUR).toISOString() }], NOW)[0];
+    const aging = seedsFromActions([{ ...base, observedAt: new Date(NOW - 2 * DAY).toISOString() }], NOW)[0];
+    const stale = seedsFromActions([{ ...base, observedAt: new Date(NOW - 5 * DAY).toISOString() }], NOW)[0];
+    expect(fresh.confidence).toBeCloseTo(0.6);
+    expect(aging.confidence).toBeCloseTo(0.3);
+    expect(stale.confidence).toBe(0);
+    // Geometric score: zero confidence sinks the stale item entirely.
+    expect(scoreSeed(stale)).toBe(0);
+    // The stamp rides along for dedupe recency.
+    expect(fresh.observedAt).toBe(new Date(NOW - 2 * HOUR).toISOString());
   });
 
   it("threats: impact scales with measured % at risk, and bands by magnitude", () => {

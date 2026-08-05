@@ -315,6 +315,13 @@ export interface AttentionItem {
   confidence: number;
   /** ISO, for dated catalysts; null for undated items. */
   occursAt: string | null;
+  /**
+   * ISO time of the underlying observation, when the item describes one
+   * (notification-backed alerts/actions). Dedupe keeps the NEWEST observation
+   * of a story, and confidence decays with observation age (audit F-22d) —
+   * the old max-score rule guaranteed the oldest, most extreme print won.
+   */
+  observedAt?: string | null;
   /** The one deep link into the owning tool. Verb-labeled. */
   primaryAction: { label: string; href: string };
   /** Feeder id, for degraded-state attribution. */
@@ -395,6 +402,8 @@ export interface RecommendedAction {
   severity: "high" | "medium" | "low";
   href: string;
   source: "decision" | "queue";
+  /** ISO time of the observation behind a queue item; null when engine-scored live. */
+  observedAt?: string | null;
   /**
    * The engine's full IC memo (why / why now / why this amount / why not the
    * alternatives / why not nothing). Null for queue-sourced items, which were

@@ -113,6 +113,7 @@ export function buildRecommendedActions(
     severity: item.severity,
     href: item.href,
     source: "queue",
+    observedAt: item.observedAt ?? null,
     // Queue items were flagged, never argued for or simulated — saying so
     // honestly (nulls) beats fabricating a memo for them.
     why: null,

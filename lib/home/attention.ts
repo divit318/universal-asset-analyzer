@@ -180,11 +180,29 @@ function weightOf(symbol: string | null, weights: WeightBySymbol): number {
   return clamp01(weights.get(symbol.toUpperCase()) ?? 0);
 }
 
+/**
+ * Confidence multiplier for observation age (audit F-22d): a same-day
+ * observation carries full weight, the previous session (weekend-tolerant)
+ * half, and anything older contributes nothing — it should already have been
+ * filtered upstream, but a zero confidence sinks it regardless (geometric
+ * score). Items with no observation time are live-engine output: full weight.
+ */
+export function observationDecay(observedAt: string | null | undefined, now: number): number {
+  if (!observedAt) return 1;
+  const t = Date.parse(observedAt);
+  if (Number.isNaN(t)) return 0;
+  const ageDays = (now - t) / DAY;
+  if (ageDays <= 1) return 1;
+  if (ageDays <= 3) return 0.5;
+  return 0;
+}
+
 /** Portfolio-engine decisions / alert queue → `action` seeds. */
-export function seedsFromActions(actions: RecommendedAction[]): AttentionSeed[] {
+export function seedsFromActions(actions: RecommendedAction[], now: number = Date.now()): AttentionSeed[] {
   return actions.map((a) => {
     const impact = a.decisionScore != null ? a.decisionScore / 100 : SEVERITY_IMPACT[a.severity];
     const band = a.decisionScore != null ? scoreBand(a.decisionScore) : a.severity;
+    const decay = observationDecay(a.observedAt, now);
     return {
       id: `action:${a.id}`,
       dedupeKey: `action:${a.symbol ?? "portfolio"}:${band}`,
@@ -194,8 +212,9 @@ export function seedsFromActions(actions: RecommendedAction[]): AttentionSeed[] 
       rationale: a.reason,
       impact,
       urgency: UNDATED_URGENCY,
-      confidence: a.confidence ?? KIND_CONFIDENCE_DEFAULT.action,
+      confidence: (a.confidence ?? KIND_CONFIDENCE_DEFAULT.action) * decay,
       occursAt: null,
+      observedAt: a.observedAt ?? null,
       primaryAction: {
         label: a.source === "decision" ? "Open decision" : "Review",
         href: a.source === "decision" ? "/portfolio?tab=decisions" : a.href,
@@ -376,7 +395,16 @@ export function buildAttentionQueue(input: BuildAttentionInput): AttentionQueue 
   // 3. Score.
   const scored: AttentionItem[] = live.map((s) => ({ ...s, score: scoreSeed(s) }));
 
-  // 4. Dedupe by story key: keep the highest score; fold the rest's links in.
+  // 4. Dedupe by story key: keep the sibling with the NEWEST observation, not
+  // the highest score — max-score kept whichever print was most extreme, which
+  // for a decaying story is provably the oldest one (audit F-22d: a five-day-
+  // old "-8.7%" outranked the fresher "-7.4%" of the same story). Items with
+  // no observation time (live engine output) sort as newest. Score breaks ties.
+  const observedMs = (i: AttentionItem) => {
+    if (!i.observedAt) return Number.POSITIVE_INFINITY;
+    const t = Date.parse(i.observedAt);
+    return Number.isNaN(t) ? Number.NEGATIVE_INFINITY : t;
+  };
   const byKey = new Map<string, AttentionItem>();
   for (const item of scored) {
     const existing = byKey.get(item.dedupeKey);
@@ -384,7 +412,10 @@ export function buildAttentionQueue(input: BuildAttentionInput): AttentionQueue 
       byKey.set(item.dedupeKey, item);
       continue;
     }
-    const [keep, drop] = item.score >= existing.score ? [item, existing] : [existing, item];
+    const a = observedMs(item);
+    const b = observedMs(existing);
+    const keepItem = a !== b ? a > b : item.score >= existing.score;
+    const [keep, drop] = keepItem ? [item, existing] : [existing, item];
     const merged = keep.mergedHrefs ?? [];
     if (drop.primaryAction.href !== keep.primaryAction.href) merged.push(drop.primaryAction);
     keep.mergedHrefs = merged;
