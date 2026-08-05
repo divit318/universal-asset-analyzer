@@ -48,6 +48,11 @@ import { buildPortfolioReport } from "@/lib/portfolio/report";
 import { buildThesisPrompt } from "@/lib/portfolio/thesis";
 import { buildHomeBriefPrompt, toBriefPortfolio } from "@/lib/home/brief";
 import { gatherContext } from "@/lib/mission-control";
+import { EquityComparisonWireSchema, COMPARISON_SCHEMA_VERSION } from "@/lib/ai/schemas/comparison";
+import { AllocationWireSchema, SelectionWireSchema, SIMULATOR_SCHEMA_VERSION } from "@/lib/ai/schemas/simulator";
+import { prepareComparison } from "@/lib/ai-compare";
+import { buildAllocationPrompt, buildSelectionPrompt, fallbackAllocation } from "@/lib/portfolio/simulator/generate";
+import type { SimProfile } from "@/lib/portfolio/simulator/types";
 import {
   WatchlistDigestSchema, WatchlistDigestWireSchema, WATCHLIST_DIGEST_SCHEMA_VERSION,
 } from "@/lib/ai/schemas/watchlist-digest";
@@ -141,6 +146,8 @@ interface Subject {
    * company-research, …) — one TaskDef, many registry tasks.
    */
   taskType?: TaskType;
+  /** Per-subject wire override (the simulator's two stages answer different schemas). */
+  wireSchema?: z.ZodType<unknown>;
 }
 
 interface TaskDef {
@@ -375,6 +382,102 @@ const TASKS: Record<string, TaskDef> = {
     },
   },
 
+  compare: {
+    taskType: "comparison",
+    output: "json",
+    schema: LooseObjectSchema,
+    wireSchema: EquityComparisonWireSchema,
+    schemaVersion: COMPARISON_SCHEMA_VERSION,
+    async buildSubjects(symbols) {
+      const sets = symbols
+        ? [{ key: symbols.join(","), label: "custom", symbols }]
+        : [
+            { key: "AAPL,MSFT,NVDA", label: "3 mega-caps", symbols: ["AAPL", "MSFT", "NVDA"] },
+            { key: "KOSS,BGFV", label: "DEGENERATE: two thin microcaps", symbols: ["KOSS", "BGFV"] },
+          ];
+      const out: Subject[] = [];
+      for (const set of sets) {
+        try {
+          const setup = await prepareComparison(set.symbols);
+          out.push({
+            key: set.key,
+            label: `${set.label} (${setup.stocks.length} loaded)`,
+            prompt: setup.prompt,
+            meta: { symbols: setup.stocks.map((s) => s.symbol) },
+          });
+        } catch (err) {
+          console.log(`  ${set.key.padEnd(14)} SKIPPED — ${err instanceof Error ? err.message : err}`);
+        }
+      }
+      return out;
+    },
+    describe(output) {
+      const bag = output as Record<string, unknown>;
+      const rankings = Array.isArray(bag.rankings) ? bag.rankings : [];
+      const order = rankings
+        .map((r) => (r && typeof r === "object" ? String((r as Record<string, unknown>).symbol ?? "?") : "?"))
+        .join(">");
+      return `rank=${order} noClearWinner=${String(bag.noClearWinner)} conf=${String(bag.confidenceScore ?? "?")}`;
+    },
+    extraChecks(output, subject) {
+      const problems: string[] = [];
+      const strict = EquityComparisonWireSchema.safeParse(output);
+      if (!strict.success) {
+        problems.push(...strict.error.issues.slice(0, 4).map((i) => `wire-incomplete ${i.path.join(".")}: ${i.message}`));
+      }
+      const allowed = new Set((subject.meta?.symbols as string[]) ?? []);
+      const rankings = Array.isArray((output as Record<string, unknown>).rankings)
+        ? ((output as Record<string, unknown>).rankings as unknown[])
+        : [];
+      for (const r of rankings) {
+        const sym = r && typeof r === "object" ? String((r as Record<string, unknown>).symbol ?? "") : "";
+        if (sym && !allowed.has(sym.toUpperCase())) problems.push(`ranking references non-compared symbol "${sym}"`);
+      }
+      return problems;
+    },
+  },
+
+  simulator: {
+    taskType: "portfolio-construction",
+    output: "json",
+    schema: LooseObjectSchema,
+    wireSchema: AllocationWireSchema,
+    schemaVersion: SIMULATOR_SCHEMA_VERSION,
+    async buildSubjects() {
+      const profile: SimProfile = {
+        cash: 100_000, currency: "USD", horizon: "long", targetDate: null, objective: "growth",
+        riskAppetite: 7, maxDrawdownPct: 35, role: "standalone", complementRef: null,
+        preferences: {}, followUps: [], intakeComplete: true,
+      };
+      const allocation = fallbackAllocation(profile);
+      return [
+        { key: "allocation", label: "stage 1: class allocation", prompt: buildAllocationPrompt(profile) },
+        {
+          key: "selection",
+          label: "stage 2: instrument selection",
+          prompt: buildSelectionPrompt(profile, allocation),
+          // Stage 2 answers a different schema — per-subject wire override.
+          wireSchema: SelectionWireSchema,
+        },
+      ];
+    },
+    describe(output) {
+      const bag = output as Record<string, unknown>;
+      if (bag.allocation && typeof bag.allocation === "object") {
+        return `alloc={${Object.entries(bag.allocation as Record<string, unknown>).map(([k, v]) => `${k}:${v}`).join(",")}}`;
+      }
+      const picks = Array.isArray(bag.picks) ? (bag.picks as Record<string, unknown>[]) : [];
+      return `picks=[${picks.map((p) => `${p.symbol}:${p.weightPct}`).join(",")}]`;
+    },
+    extraChecks(output, subject) {
+      const wire = subject.wireSchema ?? AllocationWireSchema;
+      const strict = wire.safeParse(output);
+      return strict.success
+        ? []
+        : strict.error.issues.slice(0, 4).map((i) => `wire-incomplete ${i.path.join(".")}: ${i.message}`);
+    },
+  },
+
   thesis: {
     taskType: "portfolio-intelligence",
     output: "json",
@@ -506,7 +609,7 @@ async function runProvider(kind: "ollama" | "devin", task: TaskDef, s: Subject):
     subjectKey: `parity:${s.key}`,
     prompt: s.prompt,
     schema: task.schema,
-    wireSchema: task.wireSchema,
+    wireSchema: s.wireSchema ?? task.wireSchema,
     schemaVersion: task.schemaVersion,
     output: task.output,
     idempotencyKey: `parity-${kind}-${task.taskType}-${s.key}-${Date.now()}`,

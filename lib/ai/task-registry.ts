@@ -198,6 +198,9 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     latency: "standard",
     jsonMode: true,
     maxTokens: 1800,
+    // Tranche 5 migrated (equity + class compare). Largest dossiers in the
+    // standard tier (5 stocks x full metric tables) — tail-based budget.
+    devinTimeoutMs: 300_000,
   },
   "portfolio-intelligence": {
     complexity: "standard",
@@ -293,6 +296,9 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     temperature: 0.4,
     maxTokens: 1600,
     timeoutMs: 150_000,
+    // Tranche 5: seam-migrated but interactive — stays on the token stack
+    // under a global AI_PROVIDER=devin unless pinned; budget applies when pinned.
+    devinTimeoutMs: 240_000,
   },
   // Interactive — a human is watching this exact spinner while the fullscreen
   // chart's AI dock is open. Standard complexity (real interpretive judgment
