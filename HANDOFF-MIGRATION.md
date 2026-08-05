@@ -22,25 +22,23 @@ in-progress `app/settings/account/page.tsx` (see §3).
 
 ## 2. Requests into files you own
 
-- `app/landing/_components/sections/hero.tsx`: this file carried two F-01
-  false-locality claims from before the ownership split — the
-  "Runs 100% on your computer" badge and the "all on your computer" subhead
-  clause. They were corrected in the migration session's Part A work (badge →
-  "Your data stays on your computer"; subhead → "with every portfolio, note,
-  and score stored on your computer") and are committed under `ai: `. Rewrite
-  the hero however you want, but the e2e F-01 guard
-  (`e2e/landing.spec.ts` → "F-01 guard: every retired false-locality claim
-  stays retired") will fail the suite if any retired phrase returns. The
-  approved positioning is: **local-first data + deterministic computation;
-  hosted AI narration on the user's own Anthropic key**.
-- `app/globals.css`, `app/layout.tsx`: your modifications were left unstaged
-  and uncommitted by this session.
+- `app/landing/_components/sections/hero.tsx`: RESOLVED mid-flight — your
+  rewrite ("Every figure computed. Every claim traced.") landed while this
+  session's e2e was running; it is provider-agnostic and true, and the hero
+  spec in `e2e/landing.spec.ts` was reconciled to it (commit 10a2f39). The
+  F-01 guard ("every retired false-locality claim stays retired") passes
+  against it and will fail the suite if any retired phrase ever returns. The
+  approved positioning remains: **local-first data + deterministic
+  computation; hosted AI narration on the user's own Anthropic key**.
+- `app/globals.css`, `app/layout.tsx`, `app/landing/_components/landing-header.tsx`,
+  `e2e/global-setup.ts`: your modifications were left unstaged and
+  uncommitted by this session.
 
 ## 3. Known breakage that is yours
 
-- `app/settings/account/page.tsx` imports `../_components/account-card` and
-  `../_components/change-password-card`, which don't exist yet — `tsc` fails
-  on exactly those two lines. Everything else typechecks.
+- RESOLVED mid-flight: `app/settings/_components/account-card.tsx` and
+  `change-password-card.tsx` landed while this session was running; `tsc` is
+  clean again. Nothing outstanding.
 
 ## 4. Environment facts you should know
 
