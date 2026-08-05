@@ -56,7 +56,7 @@ export const SECTIONS: LandingSection[] = [
   { id: "features", kicker: "Capabilities", title: "Everything serious research needs", nav: "Features" },
   { id: "demo", kicker: "Try it", title: "See UAA in action", nav: "Demo" },
   { id: "comparison", kicker: "Compare", title: "How UAA stacks up", nav: "Compare" },
-  { id: "pricing", kicker: "Pricing", title: "Get started for free", nav: "Pricing" },
+  { id: "pricing", kicker: "Pricing", title: "Free to run. Pro when you want us to run it.", nav: "Pricing" },
   { id: "faq", kicker: "Questions", title: "Frequently asked questions", nav: "FAQ" },
   { id: "cta", kicker: "Ready?", title: "Experience Universal Asset Analyzer" },
 ];
