@@ -25,7 +25,7 @@
  * failure mode.
  */
 
-import { getQuoteSummary } from "../../yahoo";
+import { getQuoteSummary, zeroAsMissing } from "../../yahoo";
 import type { FundHolding } from "../../types";
 import { mapPool, withRetry } from "../metrics-util";
 
@@ -119,15 +119,6 @@ const SECTOR_LABEL: Record<string, string> = {
 
 const pct = (v: number | null | undefined): number | null =>
   v == null || !Number.isFinite(v) ? null : v * 100;
-
-/**
- * Yahoo encodes a missing expense ratio as a literal 0 (every Indian mutual
- * fund, some thin closed-end funds) — the same convention lib/yahoo.ts's
- * mapFundProfile documents and nulls. A 0 kept here would rank a fund with an
- * unknown fee as the cheapest fund in the universe.
- */
-const zeroAsMissing = (v: number | null | undefined): number | null =>
-  v == null || v === 0 || !Number.isFinite(v) ? null : v;
 
 function parseDetail(raw: RawFundDetail): FundDetail {
   const profile = raw.fundProfile ?? {};

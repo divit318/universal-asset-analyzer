@@ -614,8 +614,12 @@ export interface RawFundBundle {
  * and the same funds' real TERs are 0.5–2%. A zero must therefore read as
  * missing, not as free. Verified that the collision case is theoretical: even
  * the genuinely-zero-fee Fidelity ZERO funds come back non-zero from Yahoo.
+ *
+ * Exported because every consumer of Yahoo's fund numbers must apply the same
+ * rule (the fund screener universe imports it — a 0 kept there would rank an
+ * unknown-fee fund as the cheapest in the universe).
  */
-const zeroAsMissing = (v: number | null | undefined): number | null =>
+export const zeroAsMissing = (v: number | null | undefined): number | null =>
   v == null || v === 0 || !Number.isFinite(v) ? null : v;
 
 const SECTOR_LABEL: Record<string, string> = {
