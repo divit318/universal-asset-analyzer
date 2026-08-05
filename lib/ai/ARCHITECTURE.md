@@ -60,6 +60,39 @@ Responses are normalized (`response.ts`) into `{ content, confidence,
 reasoningSummary, executionTimeMs, model, provider, tokenUsage, errors,
 metadata }`. No feature code branches on which model answered.
 
+## Instrumentation, caching, and output contracts (2026-08-06)
+
+**Telemetry** (`telemetry.ts` → `ai_call` in SQLite, rendered at `/dev/ai`):
+every Router attempt — success or failure — records task, provider, model,
+fallback depth, duration, queue time, TTFT (streamed), token usage split by
+prompt-cache creation/read, and estimated USD cost (registry pricing ×
+reported usage; an estimate, never billing truth). Ledger writes never throw,
+and are opt-in under vitest (`AI_TELEMETRY_IN_TESTS=1`). This is the
+instrument every routing/caching/tiering decision is judged against.
+
+**Prompt caching** (`anthropic-provider.ts:buildCachedPrompt`): up to two
+`cache_control` breakpoints — the system block always (free below the API's
+cacheable minimum, 0.1×-priced reads above it), and the last assistant turn
+only in real multi-turn conversations (the Copilot layout pins system +
+dossier + prior turns). One-shot prompts get no turn breakpoint: a cache
+write with no reader is a pure +25% on the written tokens. Placement never
+changes a prompt byte. `AI_PROMPT_CACHE=off` for A/B runs;
+`scripts/ai-bench.ts --suite cache` verifies write→read on the wire.
+
+**Native structured outputs**: a caller-supplied JSON Schema
+(`RunTaskOptions.jsonSchema` → `output_config.format`) makes schema validity
+a decoding guarantee. The analysis seam compiles each request's `wireSchema`
+via `z.toJSONSchema` (best-effort — anything uncompilable degrades to the
+prompt-directed JSON path unchanged), and the tolerant parse still runs: it
+carries the semantic guards and legacy-row defaults.
+
+**Evals** (`tests/ai-eval/golden.ts`): golden workflow cases built with the
+production prompt builders and graded deterministically (schema, membership
+guards, the grounding verifier). `scripts/ai-eval.ts` runs them live — the
+gate a model swap or effort repin must pass (`--model` pins a candidate);
+`--record` snapshots outputs that CI re-grades offline
+(`tests/ai-eval/recorded-outputs.test.ts`).
+
 ## Notes that are not style preferences
 
 **1. Health checks are key-presence, not paid round trips.** The Router

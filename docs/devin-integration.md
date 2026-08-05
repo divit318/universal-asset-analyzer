@@ -3,12 +3,13 @@
 This page covers Devin's **engineering-workflow** integrations — PR review,
 weekly dependency maintenance, error triage, and (dormant) incident response.
 
-> Since 2026-08-02 Devin is ALSO the app's primary AI provider (superseding
-> the local-only policy this page used to state): the Router's completion
-> chain leads with hosted Devin CLI models (`lib/ai/devin-cli.ts`,
-> `AI_PROVIDER_ORDER`), and background analyses run through the Devin
-> sessions API (`lib/ai/providers/devin/`). Local Ollama remains the offline
-> fallback. See `lib/ai/ARCHITECTURE.md` and `ai-migration/`.
+> HISTORY NOTE: between 2026-08-02 and 2026-08-05 Devin was also the app's
+> primary AI provider (Devin CLI models in the Router chain + the Devin
+> sessions API for background analyses). That era ended with decision
+> "Part A" (commit `0ce3c0c`): the app's runtime inference is now the
+> Anthropic API directly — see `lib/ai/ARCHITECTURE.md`. The empirical
+> record lives in `ai-migration/`. This page covers only the
+> engineering-workflow integrations below, which remain active.
 
 Components:
 
