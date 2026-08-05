@@ -30,7 +30,9 @@ import type { PortfolioFacts } from "./facts";
 import { collectClaimText, verifyGrounding, type GroundingReport } from "./grounding";
 import type { CompanyContext } from "./types";
 import type { TaskType } from "./task-registry";
-import { runPrompt } from "../ai";
+import { runAnalysis } from "./analysis";
+import { OllamaAnalysisError } from "./providers/ollama-analysis";
+import { VerdictParseSchema, VerdictWireSchema, VERDICT_SCHEMA_VERSION } from "./schemas/verdict";
 import { getDataset, peekDataset } from "../platform/data-layer";
 import { writeCache } from "../platform/cache";
 import { cacheKey } from "../platform/registry";
@@ -235,18 +237,42 @@ export function parseVerdictFields(raw: string): Record<string, unknown> {
 /**
  * Generate a verdict without streaming — the blocking path.
  *
+ * Runs through the analysis seam (ai-migration/03 §9), so AI_PROVIDER decides
+ * Ollama vs Devin. Both providers return the loose field bag that
+ * {@link assembleVerdict} → coerceFields narrows with plan-specific defaults —
+ * one defaulting implementation, two transports.
+ *
  * Never throws: an inference failure degrades to {@link offlineVerdict} so the
- * research page always has something to render.
+ * research page always has something to render. One deliberate asymmetry,
+ * preserving each path's pre-migration semantics exactly:
+ *   - Ollama emitting UNPARSEABLE bytes assembles the plan's defaults (what
+ *     `parseVerdictFields → {}` always did) rather than the offline fallback;
+ *   - Devin failing produces the offline fallback, which `cacheVerdict`
+ *     refuses to persist — a session error must not pin a defaults verdict
+ *     into a 6h cache.
  */
 export async function generateVerdict(
   plan: VerdictPlan,
-  opts: { signal?: AbortSignal } = {},
+  opts: { signal?: AbortSignal; subjectKey?: string } = {},
 ): Promise<InvestmentVerdict> {
   try {
-    const raw = await runPrompt(plan.task, plan.prompt, { json: true, maxTokens: 800 });
+    const result = await runAnalysis({
+      taskType: plan.task,
+      subjectKey: opts.subjectKey ?? `verdict:${plan.kind}:${plan.fallback.name}`,
+      prompt: plan.prompt,
+      schema: VerdictParseSchema,
+      wireSchema: VerdictWireSchema,
+      schemaVersion: VERDICT_SCHEMA_VERSION,
+      signal: opts.signal,
+    });
     if (opts.signal?.aborted) return offlineVerdict(plan);
-    return assembleVerdict(plan, parseVerdictFields(raw), "ollama");
-  } catch {
+    const model = result.provider === "devin" ? "devin" : (result.meta.model ?? "ollama");
+    return assembleVerdict(plan, result.data as Record<string, unknown>, model);
+  } catch (err) {
+    if (err instanceof OllamaAnalysisError && err.category === "invalid_response") {
+      // Pre-migration behavior: garbage local output → defaults, not offline.
+      return assembleVerdict(plan, {}, "ollama");
+    }
     return offlineVerdict(plan);
   }
 }
@@ -332,7 +358,12 @@ export async function getVerdict(
       "aiVerdict",
       params,
       async () => {
-        const verdict = await generateVerdict(plan, { signal: opts.signal });
+        const verdict = await generateVerdict(plan, {
+          signal: opts.signal,
+          // The cache key's symbol is the stable subject; the plan's display
+          // name would make e.g. "Apple Inc." and "AAPL" distinct subjects.
+          subjectKey: params.symbol ? `verdict:${params.symbol}` : undefined,
+        });
         if (verdict.model === "unavailable") throw new VerdictUnavailableError(verdict);
         return verdict;
       },

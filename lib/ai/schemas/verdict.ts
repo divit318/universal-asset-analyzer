@@ -1,45 +1,76 @@
 /**
- * Investment Verdict — the first Zod-defined analysis schema.
+ * Investment Verdict schema (schema v2) — one shape, two zod views, following
+ * the movement-schema convention (lib/ai/schemas/movement.ts):
  *
- * Single source of truth for the shape a Devin sessions-API verdict must
- * satisfy: the Zod object validates at runtime (client-side, belt over the
- * API's server-side braces) and compiles to the Draft-7 JSON Schema the
- * sessions API requires via `z.toJSONSchema(…, { target: "draft-7" })`.
+ *  - `VerdictWireSchema` — clean, constraint-carrying; converted to JSON
+ *    Schema Draft 7 for Devin's structured_output_schema. Mirrors the
+ *    SCHEMA_BLOCK prompt contract in lib/ai/verdict.ts (same keys, same enums,
+ *    same emission order — headline first, verdict last, which is also the
+ *    streaming order the report route depends on).
+ *  - `VerdictParseSchema` — deliberately a PASS-THROUGH record, not a tolerant
+ *    re-implementation of the field coercions. Verdict defaulting is
+ *    plan-dependent (`coerceFields` fills gaps from `defaultFields(plan)` —
+ *    e.g. the fallback verdict derives from the composite score), so a schema
+ *    cannot own it without duplicating logic that must stay in ONE place
+ *    (lib/ai/verdict.ts). Both providers' outputs flow bag → coerceFields,
+ *    exactly as the pre-migration parser did.
  *
- * Deliberately mirrors lib/ai/verdict.ts's InvestmentVerdict fields that the
- * UI renders, WITHOUT replacing that interface yet — the CLI/Ollama paths keep
- * their existing extractJsonObject defaults until Phase 5 migrates them. Keep
- * the two in sync; the golden harness diffs them field by field.
- *
- * SCHEMA_VERSION participates in every cache/idempotency key: bump it on ANY
- * shape change, or cached rows validated against the old shape would be served
- * as if they matched the new one.
+ * v1 of this module was the Phase 4 spike's BUY/HOLD/SELL shape; that schema
+ * now lives inside scripts/devin-spike-v1compat.ts, and this version bump is
+ * why SCHEMA_VERSION is 2 — cache rows keyed v1 must not satisfy v2 readers.
  */
 
 import { z } from "zod";
 
-export const VERDICT_SCHEMA_VERSION = 1;
+export const VERDICT_SCHEMA_VERSION = 2;
 
-export const VerdictSchema = z.object({
-  verdict: z.enum(["BUY", "HOLD", "SELL"]),
-  confidence: z.number().min(0).max(100).describe("0-100, calibrated, not performative"),
-  headline: z.string().min(10).max(200).describe("One-line thesis, numbers-first"),
+/* ------------------------------- wire view ------------------------------- */
+
+export const VerdictWireSchema = z.object({
+  headline: z
+    .string()
+    .min(8)
+    .max(220)
+    .describe("Decisive 10-14 word investment thesis naming the subject and the core reason"),
   thesis: z
     .string()
-    .min(50)
-    .max(1200)
-    .describe("2-4 sentences. Institutional buy-side memo style. Only supplied data."),
-  catalysts: z.array(z.string().min(5)).min(2).max(5),
-  risks: z.array(z.string().min(5)).min(2).max(5),
+    .min(40)
+    .describe("2-3 sentences: the investment case with specific metrics cited from the dossier"),
+  catalysts: z
+    .array(z.string().min(4).describe("Specific reason citing a number or fact from the dossier"))
+    .min(2)
+    .max(5),
+  risks: z
+    .array(z.string().min(4).describe("Specific risk citing a number or fact from the dossier"))
+    .min(2)
+    .max(5),
+  confidence: z
+    .enum(["high", "medium", "low"])
+    .describe("Lower it when the dossier's evidence is thin — honesty beats bravado"),
   timeHorizon: z.enum(["short-term", "medium-term", "long-term"]),
-  caveats: z
-    .array(z.string())
-    .describe("Anything the supplied data could not support. Empty array if none. Never invent."),
+  keyMetrics: z
+    .array(
+      z.object({
+        label: z.string().min(1),
+        value: z.string().min(1).describe("Formatted value, exactly as it appears in the dossier"),
+        signal: z.enum(["positive", "negative", "neutral"]),
+      }),
+    )
+    .min(3)
+    .max(8),
+  verdict: z.enum(["bullish", "bearish", "neutral"]),
 });
 
-export type Verdict = z.infer<typeof VerdictSchema>;
+export type VerdictWire = z.infer<typeof VerdictWireSchema>;
 
-/** Draft-7 JSON Schema for `structured_output_schema`. Self-contained, no $ref. */
-export function verdictJsonSchema(): Record<string, unknown> {
-  return z.toJSONSchema(VerdictSchema, { target: "draft-7" }) as Record<string, unknown>;
-}
+/* ------------------------------ parse view ------------------------------- */
+
+/**
+ * The loose field bag `assembleVerdict` → `coerceFields` narrows. Accepting
+ * any object (including `{}`) is load-bearing for Ollama-path equivalence:
+ * the pre-migration parser (`parseVerdictFields`) returned `{}` on missing
+ * fields and let coerceFields default them per plan.
+ */
+export const VerdictParseSchema = z.record(z.string(), z.unknown());
+
+export type VerdictFieldBag = z.infer<typeof VerdictParseSchema>;

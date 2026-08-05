@@ -38,6 +38,9 @@ import {
   MovementAnalysisSchema, MovementWireSchema, MOVEMENT_SCHEMA_VERSION,
 } from "@/lib/ai/schemas/movement";
 import { TextAnalysisSchema, TextWireSchema, TEXT_SCHEMA_VERSION } from "@/lib/ai/schemas/text";
+import { VerdictParseSchema, VerdictWireSchema, VERDICT_SCHEMA_VERSION } from "@/lib/ai/schemas/verdict";
+import { buildCompanyContext } from "@/lib/ai/context";
+import { planVerdict } from "@/lib/ai/verdict";
 import {
   WatchlistDigestSchema, WatchlistDigestWireSchema, WATCHLIST_DIGEST_SCHEMA_VERSION,
 } from "@/lib/ai/schemas/watchlist-digest";
@@ -125,6 +128,12 @@ interface Subject {
   prompt: string;
   /** For semantic checks that need it (e.g. watchlist symbol whitelist). */
   meta?: Record<string, unknown>;
+  /**
+   * Per-subject task override. The verdict task varies by asset class
+   * (planVerdict routes GLD to fund-research, RELIANCE.NS to
+   * company-research, …) — one TaskDef, many registry tasks.
+   */
+  taskType?: TaskType;
 }
 
 interface TaskDef {
@@ -315,6 +324,50 @@ const TASKS: Record<string, TaskDef> = {
     },
   },
 
+  verdict: {
+    taskType: "investment-thesis",
+    output: "json",
+    schema: VerdictParseSchema,
+    wireSchema: VerdictWireSchema,
+    schemaVersion: VERDICT_SCHEMA_VERSION,
+    async buildSubjects(symbols) {
+      // Real plans through the real planner: asset-class dispatch, composite
+      // scores, grounding evidence — exactly what generateVerdict feeds the
+      // providers in production.
+      const set = symbols ?? ["AAPL", "NVDA", "PG", "KOSS", "GLD", "RELIANCE.NS"];
+      const out: Subject[] = [];
+      for (const symbol of set) {
+        try {
+          const ctx = await buildCompanyContext(symbol);
+          const plan = await planVerdict(ctx, null);
+          out.push({
+            key: symbol,
+            label: `${plan.kind} via ${plan.task}`,
+            prompt: plan.prompt,
+            taskType: plan.task,
+            meta: { evidence: plan.evidence },
+          });
+        } catch (err) {
+          console.log(`  ${symbol.padEnd(14)} SKIPPED — plan build failed: ${err instanceof Error ? err.message : err}`);
+        }
+      }
+      return out;
+    },
+    describe(output) {
+      const bag = output as Record<string, unknown>;
+      return `verdict=${String(bag.verdict ?? "MISSING")} conf=${String(bag.confidence ?? "?")} horizon=${String(bag.timeHorizon ?? "?")} metrics=${Array.isArray(bag.keyMetrics) ? bag.keyMetrics.length : 0}`;
+    },
+    extraChecks(output) {
+      // The parse schema is a passthrough bag (defaulting lives in
+      // coerceFields), so completeness is checked HERE where it is visible:
+      // a provider omitting core fields ships silent defaults in production.
+      const strict = VerdictWireSchema.safeParse(output);
+      return strict.success
+        ? []
+        : strict.error.issues.slice(0, 4).map((i) => `wire-incomplete ${i.path.join(".")}: ${i.message}`);
+    },
+  },
+
   calendar: {
     taskType: "calendar-brief",
     output: "text",
@@ -359,7 +412,7 @@ interface ProviderOutcome {
 
 async function runProvider(kind: "ollama" | "devin", task: TaskDef, s: Subject): Promise<ProviderOutcome> {
   const req: AnalysisRequest<unknown> = {
-    taskType: task.taskType,
+    taskType: s.taskType ?? task.taskType,
     subjectKey: `parity:${s.key}`,
     prompt: s.prompt,
     schema: task.schema,

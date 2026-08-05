@@ -25,7 +25,25 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getQuote } from "../lib/yahoo";
-import { VerdictSchema, verdictJsonSchema, VERDICT_SCHEMA_VERSION } from "../lib/ai/schemas/verdict";
+import { z } from "zod";
+
+/* Spike-local schema (was lib/ai/schemas/verdict.ts v1; that module is now the
+ * production wire/parse pair at SCHEMA_VERSION 2 — see its header). The spike
+ * keeps the original v1 shape so its historical numbers stay reproducible. */
+const VERDICT_SCHEMA_VERSION = 1;
+const VerdictSchema = z.object({
+  verdict: z.enum(["BUY", "HOLD", "SELL"]),
+  confidence: z.number().min(0).max(100).describe("0-100, calibrated, not performative"),
+  headline: z.string().min(10).max(200).describe("One-line thesis, numbers-first"),
+  thesis: z.string().min(50).max(1200).describe("2-4 sentences. Institutional buy-side memo style. Only supplied data."),
+  catalysts: z.array(z.string().min(5)).min(2).max(5),
+  risks: z.array(z.string().min(5)).min(2).max(5),
+  timeHorizon: z.enum(["short-term", "medium-term", "long-term"]),
+  caveats: z.array(z.string()).describe("Anything the supplied data could not support. Empty array if none. Never invent."),
+});
+function verdictJsonSchema(): Record<string, unknown> {
+  return z.toJSONSchema(VerdictSchema, { target: "draft-7" }) as Record<string, unknown>;
+}
 import { formatCurrency, formatMarketCap, formatPercent } from "../lib/format";
 
 /* ----------------------------- env (.env.local) ---------------------------- */
