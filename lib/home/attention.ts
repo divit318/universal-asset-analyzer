@@ -12,7 +12,7 @@
  *
  * Feeders are pure transforms of digest slices the home digest already built —
  * no fetching, no caching, no AI. That is what lets the queue paint in the
- * first eager digest pass (§18) and never block on Ollama (§19.8).
+ * first eager digest pass (§18) and never block on the AI (§19.8).
  *
  * The scoring exponents, the per-kind TTLs, and the per-kind confidence/impact
  * defaults are all named constants so they are tunable in one place and pinned

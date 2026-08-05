@@ -90,10 +90,10 @@ export function ResearchCopilot({
             onChange={(e) => setModel(e.target.value || null)}
             disabled={installed.length === 0}
             className="rounded-md border border-border bg-surface-2 px-2 py-1 text-xs text-foreground focus:outline-none disabled:opacity-50"
-            title="Local Ollama model"
+            title="Claude effort tier"
           >
             {installed.length === 0 ? (
-            <option value="">{reachable ? "No models installed" : "Ollama offline"}</option>
+            <option value="">{reachable ? "No models available" : "AI off — add key in Settings"}</option>
           ) : null}
             {installed.map((m) => (
               <option key={m.id} value={m.id}>{m.label}</option>

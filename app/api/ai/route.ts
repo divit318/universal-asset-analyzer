@@ -15,7 +15,7 @@ interface AiRequest {
  * Body: { quote, filings }
  *
  * Routes through the AI Orchestrator (lib/ai/orchestrator.ts), which picks
- * the best local Ollama model for the task and falls back automatically.
+ * the right effort tier for the task and falls back automatically.
  */
 export async function POST(request: Request) {
   let body: AiRequest;

@@ -10,7 +10,7 @@ import { SkeletonText } from "@/app/_components/ui";
  * Mirrors the established MovementExplainerCard pattern (app/_components/
  * movement-explainer-card.tsx): a button that fetches once and caches locally,
  * never auto-loaded. A holdings table can have dozens of rows — firing an AI
- * call for every one on page load would queue behind Ollama's single-request
+ * call for every one on page load would be pure spend against the AI's per-request
  * serialization for the length of the whole table.
  */
 export function WhyOwnThis({ holdingId }: { holdingId: string }) {

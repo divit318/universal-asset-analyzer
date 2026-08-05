@@ -11,6 +11,7 @@
  * untouched rather than half-replacing it.
  */
 import { getSimulation, updateSimulation } from "@/lib/db";
+import { AI_RECOVERY_HINT } from "@/lib/ai/availability";
 import { AllModelsFailedError } from "@/lib/ai/router";
 import { generatePortfolio } from "@/lib/portfolio/simulator/generate";
 import { headlineFrom } from "@/lib/portfolio/simulator/evaluate";
@@ -61,11 +62,11 @@ export async function POST(request: Request) {
           send({
             type: "error",
             message: offline
-              ? "Ollama unavailable — start Ollama to generate this portfolio"
+              ? `AI unavailable — ${AI_RECOVERY_HINT}`
               : err instanceof Error
                 ? err.message
                 : "Generation failed",
-            ...(offline ? { code: "ollama_unavailable" } : {}),
+            ...(offline ? { code: "ai_unavailable" } : {}),
           });
           console.error("[portfolio/simulator/generate]", err);
         }

@@ -5,7 +5,7 @@
  * and clicking "run".
  *
  * The pipeline itself is heavy — "many sequential local-model calls" per
- * lib/scanner/index.ts — and Ollama serializes requests, so a scan in
+ * lib/scanner/index.ts — and a duplicate scan is pure duplicate spend, so a scan in
  * flight makes every other AI feature (copilot, verdict, IC report) queue
  * behind it. Ticks therefore check freshness first: if the last snapshot is
  * still within its TTL, the tick is a no-op. Default interval matches the

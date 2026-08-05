@@ -12,8 +12,8 @@ import { BrandMark } from "./brand";
  * page titles name the tool ("Universal Screener", "Today"), so a user who
  * scrolled past the header had no signature on screen. This is the cheapest
  * possible fix — a single 13px line, no links, no columns, no newsletter — and
- * it doubles as the "runs locally" reassurance that is the product's whole
- * premise.
+ * it doubles as the local-first data statement that is the product's whole
+ * premise — phrased to stay true with hosted AI narration (the audit's F-01).
  *
  * Deliberately NOT a lockup: the header already owns the one lockup per view,
  * and repeating the wordmark 40px below a data table is exactly the repetitive,
@@ -35,7 +35,7 @@ export function SiteFooter() {
           ·
         </span>
         <span className="text-micro text-faint">
-          Runs locally. Your data never leaves this machine.
+          Your data lives in a local database. AI narration uses your Anthropic key.
         </span>
       </div>
     </footer>

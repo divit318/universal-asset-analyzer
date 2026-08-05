@@ -1,7 +1,7 @@
 /**
  * IOS Fit Scorer — computes PortfolioFitAnalysis for any asset.
  *
- * Pure function: no network I/O, no Ollama calls. Every score is derived
+ * Pure function: no network I/O, no AI calls. Every score is derived
  * deterministically from the InvestmentProfile + FitAssetData.
  *
  * ── Methodology (redesigned) ──────────────────────────────────────────────

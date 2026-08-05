@@ -5,7 +5,7 @@
  *  1. It runs for every row in the table, not just the ones a user asks about.
  *  2. It cannot hallucinate a number, because it only ever restates values the
  *     filter engine actually compared.
- *  3. It works with Ollama offline.
+ *  3. It works with the AI unavailable.
  *
  * The AI layer (lib/screener/ai-summary.ts) sits *above* this and explains the
  * ranking as a whole — the pattern across the top names — which is the part

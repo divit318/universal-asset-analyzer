@@ -433,7 +433,7 @@ export async function runScannerPipeline(
       },
     },
     {
-      // Sequential per event — Ollama serves one request at a time locally.
+      // Sequential per event — a policy from the serializing local backend; kept as-is.
       // Sector Impact genuinely needs this stage's output (its prompt
       // references each event's causal chain), which is why — unlike Theme
       // Detection/Market Regime above — it can't move any earlier.

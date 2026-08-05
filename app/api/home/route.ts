@@ -6,7 +6,7 @@
  * which is what keeps a ten-module homepage at one round-trip instead of ten.
  *
  * Contains no AI. The narrative streams separately from /api/home/brief so a
- * slow local model can never delay first paint.
+ * slow AI generation can never delay first paint.
  */
 import { NextResponse } from "next/server";
 import { buildHomeDigest } from "@/lib/home/digest";

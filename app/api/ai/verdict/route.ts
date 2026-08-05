@@ -29,7 +29,7 @@ export type { InvestmentVerdict };
  * saved links to it.
  *
  * Asset-class dispatch, prompt construction, grounding verification, and the
- * Ollama-offline fallback all live in lib/ai/verdict.ts. This handler only maps
+ * AI-unavailable fallback all live in lib/ai/verdict.ts. This handler only maps
  * HTTP to that module.
  */
 export async function GET(request: Request) {

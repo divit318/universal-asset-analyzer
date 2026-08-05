@@ -35,6 +35,7 @@ import Link from "next/link";
 import { downloadBlob } from "@/lib/download";
 import type { IdeaStage, Quote, TargetDirection, WatchlistGroup, WatchlistItem } from "@/lib/types";
 import type { WatchlistDigest } from "@/lib/ai-watchlist";
+import { AI_RECOVERY_HINT } from "@/lib/ai/availability";
 import type { PortfolioFitAnalysis } from "@/lib/ios/types";
 import type { FitEnrichment } from "@/lib/watchlist-fit";
 import { formatCurrency, formatDate, formatPercent, toneClass } from "@/lib/format";
@@ -473,15 +474,15 @@ function WatchlistPageInner() {
     })
       .then(async (r) => {
         const json = (await r.json()) as WatchlistDigest & { error?: string };
-        if (!r.ok || json.error) throw new Error(json.error ?? "The local model did not respond.");
+        if (!r.ok || json.error) throw new Error(json.error ?? "The AI did not respond.");
         setDigest(json);
       })
       .catch((e: unknown) => {
         // Never leave the panel silently empty after a skeleton — say what failed.
         setDigestError(
           e instanceof Error
-            ? `${e.message} Check that Ollama is running.`
-            : "Local AI is unavailable. Check that Ollama is running.",
+            ? e.message
+            : `AI is unavailable. ${AI_RECOVERY_HINT}`,
         );
       })
       .finally(() => {

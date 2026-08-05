@@ -18,7 +18,7 @@
  *
  * The AI brief is a second, independent dataset. It is deliberately not awaited
  * alongside the digest: the digest paints the page, and the narrative fills in
- * when the local model gets to it. Until then (and forever, if Ollama is down)
+ * when the model gets to it. Until then (and forever, if the AI is unavailable)
  * Today's Brief renders `fallbackBriefing`, which shipped inside the digest and
  * is always true.
  *

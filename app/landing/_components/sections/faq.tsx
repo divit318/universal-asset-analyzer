@@ -7,18 +7,18 @@ import { Reveal } from "../reveal";
  * keyboard-accessible and fully functional without JS (progressive enhancement,
  * no client component needed).
  *
- * Answers are corrected to what actually ships (reconciliation §A3): local AI
- * via Ollama rather than "your OpenAI key", and US + India markets rather than
- * US-only. Nothing here promises a capability the app doesn't have.
+ * Answers are corrected to what actually ships: Claude via the Anthropic API
+ * on the user's own key, and US + India markets rather than US-only. Nothing
+ * here promises a capability the app doesn't have.
  */
 const FAQS: { q: string; a: string }[] = [
   {
     q: "Do I need an account?",
-    a: "No. UAA runs locally — there’s no sign-up and no login.",
+    a: "No. UAA has no sign-up and no login. The only credential is your own Anthropic API key, for AI features.",
   },
   {
     q: "Does UAA send my data anywhere?",
-    a: "Never. All research, notes, and portfolios stay on your computer.",
+    a: "Your research, notes, and portfolios are stored on your computer and never uploaded. When you use AI features, the prompt for that feature — company data and, where relevant, portfolio context — is sent to the Anthropic API with your key. Market data comes from public sources.",
   },
   {
     q: "Which markets are supported?",
@@ -26,7 +26,7 @@ const FAQS: { q: string; a: string }[] = [
   },
   {
     q: "What AI does it use?",
-    a: "Local models via Ollama, running on your own machine — no cloud API keys required.",
+    a: "Claude (Anthropic) via your own API key, entered once in Settings. Every number in the app is computed locally by deterministic engines — the model only writes the narrative.",
   },
   {
     q: "Is there a subscription?",

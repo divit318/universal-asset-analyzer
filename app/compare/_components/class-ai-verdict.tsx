@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { GroundingBadge } from "@/app/_components/grounding-badge";
+import { AiBadge } from "@/app/_components/ai-badge";
 import type { AssetClassId } from "@/lib/assets/types";
 import type { ClassCompareEntry } from "@/lib/compare/types";
 import type { ClassComparisonResult } from "@/lib/compare/class-ai-compare";
@@ -120,7 +121,7 @@ export function ClassAiVerdict({
         <div className="flex flex-col gap-0.5">
           <div className="flex items-center gap-2">
             <h2 className="font-semibold">Ranked Verdict</h2>
-            <span className="rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-label font-semibold uppercase tracking-widest text-brand">Local AI</span>
+            <AiBadge />
           </div>
           <p className="text-xs text-muted">{symbols.join(" vs ")} — every pick ranked with its own thesis</p>
         </div>
@@ -138,7 +139,7 @@ export function ClassAiVerdict({
           {[80, 60, 90, 50].map((w) => (
             <Skeleton key={w} height="h-2.5" width="" radius="rounded-full" style={{ width: `${w}%` }} />
           ))}
-          <p className="mt-1 text-xs text-muted">Running Ollama analysis — typically ~30s on a local model…</p>
+          <p className="mt-1 text-xs text-muted">Running AI analysis — typically well under a minute…</p>
         </div>
       )}
 

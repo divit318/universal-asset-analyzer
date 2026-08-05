@@ -12,7 +12,7 @@
  *
  * Deterministic evidence gathering (price/volume delta, sector momentum)
  * happens first and is never invented by the model; only the narrative
- * synthesis touches Ollama, matching the "AI explains, engines decide"
+ * synthesis touches the model, matching the "AI explains, engines decide"
  * split used throughout lib/scanner/*.
  */
 
@@ -190,7 +190,7 @@ const CACHE_TTL_PREFIX = "movement";
 /**
  * Explain why a symbol, sector, or portfolio moved. Results are cached
  * (reuses scanner_cache's 15-minute TTL keyed store) since re-explaining
- * the same subject within minutes wastes an Ollama call for no new evidence.
+ * the same subject within minutes wastes an AI call for no new evidence.
  */
 export async function explainMovement(
   input: ExplainMovementInput,
@@ -252,10 +252,10 @@ export async function explainMovement(
 
   let movement = MOVEMENT_DEFAULTS;
   try {
-    // First migrated call site of the analysis seam (ai-migration/03 §9):
-    // AI_PROVIDER decides Ollama vs Devin; the tolerant parse schema encodes
-    // the same coercions parseMovementResponse applies, so the Ollama path is
-    // behavior-identical. The ai_result cache is content-keyed on the dossier;
+    // First migrated call site of the analysis seam (ai-migration/03 §9).
+    // The tolerant parse schema encodes the same coercions
+    // parseMovementResponse applies, so the parse behavior is unchanged.
+    // The ai_result cache is content-keyed on the dossier;
     // the subject-keyed 15-minute short-circuit above is unchanged.
     const result = await runAnalysis(
       {

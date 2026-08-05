@@ -8,6 +8,7 @@ import { EventDrawer } from "./_components/event-drawer";
 import { PageShell, Skeleton } from "@/app/_components/ui";
 import { Reveal } from "@/app/_components/reveal";
 import { AI_RECOVERY_HINT } from "@/lib/ai/availability";
+import { AiBadge } from "@/app/_components/ai-badge";
 
 // ─── Style constants ────────────────────────────────────────────────────────
 
@@ -495,10 +496,10 @@ function AiBriefSection({ events, autoGenerate }: { events: CalendarEvent[]; aut
           <div className="text-left">
             <div className="flex items-center gap-2">
               <p className="text-sm font-semibold">AI Weekly Market Brief</p>
-              <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-label font-semibold uppercase tracking-widest text-warning">Local AI</span>
+              <AiBadge className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-label font-semibold uppercase tracking-widest text-warning" />
               {loading && <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />}
             </div>
-            <p className="text-xs text-muted">Ollama-generated summary of this week&apos;s most important events</p>
+            <p className="text-xs text-muted">AI-written summary of this week&apos;s most important events</p>
           </div>
         </div>
         <svg
@@ -514,12 +515,12 @@ function AiBriefSection({ events, autoGenerate }: { events: CalendarEvent[]; aut
           {loading && (
             <div className="flex items-center gap-3 py-4">
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-amber-400" />
-              <span className="text-sm text-muted">Generating weekly brief via Ollama — typically ~20s…</span>
+              <span className="text-sm text-muted">Generating weekly brief — typically a few seconds…</span>
             </div>
           )}
           {error && (
             <div className="rounded-lg border border-negative/30 bg-negative/8 px-4 py-3 text-sm text-negative">
-              {error.includes("Ollama") || error.includes("provider") || error.includes("fetch") || error.includes("ECONNREFUSED")
+              {error.includes("key") || error.includes("provider") || error.includes("fetch") || error.includes("ECONNREFUSED")
                 ? `No AI provider is reachable, so briefs cannot be generated. ${AI_RECOVERY_HINT}`
                 : error}
             </div>

@@ -8,7 +8,7 @@ import { Reveal } from "../reveal";
 /**
  * Interactive Demo — "try UAA before you download."
  *
- * Reconciliation §F: this runs entirely on canned, local data — no Ollama, no
+ * Reconciliation §F: this runs entirely on canned, local data — no AI, no
  * network, no runPrompt. A public marketing page has no model to call, and the
  * PDFs explicitly permit canned responses. Numbers are ILLUSTRATIVE and labelled
  * as such, so nothing here can be mistaken for a live quote.

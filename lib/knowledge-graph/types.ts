@@ -87,7 +87,7 @@ export type EdgeType =
 export interface Provenance {
   /** The upstream feed or engine the fact came from. */
   source: DataSourceId;
-  /** "computed" = deterministic engine output; "ai" = Ollama-generated; "user" = user-entered. */
+  /** "computed" = deterministic engine output; "ai" = model-generated; "user" = user-entered. */
   origin: "computed" | "ai" | "user";
   /** When the underlying fact was produced/fetched. Null = unknown. */
   asOf: string | null;

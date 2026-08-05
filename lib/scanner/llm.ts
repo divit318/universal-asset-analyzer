@@ -5,7 +5,7 @@
  *
  *   CANCELLATION   The scan's AbortSignal threads into runPrompt, so a
  *                  cancelled job stops the in-flight generation server-side
- *                  instead of leaving Ollama grinding for nobody.
+ *                  instead of leaving the model grinding for nobody.
  *
  *   MODEL PINNING  The pipeline resolves its model ONCE (lib/scanner/index.ts)
  *                  and every opportunity-engine call runs on it. Without the

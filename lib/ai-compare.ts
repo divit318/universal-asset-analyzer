@@ -50,7 +50,7 @@ export interface ComparisonResult {
   /**
    * Why the written comparison is degraded or absent — undefined when the AI
    * answered normally. Lets the Compare page show an accurate, specific
-   * status ("model warming up", "can't reach Ollama") instead of one generic
+   * status ("no API key", "can't reach the AI service") instead of one generic
    * failure message for every possible cause. See lib/ai/errors.ts.
    */
   aiStatus?: AiErrorCategory;
@@ -506,8 +506,8 @@ export function finalizeComparison(
 ): ComparisonResult {
   const { stocks, benchmarksBySymbol, evidence, droppedSymbols } = setup;
 
-  // `model` only stays "unavailable" when the AI call itself failed (Ollama
-  // down, timed out, etc); see `aiFailure` for why. A connected-but-garbage
+  // `model` only stays "unavailable" when the AI call itself failed (service
+  // down, no key, timed out, etc); see `aiFailure` for why. A connected-but-garbage
   // response still gets a real `model` and falls through to the field
   // defaults below.
   const aiUnavailable = model === "unavailable";
@@ -609,7 +609,7 @@ export async function compareStocks(
   let flat: FlatAI = {};
   // Populated only when the AI call itself failed. Drives both the fallback
   // narrative text and the machine-readable `aiStatus` the Compare page uses
-  // to show an accurate status ("model warming up" vs "can't reach Ollama")
+  // to show an accurate status ("no API key" vs "can't reach the AI service")
   // instead of one generic message for every cause.
   let aiFailure: ClassifiedAiError | undefined;
   try {

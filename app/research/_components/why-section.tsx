@@ -154,7 +154,7 @@ export function WhySection({ verdict, verdictLoading, risks, news }: Props) {
       {/* Fallback if nothing to show */}
       {!verdict && (!risks || risks.length === 0) && (!news || news.length === 0) && (
         <div className="rounded-xl border border-border bg-surface px-5 py-8 text-center text-sm text-muted">
-          Investment analysis not yet available. Ensure Ollama is running to generate the AI verdict.
+          Investment analysis not yet available. Add your Anthropic API key in Settings to generate the AI verdict.
         </div>
       )}
     </div>

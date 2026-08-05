@@ -113,11 +113,11 @@ export async function deduplicateIntoEvents(
 ): Promise<MarketEvent[]> {
   if (items.length === 0) return [];
 
-  // Cap at 20 items — local models time out on larger prompts
+  // Cap at 20 items — small models timed out on larger prompts
   const capped = items.slice(0, 20);
 
   // Timeout is handled centrally by the "opportunity-engine" task's
-  // configured timeoutMs (lib/ai/task-registry.ts) — a local model
+  // configured timeoutMs (lib/ai/task-registry.ts) — a slow model
   // realistically needs minutes, not the 25s this used to race against,
   // which meant this stage fell back on nearly every run.
   let clusters: ClusterAssignment[];

@@ -63,7 +63,7 @@ function buildCompanyMatchPrompt(
   // The old 200-row list cost real money for nothing: prompt eval measured at
   // ~40 tok/s on this class of host (2026-07-31), so ~1.6k extra tokens of
   // list was ~40s of pure prompt processing per sector — and pushed the
-  // prompt past Ollama's 4096-token default window besides. Callers pre-rank
+  // prompt past a small default context window besides. Callers pre-rank
   // by market cap so the cut keeps the names the model can actually reason
   // about.
   const companyList = companies
@@ -151,8 +151,8 @@ export async function buildCompanyOpportunities(
   const allOpportunities: ScannerOpportunity[] = [];
   const seen = new Set<string>(); // deduplicate by ticker
 
-  // Process sectors with meaningful signals (up to 6 to control Ollama calls).
-  // Sequential — Ollama's default local setup serves one request at a time,
+  // Process sectors with meaningful signals (up to 6 to control AI calls).
+  // Sequential — a policy from the serializing local backend,
   // so firing these concurrently would only queue them behind each other
   // while each one's own timeout keeps counting down.
   const toProcess = significantSectors.slice(0, 6);

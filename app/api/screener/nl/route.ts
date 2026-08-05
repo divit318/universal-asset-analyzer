@@ -48,7 +48,7 @@ export async function POST(request: Request) {
     if (err instanceof NlFilterParseError) {
       return NextResponse.json({ error: err.message, raw: err.raw }, { status: 422 });
     }
-    const message = err instanceof Error ? err.message : "Ollama request failed";
+    const message = err instanceof Error ? err.message : "AI request failed";
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }

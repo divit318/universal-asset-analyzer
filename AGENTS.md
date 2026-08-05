@@ -83,9 +83,11 @@ Read this before reading CLAUDE.md, ARCHITECTURE.md, or PROJECT_ROADMAP.md.
   Full map + decision log: `docs/ic-report/00-map.md`, `docs/ic-report/99-report.md`.
 - `lib/db.ts` — All SQLite operations. All reads/writes go here.
 - `lib/ai/` — All inference. Call `runPrompt(taskType, …)`; never a provider
-  directly. The Router walks a chain: Devin CLI (hosted) → Ollama (local).
-  `lib/ai/devin-cli.ts` is the only place that spawns a process;
-  `lib/ai/ollama.ts` the only place that talks HTTP to the daemon.
+  directly. The backend is the Anthropic API (claude-opus-5, effort tiers
+  low/medium/high as routable ids). `lib/ai/providers/anthropic-provider.ts`
+  is the only place that talks to it; the key resolves via
+  `lib/ai/anthropic-key.ts` (env var, then ~/.uaa/anthropic_api_key) and is
+  never logged.
 
 **Caching**:
 - Fundamentals: 24h TTL in SQLite (refreshed on screener load)
@@ -96,7 +98,7 @@ Read this before reading CLAUDE.md, ARCHITECTURE.md, or PROJECT_ROADMAP.md.
 **Error Handling**:
 - API failures: Non-fatal. Return partial data + error message.
 - EDGAR/news/analyst data: Optional. UI renders without them.
-- Every AI provider offline: Fallback UI message, no crash. Never say "start Ollama" — use `AI_RECOVERY_HINT` from `lib/ai/availability.ts`, which names the hosted path too.
+- AI unavailable (no key / API down): Fallback UI message, no crash. Never hand-write recovery advice — use `AI_RECOVERY_HINT` from `lib/ai/availability.ts` (it points at Settings).
 
 ---
 
@@ -380,7 +382,7 @@ not as fact** — verify against the call graph.
 
 ## Product Rules Learned The Hard Way
 
-**Never let the local model derive a directional verdict.** Given the numbers and
+**Never let the model derive a directional verdict.** Given the numbers and
 asked for judgement, a 7B model asserted "USD Cash is fully hedged against
 inflation" (health had scored Inflation 32/100 for the opposite reason), read 11.3
 effective drivers as "a small number of holdings" (it means BROAD), and called
@@ -808,8 +810,8 @@ argument, including the market region and the same history window (1825 days).
 **Nulls sink in both sort directions.** "Worst first" must not surface every row
 whose value is merely unknown. A missing value is not a small value.
 
-**Never cache a failure.** Persisting an Ollama-offline fallback pins "Start
-Ollama" for the whole TTL after Ollama comes back. See `cacheVerdict`.
+**Never cache a failure.** Persisting an AI-unavailable fallback pins the
+recovery hint for the whole TTL after the user has fixed it. See `cacheVerdict`.
 
 **`isInitialLoading` includes the `idle` tick.** The client store starts at
 `idle`, not `loading`. A page deriving `empty` from `!isInitialLoading && !data`

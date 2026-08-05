@@ -11,8 +11,8 @@
  *
  * Two hard rules it enforces:
  *
- *   1. **No AI.** The digest must paint immediately. AI is slow, serialized on
- *      local Ollama, and optional. The narrative arrives separately over
+ *   1. **No AI.** The digest must paint immediately. AI is slower than paint
+ *      and optional. The narrative arrives separately over
  *      `/api/home/brief` (see brief.ts) and every module that uses it has a
  *      deterministic fallback that ships in *this* payload (`fallbackBriefing`).
  *
@@ -301,7 +301,7 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
     calibration,
 
     // Ships with the digest so Today's Brief has something true to render the
-    // instant the page paints, whether or not Ollama is up and whether or not
+    // instant the page paints, whether or not the AI is available and whether or not
     // the AI stream ever arrives. Reads the same universal report Portfolio
     // Pulse renders, so the prose and the badge cannot disagree.
     fallbackBriefing: ctx

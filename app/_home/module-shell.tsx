@@ -50,10 +50,10 @@ const UNMET: Record<Capability, { message: string; href: string; cta: string }> 
     href: "/wire",
     cta: "Run The Wire",
   },
-  ollama: {
-    message: "Connect an AI provider to enable AI narration.",
+  ai: {
+    message: "Add your Anthropic API key to enable AI narration.",
     href: "/settings",
-    cta: "Setup",
+    cta: "Open Settings",
   },
   decisions: {
     message: "Log a few decisions to start building a track record.",

@@ -8,9 +8,9 @@ import { Reveal } from "../reveal";
  * UAA) plus the concrete local-first guarantees.
  */
 const GUARANTEES = [
-  { icon: WifiOff, label: "No cloud uploads" },
-  { icon: Lock, label: "No API keys to leak" },
-  { icon: ShieldCheck, label: "No subscriptions or accounts" },
+  { icon: WifiOff, label: "Research database stored on your disk" },
+  { icon: Lock, label: "Your own AI key, kept on this machine" },
+  { icon: ShieldCheck, label: "No subscriptions" },
 ];
 
 export function Privacy({ section, index }: SectionProps) {
@@ -27,10 +27,11 @@ export function Privacy({ section, index }: SectionProps) {
         <div className="flex max-w-2xl flex-col items-center gap-4">
           <p className="text-label font-semibold uppercase tracking-widest text-brand">{section.kicker}</p>
           <h2 id={headingId} className="text-balance text-2xl font-semibold tracking-tight text-foreground sm:text-4xl">
-            100% Local. 100% Private.
+            Local-first. Your data stays yours.
           </h2>
           <p className="text-pretty text-base leading-relaxed text-muted">
-            UAA never uploads your data. No cloud, no compromise.
+            Your portfolios, notes, and research live in a database on your disk — never on our
+            servers, because there are none. AI narration runs on Claude with your own key.
           </p>
         </div>
 
@@ -42,7 +43,8 @@ export function Privacy({ section, index }: SectionProps) {
             </span>
             <p className="text-sm font-semibold text-muted">Traditional AI tools</p>
             <p className="text-caption leading-relaxed text-faint">
-              Your filings, notes, and holdings are sent to someone else’s servers to be processed.
+              Your research history lives in someone else’s account system, on someone else’s
+              servers, behind someone else’s subscription.
             </p>
           </div>
           <div className="flex flex-col items-center gap-3 rounded-panel border border-brand/30 bg-brand-muted p-6 text-center shadow-glow-brand">
@@ -51,7 +53,8 @@ export function Privacy({ section, index }: SectionProps) {
             </span>
             <p className="text-sm font-semibold text-foreground">Universal Asset Analyzer</p>
             <p className="text-caption leading-relaxed text-muted">
-              Everything runs on your machine. Your research never leaves the device.
+              Your data and every computed figure stay on your machine. Only the AI prompts you
+              trigger go to the Anthropic API — with your key, under your control.
             </p>
           </div>
         </div>

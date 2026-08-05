@@ -429,13 +429,14 @@ export interface AgentNetworkResult {
 }
 
 /**
- * Run every investigation agent, one at a time by default. Ollama's default
- * local setup serves one request at a time regardless of how many we fire
- * (n_slots = 1) — dispatching all of them concurrently doesn't parallelise
- * anything, it just queues them, and a fixed per-request timeout then races
- * against the whole queue instead of its own generation. Sequential dispatch
+ * Run every investigation agent, one at a time by default. This dispatch
+ * policy dates from the serializing local backend (one generation slot —
+ * concurrent dispatch just queued, and a fixed per-request timeout then raced
+ * against the whole queue instead of its own generation). The hosted API runs
+ * genuinely parallel, so raising concurrency is now a real speedup available
+ * to a future change; the sequential default is kept unchanged here. Sequential dispatch
  * keeps each agent's timeout budget meaningful and gives steady progress.
- * `concurrency` > 1 is supported for setups with OLLAMA_NUM_PARALLEL configured.
+ * `concurrency` > 1 is supported and is the natural setting for the hosted API.
  */
 export async function runAgentNetwork(
   input: AgentNetworkInput,

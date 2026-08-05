@@ -7,7 +7,7 @@
  * content hash of (asset class, symbol, weight rounded to the nearest whole
  * percent) for every holding, so adding, removing or meaningfully resizing a
  * position invalidates it, while today's quote wiggling the weight by 0.2pp
- * does not burn a redundant Ollama call. Uses the same `scanner_cache` table
+ * does not burn a redundant AI call. Uses the same `scanner_cache` table
  * every other cached AI output in this app uses (lib/timeline.ts,
  * lib/movement-explainer.ts, lib/ai-financial-insight.ts) — no new cache.
  *
@@ -77,7 +77,7 @@ export interface PortfolioThesis {
   /** The condition that has to hold for this portfolio to work. */
   mustBeTrue: string;
   generatedAt: string;
-  /** Whether this came from the AI or the deterministic fallback (Ollama offline). */
+  /** Whether this came from the AI or the deterministic fallback (AI unavailable). */
   source: "ai" | "fallback";
 }
 
@@ -95,7 +95,7 @@ export function contentHash(evaluation: PortfolioEvaluation): string {
   return `portfolio-thesis:${hashOf(parts.join("|"))}`;
 }
 
-/** Grounded, honest summary used when Ollama is unavailable or returns nothing usable. */
+/** Grounded, honest summary used when the AI is unavailable or returns nothing usable. */
 export function fallbackThesis(evaluation: PortfolioEvaluation): string {
   const { allocation, risk, health, totalValue } = evaluation;
   const top = allocation.byAssetClass.slices[0];
@@ -389,7 +389,7 @@ function buildPrompt(evaluation: PortfolioEvaluation, extra: ThesisContext): str
    * The engine's own verdicts, written out as sentences the model is told to reuse
    * rather than re-derive.
    *
-   * This block exists because of what a 7B local model actually did with the richer
+   * This block exists because of what a small 7B model (an earlier local tier) actually did with the richer
    * prompt. Given the numbers and asked for judgement, it produced three claims that
    * contradicted the deterministic panels rendered inches away:
    *
@@ -487,7 +487,7 @@ function cleanString(v: unknown): string {
  *
  * The fallback must still be USEFUL, not an apology. Health already knows which
  * dimensions are strong and weak and has written a sentence about each, so an
- * Ollama outage degrades the thesis from "judgement" to "the measured facts,
+ * AI outage degrades the thesis from "judgement" to "the measured facts,
  * ranked" rather than to nothing.
  */
 function fallbackStrengthsAndRisks(evaluation: PortfolioEvaluation): { strengths: string[]; risks: string[] } {
@@ -608,7 +608,7 @@ export async function buildPortfolioThesis(
   }
 
   // Only cache a real AI result — caching the fallback would keep serving
-  // "AI unavailable" for the TTL window even after Ollama comes back up.
+  // "AI unavailable" for the TTL window even after the AI comes back up.
   if (result.source === "ai") putScannerCache(cacheKey, JSON.stringify(result));
   return result;
 }

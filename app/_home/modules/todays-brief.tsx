@@ -14,7 +14,7 @@
  * Aurora — not a card in the grid. It still selects its slices through
  * `useHomeSlice`, so it fetches nothing and shares the one digest request, and
  * it is always able to render *something true* (the deterministic fallback ships
- * in the digest), so it never blocks on Ollama.
+ * in the digest), so it never blocks on the AI.
  */
 
 import { useMemo, useState, type CSSProperties } from "react";

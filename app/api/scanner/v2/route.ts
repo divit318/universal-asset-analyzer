@@ -17,7 +17,7 @@
  * Scans are SINGLE-FLIGHT per parameter set (lib/platform/jobs.ts): a second
  * request while one is running attaches to it — replaying its history, then
  * following live — instead of starting a competing pipeline. Two concurrent
- * scans serialized behind one Ollama were how every queued call burned its
+ * scans serialized behind one backend were how every queued call burned its
  * whole timeout budget waiting (measured 2026-07-31). Disconnecting the last
  * subscriber cancels the job server-side after a short grace window, so a
  * user's Cancel genuinely stops the model, while a quick reload re-attaches.

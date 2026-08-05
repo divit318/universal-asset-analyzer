@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
  * ## Why this is a shared primitive
  *
  * Every expensive thing in UAA runs on the user's own machine against a
- * single-threaded local model, so waits are measured in tens of seconds to
+ * long multi-stage pipeline, so waits are measured in tens of seconds to
  * minutes rather than milliseconds. The Scanner already solved this well —
  * named stage, percent, elapsed, remaining, and an estimated wall-clock finish
  * time — while every other slow surface showed an undifferentiated `animate-pulse`

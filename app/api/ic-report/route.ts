@@ -18,6 +18,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { getFundamentals } from "@/lib/fundamentals";
+import { AI_RECOVERY_HINT } from "@/lib/ai/availability";
 import { getFinancialStatements, getFinancialStatementsYahoo } from "@/lib/statements";
 import { getQuote } from "@/lib/yahoo";
 import { getScreenerInCompany } from "@/lib/screener-in";
@@ -205,7 +206,7 @@ export async function POST(req: Request): Promise<Response> {
     }
     if (modelCheck.status === "rejected" || modelCheck.value == null) {
       return Response.json(
-        { error: "No local model is available for the agent task. Check that Ollama is running (`ollama ps`) and at least one model is installed." },
+        { error: `No AI model is available for the agent task. ${AI_RECOVERY_HINT}` },
         { status: 503 },
       );
     }

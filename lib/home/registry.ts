@@ -47,7 +47,7 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     requires: [],
     dataSources: ["ai", "portfolio-engine", "sector-rotation", "scanner"],
     dependencies: [],
-    // required: false — a down Ollama yields the deterministic briefing, never an error.
+    // required: false — an unavailable AI yields the deterministic briefing, never an error.
     ai: { task: "daily-briefing", required: false },
     navTarget: null,
   },

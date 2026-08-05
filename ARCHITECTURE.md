@@ -57,9 +57,9 @@ This replaced a four-stage waterfall. Measured, cold cache: full research
 
 ### AI streaming (`lib/ai/streaming-json.ts` + `/api/ai/report`)
 
-**Ollama serializes requests** (measured: 3 concurrent generations ≈ 3
-sequential). So per-section generation would cost ~9x one generation — it was
-built, measured at 138s vs 40s, and rejected. Instead: **one generation** (the
+**The then-local backend serialized requests** (measured: 3 concurrent
+generations ≈ 3 sequential). So per-section generation would have cost ~9x one
+generation — it was built, measured at 138s vs 40s, and rejected. Instead: **one generation** (the
 same `buildVerdictPrompt` the non-streamed `/api/ai/verdict` uses), parsed
 incrementally, with each top-level JSON field emitted the instant it closes.
 
@@ -251,7 +251,7 @@ everywhere it appears):
 
 **Core Logic:**
 - Deterministic evidence first: price return over the window, volume anomaly vs. 3-week baseline, recent company news, sector rotation context — AI never invents these
-- Single Ollama call synthesizes drivers (category, description, evidence, direction), confidence, and persistence classification
+- Single AI call synthesizes drivers (category, description, evidence, direction), confidence, and persistence classification
 - Cached via `scanner_cache` (15-min TTL, keyed `movement:{kind}:{subject}:{window}`)
 
 **Exports:**
@@ -308,7 +308,7 @@ These modules provide deep research and institutional-grade analysis.
 - Company news (latest intelligence)
 - Insider holdings + recent trades
 - Analyst estimates + price targets
-- AI analysis (via Ollama)
+- AI analysis (via the AI platform)
 
 **Components:**
 - Symbol search typeahead
@@ -829,15 +829,16 @@ every logged signal. `app/backtest/` and `app/api/backtest/` were deleted.
 
 ### AI Orchestration Layer (`lib/ai/*`)
 **Purpose**: single entry point for every AI request in the app, routing each
-task to the local model best suited to it and falling back automatically if
-that model isn't available. Local-only by policy — no code path to any
-hosted/paid provider. Full design doc: `lib/ai/ARCHITECTURE.md`.
+task to the Claude effort tier best suited to it and falling back
+automatically if that attempt fails. The backend is the Anthropic API
+(claude-opus-5), reached with the user's own key (`lib/ai/anthropic-key.ts`).
+Full design doc: `lib/ai/ARCHITECTURE.md`.
 
 **Request flow**: feature code → `runPrompt(taskType, prompt, opts)` (or
 `runTask`/`runTaskText` for the raw normalized response) → Orchestrator
 (`lib/ai/orchestrator.ts`) → Router (`lib/ai/router.ts`) → `AIProvider`
-(`lib/ai/providers/ollama-provider.ts`) → Ollama. Nothing above the Router
-names a model or talks HTTP.
+(`lib/ai/providers/anthropic-provider.ts`) → api.anthropic.com. Nothing above
+the Router names a model or talks HTTP.
 
 **Layering**:
 - `lib/ai/task-registry.ts` — the **Task Registry**: every `TaskType` in the
@@ -846,20 +847,20 @@ names a model or talks HTTP.
   token cap, timeout, and required capabilities. This is the one place task
   → model routing policy lives.
 - `lib/ai/models.ts` — the **Model Registry**: `MODEL_REGISTRY`, one
-  `ModelSpec` per model (id, provider, context window, temperature, token
-  cap, timeout, capabilities, priority, enabled). Prefix-matched against
-  whatever's actually installed, so a registry entry like `"qwen3"` resolves
-  a pulled `qwen3:30b-a3b` without pinning the exact tag.
+  `ModelSpec` per routable id (id, provider, context window, temperature,
+  token cap, timeout, capabilities, priority, enabled). Today: the three
+  effort tiers `claude-opus-5-low|-medium|-high`, matched exactly.
 - `lib/ai/router.ts` — turns a `TaskType` into an ordered, installed,
   capability-matching, currently-healthy candidate list and runs the
   provider against it, retrying the next candidate silently on failure.
   Throws `AllModelsFailedError` only when every candidate failed.
 - `lib/ai/health.ts` — lightweight in-memory per-model failure tracking that
   deprioritizes (not excludes) a model after repeated failures.
-- `lib/ai/provider.ts` + `lib/ai/providers/ollama-provider.ts` — the
-  `AIProvider` interface and its only implementation today, wrapping
-  `lib/ai/ollama.ts`'s HTTP/retry/typed-errors/`<think>`-tag splitting.
-  Adding a future provider means one new class here — no other layer changes.
+- `lib/ai/provider.ts` + `lib/ai/providers/anthropic-provider.ts` — the
+  `AIProvider` interface and its only implementation today: the Anthropic
+  SDK with an explicit `baseURL`, real token streaming, and effort-tier
+  translation. Adding a future provider means one new class here — no other
+  layer changes.
 - `lib/ai/response.ts` — `AIResponse` normalizer: every provider's output
   becomes `{ content, confidence, reasoningSummary, executionTimeMs, model,
   provider, tokenUsage, errors, metadata }`. Nothing downstream branches on
@@ -871,11 +872,11 @@ names a model or talks HTTP.
 - `lib/ai/prompt-builder.ts` — reusable, versioned system/developer/user
   prompt templates (additive; the Research Copilot's own `lib/ai/prompt.ts`
   predates it and stays as-is).
-- `lib/ollama.ts` — pure prompt builder for `analyzeAsset()`'s quote+filings
-  analysis (`/api/ai`; no HTTP, despite the name).
+- `lib/analysis-prompt.ts` — pure prompt builder for `analyzeAsset()`'s
+  quote+filings analysis (`/api/ai`; no HTTP).
 - `lib/json-extract.ts` — the single JSON-from-LLM-response parser. Never
   hand-roll fence stripping in routes or engines.
-- Graceful degradation if Ollama offline (UI shows fallback message).
+- Graceful degradation when no API key is configured (UI shows the recovery hint).
 
 **Research Copilot** (`lib/ai/context.ts`, `retrieval.ts`, `prompt.ts`,
 `memory.ts`, `actions.ts`, `grounding.ts`) is a richer pipeline layered on
@@ -890,7 +891,8 @@ call `runPrompt("your-task", prompt, opts)` from feature code. No other file
 changes.
 
 **Configuration:**
-- `OLLAMA_HOST` env var (default: `http://localhost:11434`)
+- `ANTHROPIC_API_KEY` env var (demo/CI), or the key file `~/.uaa/anthropic_api_key`
+  saved from `/settings` (`UAA_CONFIG_DIR` overrides the directory)
 
 **Used By**: Research, IC Report, Compare, Watchlist, Portfolio, Thematic,
 Scanner, Timeline, Knowledge Graph, Calendar, Screener NL query, Copilot —
@@ -1002,10 +1004,10 @@ with no unfiltered console/page errors, plus a few deeper journeys. Run with
 - `e2e/helpers.ts` — the console-error tripwire (the highest-value assertion
   in the suite — catches hydration mismatches and client crashes that `tsc`
   + eslint + unit tests miss) and its allowlist of expected offline noise
-  (no Ollama, sometimes no network).
+  (no AI key, sometimes no network).
 - Runs against a **production** build (`next build && next start -p 3111`)
   against an **isolated** SQLite DB at `e2e/.tmp/e2e.db` — never the real
-  `data/app.db`. Fully offline-tolerant: no Ollama required, AI panels must
+  `data/app.db`. Fully offline-tolerant: no AI key required, AI panels must
   show their fallback state, and pages that hard-depend on live Yahoo quotes
   accept either data or their designed empty/error state.
 - Kept fully separate from `npm run test` (Vitest): e2e specs live under

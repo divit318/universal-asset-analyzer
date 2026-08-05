@@ -8,6 +8,7 @@
  * never leave a half-written profile behind.
  */
 import { NextResponse } from "next/server";
+import { AI_RECOVERY_HINT } from "@/lib/ai/availability";
 import { runPromptWithMeta } from "@/lib/ai";
 import { AllModelsFailedError } from "@/lib/ai/router";
 import {
@@ -57,7 +58,7 @@ export async function POST(request: Request) {
   try {
     // request.signal: when the client aborts (navigated away, or dev
     // StrictMode's throwaway first mount), cancel the model generation too —
-    // an orphaned intake turn would otherwise hold Ollama for the next one.
+    // an orphaned intake turn is pure spend nobody reads.
     //
     // timeoutMs: an unbounded turn was measured at 195 seconds behind an
     // unlabelled spinner. Finishing on the stated defaults beats waiting
@@ -77,8 +78,8 @@ export async function POST(request: Request) {
     if (err instanceof AllModelsFailedError) {
       return NextResponse.json(
         {
-          error: "Ollama unavailable — start Ollama to continue the interview, or finish with stated defaults",
-          code: "ollama_unavailable",
+          error: `AI unavailable — finish with stated defaults, or: ${AI_RECOVERY_HINT}`,
+          code: "ai_unavailable",
         },
         { status: 503 },
       );

@@ -13,8 +13,8 @@ const COMPETITORS = ["UAA", "ChatGPT", "Perplexity", "Bloomberg"] as const;
 
 // One boolean per competitor, in COMPETITORS order.
 const ROWS: { label: string; has: boolean[] }[] = [
-  { label: "Runs 100% locally", has: [true, false, false, false] },
-  { label: "Data never leaves your device", has: [true, false, false, false] },
+  { label: "Local-first: your data on your device", has: [true, false, false, false] },
+  { label: "Research data stored on your device", has: [true, false, false, false] },
   { label: "SEC filings & fundamentals", has: [true, false, false, true] },
   { label: "Portfolio & valuation engines", has: [true, false, false, true] },
   { label: "No subscription required", has: [true, false, false, false] },

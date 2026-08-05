@@ -7,7 +7,7 @@
  *   → 1st order: lower financing costs, NIM compression for banks
  *   → 2nd order: homebuilders benefit, REITs re-rate upward, utilities become less attractive
  *
- * Runs one Ollama call per macro/policy event, sequentially — Ollama's
+ * Runs one AI call per macro/policy event, sequentially — the old local backend's
  * default local setup serves one request at a time regardless of how many
  * are fired, so dispatching them concurrently doesn't parallelize anything;
  * it only queues them behind each other while each one's own timeout keeps

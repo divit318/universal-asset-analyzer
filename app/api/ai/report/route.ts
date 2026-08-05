@@ -208,7 +208,7 @@ export async function GET(request: Request) {
 
         // Persist under the registry's `aiVerdict` policy so the next view is
         // instant. `cacheVerdict` refuses to store an offline fallback, so an
-        // Ollama outage cannot pin "start Ollama" for the whole TTL.
+        // an AI outage cannot pin a stale recovery hint for the whole TTL.
         cacheVerdict(cacheParams, verdict, ctx.symbol);
 
         send({
@@ -226,7 +226,7 @@ export async function GET(request: Request) {
           //
           // `fallback` carries the same actionable offline verdict the blocking
           // route returns, so a client that got nothing usable can still render
-          // "start Ollama" instead of an empty panel.
+          // the recovery hint instead of an empty panel.
           send({
             type: "error",
             error: err instanceof Error ? err.message : "Generation failed",

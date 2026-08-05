@@ -261,7 +261,7 @@ export default function ICReportPage() {
           </span>
         </div>
         <p className="max-w-3xl text-sm text-muted">
-          Signal detection, question generation, a {AGENT_COUNT}-agent investigation, a deterministic valuation engine, and an exportable committee report. Runs fully on local models.
+          Signal detection, question generation, a {AGENT_COUNT}-agent investigation, a deterministic valuation engine, and an exportable committee report.
         </p>
       </Reveal>
 
@@ -455,7 +455,7 @@ export default function ICReportPage() {
                 {AGENT_COUNT} agents investigate the company: business model, industry, competition, management, capital allocation, accounting, valuation, governance, and risk. A deterministic engine computes every valuation figure.
               </p>
             </div>
-            <p className="text-xs text-muted">Sections render as they complete; a full run takes 3 to 15 minutes on a local model.</p>
+            <p className="text-xs text-muted">Sections render as they complete; a full run typically takes a few minutes.</p>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

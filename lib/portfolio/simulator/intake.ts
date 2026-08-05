@@ -5,7 +5,7 @@
  *
  * This module used to drive the whole conversation: given the five quick-form
  * answers, the AI asked "the SINGLE next most valuable follow-up" from a list of
- * twelve suggested topics, three to six times over. That design put a local model
+ * twelve suggested topics, three to six times over. That design put a small model
  * in charge of discovering facts that were knowable in advance, and it failed the
  * way you would expect:
  *

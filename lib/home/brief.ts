@@ -5,8 +5,8 @@
  * "Today's Brief", a long "AI Investment Brief", and a paragraph for Portfolio
  * Pulse. Implemented literally, that is three `runPrompt()` calls on page load.
  *
- * Local Ollama serializes requests. Three calls do not run in parallel — they
- * queue, and the homepage takes three sequential model round-trips to settle.
+ * Three separate calls are three separate spends (and on the old local
+ * backend they also serialized, so the homepage took three round-trips to settle).
  * This codebase has already measured that cost once and rejected per-section AI
  * generation for exactly this reason (see the platform layer's notes). So:
  *
@@ -16,7 +16,7 @@
  * client as they become available, so Today's Brief can paint while the long
  * note is still being written.
  *
- * **This never fails.** Ollama down, model returns garbage, JSON won't parse,
+ * **This never fails.** AI unavailable, model returns garbage, JSON won't parse,
  * grounding check fails — every path lands on `deterministicBriefing()`, which
  * is assembled from the same engine outputs and is always true. AI narrates
  * here; it never decides. That is the same "engines decide, AI narrates, never

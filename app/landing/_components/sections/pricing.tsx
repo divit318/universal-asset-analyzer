@@ -14,8 +14,8 @@ import { Reveal } from "../reveal";
 const INCLUDED = [
   "Every module — research, screener, portfolio, valuation, AI",
   "U.S. and Indian market data from public sources",
-  "Local AI analysis — no cloud keys, no metering",
-  "Your data stays on your machine",
+  "AI analysis with your own Anthropic API key — you control the spend",
+  "Your portfolio and research data stay on your machine",
 ];
 
 export function Pricing({ section, index }: SectionProps) {
@@ -35,8 +35,8 @@ export function Pricing({ section, index }: SectionProps) {
             Get started in minutes — for free.
           </h2>
           <p className="text-pretty text-base leading-relaxed text-muted">
-            UAA is free to use and runs entirely on your machine. Optional professional data feeds
-            are the only thing you’d ever pay for.
+            UAA is free to use and stores everything on your machine. You pay only your own
+            Anthropic API usage for AI features — and optional professional data feeds.
           </p>
         </div>
 
@@ -45,7 +45,7 @@ export function Pricing({ section, index }: SectionProps) {
             <span className="text-4xl font-semibold tracking-tight text-foreground">$0</span>
             <span className="text-sm text-muted">/ forever</span>
           </div>
-          <p className="mt-1 text-caption uppercase tracking-widest text-faint">Free — runs locally</p>
+          <p className="mt-1 text-caption uppercase tracking-widest text-faint">Free — bring your own AI key</p>
 
           <ul className="mt-6 flex flex-col gap-3">
             {INCLUDED.map((item) => (

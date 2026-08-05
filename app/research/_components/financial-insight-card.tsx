@@ -54,7 +54,7 @@ export function FinancialInsightCard({ symbol, snapshot, statements, score }: Pr
    *
    * The ref guard is what makes this one inference instead of two: StrictMode
    * runs this effect twice on mount in dev, and each run was a full local
-   * generation competing with the verdict for the same single-threaded Ollama.
+   * generation competing with the verdict for attention nobody asked for.
    * (Deliberately no cleanup-abort — see the movement explainer card for why
    * that combination would cancel the only request that ever starts.)
    */

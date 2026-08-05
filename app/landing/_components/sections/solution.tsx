@@ -35,7 +35,7 @@ export function Solution({ section, index }: SectionProps) {
             Meet the Universal Asset Analyzer.
           </h2>
           <p className="text-pretty text-base leading-relaxed text-muted">
-            One app for all your investment research, powered by local AI.
+            One app for all your investment research, with AI narration on your own key.
           </p>
           <ul className="flex flex-col gap-2.5 self-center lg:self-start">
             {BULLETS.map((b) => (

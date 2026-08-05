@@ -19,8 +19,8 @@ export function LandingFooter() {
               the sign-off, so `lg` rather than the header's `md`. */}
           <BrandLockup href={LANDING_HOME} size="lg" />
           <p className="max-w-xs text-caption text-muted">
-            Universal Asset Analyzer — institutional-grade equity research, powered by local AI, all
-            on your computer.
+            Universal Asset Analyzer — institutional-grade equity research. Your data stays in a
+            local database you own; AI narration runs on Claude with your own API key.
           </p>
         </div>
 
@@ -42,7 +42,7 @@ export function LandingFooter() {
 
       <div className="border-t border-border">
         <p className="mx-auto w-full max-w-7xl px-6 py-4 text-micro text-faint">
-          © {year} Universal Asset Analyzer. Runs locally. No cloud, no accounts.
+          © {year} Universal Asset Analyzer. Local-first data. No accounts, no subscriptions.
         </p>
       </div>
     </footer>

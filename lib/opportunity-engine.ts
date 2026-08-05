@@ -175,10 +175,10 @@ function pickPrimary(categories: OpportunityCategory[]): OpportunityCategory {
 /* -------------------------------------------------------------------------- */
 
 function deriveConviction(score: number, confidence: number): Conviction {
-  // CALIBRATION NOTE (2026-08-02, Devin-primary switch): the hosted models'
-  // confidence scores run ~28 points LOWER than the old local Ollama numbers
+  // CALIBRATION NOTE (2026-08-02, hosted-model switch): the hosted models'
+  // confidence scores run ~28 points LOWER than the old local-model numbers
   // on identical inputs because they are better calibrated, not worse
-  // (measured across 15 symbols: Ollama mean 62.7 vs Devin 34.9 —
+  // (measured across 15 symbols: local mean 62.7 vs hosted 34.9 —
   // ai-migration/06 §1b). This >=55 gate therefore fires meaningfully less
   // often now, BY DESIGN. Do not rescale the model's confidence to
   // compensate; if the "High" base rate matters, retune this threshold from

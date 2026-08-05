@@ -23,7 +23,7 @@ export const maxDuration = 300;
 /**
  * In-flight runs, keyed by normalized theme.
  *
- * The pipeline is minutes long and Ollama serves one request at a time, so a
+ * The pipeline is minutes long and runs its AI stages sequentially, so a
  * double-click on Analyse (or two tabs on the same theme) used to launch a
  * second full run that queued behind the first — doubling the wait for both and
  * for anything else in the app that needs the model. A repeat request joins the

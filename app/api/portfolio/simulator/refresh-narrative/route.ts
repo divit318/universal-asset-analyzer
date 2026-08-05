@@ -11,6 +11,7 @@
  * accurate holdings with yesterday's prose — annoying, not wrong.
  */
 import { NextResponse } from "next/server";
+import { AI_RECOVERY_HINT } from "@/lib/ai/availability";
 import { runPromptWithMeta } from "@/lib/ai";
 import { AllModelsFailedError } from "@/lib/ai/router";
 import { getSimulation, updateSimulation } from "@/lib/db";
@@ -55,7 +56,7 @@ export async function POST(request: Request) {
     }
 
     // 2. Thesis + headline against the edited book. The thesis builder is
-    // content-hash cached and falls back deterministically when Ollama is
+    // content-hash cached and falls back deterministically when the AI is
     // down — it never throws the whole resync away.
     const evaluation = await evaluateSimHoldings(holdings, sim.profile.currency);
     const thesis = await buildPortfolioThesis({
@@ -81,7 +82,7 @@ export async function POST(request: Request) {
     if (request.signal.aborted) return new Response(null, { status: 499 });
     if (err instanceof AllModelsFailedError) {
       return NextResponse.json(
-        { error: "Ollama unavailable — rationales will refresh once it is back", code: "ollama_unavailable" },
+        { error: `AI unavailable — rationales will refresh once it is back. ${AI_RECOVERY_HINT}`, code: "ai_unavailable" },
         { status: 503 },
       );
     }

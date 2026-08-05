@@ -244,4 +244,4 @@ A typical workflow might look like this:
 
 ## AI Features Note
 
-The Research Copilot, Discover signals, Deep Research agents, Themes analysis, and Watchlist Digest all run on a local AI model (Ollama with Mistral) installed on your computer. No data is sent to any external service. If these features show "analysis unavailable", ensure Ollama is running (`ollama serve` in a terminal).
+The Research Copilot, Discover signals, Deep Research agents, Themes analysis, and Watchlist Digest run on Claude via the Anthropic API, using your own API key (enter it once at /settings; it is stored on this machine). When these features run, the prompt — company data and, where relevant, portfolio context — is sent to api.anthropic.com; your database itself never leaves your computer, and every number on every page is computed locally. If these features show "analysis unavailable", add your Anthropic API key in Settings.

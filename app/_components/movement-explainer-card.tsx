@@ -47,7 +47,7 @@ function groupDrivers(drivers: MovementDriver[]): { group: ContributionGroup; dr
  * Explain Every Movement. Defaults to the original click-to-reveal button —
  * several callers (Portfolio's live Decision Queue in actions-tab.tsx renders
  * one of these per recommendation, unconditionally) would otherwise fire N
- * parallel Ollama calls on every page load. Pass `autoLoad` to switch to
+ * parallel AI calls on every page load. Pass `autoLoad` to switch to
  * "instead of a button, display" behavior — used by Research, where the spec
  * calls for it and there's only ever one instance on the page.
  */

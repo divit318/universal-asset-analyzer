@@ -6,7 +6,7 @@
  * The long-form morning note. Same model call as Today's Brief (see
  * lib/home/brief.ts); this module just renders the `note` section of it.
  *
- * When Ollama is down there is no long note — and this module says exactly
+ * When the AI is unavailable there is no long note — and this module says exactly
  * that rather than padding the space with the deterministic headline the module
  * above already shows. A second copy of the same sentence is not a brief.
  */

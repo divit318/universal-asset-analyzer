@@ -52,7 +52,7 @@ export const SECTIONS: LandingSection[] = [
   { id: "hero", kicker: "Universal Asset Analyzer", title: "The AI terminal for investors", top: true },
   { id: "problem", kicker: "The problem", title: "Research is fragmented across a dozen tools", nav: "Problem" },
   { id: "solution", kicker: "The solution", title: "One intelligent analysis workbench" },
-  { id: "privacy", kicker: "Local-first", title: "Your data never leaves your computer" },
+  { id: "privacy", kicker: "Local-first", title: "Your data lives on your computer" },
   { id: "features", kicker: "Capabilities", title: "Everything serious research needs", nav: "Features" },
   { id: "demo", kicker: "Try it", title: "See UAA in action", nav: "Demo" },
   { id: "comparison", kicker: "Compare", title: "How UAA stacks up", nav: "Compare" },

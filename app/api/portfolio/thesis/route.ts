@@ -3,7 +3,7 @@
  *
  * Deliberately a SEPARATE route from /api/portfolio/report. That route is pure
  * deterministic computation and must stay fast; this one makes an AI call.
- * Ollama serializes requests — firing an AI call from every section of the
+ * Firing an AI call from every section of the
  * page independently was measured and rejected earlier in this project. This
  * is the ONE AI call for the whole portfolio banner, cached by content hash so
  * it only re-fires when the portfolio composition actually changes.

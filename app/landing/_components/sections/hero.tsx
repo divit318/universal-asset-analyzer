@@ -1,19 +1,29 @@
-import Link from "next/link";
-import { BrandMark } from "@/app/_components/brand";
-import { Badge } from "@/app/_components/ui";
-import { APP_ENTRY, type LandingSection } from "../../landing-config";
+"use client";
+
+import type { LandingSection } from "../../landing-config";
+import { HeroStipple } from "../hero-stipple";
+import { openAuthModal } from "../auth-modal";
 
 /**
  * Hero — the page's single <h1> and the scene-setting section.
  *
- * Copy is the approved Creative Direction final wording (§9). Visual language is
- * the repo's own design system (blue --brand, Geist, dark-default) — NOT the
- * PDF's coral/Inter, which would fork the token set.
+ * Copy contract (owner-approved, 2026-08-05): every line here grounds only in
+ * outcome-independent invariants — deterministic engines compute every metric
+ * (ARCHITECTURE.md "Engines Decide, AI Explains"), every figure traces to its
+ * source (lib/ai/grounding.ts, lib/provenance.ts), state is a local SQLite
+ * database the user owns (README). No claim, in either direction, about where
+ * AI generation runs.
  *
- * Milestone 2 is deliberately STATIC: the product reveal is an empty framed
- * placeholder. Its entrance choreography arrives in Milestone 5 (via the repo's
- * CSS keyframe system, no animation library) and the real app screenshot in
- * Milestone 7. Nothing here hardcodes motion or imagery those milestones own.
+ * The previously approved headline was:
+ *   "Stop juggling a dozen investing tools."  (Creative Direction §9)
+ * It was not discarded — it now opens the supporting paragraph as the problem
+ * statement (owner's Row-10 override). The kicker is the committed brand
+ * motto (docs/brand-guidelines.md §1). The headline serif is the brand book's
+ * judgment voice (§4), used for marketing headlines and nothing else here.
+ *
+ * CTA wiring: "Get started" opens the auth modal on Create account (the pill
+ * header's "Sign in" opens the other tab); "Watch demo" keeps the committed
+ * label and jumps to the in-page demo.
  */
 export function Hero({ section }: { section: LandingSection }) {
   const headingId = `${section.id}-heading`;
@@ -24,48 +34,49 @@ export function Hero({ section }: { section: LandingSection }) {
       aria-labelledby={headingId}
       className="scroll-mt-20 border-b border-border bg-background"
     >
-      <div className="mx-auto flex w-full max-w-5xl flex-col items-center gap-8 px-6 pb-20 pt-20 text-center sm:pt-28">
-        {/* On-load staged entrance — pure CSS (works without JS), one-shot, and
-            neutralized under prefers-reduced-motion by globals.css. */}
-        {/* The mark, alone and large — the marketing site's one place to simply
-            show the logo. Not a lockup: the header 20px above already carries
-            the wordmark, and the <h1> is the message. */}
-        <div className="animate-fade-rise" style={{ animationDuration: "500ms" }}>
-          <BrandMark size="hero" className="text-foreground" label="Universal Asset Analyzer" />
-        </div>
-
-        <div className="animate-fade-rise" style={{ animationDuration: "500ms", animationDelay: "60ms" }}>
-          <Badge variant="brand">Runs 100% on your computer</Badge>
-        </div>
+      <div className="mx-auto flex w-full max-w-5xl flex-col items-center gap-7 px-6 pt-28 text-center sm:pt-36">
+        {/* Kicker — the committed motto (brand book §1). */}
+        <p
+          className="animate-fade-rise text-label font-semibold uppercase tracking-[0.22em] text-muted"
+          style={{ animationDuration: "500ms" }}
+        >
+          Evidence in ink. <span className="text-brand">Verdicts in brass.</span>
+        </p>
 
         <div
           className="flex animate-fade-rise flex-col items-center gap-5"
-          style={{ animationDuration: "500ms", animationDelay: "120ms" }}
+          style={{ animationDuration: "500ms", animationDelay: "80ms" }}
         >
           <h1
             id={headingId}
-            className="max-w-3xl text-balance text-4xl font-semibold tracking-tight text-foreground sm:text-6xl"
+            className="max-w-3xl text-balance font-serif text-4xl font-semibold tracking-tight text-foreground sm:text-6xl"
           >
-            Stop juggling a dozen investing tools.
+            <span className="block">Every figure computed.</span>
+            <span className="block text-brand">Every claim traced.</span>
           </h1>
           <p className="max-w-2xl text-pretty text-base leading-relaxed text-muted sm:text-lg">
-            Universal Asset Analyzer combines market data, filings, valuation models, and an AI
-            research assistant — all on your computer.
+            Stop juggling a dozen investing tools. UAA is one research terminal where
+            deterministic engines compute every metric and the analysis only explains what
+            they found — every figure traces back to its source, in a database you own.
           </p>
         </div>
 
-        {/* CTA hierarchy: primary into the app, secondary to the in-page demo
-            (the PDF's "Watch 90-second Demo" reinterpreted — no video asset yet). */}
+        {/* CTA hierarchy: primary opens Create account; secondary jumps to the
+            in-page demo (committed label). */}
         <div
           className="flex animate-fade-rise flex-col items-center gap-3 sm:flex-row"
-          style={{ animationDuration: "500ms", animationDelay: "240ms" }}
+          style={{ animationDuration: "500ms", animationDelay: "180ms" }}
         >
-          <Link
-            href={APP_ENTRY}
-            className="inline-flex h-11 items-center justify-center rounded-control bg-brand px-6 text-sm font-semibold text-background outline-none transition hover:-translate-y-0.5 hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
+          <button
+            type="button"
+            onClick={() => openAuthModal("signup")}
+            className="group inline-flex h-11 items-center justify-center gap-2 rounded-control bg-brand px-6 text-sm font-semibold text-background outline-none transition hover:-translate-y-0.5 hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
           >
-            Experience UAA
-          </Link>
+            Get started
+            <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-0.5">
+              →
+            </span>
+          </button>
           <a
             href="#demo"
             className="inline-flex h-11 items-center justify-center gap-1.5 rounded-control border border-border bg-surface px-6 text-sm font-semibold text-foreground outline-none transition hover:-translate-y-0.5 hover:border-border-strong hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand/40"
@@ -75,53 +86,15 @@ export function Hero({ section }: { section: LandingSection }) {
           </a>
         </div>
 
-        {/* Product reveal — placeholder frame. A faux app window whose content
-            (real screenshot) lands in Milestone 7. Purely presentational and
-            hidden from assistive tech. Enters last in the on-load sequence. */}
+        {/* The Traceable Figure — engraved-stipple illustration anchoring the
+            hero. Decorative (aria-hidden inside); generated, reproducible art:
+            scripts/generate-hero-stipple.ts. */}
         <div
-          data-testid="hero-product-reveal"
-          aria-hidden="true"
-          className="mt-6 w-full max-w-4xl animate-fade-rise overflow-hidden rounded-panel border border-border bg-surface shadow-card"
-          style={{ animationDuration: "700ms", animationDelay: "360ms" }}
+          data-testid="hero-stipple"
+          className="animate-fade-rise -mb-px w-full"
+          style={{ animationDuration: "700ms", animationDelay: "300ms" }}
         >
-          <div className="flex items-center gap-1.5 border-b border-border bg-surface-2 px-4 py-2.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-border-strong" />
-            <span className="h-2.5 w-2.5 rounded-full bg-border-strong" />
-            <span className="h-2.5 w-2.5 rounded-full bg-border-strong" />
-          </div>
-          {/* Finished on-brand faux dashboard — token-driven, theme-aware, image-free.
-              (A real app screenshot can swap in here later via next/image.) */}
-          <div className="flex aspect-[16/9] gap-3 bg-background p-3 text-left">
-            <div className="hidden w-1/6 flex-col gap-2 rounded-card border border-border bg-surface-2 p-2.5 sm:flex">
-              <div className="h-2 w-3/4 rounded-full bg-brand/50" />
-              <div className="h-2 w-full rounded-full bg-border" />
-              <div className="h-2 w-2/3 rounded-full bg-border" />
-              <div className="h-2 w-full rounded-full bg-border" />
-              <div className="mt-auto h-2 w-1/2 rounded-full bg-border" />
-            </div>
-            <div className="flex flex-1 flex-col gap-3">
-              <div className="grid grid-cols-3 gap-3">
-                {[0, 1, 2].map((i) => (
-                  <div key={i} className="flex flex-col gap-1.5 rounded-card border border-border bg-surface-2 p-2.5">
-                    <div className="h-1.5 w-2/3 rounded-full bg-border" />
-                    <div className="h-2.5 w-1/2 rounded-full bg-foreground/70" />
-                  </div>
-                ))}
-              </div>
-              <div className="flex flex-1 items-end gap-1.5 rounded-card border border-border bg-surface-2 p-3">
-                {[42, 60, 48, 75, 58, 84, 66, 92].map((h, i) => (
-                  <div key={i} className="flex-1 rounded-sm bg-brand/40" style={{ height: `${h}%` }} />
-                ))}
-              </div>
-              <div className="flex items-center gap-2 rounded-card border border-border bg-surface-2 p-2.5">
-                <span className="h-4 w-4 shrink-0 rounded-full bg-brand/60" />
-                <div className="flex flex-1 flex-col gap-1">
-                  <div className="h-1.5 w-full rounded-full bg-border" />
-                  <div className="h-1.5 w-4/5 rounded-full bg-border" />
-                </div>
-              </div>
-            </div>
-          </div>
+          <HeroStipple />
         </div>
       </div>
     </section>

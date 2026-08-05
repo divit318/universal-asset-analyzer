@@ -9,6 +9,7 @@ import { HoverSymbolProvider, useHoverSymbol, useHoverHandlers, useSymbolEmphasi
 import { BackgroundDepth } from "./_components/background-depth";
 import { Collapsible } from "./_components/collapsible-section";
 import { CountUp } from "@/app/_components/count-up";
+import { AiBadge } from "@/app/_components/ai-badge";
 import { useInViewOnce } from "@/app/_components/use-in-view-once";
 import type { CompareEntry } from "@/app/api/compare/route";
 import type { GroundingReport } from "@/lib/ai/types";
@@ -285,21 +286,18 @@ function findWinners(values: (number | null)[], higherBetter: boolean | null): W
 
 /**
  * Progressive status copy for the AI verdict's loading state, keyed by how
- * long it's been running. A single static "Running Ollama analysis..." used
- * to sit on screen unchanged whether the answer was 5 seconds or 5 minutes
- * away, which reads as broken/stuck well before a cold-loaded model
- * (observed: up to several minutes under memory pressure — see
- * lib/ai/router.ts's cold-start budget) actually finishes. None of this
- * requires the backend to report real-time phase — it's calibrated to the
- * router's own documented timings (a model typically answers in seconds once
- * warm; a cold load is the multi-minute case) so the copy stays honest
+ * long it's been running. A single static "Running analysis..." used to sit
+ * on screen unchanged whether the answer was 5 seconds or 5 minutes away,
+ * which reads as broken/stuck well before a long generation actually
+ * finishes. None of this requires the backend to report real-time phase —
+ * it's calibrated to the router's documented timings so the copy stays honest
  * without new plumbing.
  */
 function aiLoadingLabel(elapsedMs: number): string {
-  if (elapsedMs < 8_000) return "Preparing AI — routing to the best local model…";
-  if (elapsedMs < 30_000) return "Analyzing — typically ~30s once the model is warm…";
-  if (elapsedMs < 90_000) return "Still working — this model may be loading for the first time (cold start)…";
-  return "Model warming up under load — this can take a few minutes on a busy machine. The metric table above is already complete either way.";
+  if (elapsedMs < 8_000) return "Preparing AI — routing to the right effort tier…";
+  if (elapsedMs < 30_000) return "Analyzing — typically well under a minute…";
+  if (elapsedMs < 90_000) return "Still working — a deep comparison earns a longer reasoning budget…";
+  return "Still reasoning — a large comparison can take a few minutes. The metric table above is already complete either way.";
 }
 
 /** Streamed flat-field keys (see lib/ai-compare.ts's streamComparisonFields) that map directly onto an `AiComparison` field of the same name. */
@@ -384,12 +382,12 @@ export default function ComparePage() {
   //      so a user who removes/adds a symbol before it resolves used to have
   //      whichever request finished LAST win, even if it was the older one.
   //   2. A genuinely abandoned request never gets cancelled — the previous
-  //      fetch kept running server-side (and occupying Ollama, which
+  //      fetch kept running server-side (and occupying the AI backend, which
   //      serializes generations) even though nothing was still listening.
   // `aiGen` increments on every new request; a response only gets applied if
   // it's still current when it resolves. `aiAbortRef` lets a superseded
   // request actually cancel — through Next.js's `request.signal` all the way
-  // to the in-flight Ollama call (see app/api/compare/route.ts).
+  // to the in-flight AI call (see app/api/compare/route.ts).
   const aiGen = useRef(0);
   const aiAbortRef = useRef<AbortController | null>(null);
   const [aiLoadingStartedAt, setAiLoadingStartedAt] = useState<number | null>(null);
@@ -562,7 +560,7 @@ export default function ComparePage() {
   // Reset auto-trigger when the symbol list changes. Also cancels any AI
   // verdict still in flight for the OLD symbol set — otherwise it kept
   // running server-side against symbols no longer on screen, occupying
-  // Ollama's serialized generation queue for an answer nobody could see.
+  // the generation pipeline for an answer nobody could see.
   useEffect(() => {
     aiAutoTriggered.current = "";
     aiAbortRef.current?.abort();
@@ -992,7 +990,7 @@ export default function ComparePage() {
                 <div className="flex flex-col gap-0.5">
                   <div className="flex items-center gap-2">
                     <h2 className="font-semibold">Ranked Verdict</h2>
-                    <span className="rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-label font-semibold uppercase tracking-widest text-brand">Local AI</span>
+                    <AiBadge />
                   </div>
                   <p className="text-xs text-muted">
                     {validEntries.map((e) => e.symbol).join(" vs ")} — every pick ranked with its own thesis
@@ -1447,7 +1445,7 @@ function MetricSection({
   entries: CompareEntry[];
   open: boolean;
   onToggle: () => void;
-  /** AI-written ranking rationale for this section (lib/ai-compare.ts), e.g. "Rank all N by quality — cite ROE, margins...". Absent while the AI verdict hasn't run yet or when Ollama is unavailable — the deterministic table above never depends on it. */
+  /** AI-written ranking rationale for this section (lib/ai-compare.ts), e.g. "Rank all N by quality — cite ROE, margins...". Absent while the AI verdict hasn't run yet or when the AI is unavailable — the deterministic table above never depends on it. */
   aiCommentary?: string;
 }) {
   const { hovered, setHovered } = useHoverSymbol();

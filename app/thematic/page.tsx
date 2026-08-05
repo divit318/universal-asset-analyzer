@@ -305,7 +305,7 @@ function ThematicPageInner() {
             ))}
           </div>
 
-          <SectionHeader label="How it works" description="Roughly 5–20 minutes on a local model. Reports are saved, so a repeat search is instant." />
+          <SectionHeader label="How it works" description="A full 10-stage run takes a few minutes. Reports are saved, so a repeat search is instant." />
           <div className="grid gap-3 sm:grid-cols-3">
             {[
               { step: "1–3", title: "Foundation", desc: "Inevitability of the future state, the six-tier dependency chain, and which tier is the real bottleneck." },

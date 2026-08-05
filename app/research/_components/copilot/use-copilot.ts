@@ -36,7 +36,7 @@ interface ContextResponse {
 export type CopilotStatus = "init" | "ready" | "streaming" | "error";
 
 /**
- * Drives the Research Copilot: warms the company context, tracks Ollama health
+ * Drives the Research Copilot: warms the company context, tracks AI health
  * and the model picker, and runs streaming chat turns by parsing the NDJSON
  * event stream from /api/research/chat. One instance is bound to one symbol;
  * changing the symbol resets the conversation and starts a fresh session.

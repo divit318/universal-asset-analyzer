@@ -93,7 +93,7 @@ export function PortfolioThesisBanner({
         <div className="flex flex-col">
           <span className="text-xs font-medium text-foreground">Reading your portfolio…</span>
           <span className="text-[11px] text-muted/70">
-            The local model is writing a thesis and a bear case. Every figure below is already
+            The AI is writing a thesis and a bear case. Every figure below is already
             final — this runs independently and never blocks them.
           </span>
         </div>
@@ -186,7 +186,7 @@ export function PortfolioThesisBanner({
           consistency imply they are the same kind of claim. */}
       {data.source === "ai" && (
         <p className="text-[10px] leading-relaxed text-muted/50">
-          Written by the local model from the measured figures on this page. Interpretation,
+          Written by the AI from the measured figures on this page. Interpretation,
           not measurement — where it and a panel below disagree, the panel is right.
         </p>
       )}

@@ -887,7 +887,7 @@ function coerceNumber(v: unknown, fallback: number): number {
 /**
  * Coerce a model-supplied score onto the 0–10 scale it was asked for.
  *
- * Small local models routinely answer 0–100 no matter how the prompt is worded.
+ * Small models routinely answered 0–100 no matter how the prompt was worded.
  * Unclamped, a single "85" rendered as "85/10", drew an 850%-wide progress bar,
  * and pushed the weighted headline score above 100 into a false "EXCEPTIONAL"
  * verdict — a wrong answer presented with maximum confidence. Values in 10–100
@@ -1005,7 +1005,7 @@ Return JSON only — an array of exactly 6 objects:
 /**
  * Retry variant of {@link buildDependencyChain}, deliberately terser.
  *
- * The chain is the stage observed failing most on local models (a 14B model
+ * The chain is the stage observed failing most on small models (a 14B model
  * spent 72s and returned nothing usable on a live run). Small models answer a
  * short, rigid ask far more reliably than a discursive one, so the one retry
  * the orchestrator grants this stage swaps the full framing for a compressed
@@ -1356,7 +1356,7 @@ async function mapCompaniesToTiers(
 
   // The prompt carries fewer candidates than the shortlist keeps. The full
   // 140-row list serialized to ~9KB and the observed yield was 1 mapping from
-  // 53 candidates — a small local model does materially better ranking a
+  // 53 candidates — a model does materially better ranking a
   // short, dense list than searching a long one. The shortlist is
   // relevance-then-quality ordered (see shortlistUniverse), so the head IS
   // the densest slice; integrity metrics still report the full shortlist.
@@ -1854,9 +1854,9 @@ export async function runThematicEngine(
    * These three (proxy prices, theme news, the screener universe) were
    * previously interleaved *between* AI stages, so their latency was added to a
    * pipeline that is already minutes long instead of hidden underneath it. The
-   * AI calls themselves stay strictly sequential on purpose: local Ollama
-   * serves one request at a time, so dispatching them concurrently would only
-   * queue them while each one's timeout raced against the queue ahead of it
+   * AI calls themselves stay strictly sequential — a policy from the
+   * serializing local backend, where concurrent dispatch would only
+   * queue while each call's timeout raced against the queue ahead of it
    * (the same trap documented in lib/ic-agents.ts).
    */
   const proxyDefs = pickCommodityProxies(theme);

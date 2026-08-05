@@ -4,7 +4,7 @@
  * The one place a scan is started. Both entry points (the /api/scanner/v2
  * route and the background scheduler) go through startScanJob, so identical
  * parameter sets share ONE running pipeline via the platform job registry
- * (lib/platform/jobs.ts) instead of racing each other for the local model.
+ * (lib/platform/jobs.ts) instead of racing each other for the same result.
  */
 
 import { runScannerPipeline } from "./index";

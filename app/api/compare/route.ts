@@ -246,8 +246,8 @@ export async function POST(request: Request) {
     // Forward the client's own abort signal: if the browser cancels this
     // request (user changed symbols, re-triggered analysis, or navigated
     // away), that cancellation now propagates all the way down to the
-    // in-flight Ollama call instead of running to completion unobserved.
-    // Ollama serializes generations, so a single abandoned request used to
+    // in-flight AI call instead of running to completion unobserved.
+    // On the old serializing local backend, a single abandoned request used to
     // occupy the queue behind every other AI call on the box until it
     // finished on its own.
     const result = await compareStocks(unique, { signal: request.signal });

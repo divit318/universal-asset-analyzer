@@ -538,9 +538,9 @@ export interface RecentActivity {
 /* ------------------------------------------------------------------ */
 
 /**
- * One AI call produces all three narrative surfaces. Ollama serializes
- * requests, so three separate "generate a paragraph" calls would queue behind
- * each other and the homepage would take three model round-trips to settle —
+ * One AI call produces all three narrative surfaces. Three separate
+ * "generate a paragraph" calls would be three separate spends (and on the
+ * old serializing local backend, three sequential round-trips) —
  * a cost this codebase has already measured and rejected once (see
  * lib/platform's notes on per-section AI generation).
  *

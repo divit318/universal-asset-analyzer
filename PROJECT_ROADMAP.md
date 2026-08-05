@@ -90,15 +90,15 @@ Strategic overview of completed systems, active development, planned features, a
 - **SQLite Schema** (`lib/db.ts`) — All tables and CRUD operations
   - Watchlist, portfolio, research sessions, notes, fundamentals cache, scanner cache
 - **State Management Pattern** — Server components + API routes + React state hooks
-- **Environment Configuration** — OLLAMA_HOST, OLLAMA_MODEL, DB_PATH env vars
+- **Environment Configuration** — ANTHROPIC_API_KEY / UAA_CONFIG_DIR, DB_PATH env vars
 - **iOS Environment Detection** (`lib/ios-context.tsx`) — Safe mode for iOS WebView
 
 **Status**: Single source of truth. No direct SQLite calls from pages. Schema stable.
 
 ---
 
-### Phase 7: Local AI Integration (✅ Complete)
-- **Ollama Inference** (`lib/ollama.ts`) — Local LLM (llama3.2), graceful offline degradation
+### Phase 7: AI Integration (✅ Complete; now Anthropic API, BYO key)
+- **Inference** (`lib/ai/`) — graceful degradation when no key is configured
 - **Feature-Specific Prompts** — Research, Compare, Watchlist, General Q&A
 - **Streaming Responses** — `ReadableStream` for long-running operations
 - **Multi-Turn Copilot** — Research copilot with conversation history
@@ -490,7 +490,7 @@ padding so the last sections can physically reach the top of the viewport.
 - ✅ Data integration (Phase 4) — Complete, robust
 - ✅ UI/UX (Phase 5) — Complete, accessible
 - ✅ Persistence (Phase 6) — Complete, documented
-- ✅ Local AI (Phase 7) — Complete, offline-compatible
+- ✅ AI (Phase 7) — Complete; degrades gracefully without a key
 - ⏳ Real-time updates — In progress
 - ⏳ Offline-first — Planned Q3 2026
 - ⏳ Custom factors — Planned Q3 2026
