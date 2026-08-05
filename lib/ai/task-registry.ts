@@ -205,6 +205,9 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     jsonMode: true,
     maxTokens: 1024,
     timeoutMs: 180_000,
+    // Tranche 4: portfolio thesis migrated. Tail-based (amendment 3) — the
+    // thesis dossier is the largest prompt in this task class.
+    devinTimeoutMs: 240_000,
   },
   // Split out from portfolio-intelligence: the CIO panel streams a *prose* memo
   // while the brief and new-position callers want JSON. One task cannot declare
@@ -256,7 +259,9 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
 
   /* ---- Light: short output where latency is what the user actually feels -- */
   "market-summary": { complexity: "light", latency: "standard", maxTokens: 800 },
-  "daily-briefing": { complexity: "light", latency: "standard", maxTokens: 800 },
+  // Tranche 4 migrated (home brief). Standard latency, so it moves under a
+  // global AI_PROVIDER=devin; the homepage streams it and tolerates the tail.
+  "daily-briefing": { complexity: "light", latency: "standard", maxTokens: 800, devinTimeoutMs: 240_000 },
   "knowledge-graph-explain": { complexity: "light", latency: "interactive", maxTokens: 600 },
   // Tranche-2 migrated (text mode); interactive → stays on Ollama under a
   // global AI_PROVIDER=devin unless pinned. devinTimeoutMs applies when pinned.

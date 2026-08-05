@@ -41,6 +41,13 @@ import { TextAnalysisSchema, TextWireSchema, TEXT_SCHEMA_VERSION } from "@/lib/a
 import { VerdictParseSchema, VerdictWireSchema, VERDICT_SCHEMA_VERSION } from "@/lib/ai/schemas/verdict";
 import { buildCompanyContext } from "@/lib/ai/context";
 import { planVerdict } from "@/lib/ai/verdict";
+import { LooseObjectSchema } from "@/lib/ai/schemas/loose";
+import { PortfolioThesisWireSchema, PORTFOLIO_THESIS_SCHEMA_VERSION } from "@/lib/ai/schemas/portfolio-thesis";
+import { HomeBriefWireSchema, HOME_BRIEF_SCHEMA_VERSION } from "@/lib/ai/schemas/home-brief";
+import { buildPortfolioReport } from "@/lib/portfolio/report";
+import { buildThesisPrompt } from "@/lib/portfolio/thesis";
+import { buildHomeBriefPrompt, toBriefPortfolio } from "@/lib/home/brief";
+import { gatherContext } from "@/lib/mission-control";
 import {
   WatchlistDigestSchema, WatchlistDigestWireSchema, WATCHLIST_DIGEST_SCHEMA_VERSION,
 } from "@/lib/ai/schemas/watchlist-digest";
@@ -362,6 +369,89 @@ const TASKS: Record<string, TaskDef> = {
       // coerceFields), so completeness is checked HERE where it is visible:
       // a provider omitting core fields ships silent defaults in production.
       const strict = VerdictWireSchema.safeParse(output);
+      return strict.success
+        ? []
+        : strict.error.issues.slice(0, 4).map((i) => `wire-incomplete ${i.path.join(".")}: ${i.message}`);
+    },
+  },
+
+  thesis: {
+    taskType: "portfolio-intelligence",
+    output: "json",
+    schema: LooseObjectSchema,
+    wireSchema: PortfolioThesisWireSchema,
+    schemaVersion: PORTFOLIO_THESIS_SCHEMA_VERSION,
+    async buildSubjects() {
+      // The real portfolio through the real report pipeline — the exact
+      // evaluation + prompt the route builds. No synthetic-portfolio subjects:
+      // fabricating holdings would test a dossier no user can produce.
+      const report = await buildPortfolioReport({ baseCurrency: "USD" });
+      const evaluation = {
+        holdings: report.holdings,
+        totalValue: report.totalValue,
+        allocation: report.allocation,
+        risk: report.risk,
+        health: report.health,
+      };
+      if (evaluation.holdings.length === 0) {
+        console.log("  (portfolio is empty — nothing to test; add holdings first)");
+        return [];
+      }
+      return [
+        {
+          key: "live-portfolio",
+          label: `${evaluation.holdings.length} holdings, health ${report.health.total}`,
+          prompt: buildThesisPrompt(evaluation, {}),
+        },
+      ];
+    },
+    describe(output) {
+      const bag = output as Record<string, unknown>;
+      const arr = (v: unknown) => (Array.isArray(v) ? v.length : 0);
+      return `identity=${arr(bag.identity)} strengths=${arr(bag.strengths)} risks=${arr(bag.risks)} bear=${typeof bag.bearCase === "string" && bag.bearCase.trim() ? "yes" : "empty"}`;
+    },
+    extraChecks(output) {
+      const strict = PortfolioThesisWireSchema.safeParse(output);
+      return strict.success
+        ? []
+        : strict.error.issues.slice(0, 4).map((i) => `wire-incomplete ${i.path.join(".")}: ${i.message}`);
+    },
+  },
+
+  brief: {
+    taskType: "daily-briefing",
+    output: "json",
+    schema: LooseObjectSchema,
+    wireSchema: HomeBriefWireSchema,
+    schemaVersion: HOME_BRIEF_SCHEMA_VERSION,
+    async buildSubjects() {
+      const [ctx, report] = await Promise.all([
+        gatherContext(),
+        buildPortfolioReport().catch(() => null),
+      ]);
+      const portfolio = toBriefPortfolio(report);
+      return [
+        {
+          key: "live-home",
+          label: `regime=${ctx.regime ? "yes" : "no"} portfolio=${portfolio ? "yes" : "no"}`,
+          prompt: buildHomeBriefPrompt(ctx, portfolio, 0),
+        },
+        // Degenerate: no portfolio at all — the brief must narrate the market
+        // alone, not invent holdings.
+        {
+          key: "no-portfolio",
+          label: "DEGENERATE: market only",
+          prompt: buildHomeBriefPrompt(ctx, null, 0),
+        },
+      ];
+    },
+    describe(output) {
+      const bag = output as Record<string, unknown>;
+      const headline = typeof bag.headline === "string" ? bag.headline : "";
+      return `note=${bag.note ? "yes" : "null"} headline=${headline.slice(0, 60)}…`;
+    },
+    extraChecks(output) {
+      const strict = HomeBriefWireSchema.safeParse(output);
       return strict.success
         ? []
         : strict.error.issues.slice(0, 4).map((i) => `wire-incomplete ${i.path.join(".")}: ${i.message}`);

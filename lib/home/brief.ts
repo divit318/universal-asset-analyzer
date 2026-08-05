@@ -23,9 +23,10 @@
  * fails" split lib/mission-control.ts and lib/market-summary.ts already use.
  */
 
-import { runPrompt } from "../ai";
+import { runAnalysis } from "../ai/analysis";
+import { LooseObjectSchema } from "../ai/schemas/loose";
+import { HomeBriefWireSchema, HOME_BRIEF_SCHEMA_VERSION } from "../ai/schemas/home-brief";
 import { verifyGrounding } from "../ai/grounding";
-import { extractJsonObject } from "../json-extract";
 import { getScannerCache, putScannerCache } from "../db";
 import type { MissionControlContext } from "../mission-control";
 import type { UniversalPortfolioReport } from "../portfolio/report";
@@ -108,7 +109,8 @@ export function deterministicBriefing(
 /* Prompt                                                              */
 /* ------------------------------------------------------------------ */
 
-function buildPrompt(ctx: MissionControlContext, portfolio: BriefPortfolio | null, unreadCount: number): string {
+/** Exported so the parity harness runs the exact production prompt. */
+export function buildHomeBriefPrompt(ctx: MissionControlContext, portfolio: BriefPortfolio | null, unreadCount: number): string {
   const regime = ctx.regime
     ? `${ctx.regime.trend}${ctx.regime.breadthPct != null ? ` — ${ctx.regime.breadthPct}% of sectors advancing` : ""}. ${ctx.regime.summary} Dominant sectors: ${ctx.regime.dominantSectors.join(", ") || "none identified"}.`
     : "Market regime unavailable.";
@@ -163,12 +165,11 @@ No preamble. No markdown fences. JSON only.`;
 /* ------------------------------------------------------------------ */
 
 /**
- * Parsed with `extractJsonObject`, not `extractJson`. `extractJson` guarantees
- * *parseable* JSON, not *complete* JSON — it throws on garbage and casts
- * whatever it does parse straight to `T`, so a field the model dropped becomes
- * an `undefined` that TypeScript swears is a string. That exact pattern has
- * already crashed the portfolio brief once. Defaults below are the schema
- * contract; anything the model omits reads as absent rather than exploding.
+ * The loose bag the seam's passthrough parse view delivers, spread over these
+ * defaults so a field the model dropped reads as absent rather than becoming
+ * an `undefined` that TypeScript swears is a string (that exact pattern has
+ * already crashed the portfolio brief once). On Devin the wire schema makes
+ * omission impossible; on the local path the defaults are the contract.
  */
 interface RawBrief extends Record<string, unknown> {
   headline: unknown;
@@ -248,15 +249,29 @@ export async function generateHomeBrief(
     }
   }
 
-  let raw: string;
-  const prompt = buildPrompt(ctx, portfolio, unreadCount);
+  const prompt = buildHomeBriefPrompt(ctx, portfolio, unreadCount);
+  let parsed: RawBrief;
   try {
-    raw = await runPrompt("daily-briefing", prompt, { maxTokens: 1600 });
+    // Through the analysis seam. ollamaJsonMode:false preserves this call
+    // site's historical quirk exactly — it always ran the local model WITHOUT
+    // format:"json" and let extractJson mop up — while Devin sessions get the
+    // wire schema enforced server-side. Parse-side coercion stays below
+    // (str()/readNote/grounding gate), so the seam's parse view is the shared
+    // passthrough. An unparseable local response used to yield RAW_DEFAULTS
+    // -> empty headline -> fallback; it now throws -> the same fallback.
+    const analysis = await runAnalysis({
+      taskType: "daily-briefing",
+      subjectKey: "home:brief",
+      prompt,
+      schema: LooseObjectSchema,
+      wireSchema: HomeBriefWireSchema,
+      schemaVersion: HOME_BRIEF_SCHEMA_VERSION,
+      ollamaJsonMode: false,
+    });
+    parsed = { ...RAW_DEFAULTS, ...(analysis.data as Record<string, unknown>) };
   } catch {
     return fallback;
   }
-
-  const parsed = extractJsonObject<RawBrief>(raw, RAW_DEFAULTS);
 
   const headline = str(parsed.headline);
   if (!headline) return fallback;

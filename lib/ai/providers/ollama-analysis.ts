@@ -37,7 +37,9 @@ export class OllamaAnalysisProvider implements AnalysisProvider {
     const response = await runTask(req.taskType, req.prompt, {
       // Text-mode call sites (financial insight, calendar brief) never asked
       // Ollama for JSON pre-migration; forcing it would change their output.
-      json: !textMode,
+      // ollamaJsonMode preserves the same discipline for the one JSON call
+      // site (home brief) that historically ran unconstrained.
+      json: !textMode && (req.ollamaJsonMode ?? true),
       timeoutMs: req.timeoutMs,
       signal: req.signal,
     });

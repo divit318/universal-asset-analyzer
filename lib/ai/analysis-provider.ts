@@ -47,6 +47,16 @@ export interface AnalysisRequest<T> {
    * (canonically lib/ai/schemas/text.ts).
    */
   output?: "json" | "text";
+  /**
+   * Ollama-adapter-only: whether to request grammar-constrained JSON
+   * (`format:"json"`) for a JSON-output task. Defaults to true. Exists for
+   * exactly one reason: the home brief historically called `runPrompt`
+   * WITHOUT the json flag and mopped up with extractJson — and "the Ollama
+   * path is byte-identical" is the migration discipline, so that quirk is
+   * preserved rather than silently "fixed". Meaningless to Devin, which
+   * enforces the wire schema server-side either way.
+   */
+  ollamaJsonMode?: boolean;
   /** Defaults to hash(taskType, subjectKey, inputHash, schemaVersion). */
   idempotencyKey?: string;
   timeoutMs?: number;
