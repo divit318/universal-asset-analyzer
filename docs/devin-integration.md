@@ -1,11 +1,19 @@
 # Devin Engineering Automation
 
 Devin (Cognition's cloud coding agent, [docs.devin.ai](https://docs.devin.ai))
-is wired into this repo's **engineering workflow only** — PR review, weekly
-dependency maintenance, error triage, and (dormant) incident response. It is
-deliberately **not** part of the app: the user-facing AI analysis stack stays
-on local Ollama via `lib/ai/`, and nothing under `app/` or `lib/` ever calls
-the Devin API.
+is wired into this repo at **two independent layers**:
+
+1. **Engineering workflow** (this document) — PR review, weekly dependency
+   maintenance, error triage, and (dormant) incident response.
+2. **The app's AI analysis stack** — since the Phase 5 migration
+   (`ai-migration/`), `lib/ai/` runs analyses through Devin: the sessions API
+   for structured background analyses (`lib/ai/providers/devin/`) and the
+   Devin CLI transport inside the token-level router, with local Ollama as
+   the offline fallback. `AI_PROVIDER` (ollama | devin) selects the analysis
+   provider; `AI_PROVIDER_ORDER` orders the token-level chain. The paragraph
+   that used to live here — "the user-facing AI analysis stack stays on local
+   Ollama… nothing under `app/` or `lib/` ever calls the Devin API" —
+   described the pre-migration design and is no longer true.
 
 Components:
 
