@@ -123,7 +123,9 @@ function buildPrompt(ctx: MissionControlContext, portfolio: BriefPortfolio | nul
   const portfolioDesc = portfolio
     ? [
         `Health grade ${portfolio.healthGrade} (${portfolio.healthTotal}/100).`,
-        `Today ${portfolio.todayChangePct >= 0 ? "+" : ""}${portfolio.todayChangePct.toFixed(2)}%.`,
+        // One decimal, same as every chip and stat on the page — the brief once
+        // said "+0.81%" beside a chip reading "+0.8%" (audit F-22 formatting).
+        `Today ${portfolio.todayChangePct >= 0 ? "+" : ""}${portfolio.todayChangePct.toFixed(1)}%.`,
         `${portfolio.alertCount} concentration finding(s).`,
         portfolio.topRecommendation
           ? `Top recommendation: ${portfolio.topRecommendation}`
@@ -239,17 +241,25 @@ export async function generateHomeBrief(
   if (!ctx.regime && !portfolio) return fallback;
 
   const key = cacheKey(ctx, portfolio);
+  const prompt = buildPrompt(ctx, portfolio, unreadCount);
   const cached = getScannerCache(key);
   if (cached) {
     try {
-      return { ...(JSON.parse(cached) as HomeBrief), generatedAt: new Date().toISOString() };
+      const parsedCache = JSON.parse(cached) as HomeBrief;
+      // Serve-time re-verification (audit F-22 amendment 1): the cached prose
+      // must still ground against the CURRENT facts, not the facts it was
+      // written from. A figure that has drifted since generation (the
+      // "up 0.77%" vs live 0.79% case) fails here and forces a regeneration.
+      // The stamp stays the ORIGINAL generation time — re-stamping a cached
+      // brief as fresh was its own small lie.
+      const stillGrounded = verifyGrounding(parsedCache.headline, prompt).level !== "low";
+      if (stillGrounded) return parsedCache;
     } catch {
       // Corrupt cache entry — fall through and regenerate.
     }
   }
 
   let raw: string;
-  const prompt = buildPrompt(ctx, portfolio, unreadCount);
   try {
     raw = await runPrompt("daily-briefing", prompt, { maxTokens: 1600 });
   } catch {

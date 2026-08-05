@@ -14,6 +14,7 @@
 
 import type { UniversalPortfolioReport } from "../portfolio/report";
 import type { HealthScore } from "../portfolio/engines/health";
+import { metricSessionState } from "../metric";
 import type { HealthFactor, HealthRadarAxis, PortfolioPulse, PulseMover } from "./contracts";
 
 /** An empty portfolio has no pulse. It says so, rather than rendering zeros. */
@@ -26,6 +27,8 @@ const EMPTY: PortfolioPulse = {
   todayChangeDollar: 0,
   bestPerformer: null,
   worstPerformer: null,
+  sessionNote: null,
+  asOf: 0,
   largestRisk: null,
   largestOpportunity: null,
   cashPct: null,
@@ -154,23 +157,37 @@ export function diversificationFromHhi(hhi: number): number {
   return Math.round(100 - ((hhi - DIVERSIFIED) / (CONCENTRATED - DIVERSIFIED)) * 100);
 }
 
-export function buildPortfolioPulse(report: UniversalPortfolioReport | null): PortfolioPulse {
+export function buildPortfolioPulse(report: UniversalPortfolioReport | null, now: number = Date.now()): PortfolioPulse {
   if (!report || report.holdingCount === 0) return EMPTY;
 
-  // Movers are ranked on *unrealized return %*, not dollars — a 40% gain on a
-  // small position is the more interesting fact, and the dollar figure rides
-  // along on the same object for callers that want it.
-  const scored = report.holdings
-    .filter((h) => h.unrealizedPct != null && h.symbol != null)
-    .map<PulseMover>((h) => ({
-      symbol: h.symbol as string,
-      changePct: h.unrealizedPct as number,
-      changeDollar: h.unrealizedPL ?? 0,
+  // Movers are ranked on the DAY's move (audit F-22g — this used to rank on
+  // since-cost P&L and render it under a "today" label). Stale sessions are
+  // disqualified from the superlative entirely; current and previous sessions
+  // qualify, and the stamped Metric lets the UI date a previous session's
+  // figure instead of implying "today".
+  const scored: PulseMover[] = (report.dayMoves ?? [])
+    .filter((m) => m.dayChange != null && metricSessionState(m.dayChange, now) !== "stale")
+    .map((m) => ({
+      symbol: m.symbol,
+      dayChange: m.dayChange,
+      sinceCost: m.sinceCost,
+      dayDollar: m.dayDollar,
+      plDollar: m.plDollar,
     }))
-    .sort((a, b) => b.changePct - a.changePct);
+    .sort((a, b) => (b.dayChange?.value ?? 0) - (a.dayChange?.value ?? 0));
 
   const bestPerformer = scored[0] ?? null;
   const worstPerformer = scored.length > 1 ? scored[scored.length - 1] : null;
+
+  // "Markets closed" note: when NO qualifying mover describes the current
+  // session, the whole strip is a finished session's close — say so once,
+  // deliberately, rather than letting per-figure stamps read as a warning wall.
+  const states = scored.map((m) => metricSessionState(m.dayChange!, now));
+  const newestPrevious = scored.find((m, i) => states[i] === "previous");
+  const sessionNote =
+    scored.length > 0 && !states.includes("current") && newestPrevious?.dayChange?.sessionDate
+      ? `Markets closed · ${new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(`${newestPrevious.dayChange.sessionDate}T12:00:00Z`))} close`
+      : null;
 
   // The engine already severity-ranks concentration findings; take the worst.
   const topConcern =
@@ -207,6 +224,8 @@ export function buildPortfolioPulse(report: UniversalPortfolioReport | null): Po
     todayChangeDollar: report.todayChangeDollar,
     bestPerformer,
     worstPerformer,
+    sessionNote,
+    asOf: Date.parse(report.generatedAt) || now,
     largestRisk: topConcern ? { title: topConcern.label, description: topConcern.message } : null,
     largestOpportunity: topRec ? { symbol: topRec.symbol as string, reason: topRec.rationale } : null,
     cashPct: cashSlice?.weight ?? 0,

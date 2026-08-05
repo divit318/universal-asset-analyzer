@@ -10,6 +10,7 @@
  */
 
 import { listRawHoldings } from "./store";
+import { maybeMetric, type Metric } from "../metric";
 import { buildMarketContext } from "./context";
 import { normalizeHoldings } from "./model/holding";
 import { evaluate, type PortfolioEvaluation } from "./engines/simulate";
@@ -116,6 +117,14 @@ export interface UniversalPortfolioReport {
   unresolvedCurrencies: string[];
 
   holdings: Holding[];
+  /**
+   * Per-holding day moves as stamped Metrics (audit F-22g). `dayChange` is the
+   * session move vs previous close; `sinceCost` is P&L on cost. They are
+   * DIFFERENT quantities — the homepage once ranked "today's movers" on
+   * sinceCost, which put a -7.6% since-purchase figure under a "today" label.
+   * Only market-priced, symbol-bearing holdings appear.
+   */
+  dayMoves: HoldingDayMove[];
   allocation: PortfolioAllocation;
   /**
    * Where the return actually came from, and how concentrated its sources are.
@@ -170,6 +179,40 @@ export interface ReportOptions {
   extraCandidateSymbols?: string[];
   /** Which named portfolio to report on. Defaults to the Main Portfolio. */
   portfolioId?: number;
+}
+
+export interface HoldingDayMove {
+  symbol: string;
+  /** Session move vs previous close; null when the quote had no change. */
+  dayChange: Metric<"day"> | null;
+  /** Return on average cost; null when cost basis is unusable. */
+  sinceCost: Metric<"sinceCost"> | null;
+  /** Day move in base currency, from the holding's current value. */
+  dayDollar: number | null;
+  /** Unrealized P&L in base currency. */
+  plDollar: number | null;
+}
+
+/** The stamped per-holding movers (audit F-22g). Pure projection of ctx quotes. */
+function computeDayMoves(holdings: Holding[], ctx: MarketContext, generatedAtMs: number): HoldingDayMove[] {
+  const out: HoldingDayMove[] = [];
+  for (const h of holdings) {
+    if (h.valuation.mode !== "market" || !h.symbol) continue;
+    const q = ctx.quotes.get(h.symbol.toUpperCase());
+    if (!q) continue;
+    const asOf = q.asOf ?? generatedAtMs;
+    const day = maybeMetric(q.changePercent, "day", asOf, "yahoo", q.sessionDate ?? null);
+    const sinceCost = maybeMetric(h.unrealizedPct, "sinceCost", asOf, "yahoo");
+    if (!day && !sinceCost) continue;
+    out.push({
+      symbol: h.symbol,
+      dayChange: day,
+      sinceCost,
+      dayDollar: day ? h.valuation.valueBase * (day.value / 100) : null,
+      plDollar: h.unrealizedPL,
+    });
+  }
+  return out;
 }
 
 /**
@@ -309,6 +352,7 @@ export async function buildPortfolioReport(
     unresolvedCurrencies: ctx.unresolvedCurrencies ?? [],
 
     holdings: evaluation.holdings,
+    dayMoves: computeDayMoves(evaluation.holdings, ctx, Date.now()),
     allocation: evaluation.allocation,
     attribution: computeAttribution(evaluation.holdings),
     // A local SQLite read, so this costs nothing next to the provider fetches the

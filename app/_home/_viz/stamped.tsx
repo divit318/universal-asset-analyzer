@@ -47,12 +47,20 @@ export function MetricDelta({
   digits = 1,
   className = "",
   now,
+  suppressSessionLabel = false,
 }: {
   metric: Metric | null;
   digits?: number;
   className?: string;
   /** Injectable for tests/screenshots; defaults to render time. */
   now?: number;
+  /**
+   * True when the surrounding module already carries ONE session note for all
+   * its figures ("Markets closed · Fri Aug 1 close") — per-figure date labels
+   * would then be noise. Stale figures keep their label regardless: a module
+   * note never excuses a figure older than the note describes.
+   */
+  suppressSessionLabel?: boolean;
 }) {
   if (m == null) return <span className={`font-mono tabular-nums text-muted ${className}`}>—</span>;
 
@@ -71,7 +79,7 @@ export function MetricDelta({
       {signedPct(m.value, digits)}
       {m.basis === "sinceCost" ? (
         <span className="text-[0.72em] font-sans font-normal text-muted">since cost</span>
-      ) : state === "previous" && m.sessionDate ? (
+      ) : state === "previous" && m.sessionDate && !suppressSessionLabel ? (
         <span className="text-[0.72em] font-sans font-normal text-muted">{shortSessionDate(m.sessionDate)}</span>
       ) : stale ? (
         <span className="text-[0.72em] font-sans font-normal text-muted">

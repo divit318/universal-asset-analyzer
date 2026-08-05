@@ -515,6 +515,10 @@ export interface ContextQuote {
   currency: string | null;
   name: string | null;
   marketCap: number | null;
+  /** Calendar day (exchange TZ) of the session `changePercent` describes (lib/day-change). */
+  sessionDate?: string | null;
+  /** Epoch ms of the quote's last trade. */
+  asOf?: number | null;
   /**
    * Yahoo's raw quoteType (EQUITY / ETF / MUTUALFUND / MONEYMARKET /
    * CRYPTOCURRENCY / CURRENCY). The most reliable field the provider has — it was

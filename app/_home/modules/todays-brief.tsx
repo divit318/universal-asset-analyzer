@@ -23,6 +23,7 @@ import { Sparkles, ArrowRight, ExternalLink, X, Clock, Trophy, TrendingDown, Git
 import { explainHealth } from "@/lib/home/explain";
 import { getHomeModule } from "@/lib/home/registry";
 import { fmtSignedPct, fmtMoney } from "../_viz/format";
+import { MetricDelta } from "../_viz/stamped";
 import { useCountUp } from "../_atmosphere/use-count-up";
 import { SymbolTag } from "../_atmosphere/symbol-link";
 import { ExplainableValue } from "../_atmosphere/explain-popover";
@@ -181,6 +182,14 @@ export function TodaysBriefModule() {
             <span className="inline-flex items-center gap-1">
               <Clock className="h-3 w-3" strokeWidth={2} /> {readLabel}
             </span>
+            {/* The brief's own as-of (audit F-22 amendment 1): a cached
+                generation is honest about WHEN it was written. */}
+            {brief.data?.generatedAt ? (
+              <span className="font-medium">
+                generated{" "}
+                {new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(new Date(brief.data.generatedAt))}
+              </span>
+            ) : null}
             {isAi ? (
               <span className="rounded-full bg-brand/10 px-1.5 py-0.5 font-medium text-brand">AI</span>
             ) : (
@@ -218,9 +227,16 @@ export function TodaysBriefModule() {
           </button>
         ) : null}
 
-        {/* Contributor / detractor line — read straight from the pulse. */}
+        {/* Contributor / detractor line — the DAY's movers, stamped (F-22g).
+            When the market is closed the strip carries one deliberate session
+            note instead of a wall of per-figure warnings (amendment 2). */}
         {p && (p.bestPerformer || p.worstPerformer) ? (
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
+            {p.sessionNote ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-border/80 bg-surface-2 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">
+                {p.sessionNote}
+              </span>
+            ) : null}
             {p.bestPerformer ? (
               <span className="inline-flex items-center gap-1.5 text-muted">
                 <Trophy className="h-3.5 w-3.5 text-positive" strokeWidth={2} />
@@ -228,7 +244,7 @@ export function TodaysBriefModule() {
                 <SymbolTag symbol={p.bestPerformer.symbol} className="font-mono font-semibold text-foreground">
                   {p.bestPerformer.symbol}
                 </SymbolTag>
-                <span className="font-mono text-positive">{fmtSignedPct(p.bestPerformer.changePct)}</span>
+                <MetricDelta metric={p.bestPerformer.dayChange} suppressSessionLabel={!!p.sessionNote} />
               </span>
             ) : null}
             {p.worstPerformer ? (
@@ -238,7 +254,7 @@ export function TodaysBriefModule() {
                 <SymbolTag symbol={p.worstPerformer.symbol} className="font-mono font-semibold text-foreground">
                   {p.worstPerformer.symbol}
                 </SymbolTag>
-                <span className="font-mono text-negative">{fmtSignedPct(p.worstPerformer.changePct)}</span>
+                <MetricDelta metric={p.worstPerformer.dayChange} suppressSessionLabel={!!p.sessionNote} />
               </span>
             ) : null}
           </div>

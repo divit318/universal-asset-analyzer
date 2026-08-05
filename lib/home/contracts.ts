@@ -13,6 +13,7 @@
  */
 
 import type { CardStatus, ActionQueueItem, OpportunitySnapshotItem, UpcomingEventLite, SectorAttentionChange } from "../mission-control";
+import type { Metric } from "../metric";
 import type { Freshness } from "../provenance";
 import type { TrackRecord } from "../decision-journal";
 import type { DecisionCard, WhyExplanation } from "../portfolio/engines/decision";
@@ -82,10 +83,17 @@ export interface MarketIntelligence {
 /* Module 4 — Portfolio Pulse                                          */
 /* ------------------------------------------------------------------ */
 
+/**
+ * A homepage mover. `dayChange` and `sinceCost` are structurally distinct
+ * stamped Metrics (audit F-22g) — the old shape's single `changePct` was
+ * silently since-cost P&L rendered under a "today" label.
+ */
 export interface PulseMover {
   symbol: string;
-  changePct: number;
-  changeDollar: number;
+  dayChange: Metric<"day"> | null;
+  sinceCost: Metric<"sinceCost"> | null;
+  dayDollar: number | null;
+  plDollar: number | null;
 }
 
 /**
@@ -131,6 +139,15 @@ export interface PortfolioPulse {
   todayChangeDollar: number;
   bestPerformer: PulseMover | null;
   worstPerformer: PulseMover | null;
+  /**
+   * Non-null when the movers describe a FINISHED session — e.g. "Markets
+   * closed · Fri, Aug 1 close" — so a recording made outside US hours reads as
+   * deliberate, not stale (audit F-22 amendment 2). Null while any mover's
+   * session is current.
+   */
+  sessionNote: string | null;
+  /** Epoch ms the pulse's figures were assembled (report generation time). */
+  asOf: number;
   largestRisk: { title: string; description: string } | null;
   largestOpportunity: { symbol: string; reason: string } | null;
   cashPct: number | null;

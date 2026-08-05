@@ -32,6 +32,8 @@ function pulse(overrides: Partial<PortfolioPulse> = {}): PortfolioPulse {
     todayChangeDollar: 0,
     bestPerformer: null,
     worstPerformer: null,
+    sessionNote: null,
+    asOf: 0,
     largestRisk: null,
     largestOpportunity: null,
     cashPct: 5,

@@ -24,6 +24,19 @@ function holding(symbol: string, unrealizedPct: number, unrealizedPL: number) {
   return { symbol, name: symbol, unrealizedPct, unrealizedPL } as UniversalPortfolioReport["holdings"][number];
 }
 
+const PULSE_NOW = Date.parse("2026-07-26T15:00:00");
+
+/** A stamped day-move fixture: current session unless a date is given. */
+function dayMove(symbol: string, dayPct: number, dayDollar: number, sessionDate = "2026-07-26", sinceCostPct: number | null = null) {
+  return {
+    symbol,
+    dayChange: { value: dayPct, basis: "day" as const, asOf: PULSE_NOW, source: "yahoo" as const, sessionDate },
+    sinceCost: sinceCostPct != null ? { value: sinceCostPct, basis: "sinceCost" as const, asOf: PULSE_NOW, source: "yahoo" as const } : null,
+    dayDollar,
+    plDollar: null,
+  };
+}
+
 function report(over: Partial<UniversalPortfolioReport> = {}): UniversalPortfolioReport {
   return {
     holdingCount: 3,
@@ -34,6 +47,8 @@ function report(over: Partial<UniversalPortfolioReport> = {}): UniversalPortfoli
     todayChangeDollar: 800,
     marketPricedPct: 100,
     holdings: [holding("AAPL", 40, 4000), holding("MSFT", 10, 1000), holding("XYZ", -15, -1500)],
+    generatedAt: new Date(PULSE_NOW).toISOString(),
+    dayMoves: [dayMove("AAPL", 2.1, 2100), dayMove("MSFT", 0.4, 400), dayMove("XYZ", -1.5, -1500)],
     health: { total: 72, grade: "B" },
     concentration: [
       { type: "sector", label: "Technology", pct: 68, severity: "high", message: "68% in Technology." },
@@ -65,16 +80,45 @@ describe("buildPortfolioPulse", () => {
     expect(buildPortfolioPulse(report({ holdingCount: 0 })).status).toBe("empty");
   });
 
-  it("ranks movers on return %, and carries the dollar figure alongside", () => {
-    const p = buildPortfolioPulse(report());
-    expect(p.bestPerformer).toEqual({ symbol: "AAPL", changePct: 40, changeDollar: 4000 });
-    expect(p.worstPerformer).toEqual({ symbol: "XYZ", changePct: -15, changeDollar: -1500 });
+  it("ranks movers on the DAY's move, not since-cost P&L (F-22g)", () => {
+    const p = buildPortfolioPulse(report(), PULSE_NOW);
+    // AAPL has the biggest since-cost gain (+40%) but only +2.1% today; the
+    // ranking must read the day metric.
+    expect(p.bestPerformer?.symbol).toBe("AAPL");
+    expect(p.bestPerformer?.dayChange?.value).toBe(2.1);
+    expect(p.bestPerformer?.dayChange?.basis).toBe("day");
+    expect(p.worstPerformer?.symbol).toBe("XYZ");
+    expect(p.worstPerformer?.dayChange?.value).toBe(-1.5);
+    expect(p.worstPerformer?.dayDollar).toBe(-1500);
   });
 
-  it("does not report a worst performer when there is only one holding", () => {
-    const p = buildPortfolioPulse(report({ holdings: [holding("AAPL", 40, 4000)] }));
+  it("does not report a worst performer when there is only one mover", () => {
+    const p = buildPortfolioPulse(report({ dayMoves: [dayMove("AAPL", 2.1, 2100)] }), PULSE_NOW);
     expect(p.bestPerformer?.symbol).toBe("AAPL");
     expect(p.worstPerformer).toBeNull();
+  });
+
+  it("disqualifies stale sessions from the movers strip entirely (F-22d)", () => {
+    const p = buildPortfolioPulse(
+      report({ dayMoves: [dayMove("AAPL", -8.7, -8700, "2026-07-20"), dayMove("MSFT", 0.4, 400)] }),
+      PULSE_NOW,
+    );
+    // The week-old -8.7% print cannot be "Weakest" on a Sunday two weeks later.
+    expect(p.bestPerformer?.symbol).toBe("MSFT");
+    expect(p.worstPerformer).toBeNull();
+    expect(p.sessionNote).toBeNull(); // MSFT's session is current
+  });
+
+  it("labels a fully-closed market once, deliberately (amendment 2)", () => {
+    // Saturday: every mover describes Friday's finished session.
+    const saturday = Date.parse("2026-07-25T11:00:00");
+    const p = buildPortfolioPulse(
+      report({ dayMoves: [dayMove("AAPL", 1.2, 1200, "2026-07-24"), dayMove("XYZ", -0.8, -800, "2026-07-24")] }),
+      saturday,
+    );
+    expect(p.sessionNote).toBe("Markets closed · Fri, Jul 24 close");
+    expect(p.bestPerformer?.symbol).toBe("AAPL");
+    expect(p.worstPerformer?.symbol).toBe("XYZ");
   });
 
   it("surfaces the highest-severity concentration finding as the largest risk", () => {
