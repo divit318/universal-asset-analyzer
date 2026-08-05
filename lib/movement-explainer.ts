@@ -126,7 +126,8 @@ export function volumeAnomaly(history: HistoryPoint[]): number | null {
   return ((recentAvg - baselineAvg) / baselineAvg) * 100;
 }
 
-function buildMovementPrompt(
+/** Exported for the eval harness (tests/ai-eval) — pure, no I/O. */
+export function buildMovementPrompt(
   input: ExplainMovementInput,
   evidence: {
     changePercent: number | null;
