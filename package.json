@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "scripts/ops/uaa preflight",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -11,7 +12,11 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "monitor": "node scripts/monitor.mjs",
-    "brand:assets": "node scripts/generate-brand-assets.ts"
+    "brand:assets": "node scripts/generate-brand-assets.ts",
+    "host": "scripts/ops/uaa",
+    "host:status": "scripts/ops/uaa status",
+    "host:doctor": "scripts/ops/uaa doctor",
+    "host:stop": "scripts/ops/uaa stop"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.68.0",

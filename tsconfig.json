@@ -34,5 +34,46 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  // Specifying "exclude" REPLACES TypeScript's defaults, so every directory the
+  // recursive globs above can reach must be named here explicitly.
+  //
+  // NOTE: keep these as line comments. A block comment cannot describe the
+  // recursive glob patterns above, because the "*" "*" "/" sequence in them
+  // closes the comment early and produces a stream of TS1005/TS1136 parse
+  // errors that look nothing like the actual cause.
+  //
+  // This is about directory watchers, not program size. Measured on this repo,
+  // .next holds exactly 6 .ts files (3 under .next/types, 3 under
+  // .next/dev/types) and all 6 are required — they are Next.js's generated
+  // route and validator types, which is why both types directories appear in
+  // "include" and are deliberately NOT excluded below. Excluding .next
+  // wholesale would silently drop typed-route checking.
+  //
+  // What the walk does cost is traversal: tsserver registers a directory
+  // watcher for every directory it enumerates. The entries below account for
+  // ~1,700 directories and ~16,000 files with zero .ts content between them
+  // (.venv alone is 1,248 dirs / 11,263 files). That cost is paid per tsserver,
+  // and one agent session spawns several.
+  "exclude": [
+    "node_modules",
+    ".venv",
+    "data",
+    "graphify-out",
+    "bench-out",
+    "playwright-report",
+    "test-results",
+    "e2e/.tmp",
+    ".next/cache",
+    ".next/build",
+    ".next/server",
+    ".next/static",
+    ".next/trace",
+    ".next/diagnostics",
+    ".next/dev/cache",
+    ".next/dev/build",
+    ".next/dev/server",
+    ".next/dev/static",
+    ".next/dev/trace",
+    ".next/dev/node_modules"
+  ]
 }

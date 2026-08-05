@@ -8,6 +8,8 @@ import { ValueBar } from "@/app/_components/value-bar";
 import { LoadingMark } from "@/app/_components/loading-mark";
 import { Reveal } from "@/app/_components/reveal";
 import { TaskProgress } from "@/app/_components/ui";
+import { AiBadge } from "@/app/_components/ai-badge";
+import { GroundingBadge } from "@/app/_components/grounding-badge";
 
 /* -------------------------------------------------------------------------- */
 /* Verdict color palette                                                       */
@@ -69,7 +71,7 @@ function Skeleton({ stage, elapsedMs }: { stage: string; elapsedMs: number }) {
       <div className="flex flex-col items-center gap-1 text-center">
         <p className="text-sm font-medium text-foreground">Building the investment verdict</p>
         <p className="text-caption text-muted">
-          Reasoning over fundamentals, filings, and news — typically 20–40 s on a local model.
+          Reasoning over fundamentals, filings, and news — typically 15–40 s depending on the model.
         </p>
       </div>
       <StreamStatus stage={stage} elapsedMs={elapsedMs} />
@@ -247,9 +249,15 @@ export function DecisionHero({
               </span>
             </div>
           )}
-          <span className="rounded-full border border-brand/25 bg-brand/8 px-2 py-0.5 text-micro font-semibold uppercase tracking-widest text-brand">
-            Local AI
-          </span>
+          <AiBadge
+            model={verdict.model}
+            className="rounded-full border border-brand/25 bg-brand/8 px-2 py-0.5 text-micro font-semibold uppercase tracking-widest text-brand"
+          />
+          {/* The verification layer's receipt: every figure in the prose above
+              was traced back to the evidence block. This is the product's
+              central claim — it belongs on the flagship verdict, not only on
+              the copilot/IC/compare surfaces. */}
+          {verdict.grounding && <GroundingBadge grounding={verdict.grounding} />}
         </div>
       </div>
 

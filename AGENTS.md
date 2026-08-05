@@ -316,6 +316,46 @@ renders — `npm run build` or a real page load is.
 
 ---
 
+## Host Health: Start The Dev Server With `uaa start`
+
+This is a 16 GB M4 Air, and the dev stack (Turbopack + Chrome + several agent
+sessions, each spawning its own serena + TypeScript LSP stack) has roughly 4 GB of
+slack. Use `scripts/ops/uaa` — see `scripts/ops/README.md`:
+
+```bash
+uaa start        # health gate, reap stale processes, exactly one dev server
+uaa status       # RAM, swap, Metal, Ollama, dev servers, tsservers, warnings
+uaa doctor       # every finding gets a why and a concrete fix
+uaa stop         # teardown in the order that cannot orphan anything
+```
+
+`npm run dev` is gated by a `predev` hook (`uaa preflight`) that reaps orphans and
+**blocks** if a dev server is already running — Next.js otherwise falls back to
+:3001 and silently gives you two Turbopack instances racing for one `.next`.
+Override with `UAA_SKIP_PREFLIGHT=1`.
+
+**Never leave a local model resident, and never `kill -9` `ollama serve`.** On
+2026-08-04 this host was found with 11.5 GB of 16 GB *wired* and 158 GB swapped,
+caused by one orphaned `llama-server` holding 9.49 GB. Ollama loads weights
+`--no-mmap` into Metal buffers, which are wired and un-evictable; `keep_alive`
+expiry lives inside `ollama serve`; and **macOS jetsam kills with SIGKILL**, which
+orphans the runner and strands its memory until reboot. Measured:
+
+| signal to `ollama serve` | runner | wired |
+|---|---|---|
+| SIGTERM | exits cleanly | 5.73 → 1.93 GB |
+| SIGKILL | survives as PPID 1, immortal | stays 5.57 GB |
+
+So it is a feedback loop — pressure causes the SIGKILL that makes the pressure
+permanent. `uaa stop` drains runners *before* the daemon; a launchd guard reaps
+orphans within 60 s. Regression test: `scripts/ops/stress-orphan.sh`.
+
+The diagnostic signature to remember: **an idle GPU pinning multiple GB**. Metal
+residency and GPU utilization are independent, so that combination means a leaked
+runner, not GPU load.
+
+---
+
 ## Shipped-But-Unwired: Check Before You Build
 
 The single most common finding of the 2026-07-27 product audit was **fully-built,

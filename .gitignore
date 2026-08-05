@@ -81,3 +81,10 @@ __pycache__/
 
 # stray self-referencing symlink (repo root -> repo root); breaks recursive tooling
 /universal-asset-analyzer
+
+# uaa host toolkit: dev-server pid handle (see scripts/ops/uaa)
+/.uaa-dev.pid
+
+# Spotlight/Time Machine exclusion markers dropped into generated dirs by
+# `uaa doctor --fix`. Machine-local hygiene, not project source.
+.metadata_never_index

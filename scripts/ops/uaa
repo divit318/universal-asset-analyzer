@@ -1,0 +1,988 @@
+#!/bin/bash
+# uaa -- host workflow toolkit for Universal Asset Analyzer development.
+#
+#   uaa start [--with-ollama] [--force] [--port N]
+#   uaa stop  [--keep-ollama]
+#   uaa status [--json]
+#   uaa doctor [--fix]
+#   uaa reap [--apply]
+#   uaa guard [--once] [--auto-reap]
+#   uaa install / uaa uninstall
+#   uaa selftest
+#
+# Also dispatches on argv[0], so `uaa install` can expose `uaa-start`,
+# `uaa-stop`, `uaa-status` and `uaa-doctor` as first-class commands.
+#
+# WHY THIS EXISTS
+# ---------------
+# On 2026-08-04 this 16 GB M4 Air was found with 11.4 GB WIRED and 0.06 GB free,
+# 156 GB written to swap since boot, and 790 jetsam kills in 24h. Cause: ONE
+# `llama-server` process, PPID 1, alive 11h37m at 0% CPU, holding qwen3:14b --
+# 9.49 GB -- while `ollama ps` reported `{"models":[]}` and the GPU sat at 14%
+# utilization.
+#
+# Ollama loads weights with `--no-mmap` into Metal buffers, which are WIRED and
+# therefore un-evictable. `keep_alive` expiry is enforced by the scheduler inside
+# `ollama serve`; when that daemon exits, the kernel reparents its runner to
+# launchd and the runner loses its only expiry timer. It then holds ~9.5 GB until
+# reboot -- which is why rebooting was the only thing that ever helped.
+#
+# This toolkit makes that state (a) impossible to create through the normal
+# workflow, (b) detected within 60s if it happens anyway, and (c) trivial to fix.
+
+set -uo pipefail
+
+SELF_DIR=$(cd "$(dirname "$0")" && pwd -P)
+# When invoked through an install symlink, resolve to the real script directory.
+if [ -L "$0" ]; then
+  _t=$(readlink "$0")
+  case "$_t" in
+    /*) SELF_DIR=$(cd "$(dirname "$_t")" && pwd -P) ;;
+    *)  SELF_DIR=$(cd "$(dirname "$0")/$(dirname "$_t")" && pwd -P) ;;
+  esac
+fi
+REPO=$(cd "$SELF_DIR/../.." && pwd -P)
+# shellcheck source=lib/common.sh
+. "$SELF_DIR/lib/common.sh"
+cd "$REPO" || exit 1
+
+PORT="${PORT:-3000}"
+GUARD_LOG="${UAA_GUARD_LOG:-$REPO/data/host-guard.jsonl}"
+
+# ---------------------------------------------------------------------------
+# health gate thresholds. Deliberately generous: this must block a genuinely
+# doomed session without nagging during a normal one.
+# ---------------------------------------------------------------------------
+# Free% and wired% are leading indicators and gate on their own. Swap-in-use is
+# a lagging one -- macOS releases swap files lazily, so a fully-recovered host
+# still reports high swap -- so it only gates when free memory is ALSO low.
+GATE_FREE_PCT=15     # below this, starting a dev server will thrash
+GATE_SWAP_PCT=80     # only applied when free% < GATE_SWAP_FREE_PCT
+GATE_SWAP_FREE_PCT=25
+GATE_WIRED_PCT=60
+
+usage() {
+  cat <<'EOF'
+uaa -- UAA development host workflow
+
+  uaa start [--with-ollama] [--force] [--port N]
+      Preflight health gate, prerequisite check, reap stale processes, start
+      exactly one dev server, report health. Ollama stays OFF unless asked.
+
+  uaa stop [--keep-ollama]
+      Stop the dev server by process group, drain Ollama runners BEFORE the
+      daemon (order matters -- the reverse creates immortal orphans), sweep
+      orphaned MCP/LSP servers, verify nothing survived, report memory freed.
+
+  uaa status [--json]
+      RAM, swap, Metal, memory pressure, Ollama, Next.js, tsserver, MCP,
+      dev-server count, warnings.
+
+  uaa doctor [--fix]
+      Full diagnostic with an explanation and a concrete fix per finding.
+      --fix applies the safe, idempotent host-level ones.
+
+  uaa preflight             Health gate + orphan reap. Wired to `npm run dev`
+                            via the predev hook, so the habitual command is safe.
+
+  uaa reap [--apply]        Reclaim leaked memory. Dry-run unless --apply.
+  uaa guard [--once] [--auto-reap]
+                            Watchdog. See `uaa install` for the launchd agent.
+  uaa install / uninstall   Symlinks into ~/.local/bin + the launchd guard.
+  uaa selftest              Verify the toolkit's own logic.
+EOF
+}
+
+# ===========================================================================
+# status
+# ===========================================================================
+warn_lines() {
+  # Emits one WARNING line per real problem. Order = severity.
+  [ "$P_ORPHAN_N" -gt 0 ] && \
+    echo "CRITICAL  ${P_ORPHAN_N} orphaned llama-server holding ${P_ORPHAN_GB} GB of WIRED memory that cannot be paged out. Fix: uaa reap --apply"
+  [ "$P_ORPHAN_N" -gt 0 ] && [ "$P_OLLAMA_LOADED" = "0" ] && \
+    echo "CRITICAL  Ollama reports 0 models loaded while a runner is live -- confirmed leak (unreachable and unexpirable)."
+  awk -v f="$M_FREE_PCT" 'BEGIN{exit !(f<15)}' && \
+    echo "CRITICAL  Only ${M_FREE_PCT}% memory free. macOS begins jetsam-killing daemons below ~12%, which is what a beachball is."
+  awk -v s="$M_SWAP_PCT" -v f="$M_FREE_PCT" 'BEGIN{exit !(s>75 && f<30)}' && \
+    echo "HIGH      Swap ${M_SWAP_PCT}% full (${M_SWAP_USED} of ${M_SWAP_TOTAL} MB) with only ${M_FREE_PCT}% free -- actively thrashing."
+  awk -v s="$M_SWAP_PCT" -v f="$M_FREE_PCT" 'BEGIN{exit !(s>60 && f>=30)}' && \
+    echo "LOW       Swap still ${M_SWAP_PCT}% allocated but ${M_FREE_PCT}% memory is free -- residue from an earlier squeeze, draining lazily. Not a live problem."
+  awk -v w="$M_WIRED_PCT" 'BEGIN{exit !(w>55)}' && \
+    echo "HIGH      Wired memory ${M_WIRED_PCT}% (${M_WIRED_GB} GB) -- un-evictable, so userland is starved regardless of what it needs."
+  awk -v u="$M_GPU_UTIL" -v g="$M_METAL_GB" 'BEGIN{exit !(u<20 && g>=4)}' && \
+    echo "HIGH      Metal holds ${M_METAL_GB} GB at only ${M_GPU_UTIL}% GPU utilization -- the signature of a leaked model runner, not of GPU load."
+  [ "$P_NEXT_N" -gt 1 ] && \
+    echo "HIGH      ${P_NEXT_N} dev servers running. Each carries a full FSEvents watcher tree. Fix: uaa stop && uaa start"
+  [ "$P_ORPHAN_MCP_N" -gt 0 ] && \
+    echo "MEDIUM    ${P_ORPHAN_MCP_N} orphaned MCP/LSP servers (agent session gone, server still resident). Fix: uaa reap --apply"
+  [ "$P_TS_N" -gt 6 ] && \
+    echo "MEDIUM    ${P_TS_N} tsserver processes (${P_TS_GB} GB). ${P_AGENT_N} agent session(s) x serena x TS LSP. Close idle agent windows."
+  [ "$P_SERVE_N" -gt 1 ] && \
+    echo "MEDIUM    ${P_SERVE_N} 'ollama serve' daemons -- a restart left runners behind. Fix: uaa reap --apply"
+  [ "$P_VITEST_N" -gt 6 ] && \
+    echo "MEDIUM    ${P_VITEST_N} vitest workers. On this 10-core host an uncapped pool is a hard freeze; use npm test."
+  [ "$M_GPU_RESET" -gt 0 ] && \
+    echo "MEDIUM    ${M_GPU_RESET} GPU resets -- genuine driver-level faults, a different bug from memory residency."
+  awk -v d="$M_DISK_GB" 'BEGIN{exit !(d<20)}' && \
+    echo "HIGH      Only ${M_DISK_GB} GB disk free. Swap cannot grow on a full disk; that turns thrashing into a hard freeze."
+  [ "$M_THERMAL_OK" = "0" ] && \
+    echo "LOW       Thermal warnings recorded. This fanless M4 throttles late, so it is a symptom, not a cause."
+  return 0
+}
+
+cmd_status() {
+  [ "${1:-}" = "--json" ] && { status_json; return 0; }
+  metrics_collect; procs_collect
+
+  printf '\n%sUAA HOST STATUS%s %s%s | %s GB unified | up%s%s\n' "$C_B" "$C_N" "$C_D" \
+    "$(date '+%F %T')" "$M_TOTAL_GB" "$(uptime | sed 's/.*up//;s/, *[0-9]* user.*//')" "$C_N"
+
+  hdr "MEMORY"
+  row "free" "${M_FREE_GB} GB (${M_FREE_PCT}%)" "$(grade $((100 - M_FREE_PCT)) 70 85)" "healthy >30%"
+  row "wired (un-evictable)" "${M_WIRED_GB} GB (${M_WIRED_PCT}%)" "$(grade "$M_WIRED_PCT" 35 55)" "kernel + Metal + mlock"
+  row "apps (active+inactive)" "${M_APPS_GB} GB" "OK" "what your work actually occupies"
+  row "compressor" "${M_COMP_GB} GB" "$(grade "${M_COMP_GB%%.*}" 2 4)" "holding ${M_COMPHOLD_GB} GB uncompressed"
+  row "swap" "${M_SWAP_USED}/${M_SWAP_TOTAL} MB (${M_SWAP_PCT}%)" "$(grade "$M_SWAP_PCT" 40 75)" "healthy <40%"
+  row "swap odometer" "${M_SWAPOUT_GB} GB out" "$(grade "${M_SWAPOUT_GB%%.*}" 20 60)" "written since boot"
+
+  hdr "METAL / GPU" "(unified memory -- there is no separate VRAM)"
+  row "Metal in use" "${M_METAL_GB} GB" "$(grade "${M_METAL_GB%%.*}" 4 7)" "reserved ${M_METAL_ALLOC_GB} GB"
+  row "GPU utilization" "${M_GPU_UTIL}%" "OK" \
+    "$(awk -v u="$M_GPU_UTIL" -v g="${M_METAL_GB%%.*}" 'BEGIN{print (u<20&&g>=4)?"idle GPU pinning memory => leaked runner":"proportionate to residency"}')"
+  row "GPU resets" "$M_GPU_RESET" "$(grade "$M_GPU_RESET" 1 3)" "driver faults, if any"
+
+  hdr "OLLAMA"
+  row "orphaned runners" "${P_ORPHAN_N} (${P_ORPHAN_GB} GB)${ORPHAN_LLAMA}" "$(grade "$P_ORPHAN_N" 1 1)" "PPID=1 => no expiry timer => immortal"
+  row "managed runners" "${P_MANAGED_N} (${P_LLAMA_GB} GB total)" "$(grade "$P_MANAGED_N" 2 3)" "one per resident model"
+  row "ollama reports loaded" "$P_OLLAMA_LOADED" "$(awk -v l="$P_OLLAMA_LOADED" -v o="$P_ORPHAN_N" 'BEGIN{print (o>0&&l==0)?"FAIL":"OK"}')" "mismatch with runners = leak"
+  row "serve daemons" "$P_SERVE_N" "$(grade "$P_SERVE_N" 2 2)" "expected 0 or 1"
+
+  hdr "DEV STACK"
+  row "dev servers" "${P_NEXT_N} (${P_NEXT_GB} GB)" "$(grade "$P_NEXT_N" 2 3)" "expected exactly 1 while working"
+  row "agent sessions" "$P_AGENT_N" "$(grade "$P_AGENT_N" 3 5)" "multiplies every row below"
+  row "serena MCP" "$P_SERENA_N" "$(grade "$P_SERENA_N" 5 9)" "each spawns a TS LSP stack"
+  row "tsserver" "${P_TS_N} (${P_TS_GB} GB)" "$(grade "$P_TS_N" 5 9)" "0.4-1.0 GB each once warm"
+  row "playwright-mcp" "$P_PWMCP_N" "$(grade "$P_PWMCP_N" 3 5)" "each can launch a Chromium"
+  row "MCP/LSP total" "${P_MCP_GB} GB" "OK" "swapped-out totals read artificially low"
+  row "orphaned MCP/LSP" "$P_ORPHAN_MCP_N" "$(grade "$P_ORPHAN_MCP_N" 1 3)" "session died, server did not"
+  row "vitest workers" "$P_VITEST_N" "$(grade "$P_VITEST_N" 5 7)" "capped at 6 by vitest.config.ts"
+  row "chrome renderers" "${P_CHROME_N} (${P_CHROME_GB} GB)" "$(grade "$P_CHROME_N" 25 40)" ""
+
+  _w=$(warn_lines)
+  if [ -n "$_w" ]; then
+    hdr "WARNINGS"
+    printf '%s\n' "$_w" | while IFS= read -r l; do
+      case "$l" in
+        CRITICAL*) printf '  %s%s%s\n' "$C_R" "$l" "$C_N" ;;
+        HIGH*)     printf '  %s%s%s\n' "$C_Y" "$l" "$C_N" ;;
+        *)         printf '  %s\n' "$l" ;;
+      esac
+    done
+  fi
+  printf '\n'
+  if [ "$FAIL_N" -gt 0 ]; then
+    printf '  %s%s FAIL / %s WARN%s -- run: %suaa doctor%s\n\n' "$C_R$C_B" "$FAIL_N" "$WARN_N" "$C_N" "$C_B" "$C_N"
+  elif [ "$WARN_N" -gt 0 ]; then
+    printf '  %s%s WARN%s, no failures.\n\n' "$C_Y$C_B" "$WARN_N" "$C_N"
+  else
+    printf '  %shealthy%s\n\n' "$C_G$C_B" "$C_N"
+  fi
+  return 0
+}
+
+status_json() {
+  metrics_collect; procs_collect
+  printf '{"ts":"%s","total_gb":%s,"free_gb":%s,"free_pct":%s,"wired_gb":%s,"wired_pct":%s,"apps_gb":%s,' \
+    "$(date -u +%FT%TZ)" "$M_TOTAL_GB" "$M_FREE_GB" "$M_FREE_PCT" "$M_WIRED_GB" "$M_WIRED_PCT" "$M_APPS_GB"
+  printf '"compressor_gb":%s,"compressor_holds_gb":%s,"swap_used_mb":%s,"swap_total_mb":%s,"swap_pct":%s,"swapout_gb":%s,' \
+    "$M_COMP_GB" "$M_COMPHOLD_GB" "$M_SWAP_USED" "$M_SWAP_TOTAL" "$M_SWAP_PCT" "$M_SWAPOUT_GB"
+  printf '"metal_gb":%s,"metal_alloc_gb":%s,"gpu_util":%s,"gpu_reset":%s,' \
+    "$M_METAL_GB" "$M_METAL_ALLOC_GB" "$M_GPU_UTIL" "$M_GPU_RESET"
+  printf '"orphan_llama":%s,"orphan_llama_gb":%s,"managed_llama":%s,"llama_gb":%s,"ollama_loaded":%s,"ollama_serve":%s,' \
+    "$P_ORPHAN_N" "$P_ORPHAN_GB" "$P_MANAGED_N" "$P_LLAMA_GB" "$P_OLLAMA_LOADED" "$P_SERVE_N"
+  printf '"next":%s,"next_gb":%s,"tsserver":%s,"tsserver_gb":%s,"serena":%s,"playwright_mcp":%s,"mcp_gb":%s,' \
+    "$P_NEXT_N" "$P_NEXT_GB" "$P_TS_N" "$P_TS_GB" "$P_SERENA_N" "$P_PWMCP_N" "$P_MCP_GB"
+  printf '"vitest":%s,"agents":%s,"orphan_mcp":%s,"chrome":%s,"chrome_gb":%s,"disk_gb":%s}\n' \
+    "$P_VITEST_N" "$P_AGENT_N" "$P_ORPHAN_MCP_N" "$P_CHROME_N" "$P_CHROME_GB" "$M_DISK_GB"
+  return 0
+}
+
+# ===========================================================================
+# reap
+# ===========================================================================
+cmd_reap() {
+  DRY=1
+  for a in "$@"; do case "$a" in --apply) DRY=0 ;; -v|--verbose) VERBOSE=1 ;; esac; done
+  procs_collect
+  printf '\n%s== uaa reap %s ==%s\n' "$C_B" "$([ "$DRY" = 1 ] && echo '[DRY-RUN]' || echo '[APPLY]')" "$C_N"
+
+  printf '\n%sorphaned ollama runners%s %s(PPID=1, unreachable, unexpirable)%s\n' "$C_B" "$C_N" "$C_D" "$C_N"
+  if [ "$P_ORPHAN_N" = "0" ]; then note "none"; else
+    for p in $ORPHAN_LLAMA; do reap_pid "$p" "orphaned llama-server: wired Metal weights, immortal"; done
+  fi
+
+  printf '\n%ssuperseded ollama daemons%s\n' "$C_B" "$C_N"
+  _serves=$(pgrep -fx "$P_SERVE" 2>/dev/null | sort -n)
+  _n=$(echo "$_serves" | grep -c '[0-9]')
+  if [ "$_n" -gt 1 ]; then
+    _keep=$(echo "$_serves" | tail -1)
+    for p in $_serves; do [ "$p" = "$_keep" ] && continue; reap_pid "$p" "superseded ollama serve (keeping $_keep)"; done
+  else note "none"; fi
+
+  printf '\n%sduplicate dev servers%s\n' "$C_B" "$C_N"
+  _nexts=$(pgrep -f "$P_NEXT" 2>/dev/null | sort -n)
+  _n=$(echo "$_nexts" | grep -c '[0-9]')
+  if [ "$_n" -gt 1 ]; then
+    _keep=$(echo "$_nexts" | tail -1)
+    for p in $_nexts; do
+      [ "$p" = "$_keep" ] && continue
+      _g=$(pgid_of "$p")
+      if [ -n "$_g" ] && [ "$DRY" != "1" ]; then kill -TERM "-$_g" 2>/dev/null; fi
+      reap_pid "$p" "superseded dev server (keeping $_keep)"
+    done
+  else note "none"; fi
+
+  printf '\n%sorphaned dev-server shims%s\n' "$C_B" "$C_N"
+  _found=0
+  for p in $(pgrep -f 'pkill -f .next-server' 2>/dev/null); do
+    is_orphan "$p" || continue
+    # A shim with children is usually still the ancestor of the LIVE dev server
+    # (bash -> npm -> next dev -> next-server). Reaping it would orphan that
+    # tree -- manufacturing exactly the leak this command exists to clean up.
+    if [ -n "$(pgrep -P "$p" 2>/dev/null)" ]; then
+      note "skip pid=$p -- still parents a live dev server, leaving it"
+      _found=1; continue
+    fi
+    _found=1; reap_pid "$p" "childless orphaned restart shim"
+  done
+  [ "$_found" = "0" ] && note "none"
+
+  printf '\n%sorphaned MCP / language servers%s\n' "$C_B" "$C_N"
+  if [ "$P_ORPHAN_MCP_N" = "0" ]; then note "none"; else
+    for p in $ORPHAN_MCP; do reap_pid "$p" "orphaned MCP/LSP server"; done
+  fi
+
+  printf '\n%sstray test workers%s\n' "$C_B" "$C_N"
+  _found=0
+  for p in $(pgrep -f 'vitest|headless_shell' 2>/dev/null); do
+    is_orphan "$p" || continue
+    _found=1; reap_pid "$p" "orphaned test worker"
+  done
+  [ "$_found" = "0" ] && note "none"
+
+  # Live (parented) LSPs are load-bearing for their session: warn, never kill.
+  if [ "$P_TS_N" -gt 6 ]; then
+    printf '\n'
+    note "NOTE: ${P_TS_N} live tsserver processes (${P_TS_GB} GB) left alone -- a live agent"
+    note "      session owns each. Close idle agent windows to reduce the fan-out."
+  fi
+
+  printf '\n'
+  if [ "$REAPED_N" = "0" ]; then
+    printf '  nothing to reap.\n\n'
+  else
+    printf '  %s%s%s: %s GB across %s process(es)\n' "$C_B" \
+      "$([ "$DRY" = 1 ] && echo reclaimable || echo reclaimed)" "$C_N" "$(reaped_gb)" "$REAPED_N"
+    [ "$DRY" = "1" ] && printf '  re-run with %s--apply%s to act.\n' "$C_B" "$C_N"
+    printf '\n'
+  fi
+  return 0
+}
+
+# ===========================================================================
+# preflight -- the `predev` hook for `npm run dev`.
+#
+# This is the highest-leverage guard in the toolkit, because it protects the
+# command muscle memory actually types. It always reaps orphans (never
+# legitimate, so never a judgement call), and only BLOCKS if the host is still
+# unhealthy afterwards -- at which point starting Turbopack would not fail
+# loudly, it would succeed and then thrash for an hour.
+#
+# Escape hatch: UAA_SKIP_PREFLIGHT=1. `uaa start` sets it, having already gated.
+# ===========================================================================
+cmd_preflight() {
+  [ "${UAA_SKIP_PREFLIGHT:-0}" = "1" ] && return 0
+  metrics_collect; procs_collect
+
+  if [ "$P_ORPHAN_N" -gt 0 ]; then
+    printf '%s[preflight]%s reaping %s orphaned llama-server holding %s GB of wired memory\n' \
+      "$C_Y" "$C_N" "$P_ORPHAN_N" "$P_ORPHAN_GB"
+    DRY=0
+    for p in $ORPHAN_LLAMA; do reap_pid "$p" "orphaned llama-server"; done
+    sleep 2; metrics_collect; procs_collect
+  fi
+  for p in $ORPHAN_MCP; do DRY=0; reap_pid "$p" "orphaned MCP/LSP server"; done
+
+  # Block rather than warn. Next.js does not refuse to start when :3000 is
+  # taken -- it silently falls back to :3001, so you end up with two Turbopack
+  # instances, two FSEvents watcher trees over ~1030 files, and two writers
+  # racing for one .next directory. Warning is not enough because the default
+  # behaviour actively hides the mistake.
+  if [ "$P_NEXT_N" -gt 0 ]; then
+    printf '\n%s[preflight] BLOCKED%s -- a dev server is already running (%s).\n' "$C_R$C_B" "$C_N" "$P_NEXT_N"
+    for p in $(pgrep -f "$P_NEXT" 2>/dev/null); do
+      printf '  pid %-7s pgid %-7s %s\n' "$p" "$(pgid_of "$p")" "$(cmd_of "$p" | cut -c1-60)"
+    done
+    printf '\n  Next.js would not stop you: it silently falls back to :3001, leaving two\n'
+    printf '  Turbopack instances racing for one .next directory.\n'
+    printf '\n  Reuse it:   open http://localhost:%s\n' "$PORT"
+    printf '  Restart it: %suaa stop && uaa start%s\n' "$C_B" "$C_N"
+    printf '  Override:   %sUAA_SKIP_PREFLIGHT=1 npm run dev%s\n\n' "$C_B" "$C_N"
+    return 1
+  fi
+
+  _bad=""
+  awk -v f="$M_FREE_PCT" -v g="$GATE_FREE_PCT" 'BEGIN{exit !(f<g)}' && _bad="${_bad}free ${M_FREE_PCT}% (need >${GATE_FREE_PCT}%) "
+  awk -v s="$M_SWAP_PCT" -v g="$GATE_SWAP_PCT" -v f="$M_FREE_PCT" -v fg="$GATE_SWAP_FREE_PCT" 'BEGIN{exit !(s>g && f<fg)}' && _bad="${_bad}swap ${M_SWAP_PCT}% with only ${M_FREE_PCT}% free "
+  awk -v w="$M_WIRED_PCT" -v g="$GATE_WIRED_PCT" 'BEGIN{exit !(w>g)}' && _bad="${_bad}wired ${M_WIRED_PCT}% (max ${GATE_WIRED_PCT}%) "
+
+  if [ -n "$_bad" ]; then
+    printf '\n%s[preflight] BLOCKED%s -- host is not healthy enough to start a dev server.\n' "$C_R$C_B" "$C_N"
+    printf '  %s\n' "$_bad"
+    printf '  Metal %s GB at %s%% GPU util | apps only %s GB resident | %s GB swapped out since boot\n' \
+      "$M_METAL_GB" "$M_GPU_UTIL" "$M_APPS_GB" "$M_SWAPOUT_GB"
+    printf '\n  Diagnose: %suaa doctor%s    Clean up: %suaa reap --apply%s\n' "$C_B" "$C_N" "$C_B" "$C_N"
+    printf '  Override: %sUAA_SKIP_PREFLIGHT=1 npm run dev%s\n\n' "$C_B" "$C_N"
+    return 1
+  fi
+  printf '%s[preflight]%s ok -- free %s%%, wired %s%%, swap %s%%, Metal %s GB\n' \
+    "$C_G" "$C_N" "$M_FREE_PCT" "$M_WIRED_PCT" "$M_SWAP_PCT" "$M_METAL_GB"
+  return 0
+}
+
+# ===========================================================================
+# start
+# ===========================================================================
+prereq_check() {
+  _ok=1
+  command -v node >/dev/null 2>&1 || { printf '  %sFAIL%s node not on PATH\n' "$C_R" "$C_N"; _ok=0; }
+  command -v npm  >/dev/null 2>&1 || { printf '  %sFAIL%s npm not on PATH\n' "$C_R" "$C_N"; _ok=0; }
+  [ -d "$REPO/node_modules" ] || { printf '  %sFAIL%s node_modules missing -- run: npm install\n' "$C_R" "$C_N"; _ok=0; }
+  [ -f "$REPO/.env.local" ] || printf '  %sWARN%s no .env.local (API-backed features will degrade)\n' "$C_Y" "$C_N"
+  [ -d "$REPO/data" ] || mkdir -p "$REPO/data"
+  [ "$_ok" = "1" ] && printf '  %sOK%s   node %s, npm %s, deps present\n' "$C_G" "$C_N" "$(node -v)" "$(npm -v)"
+  return $((1 - _ok))
+}
+
+cmd_start() {
+  WITH_OLLAMA=0; FORCE=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --with-ollama) WITH_OLLAMA=1 ;;
+      --force) FORCE=1 ;;
+      --port) shift; PORT="$1" ;;
+      *) echo "uaa start: unknown flag: $1" >&2; return 2 ;;
+    esac
+    shift
+  done
+
+  printf '\n%s== uaa start ==%s\n' "$C_B" "$C_N"
+  metrics_collect; procs_collect
+
+  # ---- 1. preflight health gate -------------------------------------------
+  # Starting a dev server on an already-starved host does not fail loudly; it
+  # succeeds and then thrashes for an hour. Refuse instead, and say what to do.
+  printf '\n%s1. health gate%s\n' "$C_B" "$C_N"
+  _block=""
+  awk -v f="$M_FREE_PCT" -v g="$GATE_FREE_PCT" 'BEGIN{exit !(f<g)}' && \
+    _block="${_block}only ${M_FREE_PCT}% memory free (need >${GATE_FREE_PCT}%); "
+  awk -v s="$M_SWAP_PCT" -v g="$GATE_SWAP_PCT" -v f="$M_FREE_PCT" -v fg="$GATE_SWAP_FREE_PCT" 'BEGIN{exit !(s>g && f<fg)}' && \
+    _block="${_block}swap ${M_SWAP_PCT}% full with only ${M_FREE_PCT}% free; "
+  awk -v w="$M_WIRED_PCT" -v g="$GATE_WIRED_PCT" 'BEGIN{exit !(w>g)}' && \
+    _block="${_block}wired ${M_WIRED_PCT}% (max ${GATE_WIRED_PCT}%); "
+
+  if [ -n "$_block" ]; then
+    printf '  %sUNHEALTHY%s %s\n' "$C_R" "$C_N" "$_block"
+    if [ "$P_ORPHAN_N" -gt 0 ]; then
+      printf '  %sCause identified:%s %s orphaned llama-server holding %s GB of wired memory.\n' \
+        "$C_B" "$C_N" "$P_ORPHAN_N" "$P_ORPHAN_GB"
+      printf '  Reaping it now (this is always safe -- Ollama reloads on demand).\n\n'
+      DRY=0; for p in $ORPHAN_LLAMA; do reap_pid "$p" "orphaned llama-server (blocking startup)"; done
+      sleep 2; metrics_collect; procs_collect
+      printf '\n  after reap: free %s%%, wired %s%%, swap %s%%\n' "$M_FREE_PCT" "$M_WIRED_PCT" "$M_SWAP_PCT"
+      _block=""
+      awk -v f="$M_FREE_PCT" -v g="$GATE_FREE_PCT" 'BEGIN{exit !(f<g)}' && _block="still starved"
+    fi
+    if [ -n "$_block" ] && [ "$FORCE" != "1" ]; then
+      printf '\n  %sRefusing to start.%s Swap does not drain instantly -- give macOS a minute\n' "$C_R$C_B" "$C_N"
+      printf '  to fault pages back in, or close Chrome/agent windows, then retry.\n'
+      printf '  Diagnose: %suaa doctor%s   Override: %suaa start --force%s\n\n' "$C_B" "$C_N" "$C_B" "$C_N"
+      return 1
+    fi
+  else
+    printf '  %sOK%s   free %s%%, wired %s%%, swap %s%%, Metal %s GB\n' \
+      "$C_G" "$C_N" "$M_FREE_PCT" "$M_WIRED_PCT" "$M_SWAP_PCT" "$M_METAL_GB"
+  fi
+
+  # ---- 2. prerequisites ---------------------------------------------------
+  printf '\n%s2. prerequisites%s\n' "$C_B" "$C_N"
+  prereq_check || { printf '\n  %sRefusing to start.%s\n\n' "$C_R$C_B" "$C_N"; return 1; }
+
+  # ---- 3. converge: reap stale state -------------------------------------
+  printf '\n%s3. reaping stale processes%s\n' "$C_B" "$C_N"
+  DRY=0; REAPED_KB=0; REAPED_N=0
+  procs_collect
+  for p in $ORPHAN_LLAMA;  do reap_pid "$p" "orphaned llama-server"; done
+  for p in $ORPHAN_MCP;    do reap_pid "$p" "orphaned MCP/LSP server"; done
+  for p in $(pgrep -f 'pkill -f .next-server' 2>/dev/null); do
+    is_orphan "$p" || continue
+    [ -n "$(pgrep -P "$p" 2>/dev/null)" ] && continue
+    reap_pid "$p" "childless restart shim"
+  done
+  # Collapse duplicate dev servers to one, by group.
+  _nexts=$(pgrep -f "$P_NEXT" 2>/dev/null | sort -n)
+  if [ "$(echo "$_nexts" | grep -c '[0-9]')" -gt 1 ]; then
+    _keep=$(echo "$_nexts" | tail -1)
+    for p in $_nexts; do
+      [ "$p" = "$_keep" ] && continue
+      _g=$(pgid_of "$p"); [ -n "$_g" ] && kill -TERM "-$_g" 2>/dev/null
+      reap_pid "$p" "duplicate dev server (keeping $_keep)"
+    done
+  fi
+  [ "$REAPED_N" = "0" ] && note "nothing stale" || printf '  reclaimed %s GB\n' "$(reaped_gb)"
+
+  # ---- 4. indexing exclusions (idempotent) --------------------------------
+  printf '\n%s4. indexing exclusions%s\n' "$C_B" "$C_N"
+  apply_index_exclusions
+
+  # ---- 5. dev server ------------------------------------------------------
+  printf '\n%s5. dev server%s\n' "$C_B" "$C_N"
+  _live=$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | awk 'NR==2{print $2}')
+  if [ -n "$_live" ] && pgrep -f "$P_NEXT" >/dev/null 2>&1; then
+    printf '  %sOK%s   reusing healthy dev server on :%s (pid %s)\n' "$C_G" "$C_N" "$PORT" "$_live"
+  elif [ -n "$_live" ]; then
+    printf '  %sWARN%s :%s held by pid %s which is not a next-server. Not touching it.\n' "$C_Y" "$C_N" "$PORT" "$_live"
+  else
+    printf '  starting on :%s ...' "$PORT"
+    # setsid-equivalent: run in its own process group so `uaa stop` can signal
+    # the whole tree at once instead of leaving reparented survivors.
+    ( set -m; PORT="$PORT" UAA_SKIP_PREFLIGHT=1 nohup npm run dev > "$REPO/dev.log" 2>&1 & echo $! > "$REPO/.uaa-dev.pid" )
+    _i=0
+    while [ "$_i" -lt 90 ]; do
+      curl -sf -o /dev/null "http://localhost:$PORT" 2>/dev/null && break
+      printf '.'; sleep 1; _i=$((_i + 1))
+    done
+    if curl -sf -o /dev/null "http://localhost:$PORT" 2>/dev/null; then
+      printf ' %sup%s in %ss (log: dev.log)\n' "$C_G" "$C_N" "$_i"
+    else
+      printf ' %sFAILED%s after %ss -- check dev.log\n' "$C_R" "$C_N" "$_i"; return 1
+    fi
+  fi
+
+  # ---- 6. ollama ----------------------------------------------------------
+  printf '\n%s6. ollama%s\n' "$C_B" "$C_N"
+  if [ "$WITH_OLLAMA" = "1" ]; then
+    if pgrep -fx "$P_SERVE" >/dev/null 2>&1; then
+      printf '  %sOK%s   already running\n' "$C_G" "$C_N"
+    else
+      printf '  starting (1 model max, 1 parallel, 5m keep_alive)\n'
+      OLLAMA_MAX_LOADED_MODELS=1 OLLAMA_NUM_PARALLEL=1 OLLAMA_KEEP_ALIVE=5m \
+        nohup ollama serve > /tmp/uaa-ollama.log 2>&1 &
+      sleep 2
+    fi
+    note "a 9.3 GB model resident leaves ~4 GB for everything else -- keep sessions short"
+  else
+    printf '  %sOK%s   not started (by design)\n' "$C_G" "$C_N"
+    note "lib/ai/router.ts tries hosted Devin CLI first; Ollama is the offline fallback."
+    note "Enable deliberately with: uaa start --with-ollama"
+    if [ "$(pcount "$P_LLAMA")" != "0" ]; then
+      printf '  %sWARN%s a model runner is resident (%s GB). Free it: uaa stop --keep-dev\n' \
+        "$C_Y" "$C_N" "$(rss_sum "$P_LLAMA")"
+    fi
+  fi
+
+  # ---- 7. report ----------------------------------------------------------
+  metrics_collect
+  printf '\n%s7. health%s\n' "$C_B" "$C_N"
+  printf '  free %s%% | wired %s GB (%s%%) | swap %s%% | Metal %s GB | apps %s GB\n' \
+    "$M_FREE_PCT" "$M_WIRED_GB" "$M_WIRED_PCT" "$M_SWAP_PCT" "$M_METAL_GB" "$M_APPS_GB"
+  printf '\n  %sready%s -- http://localhost:%s\n' "$C_G$C_B" "$C_N" "$PORT"
+  printf '  %suaa status%s anytime | %suaa stop%s when done | guard: %suaa install%s\n\n' \
+    "$C_D" "$C_N" "$C_D" "$C_N" "$C_D" "$C_N"
+  return 0
+}
+
+# ===========================================================================
+# stop
+# ===========================================================================
+cmd_stop() {
+  KEEP_OLLAMA=0; KEEP_DEV=0
+  for a in "$@"; do case "$a" in
+    --keep-ollama) KEEP_OLLAMA=1 ;;
+    --keep-dev) KEEP_DEV=1 ;;
+    *) echo "uaa stop: unknown flag: $a" >&2; return 2 ;;
+  esac; done
+
+  printf '\n%s== uaa stop ==%s\n' "$C_B" "$C_N"
+  metrics_collect
+  _free_before=$M_FREE_PCT; _wired_before=$M_WIRED_GB; _metal_before=$M_METAL_GB
+  _swap_before=$M_SWAP_USED
+  DRY=0; REAPED_KB=0; REAPED_N=0
+
+  if [ "$KEEP_DEV" != "1" ]; then
+    printf '\n%sdev server%s %s(by process group -- signalling one member leaves survivors)%s\n' \
+      "$C_B" "$C_N" "$C_D" "$C_N"
+    if [ "$(pcount "$P_NEXT")" = "0" ]; then note "not running"; else dev_stop; fi
+    rm -f "$REPO/.uaa-dev.pid"
+  fi
+
+  if [ "$KEEP_OLLAMA" != "1" ]; then
+    printf '\n%sollama%s %s(runners BEFORE daemon -- the reverse creates immortal orphans)%s\n' \
+      "$C_B" "$C_N" "$C_D" "$C_N"
+    if [ "$(pcount "$P_LLAMA")" = "0" ] && [ "$(pgrep -fx "$P_SERVE" 2>/dev/null | wc -l | tr -d ' ')" = "0" ]; then
+      note "not running"; OLLAMA_RESIDUE=0
+    else
+      ollama_stop_all
+    fi
+  else
+    OLLAMA_RESIDUE=$(pcount "$P_LLAMA")
+    printf '\n%sollama%s kept running (%s runner(s), %s GB)\n' "$C_B" "$C_N" "$OLLAMA_RESIDUE" "$(rss_sum "$P_LLAMA")"
+  fi
+
+  printf '\n%sorphaned MCP / language servers%s\n' "$C_B" "$C_N"
+  procs_collect
+  if [ "$P_ORPHAN_MCP_N" = "0" ]; then note "none"; else
+    for p in $ORPHAN_MCP; do reap_pid "$p" "orphaned MCP/LSP server"; done
+  fi
+
+  # ---- the guarantee ------------------------------------------------------
+  printf '\n%sverification%s\n' "$C_B" "$C_N"
+  _resid_llama=$(pcount "$P_LLAMA")
+  _resid_orphan=0
+  for p in $(pgrep -f "$P_LLAMA" 2>/dev/null); do is_orphan "$p" && _resid_orphan=$((_resid_orphan + 1)); done
+  _resid_next=$(pcount "$P_NEXT")
+  if [ "$KEEP_OLLAMA" != "1" ] && [ "$_resid_llama" != "0" ]; then
+    printf '  %sFAIL%s %s llama-server survived SIGKILL. Investigate: ps -p %s\n' \
+      "$C_R" "$C_N" "$_resid_llama" "$(pgrep -f "$P_LLAMA" | tr '\n' ',')"
+  else
+    printf '  %sOK%s   llama-server processes: %s  (orphaned: %s)\n' "$C_G" "$C_N" "$_resid_llama" "$_resid_orphan"
+  fi
+  [ "$KEEP_DEV" != "1" ] && {
+    if [ "$_resid_next" = "0" ]; then printf '  %sOK%s   dev servers: 0\n' "$C_G" "$C_N"
+    else printf '  %sFAIL%s dev servers still running: %s\n' "$C_R" "$C_N" "$_resid_next"; fi
+  }
+
+  # macOS faults pages back in lazily, so give it a moment before re-reading or
+  # the "after" numbers understate the recovery.
+  sleep 3
+  metrics_collect
+  printf '\n%smemory%s\n' "$C_B" "$C_N"
+  printf '  free   %s%% -> %s%%\n' "$_free_before" "$M_FREE_PCT"
+  printf '  wired  %s GB -> %s GB\n' "$_wired_before" "$M_WIRED_GB"
+  printf '  Metal  %s GB -> %s GB\n' "$_metal_before" "$M_METAL_GB"
+  printf '  swap   %s MB -> %s MB\n' "$_swap_before" "$M_SWAP_USED"
+  [ "$REAPED_N" != "0" ] && printf '  reaped %s GB across %s process(es)\n' "$(reaped_gb)" "$REAPED_N"
+  printf '\n  %sstopped%s\n\n' "$C_G$C_B" "$C_N"
+  return 0
+}
+
+# ===========================================================================
+# doctor
+# ===========================================================================
+# finding <severity> <title> <why> <fix>
+finding() {
+  _sc=$C_Y; [ "$1" = "CRITICAL" ] && _sc=$C_R; [ "$1" = "INFO" ] && _sc=$C_C
+  printf '\n  %s[%s]%s %s%s%s\n' "$_sc" "$1" "$C_N" "$C_B" "$2" "$C_N"
+  printf '      %swhy:%s %s\n' "$C_D" "$C_N" "$3"
+  printf '      %sfix:%s %s\n' "$C_D" "$C_N" "$4"
+  DOC_FINDINGS=$((DOC_FINDINGS + 1))
+}
+
+cmd_doctor() {
+  DO_FIX=0
+  for a in "$@"; do case "$a" in --fix) DO_FIX=1 ;; esac; done
+  metrics_collect; procs_collect
+  DOC_FINDINGS=0
+
+  printf '\n%s== uaa doctor ==%s %s%s | %s GB unified | %s%s\n' "$C_B" "$C_N" "$C_D" \
+    "$(date '+%F %T')" "$M_TOTAL_GB" "$(sysctl -n machdep.cpu.brand_string)" "$C_N"
+
+  hdr "MEASUREMENTS"
+  printf '  free %s GB (%s%%) | wired %s GB (%s%%) | apps %s GB | compressor %s GB holding %s GB\n' \
+    "$M_FREE_GB" "$M_FREE_PCT" "$M_WIRED_GB" "$M_WIRED_PCT" "$M_APPS_GB" "$M_COMP_GB" "$M_COMPHOLD_GB"
+  printf '  swap %s/%s MB (%s%%) | %s GB written since boot\n' \
+    "$M_SWAP_USED" "$M_SWAP_TOTAL" "$M_SWAP_PCT" "$M_SWAPOUT_GB"
+  printf '  Metal %s GB in use / %s GB reserved | GPU %s%% util | %s resets\n' \
+    "$M_METAL_GB" "$M_METAL_ALLOC_GB" "$M_GPU_UTIL" "$M_GPU_RESET"
+  printf '  llama-server %s (%s orphaned, %s GB) | ollama reports %s loaded | dev servers %s\n' \
+    "$(pcount "$P_LLAMA")" "$P_ORPHAN_N" "$P_ORPHAN_GB" "$P_OLLAMA_LOADED" "$P_NEXT_N"
+  printf '  agents %s | serena %s | tsserver %s (%s GB) | playwright-mcp %s | vitest %s\n' \
+    "$P_AGENT_N" "$P_SERENA_N" "$P_TS_N" "$P_TS_GB" "$P_PWMCP_N" "$P_VITEST_N"
+
+  hdr "FINDINGS"
+
+  if [ "$P_ORPHAN_N" -gt 0 ]; then
+    finding CRITICAL "${P_ORPHAN_N} orphaned llama-server holding ${P_ORPHAN_GB} GB (pids:${ORPHAN_LLAMA})" \
+"Ollama loads weights with --no-mmap into Metal buffers, which are WIRED and cannot be paged out. keep_alive expiry is enforced by the scheduler inside 'ollama serve'; that daemon exited, the kernel reparented this runner to launchd (PPID 1), and it lost its only expiry timer. 'ollama ps' reports ${P_OLLAMA_LOADED} models loaded, so nothing can route a request to it either. It is unreachable AND unexpirable: it holds this memory until reboot." \
+"uaa reap --apply   (safe and self-healing -- Ollama reloads the model on next request)"
+  fi
+
+  awk -v f="$M_FREE_PCT" 'BEGIN{exit !(f<15)}' && \
+    finding CRITICAL "Only ${M_FREE_PCT}% memory free (${M_FREE_GB} GB)" \
+"Below roughly 12% free, the kernel starts jetsam-killing idle daemons -- cfprefsd, secinitd, installd. When cfprefsd dies every app that reads a preference stalls; when secinitd dies every process spawn stalls. That is what a beachball actually is: macOS euthanising its own service layer." \
+"$([ "$P_ORPHAN_N" -gt 0 ] && echo 'uaa reap --apply first -- an orphan is holding the memory' || echo 'Close Chrome windows and idle agent sessions; uaa stop when not developing')"
+
+  awk -v s="$M_SWAP_PCT" -v f="$M_FREE_PCT" 'BEGIN{exit !(s>75 && f<30)}' && \
+    finding CRITICAL "Swap ${M_SWAP_PCT}% full (${M_SWAP_USED} of ${M_SWAP_TOTAL} MB) while only ${M_FREE_PCT}% is free" \
+"Wired pages cannot be evicted, so everything else is forced out. ${M_SWAPOUT_GB} GB has been written to swap since boot. Every subsequent action -- including opening a terminal to fix it -- must fault pages back in from disk first." \
+"Reap the wired holder, then let macOS drain: uaa reap --apply"
+
+  awk -v w="$M_WIRED_PCT" 'BEGIN{exit !(w>55)}' && \
+    finding CRITICAL "Wired memory ${M_WIRED_PCT}% (${M_WIRED_GB} GB of ${M_TOTAL_GB} GB)" \
+"Wired is the number that decides whether the machine survives, because it is the one class of page the pager cannot reclaim under any pressure. Kernel accounts for ~1.5 GB; the remainder here is Metal residency." \
+"uaa reap --apply, then keep Ollama off by default (uaa start does this)"
+
+  awk -v u="$M_GPU_UTIL" -v g="$M_METAL_GB" 'BEGIN{exit !(u<20 && g>=4)}' && \
+    finding CRITICAL "Metal holds ${M_METAL_GB} GB at only ${M_GPU_UTIL}% GPU utilization" \
+"Residency and utilization are independent measurements. An idle GPU pinning multiple GB is the signature of a leaked model runner, NOT of GPU load -- which is the distinction between 'my GPU is busy' and 'my RAM is hostage'. GPU resets: ${M_GPU_RESET}, so there is no driver fault here." \
+"uaa reap --apply"
+
+  [ "$P_ORPHAN_N" = "0" ] && [ "$P_MANAGED_N" -gt 0 ] && \
+    finding INFO "${P_MANAGED_N} managed model runner(s) resident (${P_LLAMA_GB} GB)" \
+"Properly parented and will expire on keep_alive, so this is not a leak. But on 16 GB a 9.3 GB resident model leaves ~4 GB for macOS, Chrome, Next.js and the agent tooling combined." \
+"uaa stop --keep-dev   (frees the model, leaves the dev server up)"
+
+  [ "$P_NEXT_N" -gt 1 ] && \
+    finding CRITICAL "${P_NEXT_N} Next.js dev servers running" \
+"Each carries an independent Turbopack instance and a full FSEvents watcher tree over ~1030 TypeScript files. They also race for the same .next directory." \
+"uaa stop && uaa start   (uaa start is idempotent: it reuses a healthy server rather than adding one)"
+
+  [ "$P_ORPHAN_MCP_N" -gt 0 ] && \
+    finding HIGH "${P_ORPHAN_MCP_N} orphaned MCP/LSP servers" \
+"Their owning agent session exited but the server was reparented to launchd rather than terminated. Each warm tsserver holds a full TypeScript program." \
+"uaa reap --apply"
+
+  [ "$P_TS_N" -gt 6 ] && \
+    finding HIGH "${P_TS_N} tsserver processes (${P_TS_GB} GB reported)" \
+"${P_AGENT_N} agent session(s), and each 'devin' plus 'devin acp' independently loads the MCP config -- so serena is spawned twice per window, each spawning a TypeScript LSP that spawns two tsservers. A reported total this low means they have been swapped out, which is precisely why agent tooling feels slow: every symbol lookup faults ~400 MB back from disk." \
+"Close idle agent windows. tsconfig.json now excludes .venv/data/graphify-out to cut each server's directory-watcher set."
+
+  [ "$P_SERVE_N" -gt 1 ] && \
+    finding HIGH "${P_SERVE_N} 'ollama serve' daemons" \
+"A daemon was restarted without draining its runners first, which is the exact sequence that orphans them." \
+"uaa reap --apply, and always stop via 'uaa stop' (it drains runners before the daemon)"
+
+  [ "$P_VITEST_N" -gt 6 ] && \
+    finding HIGH "${P_VITEST_N} vitest workers" \
+"An uncapped fork pool uses CPUs-1 = 9 workers on this host, each loading the full module graph." \
+"vitest.config.ts caps this at 6 (measured knee: same wall-clock as uncapped, 225 MB less peak). Run tests via 'npm test'."
+
+  [ "$M_GPU_RESET" -gt 0 ] && \
+    finding HIGH "${M_GPU_RESET} GPU resets recorded" \
+"Genuine driver-level GPU faults -- a different failure class from memory residency, and worth investigating separately." \
+"Capture: sudo powermetrics --samplers gpu_power -n 5"
+
+  awk -v d="$M_DISK_GB" 'BEGIN{exit !(d<20)}' && \
+    finding CRITICAL "Only ${M_DISK_GB} GB disk free" \
+"Swap files live on disk. When it cannot grow, thrashing becomes a hard freeze instead of a slowdown." \
+"Free space; ~/.ollama alone is $(du -sh "$HOME/.ollama" 2>/dev/null | cut -f1)"
+
+  # host hygiene
+  _idx=$(index_exclusions_status)
+  [ "$_idx" != "ok" ] && \
+    finding HIGH "Build artifacts are being indexed ($_idx)" \
+"Spotlight re-indexes and Time Machine backs up generated output: data/ (2.4 GB engine.duckdb + 191 MB app.db), .next/ (786 MB), node_modules/ (53k files). Every Turbopack rebuild fires FSEvents that wake mdworker. macOS has already filed 'disk writes' diagnostic reports against this host." \
+"uaa doctor --fix   (adds .metadata_never_index + tmutil exclusions)"
+
+  _big=$(ollama_oversized)
+  [ -n "$_big" ] && \
+    finding HIGH "Installed models that cannot fit in ${M_TOTAL_GB} GB: $_big" \
+"lib/ai/models.ts already documents these as thrashing at 0.9 tok/s -- 11x slower than a model that fits. Loading one guarantees the failure mode this toolkit exists to prevent." \
+"ollama rm $_big"
+
+  if [ "$DOC_FINDINGS" = "0" ]; then
+    printf '\n  %sNo problems detected.%s free %s%%, wired %s%%, swap %s%%, Metal %s GB.\n' \
+      "$C_G$C_B" "$C_N" "$M_FREE_PCT" "$M_WIRED_PCT" "$M_SWAP_PCT" "$M_METAL_GB"
+  fi
+
+  if [ "$DO_FIX" = "1" ]; then
+    hdr "APPLYING SAFE FIXES"
+    apply_index_exclusions
+    printf '  %sOK%s   process-level fixes are not applied automatically -- run: uaa reap --apply\n' "$C_C" "$C_N"
+  elif [ "$DOC_FINDINGS" -gt 0 ]; then
+    printf '\n  %s%s finding(s).%s Safe host fixes: %suaa doctor --fix%s   Process cleanup: %suaa reap --apply%s\n' \
+      "$C_B" "$DOC_FINDINGS" "$C_N" "$C_B" "$C_N" "$C_B" "$C_N"
+  fi
+  printf '\n'
+  return 0
+}
+
+# ===========================================================================
+# host hygiene helpers
+# ===========================================================================
+# Directories whose contents are generated, large, and never worth indexing or
+# backing up. Excluding them cuts Spotlight/mdworker wakeups on every rebuild.
+INDEX_DIRS="data .next node_modules graphify-out bench-out .venv playwright-report test-results"
+
+index_exclusions_status() {
+  _missing=""
+  for d in $INDEX_DIRS; do
+    [ -d "$REPO/$d" ] || continue
+    [ -f "$REPO/$d/.metadata_never_index" ] || _missing="$_missing $d"
+  done
+  [ -z "$_missing" ] && echo ok || echo "missing:$_missing"
+}
+
+apply_index_exclusions() {
+  _did=""
+  for d in $INDEX_DIRS; do
+    [ -d "$REPO/$d" ] || continue
+    if [ ! -f "$REPO/$d/.metadata_never_index" ]; then
+      touch "$REPO/$d/.metadata_never_index" 2>/dev/null && _did="$_did $d"
+    fi
+    # tmutil needs no sudo for paths the user owns; silent if already excluded.
+    tmutil addexclusion "$REPO/$d" >/dev/null 2>&1
+  done
+  if [ -n "$_did" ]; then
+    printf '  %sOK%s   excluded from Spotlight + Time Machine:%s\n' "$C_G" "$C_N" "$_did"
+  else
+    printf '  %sOK%s   already excluded (%s)\n' "$C_G" "$C_N" "$(echo $INDEX_DIRS | tr ' ' ',')"
+  fi
+  return 0
+}
+
+# Models physically too large to be resident alongside the dev stack.
+ollama_oversized() {
+  _lim=$(echo "$M_TOTAL_GB" | awk '{printf "%.0f",$1*0.55}')
+  command -v ollama >/dev/null 2>&1 || return 0
+  ollama list 2>/dev/null | awk -v lim="$_lim" 'NR>1 {
+    sz=$3+0; if ($4 ~ /^[Tt]/) sz*=1024;
+    if (sz > lim) printf "%s ", $1
+  }'
+  return 0
+}
+
+# ===========================================================================
+# guard
+# ===========================================================================
+cmd_guard() {
+  ONCE=0; AUTO=0
+  for a in "$@"; do case "$a" in
+    --once) ONCE=1 ;;
+    --auto-reap) AUTO=1 ;;
+    *) echo "uaa guard: unknown flag: $a" >&2; return 2 ;;
+  esac; done
+  INTERVAL="${UAA_GUARD_INTERVAL:-60}"
+  mkdir -p "$(dirname "$GUARD_LOG")"
+
+  _eval() {
+    metrics_collect; procs_collect
+    # Swap-in-use is a LAGGING indicator and must never escalate on its own.
+    # macOS releases swap files lazily, so a host that has fully recovered still
+    # reports high swap for a long while: free 79% / wired 12% / swap 65% is a
+    # healthy machine, not a sick one. Escalating on that trains you to ignore
+    # the watchdog, which is worse than having none.
+    #
+    # So swap only ever corroborates a free-memory signal. Free% and wired% are
+    # the leading indicators; swap qualifies their severity.
+    _level=OK; _reason=""
+    awk -v f="$M_FREE_PCT" -v s="$M_SWAP_PCT" 'BEGIN{exit !(f<30 || (s>40 && f<40))}' && { _level=ADVISE; _reason="free ${M_FREE_PCT}%/swap ${M_SWAP_PCT}%"; }
+    awk -v f="$M_FREE_PCT" -v s="$M_SWAP_PCT" 'BEGIN{exit !(f<20 || (s>60 && f<30))}' && { _level=WARN;   _reason="free ${M_FREE_PCT}%/swap ${M_SWAP_PCT}%"; }
+    awk -v f="$M_FREE_PCT" -v s="$M_SWAP_PCT" 'BEGIN{exit !(f<12 || (s>80 && f<20))}' && { _level=ACT;    _reason="free ${M_FREE_PCT}%/swap ${M_SWAP_PCT}%"; }
+    # An orphan escalates unconditionally regardless of current pressure: it is
+    # never legitimate, cannot serve a request, and cannot expire. Pure loss.
+    if [ "$P_ORPHAN_N" -gt 0 ]; then
+      _level=ACT; _reason="${P_ORPHAN_N} orphaned llama-server holding ${P_ORPHAN_GB} GB wired${_reason:+; $_reason}"
+    fi
+    [ "$P_ORPHAN_MCP_N" -gt 2 ] && { [ "$_level" = OK ] && _level=WARN; _reason="${P_ORPHAN_MCP_N} orphaned MCP/LSP${_reason:+; $_reason}"; }
+    [ "$P_NEXT_N" -gt 1 ] && { [ "$_level" = OK ] && _level=WARN; _reason="${P_NEXT_N} dev servers${_reason:+; $_reason}"; }
+
+    printf '{"ts":"%s","level":"%s","free_pct":%s,"wired_pct":%s,"swap_pct":%s,"metal_gb":%s,"gpu_util":%s,"orphan_llama":%s,"orphan_llama_gb":%s,"next":%s,"tsserver":%s,"orphan_mcp":%s}\n' \
+      "$(date -u +%FT%TZ)" "$_level" "$M_FREE_PCT" "$M_WIRED_PCT" "$M_SWAP_PCT" "$M_METAL_GB" \
+      "$M_GPU_UTIL" "$P_ORPHAN_N" "$P_ORPHAN_GB" "$P_NEXT_N" "$P_TS_N" "$P_ORPHAN_MCP_N" >> "$GUARD_LOG"
+
+    case "$_level" in
+      OK)     printf '[uaa-guard %s] ok    free %s%% wired %s%% swap %s%% metal %sGB\n' "$(date '+%T')" "$M_FREE_PCT" "$M_WIRED_PCT" "$M_SWAP_PCT" "$M_METAL_GB" ;;
+      ADVISE) printf '[uaa-guard %s] advise %s\n' "$(date '+%T')" "$_reason" ;;
+      WARN)   printf '[uaa-guard %s] WARN  %s\n' "$(date '+%T')" "$_reason"
+              osascript -e "display notification \"$_reason\" with title \"UAA host: memory pressure\"" >/dev/null 2>&1 ;;
+      ACT)    printf '[uaa-guard %s] ACT   %s\n' "$(date '+%T')" "$_reason"
+              if [ "$AUTO" = "1" ]; then
+                DRY=0; REAPED_KB=0; REAPED_N=0
+                for p in $ORPHAN_LLAMA; do reap_pid "$p" "orphan (guard)"; done
+                for p in $ORPHAN_MCP;   do reap_pid "$p" "orphan (guard)"; done
+                [ "$REAPED_N" != "0" ] && {
+                  printf '[uaa-guard] reclaimed %s GB\n' "$(reaped_gb)"
+                  osascript -e "display notification \"reclaimed $(reaped_gb) GB\" with title \"UAA guard: cleaned up\"" >/dev/null 2>&1
+                }
+              else
+                osascript -e "display notification \"$_reason -- run uaa reap --apply\" with title \"UAA host: ACTION NEEDED\"" >/dev/null 2>&1
+              fi ;;
+    esac
+    return 0
+  }
+
+  if [ "$ONCE" = "1" ]; then _eval; return 0; fi
+  trap 'printf "\n[uaa-guard] stopped.\n"; exit 0' INT TERM
+  printf '[uaa-guard] every %ss -> %s (auto-reap: %s)\n' "$INTERVAL" "$GUARD_LOG" "$([ "$AUTO" = 1 ] && echo on || echo off)"
+  while :; do _eval; sleep "$INTERVAL"; done
+}
+
+# ===========================================================================
+# install / uninstall
+# ===========================================================================
+cmd_install() {
+  _bin="$HOME/.local/bin"
+  mkdir -p "$_bin"
+  printf '\n%s== uaa install ==%s\n\n' "$C_B" "$C_N"
+  for n in uaa uaa-start uaa-stop uaa-status uaa-doctor; do
+    ln -sf "$SELF_DIR/uaa" "$_bin/$n"
+    printf '  %sOK%s   %s -> %s\n' "$C_G" "$C_N" "$_bin/$n" "$SELF_DIR/uaa"
+  done
+  case ":$PATH:" in
+    *":$_bin:"*) printf '  %sOK%s   %s is on PATH\n' "$C_G" "$C_N" "$_bin" ;;
+    *) printf '  %sWARN%s add to your shell rc:  export PATH="$HOME/.local/bin:$PATH"\n' "$C_Y" "$C_N" ;;
+  esac
+
+  _plist="$HOME/Library/LaunchAgents/com.uaa.guard.plist"
+  sed "s|__REPO__|$REPO|g" "$SELF_DIR/com.uaa.guard.plist" > "$_plist"
+  launchctl unload "$_plist" >/dev/null 2>&1
+  if launchctl load "$_plist" 2>/dev/null; then
+    printf '  %sOK%s   launchd guard loaded (60s interval, auto-reap on, log: /tmp/uaa-guard.log)\n' "$C_G" "$C_N"
+  else
+    printf '  %sWARN%s could not load launchd agent; run manually: uaa guard --auto-reap\n' "$C_Y" "$C_N"
+  fi
+
+  install_shell_env
+  printf '\n  installed. try: %suaa status%s\n\n' "$C_B" "$C_N"
+  return 0
+}
+
+# Ollama reads these from the environment of whatever starts `ollama serve`,
+# which is usually an interactive shell. Written as one clearly-marked block so
+# it is trivially reversible (`uaa uninstall` removes it).
+#
+# The defaults these override are the dangerous ones on a 16 GB host:
+# OLLAMA_MAX_LOADED_MODELS defaults to 3xGPU-count, so Ollama will happily hold
+# three models at once; NUM_PARALLEL multiplies KV-cache allocation; and a long
+# keep_alive widens the window in which a jetsam SIGKILL can orphan a runner.
+UAA_ENV_MARK="# >>> uaa host toolkit (managed) >>>"
+UAA_ENV_END="# <<< uaa host toolkit (managed) <<<"
+install_shell_env() {
+  _rc="$HOME/.zshrc"
+  [ -n "${ZDOTDIR:-}" ] && [ -f "$ZDOTDIR/.zshrc" ] && _rc="$ZDOTDIR/.zshrc"
+  case "${SHELL:-}" in *bash) _rc="$HOME/.bash_profile" ;; esac
+  if [ -f "$_rc" ] && grep -qF "$UAA_ENV_MARK" "$_rc" 2>/dev/null; then
+    printf '  %sOK%s   shell env already present in %s\n' "$C_G" "$C_N" "$_rc"
+    return 0
+  fi
+  {
+    printf '\n%s\n' "$UAA_ENV_MARK"
+    printf '# Caps Ollama residency on a 16 GB unified-memory host. Ollama otherwise\n'
+    printf '# allows up to 3 concurrently-loaded models, any one of which can pin\n'
+    printf '# ~9 GB of WIRED Metal memory that the pager cannot evict.\n'
+    printf 'export OLLAMA_MAX_LOADED_MODELS=1\n'
+    printf 'export OLLAMA_NUM_PARALLEL=1\n'
+    printf 'export OLLAMA_KEEP_ALIVE=5m\n'
+    # Only add PATH if the rc does not already put ~/.local/bin on it, so
+    # repeated installs across shells cannot stack duplicate prefixes.
+    grep -q 'local/bin' "$_rc" 2>/dev/null || printf 'export PATH="$HOME/.local/bin:$PATH"\n'
+    printf '%s\n' "$UAA_ENV_END"
+  } >> "$_rc"
+  printf '  %sOK%s   shell env appended to %s (marked block, removed by `uaa uninstall`)\n' "$C_G" "$C_N" "$_rc"
+  return 0
+}
+
+remove_shell_env() {
+  for _rc in "$HOME/.zshrc" "$HOME/.bash_profile"; do
+    [ -f "$_rc" ] || continue
+    grep -qF "$UAA_ENV_MARK" "$_rc" 2>/dev/null || continue
+    # sed -i '' with an address range: delete the managed block inclusive.
+    sed -i '' "/$(printf '%s' "$UAA_ENV_MARK" | sed 's/[][\.*^$/]/\\&/g')/,/$(printf '%s' "$UAA_ENV_END" | sed 's/[][\.*^$/]/\\&/g')/d" "$_rc"
+    printf '  removed managed env block from %s\n' "$_rc"
+  done
+  return 0
+}
+
+cmd_uninstall() {
+  _bin="$HOME/.local/bin"
+  for n in uaa uaa-start uaa-stop uaa-status uaa-doctor; do rm -f "$_bin/$n"; done
+  _plist="$HOME/Library/LaunchAgents/com.uaa.guard.plist"
+  launchctl unload "$_plist" >/dev/null 2>&1
+  rm -f "$_plist"
+  remove_shell_env
+  printf '\n  uninstalled (symlinks + launchd agent + shell env removed).\n\n'
+  return 0
+}
+
+# ===========================================================================
+# selftest -- verifies the toolkit's own detection logic without needing the
+# failure to be present. Guards against the class of bug found during
+# development, where a pattern matched the live dev server's own ancestor.
+# ===========================================================================
+cmd_selftest() {
+  _pass=0; _fail=0
+  _t() { # _t <desc> <expected> <actual>
+    if [ "$2" = "$3" ]; then printf '  %sPASS%s %s\n' "$C_G" "$C_N" "$1"; _pass=$((_pass+1))
+    else printf '  %sFAIL%s %s (expected %s, got %s)\n' "$C_R" "$C_N" "$1" "$2" "$3"; _fail=$((_fail+1)); fi
+  }
+  printf '\n%s== uaa selftest ==%s\n\n' "$C_B" "$C_N"
+
+  metrics_collect
+  _t "metrics: total memory parsed"  "1" "$(awk -v v="$M_TOTAL_GB" 'BEGIN{print (v>0)?1:0}')"
+  _t "metrics: wired parsed"         "1" "$(awk -v v="$M_WIRED_GB" 'BEGIN{print (v>0)?1:0}')"
+  _t "metrics: Metal residency read" "1" "$(awk -v v="$M_METAL_GB" 'BEGIN{print (v>=0)?1:0}')"
+  _t "metrics: free pct in range"    "1" "$(awk -v v="$M_FREE_PCT" 'BEGIN{print (v>=0&&v<=100)?1:0}')"
+
+  # The next-server pattern must not match the restart shim or this script.
+  _shim_hits=$(pgrep -f "$P_NEXT" 2>/dev/null | while read -r p; do
+    cmd_of "$p" | grep -q 'pkill' && echo bad; done | wc -l | tr -d ' ')
+  _t "pattern: P_NEXT excludes pkill shims" "0" "$_shim_hits"
+  _self_hits=$(pgrep -f "$P_NEXT" 2>/dev/null | while read -r p; do
+    [ "$p" = "$$" ] && echo bad; done | wc -l | tr -d ' ')
+  _t "pattern: P_NEXT excludes self" "0" "$_self_hits"
+
+  # Orphan classification must be a strict partition of all llama-servers.
+  procs_collect
+  _total=$(pcount "$P_LLAMA")
+  _t "orphan classification partitions runners" "$_total" "$((P_ORPHAN_N + P_MANAGED_N))"
+
+  # A shim that still parents the live dev server must be skipped, never reaped.
+  _guarded=1
+  for p in $(pgrep -f 'pkill -f .next-server' 2>/dev/null); do
+    is_orphan "$p" || continue
+    [ -n "$(pgrep -P "$p" 2>/dev/null)" ] && [ -n "$(pgrep -f "$P_NEXT")" ] && _guarded=1
+  done
+  _t "reaper: live-shim guard present" "1" "$_guarded"
+
+  _t "grade(): OK below warn"   "OK"   "$(grade 10 35 55)"
+  _t "grade(): WARN at warn"    "WARN" "$(grade 40 35 55)"
+  _t "grade(): FAIL at fail"    "FAIL" "$(grade 70 35 55)"
+
+  _t "json: parses"  "0" "$(status_json | python3 -c 'import json,sys; json.load(sys.stdin)' >/dev/null 2>&1; echo $?)"
+
+  _t "helper: rss_sum returns a number" "1" \
+    "$(awk -v v="$(rss_sum "$P_TSSERVER")" 'BEGIN{print (v>=0)?1:0}')"
+
+  printf '\n  %s%s passed, %s failed%s\n\n' "$C_B" "$_pass" "$_fail" "$C_N"
+  [ "$_fail" = "0" ] || return 1
+  return 0
+}
+
+# ===========================================================================
+# dispatch
+# ===========================================================================
+CMD="${1:-}"
+case "$(basename "$0")" in
+  uaa-start)  CMD=start ;;
+  uaa-stop)   CMD=stop ;;
+  uaa-status) CMD=status ;;
+  uaa-doctor) CMD=doctor ;;
+  *) [ $# -gt 0 ] && shift ;;
+esac
+
+case "$CMD" in
+  start)     cmd_start "$@" ;;
+  stop)      cmd_stop "$@" ;;
+  status|st) cmd_status "$@" ;;
+  doctor|dr) cmd_doctor "$@" ;;
+  preflight) cmd_preflight "$@" ;;
+  reap)      cmd_reap "$@" ;;
+  guard)     cmd_guard "$@" ;;
+  install)   cmd_install ;;
+  uninstall) cmd_uninstall ;;
+  selftest)  cmd_selftest ;;
+  ""|-h|--help|help) usage ;;
+  *) printf 'uaa: unknown command: %s\n\n' "$CMD" >&2; usage; exit 2 ;;
+esac

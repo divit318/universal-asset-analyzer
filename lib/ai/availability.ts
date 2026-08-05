@@ -28,3 +28,53 @@ export function aiUnavailableMessage(feature = "AI features"): string {
  */
 export const AI_NARRATIVE_UNAVAILABLE =
   "AI narrative unavailable — the numbers below are computed directly and are unaffected.";
+
+/* -------------------------------------------------------------------------- */
+/* Attribution                                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Truthful attribution for a piece of AI-generated output.
+ *
+ * The Router walks a chain (hosted Devin first by default, local Ollama as the
+ * fallback — lib/ai/config.ts), so a static "Local AI" label is wrong whenever
+ * the hosted path answered. Every badge must derive from the model that
+ * actually generated the output.
+ *
+ * Locality heuristic: Ollama's /api/tags always reports colon-tagged ids
+ * ("mistral:latest", "qwen3:14b") while the hosted catalogue ids never carry a
+ * tag ("claude-opus-5-low", "swe-1-6-fast") — the same rule the header badge
+ * (app/_components/ollama-status.tsx) has always used. Kept here, dependency-
+ * free, so client components can import it without dragging node builtins
+ * across the boundary.
+ */
+export interface AiAttribution {
+  /** Short badge text, e.g. "Local AI · mistral" or "Hosted AI · claude-opus-5-low". */
+  badge: string;
+  /** Tooltip copy stating exactly where the generation ran. */
+  title: string;
+  locality: "local" | "hosted" | "unknown";
+}
+
+export function aiAttribution(modelId?: string | null): AiAttribution {
+  if (!modelId || modelId === "unavailable" || modelId === "ollama") {
+    return {
+      badge: "AI",
+      title:
+        "Written by the configured AI provider — hosted (Devin) or local (Ollama). Every figure is computed by the deterministic engines; the model only narrates.",
+      locality: "unknown",
+    };
+  }
+  const local = modelId.includes(":");
+  return local
+    ? {
+        badge: `Local AI · ${modelId.split(":")[0]}`,
+        title: `Written on this machine by Ollama model ${modelId}. Nothing was sent to a hosted service for this text.`,
+        locality: "local",
+      }
+    : {
+        badge: `Hosted AI · ${modelId}`,
+        title: `Written by ${modelId} via the hosted provider (Devin). The prompt — company metrics and, where relevant, portfolio context — was sent to that service. Set AI_PROVIDER_ORDER=ollama for a fully local setup.`,
+        locality: "hosted",
+      };
+}

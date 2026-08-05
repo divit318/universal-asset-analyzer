@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["exceljs", "pdfkit"],
+  // Dev-only: allow the browser-preview proxy (served from 127.0.0.1) to load
+  // Next.js dev resources (HMR, RSC payloads) cross-origin.
+  allowedDevOrigins: ["127.0.0.1"],
   // Tree-shake barrel imports from heavy client libs so a page only ships the
   // icons/chart pieces it actually uses instead of the whole package.
   experimental: {
