@@ -2,6 +2,12 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "e2e",
+  // The login workstream's suite runs against its own gated server
+  // (playwright.login.config.ts, :3121, UAA_AUTH_GATE=on) and declares these
+  // via testMatch there; ignoring them here completes the partition so a bare
+  // `npx playwright test` doesn't run gate-dependent specs on the ungated
+  // :3111 server.
+  testIgnore: ["auth.spec.ts", "settings.spec.ts", "landing-hero.spec.ts"],
   workers: 1,
   retries: 1,
   timeout: 45_000,

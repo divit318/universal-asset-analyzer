@@ -37,12 +37,34 @@ test("header badge says AI is off and links to Settings — and never claims loc
   await expect(badge).toBeVisible();
   await expect(badge).toHaveAttribute("href", "/settings");
   // F-01/F-03 guard, in-app: no surface may credit "Local AI" for hosted
-  // generation, name the retired local runtime, or claim zero egress.
+  // generation, name the retired local runtime, claim zero egress, or make
+  // the retired lifetime/locality claims.
   const html = await page.content();
   expect(html).not.toMatch(/Local AI/);
   expect(html).not.toMatch(/\bOllama\b/);
   expect(html).not.toMatch(/never leaves this machine/i);
+  expect(html).not.toMatch(/all running locally/i);
+  expect(html).not.toMatch(/\/ forever/);
   expect(filterAllowedErrors(errors)).toEqual([]);
+});
+
+test("app metadata makes no zero-locality claim (layout meta + manifest)", async ({ page, request }) => {
+  // app/layout.tsx meta description said "all running locally"; the manifest
+  // said "running entirely on your own machine". Both were false once
+  // generation moved to the hosted API on the user's key — guard the fixes.
+  await page.goto("/watchlist");
+  const description = await page
+    .locator('head meta[name="description"]')
+    .first()
+    .getAttribute("content");
+  expect(description).not.toMatch(/all running locally/i);
+  expect(description).toMatch(/computed locally, in a database you own/);
+
+  const manifest = await request.get("/manifest.webmanifest");
+  expect(manifest.ok()).toBe(true);
+  const manifestText = await manifest.text();
+  expect(manifestText).not.toMatch(/running entirely on your own machine/i);
+  expect(manifestText).toMatch(/stay on your own machine/);
 });
 
 test("/settings renders the no-key failure state with the key form", async ({ page }) => {

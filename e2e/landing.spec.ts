@@ -50,8 +50,9 @@ test.describe("landing skeleton", () => {
     // The authenticated app header (a `banner` landmark) must NOT be present.
     await expect(page.getByRole("banner")).toHaveCount(0);
 
-    // The marketing header's primary CTA and anchor nav are present.
-    await expect(page.getByRole("link", { name: "Experience UAA" }).first()).toBeVisible();
+    // The pill header's auth pair (login rework) and the anchor nav are present.
+    await expect(page.locator("header").getByRole("button", { name: "Sign in" })).toBeVisible();
+    await expect(page.locator("header").getByRole("button", { name: "Get started" })).toBeVisible();
     await expect(page.locator('header a[href="#features"]')).toBeVisible();
   });
 
@@ -228,7 +229,7 @@ test.describe("landing content finalization (Milestone 7)", () => {
     ).toBeVisible();
 
     const pricing = page.locator("section#pricing");
-    await expect(pricing.getByRole("heading", { name: /Get started in minutes/ })).toBeVisible();
+    await expect(pricing.getByRole("heading", { name: /Free to run\. Pro when you want us to run it\./ })).toBeVisible();
     await expect(pricing.getByText("$0")).toBeVisible();
 
     // Comparison table has real table semantics and a highlighted UAA column.
@@ -262,10 +263,13 @@ test.describe("landing content finalization (Milestone 7)", () => {
   });
 
   test("F-01 guard: every retired false-locality claim stays retired", async ({ page }) => {
-    // Each of these phrases shipped once (pre-demo audit F-01/F-03) while the
-    // app verifiably sent prompts to a hosted model. They were replaced with
-    // claims that are true — "local-first data, hosted AI on your own key" —
-    // and none may regress on any landing surface.
+    // Each of these phrases shipped once (pre-demo audit F-01/F-03, plus the
+    // post-auth sweep) while being false: the first block claimed zero egress
+    // while the app verifiably sent prompts to a hosted model; the second
+    // block claimed "no accounts / no sign-up" after local auth shipped.
+    // Replaced with claims that are true — "local-first data, hosted AI on
+    // your own key, optional local account" — and none may regress on any
+    // landing surface.
     await page.goto("/landing");
     const html = await page.content();
     const RETIRED: RegExp[] = [
@@ -278,6 +282,8 @@ test.describe("landing content finalization (Milestone 7)", () => {
       /100% Local\. 100% Private\./i,
       /runs entirely on your machine/i,
       /running entirely on your computer/i,
+      /all running locally/i,
+      /running entirely on your own machine/i,
       /powered by local AI/i,
       /\ball on your computer\b/i,
       /no cloud/i,
@@ -288,9 +294,147 @@ test.describe("landing content finalization (Milestone 7)", () => {
       /\blocal AI analysis\b/i,
       /offline AI/i,
       /zero egress/i,
+      // Auth shipped (login workstream): account-denial claims are now false.
+      /no sign-?up/i,
+      /no login/i,
+      /\bno accounts\b/i,
+      /no account required/i,
+      // Pricing rebuild: the open-ended lifetime claim is retired for good.
+      /\/ forever/,
     ];
     for (const re of RETIRED) {
       expect(html, `retired claim resurfaced: ${re}`).not.toMatch(re);
+    }
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Pricing — two tiers, one of which exists (migration workstream, Part 2)     */
+/* -------------------------------------------------------------------------- */
+
+test.describe("pricing: two tiers, one of which exists", () => {
+  test("both cards render: Free available, Pro unmistakably not yet available", async ({ page }) => {
+    await page.goto("/landing");
+    const pricing = page.locator("section#pricing");
+
+    const free = pricing.getByTestId("pricing-free");
+    await expect(free).toBeVisible();
+    await expect(free.getByText("Available now")).toBeVisible();
+    await expect(free.getByText("$0")).toBeVisible();
+    await expect(free.getByText("The full local product. Nothing held back.")).toBeVisible();
+
+    const pro = pricing.getByTestId("pricing-pro");
+    await expect(pro).toBeVisible();
+    await expect(pro.getByText("Planned — not yet available")).toBeVisible();
+    await expect(pro.getByText("Nothing is purchasable today", { exact: false })).toBeVisible();
+    // Planned features are marked planned, per item.
+    await expect(pro.getByText("(planned)").first()).toBeVisible();
+
+    // The BYOK cost line is present and names the model + published rate.
+    await expect(pricing.getByText(/Claude Opus 5’s published rate/)).toBeVisible();
+    await expect(pricing.getByText(/\$5 per million input/)).toBeVisible();
+  });
+
+  test("no purchase affordance exists anywhere in the pricing section", async ({ page }) => {
+    await page.goto("/landing");
+    const pricing = page.locator("section#pricing");
+    const PURCHASE = /buy|upgrade|subscribe|checkout|purchase|pay now/i;
+    await expect(pricing.getByRole("button", { name: PURCHASE })).toHaveCount(0);
+    await expect(pricing.getByRole("link", { name: PURCHASE })).toHaveCount(0);
+    // And no form field asks for payment details.
+    await expect(pricing.locator('input[autocomplete*="cc-"]')).toHaveCount(0);
+  });
+
+  test('"/ forever" appears nowhere on the landing page', async ({ page }) => {
+    await page.goto("/landing");
+    expect(await page.content()).not.toMatch(/\/ forever/);
+  });
+
+  test("free CTA opens the auth modal on Create account", async ({ page }) => {
+    await page.goto("/landing");
+    await page.locator("section#pricing").getByRole("button", { name: "Get started free" }).click();
+    const dialog = page.getByRole("dialog", { name: "Create account" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Create account" })).toBeVisible();
+  });
+
+  test("currency toggle switches both cards and persists across reload", async ({ page }) => {
+    await page.goto("/landing");
+    const pricing = page.locator("section#pricing");
+
+    // Default in this (non-IN locale) environment: USD on both cards.
+    await expect(pricing.getByTestId("pricing-free").getByText("$0")).toBeVisible();
+    await expect(pricing.getByTestId("pricing-pro").getByText("$19", { exact: true })).toBeVisible();
+
+    await pricing.getByRole("button", { name: "₹ INR" }).click();
+    await expect(pricing.getByTestId("pricing-free").getByText("₹0")).toBeVisible();
+    await expect(pricing.getByTestId("pricing-pro").getByText("₹4,999", { exact: true })).toBeVisible();
+    await expect(pricing.getByTestId("pricing-pro").getByText("/ year")).toBeVisible();
+
+    // Persisted the same way the theme toggle is (localStorage).
+    await page.reload();
+    await expect(pricing.getByTestId("pricing-pro").getByText("₹4,999", { exact: true })).toBeVisible();
+    await expect(pricing.getByRole("button", { name: "₹ INR" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("interest form: empty and malformed submits error accessibly; valid submit persists", async ({ page }) => {
+    await page.goto("/landing");
+    const pro = page.getByTestId("pricing-pro");
+    const email = pro.getByLabel("Email me when Pro exists");
+    const submit = pro.getByRole("button", { name: "Notify me" });
+
+    // Empty submit: error rendered in the aria-live region the input points at.
+    await submit.click();
+    await expect(pro.locator("#pricing-interest-error")).toHaveText("Enter an email address.");
+    await expect(email).toHaveAttribute("aria-describedby", "pricing-interest-error");
+    await expect(email).toHaveAttribute("aria-invalid", "true");
+
+    // Malformed email.
+    await email.fill("not-an-email");
+    await submit.click();
+    await expect(pro.locator("#pricing-interest-error")).toHaveText(/doesn't look like an email/);
+
+    // Valid submit reaches the API (which persists into the isolated e2e
+    // SQLite — row-level persistence is pinned by tests/pricing-interest.test.ts)
+    // and swaps the form for the aria-live success state.
+    await email.fill("wtp-probe@example.com");
+    await pro.getByRole("radio", { name: /Annual/ }).check();
+    const done = page.waitForResponse((r) => r.url().includes("/api/pricing-interest") && r.ok());
+    await submit.click();
+    await done;
+    await expect(pro.getByText("You’re on the list", { exact: false })).toBeVisible();
+    await expect(pro.getByRole("button", { name: "Notify me" })).toHaveCount(0);
+  });
+
+  test("responsive: no horizontal overflow at 375/768/1440; cards stack narrow, sit side-by-side wide", async ({ page }) => {
+    // Reveal's fade-rise animates transforms mid-measurement; the section
+    // honors prefers-reduced-motion, so ask for it and measure a still page.
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    for (const width of [375, 768, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("/landing#pricing");
+
+      if (width === 375) {
+        // Documented pre-existing exclusion (HANDOFF-LOGIN §8): section#comparison
+        // overflows at 375px and predates both workstreams. Isolate it so this
+        // assertion keeps guarding the pricing section; do NOT delete this check.
+        await page.addStyleTag({ content: "section#comparison{display:none !important}" });
+      }
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(overflow, `horizontal overflow at ${width}px`).toBeLessThanOrEqual(0);
+
+      const free = await page.getByTestId("pricing-free").boundingBox();
+      const pro = await page.getByTestId("pricing-pro").boundingBox();
+      expect(free && pro).toBeTruthy();
+      if (width === 375) {
+        // Stacked ⇒ Pro starts well past Free's vertical midpoint (robust to
+        // sub-pixel rounding); side-by-side would put both tops equal.
+        expect(pro!.y, "cards should stack at 375px").toBeGreaterThan(free!.y + free!.height / 2);
+      } else if (width === 1440) {
+        expect(Math.abs(pro!.y - free!.y), "cards should sit side-by-side at 1440px").toBeLessThan(4);
+      }
     }
   });
 });

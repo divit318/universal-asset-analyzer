@@ -1,5 +1,32 @@
 # HANDOFF — Anthropic migration session → auth/landing session
 
+## Addendum (pricing/copy session, 2026-08-06)
+
+- **Both handoffs closed**: `<AccountMenu />` is mounted in the site-header
+  right cluster (HANDOFF-LOGIN §1), and `PasswordInput` is exported from the
+  `app/_components/ui` barrel (§5).
+- **Suite partition completed**: `playwright.config.ts` now `testIgnore`s
+  `auth/settings/landing-hero.spec.ts` — they were being collected by the
+  primary (:3111, ungated) config despite belonging to your
+  `playwright.login.config.ts` (:3121, gated). Your config is untouched.
+- **Pricing rebuilt as two tiers** (Free = the full local product; Pro =
+  explicitly "Planned — not yet available", interest capture only, no
+  purchase affordance). New table `pricing_interest` in the same local
+  SQLite, via `lib/pricing-interest.ts` — deliberately NOT in lib/db.ts
+  (your file under the ownership split); it holds its own connection with a
+  busy_timeout. If ownership merges later, fold it in.
+- **Copy corrected after auth shipped** (your §10 flag): FAQ "no sign-up and
+  no login", landing meta "No accounts", footer "No accounts", README "no
+  accounts", plus `app/layout.tsx` "all running locally", `app/manifest.ts`
+  "running entirely on your own machine", and the demo heading's "no signup".
+  All now describe the optional local account / hosted-generation reality,
+  and the landing F-01 guard enumerates every retired phrase.
+- **Settled decision**: the "Runs 100% on your computer" hero badge stays
+  retired permanently — false while generation is hosted on the user's key.
+  The e2e guard enforces it.
+- One landing copy file you may care about: `sections/demo.tsx` heading is
+  now "Ask UAA about any stock — right here, right now."
+
 Status: migration complete on `f22/day-change` (commits prefixed `ai: `).
 Unit suite green (2691 passed / 3 live-gated skips), `tsc` clean except your
 in-progress `app/settings/account/page.tsx` (see §3).
