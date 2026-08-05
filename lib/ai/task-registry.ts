@@ -183,6 +183,7 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     jsonMode: true,
     maxTokens: 2048,
     timeoutMs: 300_000,
+    devinTimeoutMs: 300_000, // tranche 7 — tail-based
   },
 
   /* ---- Standard: substantive research the user is waiting on -------------- */

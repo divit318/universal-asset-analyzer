@@ -88,6 +88,19 @@ export function extractJsonObject<T extends Record<string, unknown>>(
   } catch {
     return { ...defaults };
   }
+  return coerceParsedObject(parsed, defaults);
+}
+
+/**
+ * The coercion half of {@link extractJsonObject}, for callers that already
+ * hold a parsed value (the analysis seam delivers objects, not strings).
+ * Same guarantees: every top-level key present, array-ness preserved,
+ * defaults on any non-object input.
+ */
+export function coerceParsedObject<T extends Record<string, unknown>>(
+  parsed: unknown,
+  defaults: T,
+): T {
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     return { ...defaults };
   }
