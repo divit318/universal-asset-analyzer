@@ -141,7 +141,9 @@ function buildMovementPrompt(
 
   const moveDesc =
     evidence.changePercent != null
-      ? `${evidence.changePercent >= 0 ? "+" : ""}${evidence.changePercent.toFixed(2)}% over the last ${windowDays ?? 5} trading days`
+      ? `${evidence.changePercent >= 0 ? "+" : ""}${evidence.changePercent.toFixed(2)}% ${
+          (windowDays ?? 5) <= 1 ? "in the latest session" : `over the last ${windowDays ?? 5} trading days`
+        }`
       : "no reliable price history available";
 
   const volumeDesc =
@@ -216,7 +218,15 @@ export async function explainMovement(
       getHistory(subject, Math.max(windowDays + 5, 30)),
       getCompanyNews(subject, 6).catch(() => []),
     ]);
-    changePercent = windowReturn(history, windowDays) ?? quote?.changePercent ?? null;
+    // A 1-day window is the canonical quote day-change (lib/day-change), never
+    // history bars — daily bars lag/exclude the live session, which is how the
+    // explainer once said "slipped 0.15%" beside a quote header reading -0.29%
+    // for the same stock (audit F-10/F-22a). Multi-day windows are a genuinely
+    // different quantity (close-to-close window return) and keep the bars.
+    changePercent =
+      windowDays <= 1
+        ? quote?.changePercent ?? windowReturn(history, windowDays) ?? null
+        : windowReturn(history, windowDays) ?? quote?.changePercent ?? null;
     volumeAnomalyPct = volumeAnomaly(history);
     news = companyNews.map((n) => ({ headline: n.headline, publishedAt: n.publishedAt, summary: n.summary }));
 

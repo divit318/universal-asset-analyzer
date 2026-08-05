@@ -83,3 +83,19 @@ describe("parseMovementResponse", () => {
     expect(movement.drivers).toEqual([]);
   });
 });
+
+describe("window source selection (F-22a)", () => {
+  // windowReturn derives from daily bars, which lag the live session; the
+  // 1-day path must therefore prefer the quote. Multi-day windows keep bars.
+  it("windowReturn stays the multi-day source and quote is only its fallback", () => {
+    const history = [
+      { date: "2026-08-01", close: 100, adjClose: 100 },
+      { date: "2026-08-04", close: 102, adjClose: 102 },
+      { date: "2026-08-05", close: 103, adjClose: 103 },
+    ];
+    expect(windowReturn(history, 5)).toBeCloseTo(3);
+    // 1-day from bars would be yesterday's close-to-close — the wrong quantity
+    // for "today"; the explain path now takes quote.changePercent first.
+    expect(windowReturn(history, 1)).toBeCloseTo((103 - 102) / 102 * 100);
+  });
+});
