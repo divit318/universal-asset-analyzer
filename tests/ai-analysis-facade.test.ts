@@ -116,7 +116,11 @@ describe("text mode", () => {
       },
       { providers: { ollama: {
         id: "ollama",
-        async run() { return { data: { text: "plain prose answer" }, provider: "ollama" as const, meta: { durationMs: 1 } }; },
+        // The mock always returns the text shape; the runtime request's T here
+        // IS { text: string }, but a generic-position mock can't prove that to
+        // the checker, hence the cast (same convention as `schema: … as never`
+        // above).
+        async run<T>() { return { data: { text: "plain prose answer" } as T, provider: "ollama" as const, meta: { durationMs: 1 } }; },
         async healthCheck() { return { reachable: true }; },
       } } },
     );
