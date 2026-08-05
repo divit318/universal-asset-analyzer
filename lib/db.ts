@@ -444,6 +444,34 @@ function getDb(): DatabaseSync {
     CREATE INDEX IF NOT EXISTS idx_ai_result_subject
       ON ai_result (analysis_type, subject_key, created_at DESC);
 
+    /* AI call ledger (lib/ai/telemetry.ts is the only intended writer): one row
+     * per provider ATTEMPT — including failures — so latency, fallback depth,
+     * token spend, prompt-cache hits and estimated cost are queryable instead
+     * of scrolling past in server logs. This is the measuring instrument the
+     * routing/caching/tiering policies are tuned against; costs are estimates
+     * (registry pricing × reported usage), never billing truth. */
+    CREATE TABLE IF NOT EXISTS ai_call (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      at                    INTEGER NOT NULL,
+      task_type             TEXT NOT NULL,
+      provider              TEXT NOT NULL,
+      model                 TEXT NOT NULL,
+      outcome               TEXT NOT NULL,
+      streamed              INTEGER NOT NULL DEFAULT 0,
+      attempt               INTEGER NOT NULL DEFAULT 1,
+      duration_ms           INTEGER,
+      queue_ms              INTEGER,
+      ttft_ms               INTEGER,
+      prompt_tokens         INTEGER,
+      completion_tokens     INTEGER,
+      cache_creation_tokens INTEGER,
+      cache_read_tokens     INTEGER,
+      cost_usd              REAL,
+      message               TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_call_at   ON ai_call (at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ai_call_task ON ai_call (task_type, at DESC);
+
     /* Local account (lib/auth.ts). This is a single-user, local-first product:
      * the "account" exists so the terminal can greet its owner, protect the
      * demo flow (UAA_AUTH_GATE=on), and hold profile fields — it is not a
@@ -3467,6 +3495,85 @@ export function putAiResult(
   db.prepare(
     `DELETE FROM ai_result WHERE analysis_type = ? AND subject_key = ? AND input_hash != ? AND created_at < ?`,
   ).run(key.analysisType, key.subjectKey, key.inputHash, Date.now() - 7 * 24 * 60 * 60 * 1000);
+}
+
+/* ── AI call ledger (lib/ai/telemetry.ts is the only intended caller) ────── */
+
+export interface AiCallRecord {
+  at: number;
+  taskType: string;
+  provider: string;
+  model: string;
+  /** Routing outcome — mirrors lib/ai/log.ts AiLogCategory ("success", "timeout", …). */
+  outcome: string;
+  streamed: boolean;
+  /** 1-based position in the fallback chain (1 = first-choice model answered). */
+  attempt: number;
+  durationMs?: number;
+  queueMs?: number;
+  /** Streaming only: milliseconds from attempt start to the first answer delta. */
+  ttftMs?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  /** Estimated from registry pricing × reported usage — an estimate, not billing truth. */
+  costUsd?: number;
+  /** Failure detail (error message), null on success. */
+  message?: string;
+}
+
+/** How long ledger rows are kept. Long enough for month-over-month spend review. */
+const AI_CALL_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+
+export function insertAiCall(row: AiCallRecord): void {
+  const db = getDb();
+  db.prepare(
+    `INSERT INTO ai_call (at, task_type, provider, model, outcome, streamed, attempt,
+       duration_ms, queue_ms, ttft_ms, prompt_tokens, completion_tokens,
+       cache_creation_tokens, cache_read_tokens, cost_usd, message)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    row.at, row.taskType, row.provider, row.model, row.outcome, row.streamed ? 1 : 0, row.attempt,
+    row.durationMs ?? null, row.queueMs ?? null, row.ttftMs ?? null,
+    row.promptTokens ?? null, row.completionTokens ?? null,
+    row.cacheCreationTokens ?? null, row.cacheReadTokens ?? null,
+    row.costUsd ?? null, row.message ?? null,
+  );
+  // Same inline-sweep pattern as putAiResult: one indexed DELETE per write
+  // keeps the ledger bounded without a scheduler.
+  db.prepare("DELETE FROM ai_call WHERE at < ?").run(Date.now() - AI_CALL_RETENTION_MS);
+}
+
+interface AiCallDbRow {
+  at: number; task_type: string; provider: string; model: string; outcome: string;
+  streamed: number; attempt: number; duration_ms: number | null; queue_ms: number | null;
+  ttft_ms: number | null; prompt_tokens: number | null; completion_tokens: number | null;
+  cache_creation_tokens: number | null; cache_read_tokens: number | null;
+  cost_usd: number | null; message: string | null;
+}
+
+function mapAiCall(r: AiCallDbRow): AiCallRecord {
+  return {
+    at: r.at, taskType: r.task_type, provider: r.provider, model: r.model, outcome: r.outcome,
+    streamed: r.streamed === 1, attempt: r.attempt,
+    durationMs: r.duration_ms ?? undefined, queueMs: r.queue_ms ?? undefined,
+    ttftMs: r.ttft_ms ?? undefined,
+    promptTokens: r.prompt_tokens ?? undefined, completionTokens: r.completion_tokens ?? undefined,
+    cacheCreationTokens: r.cache_creation_tokens ?? undefined,
+    cacheReadTokens: r.cache_read_tokens ?? undefined,
+    costUsd: r.cost_usd ?? undefined, message: r.message ?? undefined,
+  };
+}
+
+/** Ledger rows newest-first. Aggregation lives in lib/ai/telemetry.ts (pure, testable). */
+export function listAiCalls(opts: { sinceMs?: number; limit?: number } = {}): AiCallRecord[] {
+  const since = opts.sinceMs ?? 0;
+  const limit = Math.min(opts.limit ?? 5000, 20_000);
+  const rows = getDb()
+    .prepare("SELECT * FROM ai_call WHERE at >= ? ORDER BY at DESC LIMIT ?")
+    .all(since, limit) as unknown as AiCallDbRow[];
+  return rows.map(mapAiCall);
 }
 
 /* ── Local account & sessions (lib/auth.ts is the only intended caller) ──── */

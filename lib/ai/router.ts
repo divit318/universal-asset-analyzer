@@ -30,6 +30,7 @@ import { classifyAiError } from "./errors";
 import { acquireGenerationSlot } from "./gate";
 import { isHealthy, markFailure, markSuccess, recentSuccessWithinMs } from "./health";
 import { logAiEvent } from "./log";
+import { recordAiCall } from "./telemetry";
 import {
   fitsInMemory,
   isHostedProvider,
@@ -40,7 +41,7 @@ import {
 } from "./models";
 import { isCallerAbort, isTimeout } from "./aborts";
 import { AnthropicProvider } from "./providers/anthropic-provider";
-import type { AIProvider, ProviderChatTurn, ProviderModelInfo } from "./provider";
+import type { AIProvider, ProviderChatTurn, ProviderModelInfo, ProviderTokenUsage } from "./provider";
 import { normalizeResponse, type AIResponse } from "./response";
 import {
   TASK_REGISTRY,
@@ -506,6 +507,17 @@ export async function route(
           durationMs: Date.now() - attemptStartedAt,
           queueMs: attemptStartedAt - queuedAt,
         });
+        recordAiCall({
+          taskType,
+          provider: provider.id,
+          model,
+          outcome: "success",
+          streamed: false,
+          attempt: considered,
+          durationMs: Date.now() - attemptStartedAt,
+          queueMs: attemptStartedAt - queuedAt,
+          usage: result.tokenUsage,
+        });
         return normalizeResponse({
           content: result.content,
           reasoning: result.reasoning,
@@ -526,6 +538,17 @@ export async function route(
         taskType,
         model,
         coldStart: !warm,
+        durationMs: Date.now() - attemptStartedAt,
+        queueMs: attemptStartedAt - queuedAt,
+        message: err instanceof Error ? err.message : String(err),
+      });
+      recordAiCall({
+        taskType,
+        provider: provider.id,
+        model,
+        outcome: classified.category === "cancelled" ? "cancelled" : classified.category,
+        streamed: false,
+        attempt: considered,
         durationMs: Date.now() - attemptStartedAt,
         queueMs: attemptStartedAt - queuedAt,
         message: err instanceof Error ? err.message : String(err),
@@ -590,8 +613,10 @@ export async function* routeStream(
   const attemptErrors: string[] = [];
   let coldTimeoutFallbacksUsed = 0;
   const MAX_COLD_TIMEOUT_FALLBACKS = 1;
+  let considered = 0;
 
   for await (const { provider, model } of attemptOrder(taskType, task, providers, opts.model)) {
+    considered += 1;
     if (request.signal?.aborted) break;
     let started = false;
     // Local-only, exactly as in route(): the gate, the residency probe and the
@@ -601,6 +626,11 @@ export async function* routeStream(
     const queuedAt = Date.now();
     let warm = true;
     let attemptStartedAt = queuedAt;
+    // Streaming observability: time-to-first-token is measured HERE (first
+    // answer delta out of the provider) and usage arrives via the provider's
+    // end-of-stream callback — a generator has no result object to carry it.
+    let firstDeltaAt: number | null = null;
+    let usage: ProviderTokenUsage | undefined;
     try {
       // Same gate as route(): the deadline must race the model, not the queue.
       // The slot is held for the whole stream — a local daemon is busy until the
@@ -618,11 +648,15 @@ export async function* routeStream(
             signal: request.signal,
             ...settings,
             timeoutMs,
+            onUsage: (u) => {
+              usage = u;
+            },
           },
           request.onReasoning,
         );
 
         for await (const delta of stream) {
+          if (!started) firstDeltaAt = Date.now();
           started = true;
           yield delta;
         }
@@ -636,6 +670,18 @@ export async function* routeStream(
           durationMs: Date.now() - attemptStartedAt,
           queueMs: attemptStartedAt - queuedAt,
         });
+        recordAiCall({
+          taskType,
+          provider: provider.id,
+          model,
+          outcome: "success",
+          streamed: true,
+          attempt: considered,
+          durationMs: Date.now() - attemptStartedAt,
+          queueMs: attemptStartedAt - queuedAt,
+          ttftMs: firstDeltaAt != null ? firstDeltaAt - attemptStartedAt : undefined,
+          usage,
+        });
         return model;
       } finally {
         release?.();
@@ -648,6 +694,19 @@ export async function* routeStream(
         model,
         coldStart: !warm,
         durationMs: Date.now() - attemptStartedAt,
+        message: err instanceof Error ? err.message : String(err),
+      });
+      recordAiCall({
+        taskType,
+        provider: provider.id,
+        model,
+        outcome: classified.category,
+        streamed: true,
+        attempt: considered,
+        durationMs: Date.now() - attemptStartedAt,
+        queueMs: attemptStartedAt - queuedAt,
+        ttftMs: firstDeltaAt != null ? firstDeltaAt - attemptStartedAt : undefined,
+        usage,
         message: err instanceof Error ? err.message : String(err),
       });
 

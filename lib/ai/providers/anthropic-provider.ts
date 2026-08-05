@@ -37,6 +37,7 @@ import type {
   ProviderCompleteResult,
   ProviderHealth,
   ProviderModelInfo,
+  ProviderTokenUsage,
 } from "../provider";
 import { MODEL_REGISTRY } from "../models";
 
@@ -99,6 +100,25 @@ function normalizeSdkError(err: unknown): never {
 }
 
 type Effort = "low" | "medium" | "high";
+
+/**
+ * Map the SDK's usage block onto the platform's provider-agnostic shape.
+ * `input_tokens` is the UNCACHED input; cache writes/reads are billed at
+ * their own rates and reported separately so telemetry can price them.
+ */
+function usageFromMessage(usage: {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number | null;
+  cache_read_input_tokens: number | null;
+}): ProviderTokenUsage {
+  return {
+    promptTokens: usage.input_tokens,
+    completionTokens: usage.output_tokens,
+    cacheCreationTokens: usage.cache_creation_input_tokens ?? undefined,
+    cacheReadTokens: usage.cache_read_input_tokens ?? undefined,
+  };
+}
 
 /** "claude-opus-5-medium" → { model: "claude-opus-5", effort: "medium" }. */
 export function parseModelId(id: string): { model: string; effort: Effort } {
@@ -203,10 +223,7 @@ export class AnthropicProvider implements AIProvider {
     return {
       content,
       reasoning,
-      tokenUsage: {
-        promptTokens: final.usage.input_tokens,
-        completionTokens: final.usage.output_tokens,
-      },
+      tokenUsage: usageFromMessage(final.usage),
     };
   }
 
@@ -234,6 +251,7 @@ export class AnthropicProvider implements AIProvider {
       if (final.stop_reason === "refusal") {
         throw new Error("The model declined this request (safety classifier refusal).");
       }
+      request.onUsage?.(usageFromMessage(final.usage));
     } catch (err) {
       // Pre-first-token failures (auth, rate limit, network) normalize to the
       // platform's typed codes; the Router's "no fallback once output flows"

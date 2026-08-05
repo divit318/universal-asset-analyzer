@@ -85,6 +85,30 @@ export function isHostedProvider(provider: string): boolean {
   return PROVIDER_LOCALITY[provider as ProviderId] === "hosted";
 }
 
+/**
+ * What a model costs on the wire, USD per million tokens. Cache rows follow
+ * the provider's billing split (Anthropic: 5-minute cache writes at 1.25× the
+ * input rate, cache reads at 0.1×). Used by lib/ai/telemetry.ts to estimate
+ * per-call cost — an estimate for tuning and review, never billing truth.
+ */
+export interface ModelPricing {
+  inputPerMTok: number;
+  outputPerMTok: number;
+  cacheWritePerMTok: number;
+  cacheReadPerMTok: number;
+}
+
+/**
+ * Claude Opus 5 list pricing (platform.claude.com/docs/en/about-claude/pricing,
+ * checked 2026-08-06). The effort tiers are one model, so all three share it.
+ */
+const OPUS_5_PRICING: ModelPricing = {
+  inputPerMTok: 5,
+  outputPerMTok: 25,
+  cacheWritePerMTok: 6.25,
+  cacheReadPerMTok: 0.5,
+};
+
 /** What we know about a model, independent of whether it's installed. */
 export interface ModelSpec {
   /** Provider-native id — for Anthropic, `claude-opus-5` plus an effort suffix. */
@@ -128,6 +152,8 @@ export interface ModelSpec {
   enabled: boolean;
   /** One-line positioning shown in the model picker. */
   blurb: string;
+  /** Wire cost, when known. Missing = cost estimation reports null for this model. */
+  pricing?: ModelPricing;
 }
 
 /** Where a provider's models are served from — for display and diagnostics. */
@@ -167,6 +193,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     priority: 0,
     enabled: true,
     blurb: "Deepest reasoning budget. Theses, filings, risk — quality is the product.",
+    pricing: OPUS_5_PRICING,
   },
   {
     id: "claude-opus-5-medium",
@@ -184,6 +211,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     priority: 1,
     enabled: true,
     blurb: "The standard-tier workhorse: substantive analysis at conversational latency.",
+    pricing: OPUS_5_PRICING,
   },
   {
     id: "claude-opus-5-low",
@@ -201,6 +229,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     priority: 2,
     enabled: true,
     blurb: "Fastest tier. Parsing, one-line summaries, interactive Q&A.",
+    pricing: OPUS_5_PRICING,
   },
 ];
 

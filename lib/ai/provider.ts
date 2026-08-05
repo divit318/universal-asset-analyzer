@@ -12,6 +12,22 @@ export interface ProviderChatTurn {
   content: string;
 }
 
+/**
+ * Token accounting for one completion, as reported by the provider.
+ *
+ * The cache fields follow Anthropic's billing split: `promptTokens` is the
+ * UNCACHED input, `cacheCreationTokens` were written to the prompt cache
+ * (billed at the cache-write rate), and `cacheReadTokens` were served from it
+ * (billed at ~10% of the input rate). Providers without a prompt cache simply
+ * leave the cache fields undefined.
+ */
+export interface ProviderTokenUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+}
+
 export interface ProviderCompleteRequest {
   model: string;
   messages: ProviderChatTurn[];
@@ -35,6 +51,13 @@ export interface ProviderCompleteRequest {
    */
   keepAlive?: string;
   signal?: AbortSignal;
+  /**
+   * Streaming only: called once, at end of stream, with the completion's token
+   * usage. `complete()` reports usage on its result instead; a generator has no
+   * result object to carry it, hence the callback. Best-effort — a provider
+   * that doesn't track usage never calls it.
+   */
+  onUsage?: (usage: ProviderTokenUsage) => void;
 }
 
 /** An installed model and what it costs to run. */
@@ -50,7 +73,7 @@ export interface ProviderCompleteResult {
   /** Chain-of-thought trace, when the model emits one and the provider can segregate it. */
   reasoning: string;
   /** Token usage, when the provider reports it. */
-  tokenUsage?: { promptTokens?: number; completionTokens?: number };
+  tokenUsage?: ProviderTokenUsage;
 }
 
 export interface ProviderHealth {

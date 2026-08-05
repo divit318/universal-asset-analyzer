@@ -4,6 +4,8 @@
  * should ever branch on which provider or model answered.
  */
 
+import type { ProviderTokenUsage } from "./provider";
+
 export type ResponseConfidence = "high" | "medium" | "low";
 
 export interface AIResponse {
@@ -16,7 +18,7 @@ export interface AIResponse {
   executionTimeMs: number;
   model: string;
   provider: string;
-  tokenUsage?: { promptTokens?: number; completionTokens?: number };
+  tokenUsage?: ProviderTokenUsage;
   /** Non-fatal issues surfaced during routing (e.g. "fell back from qwen3: timeout"). Empty when the first choice succeeded. */
   errors: string[];
   metadata: Record<string, unknown>;
@@ -38,7 +40,7 @@ export function normalizeResponse(opts: {
   model: string;
   provider: string;
   startedAt: number;
-  tokenUsage?: { promptTokens?: number; completionTokens?: number };
+  tokenUsage?: ProviderTokenUsage;
   /** Errors from models that were tried and skipped before this one succeeded. */
   fallbackErrors?: string[];
   metadata?: Record<string, unknown>;
