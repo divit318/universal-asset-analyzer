@@ -136,30 +136,34 @@
   --muted: #99a3b2;
   --faint: #626c7a;
 
-  --brand: #38bdf8;
-  --brand-strong: #0ea5e9;
-  --brand-muted: color-mix(in srgb, var(--brand) 14%, transparent);
+  /* Brand book Phase 1 (docs/brand-guidelines.md §3): brass in, sky-blue out.
+     Brass #C8A96E is 8.77:1 on --background and 8.14:1 on --surface (AAA). */
+  --brand: #c8a96e;
+  --brand-strong: #e2c489;
+  --brand-muted: color-mix(in srgb, var(--brand) 12%, transparent);
 
   /* Legacy chrome accent — now an alias of brand so the ~70 files still using
-     `accent` classes render the same blue as the migrated nav/home/masthead.
+     `accent` classes render the same brass as the migrated nav/home/masthead.
      (Gain/positive semantics use the separate --positive token, unaffected.) */
   --accent: var(--brand);
   --accent-strong: var(--brand-strong);
 
   --positive: #4ade80;
   --negative: #f87171;
-  --warning: #fbbf24;
+  /* Signal orange, not amber — a caution must never read as a brass verdict
+     seal (brand book §3, semantic colors). 8.70:1 on --background. */
+  --warning: #fb923c;
 
   /* Categorical chart palette — deliberately avoids green/red */
   --chart-1: #a855f7; /* purple */
-  --chart-2: #f97316; /* orange */
+  --chart-2: #60a5fa; /* steel — the freed sky-blue hue returns to the data (brand book §3) */
   --chart-3: #2dd4bf; /* teal */
   --chart-4: #f472b6; /* pink */
   --chart-5: #64748b; /* slate */
 
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
   --shadow-popover: 0 12px 32px -8px rgba(0, 0, 0, 0.6), 0 4px 12px -4px rgba(0, 0, 0, 0.5);
-  --shadow-glow-brand: 0 0 0 1px rgba(56, 189, 248, 0.16), 0 8px 24px -8px rgba(56, 189, 248, 0.25);
+  --shadow-glow-brand: 0 0 0 1px rgba(200, 169, 110, 0.16), 0 8px 24px -8px rgba(200, 169, 110, 0.25);
 
   --grid-line: rgba(255, 255, 255, 0.04);
 
@@ -194,9 +198,10 @@
   --muted: #56606f;
   --faint: #8a94a2;
 
-  /* Darker brand/semantic shades for AA contrast on light surfaces */
-  --brand: #0284c7;
-  --brand-strong: #0369a1;
+  /* Darker brass shades for AA contrast on light surfaces — Brass Dark
+     #7A5F33 is 5.98:1 on #ffffff and 5.63:1 on #f7f8fa (brand book §3). */
+  --brand: #7a5f33;
+  --brand-strong: #5f4a26;
   --brand-muted: color-mix(in srgb, var(--brand) 10%, transparent);
 
   /* Legacy chrome accent — aliases brand (see dark block note). */
@@ -205,17 +210,19 @@
 
   --positive: #16a34a;
   --negative: #dc2626;
-  --warning: #d97706;
+  /* Signal orange for light theme MUST be #C2540A (4.60:1 on white, AA);
+     the brighter #EA580C fails at 3.56:1 and is prohibited for text. */
+  --warning: #c2540a;
 
   --chart-1: #9333ea; /* purple */
-  --chart-2: #ea580c; /* orange */
+  --chart-2: #2563eb; /* steel (brand book §3) */
   --chart-3: #0d9488; /* teal */
   --chart-4: #db2777; /* pink */
   --chart-5: #64748b; /* slate */
 
   --shadow-card: 0 1px 2px rgba(16, 23, 34, 0.05), 0 4px 16px -8px rgba(16, 23, 34, 0.12);
   --shadow-popover: 0 12px 32px -8px rgba(16, 23, 34, 0.18), 0 4px 12px -4px rgba(16, 23, 34, 0.12);
-  --shadow-glow-brand: 0 0 0 1px rgba(2, 132, 199, 0.18), 0 8px 24px -8px rgba(2, 132, 199, 0.22);
+  --shadow-glow-brand: 0 0 0 1px rgba(122, 95, 51, 0.18), 0 8px 24px -8px rgba(122, 95, 51, 0.22);
 
   --grid-line: rgba(16, 23, 34, 0.04);
 
@@ -1107,21 +1114,21 @@ body::before {
 }
 
 /* ── IC Report: light-mode WCAG AA overrides (scoped) ─────────────────────
-   The global light-theme accent tokens land below 4.5:1 for normal text
-   (positive 3.3, warning 3.0, brand 4.1). Scoped to the IC Report so other
-   tabs keep their tuned palette; values are the same hues one step darker. */
+   The global light-theme positive/negative land below 4.5:1 for normal text
+   (positive 3.3). Scoped to the IC Report so other tabs keep their tuned
+   palette; values are the same hues one step darker.
+
+   The brand and warning overrides this block used to carry are gone: after
+   the brand book Phase 1 swap the global light tokens already pass AA for
+   normal text (brass #7A5F33 at 5.98:1, signal orange #C2540A at 4.60:1),
+   and a stale override here would render the one blue/amber corner of a
+   brass product. */
 [data-theme="light"] .ic-report-scope {
   /* Override the resolved --color-* aliases: Tailwind's @theme resolves
      var(--positive) at :root, so descendants inherit the substituted value
      and re-declaring the base token alone would not cascade. */
   --positive: #15803d;
   --negative: #b91c1c;
-  --warning: #a16207;
-  --brand: #0369a1;
-  --brand-strong: #075985;
   --color-positive: #15803d; /* 4.5:1 on white */
   --color-negative: #b91c1c; /* 5.9:1 */
-  --color-warning: #a16207;  /* 4.6:1 */
-  --color-brand: #0369a1;    /* 5.0:1 */
-  --color-brand-strong: #075985;
 }

@@ -20,10 +20,20 @@ import { useTheme, type Theme } from "./theme";
  */
 export const CHART_SERIES = [
   "#a855f7", // purple
-  "#f97316", // orange
+  "#60a5fa", // steel — the retired brand sky-blue hue, returned to the data (brand book §3)
   "#14b8a6", // teal
   "#ec4899", // pink
   "#64748b", // slate
+] as const;
+
+/* Steel needs a darker shade on a white canvas (brand book: #2563EB light);
+   the other four slots stay legible on both canvases unswapped. */
+const LIGHT_SERIES = [
+  CHART_SERIES[0],
+  "#2563eb", // steel (light)
+  CHART_SERIES[2],
+  CHART_SERIES[3],
+  CHART_SERIES[4],
 ] as const;
 
 export interface ChartTheme {
@@ -46,8 +56,8 @@ const DARK: ChartTheme = {
   surface: "#131519", // --surface
   positive: "#4ade80",
   negative: "#f87171",
-  warning: "#fbbf24",
-  brand: "#38bdf8",
+  warning: "#fb923c",
+  brand: "#c8a96e",
   series: CHART_SERIES,
   cursorFill: "rgba(255,255,255,0.05)",
   tooltip: {
@@ -68,9 +78,9 @@ const LIGHT: ChartTheme = {
   surface: "#ffffff", // --surface (light)
   positive: "#16a34a",
   negative: "#dc2626",
-  warning: "#d97706",
-  brand: "#0284c7",
-  series: CHART_SERIES,
+  warning: "#c2540a",
+  brand: "#7a5f33",
+  series: LIGHT_SERIES,
   cursorFill: "rgba(16,23,34,0.05)",
   tooltip: {
     background: "#ffffff",
