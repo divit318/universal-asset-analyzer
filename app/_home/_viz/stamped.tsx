@@ -20,9 +20,9 @@ import { formatPercent } from "@/lib/format";
 
 const MINUS = "−";
 
+// formatPercent already signs positives; only the minus glyph needs upgrading.
 function signedPct(value: number, digits = 1): string {
-  const s = formatPercent(value, digits).replace("-", MINUS);
-  return value > 0 ? `+${s}` : s;
+  return formatPercent(value, digits).replace("-", MINUS);
 }
 
 /** "Fri, Aug 1" from a YYYY-MM-DD session date. */
