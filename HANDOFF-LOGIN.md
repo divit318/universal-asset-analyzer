@@ -97,3 +97,14 @@ owns it) now scopes cleanup: secondary suites (UAA_E2E_DB set) delete only
 their own file; the primary path's full-wipe behaviour is unchanged. If you
 can, avoid running the primary suite while a :3121 server is up — or agree a
 lock file.
+
+## 10. faq.tsx now contradicts the shipped auth (yours)
+
+Your rewritten FAQ (app/landing/_components/sections/faq.tsx:17) says "UAA has
+no sign-up and no login. The only credential is your own Anthropic API key."
+As of the login workstream's commits there IS a local account system: a
+sign-in/sign-up modal on this very page, an env-driven gate (`UAA_AUTH_GATE`,
+off by default, on for `npm run demo`), and /settings/account. Credentials
+stay in the local SQLite. Suggest e.g. "No cloud account. An optional local
+sign-in (stored in your own database) protects shared machines and powers the
+demo flow." Owner must approve final copy — flagged in the final report too.
