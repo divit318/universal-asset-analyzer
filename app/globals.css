@@ -246,6 +246,9 @@
 
 html {
   scroll-behavior: smooth;
+  /* The sticky site header is ~57px tall; without scroll padding any anchored
+     or restored scroll position slides page headings underneath it. */
+  scroll-padding-top: 72px;
   /* Prevent the color flash before the no-flash script runs by defaulting
      the canvas to the dark base; the script sets data-theme synchronously. */
   background: var(--background);

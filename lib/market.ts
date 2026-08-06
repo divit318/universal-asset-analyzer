@@ -137,13 +137,17 @@ export function countryForSuggestion(symbol: string, quoteType?: string | null):
   return { code: "US", flag: "🇺🇸" };
 }
 
+/** Region badge labels. Deliberately NOT exchange names for multi-exchange
+ *  regions: the masthead's Exchange field shows the actual primary listing
+ *  (NYSE vs NASDAQ, NSE vs BSE) — a "NYSE / NASDAQ" badge beside an
+ *  "Exchange: NYSE" field claimed two listings where there is one. */
 export const MARKET_LABEL: Record<MarketRegion, string> = {
-  IN:     "NSE / BSE",
+  IN:     "India",
   JP:     "Tokyo",
   HK:     "HKEX",
   AU:     "ASX",
   EU:     "Europe",
-  US:     "NYSE / NASDAQ",
+  US:     "US",
   CRYPTO: "Crypto",
 };
 

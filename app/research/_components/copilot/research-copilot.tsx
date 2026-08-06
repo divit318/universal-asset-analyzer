@@ -85,20 +85,24 @@ export function ResearchCopilot({
         </div>
         <div className="flex items-center gap-2">
           <HealthBadge reachable={reachable} status={status} />
-          <select
-            value={model ?? ""}
-            onChange={(e) => setModel(e.target.value || null)}
-            disabled={installed.length === 0}
-            className="rounded-md border border-border bg-surface-2 px-2 py-1 text-xs text-foreground focus:outline-none disabled:opacity-50"
-            title="Claude effort tier"
-          >
-            {installed.length === 0 ? (
-            <option value="">{reachable ? "No models available" : "AI off — add key in Settings"}</option>
-          ) : null}
-            {installed.map((m) => (
-              <option key={m.id} value={m.id}>{m.label}</option>
-            ))}
-          </select>
+          {/* Model/effort-tier selector is a dev affordance — provider and
+              model names are implementation detail, not product surface. */}
+          {process.env.NODE_ENV !== "production" && (
+            <select
+              value={model ?? ""}
+              onChange={(e) => setModel(e.target.value || null)}
+              disabled={installed.length === 0}
+              className="rounded-md border border-border bg-surface-2 px-2 py-1 text-xs text-foreground focus:outline-none disabled:opacity-50"
+              title="Model effort tier"
+            >
+              {installed.length === 0 ? (
+              <option value="">{reachable ? "No models available" : "AI off — add key in Settings"}</option>
+            ) : null}
+              {installed.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </select>
+          )}
           {messages.length > 0 ? (
             <button onClick={reset} className="rounded-md border border-border px-2 py-1 text-xs text-muted hover:text-foreground" title="New conversation">
               Clear
@@ -111,7 +115,9 @@ export function ResearchCopilot({
           capital allocation, etc.); hidden for funds and other non-equity
           classes where none of these 15 prompts apply. */}
       {isEquity ? (
-        <div className="flex gap-2 overflow-x-auto border-b border-border px-4 py-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        // Horizontal scroll with a fading right edge, so a chip clipped
+        // mid-word reads as "more to scroll" rather than a rendering bug.
+        <div className="flex gap-2 overflow-x-auto border-b border-border px-4 py-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [mask-image:linear-gradient(to_right,black_calc(100%-2.5rem),transparent)]">
           {RESEARCH_ACTIONS.map((a) => (
             <button
               key={a.id}
@@ -272,16 +278,17 @@ function Hero({
   // (fundamentals/statements/analyst/peers/filings) — showing them as
   // "missing" for a fund would misleadingly read as fetch failures rather
   // than "not applicable to this asset class", so only equities get them.
-  const coverageItems = coverage && isEquity
-    ? [
+  const coverageItems = (coverage && isEquity
+    ? ([
         ["Fundamentals", coverage.hasFundamentals],
         ["Statements", coverage.hasStatements],
         ["Analyst", coverage.hasAnalyst],
         ["Peers", coverage.hasPeers],
-        [`Filings (${coverage.filings})`, coverage.filings > 0],
-        [`News (${coverage.news})`, coverage.news > 0],
-      ] as [string, boolean][]
-    : [];
+        [`Filings (${coverage.filings ?? 0})`, (coverage.filings ?? 0) > 0],
+        [`News (${coverage.news ?? 0})`, (coverage.news ?? 0) > 0],
+      ] as [string, boolean][])
+    : []
+  ).filter(([label]) => Boolean(label));
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-4 py-6 text-center">

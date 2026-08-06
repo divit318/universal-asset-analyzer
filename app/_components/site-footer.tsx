@@ -31,12 +31,6 @@ export function SiteFooter() {
       <div className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center gap-x-3 gap-y-1 px-6 py-4">
         <BrandMark size="xs" className="text-muted" />
         <span className="text-micro font-medium text-muted">Universal Asset Analyzer</span>
-        <span aria-hidden="true" className="text-micro text-border-strong">
-          ·
-        </span>
-        <span className="text-micro text-faint">
-          Your data lives in a local database. AI narration uses your Anthropic key.
-        </span>
       </div>
     </footer>
   );

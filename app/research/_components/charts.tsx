@@ -19,6 +19,8 @@ import {
 } from "recharts";
 import type { FinancialStatements, PeerComparison } from "@/lib/types";
 import { useChartTheme } from "@/app/_components/chart-theme";
+import { niceTicks } from "@/lib/chart-scale";
+import { sectorGroup } from "@/lib/sector";
 
 /* Categorical/semantic series colors — theme-neutral. Structural axis/grid/
    tooltip come from useChartTheme() inside each component (light-mode aware). */
@@ -34,7 +36,7 @@ function map(points: { fy: number; value: number }[]): Map<number, number> {
 /* Margin trend (gross / operating / net)                                     */
 /* -------------------------------------------------------------------------- */
 
-export function MarginTrendChart({ statements }: { statements: FinancialStatements }) {
+export function MarginTrendChart({ statements, sector }: { statements: FinancialStatements; sector?: string | null }) {
   const ct = useChartTheme();
   const AXIS = ct.axis, GRID = ct.grid, tooltipStyle = ct.tooltip;
   const gm = map(statements.grossMargin);
@@ -43,25 +45,69 @@ export function MarginTrendChart({ statements }: { statements: FinancialStatemen
   const pct = (m: Map<number, number>, fy: number) =>
     m.has(fy) ? +(m.get(fy)! * 100).toFixed(1) : null;
 
+  // Gross margin is not a meaningful metric for a lender/insurer (revenue is
+  // interest income, not goods sold) — the metric set is sector-aware.
+  const includeGross = sectorGroup(sector) !== "financials";
+
   const data = statements.fiscalYears.map((fy) => ({
     year: `FY${String(fy).slice(-2)}`,
-    Gross: pct(gm, fy),
+    ...(includeGross ? { Gross: pct(gm, fy) } : {}),
     Operating: pct(om, fy),
     Net: pct(nm, fy),
   }));
 
+  // Only series that actually carry data render — a legend entry with no
+  // visible line reads as a rendering bug.
+  const series = [
+    ...(includeGross && data.some((d) => (d as Record<string, number | string | null>).Gross != null)
+      ? [{ key: "Gross", color: POSITIVE }]
+      : []),
+    ...(data.some((d) => d.Operating != null) ? [{ key: "Operating", color: BLUE }] : []),
+    ...(data.some((d) => d.Net != null) ? [{ key: "Net", color: AMBER }] : []),
+  ];
+  if (series.length === 0) return null;
+
+  // Fit the axis to the data (± padding) instead of always spanning 0–max:
+  // a flat 22% net margin plotted on a 0–28% axis wastes most of the panel.
+  const values = data.flatMap((d) =>
+    series.map((s) => (d as Record<string, number | string | null>)[s.key]).filter((v): v is number => typeof v === "number"),
+  );
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  const pad = Math.max((hi - lo) * 0.25, 1.5);
+  // Don't extend below zero for all-positive margins; never clip a real loss.
+  const floor = lo >= 0 ? Math.max(0, lo - pad) : lo - pad;
+  const ticks = niceTicks(floor, hi + pad, 5);
+
+  const subtitle = `${series.map((s) => s.key).join(" / ")}, % of revenue${includeGross ? "" : " (gross margin omitted — not meaningful for financials)"}`;
+
   return (
-    <ChartFrame title="Margin trend" subtitle="Gross / operating / net, % of revenue">
+    <ChartFrame title="Margin trend" subtitle={subtitle}>
       <ResponsiveContainer width="100%" height={240}>
         <AreaChart data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
           <CartesianGrid stroke={GRID} vertical={false} />
           <XAxis dataKey="year" stroke={AXIS} tick={{ fontSize: 12 }} />
-          <YAxis stroke={AXIS} tick={{ fontSize: 12 }} unit="%" />
+          <YAxis
+            stroke={AXIS}
+            tick={{ fontSize: 12 }}
+            unit="%"
+            ticks={ticks}
+            domain={ticks.length >= 2 ? [ticks[0], ticks[ticks.length - 1]] : undefined}
+          />
           <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${v}%`} />
           <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Area type="monotone" dataKey="Gross" stroke={POSITIVE} fill={POSITIVE} fillOpacity={0.12} strokeWidth={2} connectNulls />
-          <Area type="monotone" dataKey="Operating" stroke={BLUE} fill={BLUE} fillOpacity={0.12} strokeWidth={2} connectNulls />
-          <Area type="monotone" dataKey="Net" stroke={AMBER} fill={AMBER} fillOpacity={0.12} strokeWidth={2} connectNulls />
+          {series.map((s) => (
+            <Area
+              key={s.key}
+              type="monotone"
+              dataKey={s.key}
+              stroke={s.color}
+              fill={s.color}
+              fillOpacity={0.12}
+              strokeWidth={2}
+              connectNulls
+            />
+          ))}
         </AreaChart>
       </ResponsiveContainer>
     </ChartFrame>

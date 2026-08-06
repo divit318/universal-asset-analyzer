@@ -29,6 +29,7 @@ interface GraphEdgeLite {
   target: string;
   type: string;
   label: string;
+  strength?: number | null;
 }
 
 const TYPE_ICON: Record<string, string> = {
@@ -75,7 +76,16 @@ export function GraphPreviewCard({ symbol }: { symbol: string }) {
       const edge = edges.find(
         (e) => (e.source === companyId && e.target === n.id) || (e.target === companyId && e.source === n.id),
       );
-      return { node: n, relationship: edge?.label ?? null };
+      return { node: n, edge, relationship: edge?.label ?? null };
+    })
+    // Only entities DIRECTLY connected to this company belong in a compact
+    // "Related Entities" list. Market events that merely share the sector
+    // (edge strength < 60 — e.g. a bond-market story tagged "Financials")
+    // are graph context, not company relevance; the full graph still has them.
+    .filter(({ node, edge }) => {
+      if (!edge) return false;
+      if (node.type === "market_event" && (edge.strength ?? 0) < 60) return false;
+      return true;
     })
     .sort((a, b) => b.node.importance - a.node.importance)
     .slice(0, 8);
