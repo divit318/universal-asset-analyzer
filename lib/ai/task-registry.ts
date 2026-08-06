@@ -250,6 +250,7 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     // the 2048-token generation cap, the window was silently overflowing and
     // shifting the oldest prompt tokens (the instructions) out of context.
     contextTokens: 8_192,
+    devinTimeoutMs: 300_000, // tranche 8 (scanner) — tail-based
   },
   "timeline-analysis": {
     complexity: "standard",

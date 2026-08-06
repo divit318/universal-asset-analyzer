@@ -39,6 +39,7 @@ import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
 import { logPipeline, timeStage } from "../debug-pipeline";
 import { runStagedPipeline, type StageDef } from "../platform/runner";
 import { describeError, scannerPrompt, type ScanRunContext } from "./llm";
+import { EmergingThemesWireSchema, RiskAlertsWireSchema } from "../ai/schemas/scanner";
 import type {
   ScannerResult,
   ScannerProgressEvent,
@@ -160,7 +161,11 @@ ${JSON_SCHEMA_LEAD_IN}
 }`;
 
   try {
-    const raw = await scannerPrompt(run, "opportunity-engine", prompt, { maxTokens: 1200 });
+    const raw = await scannerPrompt(run, "opportunity-engine", prompt, {
+      maxTokens: 1200,
+      wire: EmergingThemesWireSchema,
+      stage: "themes",
+    });
     const parsed = extractJsonObject(raw, { themes: [] as unknown[] });
     const themes = parsed.themes.map(sanitizeTheme).filter((t): t is RawEmergingTheme => t !== null);
     return themes.map((t) => ({
@@ -239,7 +244,11 @@ ${JSON_SCHEMA_LEAD_IN}
 }`;
 
   try {
-    const raw = await scannerPrompt(run, "opportunity-engine", prompt, { maxTokens: 800 });
+    const raw = await scannerPrompt(run, "opportunity-engine", prompt, {
+      maxTokens: 800,
+      wire: RiskAlertsWireSchema,
+      stage: "risk-alerts",
+    });
     const parsed = extractJsonObject(raw, { alerts: [] as unknown[] });
     const alerts = parsed.alerts.map(sanitizeRiskAlert).filter((a): a is Omit<RiskAlert, "id"> => a !== null);
     return alerts.slice(0, 3).map((a) => ({

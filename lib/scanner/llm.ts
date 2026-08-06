@@ -22,7 +22,10 @@
  *                  list — misses naturally. Failures are never cached.
  */
 
-import { runPrompt } from "../ai";
+import type { z } from "zod";
+import { runAnalysis } from "../ai/analysis";
+import { resolveProvider } from "../ai/analysis-provider";
+import { LooseObjectSchema } from "../ai/schemas/loose";
 import { getScannerCache, putScannerCache } from "../db";
 import type { TaskType } from "../ai/task-registry";
 
@@ -75,7 +78,7 @@ export async function scannerPrompt(
   run: ScanRunContext | undefined,
   taskType: TaskType,
   prompt: string,
-  opts: { maxTokens?: number } = {},
+  opts: { maxTokens?: number; wire?: z.ZodType<unknown>; stage?: string } = {},
 ): Promise<string> {
   // The pin is resolved FOR opportunity-engine; other tasks (investment-thesis
   // is `deep` and must keep its reasoning-capable routing) auto-route.
@@ -87,13 +90,65 @@ export async function scannerPrompt(
     if (cached !== null) return cached;
   }
 
-  const raw = await runPrompt(taskType, prompt, {
-    maxTokens: opts.maxTokens,
-    json: true,
+  // Through the analysis seam (tranche 8), keeping this wrapper's STRING
+  // contract: the seam's object is re-serialized so every stage's existing
+  // extractJsonObject + sanitizer parsing — and every previously cached raw
+  // response — keeps working unchanged. The wire schema is what sessions
+  // enforce server-side; the token stack ignores it.
+  const analysis = await runAnalysis({
+    taskType,
+    subjectKey: `scanner:${opts.stage ?? taskType}`,
+    prompt,
+    schema: LooseObjectSchema,
+    wireSchema: opts.wire ?? LooseObjectSchema,
+    schemaVersion: SCANNER_SEAM_VERSION,
     model,
     signal: run?.signal,
   });
+  const raw = JSON.stringify(analysis.data);
   // Never cache a failure — and an empty answer is a failure in JSON mode.
   if (CACHE_ENABLED && raw.trim().length > 0) putScannerCache(cacheKey, raw, PROMPT_CACHE_TTL_MS);
   return raw;
+}
+
+/**
+ * Version participating in scanner idempotency keys. Bump when the seam-side
+ * treatment of scanner responses changes shape.
+ */
+const SCANNER_SEAM_VERSION = 1;
+
+/**
+ * How many per-item calls a stage may run at once. Sequential dispatch exists
+ * because Ollama serializes generations (see the pin note above); Devin
+ * sessions run genuinely in parallel (validated to 40 concurrent, zero 429s —
+ * ai-migration/05 amendment 2), so the loops open up when the pipeline's
+ * tasks resolve there.
+ */
+export function scannerFanout(): number {
+  return resolveProvider("opportunity-engine") === "devin"
+    ? Math.max(1, Number(process.env.SCANNER_FANOUT) || 8)
+    : 1;
+}
+
+/**
+ * Order-preserving bounded-concurrency map for stage item loops. Results land
+ * at their input index regardless of completion order, so downstream logic
+ * (and progress totals) see exactly what the sequential loop produced.
+ */
+export async function mapWithFanout<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return out;
 }

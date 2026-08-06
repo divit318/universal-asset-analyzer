@@ -12,6 +12,7 @@
 
 import { describeError, scannerPrompt, type ScanRunContext } from "./llm";
 import { extractJsonObject } from "../json-extract";
+import { CompanyMatchesWireSchema } from "../ai/schemas/scanner";
 import { getFreshFundamentals } from "../db";
 import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
 import { logPipeline } from "../debug-pipeline";
@@ -195,7 +196,11 @@ export async function buildCompanyOpportunities(
       promptChars: prompt.length,
     });
     try {
-      const raw = await scannerPrompt(run, "opportunity-engine", prompt, { maxTokens: 1500 });
+      const raw = await scannerPrompt(run, "opportunity-engine", prompt, {
+        maxTokens: 1500,
+        wire: CompanyMatchesWireSchema,
+        stage: "company-impact",
+      });
       const parsed = extractJsonObject(raw, { matches: [] as unknown[] });
       matches = parsed.matches.map(sanitizeMatch).filter((m): m is CompanyMatchRaw => m !== null);
       logPipeline({
