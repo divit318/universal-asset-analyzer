@@ -17,7 +17,7 @@ import { getFundamentalsTimeSeries, getHistory } from "./yahoo";
 import { assessRisks, classifyInvestmentPersonality, computeMomentum, computeScore } from "./scoring";
 import { detectMarket } from "./market";
 import { getLatestSectorRotation, findSectorRotationEntry } from "./sector-rotation";
-import type { FinancialStatements, FundamentalsData, HistoryPoint, ValuationPoint } from "./types";
+import type { FundamentalsData, HistoryPoint, ValuationPoint } from "./types";
 
 /* -------------------------------------------------------------------------- */
 /* Valuation history helpers                                                  */
