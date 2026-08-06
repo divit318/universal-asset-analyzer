@@ -22,6 +22,16 @@ export function FinancialInsightCard({ symbol, snapshot, statements, score }: Pr
   const [model, setModel] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The "Analyzing…" affordance gets a hard 10s deadline; past it the
+  // container unmounts instead of spinning forever. The generation continues
+  // in the background and the insight mounts whenever it lands.
+  const [timedOut, setTimedOut] = useState(false);
+
+  useEffect(() => {
+    if (!loading) return;
+    const timer = setTimeout(() => setTimedOut(true), 10_000);
+    return () => clearTimeout(timer);
+  }, [loading]);
 
   const abortRef = useRef<AbortController | null>(null);
   /** Symbol whose auto-generation has already been started. */
@@ -102,28 +112,21 @@ export function FinancialInsightCard({ symbol, snapshot, statements, score }: Pr
     );
   }
 
+  // Failed or past the deadline → no container at all. An "unavailable" box
+  // or an eternal spinner both read as broken; absence doesn't.
+  if (error || (loading && timedOut)) return null;
+  if (!loading) return null;
+
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border px-4 py-3">
-      <span className="text-xs text-muted/60">
-        {loading ? "AI is interpreting the financial trend…" : "AI interpretation unavailable"}
-      </span>
-      {!loading ? (
-        <button
-          onClick={() => void regenerate()}
-          className="shrink-0 rounded-lg border border-border bg-surface px-3 py-1.5 text-[11px] font-medium transition-colors hover:border-accent/40 hover:text-accent"
-        >
-          {error ? "Retry" : "Generate AI Insight"}
-        </button>
-      ) : (
-        <span className="flex items-center gap-1.5 text-xs text-accent/70">
-          <span className="relative flex h-1.5 w-1.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
-            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
-          </span>
-          Analyzing…
+      <span className="text-xs text-muted/60">AI is interpreting the financial trend…</span>
+      <span className="flex items-center gap-1.5 text-xs text-accent/70">
+        <span className="relative flex h-1.5 w-1.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
         </span>
-      )}
-      {error && <p className="text-[10px] text-negative">{error}</p>}
+        Analyzing…
+      </span>
     </div>
   );
 }

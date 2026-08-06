@@ -35,8 +35,8 @@ import {
   formatCompactCurrency,
   formatCurrency,
   formatDate,
-  formatNumber,
   formatPercent,
+  formatRatio,
 } from "@/lib/format";
 
 // Universal components
@@ -76,8 +76,6 @@ import { RelatedOpportunitiesCard } from "./_components/related-opportunities-ca
 import { AddToPortfolioModal } from "@/app/_components/portfolio/add-to-portfolio-modal";
 
 // Fundamentals sub-components (US / global equity)
-import { ScoreCard } from "./_components/score-card";
-import { RiskHeatmap } from "./_components/risk-heatmap";
 import { AnalystCard } from "./_components/analyst-card";
 import { InsiderTable } from "./_components/insider-table";
 import { OwnershipCard } from "./_components/ownership-card";
@@ -112,7 +110,7 @@ import { AiForexInsight } from "./forex/_components/ai-forex-insight";
 // underlyings, not a distinct detected asset class (see lib/derivatives-analysis.ts).
 import { DerivativesSummaryCard } from "./derivatives/_components/derivatives-summary-card";
 import { AiDerivativesInsight } from "./derivatives/_components/ai-derivatives-insight";
-import type { DerivativesSummary } from "@/lib/derivatives-analysis";
+import { isDerivativesSummaryComplete, type DerivativesSummary } from "@/lib/derivatives-analysis";
 
 // Macro-specific components (conditionally rendered) — Research Hub Phase 6.
 // No score card: a yield curve has no BUY/SELL call (see lib/macro-analysis.ts).
@@ -717,7 +715,7 @@ function ResearchWorkspace({
         ["YTD return",     formatPercent(quote.ytdReturn, 1)],
         // A fund's trailing P/E is the weighted P/E of what it holds — the
         // label says so, so it isn't mistaken for a valuation of the fund itself.
-        ["P/E (holdings)", quote.peRatio != null ? formatNumber(quote.peRatio) : "—"],
+        ["P/E (holdings)", formatRatio(quote.peRatio)],
         ["52-week range",  fiftyTwoWeekRange],
         ["Previous NAV",   formatCurrency(quote.previousClose, quote.currency)],
         ["Exchange",       quote.exchange ?? "—"],
@@ -735,7 +733,7 @@ function ResearchWorkspace({
           // Yahoo reports market cap in the listing currency — a hardcoded "$"
           // mislabels every Indian/Japanese/European name by orders of magnitude.
           ["Market cap",    formatCompactCurrency(quote.marketCap, quote.currency)],
-          ["P/E ratio",     quote.peRatio != null ? formatNumber(quote.peRatio) : "—"],
+          ["P/E ratio",     formatRatio(quote.peRatio)],
           ["Day range",     `${formatCurrency(quote.dayLow, quote.currency)} – ${formatCurrency(quote.dayHigh, quote.currency)}`],
           ["52-week range", fiftyTwoWeekRange],
           ["Volume",        quote.volume != null ? formatCompact(quote.volume) : "—"],
@@ -898,61 +896,74 @@ function ResearchWorkspace({
 
       {/* ── 2b. Identity strip: personality badge + research confidence ── */}
       {isEquity && (
-        <Reveal index={1} className="flex flex-wrap items-center gap-3">
-          <InvestmentPersonalityBadge personality={fundamentals?.personality ?? null} loading={fundsLoading} />
+        <Reveal index={1} className="flex flex-wrap items-stretch gap-3">
+          <div className="flex items-center">
+            <InvestmentPersonalityBadge personality={fundamentals?.personality ?? null} loading={fundsLoading} />
+          </div>
           <div className="min-w-[220px] flex-1">
-            <ResearchConfidenceMeter symbol={quote.symbol} />
+            <ResearchConfidenceMeter
+              fundamentals={fundamentals ?? null}
+              fundamentalsLoading={fundsLoading}
+              peers={peers ?? null}
+              peersLoading={peersEntry.status === "loading"}
+              filingsCount={filings.length}
+              newsCount={news?.length ?? 0}
+            />
           </div>
         </Reveal>
       )}
 
       {/* ── 3. AI Decision Hero — the primary answer ────────────── */}
-      {/* For Indian stocks the numeric confidence comes from the screener.in
-          snapshot, never the Yahoo composite, so the hero and the Investment
-          Snapshot below always agree. Funds use their own fund score instead
-          of the (equity-only, always-null-for-funds) fundamentals score. */}
+      {/* The hero's verdict + headline score are THE canonical call: the same
+          ScoreResult the Conviction tab renders (screener.in snapshot for
+          Indian stocks, the asset-class scorer otherwise). Macro has no score
+          — the hero falls back to the AI's growth-outlook word there. */}
       <Reveal index={2}>
-        <DecisionHero
-          verdict={verdict}
-          loading={verdict == null && verdictStream.status !== "error"}
-          received={verdictStream.received}
-          streaming={verdictStream.streaming}
-          elapsedMs={verdictStream.elapsedMs}
-          error={verdictStream.error}
-          onRetry={verdictStream.retry}
-          score={isIndiaEquity || isMacro ? null : isFund ? fundScore : isCrypto ? cryptoScore : isCommodity ? commodityScore : isForex ? forexScore : fundamentals?.score ?? null}
-          confidenceOverride={isIndiaEquity ? indiaSnapshot?.composite ?? null : null}
-        />
+        {(() => {
+          const heroScoreResult = isIndiaEquity || isMacro
+            ? null
+            : isFund ? fundScore : isCrypto ? cryptoScore : isCommodity ? commodityScore : isForex ? forexScore : fundamentals?.score ?? null;
+          const headlineScore = isIndiaEquity
+            ? (indiaSnapshot ? { composite: indiaSnapshot.composite, recommendation: indiaSnapshot.recommendation } : null)
+            : heroScoreResult
+              ? { composite: heroScoreResult.composite, recommendation: heroScoreResult.recommendation }
+              : null;
+          return (
+            <DecisionHero
+              verdict={verdict}
+              loading={verdict == null && verdictStream.status !== "error"}
+              received={verdictStream.received}
+              streaming={verdictStream.streaming}
+              elapsedMs={verdictStream.elapsedMs}
+              error={verdictStream.error}
+              onRetry={verdictStream.retry}
+              headlineScore={headlineScore}
+              dataConfidence={heroScoreResult?.confidence ?? null}
+            />
+          );
+        })()}
       </Reveal>
 
-      {/* ── 3a-bis. Valuation strip — read-only. Research observes, Valuation judges:
-          the case is displayed here and edited only in the workspace, so there is
-          never a second editable copy of the one intrinsic value.
+      {/* ── Two-column layout on very wide viewports (≥1600px): the evidence
+             column (valuation, chart, tabs) sits left, the context rail (why
+             now, macro, portfolio fit, sector) sits right — halving the scroll
+             height. Below 1600px everything stacks in one column. ── */}
+      <div className="grid min-w-0 gap-5 min-[1600px]:grid-cols-[minmax(0,1fr)_400px] min-[1600px]:items-start">
+      <div className="flex min-w-0 flex-col gap-5 min-[1600px]:order-2">
 
-          Equities only, because the case is a free-cash-flow model — but that
-          includes Indian listings: the valuation layer sources them from Yahoo
-          (not screener.in, which reports neither free cash flow nor a share
-          count) and is already region-aware, using the India risk-free rate, ERP
-          and terminal growth. Names with no reported FCF get an explicit "cannot
-          be valued" message rather than a hidden strip. ── */}
-      {isEquity ? (
-        <Reveal index={3}>
-          <ValuationStrip symbol={quote.symbol} price={quote.price ?? null} />
-        </Reveal>
-      ) : null}
-
-      {/* ── 3b. Why Now — biggest current catalysts, composed from data already on the page ── */}
+      {/* ── 3b. Why Now — timing context that appears nowhere else on the page ── */}
       <Reveal index={3}>
         <WhyNowCard
-          verdict={verdict}
           sectorEntry={sectorRotationEntry}
           topMovementDriver={movementExplanation?.drivers[0]?.description ?? null}
           nearestTimelineHeadline={nearestTimelineEvent?.title ?? null}
         />
       </Reveal>
 
-      {/* ── 3c. Macro Context — secondary context, collapsed so the answer leads ── */}
-      {isEquity && (
+      {/* ── 3c. Macro Context — secondary context, collapsed so the answer leads.
+             Only mounts once at least one rung has real data; a collapsed bar
+             that expands to three "Unavailable" chips is dead weight. ── */}
+      {isEquity && (sectorRotationEntry || (isIndia ? indiaSnapshot : fundamentals?.score)) && (
         <Reveal index={4}>
           <CollapsibleSection title="Macro context" subtitle="Market · sector · company regime">
             <MacroContextLadder
@@ -1010,6 +1021,25 @@ function ResearchWorkspace({
           <SectorContextCard entry={sectorRotationEntry} />
         </Reveal>
       )}
+
+      </div>{/* end context rail */}
+
+      <div className="flex min-w-0 flex-col gap-5 min-[1600px]:order-1">
+
+      {/* ── 3a. Valuation strip — read-only. Research observes, Valuation judges:
+          the case is displayed here and edited only in the workspace, so there is
+          never a second editable copy of the one intrinsic value.
+
+          Equities only, because the case is a free-cash-flow model — but that
+          includes Indian listings: the valuation layer sources them from Yahoo
+          (not screener.in, which reports neither free cash flow nor a share
+          count) and is already region-aware, using the India risk-free rate, ERP
+          and terminal growth. ── */}
+      {isEquity ? (
+        <Reveal index={3}>
+          <ValuationStrip symbol={quote.symbol} price={quote.price ?? null} />
+        </Reveal>
+      ) : null}
 
       {/* ── 5. Price chart — always visible above tabs ──────────── */}
       <Reveal index={7}>
@@ -1107,9 +1137,8 @@ function ResearchWorkspace({
               <ConvictionBreakdown
                 score={fundamentals?.score ?? null}
                 loading={fundsLoading}
-                verdict={verdict}
                 risks={fundamentals?.risks}
-                onViewRisks={() => setTab("details")}
+                onViewRisks={() => setTab("analysis")}
               />
             </MaterialFade>
           )}
@@ -1193,7 +1222,8 @@ function ResearchWorkspace({
               <LoadingSkeleton />
             ) : fund && fundScore ? (
               <>
-                <FundScoreCard score={fundScore} />
+                {/* FundScoreCard deliberately NOT repeated here — the score
+                    lives on the Conviction tab only. */}
                 <div className="grid gap-4 lg:grid-cols-2">
                   <HoldingsTable holdings={fund.holdings} />
                   <SectorAllocationChart sectorWeights={fund.sectorWeights} />
@@ -1211,7 +1241,6 @@ function ResearchWorkspace({
               <LoadingSkeleton />
             ) : cryptoScore ? (
               <>
-                <CryptoScoreCard score={cryptoScore} />
                 <RelativeStrengthChart symbol={quote.symbol} history={history} benchmarkHistory={btcHistory} benchmarkLabel="BTC" />
                 <RiskProfileCard score={cryptoScore} />
                 <AiCryptoInsight
@@ -1235,7 +1264,6 @@ function ResearchWorkspace({
               <LoadingSkeleton />
             ) : commodityScore ? (
               <>
-                <CommodityScoreCard score={commodityScore} />
                 <RelativeStrengthChart symbol={quote.symbol} history={history} benchmarkHistory={commodityBenchmarkHistory} benchmarkLabel="DBC" />
                 <RiskProfileCard score={commodityScore} />
                 <AiCommodityInsight
@@ -1258,7 +1286,6 @@ function ResearchWorkspace({
               <LoadingSkeleton />
             ) : forexScore ? (
               <>
-                <ForexScoreCard score={forexScore} />
                 <RelativeStrengthChart symbol={quote.symbol} history={history} benchmarkHistory={forexBenchmarkHistory} benchmarkLabel="DXY" />
                 <RiskProfileCard score={forexScore} />
                 <AiForexInsight
@@ -1281,7 +1308,7 @@ function ResearchWorkspace({
               <LoadingSkeleton />
             ) : macroSummary ? (
               <>
-                <YieldCurveCard summary={macroSummary} />
+                {/* YieldCurveCard lives on the Conviction tab only. */}
                 <AiMacroInsight section="curve" resetKey={quote.symbol} summary={macroSummary} />
               </>
             ) : (
@@ -1323,29 +1350,30 @@ function ResearchWorkspace({
               <MaterialFade active={lens.active} verdict={lensFlags.freshFundamentals}>
                 <DataProvenance source="yahoo" asOf={fundamentalsEntry.updatedAt} ttlHours={24} />
               </MaterialFade>
-              <MaterialFade active={lens.active} verdict={lensFlags.dims}>
-                <ScoreCard score={fundamentals.score} momentum={fundamentals.momentum} />
-              </MaterialFade>
+              {/* The conviction block (score ring, pillars, subscores) lives on
+                  the Conviction tab ONLY — it was previously duplicated here. */}
               {hasEarnings && (
                 <MaterialFade active={lens.active} verdict={lensFlags.changes}>
                   <EarningsCard earnings={fundamentals.earnings} />
                 </MaterialFade>
               )}
 
-              {/* Financial charts grid */}
+              {/* Financial charts grid. A resolved-but-empty peer set renders
+                  NOTHING — a permanent "Peer data unavailable" box is worse
+                  than a tighter grid. */}
               <div className="grid gap-4 lg:grid-cols-2">
-                {hasStatements && <MarginTrendChart statements={fundamentals.statements!} />}
+                {hasStatements && <MarginTrendChart statements={fundamentals.statements!} sector={fundamentals.snapshot?.sector} />}
                 {hasStatements && <RevenueFcfChart statements={fundamentals.statements!} />}
                 {valuation.length >= 2 && (
                   <ValuationHistoryChart valuation={valuation} snapshot={fundamentals.snapshot} />
                 )}
                 {peers && peers.peerCount > 0 ? (
                   <PeerRadarChart peers={peers} symbol={quote.symbol} />
-                ) : (
+                ) : peersEntry.status === "loading" ? (
                   <div className="flex h-[296px] items-center justify-center rounded-xl border border-border bg-surface text-sm text-muted">
-                    {peers ? "Peer data unavailable" : "Loading peer comparison…"}
+                    Loading peer comparison…
                   </div>
-                )}
+                ) : null}
               </div>
 
               {!isIndia && peers && peers.peerCount > 0 && (
@@ -1502,10 +1530,13 @@ function ResearchWorkspace({
           {/* Fund profile (family, category, expense ratio, asset allocation) */}
           {isFund && fund && <FundProfileCard fund={fund} perShareClass={isMutualFund} />}
 
-          {/* Options chain (equity/fund underlyings with listed options — additive, not every symbol has one) */}
+          {/* Options chain (equity/fund underlyings with listed options).
+              Rendered ONLY when every field is present and plausible — Yahoo's
+              chain data is often stale/placeholder off-hours, and a card with
+              "ATM IV 2.3%" or zeroed greeks is worse than no card. */}
           {derivativesLoading ? (
             <LoadingPanel height="h-40" message="Loading options chain…" />
-          ) : derivativesSummary ? (
+          ) : isDerivativesSummaryComplete(derivativesSummary) ? (
             <div className="flex flex-col gap-4">
               <DerivativesSummaryCard summary={derivativesSummary} />
               <div className="grid gap-4 sm:grid-cols-2">
@@ -1522,13 +1553,8 @@ function ResearchWorkspace({
             </MaterialFade>
           )}
 
-          {/* Risk heatmap — keeps itself visible when it holds a high risk, and
-              fades its own low/medium tiles individually while the lens is on. */}
-          {fundamentals?.risks && (
-            <MaterialFade active={lens.active} verdict={lensFlags.risks}>
-              <RiskHeatmap risks={fundamentals.risks} lensActive={lens.active} />
-            </MaterialFade>
-          )}
+          {/* Risks render on the Analysis tab only (WhySection's "Biggest
+              Risks") — the risk heatmap here duplicated the same list. */}
 
           {/* SEC Filings (US/global equity) */}
           {isEquity && (
@@ -1544,28 +1570,60 @@ function ResearchWorkspace({
                 <p className="text-sm text-muted">No recent filings found.</p>
               ) : (
                 <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">
-                  {filings.slice(0, 20).map((f) => (
-                    <li
-                      key={f.accessionNumber}
-                      className="flex items-center justify-between gap-4 bg-surface px-4 py-3"
-                    >
-                      <div className="min-w-0">
-                        <span className="font-mono text-sm text-brand">{f.form}</span>
-                        <p className="truncate text-sm text-muted">{f.description}</p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-4">
-                        <span className="text-xs text-muted">{formatDate(f.filedAt)}</span>
-                        <a
-                          href={f.documentUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-sm text-brand hover:underline"
-                        >
-                          View →
-                        </a>
-                      </div>
-                    </li>
-                  ))}
+                  {/* Identical same-day filings of one form type (e.g. four
+                      Form 4s covering four insiders) collapse into one row —
+                      EDGAR's submissions feed does not carry the filer name,
+                      so a count is the honest differentiator. */}
+                  {(() => {
+                    type FilingGroup = { first: Filing; all: Filing[] };
+                    const groups: FilingGroup[] = [];
+                    const byKey = new Map<string, FilingGroup>();
+                    for (const f of filings.slice(0, 20)) {
+                      const key = `${f.form}|${f.filedAt}`;
+                      const existing = byKey.get(key);
+                      if (existing) existing.all.push(f);
+                      else {
+                        const g = { first: f, all: [f] };
+                        byKey.set(key, g);
+                        groups.push(g);
+                      }
+                    }
+                    return groups.map(({ first, all }) => (
+                      <li
+                        key={first.accessionNumber}
+                        className="flex items-center justify-between gap-4 bg-surface px-4 py-3"
+                      >
+                        <div className="min-w-0">
+                          <span className="font-mono text-sm text-brand">
+                            {first.form}
+                            {all.length > 1 && (
+                              <span className="ml-1.5 rounded-full border border-border px-1.5 text-xs text-muted">×{all.length}</span>
+                            )}
+                          </span>
+                          <p className="truncate text-sm text-muted">
+                            {first.description}
+                            {all.length > 1 ? ` — ${all.length} filed this day` : ""}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-4">
+                          <span className="text-xs text-muted">{formatDate(first.filedAt)}</span>
+                          <span className="flex items-center gap-2">
+                            {all.map((f, i) => (
+                              <a
+                                key={f.accessionNumber}
+                                href={f.documentUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sm text-brand hover:underline"
+                              >
+                                {all.length > 1 ? `${i + 1}` : "View →"}
+                              </a>
+                            ))}
+                          </span>
+                        </div>
+                      </li>
+                    ));
+                  })()}
                   {filings.length > 20 && (
                     <li className="bg-surface px-4 py-3 text-center text-xs text-muted">
                       Showing 20 of {filings.length} filings
@@ -1598,6 +1656,9 @@ function ResearchWorkspace({
           <ResearchNotes symbol={quote.symbol} />
         </Reveal>
       )}
+
+      </div>{/* end evidence column */}
+      </div>{/* end two-column grid */}
     </div>
   );
 }
@@ -1915,7 +1976,10 @@ function ResearchPageInner() {
   }
 
   return (
-    <PageShell gap="gap-6" py="py-10">
+    // "wide": research is a data surface — capping it at 1280px left a third
+    // of a 2500px display as dead margin and made the page ~15 screens tall.
+    // Pairs with the ≥1600px two-column layout inside ResearchWorkspace.
+    <PageShell gap="gap-6" py="py-10" width="wide">
       <ArrivalHighlight targetId={highlightTarget} />
       {/* The description is an ONBOARDING affordance, so it is shown only while
           there is nothing to research yet.
@@ -1958,7 +2022,9 @@ function ResearchPageInner() {
             if (searchMode === "ticker") submit(symbol);
             else submitManualSearch(searchMode);
           }}
-          className="flex gap-2"
+          // A ticker is 1–5 characters; a viewport-wide input reads as a form,
+          // not a command line. Capped, with the button right beside it.
+          className="flex max-w-2xl gap-2"
         >
           {searchMode === "ticker" ? (
             <SymbolSearch

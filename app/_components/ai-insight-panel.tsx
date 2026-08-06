@@ -25,6 +25,10 @@ export function AiInsightPanel({ label, resetKey, promptHint, fetchInsight }: Ai
   const [model, setModel] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Hard 10s deadline on the "Analyzing…" affordance — past it the container
+  // unmounts rather than spinning forever. Generation continues in the
+  // background; the card mounts whenever the insight actually lands.
+  const [timedOut, setTimedOut] = useState(false);
 
   async function generate() {
     setLoading(true);
@@ -46,6 +50,12 @@ export function AiInsightPanel({ label, resetKey, promptHint, fetchInsight }: Ai
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetKey]);
 
+  useEffect(() => {
+    if (!loading) return;
+    const timer = setTimeout(() => setTimedOut(true), 10_000);
+    return () => clearTimeout(timer);
+  }, [loading]);
+
   if (insight) {
     return (
       <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2 px-4 py-3">
@@ -66,28 +76,20 @@ export function AiInsightPanel({ label, resetKey, promptHint, fetchInsight }: Ai
     );
   }
 
+  // Failed or past the deadline → no container. A dashed box stuck on
+  // "Analyzing…" or an error strip reads as a broken page; absence doesn't.
+  if (error || (loading && timedOut) || !loading) return null;
+
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border px-4 py-3">
-      <span className="text-xs text-muted/60">
-        {loading ? "AI is interpreting this section…" : `Ask AI: ${promptHint}`}
-      </span>
-      {!loading ? (
-        <button
-          onClick={generate}
-          className="shrink-0 rounded-lg border border-border bg-surface px-3 py-1.5 text-[11px] font-medium transition-colors hover:border-accent/40 hover:text-accent"
-        >
-          {error ? "Retry" : "Generate AI Insight"}
-        </button>
-      ) : (
-        <span className="flex items-center gap-1.5 text-xs text-accent/70">
-          <span className="relative flex h-1.5 w-1.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
-            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
-          </span>
-          Analyzing…
+      <span className="text-xs text-muted/60">AI is interpreting this section — {promptHint}</span>
+      <span className="flex items-center gap-1.5 text-xs text-accent/70">
+        <span className="relative flex h-1.5 w-1.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
         </span>
-      )}
-      {error && <p className="text-[10px] text-negative">{error}</p>}
+        Analyzing…
+      </span>
     </div>
   );
 }

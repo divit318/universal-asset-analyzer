@@ -71,19 +71,32 @@ export function PositionActionCard({
       {(action.currentPct > 0 || action.targetPct > 0) && (
         <div className="flex flex-col gap-1">
           <div className="flex justify-between text-micro text-faint">
-            <span>Current {action.currentPct.toFixed(1)}%</span>
+            <span>{action.currentPct > 0 ? `Current ${action.currentPct.toFixed(1)}%` : "No position yet"}</span>
             {/* Named for what it is. The two targets on this page are not the same
                 quantity, and the previous copy tried to resolve that with a
                 sentence of explanation instead of a distinct name — a paragraph
                 apologising for a label is a sign the label is wrong. */}
             <span>Policy target {action.targetPct.toFixed(1)}%</span>
           </div>
-          {/* Current weight grows to its value; the target sits as a fixed marker
-              so the gap the action closes is what moves. */}
-          <div className="relative">
-            <ValueBar value={(action.currentPct / barMax) * 100} barClassName="bg-muted/50" height="h-1.5" />
-            <div className="absolute inset-y-0 w-0.5 bg-brand" style={{ left: `${(action.targetPct / barMax) * 100}%` }} />
-          </div>
+          {action.currentPct > 0 ? (
+            /* Current weight grows to its value; the target sits as a fixed
+               marker so the gap the action closes is what moves. */
+            <div className="relative">
+              <ValueBar value={(action.currentPct / barMax) * 100} barClassName="bg-muted/50" height="h-1.5" />
+              <div className="absolute inset-y-0 w-0.5 bg-brand" style={{ left: `${(action.targetPct / barMax) * 100}%` }} />
+            </div>
+          ) : (
+            /* Zero current position is a deliberate starting point, not broken
+               data: the target weight renders as an outlined "to fill" segment
+               instead of an empty track with a stranded tick mark. */
+            <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
+              <div
+                className="absolute inset-y-0 left-0 rounded-full border border-dashed border-brand/60 bg-brand/15"
+                style={{ width: `${(action.targetPct / barMax) * 100}%` }}
+                title={`Buying to the ${action.targetPct.toFixed(1)}% policy target fills this segment`}
+              />
+            </div>
+          )}
           <p className="text-[10px] text-faint">
             Sized by your investment policy — portfolio fit, sector caps and diversification.
           </p>

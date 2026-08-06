@@ -78,7 +78,7 @@ function DimensionRow({ dim }: { dim: FitDimension }) {
       <div className="flex items-center justify-between mb-0.5">
         <span className="text-[11px] text-muted">{dim.label}</span>
         <span className={`text-[10px] font-mono font-semibold ${IMPACT_TEXT[dim.impact]}`}>
-          {IMPACT_ICON[dim.impact]} {dim.score}
+          {IMPACT_ICON[dim.impact]} {Math.round(dim.score)}
         </span>
       </div>
       <ValueBar value={dim.score} barClassName={barColor} />
