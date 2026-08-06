@@ -52,13 +52,22 @@ function newsItem(headline: string, tickers: string[]): NewsItem {
 }
 
 describe("isRelevantToSymbol", () => {
-  it("keeps stories tagged with the symbol", () => {
-    expect(isRelevantToSymbol(newsItem("Synchrony beats estimates", ["SYF"]), "SYF")).toBe(true);
+  it("keeps stories whose PRIMARY tag is the symbol", () => {
+    expect(isRelevantToSymbol(newsItem("Raising target price to $89.00", ["SYF", "SYF-PB"]), "SYF")).toBe(true);
   });
 
-  it("drops stories tagged only with OTHER tickers (the Petco/COIN bug)", () => {
+  it("drops stories tagged only with OTHER tickers", () => {
     expect(isRelevantToSymbol(newsItem("Petco Appoints Jeffrey Naylor to Board of Directors", ["WOOF"]), "SYF")).toBe(false);
-    expect(isRelevantToSymbol(newsItem("COIN Q2 Earnings & Revenues Miss", ["COIN"]), "SYF")).toBe(false);
+  });
+
+  it("drops secondary-tagged stories that never mention the company (the real Petco/COIN feed)", () => {
+    // Yahoo tags these with SYF because of a shared director / passing mention.
+    expect(isRelevantToSymbol(newsItem("Petco Appoints Jeffrey Naylor to Board of Directors", ["TJX", "WOOF", "SYF", "W"]), "SYF", "Synchrony Financial")).toBe(false);
+    expect(isRelevantToSymbol(newsItem("COIN Q2 Earnings & Revenues Miss on Lower Transaction Revenues", ["VIRT", "BFH", "SYF"]), "SYF", "Synchrony Financial")).toBe(false);
+  });
+
+  it("keeps secondary-tagged stories that name the company", () => {
+    expect(isRelevantToSymbol(newsItem("UBS Adjusts Price Target on Synchrony Financial", ["UBS", "SYF"]), "SYF", "Synchrony Financial")).toBe(true);
   });
 
   it("keeps untagged stories only when the headline names the ticker", () => {

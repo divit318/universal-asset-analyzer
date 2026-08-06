@@ -150,27 +150,52 @@ function baseTicker(symbol: string): string {
   return symbol.toUpperCase().replace(/[.\-][A-Z]{1,3}$/, "");
 }
 
+/** Company-name tokens worth matching in a headline (drops legal suffixes). */
+const NAME_STOPWORDS = new Set([
+  "INC", "INC.", "CORP", "CORP.", "CORPORATION", "CO", "CO.", "COMPANY", "LTD", "LTD.",
+  "PLC", "GROUP", "HOLDINGS", "THE", "&", "AND", "CLASS", "A", "B", "FINANCIAL", "SERVICES",
+]);
+
+function nameTokens(name: string | undefined): string[] {
+  if (!name) return [];
+  return name
+    .toUpperCase()
+    .split(/[^A-Z0-9]+/)
+    .filter((t) => t.length > 2 && !NAME_STOPWORDS.has(t));
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * Is this story actually about `symbol`?
  *
  * Yahoo's symbol search returns a relevance-ranked mix that can include broad
  * market stories and stories about *other* companies (observed: Petco board
- * appointments and COIN earnings inside SYF's feed). Trust Yahoo's own tags
- * first: when the story carries `relatedTickers`, the symbol must be among
- * them. Untagged stories fall back to a headline mention of the ticker.
- * Under-showing (3 relevant items) beats padding with unrelated ones.
+ * appointments and COIN earnings inside SYF's feed — both tagged with SYF as
+ * a SECONDARY ticker because of a shared director / passing mention). The
+ * rule: the symbol must be the story's PRIMARY tag, or the headline must name
+ * the ticker or the company. Under-showing beats padding with unrelated items.
  */
-export function isRelevantToSymbol(item: NewsItem, symbol: string): boolean {
+export function isRelevantToSymbol(item: NewsItem, symbol: string, companyName?: string): boolean {
   const base = baseTicker(symbol);
+  const headlineUpper = item.headline.toUpperCase();
+  const mentionsSymbol = new RegExp(`\\b${escapeRe(base)}\\b`).test(headlineUpper);
+  const mentionsName = nameTokens(companyName).some((t) =>
+    new RegExp(`\\b${escapeRe(t)}\\b`).test(headlineUpper),
+  );
+
   if (item.tickers.length > 0) {
-    return item.tickers.some((t) => baseTicker(t) === base);
+    const tagged = item.tickers.some((t) => baseTicker(t) === base);
+    if (!tagged) return false;
+    const primary = baseTicker(item.tickers[0]) === base;
+    return primary || mentionsSymbol || mentionsName;
   }
   // Futures/forex/crypto/index symbols (GC=F, EURUSD=X, ^TNX, BTC-USD): the
   // feed is macro context that rarely names the raw symbol — keep untagged.
   if (/[=^]/.test(symbol) || symbol.includes("-")) return true;
-  return new RegExp(`\\b${base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(
-    item.headline.toUpperCase(),
-  );
+  return mentionsSymbol || mentionsName;
 }
 
 /** Recent, de-duplicated news for a specific symbol, newest first. Best-effort. */
