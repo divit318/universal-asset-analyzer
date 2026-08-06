@@ -7,11 +7,13 @@ import { JsonFieldStreamer } from "@/lib/ai/streaming-json";
 import {
   assembleVerdict,
   cacheVerdict,
+  generateVerdict,
   offlineVerdict,
   peekVerdict,
   planVerdict,
   verdictCacheParams,
 } from "@/lib/ai/verdict";
+import { resolveProvider } from "@/lib/ai/analysis-provider";
 import { personalizationParams } from "@/lib/ai/verdict-params";
 import { normalizeSymbol } from "@/lib/market";
 import { REPORT_SECTIONS } from "@/lib/ai/report-sections";
@@ -147,6 +149,56 @@ export async function GET(request: Request) {
           durationMs: Date.now() - startedAt,
           fromCache: true,
         });
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          /* already closed by the client */
+        }
+        return;
+      }
+
+      /* Streaming redesign (ai-migration/13): when the verdict task resolves
+         to the Devin provider there is no token stream to parse — a session
+         delivers one schema-validated object. So the seam runs the SAME
+         generateVerdict the blocking route uses (same plan, same assembler,
+         same content-keyed idempotency; a warmer-precomputed verdict makes
+         this instant), and the finished report replays section-by-section in
+         the exact protocol below — the client cannot tell the transports
+         apart. Progressive token rendering remains the local path's behavior;
+         trading it for schema-validated, warmable sessions is the deliberate
+         deal, not an accident. */
+      if (resolveProvider(plan.task) === "devin") {
+        const verdict = await generateVerdict(plan, {
+          signal: request.signal,
+          subjectKey: `verdict:${ctx.symbol}`,
+        });
+        if (verdict.model === "unavailable") {
+          if (!request.signal.aborted) {
+            send({ type: "error", error: "Generation failed", completed: [], fallback: verdict });
+          }
+        } else {
+          cacheVerdict(cacheParams, verdict, ctx.symbol);
+          const record = verdict as unknown as Record<string, unknown>;
+          for (const spec of REPORT_SECTIONS) {
+            if (record[spec.id] === undefined) continue;
+            send({
+              type: "section",
+              id: spec.id,
+              title: spec.title,
+              order: spec.order,
+              data: record[spec.id],
+              elapsedMs: Date.now() - startedAt,
+            });
+          }
+          send({
+            type: "done",
+            verdict,
+            grounding: verdict.grounding,
+            model: verdict.model,
+            durationMs: Date.now() - startedAt,
+          });
+        }
         closed = true;
         try {
           controller.close();

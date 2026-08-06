@@ -206,6 +206,17 @@ function kindsComparable(a: ClaimKind, b: ClaimKind): boolean {
   return (a === "percent") === (b === "percent");
 }
 
+/**
+ * Unit-scale forgiveness for non-percent figures: financial tables state
+ * values in thousands/millions/billions ("Revenue: 391,035" meaning $M) and a
+ * model that correctly writes "$391B" was being flagged as fabricating —
+ * observed live as 5/9 IC agents confidence-downgraded on reformatted
+ * figures (ai-migration/10). The parity harness has scale-matched since
+ * tranche 2; this ports the same tolerance to the production verifier.
+ * Percents never scale (12% is not 12,000%).
+ */
+const UNIT_SCALES = [1e3, 1e6, 1e9] as const;
+
 function figureSupported(
   claim: NumericClaim,
   evidence: NumericClaim[],
@@ -219,6 +230,12 @@ function figureSupported(
     // Precision-aware: "18" grounded by "17.94" (evidence rounded to the
     // answer's displayed precision).
     if (roundsTo(ev.value, claim.value)) return true;
+    if (claim.kind !== "percent" && ev.kind !== "percent") {
+      for (const s of UNIT_SCALES) {
+        if (Math.abs(claim.value - ev.value * s) <= relTol * Math.abs(ev.value * s)) return true;
+        if (Math.abs(claim.value * s - ev.value) <= relTol * Math.abs(ev.value)) return true;
+      }
+    }
   }
   return false;
 }

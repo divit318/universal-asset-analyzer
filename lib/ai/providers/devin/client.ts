@@ -98,6 +98,9 @@ interface V1Session {
   status_enum?: string | null;
   structured_output?: Record<string, unknown> | null;
   tags?: string[] | null;
+  /** ISO-8601 strings on v1 (v3 uses epoch numbers) — parsed at the edge. */
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 /**
@@ -125,6 +128,11 @@ function fromV1(s: V1Session): DevinSession {
     structured_output: s.structured_output ?? null,
     acus_consumed: null, // v1's GET has no ACU field (04b §Other observations)
     tags: s.tags ?? [],
+    // v1 timestamps are ISO strings; the sweeper ages sessions on these, and
+    // an untranslated timestamp reads as "age zero, never stale" — the exact
+    // silent hole the tranche-7 orphan would have fallen through on this key.
+    created_at: s.created_at ? Date.parse(s.created_at) : undefined,
+    updated_at: s.updated_at ? Date.parse(s.updated_at) : undefined,
   };
 }
 

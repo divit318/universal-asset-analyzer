@@ -16,6 +16,15 @@ import { devinConfigured, listSessions, terminateSession } from "./client";
 const SWEEP_INTERVAL_MS = 10 * 60_000;
 /** Anything older than the longest devinTimeoutMs default (15 min) + slack is orphaned. */
 const STALE_AGE_MS = 20 * 60_000;
+/**
+ * Waiting-for-user sessions reap much sooner: a disposable analyst session
+ * that asked a question can never become useful — no one will ever answer it.
+ * Observed live (ai-migration/11): a response-close abort raced the
+ * finally-terminate and left a blocked session pending the full 20-minute
+ * threshold. 5 min clears the provider's own corrective-turn window, so a
+ * session mid-correction is never reaped out from under the poller.
+ */
+const BLOCKED_STALE_AGE_MS = 5 * 60_000;
 
 const state = globalThis as unknown as { __uaaDevinSweepAt?: number };
 
@@ -40,7 +49,8 @@ export async function sweepStaleSessions(force = false): Promise<SweepReport | n
       ALIVE.has(s.status) &&
       // created_at/updated_at are epoch seconds or ms depending on endpoint
       // generation; normalize by magnitude.
-      now - normalizeEpochMs(s.updated_at ?? s.created_at ?? now) > STALE_AGE_MS,
+      now - normalizeEpochMs(s.updated_at ?? s.created_at ?? now) >
+        (s.status_detail === "waiting_for_user" ? BLOCKED_STALE_AGE_MS : STALE_AGE_MS),
   );
 
   const terminated: string[] = [];
