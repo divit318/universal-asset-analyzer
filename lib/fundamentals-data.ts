@@ -12,7 +12,7 @@
  */
 
 import { getFundamentals } from "./fundamentals";
-import { getFinancialStatements, getFinancialStatementsYahoo } from "./statements";
+import { getStatementsWithFallback } from "./statements";
 import { getFundamentalsTimeSeries, getHistory } from "./yahoo";
 import { assessRisks, classifyInvestmentPersonality, computeMomentum, computeScore } from "./scoring";
 import { detectMarket } from "./market";
@@ -121,22 +121,7 @@ export async function buildFundamentalsData(symbol: string): Promise<Fundamental
   // Yahoo Finance is tried first (works for all markets); EDGAR is the fallback
   // for deeper US history when Yahoo returns fewer than 3 fiscal years.
   const [statementsResult, history, timeSeries] = await Promise.all([
-    (async (): Promise<{ statements: FinancialStatements | null; error: string | null }> => {
-      const yahoo = await getFinancialStatementsYahoo(symbol);
-      if (yahoo && yahoo.fiscalYears.length >= 3) return { statements: yahoo, error: null };
-      // fallback to EDGAR for US-listed companies with deeper history
-      const edgar = await getFinancialStatements(symbol).catch((e: unknown) => ({
-        err: e instanceof Error ? e.message : "EDGAR statements unavailable",
-      }));
-      if ("err" in edgar) {
-        // If EDGAR also fails, return Yahoo result even if short (better than nothing)
-        if (yahoo) return { statements: yahoo, error: null };
-        return { statements: null, error: edgar.err };
-      }
-      // prefer whichever source has more years
-      const best = yahoo && yahoo.fiscalYears.length >= edgar.fiscalYears.length ? yahoo : edgar;
-      return { statements: best, error: null };
-    })(),
+    getStatementsWithFallback(symbol),
     getHistory(symbol, 1825),
     getFundamentalsTimeSeries(symbol).catch(() => [] as Record<string, unknown>[]),
   ]);

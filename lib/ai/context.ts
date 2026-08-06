@@ -12,7 +12,7 @@
 
 import { getHistory, getQuote } from "../yahoo";
 import { getFundamentals } from "../fundamentals";
-import { getFinancialStatements } from "../statements";
+import { getStatementsWithFallback } from "../statements";
 import { getRecentFilings } from "../edgar";
 import { getCompanyProfile } from "../profile";
 import { getCompanyNews } from "../news";
@@ -87,7 +87,15 @@ async function assembleCompanyContext(symbol: string): Promise<CompanyContext> {
       ),
       tryOr("profile", warnings, () => getCompanyProfile(symbol), null),
       tryOr("fundamentals", warnings, () => getFundamentals(symbol), null),
-      tryOr("statements", warnings, () => getFinancialStatements(symbol), null),
+      // Same Yahoo-first/EDGAR-fallback chain the research page uses, so the
+      // AI's score inputs are IDENTICAL to the page's (an EDGAR-only fetch
+      // here made the narration quote subscores the Conviction tab never
+      // showed, for any ticker EDGAR's XBRL tags don't cover).
+      tryOr("statements", warnings, async () => {
+        const { statements, error } = await getStatementsWithFallback(symbol);
+        if (!statements && error) throw new Error(error);
+        return statements;
+      }, null),
       tryOr("filings", warnings, () => getRecentFilings(symbol, 10), []),
       tryOr("news", warnings, () => getCompanyNews(symbol, 8), []),
       tryOr("peers", warnings, () => getPeerComparison(symbol), null),
