@@ -61,6 +61,10 @@ export default function RootLayout({
     <html
       lang="en"
       data-theme="dark"
+      // globals.css sets `scroll-behavior: smooth`; this attribute tells
+      // Next.js it is intentional so router transitions don't log a
+      // "Detected scroll-behavior: smooth" warning on every client-side nav.
+      data-scroll-behavior="smooth"
       className={`${geistSans.variable} ${geistMono.variable} ${sourceSerif.variable} h-full antialiased`}
       suppressHydrationWarning
     >

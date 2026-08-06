@@ -4,7 +4,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { TrendingUp, TrendingDown, Clock3, Network, Link2, Bookmark, Wallet } from "lucide-react";
+import { TrendingUp, TrendingDown, Clock3, FileText, Network, Link2, Bookmark, Wallet } from "lucide-react";
 import type {
   Filing,
   FundamentalsData,
@@ -855,6 +855,20 @@ function ResearchWorkspace({
               <Link2 className="h-4 w-4" strokeWidth={1.75} /> Copy link
             </button>
             <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
+            {/* IC Report is an equity workflow (signal library, 9-agent
+                network, DCF engine — see app/ic-report). Funds, crypto,
+                commodities, forex and macro don't get a dead button. The
+                page reads ?symbol= and defaults its own tab; ?autorun=1 is
+                deliberately NOT passed — the user triggers generation. */}
+            {isEquity && (
+              <Link
+                href={`/ic-report?symbol=${encodeURIComponent(quote.symbol.toUpperCase())}`}
+                className="inline-flex items-center gap-1.5 rounded-control border border-brand/40 bg-brand-muted px-3 py-2 text-sm font-medium text-brand outline-none transition-[color,background-color,transform] duration-150 hover:bg-brand/20 focus-visible:ring-2 focus-visible:ring-brand/40 active:scale-[0.97]"
+              >
+                <FileText className="h-4 w-4" strokeWidth={1.75} />
+                IC Report
+              </Link>
+            )}
             <button
               onClick={downloadReport}
               disabled={downloading}
