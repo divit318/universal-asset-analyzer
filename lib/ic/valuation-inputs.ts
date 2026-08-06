@@ -9,8 +9,9 @@
  * state exactly which inputs the model chose and which the engine kept.
  */
 
-import { runPrompt } from "../ai";
-import { extractJsonObject } from "../json-extract";
+import { runAnalysis } from "../ai/analysis";
+import { LooseObjectSchema } from "../ai/schemas/loose";
+import { ValuationProposalWireSchema, IC_SCHEMA_VERSION } from "../ai/schemas/ic";
 import { BANDS } from "./valuation-engine";
 import type { CanonicalFacts } from "./canonical";
 import { fmtPercent, fmtMultiple } from "./format";
@@ -246,20 +247,33 @@ Reply with ONLY a raw JSON object (no fences, no prose):
 }`;
 
   try {
-    const raw = await runPrompt("scenario-analysis", prompt, { maxTokens: 700, json: true, model });
-    const parsed = extractJsonObject(raw, {
-      growthY1: null as number | null,
-      fadeYears: null as number | null,
-      terminalGrowth: null as number | null,
-      waccAdjustmentBp: null as number | null,
-      exitMultiple: null as number | null,
-      peMultiple: null as number | null,
-      evEbitdaMultiple: null as number | null,
-      fcfRequiredYield: null as number | null,
-      bearGrowthDelta: null as number | null,
-      bullGrowthDelta: null as number | null,
-      justifications: {} as Record<string, string>,
+    const analysis = await runAnalysis({
+      taskType: "scenario-analysis",
+      subjectKey: `ic:valuation-inputs:${facts.symbol}`,
+      prompt,
+      schema: LooseObjectSchema,
+      wireSchema: ValuationProposalWireSchema,
+      schemaVersion: IC_SCHEMA_VERSION,
+      model,
     });
+    const bag = analysis.data as Record<string, unknown>;
+    const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    const parsed = {
+      growthY1: num(bag.growthY1),
+      fadeYears: num(bag.fadeYears),
+      terminalGrowth: num(bag.terminalGrowth),
+      waccAdjustmentBp: num(bag.waccAdjustmentBp),
+      exitMultiple: num(bag.exitMultiple),
+      peMultiple: num(bag.peMultiple),
+      evEbitdaMultiple: num(bag.evEbitdaMultiple),
+      fcfRequiredYield: num(bag.fcfRequiredYield),
+      bearGrowthDelta: num(bag.bearGrowthDelta),
+      bullGrowthDelta: num(bag.bullGrowthDelta),
+      justifications:
+        bag.justifications && typeof bag.justifications === "object" && !Array.isArray(bag.justifications)
+          ? (bag.justifications as Record<string, string>)
+          : ({} as Record<string, string>),
+    };
     // A proposal that came back with no growth at all is treated as a failed call.
     if (parsed.growthY1 == null && parsed.peMultiple == null && parsed.evEbitdaMultiple == null) return null;
     return parsed as Partial<ValuationProposal>;

@@ -25,7 +25,7 @@
  * failure mode.
  */
 
-import { getQuoteSummary } from "../../yahoo";
+import { getQuoteSummary, zeroAsMissing } from "../../yahoo";
 import type { FundHolding } from "../../types";
 import { mapPool, withRetry } from "../metrics-util";
 
@@ -174,7 +174,7 @@ function parseDetail(raw: RawFundDetail): FundDetail {
     available: raw.fundProfile != null || raw.topHoldings != null,
     category: profile.categoryName ?? null,
     family: profile.family ?? null,
-    expenseRatio: pct(profile.feesExpensesInvestment?.annualReportExpenseRatio),
+    expenseRatio: pct(zeroAsMissing(profile.feesExpensesInvestment?.annualReportExpenseRatio)),
     // Zero holdings reported means "Yahoo didn't tell us", not "the fund holds
     // nothing" — null so a concentration filter excludes it instead of ranking
     // it as perfectly diversified.

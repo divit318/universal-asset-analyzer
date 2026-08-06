@@ -47,10 +47,15 @@ function performanceBucket(fund: FundProfileData) {
   const relativeOneYear = fund.categoryRelativeReturns.oneYear;
   const relativeThreeYear = fund.categoryRelativeReturns.threeYear;
   // Fall back to absolute return only when Yahoo didn't return a category
-  // baseline to diff against (thin coverage, e.g. some closed-end funds).
+  // baseline to diff against (no category data exists at all for Indian
+  // mutual funds, and coverage is thin for some closed-end funds). The label
+  // and detail always say which basis was used — an absolute number presented
+  // as a category edge is exactly the fabrication this fallback exists to avoid.
   const oneYearSignal = relativeOneYear ?? fund.trailingReturns.oneYear;
   const oneYearIsRelative = relativeOneYear != null;
-  return bucket("Performance vs Category", [
+  const threeYearSignal = relativeThreeYear ?? fund.trailingReturns.threeYear;
+  const threeYearIsRelative = relativeThreeYear != null;
+  return bucket(oneYearIsRelative || threeYearIsRelative ? "Performance vs Category" : "Performance", [
     mk(
       oneYearIsRelative ? "1-year return vs category" : "1-year return",
       oneYearSignal,
@@ -59,7 +64,14 @@ function performanceBucket(fund: FundProfileData) {
       16,
       (v) => (oneYearIsRelative ? `${v >= 0 ? "+" : ""}${v.toFixed(1)}pp vs category` : `${v >= 0 ? "+" : ""}${v.toFixed(1)}% (absolute)`),
     ),
-    mk("3-year return vs category", relativeThreeYear, -6, 6, 9, (v) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}pp vs category`),
+    mk(
+      threeYearIsRelative ? "3-year return vs category" : "3-year return (annualized)",
+      threeYearSignal,
+      threeYearIsRelative ? -6 : -5,
+      threeYearIsRelative ? 6 : 18,
+      9,
+      (v) => (threeYearIsRelative ? `${v >= 0 ? "+" : ""}${v.toFixed(1)}pp vs category` : `${v >= 0 ? "+" : ""}${v.toFixed(1)}% (absolute)`),
+    ),
   ]);
 }
 
@@ -116,8 +128,10 @@ export function computeFundScore(fund: FundProfileData, history: HistoryPoint[])
     .slice(0, 2)
     .map((f) => f.detail);
 
+  const hasCategoryBaseline =
+    fund.categoryRelativeReturns.oneYear != null || fund.categoryRelativeReturns.threeYear != null;
   const rationaleParts = [
-    `Fund score ${total}/100 (cost, diversification, category-relative performance, risk-adjusted quality)${momentumScore != null ? `, blended with a ${momentumScore}/100 momentum reading` : ""}.`,
+    `Fund score ${total}/100 (cost, diversification, ${hasCategoryBaseline ? "category-relative performance" : "absolute performance — no category baseline available"}, risk-adjusted quality)${momentumScore != null ? `, blended with a ${momentumScore}/100 momentum reading` : ""}.`,
   ];
   if (strengths.length) rationaleParts.push(`Strengths: ${strengths.join("; ")}.`);
   if (concerns.length) rationaleParts.push(`Watch: ${concerns.join("; ")}.`);

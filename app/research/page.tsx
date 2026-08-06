@@ -32,9 +32,9 @@ import { useDataset, useDatasetValue } from "@/lib/platform/client/use-dataset";
 import { useRecordActivity } from "@/app/_home/use-record-activity";
 import {
   formatCompact,
+  formatCompactCurrency,
   formatCurrency,
   formatDate,
-  formatMarketCap,
   formatNumber,
   formatPercent,
 } from "@/lib/format";
@@ -68,6 +68,8 @@ import { WatchlistIntelligenceCard } from "./_components/watchlist-intelligence-
 import { FinancialInsightCard } from "./_components/financial-insight-card";
 import { PeerCompetitivePosition } from "./_components/peer-competitive-position";
 import { ArrivalHighlight, useArrivalTarget } from "@/app/_components/arrival-highlight";
+import { LensControl, MaterialFade, useMaterialityLens } from "@/app/_components/materiality-lens";
+import { isMaterial, materialCount, pickVerdict, type MaterialityContext, type MaterialityVerdict } from "@/lib/materiality";
 import { TimelinePreviewCard } from "./_components/timeline-preview-card";
 import { GraphPreviewCard } from "./_components/graph-preview-card";
 import { RelatedOpportunitiesCard } from "./_components/related-opportunities-card";
@@ -348,6 +350,14 @@ function ResearchWorkspace({
   const isEquity = !quote.assetType || quote.assetType === "EQUITY";
   const isIndia = market === "IN";
   const isFund = detectAssetClass(quote) === "fund";
+  // screener.in covers listed Indian *companies* only. An Indian mutual fund
+  // (Yahoo's Morningstar-style 0P… symbol) must never hit that path: the
+  // search would fuzzy-match a random company and render its equity snapshot
+  // on a fund page. Every India-specific module keys off this, not isIndia.
+  const isIndiaEquity = isIndia && isEquity;
+  // NAV-priced, not exchange-traded: one NAV per day, no intraday range, no
+  // volume. Decides which stats the masthead strip can honestly show.
+  const isMutualFund = quote.assetType === "MUTUALFUND";
   const isCrypto = detectAssetClass(quote) === "crypto";
   const isCommodity = detectAssetClass(quote) === "commodity";
   const isForex = detectAssetClass(quote) === "forex";
@@ -422,6 +432,80 @@ function ResearchWorkspace({
   // Most recent Timeline milestone, populated once TimelinePreviewCard (Details
   // tab) has loaded — lets WhyNowCard cite it without a second fetch.
   const [nearestTimelineEvent, setNearestTimelineEvent] = useState<TimelineEvent | null>(null);
+
+  /* ── Materiality lens ─────────────────────────────────────────────────
+     The flag set is computed once per symbol alongside the existing data
+     fetches and memoised; toggling the lens (button or `d`) is pure
+     presentation. Two server inputs arrive async: peer-dispersion
+     percentiles + the prior-visit timestamp (/api/materiality/research),
+     and the symbol's timeline (fetched here at page load — not in the
+     Details tab — because the header count must be able to say "changed
+     since your last visit" before the user opens any tab; the preview card
+     reuses these events instead of fetching again). */
+  const lens = useMaterialityLens();
+  const [lensServer, setLensServer] = useState<{
+    dimensions:
+      | { key: string; label: string; percentile: number | null; peerGroup: string | null; peerGroupSize: number | null }[]
+      | null;
+    priorVisitAt: string | null;
+  } | null>(null);
+  const [lensTimeline, setLensTimeline] = useState<TimelineEvent[] | null>(null);
+  // Freshness checks need a "now", and react-hooks/purity (rightly) refuses
+  // Date.now() inside the memo — so the clock is read here, once per symbol,
+  // where impurity is allowed. Staleness is a >1h-scale judgment; a timestamp
+  // anchored at load is exactly as honest as one anchored at render.
+  const [lensNow, setLensNow] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setLensServer(null);
+    setLensTimeline(null);
+    setLensNow(Date.now());
+    /* eslint-enable react-hooks/set-state-in-effect */
+    void fetch(`/api/materiality/research?symbol=${encodeURIComponent(quote.symbol)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled && d) setLensServer(d); })
+      .catch(() => {});
+    void fetch(`/api/timeline?scope=symbol&id=${encodeURIComponent(quote.symbol)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled) setLensTimeline((d?.events as TimelineEvent[] | undefined) ?? []); })
+      .catch(() => { if (!cancelled) setLensTimeline([]); });
+    return () => { cancelled = true; };
+  }, [quote.symbol]);
+
+  const lensFlags = useMemo(() => {
+    const ctx: MaterialityContext = { now: lensNow, priorVisitAt: lensServer?.priorVisitAt ?? null };
+
+    const dimVerdicts = (lensServer?.dimensions ?? []).map((d) =>
+      isMaterial({ kind: "dimension", label: d.label, percentile: d.percentile, peerGroup: d.peerGroup, peerGroupSize: d.peerGroupSize }, ctx),
+    );
+    const riskVerdicts = (fundamentals?.risks ?? []).map((r) =>
+      isMaterial({ kind: "risk", category: r.category, level: r.level, detail: r.reason }, ctx),
+    );
+    const freshFundamentals = fundamentals
+      ? isMaterial({ kind: "freshness", label: "Fundamentals", asOf: fundamentalsEntry.updatedAt ?? null, ttlHours: 24 }, ctx)
+      : null;
+    const freshFilings =
+      isEquity && filings.length > 0
+        ? isMaterial({ kind: "freshness", label: "SEC filings", asOf: filingsUpdatedAt, ttlHours: 24 }, ctx)
+        : null;
+    const changeVerdicts = (lensTimeline ?? []).map((ev) =>
+      isMaterial({ kind: "change", label: ev.title, at: ev.timestamp }, ctx),
+    );
+
+    const all = [...dimVerdicts, ...riskVerdicts, ...changeVerdicts, freshFundamentals, freshFilings]
+      .filter((v): v is MaterialityVerdict => v != null);
+
+    return {
+      count: materialCount(all),
+      dims: pickVerdict(dimVerdicts),
+      risks: pickVerdict(riskVerdicts),
+      freshFundamentals: freshFundamentals ?? undefined,
+      freshFilings: freshFilings ?? undefined,
+      changes: pickVerdict(changeVerdicts),
+    };
+  }, [lensServer, lensTimeline, lensNow, fundamentals, fundamentalsEntry.updatedAt, filingsUpdatedAt, isEquity, filings.length]);
 
   // India / fund / crypto / commodity / forex / derivatives / macro data is
   // fetched below via `useDataset` — see the block after the verdict effect.
@@ -528,7 +612,7 @@ function ResearchWorkspace({
         `/api/screener-in?symbol=${encodeURIComponent(quote.symbol.replace(/\.(NS|BO)$/i, ""))}`,
         signal,
       ),
-    { enabled: isIndia },
+    { enabled: isIndiaEquity },
   );
   const india = indiaEntry.data;
   const indiaLoading = indiaEntry.status === "loading";
@@ -613,14 +697,50 @@ function ResearchWorkspace({
     }
   }
 
-  const statsRow: [string, string][] = [
-    ["Market cap",    formatMarketCap(quote.marketCap)],
-    ["P/E ratio",     quote.peRatio != null ? formatNumber(quote.peRatio) : "—"],
-    ["Day range",     `${formatCurrency(quote.dayLow, quote.currency)} – ${formatCurrency(quote.dayHigh, quote.currency)}`],
-    ["52-week range", `${formatCurrency(quote.fiftyTwoWeekLow, quote.currency)} – ${formatCurrency(quote.fiftyTwoWeekHigh, quote.currency)}`],
-    ["Volume",        quote.volume != null ? formatCompact(quote.volume) : "—"],
-    ["Exchange",      quote.exchange ?? "—"],
+  // The stat strip describes what the instrument *is*. A mutual fund is a
+  // NAV-priced pool: it has net assets rather than a market cap, one NAV per
+  // day rather than an intraday range, and no exchange volume — rendering
+  // those as "—" reads as broken data, so fund-shaped stats replace them.
+  // ETFs are exchange-traded and keep range/volume, but lead with AUM too.
+  const fiftyTwoWeekRange = `${formatCurrency(quote.fiftyTwoWeekLow, quote.currency)} – ${formatCurrency(quote.fiftyTwoWeekHigh, quote.currency)}`;
+  const netAssetsStat: [string, string] = [
+    "Net assets",
+    formatCompactCurrency(quote.netAssets ?? quote.marketCap, quote.currency),
   ];
+  const statsRow: [string, string][] = isMutualFund
+    ? [
+        // Morningstar (Yahoo's fund source) reports net assets per share
+        // class — for an Indian scheme that is the plan/option being viewed
+        // (e.g. Regular-IDCW), not the whole scheme's AUM. Verified against
+        // HDFC Large Cap: plan ₹3.6k Cr vs scheme ₹38k Cr. The label says so.
+        ["Net assets (plan)", netAssetsStat[1]],
+        ["YTD return",     formatPercent(quote.ytdReturn, 1)],
+        // A fund's trailing P/E is the weighted P/E of what it holds — the
+        // label says so, so it isn't mistaken for a valuation of the fund itself.
+        ["P/E (holdings)", quote.peRatio != null ? formatNumber(quote.peRatio) : "—"],
+        ["52-week range",  fiftyTwoWeekRange],
+        ["Previous NAV",   formatCurrency(quote.previousClose, quote.currency)],
+        ["Exchange",       quote.exchange ?? "—"],
+      ]
+    : isFund
+      ? [
+          netAssetsStat,
+          ["YTD return",    formatPercent(quote.ytdReturn, 1)],
+          ["Day range",     `${formatCurrency(quote.dayLow, quote.currency)} – ${formatCurrency(quote.dayHigh, quote.currency)}`],
+          ["52-week range", fiftyTwoWeekRange],
+          ["Volume",        quote.volume != null ? formatCompact(quote.volume) : "—"],
+          ["Exchange",      quote.exchange ?? "—"],
+        ]
+      : [
+          // Yahoo reports market cap in the listing currency — a hardcoded "$"
+          // mislabels every Indian/Japanese/European name by orders of magnitude.
+          ["Market cap",    formatCompactCurrency(quote.marketCap, quote.currency)],
+          ["P/E ratio",     quote.peRatio != null ? formatNumber(quote.peRatio) : "—"],
+          ["Day range",     `${formatCurrency(quote.dayLow, quote.currency)} – ${formatCurrency(quote.dayHigh, quote.currency)}`],
+          ["52-week range", fiftyTwoWeekRange],
+          ["Volume",        quote.volume != null ? formatCompact(quote.volume) : "—"],
+          ["Exchange",      quote.exchange ?? "—"],
+        ];
 
   /* ── Convenience helpers ─────────────────────────────────── */
   const hasEarnings =
@@ -672,8 +792,21 @@ function ResearchWorkspace({
         <div className="flex flex-wrap items-start justify-between gap-4 p-5">
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2.5">
-              <span className="font-mono text-xl font-semibold tracking-tight">{quote.symbol}</span>
-              <span className="text-sm text-muted">{quote.name}</span>
+              {/* A mutual fund's Yahoo symbol is an opaque Morningstar ID
+                  (0P0001BA9B.BO) nobody searches by or remembers — the fund
+                  NAME is its identity, so it leads. Ticker-first stays right
+                  for everything with a real ticker. */}
+              {isMutualFund && quote.name && quote.name !== quote.symbol ? (
+                <>
+                  <span className="text-xl font-semibold tracking-tight">{quote.name}</span>
+                  <span className="font-mono text-sm text-muted">{quote.symbol}</span>
+                </>
+              ) : (
+                <>
+                  <span className="font-mono text-xl font-semibold tracking-tight">{quote.symbol}</span>
+                  <span className="text-sm text-muted">{quote.name}</span>
+                </>
+              )}
               <span className={`rounded-full border px-2 py-0.5 text-micro font-semibold uppercase tracking-widest ${MARKET_BADGE[market]}`}>
                 {MARKET_LABEL[market]}
               </span>
@@ -703,6 +836,8 @@ function ResearchWorkspace({
 
           {/* Action row */}
           <div className="flex flex-wrap items-center gap-1.5">
+            <LensControl count={lensFlags.count} active={lens.active} onToggle={lens.toggle} />
+            <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
             <Link
               href={`/journal?symbol=${encodeURIComponent(quote.symbol)}`}
               className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-2 text-sm text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
@@ -785,8 +920,8 @@ function ResearchWorkspace({
           elapsedMs={verdictStream.elapsedMs}
           error={verdictStream.error}
           onRetry={verdictStream.retry}
-          score={isIndia || isMacro ? null : isFund ? fundScore : isCrypto ? cryptoScore : isCommodity ? commodityScore : isForex ? forexScore : fundamentals?.score ?? null}
-          confidenceOverride={isIndia ? indiaSnapshot?.composite ?? null : null}
+          score={isIndiaEquity || isMacro ? null : isFund ? fundScore : isCrypto ? cryptoScore : isCommodity ? commodityScore : isForex ? forexScore : fundamentals?.score ?? null}
+          confidenceOverride={isIndiaEquity ? indiaSnapshot?.composite ?? null : null}
         />
       </Reveal>
 
@@ -912,7 +1047,7 @@ function ResearchWorkspace({
           in rather than hard-cutting it. */}
       {tab === "conviction" && (
         <Reveal index={0} className="flex flex-col gap-6">
-          {isIndia && hasIndia && indiaCompany && indiaDerived ? (
+          {isIndiaEquity && hasIndia && indiaCompany && indiaDerived ? (
             // Indian stocks: screener.in is the single source of the conviction
             // score. The Yahoo composite is intentionally omitted here — showing
             // both produced two contradictory headline scores (e.g. 52 vs 67).
@@ -968,15 +1103,17 @@ function ResearchWorkspace({
               </div>
             )
           ) : (
-            <ConvictionBreakdown
-              score={fundamentals?.score ?? null}
-              loading={fundsLoading}
-              verdict={verdict}
-              risks={fundamentals?.risks}
-              onViewRisks={() => setTab("details")}
-            />
+            <MaterialFade active={lens.active} verdict={lensFlags.dims ?? lensFlags.risks}>
+              <ConvictionBreakdown
+                score={fundamentals?.score ?? null}
+                loading={fundsLoading}
+                verdict={verdict}
+                risks={fundamentals?.risks}
+                onViewRisks={() => setTab("details")}
+              />
+            </MaterialFade>
           )}
-          {isIndia && indiaLoading && (
+          {isIndiaEquity && indiaLoading && (
             <LoadingLine
               message="Loading India research data…"
               className="rounded-xl border border-border bg-surface p-5"
@@ -995,7 +1132,7 @@ function ResearchWorkspace({
             news={news}
           />
           <WatchlistIntelligenceCard symbol={quote.symbol} />
-          {isIndia && hasIndia && indiaCompany && (
+          {isIndiaEquity && hasIndia && indiaCompany && (
             <AiSectionInsight
               section="valuation"
               company={indiaCompany}
@@ -1183,9 +1320,17 @@ function ResearchWorkspace({
                 ) : null;
               })()}
 
-              <DataProvenance source="yahoo" asOf={fundamentalsEntry.updatedAt} ttlHours={24} />
-              <ScoreCard score={fundamentals.score} momentum={fundamentals.momentum} />
-              {hasEarnings && <EarningsCard earnings={fundamentals.earnings} />}
+              <MaterialFade active={lens.active} verdict={lensFlags.freshFundamentals}>
+                <DataProvenance source="yahoo" asOf={fundamentalsEntry.updatedAt} ttlHours={24} />
+              </MaterialFade>
+              <MaterialFade active={lens.active} verdict={lensFlags.dims}>
+                <ScoreCard score={fundamentals.score} momentum={fundamentals.momentum} />
+              </MaterialFade>
+              {hasEarnings && (
+                <MaterialFade active={lens.active} verdict={lensFlags.changes}>
+                  <EarningsCard earnings={fundamentals.earnings} />
+                </MaterialFade>
+              )}
 
               {/* Financial charts grid */}
               <div className="grid gap-4 lg:grid-cols-2">
@@ -1218,7 +1363,7 @@ function ResearchWorkspace({
               )}
 
               {/* India financial overlays */}
-              {isIndia && hasIndia && indiaCompany && hasIndiaFinancials && (
+              {isIndiaEquity && hasIndia && indiaCompany && hasIndiaFinancials && (
                 <div className="flex flex-col gap-5">
                   <SectionDivider title="India Financial Trends (screener.in)" />
                   <DataProvenance source="screener_in" asOf={indiaEntry.updatedAt} ttlHours={24} />
@@ -1260,7 +1405,7 @@ function ResearchWorkspace({
                 </div>
               )}
 
-              {isIndia && indiaLoading && <LoadingLine message="Loading India financial data…" />}
+              {isIndiaEquity && indiaLoading && <LoadingLine message="Loading India financial data…" />}
 
               {fundamentals.statementsError && (
                 <p className="text-xs text-muted">
@@ -1280,7 +1425,7 @@ function ResearchWorkspace({
           ) : (
             <>
               {/* India shareholding — shown first for India stocks */}
-              {isIndia && hasIndia && indiaCompany && hasIndiaOwnership && (
+              {isIndiaEquity && hasIndia && indiaCompany && hasIndiaOwnership && (
                 <div className="flex flex-col gap-5">
                   <div>
                     <h3 className="text-sm font-semibold">Shareholding Pattern</h3>
@@ -1300,7 +1445,7 @@ function ResearchWorkspace({
                 </div>
               )}
 
-              {isIndia && indiaLoading && <LoadingLine message="Loading shareholding data…" />}
+              {isIndiaEquity && indiaLoading && <LoadingLine message="Loading shareholding data…" />}
 
               {/* Global institutional ownership + insider */}
               {hasOwnership && <OwnershipCard ownership={fundamentals!.ownership} />}
@@ -1316,7 +1461,7 @@ function ResearchWorkspace({
               )}
 
               {/* India peer table */}
-              {isIndia && hasIndia && indiaDerived && indiaDerived.peers.length > 0 && (
+              {isIndiaEquity && hasIndia && indiaDerived && indiaDerived.peers.length > 0 && (
                 <div className="flex flex-col gap-4">
                   <SectionDivider title="Peer Comparison" />
                   <p className="text-xs text-muted">Rankings within peer set. Data from screener.in.</p>
@@ -1344,15 +1489,18 @@ function ResearchWorkspace({
       {tab === "details" && (
         <Reveal index={0} className="flex flex-col gap-6">
           {/* Investment Timeline, Knowledge Graph, Opportunity Map — compact previews */}
-          <TimelinePreviewCard
-            symbol={quote.symbol}
-            onLoaded={(mostRecent) => setNearestTimelineEvent(mostRecent)}
-          />
+          <MaterialFade active={lens.active} verdict={lensFlags.changes}>
+            <TimelinePreviewCard
+              symbol={quote.symbol}
+              initialEvents={lensTimeline}
+              onLoaded={(mostRecent) => setNearestTimelineEvent(mostRecent)}
+            />
+          </MaterialFade>
           <GraphPreviewCard symbol={quote.symbol} />
           <RelatedOpportunitiesCard symbol={quote.symbol} />
 
           {/* Fund profile (family, category, expense ratio, asset allocation) */}
-          {isFund && fund && <FundProfileCard fund={fund} />}
+          {isFund && fund && <FundProfileCard fund={fund} perShareClass={isMutualFund} />}
 
           {/* Options chain (equity/fund underlyings with listed options — additive, not every symbol has one) */}
           {derivativesLoading ? (
@@ -1368,13 +1516,23 @@ function ResearchWorkspace({
           ) : null}
 
           {/* Analyst consensus */}
-          {fundamentals?.analyst && <AnalystCard analyst={fundamentals.analyst} />}
+          {fundamentals?.analyst && (
+            <MaterialFade active={lens.active} verdict={undefined}>
+              <AnalystCard analyst={fundamentals.analyst} />
+            </MaterialFade>
+          )}
 
-          {/* Risk heatmap */}
-          {fundamentals?.risks && <RiskHeatmap risks={fundamentals.risks} />}
+          {/* Risk heatmap — keeps itself visible when it holds a high risk, and
+              fades its own low/medium tiles individually while the lens is on. */}
+          {fundamentals?.risks && (
+            <MaterialFade active={lens.active} verdict={lensFlags.risks}>
+              <RiskHeatmap risks={fundamentals.risks} lensActive={lens.active} />
+            </MaterialFade>
+          )}
 
           {/* SEC Filings (US/global equity) */}
           {isEquity && (
+            <MaterialFade active={lens.active} verdict={lensFlags.freshFilings}>
             <section className="flex flex-col gap-3">
               <SectionDivider title="SEC Filings" />
               {!edgarError && filings.length > 0 && (
@@ -1416,6 +1574,7 @@ function ResearchWorkspace({
                 </ul>
               )}
             </section>
+            </MaterialFade>
           )}
 
           {/* AI Copilot */}

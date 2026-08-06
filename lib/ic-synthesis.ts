@@ -12,8 +12,9 @@
  * the deterministic parts when the model is unavailable.
  */
 
-import { runPrompt } from "./ai";
-import { extractJsonObject } from "./json-extract";
+import { runAnalysis } from "./ai/analysis";
+import { LooseObjectSchema } from "./ai/schemas/loose";
+import { SynthesisWireSchema, IC_SCHEMA_VERSION } from "./ai/schemas/ic";
 import type { AgentFinding } from "./ic-agents";
 
 export const SYNTHESIS_PROMPT_VERSION = "synth-1";
@@ -144,11 +145,20 @@ Reply with ONLY a raw JSON object:
 }`;
 
   try {
-    const raw = await runPrompt("investment-thesis", prompt, { maxTokens: 800, json: true, model });
-    const parsed = extractJsonObject(raw, {
-      disagreements: [] as unknown[],
-      crossAgentSummary: "",
+    const analysis = await runAnalysis({
+      taskType: "investment-thesis",
+      subjectKey: `ic:synthesis:${symbol}`,
+      prompt,
+      schema: LooseObjectSchema,
+      wireSchema: SynthesisWireSchema,
+      schemaVersion: IC_SCHEMA_VERSION,
+      model,
     });
+    const bag = analysis.data as Record<string, unknown>;
+    const parsed = {
+      disagreements: Array.isArray(bag.disagreements) ? (bag.disagreements as unknown[]) : [],
+      crossAgentSummary: typeof bag.crossAgentSummary === "string" ? bag.crossAgentSummary : "",
+    };
     const agentLabels = new Set(findings.map((f) => f.agentLabel));
     const disagreements = parsed.disagreements
       .map((d): Disagreement | null => {

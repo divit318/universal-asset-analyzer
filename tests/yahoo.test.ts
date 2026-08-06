@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mapHistory, mapQuote, mapSuggestion } from "@/lib/yahoo";
+import { mapFundProfile, mapHistory, mapQuote, mapSuggestion } from "@/lib/yahoo";
 
 describe("mapSuggestion", () => {
   it("maps a Yahoo equity hit", () => {
@@ -106,6 +106,117 @@ describe("mapQuote", () => {
     expect(q.peRatio).toBeNull();
     expect(q.currency).toBe("USD");
     expect(q.name).toBe("Y");
+  });
+
+  it("carries fund-shaped fields (net assets, YTD) for mutual fund quotes", () => {
+    const q = mapQuote({
+      symbol: "0P0001BA9B.BO",
+      longName: "HDFC Large Cap IDCW-R",
+      regularMarketPrice: 53.34,
+      currency: "INR",
+      quoteType: "MUTUALFUND",
+      netAssets: 36261556000,
+      ytdReturn: -5.58,
+    });
+    expect(q.name).toBe("HDFC Large Cap IDCW-R");
+    expect(q.netAssets).toBe(36261556000);
+    expect(q.ytdReturn).toBe(-5.58);
+    expect(q.marketCap).toBeNull();
+    expect(q.volume).toBeNull();
+  });
+});
+
+describe("mapFundProfile", () => {
+  // The exact shape Yahoo returns for every Indian mutual fund (verified live
+  // against 0P0001BA9B.BO — HDFC Large Cap IDCW-R): expense ratios encoded as
+  // literal zeros, category returns padded with zeros, no categoryName, with
+  // the real turnover/AUM/rating living in defaultKeyStatistics/summaryDetail.
+  const indianFundRaw = {
+    fundProfile: {
+      family: "HDFC Asset Management Co Ltd",
+      categoryName: null,
+      legalType: null,
+      feesExpensesInvestment: { annualReportExpenseRatio: 0 },
+    },
+    topHoldings: {
+      stockPosition: 0.9678,
+      bondPosition: 0.005,
+      cashPosition: 0.0272,
+      holdings: [{ symbol: "ICICIBANK.NS", holdingName: "ICICI Bank Ltd", holdingPercent: 0.0973 }],
+      sectorWeightings: [{ financial_services: 0.3965 }],
+    },
+    fundPerformance: {
+      trailingReturns: { ytd: -0.0558, oneYear: -0.0345, threeYear: 0.1034, fiveYear: 0.1204 },
+      trailingReturnsCat: { ytd: 0, oneYear: 0, threeYear: 0, fiveYear: 0 },
+    },
+    defaultKeyStatistics: {
+      annualReportExpenseRatio: 0,
+      annualHoldingsTurnover: 0.1276,
+      totalAssets: 36261556224,
+      morningStarOverallRating: 3,
+      fundInceptionDate: "1996-10-11T00:00:00.000Z",
+    },
+    summaryDetail: { totalAssets: 36261556224, currency: "INR" },
+  };
+
+  it("treats Yahoo's zero-encoded expense ratio as missing, never as free", () => {
+    const fund = mapFundProfile(indianFundRaw);
+    expect(fund.expenseRatio).toBeNull();
+    expect(fund.expenseRatioSource).toBeNull();
+  });
+
+  it("never fabricates a vs-category edge from an all-zero category baseline", () => {
+    const fund = mapFundProfile(indianFundRaw);
+    expect(fund.categoryRelativeReturns.oneYear).toBeNull();
+    expect(fund.categoryRelativeReturns.threeYear).toBeNull();
+    // …while the absolute returns themselves survive.
+    expect(fund.trailingReturns.threeYear).toBeCloseTo(10.34);
+  });
+
+  it("recovers turnover, AUM, currency, rating and inception from the key-stats modules", () => {
+    const fund = mapFundProfile(indianFundRaw);
+    expect(fund.turnoverPercent).toBeCloseTo(0.1276);
+    expect(fund.totalNetAssets).toBe(36261556224);
+    expect(fund.currency).toBe("INR");
+    expect(fund.morningstarRating).toBe(3);
+    expect(fund.inceptionDate).toBe("1996-10-11");
+  });
+
+  it("keeps a US fund's real expense ratio and category-relative returns", () => {
+    const fund = mapFundProfile({
+      fundProfile: {
+        family: "SPDR State Street Global Advisors",
+        categoryName: "Large Blend",
+        feesExpensesInvestment: { annualReportExpenseRatio: 0.000945, totalNetAssets: 486986.6 },
+      },
+      fundPerformance: {
+        trailingReturns: { ytd: 0.1016, oneYear: 0.15, threeYear: 0.19, fiveYear: 0.14 },
+        trailingReturnsCat: { ytd: 0.0514, oneYear: 0.2772, threeYear: 0.1934, fiveYear: 0.12 },
+      },
+      summaryDetail: { totalAssets: 781188857856, currency: "USD" },
+    });
+    expect(fund.expenseRatio).toBeCloseTo(0.000945);
+    expect(fund.expenseRatioSource).toBe("yahoo");
+    expect(fund.category).toBe("Large Blend");
+    // summaryDetail's live raw figure wins over fundProfile's stale millions figure.
+    expect(fund.totalNetAssets).toBe(781188857856);
+    expect(fund.categoryRelativeReturns.oneYear).toBeCloseTo((0.15 - 0.2772) * 100);
+  });
+
+  it("falls back to fundProfile's millions-denominated AUM only as a last resort", () => {
+    const fund = mapFundProfile({
+      fundProfile: { feesExpensesInvestment: { totalNetAssets: 486986.6 } },
+    });
+    expect(fund.totalNetAssets).toBeCloseTo(486986.6e6);
+  });
+
+  it("degrades an empty payload to nulls without throwing", () => {
+    const fund = mapFundProfile({});
+    expect(fund.expenseRatio).toBeNull();
+    expect(fund.totalNetAssets).toBeNull();
+    expect(fund.currency).toBeNull();
+    expect(fund.holdings).toEqual([]);
+    expect(fund.categoryRelativeReturns).toEqual({ oneYear: null, threeYear: null });
   });
 });
 

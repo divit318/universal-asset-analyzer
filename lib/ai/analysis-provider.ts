@@ -16,6 +16,11 @@
  *
  * (AI_TASK_<NAME>_PROVIDER and the old AI_PROVIDER flag are retired along
  * with the second runtime; stale values in .env.local are ignored.)
+ *
+ * Merge resolution (origin/main → f22/day-change, 2026-08-06): main still
+ * carried the two-runtime version of this header and resolver; this branch's
+ * single-runtime contract wins because the sessions provider code no longer
+ * exists here (tests/ai-analysis-provider.test.ts pins this).
  */
 
 import type { z } from "zod";
@@ -29,14 +34,13 @@ export interface AnalysisRequest<T> {
   subjectKey: string;
   /** The dossier: computed facts pushed in. House style lives in the playbook. */
   prompt: string;
-  /** Tolerant PARSE schema — the runtime's output runs through this. */
+  /** Tolerant PARSE schema — both providers' outputs run through this. */
   schema: z.ZodType<T>;
   /**
-   * Clean constraint-carrying schema (no transforms/catches), kept distinct
-   * from the tolerant parse view. Currently unused by the chain runtime,
-   * which validates with `schema` after JSON extraction — retained because
-   * call sites already supply it and a future structured-output wire format
-   * would need exactly this view. Defaults to `schema`.
+   * Clean constraint-carrying schema converted to Draft 7 for the sessions
+   * API's structured_output_schema. Transforms/catches are unrepresentable in
+   * JSON Schema, so a parse schema with tolerances cannot be converted —
+   * supply a wire view when the parse view has them. Defaults to `schema`.
    */
   wireSchema?: z.ZodType<unknown>;
   schemaVersion: number;
@@ -47,6 +51,13 @@ export interface AnalysisRequest<T> {
    * delivers { text } through structured output (lib/ai/schemas/text.ts).
    */
   output?: "json" | "text";
+  /**
+   * Explicit model override, forwarded to the Router (skips auto-routing).
+   * Merge resolution 2026-08-06: main's call sites (IC agents/synthesis/
+   * thesis, valuation inputs) pass this; the chain adapter forwards it to
+   * runTask's existing `model` option.
+   */
+  model?: string;
   /** Defaults to hash(taskType, subjectKey, inputHash, schemaVersion). */
   idempotencyKey?: string;
   timeoutMs?: number;

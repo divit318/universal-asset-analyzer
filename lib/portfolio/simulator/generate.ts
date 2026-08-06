@@ -18,7 +18,13 @@
  * persisted holdings without a live price behind it.
  */
 
-import { runPromptWithMeta } from "@/lib/ai";
+import { runAnalysis } from "@/lib/ai/analysis";
+import { LooseObjectSchema } from "@/lib/ai/schemas/loose";
+import {
+  AllocationWireSchema,
+  SelectionWireSchema,
+  SIMULATOR_SCHEMA_VERSION,
+} from "@/lib/ai/schemas/simulator";
 import { extractJson } from "@/lib/json-extract";
 import { DEFAULT_CONSTRAINTS, OBJECTIVES } from "@/lib/portfolio/engines/optimize";
 import { buildMarketContext } from "@/lib/portfolio/context";
@@ -242,7 +248,19 @@ export function parseSelectionResponse(
   /** Mandate constraints. Omitted = no exclusions (used by callers with no profile). */
   allow?: CandidateFilter,
 ): { picks: SelectionPick[]; dropped: string[] } {
-  const parsed = extractJson<{ picks?: unknown }>(raw);
+  return parseSelectionBag(extractJson<{ picks?: unknown }>(raw), allocation, allow);
+}
+
+/**
+ * The validation/renormalization half of {@link parseSelectionResponse},
+ * taking the already-parsed object — the shape the analysis seam delivers.
+ * All mandate enforcement lives here so both entry points share it.
+ */
+export function parseSelectionBag(
+  parsed: { picks?: unknown },
+  allocation: ClassAllocation,
+  allow?: CandidateFilter,
+): { picks: SelectionPick[]; dropped: string[] } {
   const arr = Array.isArray(parsed.picks) ? parsed.picks : [];
   const picks: SelectionPick[] = [];
   const dropped: string[] = [];
@@ -410,12 +428,21 @@ export async function generatePortfolio(
   emit("allocate", "Designing the asset-class allocation…", 5);
   let allocation: ClassAllocation;
   try {
-    const { text } = await runPromptWithMeta("portfolio-construction", buildAllocationPrompt(profile), {
-      json: true,
+    // Through the analysis seam (tranche 5). portfolio-construction is
+    // latency:"interactive", so under a global AI_PROVIDER=devin the guardrail
+    // keeps it on the token stack unless explicitly pinned; the wire schema
+    // still applies whenever a pin routes it to sessions.
+    const analysis = await runAnalysis({
+      taskType: "portfolio-construction",
+      subjectKey: "simulator:allocation",
+      prompt: buildAllocationPrompt(profile),
+      schema: LooseObjectSchema,
+      wireSchema: AllocationWireSchema,
+      schemaVersion: SIMULATOR_SCHEMA_VERSION,
       timeoutMs: AI_TIMEOUT_MS,
       signal: opts.signal,
     });
-    const parsed = extractJson<{ allocation?: Record<string, unknown> }>(text);
+    const parsed = analysis.data as { allocation?: Record<string, unknown> };
     allocation = normalizeAllocation(parsed.allocation ?? {}, allowedClasses);
     if (Object.keys(allocation).length <= 1) throw new Error("empty allocation");
   } catch (err) {
@@ -429,12 +456,17 @@ export async function generatePortfolio(
   let picks: SelectionPick[];
   let excluded: string[] = [];
   try {
-    const { text } = await runPromptWithMeta("portfolio-construction", buildSelectionPrompt(profile, allocation), {
-      json: true,
+    const analysis = await runAnalysis({
+      taskType: "portfolio-construction",
+      subjectKey: "simulator:selection",
+      prompt: buildSelectionPrompt(profile, allocation),
+      schema: LooseObjectSchema,
+      wireSchema: SelectionWireSchema,
+      schemaVersion: SIMULATOR_SCHEMA_VERSION,
       timeoutMs: AI_TIMEOUT_MS,
       signal: opts.signal,
     });
-    const selection = parseSelectionResponse(text, allocation, allow);
+    const selection = parseSelectionBag(analysis.data as Record<string, unknown>, allocation, allow);
     picks = selection.picks;
     excluded = selection.dropped;
     if (picks.length === 0) throw new Error("no valid picks");

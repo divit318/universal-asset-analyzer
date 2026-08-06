@@ -13,8 +13,9 @@
  * branching in the prompt-building logic itself.
  */
 
-import { runPromptWithMeta } from "../ai";
-import { extractJsonObject } from "../json-extract";
+import { runAnalysis } from "../ai/analysis";
+import { LooseObjectSchema } from "../ai/schemas/loose";
+import { ClassComparisonWireSchema, COMPARISON_SCHEMA_VERSION } from "../ai/schemas/comparison";
 import { verifyGrounding, collectClaimText, type GroundingReport } from "../ai/grounding";
 import { getAssetClass, availableMetrics } from "../assets/registry";
 import { computeHoldingsOverlap } from "./holdings-overlap";
@@ -259,15 +260,26 @@ export async function compareClassAssets(
   let model = "unavailable";
   let flat: FlatClassAI = {};
   try {
-    const { text: raw, model: usedModel } = await runPromptWithMeta("comparison", prompt, {
-      maxTokens: 1600,
-      json: true,
+    // Through the analysis seam (tranche 5); the class wire schema carries
+    // the per-class keyQuestions contract. Downstream sanitizers
+    // (normalizeRankings, sanitizeKeyQuestions, the ?? defaults) are the
+    // parse layer, exactly as before.
+    const analysis = await runAnalysis({
+      taskType: "comparison",
+      subjectKey: `compare:${assetClass}:${valid.map((e) => e.symbol).join(",")}`,
+      prompt,
+      schema: LooseObjectSchema,
+      wireSchema: ClassComparisonWireSchema,
+      schemaVersion: COMPARISON_SCHEMA_VERSION,
     });
-    model = usedModel;
-    flat = extractJsonObject<FlatClassAI>(raw, {
+    // Merge resolution 2026-08-06: single-runtime seam — the answering model
+    // is in meta; main's provider-id branch referenced a retired runtime.
+    model = analysis.meta.model ?? "unknown";
+    flat = {
       keyQuestions: [], rankings: [], noClearWinner: false, tradeoffSummary: "",
       executiveSummary: "", conditionsForChange: "", confidenceScore: undefined,
-    });
+      ...(analysis.data as Record<string, unknown>),
+    } as FlatClassAI;
   } catch {
     // AI unavailable — the metric table / deterministic scores still work.
   }

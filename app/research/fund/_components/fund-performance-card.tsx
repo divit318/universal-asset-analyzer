@@ -11,9 +11,15 @@ export function FundPerformanceCard({ fund }: { fund: FundProfileData }) {
     ["5 year", pct1(fund.trailingReturns.fiveYear)],
   ];
 
+  // Yahoo carries no Morningstar category baseline for Indian mutual funds
+  // (and some closed-end funds) — say so, rather than titling absolute
+  // returns "vs Category" and rendering two dashes.
+  const hasCategoryBaseline =
+    fund.categoryRelativeReturns.oneYear != null || fund.categoryRelativeReturns.threeYear != null;
+
   return (
     <section className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-5">
-      <h3 className="text-sm font-semibold">Performance vs Category</h3>
+      <h3 className="text-sm font-semibold">{hasCategoryBaseline ? "Performance vs Category" : "Performance"}</h3>
 
       <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-4">
         {rows.map(([label, value]) => (
@@ -24,10 +30,16 @@ export function FundPerformanceCard({ fund }: { fund: FundProfileData }) {
         ))}
       </dl>
 
-      <div className="flex flex-wrap gap-4 text-xs text-muted">
-        <span>1yr vs category: <span className="font-mono text-foreground">{pp1(fund.categoryRelativeReturns.oneYear)}</span></span>
-        <span>3yr vs category: <span className="font-mono text-foreground">{pp1(fund.categoryRelativeReturns.threeYear)}</span></span>
-      </div>
+      {hasCategoryBaseline ? (
+        <div className="flex flex-wrap gap-4 text-xs text-muted">
+          <span>1yr vs category: <span className="font-mono text-foreground">{pp1(fund.categoryRelativeReturns.oneYear)}</span></span>
+          <span>3yr vs category: <span className="font-mono text-foreground">{pp1(fund.categoryRelativeReturns.threeYear)}</span></span>
+        </div>
+      ) : (
+        <p className="text-xs text-muted">
+          Category comparison unavailable — our data source carries no category benchmark for this fund. Returns above are absolute.
+        </p>
+      )}
 
       {fund.risk ? (
         <div className="flex flex-wrap gap-4 border-t border-border/60 pt-3 text-xs text-muted">

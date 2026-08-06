@@ -14,13 +14,27 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  *      front of the user.
  */
 
+// The thesis now runs through the analysis seam (tranche 4). The mock records
+// (taskType, prompt) exactly as the old runPrompt mock did, so the prompt-
+// grounding assertions below keep reading calls[0][1]; the resolved value is
+// the seam's AnalysisResult envelope around the same loose JSON bag.
 const runPromptMock = vi.fn();
+const runAnalysisMock = vi.fn(async (req: { taskType: string; prompt: string }) => {
+  const raw = await runPromptMock(req.taskType, req.prompt);
+  return {
+    data: JSON.parse(String(raw)) as Record<string, unknown>,
+    provider: "ollama" as const,
+    meta: { durationMs: 1 },
+  };
+});
 // Typed with its key so the cache-version test can assert that the key read is
 // the key written — an untyped `vi.fn()` records calls as an empty tuple.
 const cacheGet = vi.fn((_key: string) => null as string | null);
 const cachePut = vi.fn();
 
-vi.mock("@/lib/ai", () => ({ runPrompt: (...a: unknown[]) => runPromptMock(...a) }));
+vi.mock("@/lib/ai/analysis", () => ({
+  runAnalysis: (req: { taskType: string; prompt: string }) => runAnalysisMock(req),
+}));
 vi.mock("@/lib/db", () => ({
   getScannerCache: (key: string) => cacheGet(key),
   putScannerCache: (...a: unknown[]) => cachePut(...(a as [])),

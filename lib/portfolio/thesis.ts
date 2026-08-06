@@ -17,8 +17,12 @@
  * consumer. No new task type, no new model policy.
  */
 
-import { runPrompt } from "@/lib/ai";
-import { extractJsonObject } from "@/lib/json-extract";
+import { runAnalysis } from "@/lib/ai/analysis";
+import { LooseObjectSchema } from "@/lib/ai/schemas/loose";
+import {
+  PortfolioThesisWireSchema,
+  PORTFOLIO_THESIS_SCHEMA_VERSION,
+} from "@/lib/ai/schemas/portfolio-thesis";
 import { getScannerCache, putScannerCache } from "@/lib/db";
 import { formatCurrency } from "@/lib/format";
 import { PORTFOLIO_CLASS_LABEL } from "./model/types";
@@ -326,7 +330,8 @@ export function resolveSectionConflicts(
   };
 }
 
-function buildPrompt(evaluation: PortfolioEvaluation, extra: ThesisContext): string {
+/** Exported so the parity harness runs the exact production prompt. */
+export function buildThesisPrompt(evaluation: PortfolioEvaluation, extra: ThesisContext): string {
   const { holdings, allocation, risk, health, totalValue } = evaluation;
   const top = [...holdings].sort((a, b) => b.weight - a.weight).slice(0, 10);
   const holdingLines = top
@@ -558,20 +563,27 @@ export async function buildPortfolioThesis(
 
   let result: PortfolioThesis;
   try {
-    // maxTokens raised from 500: the response now carries five fields rather than
-    // two, and truncating it mid-JSON would fail the parse and silently fall back.
-    const raw = await runPrompt("portfolio-intelligence", buildPrompt(evaluation, extra), {
-      json: true,
-      maxTokens: 900,
-    });
-    const parsed = extractJsonObject(raw, {
-      thesis: "",
-      identity: [] as unknown,
-      strengths: [] as unknown,
-      risks: [] as unknown,
-      bearCase: "",
-      mustBeTrue: "",
-    });
+    // Through the analysis seam (ai-migration/03 §9): AI_PROVIDER decides the
+    // transport; the wire schema is enforced server-side on Devin sessions.
+    // All coercion and defaulting stays below in cleanString/cleanList +
+    // per-field fallbacks — the parse schema is deliberately a passthrough
+    // (see lib/ai/schemas/loose.ts), so the Ollama path is behavior-identical
+    // to the old runPrompt + extractJsonObject pair (an unparseable response
+    // now throws instead of returning defaults, and both roads lead to the
+    // same `fallback`).
+    const analysis = await runAnalysis(
+      {
+        taskType: "portfolio-intelligence",
+        subjectKey: `portfolio:thesis:${contentHash(evaluation)}`,
+        prompt: buildThesisPrompt(evaluation, extra),
+        schema: LooseObjectSchema,
+        wireSchema: PortfolioThesisWireSchema,
+        schemaVersion: PORTFOLIO_THESIS_SCHEMA_VERSION,
+      },
+      // No maxAgeMs: the scanner_cache content-hash short-circuit above is
+      // this feature's freshness policy; a second cache layer would fight it.
+    );
+    const parsed = analysis.data as Record<string, unknown>;
 
     const thesis = cleanString(parsed.thesis);
     if (!thesis) {

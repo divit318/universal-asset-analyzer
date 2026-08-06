@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatCompact,
+  formatCompactCurrency,
   formatCurrency,
   formatDate,
   formatMarketCap,
@@ -24,6 +25,27 @@ describe("formatCurrency", () => {
   });
   it("respects currency", () => {
     expect(formatCurrency(10, "EUR")).toBe("€10.00");
+  });
+});
+
+describe("formatCompactCurrency", () => {
+  it("uses K/M/B/T units for non-INR currencies", () => {
+    expect(formatCompactCurrency(781_188_857_856, "USD")).toBe("$781.19B");
+    expect(formatCompactCurrency(-1_500_000, "EUR")).toBe("-€1.50M");
+  });
+
+  it("uses crore/lakh with Indian digit grouping for INR", () => {
+    // HDFC Large Cap IDCW-Regular plan net assets: ₹3,626 crore, not "₹36.26B".
+    expect(formatCompactCurrency(36_261_556_224, "INR")).toBe("₹3,626.2 Cr");
+    // Reliance-scale market cap: whole crore, Indian grouping.
+    expect(formatCompactCurrency(19_940_000_000_000, "INR")).toBe("₹19,94,000 Cr");
+    expect(formatCompactCurrency(250_000, "INR")).toBe("₹2.5 L");
+    expect(formatCompactCurrency(9_000, "INR")).toBe("₹9,000");
+    expect(formatCompactCurrency(-36_261_556_224, "INR")).toBe("-₹3,626.2 Cr");
+  });
+
+  it("returns em dash for null", () => {
+    expect(formatCompactCurrency(null, "INR")).toBe("—");
   });
 });
 

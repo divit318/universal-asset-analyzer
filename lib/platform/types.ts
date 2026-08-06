@@ -33,8 +33,9 @@ export type DatasetId =
   | "filings"
   | "cikMap"
   | "news"
-  // India (screener.in)
+  // India (screener.in for equities, AMFI for mutual funds)
   | "screenerIn"
+  | "amfiTer"
   // Cross-asset / market-wide
   | "macro"
   | "sectorRotation"

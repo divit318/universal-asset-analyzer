@@ -58,6 +58,14 @@ export interface Quote {
   regularMarketTime?: string | null;
   /** IANA timezone of the listing exchange, e.g. "America/New_York". */
   exchangeTimezone?: string | null;
+  /**
+   * Fund AUM in the listing currency (funds only). Mutual funds have no market
+   * cap — the fund-shaped stat strips render this instead. Optional so quotes
+   * cached before the field existed deserialize unchanged.
+   */
+  netAssets?: number | null;
+  /** Year-to-date return in percent units (funds only; Yahoo reports it inline). */
+  ytdReturn?: number | null;
 }
 
 export interface HistoryPoint {
@@ -472,9 +480,34 @@ export interface FundProfileData {
   family: string | null;
   category: string | null;
   legalType: string | null;
-  expenseRatio: number | null; // fraction, e.g. 0.0009 = 0.09%
+  /**
+   * Fraction, e.g. 0.0009 = 0.09%. Yahoo encodes "not reported" as a literal 0
+   * (every Indian mutual fund comes back 0 across annualReportExpenseRatio,
+   * netExpRatio and grossExpRatio), so the mapping layer nulls exact zeros —
+   * verified that even genuinely-zero-fee funds (Fidelity ZERO) never report 0.
+   */
+  expenseRatio: number | null;
+  /**
+   * Which feed the expense ratio came from: "yahoo" for the normal path,
+   * "amfi" when it was recovered from AMFI's official monthly TER table
+   * (the only source that has it for Indian mutual funds). Null when no
+   * expense ratio is known — the UI badges the AMFI case since the figure
+   * then has a different provenance from the rest of the card.
+   */
+  expenseRatioSource: "yahoo" | "amfi" | null;
   turnoverPercent: number | null; // fraction
-  totalNetAssets: number | null; // raw dollars (Yahoo reports in millions; converted at the mapping layer)
+  /**
+   * Raw units of `currency` (not millions). Sourced from summaryDetail.totalAssets,
+   * which is both current and unit-unambiguous; fundProfile's totalNetAssets is in
+   * millions AND was observed hundreds of billions stale for SPY.
+   */
+  totalNetAssets: number | null;
+  /** ISO currency the fund reports in ("USD", "INR", …) — funds are not all dollar-denominated. */
+  currency: string | null;
+  /** Morningstar overall rating, 1–5 stars. Null when unrated. */
+  morningstarRating: number | null;
+  /** Fund inception date, ISO "YYYY-MM-DD". */
+  inceptionDate: string | null;
   holdings: FundHolding[];
   sectorWeights: FundSectorWeight[];
   assetAllocation: { stock: number | null; bond: number | null; cash: number | null; other: number | null }; // percentage-points, e.g. 60 = 60%

@@ -140,11 +140,14 @@ function JournalPageInner() {
       try {
         const r = await fetch(`/api/quote?symbol=${encodeURIComponent(symbol)}`);
         if (!r.ok || !alive) return;
-        const q = (await r.json()) as { price?: number; currency?: string; shortName?: string; name?: string };
+        const q = (await r.json()) as { price?: number; currency?: string; name?: string };
         if (!alive) return;
         if (q.price != null) setPriceAt(q.price);
         if (q.currency) setCurrency(q.currency);
-        setName(q.shortName ?? q.name ?? symbol);
+        // `name` is longName-first from mapQuote. (A `shortName` preference here
+        // was dead code — /api/quote never returns one — but would have shown
+        // mutual funds' raw Morningstar IDs had it ever resolved.)
+        setName(q.name ?? symbol);
       } catch {
         /* ignore */
       }

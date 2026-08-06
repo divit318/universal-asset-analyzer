@@ -20,6 +20,10 @@ import {
   type AnalysisRequest,
   type AnalysisResult,
 } from "./analysis-provider";
+/* Merge resolution (origin/main → f22/day-change, 2026-08-06): main's version
+   imported ./providers/devin/{provider,sweeper}, which this branch removed
+   when the sessions runtime was retired (30e04d2 / 42d579d). The chain is the
+   one runtime; legacy "sessions" ids remain readable below. */
 import { chainAnalysisProvider } from "./providers/chain-analysis";
 import { dedupe } from "../platform/dedup";
 import {
@@ -103,7 +107,9 @@ export interface JobHandle {
  * Async-first entry: record a durable job row, kick the work off in-process
  * (attached to the platform job registry), return immediately. UIs poll
  * GET /api/ai/jobs/[jobId]. Restart recovery: a `running` row whose driver
- * died re-executes on the next enqueue with the same idempotency key.
+ * died re-executes on the next enqueue with the same idempotency key — the
+ * Devin provider then re-attaches to the live tagged session instead of
+ * creating a second one.
  */
 export function enqueueAnalysis<T>(req: AnalysisRequest<T>, opts: RunAnalysisOptions = {}): JobHandle {
   const inputHash = analysisInputHash(req.prompt);
@@ -115,7 +121,8 @@ export function enqueueAnalysis<T>(req: AnalysisRequest<T>, opts: RunAnalysisOpt
   const existing = getAiJob(jobId);
   if (existing && (existing.status === "pending" || existing.status === "running")) {
     // Durable single-flight: dedupe coalesces in-process; if the driver died
-    // with a previous process, this re-kicks it under the same idempotency key.
+    // with a previous process, this re-kicks it and the Devin provider
+    // re-attaches to the live tagged session instead of creating a second.
     void dedupe(jobId, () => driveJob(jobId, req, opts)).catch(() => {});
     return { jobId, status: existing.status };
   }

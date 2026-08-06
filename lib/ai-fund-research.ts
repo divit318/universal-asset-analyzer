@@ -7,6 +7,7 @@
  */
 
 import { runPromptWithMeta } from "./ai";
+import { formatCompactCurrency } from "./format";
 import type { FundProfileData, ScoreResult } from "./types";
 import type { ChatMessage } from "./ai-research";
 
@@ -22,9 +23,9 @@ function fundDataBlock(symbol: string, name: string, fund: FundProfileData, scor
 
   return `FUND: ${symbol} — ${name}
 Category: ${fund.category ?? "n/a"} (family: ${fund.family ?? "n/a"})
-Expense ratio: ${fund.expenseRatio != null ? `${(fund.expenseRatio * 100).toFixed(2)}%` : "n/a"}
+Expense ratio: ${fund.expenseRatio != null ? `${(fund.expenseRatio * 100).toFixed(2)}%` : "not reported by our data source — do NOT assume it is zero or low"}
 Portfolio turnover: ${fund.turnoverPercent != null ? `${(fund.turnoverPercent * 100).toFixed(0)}%` : "n/a"}
-Total net assets: ${fund.totalNetAssets != null ? `$${(fund.totalNetAssets / 1e9).toFixed(1)}B` : "n/a"}
+Total net assets: ${fund.totalNetAssets != null ? formatCompactCurrency(fund.totalNetAssets, fund.currency) : "n/a"}
 
 TOP HOLDINGS:
 ${topHoldings || "  not available"}

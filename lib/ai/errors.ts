@@ -134,10 +134,27 @@ const PROMOTABLE_CAUSES: ReadonlySet<AiErrorCategory> = new Set([
   "network",
 ]);
 
+/**
+ * DevinAnalysisError (lib/ai/providers/devin/provider.ts) carries its own
+ * category field whose four values are already members of this union. Read
+ * by name + duck-typed field for the same no-import-cycle reason as codeOf.
+ */
+function devinCategoryOf(err: unknown): AiErrorCategory | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  const e = err as { name?: unknown; category?: unknown };
+  if (e.name !== "DevinAnalysisError") return undefined;
+  const c = e.category;
+  return c === "cancelled" || c === "timeout" || c === "invalid_response" || c === "unknown"
+    ? c
+    : "unknown";
+}
+
 export function classifyAiError(err: unknown): ClassifiedAiError {
   const code = codeOf(err);
   let category: AiErrorCategory;
-  if (isCallerAbort(err)) category = "cancelled";
+  const devin = devinCategoryOf(err);
+  if (devin) category = devin;
+  else if (isCallerAbort(err)) category = "cancelled";
   else if (isTimeout(err)) category = "timeout";
   // "anthropic_key_*" are the AnthropicProvider's own codes; "api_key_*" are
   // the provider-generic ones every other keyed provider throws (lib/ai/keys.ts).

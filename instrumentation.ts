@@ -14,6 +14,12 @@ export async function register() {
 
   const { startScannerScheduler } = await import("@/lib/scanner/scheduler");
   startScannerScheduler();
+
+  // Verdict cache warming (watchlist + portfolio). Internally a no-op unless
+  // the verdict tasks resolve to the Devin provider — warming through the
+  // serializing local daemon would starve interactive users.
+  const { startVerdictWarmer } = await import("@/lib/ai/verdict-warmer");
+  startVerdictWarmer();
 }
 
 // Captures errors from Server Components, route handlers, and streaming

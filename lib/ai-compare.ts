@@ -8,7 +8,9 @@
  * weaknesses, and the investor it suits) rather than one forced winner.
  */
 
-import { runPromptWithMeta } from "./ai";
+import { runAnalysis } from "./ai/analysis";
+import { LooseObjectSchema } from "./ai/schemas/loose";
+import { EquityComparisonWireSchema, COMPARISON_SCHEMA_VERSION } from "./ai/schemas/comparison";
 import { runTaskStream } from "./ai/orchestrator";
 import { classifyAiError, type AiErrorCategory, type ClassifiedAiError } from "./ai/errors";
 import { logAiEvent } from "./ai/log";
@@ -613,13 +615,24 @@ export async function compareStocks(
   // instead of one generic message for every cause.
   let aiFailure: ClassifiedAiError | undefined;
   try {
-    const { text: raw, model: usedModel } = await runPromptWithMeta("comparison", setup.prompt, {
-      maxTokens: 1800,
-      json: true,
+    // Through the analysis seam (tranche 5). The wire schema is enforced
+    // server-side on Devin sessions; parse-side defaulting is unchanged —
+    // flatFromStreamedFields applies the same FLAT_AI_DEFAULTS the old
+    // parseCompareResponse guaranteed, so finalizeComparison sees the same
+    // shape from either transport (or from the streamed path).
+    const analysis = await runAnalysis({
+      taskType: "comparison",
+      subjectKey: `compare:${setup.stocks.map((s) => s.symbol).join(",")}`,
+      prompt: setup.prompt,
+      schema: LooseObjectSchema,
+      wireSchema: EquityComparisonWireSchema,
+      schemaVersion: COMPARISON_SCHEMA_VERSION,
       signal: opts.signal,
     });
-    model = usedModel;
-    flat = parseCompareResponse(raw);
+    // Merge resolution 2026-08-06: single-runtime seam — the answering model
+    // is in meta; main's provider-id branch referenced a retired runtime.
+    model = analysis.meta.model ?? "unknown";
+    flat = flatFromStreamedFields(analysis.data as Record<string, unknown>);
   } catch (err) {
     aiFailure = classifyAiError(err);
     logAiEvent({

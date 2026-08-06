@@ -114,6 +114,8 @@ describe("text mode", () => {
         schemaVersion: 1,
         output: "text",
       },
+      /* Merge resolution: provider ids are "chain" | "sessions" on this
+         branch (analysis-provider.ts); main's "ollama" id no longer exists. */
       { providers: { chain: {
         id: "chain",
         async run() { return { data: { text: "plain prose answer" }, provider: "chain" as const, meta: { durationMs: 1 } }; },

@@ -1,6 +1,7 @@
 import { isValidSymbol } from "@/lib/market";
 import { NextResponse } from "next/server";
 import { isIdeaSource } from "@/lib/idea-source";
+import { resolveDisplayName } from "@/lib/yahoo";
 import type { TargetDirection } from "@/lib/types";
 import {
   addToWatchlist,
@@ -82,9 +83,13 @@ export async function POST(request: Request) {
 
   try {
     const detail = typeof body.sourceDetail === "string" ? body.sourceDetail.trim().slice(0, 120) || null : null;
+    // Callers without a name in hand (command palette quick-add) used to
+    // persist the raw symbol as the name — for Indian mutual funds that is a
+    // Morningstar ID ("0P0001BA9B.BO") shown verbatim on every watchlist read.
+    const name = await resolveDisplayName(symbol, body.name);
     const item = addToWatchlist(
       symbol,
-      body.name?.trim() || symbol.toUpperCase(),
+      name,
       body.group != null ? Number(body.group) : undefined,
       isIdeaSource(body.source) ? { source: body.source, detail } : undefined,
     );

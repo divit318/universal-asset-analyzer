@@ -36,7 +36,7 @@ import { writeCache } from "../platform/cache";
 import { cacheKey } from "../platform/registry";
 import { extractJson } from "../json-extract";
 import { detectAssetClass } from "../asset-class";
-import { formatCurrency, formatMarketCap } from "../format";
+import { formatCompactCurrency, formatCurrency, formatMarketCap } from "../format";
 import { getFundProfile, getHistory, getMacroSummary } from "../yahoo";
 import { computeFundScore } from "../fund-scoring";
 import { computeCryptoScore } from "../crypto-scoring";
@@ -235,14 +235,31 @@ export function parseVerdictFields(raw: string): Record<string, unknown> {
 /**
  * Generate a verdict without streaming — the blocking path.
  *
+ * Runs through the analysis seam (ai-migration/03 §9), so AI_PROVIDER decides
+ * Ollama vs Devin. Both providers return the loose field bag that
+ * {@link assembleVerdict} → coerceFields narrows with plan-specific defaults —
+ * one defaulting implementation, two transports.
+ *
  * Never throws: an inference failure degrades to {@link offlineVerdict} so the
- * research page always has something to render.
+ * research page always has something to render. One deliberate asymmetry,
+ * preserving each path's pre-migration semantics exactly:
+ *   - Ollama emitting UNPARSEABLE bytes assembles the plan's defaults (what
+ *     `parseVerdictFields → {}` always did) rather than the offline fallback;
+ *   - Devin failing produces the offline fallback, which `cacheVerdict`
+ *     refuses to persist — a session error must not pin a defaults verdict
+ *     into a 6h cache.
  */
 export async function generateVerdict(
   plan: VerdictPlan,
-  opts: { signal?: AbortSignal } = {},
+  opts: { signal?: AbortSignal; subjectKey?: string } = {},
 ): Promise<InvestmentVerdict> {
   try {
+    /* Merge resolution (origin/main → f22/day-change, 2026-08-06): kept this
+       branch's provider-agnostic seam (runPromptWithMeta). main's runAnalysis
+       variant imported ./providers/ollama-analysis and ./schemas/verdict,
+       neither of which exists after 42d579d ("six providers behind one
+       seam") — the branch side is the only one that compiles, and it is the
+       newer architecture. */
     const { text: raw, model } = await runPromptWithMeta(plan.task, plan.prompt, { json: true });
     if (opts.signal?.aborted) return offlineVerdict(plan);
     return assembleVerdict(plan, parseVerdictFields(raw), model);
@@ -332,7 +349,12 @@ export async function getVerdict(
       "aiVerdict",
       params,
       async () => {
-        const verdict = await generateVerdict(plan, { signal: opts.signal });
+        const verdict = await generateVerdict(plan, {
+          signal: opts.signal,
+          // The cache key's symbol is the stable subject; the plan's display
+          // name would make e.g. "Apple Inc." and "AAPL" distinct subjects.
+          subjectKey: params.symbol ? `verdict:${params.symbol}` : undefined,
+        });
         if (verdict.model === "unavailable") throw new VerdictUnavailableError(verdict);
         return verdict;
       },
@@ -424,9 +446,11 @@ async function planFundVerdict(ctx: CompanyContext): Promise<VerdictPlan> {
   const facts = [
     `Fund: ${name} (${symbol})`,
     `Price: ${formatCurrency(quote.price, quote.currency)} (${quote.changePercent >= 0 ? "+" : ""}${quote.changePercent.toFixed(2)}% today)`,
-    `Total net assets: ${fund.totalNetAssets != null ? `$${(fund.totalNetAssets / 1e9).toFixed(1)}B` : "n/a"}`,
+    `Total net assets: ${fund.totalNetAssets != null ? formatCompactCurrency(fund.totalNetAssets, fund.currency) : "n/a"}`,
     `Category: ${fund.category ?? "n/a"}`,
-    `Expense ratio: ${fund.expenseRatio != null ? `${(fund.expenseRatio * 100).toFixed(2)}%` : "n/a"}`,
+    // "n/a" alone reads as "free" to a model told the fund is an index-style
+    // pool — the explicit instruction stops fee claims being invented.
+    `Expense ratio: ${fund.expenseRatio != null ? `${(fund.expenseRatio * 100).toFixed(2)}%` : "not reported by our data source — do NOT assume it is zero or low"}`,
     `Fund score: ${score.composite}/100 (${score.recommendation.replace(/_/g, " ")})`,
     ...scoreFacts(score),
     `Top holdings: ${fund.holdings.slice(0, 5).map((h) => `${h.symbol} ${h.weightPercent.toFixed(1)}%`).join(", ") || "n/a"}`,

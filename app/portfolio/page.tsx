@@ -12,9 +12,11 @@
  * See PLAN-portfolio-universal.md for the architecture and the audit that motivated it.
  */
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useDataset } from "@/lib/platform/client/use-dataset";
+import { LensControl, MaterialFade, useMaterialityLens } from "@/app/_components/materiality-lens";
+import { isMaterial, materialCount, pickVerdict, type MaterialityContext, type MaterialityVerdict } from "@/lib/materiality";
 import {
   PageShell,
   PageHeader,
@@ -184,6 +186,60 @@ function PortfolioPageInner() {
   const cashSlice = report?.allocation.byAssetClass.slices.find((s) => s.key === "cash");
   const cash = { value: cashSlice?.value ?? 0, weight: cashSlice?.weight ?? 0 };
 
+  /* ── Materiality lens ─────────────────────────────────────────────────
+     Flags derive from the report the page already fetched (concentration
+     breaches the allocation engine computed) plus one small baseline
+     exchange: the current per-holding scores are POSTed to
+     /api/materiality/portfolio, which returns the scores captured on the
+     PREVIOUS visit — nothing is rebuilt server-side. Toggling the lens is
+     pure presentation. Main portfolio only for the baseline: the two-slot
+     fingerprint is one page-wide blob, and letting a view-only portfolio
+     overwrite Main's baseline would corrupt the comparison. */
+  const lens = useMaterialityLens();
+  const [priorScores, setPriorScores] = useState<Record<string, number | null> | null>(null);
+
+  useEffect(() => {
+    if (!report || report.holdingCount === 0 || !isMain) return;
+    const scores: Record<string, number | null> = {};
+    for (const h of report.holdings) {
+      if (h.symbol) scores[h.symbol.toUpperCase()] = h.score?.score ?? null;
+    }
+    let cancelled = false;
+    void fetch("/api/materiality/portfolio", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scores }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled && d) setPriorScores(d.priorScores ?? null); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // Keyed on generatedAt: one exchange per report build, not per re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [report?.generatedAt, isMain]);
+
+  const lensFlags = useMemo(() => {
+    if (!report || report.holdingCount === 0) {
+      return { count: 0, concentration: [] as MaterialityVerdict[], concAgg: undefined as MaterialityVerdict | undefined, crossings: [] as MaterialityVerdict[], materialCrossings: [] as MaterialityVerdict[] };
+    }
+    // `now` is unused by concentration/tierCrossing items (no freshness checks
+    // on this page), so a constant keeps the memo pure per react-hooks/purity.
+    const ctx: MaterialityContext = { now: 0, priorScores: isMain ? priorScores : null };
+    const concentration = report.concentration.map((c) =>
+      isMaterial({ kind: "concentration", label: c.label, pct: c.pct, severity: c.severity, message: c.message }, ctx),
+    );
+    const crossings = report.holdings
+      .filter((h) => h.symbol)
+      .map((h) => isMaterial({ kind: "tierCrossing", symbol: h.symbol!.toUpperCase(), currentScore: h.score?.score ?? null }, ctx));
+    return {
+      count: materialCount([...concentration, ...crossings]),
+      concentration,
+      concAgg: pickVerdict(concentration),
+      crossings,
+      materialCrossings: crossings.filter((v) => v.material),
+    };
+  }, [report, priorScores, isMain]);
+
   return (
     <PageShell width="wide">
       <ArrivalHighlight targetId={highlightTarget} />
@@ -196,6 +252,9 @@ function PortfolioPageInner() {
                 "Today +0.42%" is presented with exactly the authority of a quote
                 from ten seconds ago. */}
             {report && <AsOfStamp generatedAt={report.generatedAt} />}
+            {report && report.holdingCount > 0 && (
+              <LensControl count={lensFlags.count} active={lens.active} onToggle={lens.toggle} />
+            )}
             {isMain && (
               <Button variant="primary" size="md" onClick={() => setShowAdd(true)}>
                 Add holding
@@ -293,6 +352,7 @@ function PortfolioPageInner() {
               book — "how much can I deploy?" is asked more often than almost
               anything else on this page — and it was previously reachable only by
               reading a row inside an allocation bar. */}
+          <MaterialFade active={lens.active} verdict={undefined}>
           <Reveal index={1} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <StatTile
               label="Total value"
@@ -341,6 +401,7 @@ function PortfolioPageInner() {
               tone={report.health.total >= 70 ? "positive" : report.health.total >= 50 ? "default" : "warning"}
             />
           </Reveal>
+          </MaterialFade>
 
           {/* ── Data-quality disclosure ──────────────────────────────────────────
               A portfolio that is largely self-reported marks has a "total value" that
@@ -405,6 +466,7 @@ function PortfolioPageInner() {
               {(showAllConcentration ? report.concentration : report.concentration.slice(0, 3)).map((c, i) => (
                 <div
                   key={`${c.type}-${c.label}-${i}`}
+                  title={lens.active ? lensFlags.concentration[i]?.reason : undefined}
                   className={`flex items-start gap-2 rounded-lg border px-3.5 py-2.5 ${
                     c.severity === "high"
                       ? "border-negative/25 bg-negative/[0.04]"
@@ -431,6 +493,26 @@ function PortfolioPageInner() {
                 </button>
               )}
             </Reveal>
+          )}
+
+          {/* ── Tier changes since the last visit ───────────────────────────
+              Rendered only while the lens is on: these rows ARE the lens's
+              reason strings for holdings whose score crossed a TIER_EDGES
+              boundary since the previous visit (per the two-slot baseline),
+              giving each crossing a visible anchor even before row-level
+              fading exists inside the holdings table. */}
+          {lens.active && lensFlags.materialCrossings.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              {lensFlags.materialCrossings.map((v, i) => (
+                <div
+                  key={i}
+                  className="flex items-start gap-2 rounded-lg border border-warning/25 bg-warning/[0.04] px-3.5 py-2.5"
+                >
+                  <Badge variant="warning">tier change</Badge>
+                  <p className="text-xs leading-relaxed text-muted">{v.reason}</p>
+                </div>
+              ))}
+            </div>
           )}
 
           <Reveal index={4}>
@@ -465,19 +547,31 @@ function PortfolioPageInner() {
           {effectiveTab === "dashboard" && (
             <div className="flex flex-col gap-4">
               <div className="grid gap-4 xl:grid-cols-2">
-                <TrajectoryPanel trajectory={report.trajectory} />
-                <HealthPanel health={report.health} />
+                <MaterialFade active={lens.active} verdict={undefined}>
+                  <TrajectoryPanel trajectory={report.trajectory} />
+                </MaterialFade>
+                <MaterialFade active={lens.active} verdict={undefined}>
+                  <HealthPanel health={report.health} />
+                </MaterialFade>
               </div>
-              <AllocationPanel allocation={report.allocation} />
+              {/* Concentration breaches live in the allocation breakdown, so the
+                  panel inherits their verdict and stays crisp when one exists. */}
+              <MaterialFade active={lens.active} verdict={lensFlags.concAgg}>
+                <AllocationPanel allocation={report.allocation} />
+              </MaterialFade>
               {/* `realizedPnl` from the same report: attribution decomposes only
                   what is still held, so without it the panel's total differed from
                   the tile above by exactly the banked P&L and said nothing. */}
-              <AttributionPanel
-                attribution={report.attribution}
-                totalReturnPct={report.totalReturn}
-                realizedPnl={"empty" in report.performance ? 0 : report.performance.realizedPnl}
-              />
-              <MacroFactorPanel allocation={report.allocation} />
+              <MaterialFade active={lens.active} verdict={undefined}>
+                <AttributionPanel
+                  attribution={report.attribution}
+                  totalReturnPct={report.totalReturn}
+                  realizedPnl={"empty" in report.performance ? 0 : report.performance.realizedPnl}
+                />
+              </MaterialFade>
+              <MaterialFade active={lens.active} verdict={undefined}>
+                <MacroFactorPanel allocation={report.allocation} />
+              </MaterialFade>
               {!isMain && <ReadOnlyHoldings holdings={report.holdings} baseCurrency={report.baseCurrency} />}
             </div>
           )}
@@ -501,11 +595,13 @@ function PortfolioPageInner() {
           )}
 
           {effectiveTab === "holdings" && (
-            <HoldingsPanel
-              holdings={report.holdings}
-              totalValue={report.totalValue}
-              onChanged={() => { refresh(); setThesisRefreshSignal((n) => n + 1); }}
-            />
+            <MaterialFade active={lens.active} verdict={pickVerdict(lensFlags.crossings)}>
+              <HoldingsPanel
+                holdings={report.holdings}
+                totalValue={report.totalValue}
+                onChanged={() => { refresh(); setThesisRefreshSignal((n) => n + 1); }}
+              />
+            </MaterialFade>
           )}
 
           {/* Both props come from ONE report, so the panel's reconciliation is

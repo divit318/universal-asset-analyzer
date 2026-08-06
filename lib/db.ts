@@ -341,6 +341,18 @@ function getDb(): DatabaseSync {
       taken_at INTEGER NOT NULL
     );
 
+    -- Per-page change baselines for the materiality lens (lib/materiality.ts).
+    -- Same two-slot design as home_fingerprint, keyed by page so each surface
+    -- keeps its own "what did this look like on my previous visit" blob
+    -- (e.g. page = 'portfolio-scores' stores symbol → holding score).
+    CREATE TABLE IF NOT EXISTS page_fingerprint (
+      page     TEXT NOT NULL,
+      slot     TEXT NOT NULL CHECK (slot IN ('current', 'baseline')),
+      data     TEXT NOT NULL,
+      taken_at INTEGER NOT NULL,
+      PRIMARY KEY (page, slot)
+    );
+
     -- Valuation as a persisted object rather than a page.
     --
     -- The valuation_event table is the truth: append-only, one row per version,
@@ -3022,6 +3034,19 @@ export function listActivity(limit = 6): ActivityRow[] {
     .all(limit) as unknown as ActivityRow[];
 }
 
+/**
+ * When the user last visited one specific thing — the materiality lens's
+ * "changed since your last visit" baseline. Read at page load, BEFORE the
+ * current visit's debounced recordActivity() lands, so it still reports the
+ * previous visit. Null = never visited (first visit skips the check).
+ */
+export function getActivityAt(kind: string, ref: string): string | null {
+  const row = getDb()
+    .prepare("SELECT at FROM activity WHERE kind = ? AND ref = ?")
+    .get(kind, ref) as { at: string } | undefined;
+  return row?.at ?? null;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Attention Queue dismissals (§13)                                            */
 /* -------------------------------------------------------------------------- */
@@ -3083,6 +3108,27 @@ export function putHomeFingerprint(slot: HomeFingerprintSlot, data: string, take
        ON CONFLICT(slot) DO UPDATE SET data = excluded.data, taken_at = excluded.taken_at`,
     )
     .run(slot, data, takenAt);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Per-page materiality baselines (lib/materiality.ts)                         */
+/* -------------------------------------------------------------------------- */
+
+/** Same slot semantics as home_fingerprint; the blob is opaque JSON owned by the page's route. */
+export function getPageFingerprint(page: string, slot: HomeFingerprintSlot): { data: string; takenAt: number } | null {
+  const row = getDb()
+    .prepare("SELECT data, taken_at FROM page_fingerprint WHERE page = ? AND slot = ?")
+    .get(page, slot) as { data: string; taken_at: number } | undefined;
+  return row ? { data: row.data, takenAt: row.taken_at } : null;
+}
+
+export function putPageFingerprint(page: string, slot: HomeFingerprintSlot, data: string, takenAt: number): void {
+  getDb()
+    .prepare(
+      `INSERT INTO page_fingerprint (page, slot, data, taken_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(page, slot) DO UPDATE SET data = excluded.data, taken_at = excluded.taken_at`,
+    )
+    .run(page, slot, data, takenAt);
 }
 
 /* -------------------------------------------------------------------------- */

@@ -16,7 +16,10 @@
  * to make no claims about individuals beyond those records.
  */
 
-import { runPrompt } from "./ai";
+import { runAnalysis } from "./ai/analysis";
+import { resolveProvider } from "./ai/analysis-provider";
+import { LooseObjectSchema } from "./ai/schemas/loose";
+import { AgentFindingWireSchema, IC_SCHEMA_VERSION } from "./ai/schemas/ic";
 import { taskForAgentDomain } from "./ai/task-registry";
 import { extractJsonObject } from "./json-extract";
 import { verifyGrounding, collectClaimText, type GroundingReport } from "./ai/grounding";
@@ -262,12 +265,12 @@ export const AGENT_CONFIG: Record<AgentDomain, { label: string; persona: string;
 const AGENT_TIMEOUT_MS = 180_000;
 const AGENT_RETRIES = 1;
 
-async function runAgent(
+/** Exported so the parity harness runs the exact production prompt. */
+export function buildAgentPrompt(
   domain: AgentDomain,
   questions: InvestigativeQuestion[],
   ctx: AgentContext,
-  model?: string,
-): Promise<AgentFinding> {
+): { prompt: string; dataContext: string; included: InvestigativeQuestion[] } {
   const config = AGENT_CONFIG[domain];
   const dataContext = buildDataContext(ctx, domain);
 
@@ -295,16 +298,35 @@ IMPORTANT: Reply with ONLY a raw JSON object. No markdown, no code fences, no ex
   "dataLimitations": "null or a sentence describing missing data"
 }`;
 
+  return { prompt, dataContext, included };
+}
+
+async function runAgent(
+  domain: AgentDomain,
+  questions: InvestigativeQuestion[],
+  ctx: AgentContext,
+  model?: string,
+): Promise<AgentFinding> {
+  const config = AGENT_CONFIG[domain];
+  const { prompt, dataContext, included } = buildAgentPrompt(domain, questions, ctx);
+
   let lastError: unknown;
   for (let attempt = 0; attempt <= AGENT_RETRIES; attempt++) {
     try {
-      const raw = await runPrompt(taskForAgentDomain(domain), prompt, {
-        maxTokens: 1200,
-        json: true,
+      // Through the analysis seam (tranche 6): a Devin session per agent with
+      // the finding schema enforced server-side; the token stack unchanged
+      // underneath (model override honored exactly as runPrompt honored it).
+      const analysis = await runAnalysis({
+        taskType: taskForAgentDomain(domain),
+        subjectKey: `ic:${ctx.facts.symbol}:${domain}`,
+        prompt,
+        schema: LooseObjectSchema,
+        wireSchema: AgentFindingWireSchema,
+        schemaVersion: IC_SCHEMA_VERSION,
         model,
         timeoutMs: AGENT_TIMEOUT_MS,
       });
-      const parsed = extractAgentJson(raw);
+      const parsed = normalizeAgentBag(analysis.data as Record<string, unknown>);
 
       // Verify the agent's prose against the exact data slice it was handed.
       const grounding = verifyGrounding(
@@ -344,6 +366,36 @@ IMPORTANT: Reply with ONLY a raw JSON object. No markdown, no code fences, no ex
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
+/**
+ * Normalize an already-parsed agent bag — the shape the analysis seam
+ * delivers. The string-shaped {@link extractAgentJson} delegates here after
+ * its own extraction strategies, so the coercions exist once.
+ */
+export function normalizeAgentBag(bag: Record<string, unknown>): {
+  findings: string;
+  keyInsights: string[];
+  confidence: "high" | "medium" | "low";
+  dataLimitations: string | null;
+} {
+  const findings = typeof bag.findings === "string" ? bag.findings : "";
+  if (!findings) {
+    return {
+      findings: "Insufficient data for analysis.",
+      keyInsights: [],
+      confidence: "low",
+      dataLimitations: "AI response format could not be fully parsed.",
+    };
+  }
+  return {
+    findings,
+    keyInsights: Array.isArray(bag.keyInsights)
+      ? bag.keyInsights.filter((s): s is string => typeof s === "string")
+      : [],
+    confidence: normaliseConfidence(typeof bag.confidence === "string" ? bag.confidence : undefined),
+    dataLimitations: typeof bag.dataLimitations === "string" ? bag.dataLimitations : null,
+  };
+}
+
 /** Extract agent JSON from a raw LLM response, with multiple fallback strategies. */
 export function extractAgentJson(raw: string): {
   findings: string;
@@ -359,12 +411,7 @@ export function extractAgentJson(raw: string): {
     dataLimitations: null as string | null,
   });
   if (parsed.findings) {
-    return {
-      findings: parsed.findings,
-      keyInsights: parsed.keyInsights.filter((s): s is string => typeof s === "string"),
-      confidence: normaliseConfidence(parsed.confidence),
-      dataLimitations: typeof parsed.dataLimitations === "string" ? parsed.dataLimitations : null,
-    };
+    return normalizeAgentBag(parsed as Record<string, unknown>);
   }
 
   // Strategy 2: extract prose text by aggressively stripping all JSON scaffolding
@@ -442,8 +489,19 @@ export async function runAgentNetwork(
   input: AgentNetworkInput,
   onAgentComplete?: (finding: AgentFinding) => void,
   model?: string,
-  concurrency = 1,
+  concurrency?: number,
 ): Promise<AgentNetworkResult> {
+  // Sequential dispatch exists because Ollama SERIALIZES generations (see the
+  // module comment above). Devin sessions do not — fan-out to 40 concurrent
+  // was validated with zero 429s (ai-migration/05 amendment 2) — so when the
+  // agent tasks resolve to Devin the whole network runs at once. That single
+  // difference is 9x wall-clock on the report's longest stage.
+  /* Merge resolution 2026-08-06: main auto-raised concurrency to 9 when the
+     agent tasks resolved to its "sessions" runtime; that runtime is retired
+     on this branch, so the default stays sequential (the explicit
+     `concurrency` parameter remains the caller's dial — pinned by
+     tests/ic-agents.test.ts). */
+  const effectiveConcurrency = concurrency ?? 1;
   const ctx: AgentContext = {
     facts: input.facts,
     signals: input.signals,
@@ -470,11 +528,11 @@ export async function runAgentNetwork(
     }
   };
 
-  if (concurrency <= 1) {
+  if (effectiveConcurrency <= 1) {
     for (const entry of entries) await runOne(entry);
   } else {
     const queue = [...entries];
-    const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+    const workers = Array.from({ length: Math.min(effectiveConcurrency, queue.length) }, async () => {
       for (let e = queue.shift(); e; e = queue.shift()) await runOne(e);
     });
     await Promise.all(workers);

@@ -111,6 +111,7 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     jsonMode: true,
     maxTokens: 2048,
     timeoutMs: 300_000,
+    devinTimeoutMs: 300_000, // tranche 6 (IC pipeline) — tail-based
   },
   "sec-filing-analysis": {
     complexity: "deep",
@@ -126,6 +127,7 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     jsonMode: true,
     maxTokens: 1536,
     timeoutMs: 300_000,
+    devinTimeoutMs: 300_000, // tranche 6 (IC pipeline) — tail-based
   },
   "accounting-red-flags": {
     complexity: "deep",
@@ -133,6 +135,7 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     jsonMode: true,
     maxTokens: 1536,
     timeoutMs: 300_000,
+    devinTimeoutMs: 300_000, // tranche 6 (IC pipeline) — tail-based
   },
   "scenario-analysis": {
     complexity: "deep",
@@ -140,6 +143,7 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     jsonMode: true,
     maxTokens: 2048,
     timeoutMs: 300_000,
+    devinTimeoutMs: 300_000, // tranche 6 (IC pipeline) — tail-based
   },
   "stress-testing": {
     complexity: "deep",
@@ -154,6 +158,7 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     jsonMode: true,
     maxTokens: 1200,
     timeoutMs: 300_000,
+    devinTimeoutMs: 300_000, // tranche 6 (IC pipeline) — tail-based
   },
   "thematic-analysis": {
     complexity: "deep",
@@ -181,6 +186,9 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     latency: "standard",
     jsonMode: true,
     maxTokens: 1800,
+    // Tranche 5 migrated (equity + class compare). Largest dossiers in the
+    // standard tier (5 stocks x full metric tables) — tail-based budget.
+    devinTimeoutMs: 300_000,
   },
   "portfolio-intelligence": {
     complexity: "standard",
@@ -188,6 +196,9 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     jsonMode: true,
     maxTokens: 1024,
     timeoutMs: 180_000,
+    // Tranche 4: portfolio thesis migrated. Tail-based (amendment 3) — the
+    // thesis dossier is the largest prompt in this task class.
+    devinTimeoutMs: 240_000,
   },
   // Split out from portfolio-intelligence: the CIO panel streams a *prose* memo
   // while the brief and new-position callers want JSON. One task cannot declare
@@ -233,7 +244,9 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
 
   /* ---- Light: short output where latency is what the user actually feels -- */
   "market-summary": { complexity: "light", latency: "standard", maxTokens: 800 },
-  "daily-briefing": { complexity: "light", latency: "standard", maxTokens: 800 },
+  // Tranche 4 migrated (home brief). Standard latency, so it moves under a
+  // global AI_PROVIDER=devin; the homepage streams it and tolerates the tail.
+  "daily-briefing": { complexity: "light", latency: "standard", maxTokens: 800, devinTimeoutMs: 240_000 },
   "knowledge-graph-explain": { complexity: "light", latency: "interactive", maxTokens: 600 },
   "calendar-brief": { complexity: "light", latency: "interactive", maxTokens: 600 },
   "nl-screener": {
@@ -263,6 +276,9 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     temperature: 0.4,
     maxTokens: 1600,
     timeoutMs: 150_000,
+    // Tranche 5: seam-migrated but interactive — stays on the token stack
+    // under a global AI_PROVIDER=devin unless pinned; budget applies when pinned.
+    devinTimeoutMs: 240_000,
   },
   // Interactive — a human is watching this exact spinner while the fullscreen
   // chart's AI dock is open. Standard complexity (real interpretive judgment

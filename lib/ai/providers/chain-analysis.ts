@@ -71,6 +71,9 @@ export class ChainAnalysisProvider implements AnalysisProvider {
       // Native structured outputs whenever the call site supplied a clean wire
       // schema. Prompt directives stay in the prompt as the portable fallback.
       jsonSchema: textMode ? undefined : wireJsonSchema(req.wireSchema),
+      // Explicit per-request override (IC pipeline pins its reasoning model);
+      // absent, the Router auto-routes as usual.
+      model: req.model,
       timeoutMs: req.timeoutMs,
       signal: req.signal,
     });
