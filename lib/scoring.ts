@@ -28,6 +28,9 @@ import { scoreToRecommendation, RECOMMENDATION_LABEL, TIER_EDGES } from "./recom
 
 const pct = (v: number) => `${(v * 100).toFixed(0)}%`;
 const ratio = (v: number) => v.toFixed(2);
+/** Valuation-multiple rendering — matches lib/format.ts's formatRatio (2dp + "x")
+ *  so a P/E quoted in a factor detail equals the one in the masthead. */
+const pe = (v: number | null | undefined) => (v != null ? `${v.toFixed(2)}x` : "n/a");
 
 /* -------------------------------------------------------------------------- */
 /* Buckets (sector-aware)                                                     */
@@ -43,29 +46,29 @@ export function scoreValuation(s: FundamentalsSnapshot, a: AnalystConsensus) {
   if (sg === "financials") {
     // Banks: P/E is less distorted than for industrials, but still apply tighter range
     return bucket("Valuation", [
-      mk("Analyst upside", a.upsidePercent, -15, 30, 12, (v) => `${v >= 0 ? "+" : ""}${v.toFixed(0)}% to target`),
-      mk("Forward P/E", s.forwardPE, 18, 8, 10, (v) => `Fwd P/E ${v.toFixed(1)}`),
+      mk("Analyst upside", a.upsidePercent, -15, 30, 12, (v) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}% to target`),
+      mk("Forward P/E", s.forwardPE, 18, 8, 10, (v) => `Fwd P/E ${pe(v)}`),
       mk("Forward vs trailing P/E", fwdRatio, 1.2, 0.7, 8, () =>
-        s.forwardPE != null ? `Fwd P/E ${s.forwardPE.toFixed(1)} vs ${s.trailingPE?.toFixed(1)}` : "n/a",
+        s.forwardPE != null ? `Fwd P/E ${pe(s.forwardPE)} vs ${pe(s.trailingPE)}` : "n/a",
       ),
     ]);
   }
   if (sg === "utilities") {
     // Utilities trade at 14-20x P/E as a normal range — don't penalize 18x
     return bucket("Valuation", [
-      mk("Analyst upside", a.upsidePercent, -15, 30, 12, (v) => `${v >= 0 ? "+" : ""}${v.toFixed(0)}% to target`),
-      mk("Forward P/E", s.forwardPE, 28, 13, 10, (v) => `Fwd P/E ${v.toFixed(1)}`),
+      mk("Analyst upside", a.upsidePercent, -15, 30, 12, (v) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}% to target`),
+      mk("Forward P/E", s.forwardPE, 28, 13, 10, (v) => `Fwd P/E ${pe(v)}`),
       mk("Forward vs trailing P/E", fwdRatio, 1.2, 0.6, 8, () =>
-        s.forwardPE != null ? `Fwd P/E ${s.forwardPE.toFixed(1)} vs ${s.trailingPE?.toFixed(1)}` : "n/a",
+        s.forwardPE != null ? `Fwd P/E ${pe(s.forwardPE)} vs ${pe(s.trailingPE)}` : "n/a",
       ),
     ]);
   }
   // default / REITs
   return bucket("Valuation", [
-    mk("Analyst upside", a.upsidePercent, -15, 30, 12, (v) => `${v >= 0 ? "+" : ""}${v.toFixed(0)}% to target`),
+    mk("Analyst upside", a.upsidePercent, -15, 30, 12, (v) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}% to target`),
     mk("PEG ratio", s.pegRatio, 3, 0.8, 10, (v) => `PEG ${ratio(v)}`),
     mk("Forward vs trailing P/E", fwdRatio, 1.2, 0.6, 8, () =>
-      s.forwardPE != null ? `Fwd P/E ${s.forwardPE.toFixed(1)} vs ${s.trailingPE?.toFixed(1)}` : "n/a",
+      s.forwardPE != null ? `Fwd P/E ${pe(s.forwardPE)} vs ${pe(s.trailingPE)}` : "n/a",
     ),
   ]);
 }

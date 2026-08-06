@@ -246,7 +246,10 @@ function eventFromFiling(symbol: string, filing: Filing): TimelineEvent | null {
     id: buildEventId(symbol, "filing", filing.accessionNumber),
     symbol,
     timestamp,
-    title: `${filing.form}: ${filing.description}`,
+    // Human description leads; the form code is the parenthetical. The old
+    // "form: description" template produced titles like "4: FORM 4" whenever
+    // EDGAR echoed the form back as its description.
+    title: `${filing.description} (Form ${filing.form})`,
     category,
     importanceScore,
     confidenceScore,

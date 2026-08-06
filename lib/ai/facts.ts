@@ -11,7 +11,7 @@
  * every figure the model writes must trace back to a line produced here.
  */
 
-import { formatCurrency, formatMarketCap } from "../format";
+import { formatCurrency, formatMarketCap, formatRatio } from "../format";
 import type { CompanyContext } from "./types";
 
 /** Portfolio personalization passed through from the client (IOS-computed, per user). */
@@ -44,9 +44,11 @@ export function buildEquityFacts(ctx: CompanyContext): string[] {
   ];
 
   if (s) {
-    if (s.forwardPE != null) facts.push(`Forward P/E: ${s.forwardPE.toFixed(1)}x`);
-    if (s.trailingPE != null) facts.push(`Trailing P/E: ${s.trailingPE.toFixed(1)}x`);
-    if (s.priceToBook != null) facts.push(`P/B ratio: ${s.priceToBook.toFixed(2)}x`);
+    // formatRatio matches the UI's ratio rendering (2dp + "x") so the model
+    // quotes the same figure the page shows — never "8.1x" beside "8.13x".
+    if (s.forwardPE != null) facts.push(`Forward P/E: ${formatRatio(s.forwardPE)}`);
+    if (s.trailingPE != null) facts.push(`Trailing P/E: ${formatRatio(s.trailingPE)}`);
+    if (s.priceToBook != null) facts.push(`P/B ratio: ${formatRatio(s.priceToBook)}`);
     if (s.profitMargins != null) facts.push(`Net margin: ${(s.profitMargins * 100).toFixed(1)}%`);
     if (s.operatingMargins != null) facts.push(`Operating margin: ${(s.operatingMargins * 100).toFixed(1)}%`);
     if (s.grossMargins != null) facts.push(`Gross margin: ${(s.grossMargins * 100).toFixed(1)}%`);
@@ -80,7 +82,7 @@ export function buildEquityFacts(ctx: CompanyContext): string[] {
       facts.push(`Analyst consensus: ${analyst.recommendationKey.replace(/_/g, " ")} (${analyst.numberOfOpinions ?? "?"} analysts)`);
     }
     if (analyst.targetMean != null) facts.push(`Price target: ${formatCurrency(analyst.targetMean, q.currency)}`);
-    if (analyst.upsidePercent != null) facts.push(`Analyst upside: ${analyst.upsidePercent >= 0 ? "+" : ""}${analyst.upsidePercent.toFixed(0)}%`);
+    if (analyst.upsidePercent != null) facts.push(`Analyst upside: ${analyst.upsidePercent >= 0 ? "+" : ""}${analyst.upsidePercent.toFixed(1)}%`);
     const bullish = analyst.strongBuy + analyst.buy;
     const bearish = analyst.sell + analyst.strongSell;
     const total = bullish + analyst.hold + bearish;
