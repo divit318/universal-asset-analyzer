@@ -99,7 +99,11 @@ async function assembleCompanyContext(symbol: string): Promise<CompanyContext> {
       tryOr("filings", warnings, () => getRecentFilings(symbol, 10), []),
       tryOr("news", warnings, () => getCompanyNews(symbol, 8), []),
       tryOr("peers", warnings, () => getPeerComparison(symbol), null),
-      tryOr("price history", warnings, () => getHistory(symbol, 420), []),
+      // 1825d — the SAME window buildFundamentalsData feeds computeMomentum,
+      // so the context's composite score is bit-identical to the page's.
+      // (420d here produced a slightly different momentum blend, so the
+      // narration could quote "50/100" beside a hero showing 51/100.)
+      tryOr("price history", warnings, () => getHistory(symbol, 1825), []),
       tryOr("knowledge graph", warnings, () => getKnowledgeGraph("symbol", symbol), null),
     ]);
 
