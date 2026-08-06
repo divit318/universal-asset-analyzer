@@ -306,7 +306,7 @@ Run these before considering any change complete:
 
 ```bash
 npx tsc --noEmit          # must be silent
-npx vitest run            # 2748 tests as of the 2026-08-06 multi-provider restoration
+npx vitest run            # 2832 tests as of the 2026-08-06 research demo hardening
 npx eslint app lib        # see "known pre-existing" below
 npm run build             # catches Server/Client boundary errors tsc misses
                           # NEVER while `next dev` is running — they race for .next/
@@ -507,6 +507,28 @@ from a union must take that union.
 and one order of magnitude apart and neither is legible in a number input. The
 intake form now echoes "$100,000,000 · 100 million" live. A Cancel button on the
 multi-minute generation is the safety net; the echo is the fix.
+
+**The AI context must consume the SAME pipelines the page renders from — checked
+per input, not per intention** (2026-08-06 research demo hardening). The verdict's
+`buildCompanyContext` and the page's `buildFundamentalsData` both "fetched
+statements", but the context used the EDGAR-only path (empty for SYF — its revenue
+tag isn't in `lib/statements.ts`'s XBRL list) and scored WITHOUT statements while
+the page scored WITH them; it also fed `computeMomentum` a 420-day window against
+the page's 1825 days, drifting the composite by a point. Result: a hero saying
+"Buy 67" over a thesis free-quoting "62/100" and "84% Quality" against a card
+showing 25/25. The invariants that now hold (pinned in
+`tests/verdict-consistency.test.ts`): the verdict direction is
+`scoreDirection(composite)` from `lib/recommendation.ts` and the model's emitted
+verdict field is OVERRIDDEN in `coerceFields`; statements resolve only through
+`getStatementsWithFallback`; every subscore the prompt exposes uses the identical
+`Math.round(points/max*100)` the UI renders. Related classifier traps fixed in the
+same pass: Yahoo insider `transactionText` must check award/grant/exercise/tax
+BEFORE "sale" (Form 4 code A/M/F/G grants read as "33 sells · -$53M"); Yahoo
+`institutionsPercentHeld` can exceed 1.0 (13F double-counting — footnote it, never
+bar-chart it); Yahoo `relatedTickers` tags stories about OTHER companies with your
+symbol as a secondary ticker (require primary tag or a name mention); Yahoo option
+chains off-hours carry binary-fraction placeholder IVs with bid=ask=0 (gate the
+whole card on `isDerivativesSummaryComplete`).
 
 **A native `<input type="date">` renders in the BROWSER's locale, not the app's.**
 It is not reachable from CSS or JS — no attribute, no pseudo-element, no override.
