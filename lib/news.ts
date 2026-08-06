@@ -139,23 +139,56 @@ function mapRawNews(raw: RawNews): NewsItem | null {
     source: raw.publisher ?? "Yahoo Finance",
     url: raw.link,
     publishedAt,
-    tickers: [],
+    tickers: raw.relatedTickers ?? [],
     summary: null,
   };
 }
 
+/** Base ticker for relevance matching: strips exchange/class suffixes
+ *  ("RELIANCE.NS" → "RELIANCE", "BRK-B"/"BRK.B" → "BRK"). */
+function baseTicker(symbol: string): string {
+  return symbol.toUpperCase().replace(/[.\-][A-Z]{1,3}$/, "");
+}
+
+/**
+ * Is this story actually about `symbol`?
+ *
+ * Yahoo's symbol search returns a relevance-ranked mix that can include broad
+ * market stories and stories about *other* companies (observed: Petco board
+ * appointments and COIN earnings inside SYF's feed). Trust Yahoo's own tags
+ * first: when the story carries `relatedTickers`, the symbol must be among
+ * them. Untagged stories fall back to a headline mention of the ticker.
+ * Under-showing (3 relevant items) beats padding with unrelated ones.
+ */
+export function isRelevantToSymbol(item: NewsItem, symbol: string): boolean {
+  const base = baseTicker(symbol);
+  if (item.tickers.length > 0) {
+    return item.tickers.some((t) => baseTicker(t) === base);
+  }
+  // Futures/forex/crypto/index symbols (GC=F, EURUSD=X, ^TNX, BTC-USD): the
+  // feed is macro context that rarely names the raw symbol — keep untagged.
+  if (/[=^]/.test(symbol) || symbol.includes("-")) return true;
+  return new RegExp(`\\b${base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(
+    item.headline.toUpperCase(),
+  );
+}
+
 /** Recent, de-duplicated news for a specific symbol, newest first. Best-effort. */
 export async function getCompanyNews(symbol: string, count = 8): Promise<NewsItem[]> {
-  const raw = await getNews(symbol, count);
+  // Over-fetch so relevance filtering still leaves ~count items when Yahoo's
+  // feed is diluted with market-wide stories.
+  const raw = await getNews(symbol, Math.max(count * 2, 12));
   const seen = new Set<string>();
   return raw
     .map(mapRawNews)
     .filter((n): n is NewsItem => {
       if (!n || seen.has(n.url)) return false;
+      if (!isRelevantToSymbol(n, symbol)) return false;
       seen.add(n.url);
       return true;
     })
-    .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
+    .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt))
+    .slice(0, count);
 }
 
 /* -------------------------------------------------------------------------- */

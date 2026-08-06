@@ -95,6 +95,58 @@ interface RawSubmissions {
   };
 }
 
+/** Human descriptions for the SEC form types that actually show up in a
+ *  company's recent-filings list. Anything unmapped falls back to "SEC filing". */
+const FORM_DESCRIPTIONS: Record<string, string> = {
+  "10-K": "Annual report",
+  "10-K/A": "Annual report (amended)",
+  "10-Q": "Quarterly report",
+  "10-Q/A": "Quarterly report (amended)",
+  "8-K": "Current report — material event",
+  "8-K/A": "Current report (amended)",
+  "3": "Initial insider ownership statement",
+  "4": "Insider transaction report",
+  "4/A": "Insider transaction report (amended)",
+  "5": "Annual insider ownership statement",
+  "144": "Notice of proposed insider sale",
+  "DEF 14A": "Proxy statement",
+  "DEFA14A": "Proxy soliciting material",
+  "S-8": "Employee stock plan registration",
+  "S-3": "Shelf registration",
+  "S-3ASR": "Automatic shelf registration",
+  "424B2": "Prospectus supplement",
+  "424B3": "Prospectus supplement",
+  "424B5": "Prospectus supplement — securities offering",
+  "FWP": "Free-writing prospectus",
+  "SC 13G": "Passive ownership >5% disclosure",
+  "SC 13G/A": "Passive ownership disclosure (amended)",
+  "SC 13D": "Activist ownership >5% disclosure",
+  "SC 13D/A": "Activist ownership disclosure (amended)",
+  "13F-HR": "Institutional holdings report",
+  "11-K": "Employee plan annual report",
+  "ARS": "Annual report to shareholders",
+  "PX14A6G": "Shareholder proxy exempt solicitation",
+  "25-NSE": "Delisting notification",
+  "IRANNOTICE": "Iran-related disclosure notice",
+  "CERT": "Exchange certification",
+  "SD": "Specialized disclosure (conflict minerals)",
+  "CORRESP": "SEC correspondence",
+  "UPLOAD": "SEC comment letter",
+};
+
+/** Human-readable description for a filing row. Never echoes the form code
+ *  back (the old fallback produced rows like "4 / FORM 4" and "144 / 144"),
+ *  and never leaks raw numeric artifacts from primaryDocDescription. */
+export function describeFiling(form: string, primaryDocDescription: string | undefined): string {
+  const mapped = FORM_DESCRIPTIONS[form.toUpperCase()];
+  const raw = (primaryDocDescription ?? "").trim();
+  const normalized = raw.replace(/^FORM\s+/i, "").toUpperCase();
+  const isEcho = raw === "" || normalized === form.toUpperCase();
+  const isJunk = /^[\d\s\-./]+$/.test(raw); // raw IDs like "42485"
+  if (!isEcho && !isJunk) return raw;
+  return mapped ?? "SEC filing";
+}
+
 /**
  * Parse the most recent filings out of SEC's submissions JSON. Pure so it is
  * unit-testable against a fixture.
@@ -115,10 +167,11 @@ export function parseFilings(
     const accession = recent.accessionNumber[i];
     const doc = recent.primaryDocument?.[i] ?? "";
     const accessionPath = accession.replace(/-/g, "");
+    const form = recent.form?.[i] ?? "—";
     filings.push({
-      form: recent.form?.[i] ?? "—",
+      form,
       filedAt: recent.filingDate?.[i] ?? "",
-      description: recent.primaryDocDescription?.[i] || recent.form?.[i] || "Filing",
+      description: describeFiling(form, recent.primaryDocDescription?.[i]),
       accessionNumber: accession,
       documentUrl: doc
         ? `https://www.sec.gov/Archives/edgar/data/${cikNumber}/${accessionPath}/${doc}`

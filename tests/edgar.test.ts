@@ -38,9 +38,11 @@ describe("parseFilings", () => {
     );
   });
 
-  it("falls back to the form name when description is empty", () => {
+  it("falls back to a HUMAN description when EDGAR's is empty — never echoes the form code", () => {
+    // Echoing produced rows like "8-K / 8-K" and "4 / FORM 4" on the research page.
     const filings = parseFilings(submissions, "0000320193");
-    expect(filings[1].description).toBe("8-K");
+    expect(filings[1].description).toBe("Current report — material event");
+    expect(filings[1].description).not.toBe(filings[1].form);
   });
 
   it("respects the max limit", () => {

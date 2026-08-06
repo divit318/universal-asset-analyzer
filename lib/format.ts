@@ -65,6 +65,16 @@ export function formatPercent(value: number | null | undefined, digits = 2): str
   return `${sign}${value.toFixed(digits)}%`;
 }
 
+/**
+ * Valuation ratio, e.g. "8.13x". THE formatter for P/E, P/B, EV/EBITDA and
+ * friends — one ratio must not render as `8.13`, `8.1x`, and `7.5` on the
+ * same page depending on which component drew it.
+ */
+export function formatRatio(value: number | null | undefined, digits = 2): string {
+  if (!isRenderable(value)) return "—";
+  return `${value.toFixed(digits)}x`;
+}
+
 /** Compact large numbers: 1.2K, 3.4M, 5.6B, 7.8T. */
 export function formatCompact(value: number | null | undefined): string {
   if (!isRenderable(value)) return "—";

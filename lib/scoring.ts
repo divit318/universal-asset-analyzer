@@ -83,11 +83,16 @@ export function scoreQuality(
       : null;
 
   if (sg === "financials") {
-    // Gross margin is not meaningful for banks; ROE is the primary quality signal
+    // Gross margin is not meaningful for banks; ROE is the primary quality
+    // signal. FCF/NI is dropped too: a lender's operating cash flow embeds
+    // loan-book flows, so FCF/NI ≈ 2–3x is routine and the factor saturated
+    // for every bank — a Quality of 25/25 for any profitable lender read as
+    // fake. ROA (the classic bank-quality metric) replaces it, and the ROE
+    // ceiling sits at 22% so a genuinely elite franchise still isn't "perfect".
     return bucket("Quality", [
-      mk("Return on equity", s.returnOnEquity, 0.05, 0.18, 9, (v) => `ROE ${pct(v)}`),
-      mk("Operating margin", s.operatingMargins, 0.10, 0.40, 8, (v) => `Op margin ${pct(v)}`),
-      mk("FCF / net income", fcfQuality, 0.4, 1.1, 8, (v) => `FCF/NI ${ratio(v)}`),
+      mk("Return on equity", s.returnOnEquity, 0.05, 0.22, 9, (v) => `ROE ${pct(v)}`),
+      mk("Return on assets", s.returnOnAssets, 0.005, 0.03, 8, (v) => `ROA ${(v * 100).toFixed(1)}%`),
+      mk("Net margin", s.profitMargins, 0.10, 0.40, 8, (v) => `Net margin ${pct(v)}`),
     ]);
   }
   if (sg === "utilities") {

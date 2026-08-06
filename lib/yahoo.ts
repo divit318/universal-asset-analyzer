@@ -547,6 +547,8 @@ export interface RawNews {
   publisher?: string;
   link?: string;
   providerPublishTime?: number | Date;
+  /** Symbols Yahoo tagged the story with — the relevance signal getCompanyNews filters on. */
+  relatedTickers?: string[];
 }
 
 /**
