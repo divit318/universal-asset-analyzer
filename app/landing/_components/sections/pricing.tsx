@@ -92,7 +92,7 @@ const FREE_INCLUDED = [
   "Deterministic engines compute every figure: screening, composite scoring, DCF valuation, portfolio analytics",
   "The verification layer — every AI-written figure traced back to its evidence",
   "US and Indian market data from public sources",
-  "AI narration on Claude, with your own Anthropic API key — Anthropic bills you directly",
+  "AI narration on your own provider — Devin CLI login (no API key) or your own Anthropic/OpenAI/Gemini/OpenRouter key; the provider bills you directly",
   "Your data in a local database you own, with an optional local account for shared machines",
 ];
 

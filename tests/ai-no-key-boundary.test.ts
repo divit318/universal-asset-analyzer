@@ -29,6 +29,12 @@ beforeEach(() => {
   savedConfigDir = process.env.UAA_CONFIG_DIR;
   delete process.env.ANTHROPIC_API_KEY; // no env key…
   process.env.UAA_CONFIG_DIR = dir; // …and an empty key-file directory
+  // Pin the chain to the KEYED provider. Since the multi-provider restoration
+  // (2026-08-06) the default chain leads with the Devin CLI, which needs no
+  // key at all — with it present, "no key" no longer degrades AI (that is the
+  // point of the chain). This suite tests the degraded path itself, and must
+  // never spawn a real `devin` subprocess from a unit test.
+  process.env.AI_PROVIDER_ORDER = "anthropic";
   resetProvidersForTests();
 });
 
@@ -37,6 +43,7 @@ afterEach(() => {
   else process.env.ANTHROPIC_API_KEY = savedEnvKey;
   if (savedConfigDir === undefined) delete process.env.UAA_CONFIG_DIR;
   else process.env.UAA_CONFIG_DIR = savedConfigDir;
+  delete process.env.AI_PROVIDER_ORDER;
   resetProvidersForTests();
 });
 
@@ -155,7 +162,7 @@ describe("the AI path fails typed and polite, never blank", () => {
   it("attribution never claims locality, even with no model to attribute", () => {
     const a = aiAttribution(null);
     expect(a.badge).not.toMatch(/local/i);
-    expect(a.title).toMatch(/Anthropic API/);
+    expect(a.title).toMatch(/provider/i); // hosted, provider-generic — never a claimed host
     expect(a.title).toMatch(/deterministic engines/);
   });
 });

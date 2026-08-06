@@ -48,20 +48,57 @@ export function memoryBudgetGb(): number {
   return envNumber("AI_MAX_MODEL_GB") ?? (totalmem() / 1e9) * DEFAULT_MEMORY_FRACTION;
 }
 
+const KNOWN_PROVIDERS: readonly ProviderId[] = [
+  "devin",
+  "anthropic",
+  "openai",
+  "gemini",
+  "openrouter",
+  "ollama",
+];
+
 /**
- * The provider chain, best first. One entry today: the Anthropic API is the
- * single backend (decision: Part A, 2026-08-05 — it replaced the Devin CLI
- * chain and the Ollama local tier). The chain SHAPE is kept so that adding a
- * second provider is a one-line change here plus a factory entry in the
- * Router, exactly as before — the Router still walks a list.
+ * The DEFAULT provider chain, best first (owner decision, 2026-08-06: the
+ * platform is provider-agnostic and never requires an Anthropic key).
  *
- * (AI_PROVIDER_ORDER is retired with the multi-provider chain it ordered; a
- * stale value in .env.local is ignored.)
+ *   1. devin      — the Devin CLI (`devin -p`), Cognition-hosted models on the
+ *                   user's own `devin login`. Zero API keys; works out of the
+ *                   box. Measured 8.9s for a light JSON task on this host.
+ *   2. anthropic  — direct Anthropic API when the user configures a key
+ *                   (real token streaming, prompt caching, native structured
+ *                   outputs — the richest wire features of the chain).
+ *   3. openai / gemini / openrouter — BYO-key hosted APIs, dormant until a
+ *                   key exists (health = key presence; they cost nothing to
+ *                   keep in the chain).
+ *   6. ollama     — the local daemon, offline fallback of last resort.
+ *
+ * Reorder without code via AI_PROVIDER_ORDER, e.g.:
+ *
+ *   AI_PROVIDER_ORDER=anthropic,devin   # direct API first
+ *   AI_PROVIDER_ORDER=ollama            # local-only (plane / captive portal)
+ *
+ * Unknown names are dropped rather than throwing — a typo in an env var must
+ * not take the platform down — and an order that names nothing valid falls
+ * back to the default.
  */
-const PROVIDER_CHAIN: readonly ProviderId[] = ["anthropic"];
+const DEFAULT_PROVIDER_ORDER: readonly ProviderId[] = [
+  "devin",
+  "anthropic",
+  "openai",
+  "gemini",
+  "openrouter",
+  "ollama",
+];
 
 export function providerOrder(): ProviderId[] {
-  return [...PROVIDER_CHAIN];
+  const raw = process.env.AI_PROVIDER_ORDER;
+  if (!raw) return [...DEFAULT_PROVIDER_ORDER];
+  const seen = new Set<ProviderId>();
+  for (const part of raw.split(",").map((s) => s.trim().toLowerCase())) {
+    const match = KNOWN_PROVIDERS.find((p) => p === part);
+    if (match) seen.add(match);
+  }
+  return seen.size > 0 ? [...seen] : [...DEFAULT_PROVIDER_ORDER];
 }
 
 /** Model ids taken out of routing entirely, via AI_DISABLED_MODELS. */

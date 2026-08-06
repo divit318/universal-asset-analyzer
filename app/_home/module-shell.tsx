@@ -51,7 +51,7 @@ const UNMET: Record<Capability, { message: string; href: string; cta: string }> 
     cta: "Run The Wire",
   },
   ai: {
-    message: "Add your Anthropic API key to enable AI narration.",
+    message: "Connect an AI provider (Devin CLI login or an API key) to enable AI narration.",
     href: "/settings",
     cta: "Open Settings",
   },

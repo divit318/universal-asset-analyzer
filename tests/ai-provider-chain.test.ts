@@ -179,11 +179,39 @@ describe("provider chain", () => {
 });
 
 describe("providerOrder", () => {
-  it("is the single anthropic backend, and ignores the retired AI_PROVIDER_ORDER env var", () => {
-    expect(providerOrder()).toEqual(["anthropic"]);
-    process.env.AI_PROVIDER_ORDER = "ollama,devin"; // stale .env.local value
+  it("defaults to the full chain, Devin (no API key) first", () => {
+    expect(providerOrder()).toEqual([
+      "devin",
+      "anthropic",
+      "openai",
+      "gemini",
+      "openrouter",
+      "ollama",
+    ]);
+  });
+
+  it("honors AI_PROVIDER_ORDER, preserving the given order", () => {
+    process.env.AI_PROVIDER_ORDER = "anthropic,devin";
     try {
-      expect(providerOrder()).toEqual(["anthropic"]);
+      expect(providerOrder()).toEqual(["anthropic", "devin"]);
+    } finally {
+      delete process.env.AI_PROVIDER_ORDER;
+    }
+  });
+
+  it("drops unknown names rather than throwing, and falls back to the default when nothing valid remains", () => {
+    process.env.AI_PROVIDER_ORDER = "ollama, definitely-not-a-provider";
+    try {
+      expect(providerOrder()).toEqual(["ollama"]);
+      process.env.AI_PROVIDER_ORDER = "nonsense,also-nonsense";
+      expect(providerOrder()).toEqual([
+        "devin",
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter",
+        "ollama",
+      ]);
     } finally {
       delete process.env.AI_PROVIDER_ORDER;
     }

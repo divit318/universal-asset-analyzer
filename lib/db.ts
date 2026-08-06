@@ -3571,7 +3571,9 @@ export function listAiCalls(opts: { sinceMs?: number; limit?: number } = {}): Ai
   const since = opts.sinceMs ?? 0;
   const limit = Math.min(opts.limit ?? 5000, 20_000);
   const rows = getDb()
-    .prepare("SELECT * FROM ai_call WHERE at >= ? ORDER BY at DESC LIMIT ?")
+    // rowid breaks same-millisecond ties: "newest-first" must mean insertion
+    // order, not whatever SQLite returns for equal `at` values.
+    .prepare("SELECT * FROM ai_call WHERE at >= ? ORDER BY at DESC, rowid DESC LIMIT ?")
     .all(since, limit) as unknown as AiCallDbRow[];
   return rows.map(mapAiCall);
 }

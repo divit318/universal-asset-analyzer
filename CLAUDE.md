@@ -6,7 +6,7 @@ This file provides comprehensive guidance to Claude Code when working with the U
 
 **UAA is an institutional-grade equity research platform** that runs entirely locally, powered by:
 - **Live market data** (Yahoo Finance for US equities, screener.in for Indian markets)
-- **AI on the user's own key**. Feature code names a *task*, never a model or a provider; the AI Platform (`lib/ai/`) routes it to the Anthropic API (claude-opus-5) at the effort tier the task earns. The key is the user's own (Settings → ~/.uaa/anthropic_api_key, or ANTHROPIC_API_KEY for demo/CI). Everything computed works without a key. See `lib/ai/ARCHITECTURE.md`.
+- **AI on the user's own account — no required API key**. Feature code names a *task*, never a model or a provider; the AI Platform (`lib/ai/`) routes it through a provider-agnostic chain (default: Devin CLI on the user's `devin login` → Anthropic → OpenAI → Gemini → OpenRouter → local Ollama; reorder with `AI_PROVIDER_ORDER`) at the effort tier the task earns. BYO keys live in Settings → ~/.uaa/, or provider env vars for demo/CI. Everything computed works without AI entirely. See `lib/ai/ARCHITECTURE.md`.
 - **Quant scoring** (Python DuckDB engine for systematic signal generation)
 - **User-owned state** (SQLite database, no cloud sync, no subscriptions)
 
@@ -56,7 +56,7 @@ The design philosophy is **transparency over convenience**: users see the resear
 | **Styling** | Tailwind CSS v4 | Utility classes only; no component library |
 | **Data** | SQLite (node:sqlite) + DuckDB | Single app database at `data/app.db`; quant engine uses separate `data/engine.duckdb` |
 | **Market data** | yahoo-finance2 (US), screener.in API (India) | Live quotes, fundamentals, history, filings |
-| **AI/Inference** | Anthropic API (claude-opus-5, BYO key), via `lib/ai/` orchestration layer | Task-routed to an effort tier per task; see `lib/ai/ARCHITECTURE.md` |
+| **AI/Inference** | Provider chain via `lib/ai/`: Devin CLI (keyless, default) → Anthropic → OpenAI → Gemini → OpenRouter → Ollama | Task-routed to a model/effort tier per task; see `lib/ai/ARCHITECTURE.md` |
 | **Exports** | ExcelJS (server-side) + PDFKit | Never import in client components |
 | **Charting** | Recharts | Real-time interactive charts with multi-line, candlestick, heatmap patterns |
 
@@ -152,7 +152,7 @@ The design philosophy is **transparency over convenience**: users see the resear
 - `lib/thematic-engine.ts` — 10-stage thematic analysis framework
 
 **AI/Inference**
-- `lib/ai/` — the orchestration layer: task registry, model registry, router (auto-selects + falls back per task), provider interface, response normalizer. See `lib/ai/ARCHITECTURE.md`. Every AI call goes through `runPrompt(taskType, prompt, opts)` in `lib/ai.ts` — never call the Anthropic API directly.
+- `lib/ai/` — the orchestration layer: task registry, model registry, router (auto-selects + falls back per task across the provider chain), provider interface (Devin CLI / Anthropic / OpenAI / Gemini / OpenRouter / Ollama), response normalizer. See `lib/ai/ARCHITECTURE.md`. Every AI call goes through `runPrompt(taskType, prompt, opts)` in `lib/ai.ts` — never call a provider API directly.
 - `lib/ai-research.ts`, `lib/ai-compare.ts`, `lib/ai-watchlist.ts` — feature-specific prompt builders, all calling `runPrompt()` with the task type that matches what they do
 - `lib/ic-agents.ts` — 9 agent domains (business, industry, competition, management, capitalAllocation, accounting, valuation, governance, risk) run in parallel, each routed to its own task (accounting/valuation/risk get the reasoning-heavy route). Results streamed via `ReadableStream`.
 

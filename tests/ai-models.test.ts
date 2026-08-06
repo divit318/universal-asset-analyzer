@@ -6,6 +6,7 @@ import {
   genericSpec,
   isHostedProvider,
   pickDefaultModel,
+  registryModelsFor,
   specForInstalled,
 } from "@/lib/ai/models";
 
@@ -32,16 +33,36 @@ describe("specForInstalled", () => {
 });
 
 describe("MODEL_REGISTRY", () => {
-  it("registers exactly the three claude-opus-5 effort tiers, all anthropic, all enabled", () => {
-    expect(MODEL_REGISTRY.map((m) => m.id).sort()).toEqual([
+  it("registers the three claude-opus-5 effort tiers, anthropic-canonical, Devin-servable, enabled", () => {
+    const tiers = MODEL_REGISTRY.filter((m) => m.id.startsWith("claude-opus-5-"));
+    expect(tiers.map((m) => m.id).sort()).toEqual([
       "claude-opus-5-high",
       "claude-opus-5-low",
       "claude-opus-5-medium",
     ]);
-    for (const spec of MODEL_REGISTRY) {
+    for (const spec of tiers) {
       expect(spec.provider).toBe("anthropic");
+      // The Devin CLI catalogue carries the same uids, so the task pins
+      // resolve through Devin (no key) before the direct API (BYO key).
+      expect(spec.alsoServedBy).toContain("devin");
       expect(spec.enabled).toBe(true);
     }
+  });
+
+  it("registers at least one model per provider in the chain", () => {
+    for (const provider of ["devin", "anthropic", "openai", "gemini", "openrouter", "ollama"] as const) {
+      expect(
+        registryModelsFor(provider).length,
+        `no registry entry is servable by ${provider}`,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  it("registryModelsFor includes alsoServedBy entries exactly once", () => {
+    const devinServable = registryModelsFor("devin").map((m) => m.id);
+    expect(devinServable).toContain("claude-opus-5-high"); // alsoServedBy
+    expect(devinServable).toContain("adaptive"); // its own entry
+    expect(new Set(devinServable).size).toBe(devinServable.length);
   });
 
   it("declares a speed and a quality band for every model", () => {
@@ -52,12 +73,18 @@ describe("MODEL_REGISTRY", () => {
     }
   });
 
-  it("hosted models claim no weights size and are never memory-gated", () => {
+  it("hosted models claim no weights size and are never memory-gated; local models claim one", () => {
     process.env.AI_MAX_MODEL_GB = "0.001";
     try {
       for (const spec of MODEL_REGISTRY) {
-        expect(spec.sizeGb, `${spec.id} is hosted and must not claim a size`).toBe(0);
-        expect(fitsInMemory(spec), `${spec.id} was memory-gated`).toBe(true);
+        if (isHostedProvider(spec.provider)) {
+          expect(spec.sizeGb, `${spec.id} is hosted and must not claim a size`).toBe(0);
+          expect(fitsInMemory(spec), `${spec.id} was memory-gated`).toBe(true);
+        } else {
+          // A local model that claimed no size would bypass the gate and thrash.
+          expect(spec.sizeGb, `${spec.id} is local and must declare its weights size`).toBeGreaterThan(0);
+          expect(fitsInMemory(spec), `${spec.id} escaped the memory gate`).toBe(false);
+        }
       }
     } finally {
       delete process.env.AI_MAX_MODEL_GB;

@@ -14,7 +14,7 @@
 
 /** How a user restores AI service. */
 export const AI_RECOVERY_HINT =
-  "Add your Anthropic API key in Settings to enable AI features.";
+  "Connect an AI provider in Settings — sign in to the Devin CLI (no API key needed) or add a provider API key — to enable AI features.";
 
 /** Full sentence for a feature that could not run. */
 export function aiUnavailableMessage(feature = "AI features"): string {
@@ -36,17 +36,21 @@ export const AI_NARRATIVE_UNAVAILABLE =
 /**
  * Truthful attribution for a piece of AI-generated output.
  *
- * All generation runs on the Anthropic API (claude-opus-5, the user's own
- * key) — there is no local inference tier. Every badge states that plainly:
- * the prompt for this text left the machine, the computed figures did not
- * come from it. A static "Local AI" label was finding F-03 in the pre-demo
- * audit; nothing may ever claim locality for hosted output again.
+ * Generation runs on a HOSTED provider — the Devin CLI (Cognition-hosted
+ * models on the user's Devin login) or a BYO-key API (Anthropic, OpenAI,
+ * Gemini, OpenRouter) — unless the user has explicitly routed to the local
+ * Ollama tier. Every badge states plainly that the prompt for this text left
+ * the machine and that the computed figures did not come from it. A static
+ * "Local AI" label was finding F-03 in the pre-demo audit; nothing may ever
+ * claim locality for hosted output again — so with only a model id to go on
+ * (the serving provider is not always threaded through), the copy stays
+ * provider-generic rather than guessing a host.
  *
  * Kept dependency-free so client components can import it without dragging
  * node builtins across the boundary.
  */
 export interface AiAttribution {
-  /** Short badge text, e.g. "Claude · claude-opus-5-high". */
+  /** Short badge text, e.g. "AI · claude-opus-5-high". */
   badge: string;
   /** Tooltip copy stating exactly where the generation ran. */
   title: string;
@@ -58,13 +62,14 @@ export function aiAttribution(modelId?: string | null): AiAttribution {
     return {
       badge: "AI",
       title:
-        "Written by Claude via the Anthropic API, using your API key. Every figure is computed by the deterministic engines; the model only narrates.",
+        "Written by a hosted AI model via your configured provider (Devin CLI or your own API key). Every figure is computed by the deterministic engines; the model only narrates.",
       locality: "unknown",
     };
   }
+  const family = modelId.toLowerCase().includes("claude") ? "Claude" : "AI";
   return {
-    badge: `Claude · ${modelId}`,
-    title: `Written by ${modelId} via the Anthropic API, using your API key. The prompt — company metrics and, where relevant, portfolio context — was sent to api.anthropic.com. Every figure is computed by the deterministic engines; the model only narrates.`,
+    badge: `${family} · ${modelId}`,
+    title: `Written by ${modelId} via your configured AI provider. The prompt — company metrics and, where relevant, portfolio context — was sent to that provider. Every figure is computed by the deterministic engines; the model only narrates.`,
     locality: "hosted",
   };
 }

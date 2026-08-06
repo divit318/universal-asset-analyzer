@@ -1,7 +1,7 @@
 import { isValidSymbol } from "@/lib/market";
 import { detectAssetClass } from "@/lib/asset-class";
 import { buildCompanyContext } from "@/lib/ai/context";
-import { AnthropicKeyMissingError } from "@/lib/ai/providers/anthropic-provider";
+import { classifyAiError } from "@/lib/ai/errors";
 import { checkPlatformHealth, unavailableMessage } from "@/lib/ai/platform-health";
 import { specForInstalled } from "@/lib/ai/models";
 import { pickModel } from "@/lib/ai/router";
@@ -541,7 +541,11 @@ export async function POST(request: Request) {
         if (err instanceof DOMException && err.name === "AbortError") {
           // Client navigated away / cancelled — just close.
         } else {
-          const code = err instanceof AnthropicKeyMissingError ? "ai_unavailable" : "internal";
+          // classifyAiError sees through the Router's exhausted-candidates
+          // wrapper, so a missing key that failed the whole chain still maps
+          // to the recovery affordance rather than a generic failure.
+          const classified = classifyAiError(err);
+          const code = classified.category === "no_api_key" ? "ai_unavailable" : "internal";
           const message = err instanceof Error ? err.message : "Generation failed";
           controller.enqueue(line({ type: "error", message, code }));
         }

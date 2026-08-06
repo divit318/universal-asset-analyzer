@@ -27,7 +27,7 @@ export default async function AccountSettingsPage() {
         title="Account"
         description="Your local UAA account — profile and credentials, stored in this machine's own database."
       />
-      <div className="flex max-w-2xl flex-col gap-6">
+      <div className="grid max-w-2xl grid-cols-1 items-start gap-6 lg:max-w-5xl lg:grid-cols-2">
         <AccountCard initialUser={user} />
         <ChangePasswordCard email={user.email} />
       </div>

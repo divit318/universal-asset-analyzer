@@ -2,15 +2,17 @@
  * ChainAnalysisProvider — one completion through the Router's provider chain.
  *
  * A thin adapter: `runTask` (orchestrator → router → the provider chain) then
- * the shared JSON extraction, then the caller's Zod schema. The chain is the
- * Anthropic API today; this adapter neither knows nor cares — the effort tier
+ * the shared JSON extraction, then the caller's Zod schema. Which backend the
+ * chain reaches (Devin CLI, Anthropic, OpenAI, Gemini, OpenRouter, Ollama) is
+ * the Router's business; this adapter neither knows nor cares — the model
  * that answered is in `meta.model`.
  */
 
 import { z } from "zod";
 import type { AnalysisProvider, AnalysisRequest, AnalysisResult } from "../analysis-provider";
 import { runTask } from "../orchestrator";
-import { keyStatus } from "../anthropic-key";
+import { checkPlatformHealth } from "../platform-health";
+import { AI_RECOVERY_HINT } from "../availability";
 import { extractJson } from "../../json-extract";
 
 /**
@@ -47,13 +49,15 @@ export class ChainAnalysisProvider implements AnalysisProvider {
   readonly id = "chain" as const;
 
   async healthCheck(): Promise<{ reachable: boolean; detail?: string }> {
-    // Key presence, not a paid round trip — the same policy as the provider's
-    // own healthCheck (see anthropic-provider.ts): the first real request
-    // surfaces auth/network failures with a far better error than a probe.
-    const { configured } = keyStatus();
+    // Platform readiness, not one backend's key: the chain is provider-
+    // agnostic (Devin CLI needs no key at all), so gating this seam on the
+    // Anthropic key alone would report "unreachable" while the Router was
+    // happily answering — the exact bug platform-health.ts exists to prevent.
+    // Cheap: key-presence checks plus a briefly-memoized Devin catalogue read.
+    const health = await checkPlatformHealth();
     return {
-      reachable: configured,
-      detail: configured ? undefined : "no Anthropic API key is configured (add one in Settings)",
+      reachable: health.reachable,
+      detail: health.reachable ? undefined : AI_RECOVERY_HINT,
     };
   }
 

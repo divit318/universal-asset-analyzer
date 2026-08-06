@@ -41,6 +41,10 @@ import {
 } from "./models";
 import { isCallerAbort, isTimeout } from "./aborts";
 import { AnthropicProvider } from "./providers/anthropic-provider";
+import { DevinProvider } from "./providers/devin-provider";
+import { GeminiProvider } from "./providers/gemini-provider";
+import { OllamaProvider } from "./providers/ollama-provider";
+import { OpenAIProvider, OpenRouterProvider } from "./providers/openai-compatible-provider";
 import type { AIProvider, ProviderChatTurn, ProviderModelInfo, ProviderTokenUsage } from "./provider";
 import { normalizeResponse, type AIResponse } from "./response";
 import {
@@ -52,7 +56,12 @@ import {
 } from "./task-registry";
 
 const PROVIDER_FACTORIES: Record<ProviderId, () => AIProvider> = {
+  devin: () => new DevinProvider(),
   anthropic: () => new AnthropicProvider(),
+  openai: () => new OpenAIProvider(),
+  gemini: () => new GeminiProvider(),
+  openrouter: () => new OpenRouterProvider(),
+  ollama: () => new OllamaProvider(),
 };
 
 let providerCache: { key: string; providers: AIProvider[] } | null = null;
@@ -100,9 +109,17 @@ export interface RouteOptions {
 
 export class AllModelsFailedError extends Error {
   code = "all_models_failed" as const;
-  constructor(taskType: TaskType, attempts: string[]) {
+  /**
+   * The original error from each attempt, in order. Kept so classifyAiError
+   * can see through the wrapper when every attempt failed the same way — an
+   * invalid key exhausting the chain is a key problem, not a transient outage,
+   * and must not surface as "try again shortly".
+   */
+  readonly causes: unknown[];
+  constructor(taskType: TaskType, attempts: string[], causes: unknown[] = []) {
     super(`All compatible models failed for task "${taskType}": ${attempts.join("; ")}`);
     this.name = "AllModelsFailedError";
+    this.causes = causes;
   }
 }
 
@@ -455,6 +472,13 @@ export async function route(
   const startedAt = Date.now();
 
   const attemptErrors: string[] = [];
+  const attemptCauses: unknown[] = [];
+  // A rejected or missing key is a provider-level configuration failure:
+  // every remaining candidate on the SAME provider presents the same
+  // credential, so walking them is pure spend on requests that cannot
+  // succeed. Other providers keep their chance — their credentials are their
+  // own.
+  const keyFailedProviders = new Set<string>();
   // A cold-start timeout earns the chain exactly one extra candidate — not
   // an unbounded walk. Without a cap, a genuinely overloaded host would cold-
   // time-out on every candidate in turn and multiply the wait by the full
@@ -467,6 +491,7 @@ export async function route(
   let considered = 0;
 
   for await (const { provider, model } of attemptOrder(taskType, task, providers, opts.model)) {
+    if (keyFailedProviders.has(provider.id)) continue;
     considered += 1;
     // An abort is the caller's decision, not a model failure. Retrying the
     // next candidate would keep spending on work nobody is waiting for.
@@ -570,6 +595,12 @@ export async function route(
       // Qualified by provider: the same model id can now be reached two ways,
       // and "which provider failed" is the first thing you need to know.
       attemptErrors.push(`${provider.id}/${model}: ${err instanceof Error ? err.message : String(err)}`);
+      attemptCauses.push(err);
+
+      // Same key, same rejection: skip this provider's remaining candidates.
+      if (classified.category === "no_api_key" || classified.category === "bad_api_key") {
+        keyFailedProviders.add(provider.id);
+      }
 
       // Fall back on a model that FAILED, never on a LOCAL one that ran out of
       // time while WARM. A warm local model timing out says something about
@@ -595,7 +626,7 @@ export async function route(
   if (attemptErrors.length === 0) {
     throw new AllModelsFailedError(taskType, ["no compatible model is available"]);
   }
-  throw new AllModelsFailedError(taskType, attemptErrors);
+  throw new AllModelsFailedError(taskType, attemptErrors, attemptCauses);
 }
 
 /**
@@ -614,11 +645,16 @@ export async function* routeStream(
   const task = TASK_REGISTRY[taskType];
 
   const attemptErrors: string[] = [];
+  const attemptCauses: unknown[] = [];
+  // Same rule as route(): a rejected/missing key fails every candidate that
+  // presents the same credential — skip the rest of that provider's chain.
+  const keyFailedProviders = new Set<string>();
   let coldTimeoutFallbacksUsed = 0;
   const MAX_COLD_TIMEOUT_FALLBACKS = 1;
   let considered = 0;
 
   for await (const { provider, model } of attemptOrder(taskType, task, providers, opts.model)) {
+    if (keyFailedProviders.has(provider.id)) continue;
     considered += 1;
     if (request.signal?.aborted) break;
     let started = false;
@@ -721,11 +757,17 @@ export async function* routeStream(
 
       markFailure(model);
       attemptErrors.push(`${provider.id}/${model}: ${err instanceof Error ? err.message : String(err)}`);
+      attemptCauses.push(err);
+
+      // Same key, same rejection: skip this provider's remaining candidates.
+      if (classified.category === "no_api_key" || classified.category === "bad_api_key") {
+        keyFailedProviders.add(provider.id);
+      }
 
       // Mid-stream failure: the consumer already has partial output from THIS
       // model. Retrying another would append a second model's answer to the
       // first one's. Fail honestly instead.
-      if (started) throw new AllModelsFailedError(taskType, attemptErrors);
+      if (started) throw new AllModelsFailedError(taskType, attemptErrors, attemptCauses);
 
       // Same policy as route(): a warm LOCAL timeout stops the chain; a cold
       // one earns exactly one more candidate before it does too. A hosted
@@ -740,5 +782,5 @@ export async function* routeStream(
   if (attemptErrors.length === 0) {
     throw new AllModelsFailedError(taskType, ["no compatible model is available"]);
   }
-  throw new AllModelsFailedError(taskType, attemptErrors);
+  throw new AllModelsFailedError(taskType, attemptErrors, attemptCauses);
 }

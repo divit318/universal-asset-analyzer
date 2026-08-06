@@ -83,11 +83,15 @@ Read this before reading CLAUDE.md, ARCHITECTURE.md, or PROJECT_ROADMAP.md.
   Full map + decision log: `docs/ic-report/00-map.md`, `docs/ic-report/99-report.md`.
 - `lib/db.ts` — All SQLite operations. All reads/writes go here.
 - `lib/ai/` — All inference. Call `runPrompt(taskType, …)`; never a provider
-  directly. The backend is the Anthropic API (claude-opus-5, effort tiers
-  low/medium/high as routable ids). `lib/ai/providers/anthropic-provider.ts`
-  is the only place that talks to it; the key resolves via
-  `lib/ai/anthropic-key.ts` (env var, then ~/.uaa/anthropic_api_key) and is
-  never logged.
+  directly. The backend is a provider-agnostic CHAIN (2026-08-06:
+  `AI_PROVIDER_ORDER`, default devin → anthropic → openai → gemini →
+  openrouter → ollama). The Devin CLI (`lib/ai/devin-cli.ts` +
+  `providers/devin-provider.ts`) is the keyless default — it uses the user's
+  `devin login`; the BYO-key APIs resolve keys via `lib/ai/anthropic-key.ts` /
+  `lib/ai/keys.ts` (env var, then ~/.uaa/<provider>_api_key), never logged.
+  The task pins name model ids (claude-opus-5 effort tiers) that BOTH devin
+  and anthropic serve; the chain decides who answers. See
+  `lib/ai/ARCHITECTURE.md`.
 
 **Caching**:
 - Fundamentals: 24h TTL in SQLite (refreshed on screener load)
@@ -302,9 +306,16 @@ Run these before considering any change complete:
 
 ```bash
 npx tsc --noEmit          # must be silent
-npx vitest run            # 2719 tests as of the 2026-08-06 AI platform hardening
+npx vitest run            # 2748 tests as of the 2026-08-06 multi-provider restoration
 npx eslint app lib        # see "known pre-existing" below
 npm run build             # catches Server/Client boundary errors tsc misses
+                          # NEVER while `next dev` is running — they race for .next/
+```
+
+**Live AI verification** (spends the user's Devin plan / API keys — small prompts):
+
+```bash
+LIVE_AI=1 npx vitest run tests/ai-platform-live.test.ts   # end-to-end through the chain
 ```
 
 **For AI-layer changes specifically** (routing, prompts, provider, schemas):

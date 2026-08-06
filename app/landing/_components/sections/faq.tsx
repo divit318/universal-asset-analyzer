@@ -14,11 +14,11 @@ import { Reveal } from "../reveal";
 const FAQS: { q: string; a: string }[] = [
   {
     q: "Do I need an account?",
-    a: "Not to run it. UAA ships an optional local account — credentials live in your own database, never on a server — to protect shared machines and power the hosted demo; the sign-in gate is off by default. AI features additionally use your own Anthropic API key.",
+    a: "Not to run it. UAA ships an optional local account — credentials live in your own database, never on a server — to protect shared machines and power the hosted demo; the sign-in gate is off by default. AI features additionally use your own AI provider — a Devin CLI login (no API key) or your own provider API key.",
   },
   {
     q: "Does UAA send my data anywhere?",
-    a: "Your research, notes, and portfolios are stored on your computer and never uploaded. When you use AI features, the prompt for that feature — company data and, where relevant, portfolio context — is sent to the Anthropic API with your key. Market data comes from public sources.",
+    a: "Your research, notes, and portfolios are stored on your computer and never uploaded. When you use AI features, the prompt for that feature — company data and, where relevant, portfolio context — is sent to the one AI provider serving the request (your Devin login or your own API key). Market data comes from public sources.",
   },
   {
     q: "Which markets are supported?",

@@ -1,12 +1,13 @@
 /**
  * AI façade for single-shot inference — the app-wide entry point.
  *
- * The backend is the Anthropic API (claude-opus-5), reached with the user's
- * own key (lib/ai/anthropic-key.ts). Every call routes through the
- * Orchestrator (lib/ai/orchestrator.ts), which asks the Router
- * (lib/ai/task-registry.ts + lib/ai/router.ts) which effort tier best fits
- * the given TaskType and falls back automatically if it's unavailable —
- * feature code never names a model or talks to a backend directly.
+ * The backend is the provider CHAIN (lib/ai/config.ts:providerOrder() —
+ * Devin CLI first by default, needing no API key; then the BYO-key hosted
+ * APIs; then local Ollama). Every call routes through the Orchestrator
+ * (lib/ai/orchestrator.ts), which asks the Router (lib/ai/task-registry.ts +
+ * lib/ai/router.ts) which model/effort tier best fits the given TaskType and
+ * falls back automatically if it's unavailable — feature code never names a
+ * model or talks to a backend directly.
  */
 
 import type { AiAnalysis } from "./types";

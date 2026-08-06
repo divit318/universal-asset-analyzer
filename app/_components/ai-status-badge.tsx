@@ -4,32 +4,45 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AI_RECOVERY_HINT } from "@/lib/ai/availability";
 
-interface KeyStatus {
-  configured: boolean;
-  source: "env" | "file" | null;
+interface ProvidersStatus {
+  reachable: boolean;
+  active: { provider: string; model: string | null } | null;
 }
+
+const PROVIDER_SHORT: Record<string, string> = {
+  devin: "Devin",
+  anthropic: "Claude API",
+  openai: "OpenAI",
+  gemini: "Gemini",
+  openrouter: "OpenRouter",
+  ollama: "Ollama",
+};
 
 /**
  * Header badge for AI readiness.
  *
- * AI readiness is exactly one question now: is an Anthropic API key
- * configured? The badge answers it honestly — "AI · Claude Opus 5" when a key
- * exists, "AI off · add key" when not — and links to /settings either way,
- * because that is where both states are managed. It never claims locality:
- * generation is hosted, on the user's own key.
+ * AI readiness is one question: can at least one provider in the chain serve
+ * a model right now? The badge answers it honestly — "AI · <provider>" naming
+ * the provider the Router would reach first, or "AI off · connect" when the
+ * whole chain is down — and links to /settings either way, because that is
+ * where both states are managed. It never claims locality: generation is
+ * hosted unless the user has explicitly routed to the local tier.
  */
 export function AiStatusBadge() {
-  const [status, setStatus] = useState<"checking" | "ready" | "no-key">("checking");
+  const [status, setStatus] = useState<"checking" | "ready" | "off">("checking");
+  const [active, setActive] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/settings/ai-key")
+    fetch("/api/settings/ai-providers")
       .then((r) => r.json())
-      .then((d: KeyStatus) => {
-        if (!cancelled) setStatus(d.configured ? "ready" : "no-key");
+      .then((d: ProvidersStatus) => {
+        if (cancelled) return;
+        setStatus(d.reachable ? "ready" : "off");
+        setActive(d.active ? (PROVIDER_SHORT[d.active.provider] ?? d.active.provider) : null);
       })
       .catch(() => {
-        if (!cancelled) setStatus("no-key");
+        if (!cancelled) setStatus("off");
       });
     return () => {
       cancelled = true;
@@ -42,10 +55,10 @@ export function AiStatusBadge() {
     <Link
       href="/settings"
       className="flex items-center gap-1.5 rounded-full border border-positive/30 bg-positive/10 px-2.5 py-0.5 text-xs font-medium text-positive"
-      title="AI ready: Claude Opus 5 via the Anthropic API, using your API key. Manage it in Settings."
+      title={`AI ready via ${active ?? "your configured provider"}. Manage providers in Settings.`}
     >
       <span className="h-1.5 w-1.5 rounded-full bg-positive" />
-      AI · Claude Opus 5
+      AI · {active ?? "ready"}
     </Link>
   ) : (
     <Link
@@ -54,7 +67,7 @@ export function AiStatusBadge() {
       title={`AI features are off. ${AI_RECOVERY_HINT}`}
     >
       <span className="h-1.5 w-1.5 rounded-full bg-muted" />
-      AI off · add key
+      AI off · connect
     </Link>
   );
 }

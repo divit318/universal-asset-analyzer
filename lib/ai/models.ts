@@ -40,8 +40,18 @@ export type ThinkingMode =
 
 /** Which backend serves a model. */
 export type ProviderId =
+  /** Devin CLI (`devin -p`) — Cognition-hosted models via the user's Devin login. No API key. */
+  | "devin"
   /** Hosted Anthropic API (claude-opus-5). No memory gate, genuinely parallel. */
-  "anthropic";
+  | "anthropic"
+  /** Hosted OpenAI API (chat completions), BYO key. */
+  | "openai"
+  /** Hosted Google Gemini API, BYO key. */
+  | "gemini"
+  /** OpenRouter — one key, many hosted models (OpenAI-compatible wire format). */
+  | "openrouter"
+  /** Local Ollama daemon — weights in local RAM, memory-gated, serialized generation. */
+  | "ollama";
 
 /**
  * Where each provider's weights actually run.
@@ -50,9 +60,18 @@ export type ProviderId =
  * is a compile error until it is classified here, because every consumer below
  * changes behaviour based on this answer and defaulting a new provider to
  * either side silently would be a bug rather than a gap.
+ *
+ * The Devin CLI spawns a LOCAL subprocess, but the weights run on Cognition's
+ * hosts — no local RAM is occupied and calls execute genuinely in parallel,
+ * so it is "hosted" for every purpose the Router cares about.
  */
 const PROVIDER_LOCALITY: Record<ProviderId, "local" | "hosted"> = {
+  devin: "hosted",
   anthropic: "hosted",
+  openai: "hosted",
+  gemini: "hosted",
+  openrouter: "hosted",
+  ollama: "local",
 };
 
 /** Backends whose models occupy local RAM and are therefore memory-gated. */
@@ -111,12 +130,20 @@ const OPUS_5_PRICING: ModelPricing = {
 
 /** What we know about a model, independent of whether it's installed. */
 export interface ModelSpec {
-  /** Provider-native id — for Anthropic, `claude-opus-5` plus an effort suffix. */
+  /** Provider-native id — an Anthropic model+effort id, a Devin `model_uid`, or an `ollama list` tag. */
   id: string;
   label: string;
-  family: "claude" | "other";
-  /** Which provider serves this model. */
+  family: "claude" | "gpt" | "gemini" | "qwen" | "mistral" | "other";
+  /** The canonical provider for this model — timeouts, pricing, and display come from here. */
   provider: ProviderId;
+  /**
+   * Additional providers that can serve this exact model id. The Devin CLI's
+   * catalogue includes the Claude effort tiers under the same uids, so the
+   * same registry entry is routable through either backend — the Router's
+   * provider chain decides which is tried first, and the normalized response
+   * reports the provider that actually answered.
+   */
+  alsoServedBy?: ProviderId[];
   /** Usable context window in tokens. */
   contextWindow: number;
   /** Chain-of-thought support. */
@@ -159,11 +186,23 @@ export interface ModelSpec {
 /** Where a provider's models are served from — for display and diagnostics. */
 export function endpointForProvider(provider: ProviderId): string {
   switch (provider) {
+    case "devin":
+      // A local `devin -p` subprocess; the models themselves run on
+      // Cognition's hosts, authenticated by the user's `devin login`.
+      return "devin CLI (Cognition-hosted)";
     case "anthropic":
       // Pinned in lib/ai/anthropic-key.ts (ANTHROPIC_BASE_URL): the provider
       // constructs its client with this exact baseURL, so prompts go to
       // api.anthropic.com and nowhere else.
       return "https://api.anthropic.com";
+    case "openai":
+      return "https://api.openai.com";
+    case "gemini":
+      return "https://generativelanguage.googleapis.com";
+    case "openrouter":
+      return "https://openrouter.ai/api";
+    case "ollama":
+      return process.env.OLLAMA_HOST ?? "http://localhost:11434";
   }
 }
 
@@ -179,6 +218,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     label: "Claude Opus 5 (high effort)",
     family: "claude",
     provider: "anthropic",
+    alsoServedBy: ["devin"],
     contextWindow: 1_000_000,
     // Effort is baked into the routable id rather than exposed as a
     // per-request toggle, so there is no `think` flag to send. "none" means
@@ -200,6 +240,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     label: "Claude Opus 5 (medium effort)",
     family: "claude",
     provider: "anthropic",
+    alsoServedBy: ["devin"],
     contextWindow: 1_000_000,
     thinking: "none",
     temperature: 0.4,
@@ -218,6 +259,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     label: "Claude Opus 5 (low effort)",
     family: "claude",
     provider: "anthropic",
+    alsoServedBy: ["devin"],
     contextWindow: 1_000_000,
     thinking: "none",
     temperature: 0.3,
@@ -231,7 +273,257 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     blurb: "Fastest tier. Parsing, one-line summaries, interactive Q&A.",
     pricing: OPUS_5_PRICING,
   },
+
+  /* ---- Devin CLI (Cognition-hosted, user's Devin login, no API key) -------
+   * ids are `devin models list` model_uids, verified against the live
+   * catalogue 2026-08-06. The Claude effort tiers above are ALSO servable
+   * through Devin (`alsoServedBy`) under the same uids, so the task pins in
+   * config.ts resolve through whichever provider the chain reaches first.
+   * No `pricing`: Devin bills in ACUs against the user's plan, not USD/token,
+   * so the telemetry cost estimate honestly reports null.
+   * Latency numbers are from scripts/devin-model-bench.ts (2026-08-02, means
+   * of 2 runs on real UAA prompts, including the ~2s CLI spawn). */
+  {
+    id: "adaptive",
+    label: "Devin Adaptive (auto model)",
+    family: "other",
+    provider: "devin",
+    contextWindow: 200_000,
+    thinking: "none",
+    temperature: 0.4,
+    timeoutMs: 180_000,
+    capabilities: ["reasoning", "long-context", "structured-json", "coding", "fast"],
+    quality: 9,
+    tokensPerSecond: 20,
+    sizeGb: 0,
+    priority: 3,
+    enabled: true,
+    blurb: "Devin's own router picks the best hosted model per prompt. Uses your Devin login — no API key.",
+  },
+  {
+    id: "claude-sonnet-5-low",
+    label: "Claude Sonnet 5 (low effort, via Devin)",
+    family: "claude",
+    provider: "devin",
+    contextWindow: 200_000,
+    thinking: "none",
+    temperature: 0.4,
+    timeoutMs: 120_000,
+    capabilities: ["reasoning", "long-context", "structured-json"],
+    quality: 8,
+    tokensPerSecond: 28,
+    sizeGb: 0,
+    priority: 4,
+    enabled: true,
+    blurb: "Measured 21.8s on real dossier prompts with the richest cross-evidence synthesis of the standard bench.",
+  },
+  {
+    id: "swe-1-6-fast",
+    label: "SWE 1.6 Fast (via Devin)",
+    family: "other",
+    provider: "devin",
+    contextWindow: 128_000,
+    thinking: "none",
+    temperature: 0.3,
+    timeoutMs: 90_000,
+    capabilities: ["fast", "structured-json", "coding"],
+    quality: 7,
+    tokensPerSecond: 40,
+    sizeGb: 0,
+    priority: 5,
+    enabled: true,
+    blurb: "Fastest Devin-served tier: 9-12s wall-clock, 4/4 valid JSON on the light-task bench.",
+  },
+
+  /* ---- Hosted BYO-key APIs (dormant until a key is configured) ------------
+   * Best-guess ids, verified only against each provider's live /models
+   * catalogue at runtime (each provider routes the INTERSECTION of this
+   * registry with its live list, so a stale id here can never be routed to).
+   * Explicit model overrides and AI_TASK_* env pins can reach any live
+   * catalogue id regardless of registry membership. */
+  {
+    id: "gpt-5.2",
+    label: "GPT-5.2",
+    family: "gpt",
+    provider: "openai",
+    contextWindow: 400_000,
+    thinking: "none",
+    temperature: 0.4,
+    timeoutMs: 180_000,
+    capabilities: ["reasoning", "long-context", "structured-json", "coding"],
+    quality: 9,
+    tokensPerSecond: 25,
+    sizeGb: 0,
+    priority: 6,
+    enabled: true,
+    blurb: "OpenAI's flagship reasoning model. Requires an OpenAI API key in Settings.",
+  },
+  {
+    id: "gpt-5.2-mini",
+    label: "GPT-5.2 mini",
+    family: "gpt",
+    provider: "openai",
+    contextWindow: 400_000,
+    thinking: "none",
+    temperature: 0.3,
+    timeoutMs: 90_000,
+    capabilities: ["fast", "structured-json", "coding"],
+    quality: 7,
+    tokensPerSecond: 45,
+    sizeGb: 0,
+    priority: 7,
+    enabled: true,
+    blurb: "OpenAI's fast tier for parsing and short answers. Requires an OpenAI API key.",
+  },
+  {
+    id: "gemini-3-pro",
+    label: "Gemini 3 Pro",
+    family: "gemini",
+    provider: "gemini",
+    contextWindow: 1_000_000,
+    thinking: "none",
+    temperature: 0.4,
+    timeoutMs: 180_000,
+    capabilities: ["reasoning", "long-context", "structured-json", "coding"],
+    quality: 9,
+    tokensPerSecond: 25,
+    sizeGb: 0,
+    priority: 8,
+    enabled: true,
+    blurb: "Google's flagship. Requires a Gemini API key in Settings.",
+  },
+  {
+    id: "gemini-3-flash",
+    label: "Gemini 3 Flash",
+    family: "gemini",
+    provider: "gemini",
+    contextWindow: 1_000_000,
+    thinking: "none",
+    temperature: 0.3,
+    timeoutMs: 90_000,
+    capabilities: ["fast", "long-context", "structured-json"],
+    quality: 7,
+    tokensPerSecond: 50,
+    sizeGb: 0,
+    priority: 9,
+    enabled: true,
+    blurb: "Google's fast tier. Requires a Gemini API key in Settings.",
+  },
+  {
+    id: "anthropic/claude-sonnet-5",
+    label: "Claude Sonnet 5 (via OpenRouter)",
+    family: "claude",
+    provider: "openrouter",
+    contextWindow: 200_000,
+    thinking: "none",
+    temperature: 0.4,
+    timeoutMs: 120_000,
+    capabilities: ["reasoning", "long-context", "structured-json"],
+    quality: 8,
+    tokensPerSecond: 30,
+    sizeGb: 0,
+    priority: 10,
+    enabled: true,
+    blurb: "One OpenRouter key reaches many hosted models. Requires an OpenRouter API key in Settings.",
+  },
+
+  /* ---- Local (Ollama) — restored with the multi-provider chain ------------
+   * Latency/size numbers were measured on this host before the 2026-08-05
+   * consolidation removed the tier; the local machinery in the Router
+   * (memory gate, generation slot, cold budgets) was kept dormant for exactly
+   * this restoration. */
+  {
+    // Registered but not selectable on a 16GB host: the memory filter excludes
+    // it. On a machine with the RAM to hold it this becomes the best local
+    // model with no code change — the point of deriving a memory budget.
+    id: "qwen3:30b-a3b",
+    label: "Qwen 3 30B (MoE)",
+    family: "qwen",
+    provider: "ollama",
+    contextWindow: 32_768,
+    thinking: "hybrid",
+    temperature: 0.4,
+    timeoutMs: 300_000,
+    capabilities: ["reasoning", "long-context", "structured-json"],
+    quality: 9,
+    tokensPerSecond: 0.9, // measured while memory-starved; far higher when resident
+    sizeGb: 18.6,
+    priority: 11,
+    enabled: true,
+    blurb: "Strongest local reasoning. Needs ~24GB+ RAM to be usable.",
+  },
+  {
+    id: "qwen3:14b",
+    label: "Qwen 3 14B",
+    family: "qwen",
+    provider: "ollama",
+    contextWindow: 32_768,
+    thinking: "hybrid",
+    temperature: 0.4,
+    timeoutMs: 300_000,
+    // Measured: cold-loading this 9.3GB model has been observed consuming
+    // its ENTIRE 300s base timeout under memory pressure, leaving zero time
+    // to actually generate. 480s is a real, deliberate budget for the load
+    // phase specifically — not a multiplier guess.
+    coldStartTimeoutMs: 480_000,
+    capabilities: ["reasoning", "long-context", "structured-json"],
+    quality: 8,
+    tokensPerSecond: 5.0,
+    sizeGb: 9.3,
+    priority: 12,
+    enabled: true,
+    blurb: "Best local reasoning that fits in memory. The offline analytical workhorse.",
+  },
+  {
+    id: "mistral:latest",
+    label: "Mistral 7B",
+    family: "mistral",
+    provider: "ollama",
+    contextWindow: 32_768,
+    thinking: "none",
+    temperature: 0.4,
+    timeoutMs: 120_000,
+    // Measured: cold-loads in ~70s on this host — the 120s base timeout
+    // already has real headroom, so cold start only needs a modest bump.
+    coldStartTimeoutMs: 150_000,
+    capabilities: ["fast", "structured-json"],
+    quality: 5,
+    tokensPerSecond: 10.5,
+    sizeGb: 4.4,
+    priority: 13,
+    enabled: true,
+    blurb: "Fast local fallback with reliably valid JSON for short output.",
+  },
+  {
+    id: "qwen2.5-coder:14b",
+    label: "Qwen 2.5 Coder 14B",
+    family: "qwen",
+    provider: "ollama",
+    contextWindow: 32_768,
+    thinking: "none",
+    temperature: 0.2,
+    timeoutMs: 120_000,
+    capabilities: ["coding", "structured-json"],
+    quality: 6,
+    tokensPerSecond: 5.0,
+    sizeGb: 9.0,
+    priority: 14,
+    enabled: true,
+    blurb: "Code-specialized. The only local coding model within the memory budget.",
+  },
 ];
+
+/**
+ * The registry ids a given provider can serve: its own entries plus any entry
+ * that names it in `alsoServedBy`. Providers intersect this with their LIVE
+ * catalogue (`devin models list`, `/v1/models`, `ollama list`) — the registry
+ * is the policy, the catalogue is the availability check.
+ */
+export function registryModelsFor(provider: ProviderId): ModelSpec[] {
+  return MODEL_REGISTRY.filter(
+    (m) => m.provider === provider || (m.alsoServedBy ?? []).includes(provider),
+  );
+}
 
 /**
  * Fallback spec for a model id with no registry entry (an explicit `model`
@@ -244,7 +536,13 @@ export function genericSpec(id: string): ModelSpec {
     id,
     label: id,
     family: id.toLowerCase().includes("claude") ? "claude" : "other",
-    provider: "anthropic",
+    // "ollama" (local) deliberately: an unknown LOCAL tag must stay behind
+    // the memory gate when its daemon reports a size (fitsInMemory only gates
+    // specs whose provider is local), and misclassifying a hosted model as
+    // local costs nothing — its size is never reported, and sizeGb 0 passes
+    // the gate. The reverse default (an ungated 18GB local model) thrashes
+    // the machine.
+    provider: "ollama",
     contextWindow: 8_192,
     thinking: "none",
     temperature: 0.4,

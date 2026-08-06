@@ -4,13 +4,27 @@ Single entry point for every AI request in UAA. Feature code never talks to a
 backend and never names a model — it names a *task*, and the Router picks the
 best routable model for it, falling back automatically if that attempt fails.
 
-**One backend, bring your own key.** The provider is the Anthropic API
-(`api.anthropic.com`), the model is `claude-opus-5`, and the credential is the
-user's own key — `ANTHROPIC_API_KEY` env var first (demo/CI), then the local
-key file `~/.uaa/anthropic_api_key` saved from `/settings` (see
-`anthropic-key.ts` for the storage/egress guarantees). Per-task reasoning depth
-is expressed as three routable ids — `claude-opus-5-low|-medium|-high` — that
-the provider translates into `output_config.effort` on the wire.
+**Provider-agnostic, six backends, zero required keys (2026-08-06).** The
+Router walks a configurable provider chain (`config.ts:providerOrder()`,
+default `devin → anthropic → openai → gemini → openrouter → ollama`,
+reorderable via `AI_PROVIDER_ORDER`) and uses the first provider that can
+serve the routed model:
+
+| Provider | Transport | Credential |
+|---|---|---|
+| `devin` | `devin -p` subprocess (`devin-cli.ts`) — Cognition-hosted models | the user's `devin login` — **no API key** |
+| `anthropic` | `api.anthropic.com` (SDK, real token streaming, prompt caching, native structured outputs) | `ANTHROPIC_API_KEY` env, then `~/.uaa/anthropic_api_key` (`anthropic-key.ts`) |
+| `openai` / `openrouter` | chat-completions over fetch (`openai-compatible-provider.ts`) | `OPENAI_API_KEY` / `OPENROUTER_API_KEY` env, then `~/.uaa/*` (`keys.ts`) |
+| `gemini` | Generative Language API over fetch (`gemini-provider.ts`) | `GEMINI_API_KEY`/`GOOGLE_API_KEY` env, then `~/.uaa/gemini_api_key` |
+| `ollama` | local daemon (`ollama.ts`) — memory-gated, serialized | none (local) |
+
+The BYO-key providers are dormant until a key exists (health = key presence);
+the Devin CLI is the out-of-the-box default because it needs no key at all.
+Per-task reasoning depth is expressed as three routable ids —
+`claude-opus-5-low|-medium|-high` — which BOTH the Devin catalogue and the
+Anthropic API serve under the same ids (`models.ts:alsoServedBy`): the
+Anthropic provider translates the suffix into `output_config.effort` on the
+wire, the Devin provider passes the uid through.
 
 Every number in the product is computed by the deterministic engines; the model
 only narrates. No prompt asks the model to produce, transform, or round a
@@ -20,31 +34,44 @@ generated figures against the evidence they were given.
 ## Request flow
 
 ```
+User (page / feature UI)
+  ▼
 Feature code
   │  runPrompt(taskType, prompt)          lib/ai.ts — thin façade
   │  runTask / runTaskText / runTaskStream / runTaskChat
   ▼
-Orchestrator                              lib/ai/orchestrator.ts
+Orchestrator                              lib/ai/orchestrator.ts  (dedup/coalescing)
   ▼
 Router                                    lib/ai/router.ts
-  │  for each provider, in order:
+  │  for each provider, in chain order:
   │  1. ELIGIBILITY  available ∧ enabled ∧ has required caps
   │  2. SCORE        quality vs speed, weighted by the task's own requirements
   │  3. TIEBREAK     registry priority, then id  (fully deterministic)
-  │  ← provider chain lib/ai/config.ts  (one entry: anthropic)
+  │  ← provider chain lib/ai/config.ts  (AI_PROVIDER_ORDER; default devin-first)
   │  ← config pins    lib/ai/config.ts  (env / static overrides beat the scorer)
   │  ← task needs     lib/ai/task-registry.ts
-  │  ← model facts    lib/ai/models.ts
+  │  ← model facts    lib/ai/models.ts  (incl. alsoServedBy cross-provider ids)
   ▼
 AIProvider                                lib/ai/provider.ts
-  └─ AnthropicProvider                    lib/ai/providers/anthropic-provider.ts
-       └─ api.anthropic.com              explicit baseURL; the user's key;
-                                          real token streaming
+  ├─ DevinProvider                        providers/devin-provider.ts
+  │    └─ `devin -p` subprocess           lib/ai/devin-cli.ts — isolated
+  │         └─ Cognition-hosted model     workspace, tools denied, user's
+  │                                       `devin login`, NO API key
+  ├─ AnthropicProvider                    providers/anthropic-provider.ts
+  │    └─ api.anthropic.com               explicit baseURL; the user's key;
+  │                                       real token streaming
+  ├─ OpenAIProvider / OpenRouterProvider  providers/openai-compatible-provider.ts
+  ├─ GeminiProvider                       providers/gemini-provider.ts
+  └─ OllamaProvider                       providers/ollama-provider.ts (local)
+  ▼
+Normalized AIResponse                     lib/ai/response.ts
+  ▼
+Feature parse (Zod schemas / tolerant JSON) → grounding verification → UI
 ```
 
 ## What each tier routes to
 
-One model, three effort depths. The pin per task complexity
+One model family, three effort depths. The pin per task complexity
 (`config.ts:TASK_MODEL_PINS`):
 
 | Task complexity | Pin (primary → fallback) |
@@ -53,8 +80,15 @@ One model, three effort depths. The pin per task complexity
 | `standard` (research, comparison, portfolio) | `claude-opus-5-medium` → `-low` |
 | `light` / `interactive` (nl-screener, summaries, chart-QA) | `claude-opus-5-low` |
 
-A failing high-effort attempt degrades to a shallower tier of the same model
-rather than to nothing.
+Pins are model ids, not provider choices: each pinned id resolves against the
+provider chain in order, so the same table serves Devin-first (no key) and
+API-first (BYO key) setups without edits. A failing high-effort attempt
+degrades to a shallower tier of the same model rather than to nothing, and a
+provider whose credential is rejected is skipped for the rest of the chain
+walk (same key ⇒ same rejection; the error survives classification as
+`bad_api_key`, never a generic "try again"). The Devin catalogue also offers
+`adaptive` (Devin's own per-prompt model router), `claude-sonnet-5-low`, and
+`swe-1-6-fast` as routable/pinnable ids.
 
 Responses are normalized (`response.ts`) into `{ content, confidence,
 reasoningSummary, executionTimeMs, model, provider, tokenUsage, errors,
@@ -95,10 +129,11 @@ gate a model swap or effort repin must pass (`--model` pins a candidate);
 
 ## Notes that are not style preferences
 
-**1. Health checks are key-presence, not paid round trips.** The Router
-health-checks providers on hot paths; the provider answers from
-`resolveApiKey()` and lets the first real request surface auth/network
-failures, which produce far better errors than a probe would.
+**1. Health checks are cheap, not paid round trips.** The Router
+health-checks providers on hot paths; the keyed providers answer from key
+presence (`resolveApiKey()` / `keys.ts`), the Devin provider from a
+ten-minute-cached `devin models list`, and the first real request surfaces
+auth/network failures, which produce far better errors than a probe would.
 
 **2. JSON mode and thinking are mutually exclusive** at the request level
 (`router.ts:resolveThinking()`), a rule kept from the era of hybrid local
@@ -107,11 +142,12 @@ effort tiers have no per-request thinking toggle — depth rides on the model id
 — so the rule is dormant but still asserted by tests.
 
 **3. The local-provider machinery (memory gate, generation gate, cold-start
-budgets, warm probes) is dormant, not deleted.** It keys off
-`isHostedProvider()` and never runs for the hosted chain. It is the
-provider-agnostic contract a future local runtime would need
-(`ProviderModelInfo.sizeGb`, `AIProvider.isModelWarm`), and the router tests
-exercise it with fake local providers.
+budgets, warm probes) is live again for Ollama.** It keys off
+`isHostedProvider()` and never runs for the hosted providers (including the
+Devin CLI: a local subprocess, but the weights run on Cognition's hosts —
+no local RAM, genuinely parallel). It was kept dormant through the
+single-backend era precisely so the local tier could be restored as a
+registry entry rather than a Router rewrite — which is what happened.
 
 ## Where to change what
 
@@ -121,8 +157,9 @@ exercise it with fake local providers.
 | Add a task | `task-registry.ts` — declare complexity/latency/context/output | — |
 | Add or re-tune a model | `models.ts` (`MODEL_REGISTRY`) | any feature module |
 | Bench a model | `AI_DISABLED_MODELS`, or `enabled: false` | deleting its entry |
-| Add a provider | new `AIProvider` in `providers/`, added to `PROVIDER_FACTORIES` (router.ts) + `PROVIDER_CHAIN` (config.ts) + `PROVIDER_LOCALITY` (models.ts) | orchestrator, feature code |
-| Manage the API key | `/settings` in-app, or `ANTHROPIC_API_KEY` | anything that would log it |
+| Reorder / restrict the provider chain | `AI_PROVIDER_ORDER` env (`config.ts`) | any feature module |
+| Add a provider | new `AIProvider` in `providers/`, added to `PROVIDER_FACTORIES` (router.ts) + `DEFAULT_PROVIDER_ORDER`/`KNOWN_PROVIDERS` (config.ts) + `PROVIDER_LOCALITY` (models.ts) (+ `keys.ts` if BYO-key) | orchestrator, feature code |
+| Manage API keys | `/settings` in-app, or the provider's env var | anything that would log them |
 
 A task declares what it *needs*; it never names a model. That indirection is the
 whole point: the previous registry hand-maintained a `preferredModels` list per
@@ -161,15 +198,22 @@ everything else. It never calls a provider directly.
 
 ## What this layer deliberately does not do
 
-- **No temperature on the wire.** `claude-opus-5` does not accept the field;
-  the provider accepts the Router's computed value and deliberately ignores it
-  rather than pretending otherwise.
+- **No temperature on the wire.** `claude-opus-5` does not accept the field,
+  several current OpenAI reasoning models reject non-default values, and
+  `devin -p` has no sampling controls at all; every hosted provider accepts
+  the Router's computed value and deliberately ignores it rather than
+  pretending otherwise.
 - **No mass prompt migration.** `prompts/` centralizes the shared JSON
   directives. The ~20 hand-tuned feature prompts stay next to their features:
   they are schema-specific, not duplicated templates, and rewording them is a
   quality-sensitive change that needs per-model evaluation.
 - **No persisted health state.** `health.ts` is in-memory, per-process.
-- **No key exposure.** The key is read by `anthropic-key.ts`, sent to
-  `api.anthropic.com` (explicit `baseURL` — a stray `ANTHROPIC_BASE_URL` env
-  var cannot redirect it), and appears in no log line, no error message, and
-  no API response (`/api/settings/ai-key` reports presence only).
+- **No key exposure.** Keys are read by `anthropic-key.ts` / `keys.ts`, sent
+  only to their own provider's pinned endpoint (the Anthropic client uses an
+  explicit `baseURL` — a stray `ANTHROPIC_BASE_URL` env var cannot redirect
+  it; the Gemini key rides in a header, never a query string), and appear in
+  no log line, no error message, and no API response
+  (`/api/settings/ai-key(s|-providers)` report presence only). The Devin CLI
+  path involves no key at all; its prompt files are written to an isolated
+  scratch workspace and deleted after every call, and the agent's tools are
+  denied so it cannot read files or reach the network from a prompt.

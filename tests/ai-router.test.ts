@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { classifyAiError } from "@/lib/ai/errors";
 import { resetHealth } from "@/lib/ai/health";
 import {
   AllModelsFailedError,
@@ -269,6 +270,25 @@ describe("route", () => {
         { providers: [provider] },
       ),
     ).rejects.toBeInstanceOf(AllModelsFailedError);
+  });
+
+  it("stops walking a provider's candidates once its key is rejected — same credential, same outcome", async () => {
+    const invalid = Object.assign(new Error("rejected"), { code: "anthropic_key_invalid" });
+    const provider = new FakeProvider(TIERS, {
+      "claude-opus-5-medium": invalid,
+      // Must never be reached: the low tier presents the same key.
+      "claude-opus-5-low": { content: "should never be generated", reasoning: "" },
+    });
+    const err = await route(
+      "explain-movement",
+      { messages: [{ role: "user", content: "hi" }] },
+      { providers: [provider] },
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AllModelsFailedError);
+    expect(provider.calls).toEqual(["claude-opus-5-medium"]);
+    // The wrapper stays classifiable as the real failure: a bad key, not "try again".
+    expect(classifyAiError(err).category).toBe("bad_api_key");
+    expect(classifyAiError(err).retryable).toBe(false);
   });
 
   it("throws AllModelsFailedError immediately when nothing is available (no key)", async () => {

@@ -1,10 +1,11 @@
 /**
  * Anthropic Provider — direct Claude API inference (claude-opus-5).
  *
- * The single hosted backend behind the provider-agnostic {@link AIProvider}
- * interface. It replaces the Devin CLI (a third-party coding agent shelling
- * out to hosted models — a ToS liability and an install burden) and the
- * Ollama tier (dropped): one provider, one model, real streaming, and the
+ * One backend in the provider-agnostic chain (see lib/ai/config.ts). It was
+ * briefly the SINGLE backend (2026-08-05); the 2026-08-06 multi-provider
+ * restoration put it second in the default chain, behind the keyless Devin
+ * CLI — it earns its place with the chain's richest wire features: real
+ * token streaming, prompt caching, and native structured outputs, on the
  * user's own key.
  *
  * ## Egress guarantee
@@ -30,7 +31,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import { ANTHROPIC_BASE_URL, resolveApiKey } from "../anthropic-key";
+import { ANTHROPIC_BASE_URL, keyStatus, resolveApiKey, type KeySource } from "../anthropic-key";
 import type {
   AIProvider,
   ProviderCompleteRequest,
@@ -54,10 +55,18 @@ export class AnthropicKeyMissingError extends Error {
 /** The key was presented and rejected (invalid/revoked) — a different fix than "add a key". */
 export class AnthropicKeyInvalidError extends Error {
   code = "anthropic_key_invalid" as const;
-  constructor() {
+  /**
+   * Where the rejected key came from. "env" and "file" need DIFFERENT advice:
+   * the ANTHROPIC_API_KEY env var overrides the Settings-saved file, so
+   * "replace it in Settings" cannot fix an env-sourced key. Classified by
+   * lib/ai/errors.ts into the matching user message.
+   */
+  readonly source: KeySource;
+  constructor(source: KeySource = keyStatus().source) {
     // Static message on purpose: never echo anything derived from the key.
     super("The Anthropic API rejected the configured API key (invalid or revoked).");
     this.name = "AnthropicKeyInvalidError";
+    this.source = source;
   }
 }
 

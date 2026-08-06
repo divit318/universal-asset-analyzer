@@ -36,6 +36,7 @@ import { isAssetClassId } from "./assets/registry";
 import type { AssetClassId, FilterValues } from "./assets/types";
 import { parseNlFilters } from "./screener/nl-filters";
 import { AI_RECOVERY_HINT } from "./ai/availability";
+import { classifyAiError } from "./ai/errors";
 
 export interface AppAssistantTurn {
   question: string;
@@ -342,15 +343,30 @@ export async function runAppAssistant(
  * "fixes" the wrong thing — so this names the actual failure class.
  */
 export function failureAnswer(err: unknown): string {
-  const name = err instanceof Error ? err.name : "";
-  if (name === "AnthropicKeyMissingError") {
-    return `I can't answer without an API key. ${AI_RECOVERY_HINT} Or use ⌘K to jump straight to a tool.`;
+  // classifyAiError sees through the Router's exhausted-candidates wrapper
+  // (a bad key exhausting the fallback chain used to land in the generic
+  // "took too long" branch here — advice you can't act on).
+  const classified = classifyAiError(err);
+  switch (classified.category) {
+    case "no_api_key":
+      return `I can't answer without an API key. ${AI_RECOVERY_HINT} Or use ⌘K to jump straight to a tool.`;
+    case "bad_api_key":
+      return `${classified.message} ⌘K still works for jumping straight to a tool.`;
+    case "cancelled":
+    case "timeout":
+    case "rate_limited":
+    case "network":
+    case "all_models_failed":
+      return "The AI took too long to answer or is unreachable — try again in a moment. ⌘K still works.";
+    default: {
+      // Some transports throw plain Errors merely NAMED like abort/timeout
+      // (not DOMExceptions, so the classifier files them under "unknown").
+      // For user-facing copy the name is signal enough.
+      const name = err instanceof Error ? err.name : "";
+      if (name === "TimeoutError" || name === "AbortError") {
+        return "The AI took too long to answer or is unreachable — try again in a moment. ⌘K still works.";
+      }
+      return "I hit an error generating that answer. Try rephrasing, or use ⌘K to jump straight to a tool.";
+    }
   }
-  if (name === "AnthropicKeyInvalidError") {
-    return "The Anthropic API rejected your API key (invalid or revoked). Replace it in Settings, or use ⌘K to jump straight to a tool.";
-  }
-  if (name === "TimeoutError" || name === "AbortError" || name === "AllModelsFailedError") {
-    return "The AI took too long to answer or is unreachable — try again in a moment. ⌘K still works.";
-  }
-  return "I hit an error generating that answer. Try rephrasing, or use ⌘K to jump straight to a tool.";
 }
