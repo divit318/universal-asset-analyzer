@@ -1,29 +1,17 @@
 "use client";
 
-import type { InvestmentVerdict } from "@/app/api/ai/verdict/route";
 import type { RiskItem, RiskLevel, ScoreResult } from "@/lib/types";
-import { RECOMMENDATION_ARC, scoreToRecommendation } from "@/lib/recommendation";
+import {
+  RECOMMENDATION_ARC,
+  RECOMMENDATION_LABEL,
+  RECOMMENDATION_TONE,
+  scoreToRecommendation,
+} from "@/lib/recommendation";
 import { CountUp } from "@/app/_components/count-up";
 import { LoadingPanel } from "@/app/_components/loading-panel";
 import { Reveal } from "@/app/_components/reveal";
 import { ScoreRing } from "@/app/_components/score-ring";
 import { ValueBar } from "@/app/_components/value-bar";
-
-const REC_LABEL: Record<string, string> = {
-  STRONG_BUY:  "Strong Buy",
-  BUY:         "Buy",
-  HOLD:        "Hold",
-  SELL:        "Sell",
-  STRONG_SELL: "Strong Sell",
-};
-
-const REC_COLOR: Record<string, string> = {
-  STRONG_BUY:  "text-positive border-positive/40 bg-positive/10",
-  BUY:         "text-positive border-positive/30 bg-positive/8",
-  HOLD:        "text-warning border-warning/40 bg-warning/10",
-  SELL:        "text-negative border-negative/30 bg-negative/8",
-  STRONG_SELL: "text-negative border-negative/40 bg-negative/10",
-};
 
 function barColor(pct: number) {
   if (pct >= 65) return "bg-positive";
@@ -66,13 +54,12 @@ function Skeleton() {
 interface Props {
   score: ScoreResult | null;
   loading: boolean;
-  verdict?: InvestmentVerdict | null;
   risks?: RiskItem[];
-  /** Jump to the tab with the full Risk Heatmap (Details). */
+  /** Jump to the tab with the full risk list (Analysis). */
   onViewRisks?: () => void;
 }
 
-export function ConvictionBreakdown({ score, loading, verdict, risks, onViewRisks }: Props) {
+export function ConvictionBreakdown({ score, loading, risks, onViewRisks }: Props) {
   if (loading) return <Skeleton />;
   if (!score) {
     return (
@@ -82,7 +69,7 @@ export function ConvictionBreakdown({ score, loading, verdict, risks, onViewRisk
     );
   }
 
-  const recColor = REC_COLOR[score.recommendation] ?? REC_COLOR.HOLD;
+  const recColor = RECOMMENDATION_TONE[score.recommendation] ?? RECOMMENDATION_TONE.HOLD;
 
   return (
     <div className="flex flex-col gap-6">
@@ -102,7 +89,7 @@ export function ConvictionBreakdown({ score, loading, verdict, risks, onViewRisk
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <span className={`inline-flex w-fit items-center rounded-lg border px-3 py-1 text-sm font-semibold tracking-wide ${recColor}`}>
-              {REC_LABEL[score.recommendation] ?? score.recommendation}
+              {RECOMMENDATION_LABEL[score.recommendation] ?? score.recommendation}
             </span>
             {risks && risks.length > 0 && (() => {
               const worst = worstRisk(risks);
@@ -142,12 +129,14 @@ export function ConvictionBreakdown({ score, loading, verdict, risks, onViewRisk
           <h3 className="text-[10px] font-semibold uppercase tracking-widest text-muted">Signal Pillars</h3>
           <div className="h-px flex-1 bg-border" />
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {/* Data confidence is deliberately NOT a pillar here: it is metadata
+            about input completeness, not an investment signal — it renders as
+            the small labelled line in the score card above instead. */}
+        <div className="grid gap-3 sm:grid-cols-3">
           {[
             { label: "Fundamentals", value: score.signals.fundamentals },
             { label: "Analyst Consensus", value: score.signals.analysts },
             { label: "Price Momentum", value: score.signals.momentum },
-            { label: "Data Confidence", value: score.confidence },
           ].map(({ label, value }, i) => (
             <Reveal key={label} index={i} className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2 p-3.5">
               <div className="flex items-center justify-between gap-2">
@@ -171,7 +160,7 @@ export function ConvictionBreakdown({ score, loading, verdict, risks, onViewRisk
             Investment Assumptions
           </h3>
           <div className="h-px flex-1 bg-border" />
-          <span className="text-[10px] text-muted/50">Confidence based on available data</span>
+          <span className="text-[10px] text-muted/50">All subscores normalized to /100</span>
         </div>
 
         {/* A grid, not a stack.
@@ -192,13 +181,15 @@ export function ConvictionBreakdown({ score, loading, verdict, risks, onViewRisk
               <Reveal
                 key={bucket.name}
                 index={i}
-                className="flex flex-col gap-1.5 rounded-card border border-border bg-surface p-3"
+                className="flex min-h-[7.5rem] flex-col gap-1.5 rounded-card border border-border bg-surface p-3"
               >
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="truncate text-xs font-medium text-foreground">{bucket.name}</span>
-                  <span className="shrink-0 font-mono text-xs tabular-nums text-muted">
-                    <CountUp value={bucket.points} format={(v) => String(Math.round(v))} durationMs={800} />
-                    <span className="text-muted/40">/{bucket.max}</span>
+                  {/* Normalized to /100 — the same figure the narration quotes
+                      (raw maxes of /30, /25, /24… explained nothing). */}
+                  <span className="shrink-0 font-mono text-xs tabular-nums text-muted" title={`${bucket.points.toFixed(0)} of ${bucket.max} raw points`}>
+                    <CountUp value={pct} format={(v) => String(Math.round(v))} durationMs={800} />
+                    <span className="text-muted/40">/100</span>
                   </span>
                 </div>
 
@@ -209,8 +200,9 @@ export function ConvictionBreakdown({ score, loading, verdict, risks, onViewRisk
                   <span className={`text-[10px] font-semibold ${conf.cls}`}>{conf.text}</span>
                 </div>
 
-                {/* Factor details */}
-                {visibleFactors.length > 0 && (
+                {/* Factor details — an empty card reads as broken, so the
+                    half-credit degradation is stated instead. */}
+                {visibleFactors.length > 0 ? (
                   <div className="flex flex-col gap-0.5">
                     {visibleFactors.map((f) => (
                       <span key={f.label} className="truncate text-[11px] text-muted/70" title={f.detail}>
@@ -218,6 +210,8 @@ export function ConvictionBreakdown({ score, loading, verdict, risks, onViewRisk
                       </span>
                     ))}
                   </div>
+                ) : (
+                  <span className="text-[11px] text-muted/50">No source data — scored at half credit</span>
                 )}
               </Reveal>
             );
@@ -225,13 +219,6 @@ export function ConvictionBreakdown({ score, loading, verdict, risks, onViewRisk
         </div>
       </div>
 
-      {/* ── AI verdict headline cross-reference ── */}
-      {verdict && (
-        <div className="rounded-lg border border-border/60 bg-surface-2 px-4 py-3 text-sm leading-6 text-muted">
-          <span className="mr-2 text-[10px] font-semibold uppercase tracking-widest text-muted/60">AI Thesis</span>
-          {verdict.thesis}
-        </div>
-      )}
     </div>
   );
 }

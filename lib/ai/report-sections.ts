@@ -38,6 +38,7 @@
  */
 
 import { buildEquityFacts, buildPortfolioFacts, hasPortfolioContext, type PortfolioFacts } from "./facts";
+import { scoreDirection } from "../recommendation";
 import type { DatasetId } from "../platform/types";
 import type { CompanyContext } from "./types";
 
@@ -123,6 +124,13 @@ export function buildVerdictPrompt(
   const hasPortfolioCtx = hasPortfolioContext(portfolio);
   const suggestedPct = portfolio?.suggestedPct ?? null;
 
+  // The verdict direction is settled in code (lib/ai/verdict.ts overrides the
+  // parsed field from the composite score) — the prompt states the conclusion
+  // so the narration argues FOR it instead of contradicting it.
+  const verdictRequirement = ctx.score
+    ? `- verdict: MUST be exactly "${scoreDirection(ctx.score.composite)}" — it is computed from the composite score of ${ctx.score.composite}/100 and is not yours to change`
+    : `- verdict: bullish, bearish, or neutral — justify it strictly from the data above`;
+
   const portfolioInstructions = hasPortfolioCtx
     ? `
 PORTFOLIO PERSONALIZATION (mandatory):
@@ -154,7 +162,8 @@ Respond with ONLY a raw JSON object — no markdown, no code fences, no explanat
 }
 
 REQUIREMENTS:
-- verdict: bullish if score>65 AND no high risks overwhelming thesis; bearish if score<40 OR multiple compounding high risks; neutral otherwise
+${verdictRequirement}
+- Every score, subscore, or percentage you mention MUST be copied verbatim from the DATA block above (the "Composite score" and "Score breakdown" lines). Do not compute, round differently, or invent any score figure.
 - headline: NO generic phrases like "shows potential" — make a real investment call${hasPortfolioCtx ? " — MUST reference portfolio fit" : ""}
 - catalysts + risks: MUST cite specific numbers from the data. Generic bullets will be rejected.
 - keyMetrics: exactly 5, covering valuation + quality + growth + momentum + analyst

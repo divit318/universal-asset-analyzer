@@ -37,6 +37,7 @@ import { cacheKey } from "../platform/registry";
 import { extractJson } from "../json-extract";
 import { detectAssetClass } from "../asset-class";
 import { formatCompactCurrency, formatCurrency, formatMarketCap } from "../format";
+import { scoreDirection } from "../recommendation";
 import { getFundProfile, getHistory, getMacroSummary } from "../yahoo";
 import { computeFundScore } from "../fund-scoring";
 import { computeCryptoScore } from "../crypto-scoring";
@@ -81,6 +82,13 @@ export interface VerdictPlan {
   prompt: string;
   /** The fact block the grounding check verifies generated claims against. */
   evidence: string;
+  /**
+   * The deterministic composite score (0–100) for scored asset classes.
+   * When present, the final verdict direction is COMPUTED from it via
+   * {@link verdictFromScore} — the model narrates, it does not decide.
+   * Absent for macro (a yield curve has no composite).
+   */
+  composite?: number | null;
   /** Used verbatim when generation fails (AI unavailable, unparseable output). */
   fallback: {
     verdict: InvestmentVerdict["verdict"];
@@ -92,9 +100,16 @@ export interface VerdictPlan {
   };
 }
 
-/** Threshold shared by every scored asset class. Macro overrides it (no score). */
-function verdictFromScore(composite: number): InvestmentVerdict["verdict"] {
-  return composite > 65 ? "bullish" : composite < 40 ? "bearish" : "neutral";
+/**
+ * Direction from a composite score — shared by every scored asset class.
+ * Derived from lib/recommendation.ts's canonical bands so the AI verdict can
+ * NEVER contradict the recommendation badge rendered beside it: BUY tiers
+ * (≥60) are bullish, SELL tiers (<42) are bearish, HOLD is neutral. The old
+ * thresholds (>65 / <40) disagreed with the bands in the 60–65 and 40–42
+ * windows, which is exactly how a "Buy 62/100" page carried a NEUTRAL hero.
+ */
+export function verdictFromScore(composite: number): InvestmentVerdict["verdict"] {
+  return scoreDirection(composite);
 }
 
 /** The complete default shape every parse coerces against.
@@ -180,9 +195,19 @@ function coerceFields(plan: VerdictPlan, raw: Record<string, unknown>): VerdictF
   const confidence = raw.confidence;
   const timeHorizon = raw.timeHorizon;
 
+  // "Never let the model derive a directional verdict" (AGENTS.md): for scored
+  // asset classes the direction is a pure function of the composite score.
+  // Whatever the model emitted is overridden — this is what makes the hero
+  // verdict and the Conviction tab's recommendation structurally identical.
+  const computedVerdict =
+    plan.composite != null
+      ? verdictFromScore(plan.composite)
+      : verdict === "bullish" || verdict === "bearish" || verdict === "neutral"
+        ? verdict
+        : base.verdict;
+
   return {
-    verdict:
-      verdict === "bullish" || verdict === "bearish" || verdict === "neutral" ? verdict : base.verdict,
+    verdict: computedVerdict,
     headline: typeof raw.headline === "string" && raw.headline.trim() ? raw.headline : base.headline,
     thesis: typeof raw.thesis === "string" ? raw.thesis : base.thesis,
     catalysts: strings(raw.catalysts),
@@ -420,12 +445,14 @@ function plan(
   fallback: VerdictPlan["fallback"],
   role: string,
   subjectLabel: string,
+  composite?: number | null,
 ): VerdictPlan {
   return {
     kind,
     task,
     evidence: facts.join("\n"),
     fallback,
+    composite,
     prompt: `You are ${role}. Based ONLY on the data below, generate a structured investment verdict for this ${subjectLabel}.
 
 DATA:
@@ -436,6 +463,13 @@ ${SCHEMA_BLOCK}
 REQUIREMENTS:
 ${instructions}`,
   };
+}
+
+/** The established-conclusions instruction block shared by every scored plan:
+ *  the verdict is settled in code; the model's job is narration only. */
+function establishedVerdictInstruction(composite: number, scoreLabel: string): string {
+  return `- verdict: MUST be exactly "${verdictFromScore(composite)}" — it is computed from the ${scoreLabel} of ${composite}/100 and is not yours to change
+- Every score, subscore, or percentage you mention MUST be copied verbatim from the DATA block above. Do not compute, round differently, or invent any score figure.`;
 }
 
 async function planFundVerdict(ctx: CompanyContext): Promise<VerdictPlan> {
@@ -465,7 +499,7 @@ async function planFundVerdict(ctx: CompanyContext): Promise<VerdictPlan> {
     "fund",
     "fund-research",
     facts,
-    `- verdict: bullish if fund score>65; bearish if fund score<40; neutral otherwise
+    `${establishedVerdictInstruction(score.composite, "fund score")}
 - headline: NO generic phrases like "shows potential" — make a real call
 - catalysts + risks: MUST cite specific numbers from the data (cost, concentration, performance vs category). Generic bullets will be rejected.
 - keyMetrics: exactly 5, covering cost + diversification + performance vs category + risk-adjusted quality + momentum
@@ -473,6 +507,7 @@ async function planFundVerdict(ctx: CompanyContext): Promise<VerdictPlan> {
     { verdict: verdictFromScore(score.composite), name, subject: "fund", reviewHint: "Review the fund score below" },
     "a fund analyst",
     "fund",
+    score.composite,
   );
 }
 
@@ -498,7 +533,7 @@ async function planCryptoVerdict(ctx: CompanyContext): Promise<VerdictPlan> {
     "crypto",
     "crypto-research",
     facts,
-    `- verdict: bullish if crypto score>65; bearish if crypto score<40; neutral otherwise
+    `${establishedVerdictInstruction(score.composite, "crypto score")}
 - headline: NO generic phrases like "shows potential" — make a real call
 - catalysts + risks: MUST cite specific numbers from the data (momentum, relative strength vs BTC, volatility, drawdown). Generic bullets will be rejected.
 - keyMetrics: exactly 5, covering momentum + relative strength vs BTC + risk-adjusted return + drawdown risk + volatility
@@ -507,6 +542,7 @@ async function planCryptoVerdict(ctx: CompanyContext): Promise<VerdictPlan> {
     { verdict: verdictFromScore(score.composite), name, subject: "asset", reviewHint: "Review the crypto score below" },
     "a crypto markets analyst",
     "crypto asset",
+    score.composite,
   );
 }
 
@@ -531,7 +567,7 @@ async function planCommodityVerdict(ctx: CompanyContext): Promise<VerdictPlan> {
     "commodity",
     "commodity-research",
     facts,
-    `- verdict: bullish if commodity score>65; bearish if commodity score<40; neutral otherwise
+    `${establishedVerdictInstruction(score.composite, "commodity score")}
 - headline: NO generic phrases like "shows potential" — make a real call
 - catalysts + risks: MUST cite specific numbers or headlines from the data (momentum, relative strength vs commodity index, volatility, drawdown, or recent news). Generic bullets will be rejected.
 - keyMetrics: exactly 5, covering momentum + relative strength vs commodity index + risk-adjusted return + drawdown risk + volatility
@@ -540,6 +576,7 @@ async function planCommodityVerdict(ctx: CompanyContext): Promise<VerdictPlan> {
     { verdict: verdictFromScore(score.composite), name, subject: "commodity", reviewHint: "Review the commodity score below" },
     "a commodities markets analyst",
     "commodity",
+    score.composite,
   );
 }
 
@@ -565,7 +602,7 @@ async function planForexVerdict(ctx: CompanyContext): Promise<VerdictPlan> {
     "forex",
     "forex-research",
     facts,
-    `- verdict: bullish if forex score>65; bearish if forex score<40; neutral otherwise
+    `${establishedVerdictInstruction(score.composite, "forex score")}
 - headline: NO generic phrases like "shows potential" — make a real call
 - catalysts + risks: MUST cite specific numbers or headlines from the data (momentum, relative strength vs Dollar Index, volatility, drawdown, or recent news). Generic bullets will be rejected.
 - keyMetrics: exactly 5, covering momentum + relative strength vs Dollar Index + risk-adjusted return + drawdown risk + volatility
@@ -574,6 +611,7 @@ async function planForexVerdict(ctx: CompanyContext): Promise<VerdictPlan> {
     { verdict: verdictFromScore(score.composite), name, subject: "currency pair", reviewHint: "Review the forex score below" },
     "a currency markets analyst",
     "currency pair",
+    score.composite,
   );
 }
 
@@ -636,6 +674,7 @@ function planEquityVerdict(ctx: CompanyContext, portfolio: PortfolioFacts | null
     task: "investment-thesis",
     prompt,
     evidence,
+    composite: ctx.score?.composite ?? null,
     fallback: {
       verdict: ctx.score ? verdictFromScore(ctx.score.composite) : "neutral",
       name: ctx.name,

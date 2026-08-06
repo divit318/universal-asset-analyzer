@@ -83,7 +83,11 @@ export function buildEquityFacts(ctx: CompanyContext): string[] {
     if (analyst.upsidePercent != null) facts.push(`Analyst upside: ${analyst.upsidePercent >= 0 ? "+" : ""}${analyst.upsidePercent.toFixed(0)}%`);
     const bullish = analyst.strongBuy + analyst.buy;
     const bearish = analyst.sell + analyst.strongSell;
-    facts.push(`Ratings breakdown: ${bullish} buy, ${analyst.hold} hold, ${bearish} sell`);
+    const total = bullish + analyst.hold + bearish;
+    // Total is stated alongside the split so the model cannot pair the split
+    // with a different analyst count from another line ("16 of 23" over a
+    // 4+12+8 = 24 breakdown).
+    facts.push(`Ratings breakdown: ${bullish} buy, ${analyst.hold} hold, ${bearish} sell (${total} analysts total)`);
   }
 
   const highRisks = ctx.risks.filter((r) => r.level === "high");

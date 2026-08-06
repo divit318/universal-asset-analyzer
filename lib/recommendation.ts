@@ -70,6 +70,16 @@ export const RECOMMENDATION_ARC: Record<Recommendation, string> = {
   STRONG_SELL: "text-negative",
 };
 
+/** Directional read of a raw 0–100 score, aligned to the same bands: BUY
+ *  tiers are bullish, SELL tiers are bearish, HOLD is neutral. The single
+ *  mapping the AI verdict and every badge share — they cannot disagree. */
+export function scoreDirection(score: number): "bullish" | "bearish" | "neutral" {
+  const rec = scoreToRecommendation(score);
+  if (rec === "BUY" || rec === "STRONG_BUY") return "bullish";
+  if (rec === "SELL" || rec === "STRONG_SELL") return "bearish";
+  return "neutral";
+}
+
 /** Convenience: label for a raw 0–100 score. */
 export function scoreLabel(score: number): string {
   return RECOMMENDATION_LABEL[scoreToRecommendation(score)];
