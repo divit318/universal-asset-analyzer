@@ -13,6 +13,10 @@ import {
   scoreSeed,
   computeUrgency,
   dismissalExpiresAt,
+  dismissalTtlLabel,
+  muteKeyForSymbol,
+  withFromToday,
+  MAX_SUPPRESS_MS,
   seedsFromActions,
   seedsFromThreats,
   seedsFromAlerts,
@@ -432,5 +436,73 @@ describe("feeders", () => {
     expect(s.impact).toBeCloseTo(0.82);
     expect(s.confidence).toBe(0.5);
     expect(s.dedupeKey).toBe("signal:ASML:80");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Agency verbs (wave 3): TTL transparency, mute, outbound context     */
+/* ------------------------------------------------------------------ */
+
+describe("dismissalTtlLabel (AG-02)", () => {
+  it("renders each kind's TTL in days, straight from KIND_TTL_MS", () => {
+    // The dismiss toast must SAY what the X did, so the label is pinned to
+    // the same constant the API stamps expiry from.
+    expect(dismissalTtlLabel("threat")).toBe("7d");
+    expect(dismissalTtlLabel("alert")).toBe("7d");
+    expect(dismissalTtlLabel("action")).toBe("3d");
+    expect(dismissalTtlLabel("event")).toBe("30d");
+    expect(dismissalTtlLabel("signal")).toBe("30d");
+  });
+});
+
+describe("per-symbol mute (AG-05)", () => {
+  it("builds the reserved mute key, symbol upper-cased", () => {
+    expect(muteKeyForSymbol("schw")).toBe("mute:symbol:SCHW");
+    expect(muteKeyForSymbol(" NVDA ")).toBe("mute:symbol:NVDA");
+  });
+
+  it("an active mute drops every seed for that symbol, regardless of kind or band", () => {
+    // The point of mute vs dismiss: SCHW re-scored into a new 10-pt band gets
+    // a NEW dedupe key and would sail past a plain dismissal (attention.ts
+    // scoreBand); the mute matches the symbol itself, so it holds.
+    const q = buildAttentionQueue({
+      feeders: [
+        feeder("f", [
+          seed({ id: "1", dedupeKey: "signal:SCHW:70", kind: "signal", symbol: "SCHW" }),
+          seed({ id: "2", dedupeKey: "signal:SCHW:80", kind: "signal", symbol: "SCHW" }),
+          seed({ id: "3", dedupeKey: "alert:SCHW:drop:high", kind: "alert", symbol: "SCHW" }),
+          seed({ id: "4", dedupeKey: "signal:ASML:80", kind: "signal", symbol: "ASML" }),
+        ]),
+      ],
+      dismissals: [{ dedupeKey: "mute:symbol:SCHW", dismissedAt: NOW, expiresAt: NOW + MAX_SUPPRESS_MS }],
+      now: NOW,
+    });
+    expect(q.items.map((i) => i.symbol)).toEqual(["ASML"]);
+  });
+
+  it("an expired mute suppresses nothing, and symbol-less seeds are never muted", () => {
+    const q = buildAttentionQueue({
+      feeders: [
+        feeder("f", [
+          seed({ id: "1", dedupeKey: "signal:SCHW:70", kind: "signal", symbol: "SCHW" }),
+          seed({ id: "2", dedupeKey: "threat:x:high", kind: "threat", symbol: null }),
+        ]),
+      ],
+      dismissals: [{ dedupeKey: "mute:symbol:SCHW", dismissedAt: NOW - 91 * DAY, expiresAt: NOW - DAY }],
+      now: NOW,
+    });
+    expect(q.items).toHaveLength(2);
+  });
+});
+
+describe("withFromToday (AG-10)", () => {
+  it("appends the origin param to internal hrefs, with or without a query", () => {
+    expect(withFromToday("/research?symbol=SCHW")).toBe("/research?symbol=SCHW&from=today");
+    expect(withFromToday("/calendar")).toBe("/calendar?from=today");
+  });
+
+  it("never doubles an existing from param and leaves external hrefs alone", () => {
+    expect(withFromToday("/research?from=today")).toBe("/research?from=today");
+    expect(withFromToday("https://example.com/x")).toBe("https://example.com/x");
   });
 });

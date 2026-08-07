@@ -65,6 +65,47 @@ export const KIND_TTL_MS: Record<AttentionKind, number> = {
   alert: 7 * DAY,
 };
 
+/**
+ * The longest any user-chosen suppression may last (audit AG-04/AG-05/AG-06):
+ * "done" and per-symbol mutes park a story for 90 days, and a snooze may not
+ * reach past it — a never-revisited choice must not suppress forever. Band
+ * resurfacing still applies throughout: a materially worse version of the
+ * story carries a different dedupe key and bypasses any of these.
+ */
+export const MAX_SUPPRESS_MS = 90 * DAY;
+
+/**
+ * The user-facing form of a kind's dismissal TTL (audit AG-02): the plain
+ * dismiss toast must SAY what the X did ("Dismissed for 7d"), because the
+ * per-kind TTL is otherwise invisible and the affordance unpredictable.
+ */
+export function dismissalTtlLabel(kind: AttentionKind): string {
+  return `${Math.round(KIND_TTL_MS[kind] / DAY)}d`;
+}
+
+/**
+ * A per-symbol mute is a dismissal row with a reserved key shape (audit
+ * AG-05): unlike a story dismissal it matches on the seed's SYMBOL, so it
+ * survives dedupe-band rotation — that durability is exactly what makes it a
+ * mute rather than a dismiss. Same table, same undo path (DELETE the key).
+ */
+export const MUTE_KEY_PREFIX = "mute:symbol:";
+
+export function muteKeyForSymbol(symbol: string): string {
+  return `${MUTE_KEY_PREFIX}${symbol.trim().toUpperCase()}`;
+}
+
+/**
+ * Context-preserving navigation, outbound half (audit AG-10): every queue
+ * link carries `from=today` so the destination can know the visit started at
+ * the dashboard. Internal hrefs only, and never doubled.
+ */
+export function withFromToday(href: string): string {
+  if (!href.startsWith("/")) return href;
+  if (/[?&]from=/.test(href)) return href;
+  return `${href}${href.includes("?") ? "&" : "?"}from=today`;
+}
+
 /** Confidence when the feeder's source doesn't quantify one (§4.2). */
 export const KIND_CONFIDENCE_DEFAULT: Record<AttentionKind, number> = {
   threat: 0.8,
@@ -465,11 +506,21 @@ export function buildAttentionQueue(input: BuildAttentionInput): AttentionQueue 
 
   // 2. Drop stories with an active (unexpired) dismissal. A dismissal of a
   // merged story stores the storyKey too, so the absorbed twin stays gone.
+  // A `mute:symbol:<SYM>` row (audit AG-05) matches on the seed's SYMBOL, not
+  // its key, so it keeps suppressing across dedupe-band rotation.
   const activeDismissals = new Set(
     input.dismissals.filter((d) => d.expiresAt > now).map((d) => d.dedupeKey),
   );
+  const mutedSymbols = new Set(
+    [...activeDismissals]
+      .filter((k) => k.startsWith(MUTE_KEY_PREFIX))
+      .map((k) => k.slice(MUTE_KEY_PREFIX.length)),
+  );
   const live = seeds.filter(
-    (s) => !activeDismissals.has(s.dedupeKey) && !(s.storyKey && activeDismissals.has(s.storyKey)),
+    (s) =>
+      !activeDismissals.has(s.dedupeKey) &&
+      !(s.storyKey && activeDismissals.has(s.storyKey)) &&
+      !(s.symbol && mutedSymbols.has(s.symbol.toUpperCase())),
   );
 
   // 3. Score.
