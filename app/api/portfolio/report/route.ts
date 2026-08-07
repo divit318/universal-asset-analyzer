@@ -18,7 +18,7 @@
  *     and lets runPlan() own concurrency, failure isolation and cancellation.
  */
 import { NextResponse } from "next/server";
-import { buildPortfolioReport } from "@/lib/portfolio/report";
+import { getPortfolioReport } from "@/lib/portfolio/report";
 import { OBJECTIVES, type Objective } from "@/lib/portfolio/engines/optimize";
 
 export const runtime = "nodejs";
@@ -33,11 +33,18 @@ export async function GET(request: Request) {
 
   try {
     const rawPortfolioId = Number(url.searchParams.get("portfolioId") ?? "1");
-    const report = await buildPortfolioReport({
-      objective: parseObjective(url.searchParams.get("objective")),
-      baseCurrency: url.searchParams.get("currency") ?? "USD",
-      portfolioId: Number.isInteger(rawPortfolioId) && rawPortfolioId > 0 ? rawPortfolioId : 1,
-    });
+    // Through the platform's `portfolioReport` dataset (2-min TTL + SWR): one
+    // build shared with the home digest, the brief route, and the IOS
+    // context (audit PF-02). Portfolio mutations invalidate the dataset, so
+    // an edit is never served stale; `?fresh=1` forces a rebuild regardless.
+    const report = await getPortfolioReport(
+      {
+        objective: parseObjective(url.searchParams.get("objective")),
+        baseCurrency: url.searchParams.get("currency") ?? "USD",
+        portfolioId: Number.isInteger(rawPortfolioId) && rawPortfolioId > 0 ? rawPortfolioId : 1,
+      },
+      { fresh: url.searchParams.get("fresh") === "1" },
+    );
     return NextResponse.json(report);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to build portfolio report";

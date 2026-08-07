@@ -17,6 +17,7 @@
  */
 
 import { getPortfolioForIOS } from "./ios/server";
+import { getDataset } from "./platform";
 import { buildInvestmentProfile, fromUniversalReport } from "./ios/profile";
 import { DEFAULT_FIT_WEIGHT, rankByFit } from "./ios/fit-scorer";
 import type { FitAssetData } from "./ios/types";
@@ -173,6 +174,17 @@ export async function gatherContext(): Promise<MissionControlContext> {
     watchlistAlerts,
     scannerFreshness: scannerSnapshot?.freshness ?? null,
   };
+}
+
+/**
+ * `gatherContext` through the platform cache (audit PF-02): the digest's ctx
+ * step and the brief route each rebuilt this in parallel on every homepage
+ * load. Two minutes of TTL matches the report cache it wraps; the digest
+ * dataset depends on it, so invalidation cascades.
+ */
+export async function getMissionContext(): Promise<MissionControlContext> {
+  const { data } = await getDataset("missionContext", {}, () => gatherContext(), { timeoutMs: 60_000 });
+  return data;
 }
 
 const SEVERITY_RANK: Record<"high" | "medium" | "low", number> = { high: 0, medium: 1, low: 2 };

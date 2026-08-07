@@ -23,8 +23,8 @@
  */
 
 import { runPlan, stepValue } from "../platform/orchestrator";
-import { gatherContext, buildOpportunitySnapshot, buildCalibration, buildSectorAttention, type MissionControlContext, type UpcomingEventLite } from "../mission-control";
-import { buildPortfolioReport, type UniversalPortfolioReport } from "../portfolio/report";
+import { getMissionContext, buildOpportunitySnapshot, buildSectorAttention, type MissionControlContext, type UpcomingEventLite } from "../mission-control";
+import { getPortfolioReport, type UniversalPortfolioReport } from "../portfolio/report";
 import { getCalendarEvents } from "../calendar";
 import { listWatchlist, listLots, listNotifications } from "../db";
 import { getHistory, getQuote, getQuotes } from "../yahoo";
@@ -34,7 +34,6 @@ import { buildPortfolioPulse } from "./pulse";
 import { buildEquityCurve, EQUITY_CURVE_DAYS } from "./equity-curve";
 import { buildThreats } from "./threats";
 import { buildAttribution } from "./attribution";
-import { buildTimelineFeeds } from "./timeline";
 import { buildWatchlistIntelligence } from "./watchlist-intel";
 import { buildRecentActivity } from "./activity";
 import { buildRecommendedActions } from "./actions";
@@ -162,12 +161,14 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
   const plan = await runPlan([
     // The shared deterministic context Mission Control already assembles:
     // legacy portfolio report, sector rotation, market regime, watchlist alerts,
-    // scanner freshness. One call, reused by four modules below.
-    { id: "ctx", run: () => gatherContext() },
+    // scanner freshness. One call, reused by four modules below — and shared
+    // with the brief route through the platform's missionContext dataset.
+    { id: "ctx", run: () => getMissionContext() },
 
     // The universal report is a separate, heavier build (multi-asset-class,
-    // decision cards, optimization). It is what Modules 3 and 4 need.
-    { id: "report", run: () => buildPortfolioReport() },
+    // decision cards, optimization). Shared through the platform's
+    // portfolioReport dataset (audit PF-02).
+    { id: "report", run: () => getPortfolioReport() },
 
     { id: "calendar", run: () => getCalendarEvents() },
     { id: "watchlist", run: async () => listWatchlist() },
@@ -219,24 +220,17 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
 
   const watchlistAlerts = ctx?.watchlistAlerts ?? [];
 
-  // buildOpportunitySnapshot and buildCalibration read the *legacy* report shape
-  // that gatherContext already produced — reusing Mission Control's own builders
-  // rather than reimplementing fit-ranked opportunities on the homepage.
+  // buildOpportunitySnapshot reads the *legacy* report shape that the shared
+  // context already produced — reusing Mission Control's own builder rather
+  // than reimplementing fit-ranked opportunities on the homepage.
+  // (timeline/intelligence/calibration slices were CUT in Wave 5, audit
+  // RD-13/CH-14/PF-07: ~30 KB of payload serialized on every load that no
+  // module has selected since the module retirement.)
   const opportunity = ctx
     ? buildOpportunitySnapshot(ctx)
     : { status: "empty" as const, healthIssues: [], opportunities: [], scannerFreshness: null };
 
-  const calibration = ctx
-    ? await buildCalibration(ctx.report).catch(() => ({ status: "empty" as const, trackRecord: null, eligible: false }))
-    : { status: "empty" as const, trackRecord: null, eligible: false };
-
   const activity = buildRecentActivity();
-  const { timeline, intelligence } = buildTimelineFeeds({
-    activity: activity.entries,
-    notifications,
-    watchlistAlerts,
-    upcomingEvents: upcoming,
-  });
 
   // The retired modules' engines now feed the Attention Queue instead of owning
   // cards. These are the *same* already-computed slices the digest was building;
@@ -297,9 +291,6 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
       scannerFreshness: opportunity.scannerFreshness,
     },
 
-    timeline,
-    intelligence,
-
     watchlistIntelligence: buildWatchlistIntelligence(watchlist, watchlistAlerts, upcoming),
 
     upcomingEvents: { status: upcoming.length > 0 ? "ok" : "empty", events: upcoming },
@@ -312,8 +303,6 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
       { status: "degraded", windowDays: EQUITY_CURVE_DAYS, points: [], portfolioPct: null, benchmarkPct: null, benchmarkSymbol: BENCHMARK, coveragePct: null },
 
     activity,
-
-    calibration,
 
     // Ships with the digest so Today's Brief has something true to render the
     // instant the page paints, whether or not the AI is available and whether or not

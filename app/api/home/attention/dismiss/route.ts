@@ -11,6 +11,7 @@
 import { NextResponse } from "next/server";
 import { dismissAttention, undismissAttention } from "@/lib/db";
 import { dismissalExpiresAt, MAX_SUPPRESS_MS } from "@/lib/home/attention";
+import { invalidateDataset } from "@/lib/platform";
 import type { AttentionKind } from "@/lib/home/contracts";
 
 export const runtime = "nodejs";
@@ -58,6 +59,9 @@ export async function POST(req: Request) {
     // the surviving item's key would let its absorbed twin resurface next
     // build under its own kind.
     if (storyKey) dismissAttention(storyKey, now, expiresAt);
+    // The cached digest still contains the item; drop it so a reload inside
+    // the TTL reflects the dismissal (audit PF-01/PF-04).
+    invalidateDataset("homeDigest");
 
     return NextResponse.json({ ok: true, dedupeKey, expiresAt });
   } catch (err) {
@@ -75,6 +79,7 @@ export async function DELETE(req: Request) {
 
     undismissAttention(dedupeKey);
     if (storyKey) undismissAttention(storyKey);
+    invalidateDataset("homeDigest");
     return NextResponse.json({ ok: true, dedupeKey });
   } catch (err) {
     console.error("[api/home/attention/dismiss DELETE]", err);

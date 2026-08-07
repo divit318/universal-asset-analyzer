@@ -323,8 +323,12 @@ export function BookModule() {
                 ) : equityCurve.status === "loading" || equityCurve.revalidating ? (
                   <Skeleton height="h-[72px]" />
                 ) : (
+                  // "Degraded" and "young book" are different facts (ST-04):
+                  // one is a data failure, the other an honest wait.
                   <p className="flex h-[72px] items-center text-sm text-foreground/60">
-                    Not enough priced history to draw yet.
+                    {curve?.status === "degraded"
+                      ? "Couldn't price the book's history right now."
+                      : "Not enough priced history to draw yet."}
                   </p>
                 )}
               </div>

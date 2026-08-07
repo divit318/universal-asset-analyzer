@@ -28,7 +28,7 @@
  */
 
 import {
-  addUniversalLot,
+  addUniversalLot as dbAddUniversalLot,
   executeTradeBatch,
   snapshotPortfolio,
   restoreSnapshot,
@@ -37,6 +37,7 @@ import {
   type PortfolioSnapshotSummary,
   type PortfolioSnapshot,
 } from "../../db";
+import { invalidateDataset } from "../../platform";
 import { applyTargetPlanConserving, evaluate, estimateImpact, type PortfolioEvaluation, type ImpactEstimate } from "./simulate";
 import { computeRecommendations } from "./recommend";
 import { buildDecisionCards, type DecisionCard } from "./decision";
@@ -492,6 +493,10 @@ export function executeTrades(
 
   executeTradeBatch(lots, built.manualAssetIdsToDelete);
 
+  // The cached report (and its dependents, missionContext + homeDigest)
+  // describe the pre-trade book; drop them so no surface serves it.
+  invalidateDataset("portfolioReport");
+
   // executedCount counts the trades the USER selected — the balancing cash lot is
   // internal bookkeeping, not one of them.
   return {
@@ -509,7 +514,9 @@ export function captureSnapshot(evaluation: PortfolioEvaluation, label: string, 
 
 /** Undo — restore the portfolio to exactly how it was right before a transaction. */
 export function undoTransaction(snapshotId: string): boolean {
-  return restoreSnapshot(snapshotId);
+  const restored = restoreSnapshot(snapshotId);
+  if (restored) invalidateDataset("portfolioReport");
+  return restored;
 }
 
 export function getPortfolioSnapshot(id: string): PortfolioSnapshot | null {
@@ -520,6 +527,15 @@ export function listPortfolioSnapshots(limit?: number): PortfolioSnapshot[] {
   return listSnapshots(limit);
 }
 
-/** A single trade lot, exposed for callers that need to build one directly (e.g. tests). */
-export { addUniversalLot, executeTradeBatch };
+/**
+ * A single trade lot, exposed for callers that need to write one directly
+ * (the buy route, tests). Wrapped so a direct lot write ALSO invalidates the
+ * cached report — the buy route bypasses executeTrades.
+ */
+export function addUniversalLot(...args: Parameters<typeof dbAddUniversalLot>): ReturnType<typeof dbAddUniversalLot> {
+  const result = dbAddUniversalLot(...args);
+  invalidateDataset("portfolioReport");
+  return result;
+}
+export { executeTradeBatch };
 export type { PortfolioSnapshot, PortfolioSnapshotSummary };

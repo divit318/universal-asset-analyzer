@@ -770,17 +770,12 @@ export interface HomeDigest {
     opportunities: OpportunitySnapshotItem[];
     scannerFreshness: Freshness | null;
   };
-  /** Full chronological feed of meaningful events (past + upcoming). */
-  timeline: TimelineFeed;
-  /** The high-signal, needs-interpretation subset — a filtered view of the feed. */
-  intelligence: TimelineFeed;
   watchlistIntelligence: WatchlistIntelligence;
   upcomingEvents: { status: CardStatus; events: UpcomingEventLite[] };
   performance: PortfolioPerformanceSummary;
   /** The Book card's 90-day portfolio-vs-benchmark return index. */
   equityCurve: EquityCurve;
   activity: RecentActivity;
-  calibration: { status: CardStatus; trackRecord: TrackRecord | null; eligible: boolean };
   /** Deterministic fallback text, used until (or instead of) the AI stream. */
   fallbackBriefing: string;
   /**

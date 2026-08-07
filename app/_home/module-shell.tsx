@@ -123,10 +123,10 @@ export function ModuleShell<T>({
   }, [state.revalidating, emit, definition.id]);
 
   const toggle = () => {
-    setCollapsed((c) => {
-      emit(c ? "expand" : "collapse", definition.id);
-      return !c;
-    });
+    // The emit happens OUTSIDE the state updater: updaters must be pure, and
+    // React StrictMode double-invokes them, double-firing the event (CH-05).
+    emit(collapsed ? "expand" : "collapse", definition.id);
+    setCollapsed((c) => !c);
   };
 
   const display = variant === "display";

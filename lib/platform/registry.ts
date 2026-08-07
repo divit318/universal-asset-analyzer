@@ -144,6 +144,31 @@ export const DATASETS: Record<DatasetId, CachePolicy> = {
   // The SWR window is deliberately long for the same reason: serving yesterday's
   // report instantly beats blocking on a fresh one the user did not ask for.
   thematicReport: { ttlMs: 12 * HOUR, swrMs: 6 * DAY, persist: true, source: "platform", label: "Thematic report" },
+
+  /* ---------------------------------------------------------------- */
+  /* Composed page payloads (Today dashboard rebuild)                   */
+  /* ---------------------------------------------------------------- */
+
+  // The universal portfolio report: every engine over every holding. Audit
+  // PF-02 measured it being built THREE TIMES in parallel on one homepage
+  // load (digest, IOS context, brief route), 8-9s each. Two minutes of TTL
+  // is well inside the tolerance of a surface whose own header stamps its
+  // as-of; portfolio mutations invalidate it explicitly (see
+  // app/api/portfolio routes). The digest depends on it, so invalidation
+  // cascades.
+  portfolioReport: { ttlMs: 2 * MINUTE, swrMs: 10 * MINUTE, persist: false, source: "platform", label: "Universal portfolio report", dependents: ["missionContext", "homeDigest"] },
+
+  // Mission-control context (legacy report + rotation + regime + alerts):
+  // shared by the digest's ctx step and the brief route.
+  missionContext: { ttlMs: 2 * MINUTE, swrMs: 10 * MINUTE, persist: false, source: "platform", label: "Mission-control context", dependents: ["homeDigest"] },
+
+  // The whole homepage payload. Audit PF-01: time-to-meaning was gated on a
+  // fresh 8-9s digest build on EVERY load. A 45s TTL keeps a working session
+  // instant; the long SWR window means a morning open paints the last known
+  // state in milliseconds while the rebuild runs behind it, which is exactly
+  // the "show the last known state, honestly stamped" behaviour the north
+  // star demands (the payload carries its own generatedAt).
+  homeDigest: { ttlMs: 45 * SECOND, swrMs: 30 * MINUTE, persist: false, source: "platform", label: "Home digest" },
 };
 
 export function policyFor(dataset: DatasetId): CachePolicy {

@@ -11,13 +11,18 @@
 import { NextResponse } from "next/server";
 import { buildHomeDigest } from "@/lib/home/digest";
 import { reconcileDashboardFacts } from "@/lib/home/facts";
+import { getDataset } from "@/lib/platform";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const digest = await buildHomeDigest();
+    // Through the platform's homeDigest dataset (audit PF-01): a working
+    // session is served from the last build in milliseconds; past the TTL the
+    // stale payload paints instantly (it carries its own generatedAt) while
+    // the rebuild runs behind it (SWR). A dismissal invalidates the dataset.
+    const { data: digest } = await getDataset("homeDigest", {}, () => buildHomeDigest(), { timeoutMs: 30_000 });
     // The reconciliation harness runs on every dev build (and in CI over the
     // pure builders). A violation is a correctness bug in an engine or a
     // projection; it is logged loudly here and must never 500 the page.

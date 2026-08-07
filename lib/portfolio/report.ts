@@ -10,6 +10,7 @@
  */
 
 import { listRawHoldings } from "./store";
+import { getDataset } from "../platform";
 import { maybeMetric, type Metric } from "../metric";
 import { buildMarketContext } from "./context";
 import { normalizeHoldings } from "./model/holding";
@@ -281,6 +282,32 @@ function totalReturnOf(
   }
 
   return { pnl: performance.total.pnl, pct: performance.total.pct };
+}
+
+/**
+ * The report through the platform cache (audit PF-02): one homepage load used
+ * to build this three times in parallel (digest, IOS context, brief route) at
+ * 8-9s each. `portfolioReport` carries a 2-minute TTL + SWR in the platform
+ * registry; portfolio mutations invalidate it (and the digest cascades) via
+ * `invalidateDataset("portfolioReport")`. Callers that need a guaranteed-fresh
+ * build (a route responding to a mutation) pass `fresh: true`.
+ */
+export async function getPortfolioReport(
+  opts: ReportOptions = {},
+  cacheOpts: { fresh?: boolean } = {},
+): Promise<UniversalPortfolioReport> {
+  const { data } = await getDataset(
+    "portfolioReport",
+    {
+      objective: opts.objective ?? "maximize_sharpe",
+      portfolioId: opts.portfolioId ?? 1,
+      baseCurrency: opts.baseCurrency ?? "USD",
+      extra: opts.extraCandidateSymbols?.slice().sort().join(",") || undefined,
+    },
+    () => buildPortfolioReport(opts),
+    { fresh: cacheOpts.fresh, timeoutMs: 60_000 },
+  );
+  return data;
 }
 
 /** Build the full report. This is the one entry point the API routes call. */
