@@ -107,9 +107,9 @@ function GraphCanvasInner(
   const [size, setSize] = useState({ width: 800, height: 560 });
   // The d3 "end" handler closes over fitToView once per layout effect; the
   // ref keeps the viewport it frames against current (a stale 800x560
-  // default made fit a no-op on narrow viewports).
+  // default made fit a no-op on narrow viewports). Written by the
+  // ResizeObserver below, never during render.
   const sizeRef = useRef(size);
-  sizeRef.current = size;
   const [positions, setPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
   const [transform, setTransform] = useState({ x: 0, y: 0, k: 1 });
   const [dragNodeId, setDragNodeId] = useState<string | null>(null);
@@ -124,7 +124,11 @@ function GraphCanvasInner(
     if (!el) return;
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
-      if (entry) setSize({ width: entry.contentRect.width, height: Math.max(440, entry.contentRect.height) });
+      if (entry) {
+        const next = { width: entry.contentRect.width, height: Math.max(440, entry.contentRect.height) };
+        sizeRef.current = next;
+        setSize(next);
+      }
     });
     observer.observe(el);
     return () => observer.disconnect();
