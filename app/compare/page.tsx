@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
@@ -10,7 +10,7 @@ import { BackgroundDepth } from "./_components/background-depth";
 import { Collapsible } from "./_components/collapsible-section";
 import { CountUp } from "@/app/_components/count-up";
 import { AiBadge } from "@/app/_components/ai-badge";
-import { useInViewOnce } from "@/app/_components/use-in-view-once";
+import { useTheme } from "@/app/_components/theme";
 import type { CompareEntry } from "@/app/api/compare/route";
 import type { GroundingReport } from "@/lib/ai/types";
 import { downloadBlob } from "@/lib/download";
@@ -45,11 +45,11 @@ const ClassCompareView = dynamic(
   () => import("./_components/class-compare-view").then((m) => m.ClassCompareView),
   { ssr: false, loading: () => chartFallback },
 );
-import { formatCurrency, formatMarketCap, formatPercent } from "@/lib/format";
+import { formatCurrency, formatMarketCap, formatPercent, ordinal, roundForDisplay } from "@/lib/format";
+import { metricApplicability, resolveRowHighlights, zeroAsMissing, type MetricDirection, type RowHighlights } from "@/lib/compare/metrics";
 import { useIOSSafe } from "@/lib/ios-context";
 import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
 import { PageShell, Skeleton } from "@/app/_components/ui";
-import { CHART_SERIES } from "@/app/_components/chart-theme";
 import type { PortfolioFitAnalysis } from "@/lib/ios/types";
 
 const NON_EQUITY_CLASSES = listAssetClasses().filter((c) => c.id !== "equity");
@@ -59,18 +59,26 @@ const NON_EQUITY_CLASSES = listAssetClasses().filter((c) => c.id !== "equity");
 /* -------------------------------------------------------------------------- */
 
 const MAX = 5;
-/* Single source of truth (CHART_SERIES) so the cards, radar chart, and line
-   chart never drift out of sync. Deliberately avoids green/red — those
-   already mean positive/negative (price change, score deltas) elsewhere on
-   this page — so categorical stock identity can't be misread as a gain/loss
-   signal. Order: purple, orange, teal, brown, slate. */
-const COLORS: string[] = [...CHART_SERIES];
+/* Categorical identity palette for compared symbols. Deliberately avoids
+   green/red — those already mean positive/negative (price change, score
+   deltas) elsewhere on this page — so categorical stock identity can't be
+   misread as a gain/loss signal. Five hues of comparable saturation and
+   luminance (violet, sky, teal, amber, pink): the previous set ended in
+   slate, which made the 5th symbol read as disabled/deselected, and put
+   near-identical purple and pink on symbols 1 and 4. Everything on this page
+   that colors a symbol goes through colorForSymbol, so cards, chips, charts,
+   and the metric table always agree. */
+const COLORS_DARK: string[] = ["#a78bfa", "#38bdf8", "#2dd4bf", "#fbbf24", "#f472b6"];
+/* Same five hues, deepened for a white canvas — the 400-weight dark-theme set
+   sits near 2.5:1 on white, well short of AA. Chosen per-hue at ~600/700
+   weight, mirroring how chart-theme.ts swaps its steel for light mode. */
+const COLORS_LIGHT: string[] = ["#7c3aed", "#0284c7", "#0f766e", "#b45309", "#be185d"];
 const COLOR_BG = [
-  "bg-purple-500/10 border-purple-500/30",
-  "bg-orange-500/10 border-orange-500/30",
+  "bg-violet-500/10 border-violet-500/30",
+  "bg-sky-500/10 border-sky-500/30",
   "bg-teal-500/10 border-teal-500/30",
-  "bg-[#b5651d]/10 border-[#b5651d]/30",
-  "bg-slate-500/10 border-slate-500/30",
+  "bg-amber-500/10 border-amber-500/30",
+  "bg-pink-500/10 border-pink-500/30",
 ];
 
 /** Asset-class tab: tactile without being animated — a 2-3% scale, 2px lift,
@@ -88,13 +96,18 @@ function assetTabClass(active: boolean): string {
 /* -------------------------------------------------------------------------- */
 
 interface MetricDef {
+  /** Stable metric id — keys the sector-applicability layer (lib/compare/metrics.ts) and matches the benchmark key where one exists. */
+  id: string;
   label: string;
   sub?: string;
-  /** One line, revealed on row hover — what the metric means, not just how to read its direction (that's `sub`). */
+  /** One line, shown when the row is expanded — what the metric means, not just how to read its direction (that's `sub`). */
   description?: string;
   getValue: (e: CompareEntry) => number | null;
   format: (v: number) => string;
-  higherBetter: boolean | null;
+  /** Explicit comparison direction. `neutral` metrics (counts, descriptive stats) never receive a best/worst treatment. */
+  direction: MetricDirection;
+  /** The value itself is a signed return/change — the ONLY case where the number is colored green/red. */
+  signed?: boolean;
   /** Registry metric key for sector-benchmark lookup in entry.benchmarks — omitted where no like-for-like universe metric exists. */
   benchmarkKey?: string;
 }
@@ -109,9 +122,14 @@ function bucketPct(score: NonNullable<CompareEntry["score"]>, name: string): num
   return b ? Math.round((b.points / b.max) * 100) : 50;
 }
 
-const pctSigned = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
-const pctAbs = (v: number) => `${v.toFixed(1)}%`;
-const xRatio = (v: number) => `${v.toFixed(1)}x`;
+/* Signed-zero-safe formatters: rounding happens BEFORE the sign is chosen,
+   so -0.04% renders "0.0%", never "-0.0%". */
+const pctSigned = (v: number) => {
+  const r = roundForDisplay(v, 1);
+  return `${r > 0 ? "+" : ""}${r.toFixed(1)}%`;
+};
+const pctAbs = (v: number) => `${roundForDisplay(v, 1).toFixed(1)}%`;
+const xRatio = (v: number) => `${roundForDisplay(v, 1).toFixed(1)}x`;
 const integer = (v: number) => Math.round(v).toString();
 const score100 = (v: number) => `${Math.round(v)}`;
 
@@ -119,74 +137,79 @@ const SECTIONS: SectionDef[] = [
   {
     title: "Valuation",
     metrics: [
-      { label: "Forward P/E", sub: "lower = cheaper", description: "Price relative to next year's expected earnings.", getValue: (e) => e.snapshot?.forwardPE ?? null, format: xRatio, higherBetter: false, benchmarkKey: "forwardPE" },
-      { label: "Trailing P/E", description: "Price relative to the last twelve months of earnings.", getValue: (e) => e.snapshot?.trailingPE ?? null, format: xRatio, higherBetter: false },
-      { label: "PEG Ratio", sub: "P/E ÷ growth", description: "P/E adjusted for growth — under 1x is often considered cheap for the growth on offer.", getValue: (e) => e.snapshot?.pegRatio ?? null, format: xRatio, higherBetter: false, benchmarkKey: "pegRatio" },
-      { label: "Price / Book", description: "Price relative to net asset value on the balance sheet.", getValue: (e) => e.snapshot?.priceToBook ?? null, format: xRatio, higherBetter: false },
-      { label: "FCF Yield", sub: "higher = more value", description: "Free cash flow as a percentage of market cap — the cash-based answer to \"is it cheap?\"", getValue: (e) => e.fcfYieldPct ?? null, format: pctAbs, higherBetter: true, benchmarkKey: "fcfYield" },
-      { label: "Analyst Target Upside", description: "Consensus price target versus the current price.", getValue: (e) => e.analyst?.upsidePercent ?? null, format: pctSigned, higherBetter: true },
+      { id: "forwardPE", label: "Forward P/E", sub: "lower = cheaper", description: "Price relative to next year's expected earnings.", getValue: (e) => e.snapshot?.forwardPE ?? null, format: xRatio, direction: "lower_is_better", benchmarkKey: "forwardPE" },
+      { id: "trailingPE", label: "Trailing P/E", description: "Price relative to the last twelve months of earnings.", getValue: (e) => e.snapshot?.trailingPE ?? null, format: xRatio, direction: "lower_is_better" },
+      { id: "pegRatio", label: "PEG Ratio", sub: "P/E ÷ growth", description: "P/E adjusted for growth — under 1x is often considered cheap for the growth on offer.", getValue: (e) => e.snapshot?.pegRatio ?? null, format: xRatio, direction: "lower_is_better", benchmarkKey: "pegRatio" },
+      { id: "priceToBook", label: "Price / Book", description: "Price relative to net asset value on the balance sheet.", getValue: (e) => e.snapshot?.priceToBook ?? null, format: xRatio, direction: "lower_is_better" },
+      // Analyst Target Upside used to be duplicated here — it lives in Analyst Consensus, where it belongs.
+      { id: "fcfYield", label: "FCF Yield", sub: "higher = more value", description: "Free cash flow as a percentage of market cap — the cash-based answer to \"is it cheap?\"", getValue: (e) => e.fcfYieldPct ?? null, format: pctAbs, direction: "higher_is_better", benchmarkKey: "fcfYield" },
     ],
   },
   {
     title: "Growth",
     metrics: [
-      { label: "Revenue Growth YoY", description: "Year-over-year revenue increase.", getValue: (e) => e.snapshot?.revenueGrowth != null ? e.snapshot.revenueGrowth * 100 : null, format: pctSigned, higherBetter: true, benchmarkKey: "revenueGrowthYoY" },
-      { label: "Earnings Growth YoY", description: "Year-over-year net income increase.", getValue: (e) => e.snapshot?.earningsGrowth != null ? e.snapshot.earningsGrowth * 100 : null, format: pctSigned, higherBetter: true },
-      { label: "Revenue CAGR 3Y", description: "Compound annual revenue growth over the last 3 fiscal years.", getValue: (e) => e.statements?.revenueCagr != null ? e.statements.revenueCagr * 100 : null, format: pctSigned, higherBetter: true },
-      { label: "FCF CAGR 3Y", description: "Compound annual free cash flow growth over the last 3 fiscal years.", getValue: (e) => e.statements?.fcfCagr != null ? e.statements.fcfCagr * 100 : null, format: pctSigned, higherBetter: true },
+      { id: "revenueGrowthYoY", label: "Revenue Growth YoY", description: "Year-over-year revenue increase.", getValue: (e) => e.snapshot?.revenueGrowth != null ? e.snapshot.revenueGrowth * 100 : null, format: pctSigned, direction: "higher_is_better", signed: true, benchmarkKey: "revenueGrowthYoY" },
+      { id: "earningsGrowthYoY", label: "Earnings Growth YoY", description: "Year-over-year net income increase.", getValue: (e) => e.snapshot?.earningsGrowth != null ? e.snapshot.earningsGrowth * 100 : null, format: pctSigned, direction: "higher_is_better", signed: true },
+      { id: "revenueCagr3y", label: "Revenue CAGR 3Y", description: "Compound annual revenue growth over the last 3 fiscal years.", getValue: (e) => e.statements?.revenueCagr != null ? e.statements.revenueCagr * 100 : null, format: pctSigned, direction: "higher_is_better", signed: true },
+      { id: "fcfCagr3y", label: "FCF CAGR 3Y", description: "Compound annual free cash flow growth over the last 3 fiscal years.", getValue: (e) => e.statements?.fcfCagr != null ? e.statements.fcfCagr * 100 : null, format: pctSigned, direction: "higher_is_better", signed: true },
     ],
   },
   {
     title: "Quality",
     metrics: [
-      { label: "Return on Equity", description: "Net income as a percentage of shareholder equity — how efficiently the company compounds capital.", getValue: (e) => e.snapshot?.returnOnEquity != null ? e.snapshot.returnOnEquity * 100 : null, format: pctAbs, higherBetter: true, benchmarkKey: "roe" },
-      { label: "Return on Assets", description: "Net income as a percentage of total assets.", getValue: (e) => e.snapshot?.returnOnAssets != null ? e.snapshot.returnOnAssets * 100 : null, format: pctAbs, higherBetter: true },
-      { label: "Gross Margin", description: "Revenue left after cost of goods sold.", getValue: (e) => e.snapshot?.grossMargins != null ? e.snapshot.grossMargins * 100 : null, format: pctAbs, higherBetter: true, benchmarkKey: "grossMargin" },
-      { label: "Operating Margin", description: "Revenue left after operating expenses — core profitability before interest and tax.", getValue: (e) => e.snapshot?.operatingMargins != null ? e.snapshot.operatingMargins * 100 : null, format: pctAbs, higherBetter: true, benchmarkKey: "operatingMargin" },
-      { label: "Net Profit Margin", description: "Revenue left after all expenses, interest and tax.", getValue: (e) => e.snapshot?.profitMargins != null ? e.snapshot.profitMargins * 100 : null, format: pctAbs, higherBetter: true },
-      { label: "EBITDA Margin", description: "Earnings before interest, tax, depreciation and amortization, as a share of revenue.", getValue: (e) => e.snapshot?.ebitdaMargins != null ? e.snapshot.ebitdaMargins * 100 : null, format: pctAbs, higherBetter: true },
+      { id: "roe", label: "Return on Equity", description: "Net income as a percentage of shareholder equity — how efficiently the company compounds capital.", getValue: (e) => e.snapshot?.returnOnEquity != null ? e.snapshot.returnOnEquity * 100 : null, format: pctAbs, direction: "higher_is_better", benchmarkKey: "roe" },
+      { id: "roa", label: "Return on Assets", description: "Net income as a percentage of total assets.", getValue: (e) => e.snapshot?.returnOnAssets != null ? e.snapshot.returnOnAssets * 100 : null, format: pctAbs, direction: "higher_is_better" },
+      // Provider sends a literal 0 for unreported margins (every bank) — zeroAsMissing keeps fabricated "0.0%" off the screen.
+      { id: "grossMargin", label: "Gross Margin", description: "Revenue left after cost of goods sold.", getValue: (e) => zeroAsMissing(e.snapshot?.grossMargins) != null ? e.snapshot!.grossMargins! * 100 : null, format: pctAbs, direction: "higher_is_better", benchmarkKey: "grossMargin" },
+      { id: "operatingMargin", label: "Operating Margin", description: "Revenue left after operating expenses — core profitability before interest and tax.", getValue: (e) => zeroAsMissing(e.snapshot?.operatingMargins) != null ? e.snapshot!.operatingMargins! * 100 : null, format: pctAbs, direction: "higher_is_better", benchmarkKey: "operatingMargin" },
+      { id: "netProfitMargin", label: "Net Profit Margin", description: "Revenue left after all expenses, interest and tax.", getValue: (e) => e.snapshot?.profitMargins != null ? e.snapshot.profitMargins * 100 : null, format: pctAbs, direction: "higher_is_better" },
+      { id: "ebitdaMargin", label: "EBITDA Margin", description: "Earnings before interest, tax, depreciation and amortization, as a share of revenue.", getValue: (e) => zeroAsMissing(e.snapshot?.ebitdaMargins) != null ? e.snapshot!.ebitdaMargins! * 100 : null, format: pctAbs, direction: "higher_is_better" },
     ],
   },
   {
     title: "Financial Health",
     metrics: [
-      { label: "Debt / Equity", sub: "lower = safer", description: "Total debt relative to shareholder equity — leverage on the balance sheet.", getValue: (e) => e.snapshot?.debtToEquity ?? null, format: xRatio, higherBetter: false, benchmarkKey: "debtToEquity" },
-      { label: "Net Debt / EBITDA", description: "Debt net of cash, relative to a year of earnings — how many years to pay it off.", getValue: (e) => e.netDebtToEbitda ?? null, format: xRatio, higherBetter: false },
-      { label: "Current Ratio", sub: "higher = more liquid", description: "Current assets divided by current liabilities — short-term liquidity.", getValue: (e) => e.snapshot?.currentRatio ?? null, format: xRatio, higherBetter: true },
-      { label: "Quick Ratio", description: "Current assets excluding inventory, divided by current liabilities — a stricter liquidity test.", getValue: (e) => e.snapshot?.quickRatio ?? null, format: xRatio, higherBetter: true },
-      { label: "Dividend Yield", description: "Trailing annual dividend as a percentage of the current price.", getValue: (e) => e.snapshot?.dividendYield != null ? e.snapshot.dividendYield * 100 : null, format: pctAbs, higherBetter: true, benchmarkKey: "dividendYield" },
+      { id: "debtToEquity", label: "Debt / Equity", sub: "lower = safer", description: "Total debt relative to shareholder equity — leverage on the balance sheet.", getValue: (e) => e.snapshot?.debtToEquity ?? null, format: xRatio, direction: "lower_is_better", benchmarkKey: "debtToEquity" },
+      { id: "netDebtToEbitda", label: "Net Debt / EBITDA", description: "Debt net of cash, relative to a year of earnings — how many years to pay it off.", getValue: (e) => e.netDebtToEbitda ?? null, format: xRatio, direction: "lower_is_better" },
+      { id: "currentRatio", label: "Current Ratio", sub: "higher = more liquid", description: "Current assets divided by current liabilities — short-term liquidity.", getValue: (e) => e.snapshot?.currentRatio ?? null, format: xRatio, direction: "higher_is_better" },
+      { id: "quickRatio", label: "Quick Ratio", description: "Current assets excluding inventory, divided by current liabilities — a stricter liquidity test.", getValue: (e) => e.snapshot?.quickRatio ?? null, format: xRatio, direction: "higher_is_better" },
+      { id: "dividendYield", label: "Dividend Yield", description: "Trailing annual dividend as a percentage of the current price.", getValue: (e) => e.snapshot?.dividendYield != null ? e.snapshot.dividendYield * 100 : null, format: pctAbs, direction: "higher_is_better", benchmarkKey: "dividendYield" },
     ],
   },
   {
     title: "Momentum",
     metrics: [
-      { label: "1-Year Return", description: "Trailing twelve-month price return.", getValue: (e) => e.oneYearReturn ?? null, format: pctSigned, higherBetter: true, benchmarkKey: "oneYearReturn" },
-      { label: "3-Month Return", description: "Trailing three-month price return.", getValue: (e) => e.momentum?.return3m ?? null, format: pctSigned, higherBetter: true },
-      { label: "vs SMA 200", sub: "% above/below", description: "Distance above or below the 200-day moving average — the long-term trend line.", getValue: (e) => e.momentum?.vsSma200 ?? null, format: pctSigned, higherBetter: true },
-      { label: "vs SMA 50", description: "Distance above or below the 50-day moving average — the medium-term trend line.", getValue: (e) => e.momentum?.vsSma50 ?? null, format: pctSigned, higherBetter: true },
-      { label: "From 52W High", sub: "0 = at the high", description: "Distance below the 52-week high — 0% means it's at the high right now.", getValue: (e) => e.momentum?.pctFrom52WkHigh ?? null, format: pctSigned, higherBetter: true, benchmarkKey: "distanceFrom52WkHigh" },
+      { id: "oneYearReturn", label: "1-Year Return", description: "Trailing twelve-month total return (dividend-adjusted).", getValue: (e) => e.oneYearReturn ?? null, format: pctSigned, direction: "higher_is_better", signed: true, benchmarkKey: "oneYearReturn" },
+      { id: "return3m", label: "3-Month Return", description: "Trailing three-month price return.", getValue: (e) => e.momentum?.return3m ?? null, format: pctSigned, direction: "higher_is_better", signed: true },
+      { id: "vsSma200", label: "vs SMA 200", sub: "% above/below", description: "Distance above or below the 200-day moving average — the long-term trend line.", getValue: (e) => e.momentum?.vsSma200 ?? null, format: pctSigned, direction: "higher_is_better", signed: true },
+      { id: "vsSma50", label: "vs SMA 50", description: "Distance above or below the 50-day moving average — the medium-term trend line.", getValue: (e) => e.momentum?.vsSma50 ?? null, format: pctSigned, direction: "higher_is_better", signed: true },
+      { id: "distanceFrom52WkHigh", label: "From 52W High", sub: "0 = at the high", description: "Distance below the 52-week high — 0% means it's at the high right now.", getValue: (e) => e.momentum?.pctFrom52WkHigh ?? null, format: pctSigned, direction: "higher_is_better", signed: true, benchmarkKey: "distanceFrom52WkHigh" },
     ],
   },
   {
     title: "Analyst Consensus",
     metrics: [
-      { label: "Target Upside %", description: "Consensus price target versus the current price.", getValue: (e) => e.analyst?.upsidePercent ?? null, format: pctSigned, higherBetter: true },
-      { label: "# Analysts", description: "Number of analysts covering the stock.", getValue: (e) => e.analyst?.numberOfOpinions ?? null, format: integer, higherBetter: null },
-      { label: "Strong Buy + Buy", description: "Analysts rating the stock a buy or strong buy.", getValue: (e) => e.analyst ? e.analyst.strongBuy + e.analyst.buy : null, format: integer, higherBetter: true },
-      { label: "Hold", description: "Analysts rating the stock a hold.", getValue: (e) => e.analyst?.hold ?? null, format: integer, higherBetter: null },
-      { label: "Sell + Strong Sell", description: "Analysts rating the stock a sell or strong sell.", getValue: (e) => e.analyst ? e.analyst.sell + e.analyst.strongSell : null, format: integer, higherBetter: false },
+      { id: "targetUpside", label: "Target Upside %", description: "Consensus price target versus the current price.", getValue: (e) => e.analyst?.upsidePercent ?? null, format: pctSigned, direction: "higher_is_better", signed: true },
+      { id: "numAnalysts", label: "# Analysts", description: "Number of analysts covering the stock — coverage breadth, not a judgment.", getValue: (e) => e.analyst?.numberOfOpinions ?? null, format: integer, direction: "neutral" },
+      { id: "strongBuyBuy", label: "Strong Buy + Buy", description: "Analysts rating the stock a buy or strong buy.", getValue: (e) => e.analyst ? e.analyst.strongBuy + e.analyst.buy : null, format: integer, direction: "higher_is_better" },
+      { id: "holdRatings", label: "Hold", description: "Analysts rating the stock a hold — descriptive, neither good nor bad on its own.", getValue: (e) => e.analyst?.hold ?? null, format: integer, direction: "neutral" },
+      { id: "sellRatings", label: "Sell + Strong Sell", description: "Analysts rating the stock a sell or strong sell.", getValue: (e) => e.analyst ? e.analyst.sell + e.analyst.strongSell : null, format: integer, direction: "lower_is_better" },
       {
+        id: "avgEpsSurprise",
         label: "Avg EPS Surprise",
         description: "Average earnings beat or miss versus estimates, across recent quarters.",
         getValue: (e) => {
           const s = e.analyst?.epsSurprises;
           if (!s || s.length === 0) return null;
-          return s.reduce((a, b) => a + b, 0) / s.length;
+          // Provider reports surprise as a FRACTION (0.07 = beat by 7%) — scale to percent units like every other % metric here.
+          return (s.reduce((a, b) => a + b, 0) / s.length) * 100;
         },
         format: pctSigned,
-        higherBetter: true,
+        direction: "higher_is_better",
+        signed: true,
       },
       {
+        id: "epsRevisions30d",
         label: "EPS Revisions (30d)",
         sub: "up − down",
         description: "Net analyst estimate revisions in the last 30 days — up-revisions minus down.",
@@ -197,7 +220,8 @@ const SECTIONS: SectionDef[] = [
           return (up ?? 0) - (down ?? 0);
         },
         format: (v) => (v >= 0 ? `+${Math.round(v)}` : String(Math.round(v))),
-        higherBetter: true,
+        direction: "higher_is_better",
+        signed: true,
       },
     ],
   },
@@ -207,15 +231,15 @@ const SECTIONS: SectionDef[] = [
       // Named "Conviction" because it IS /research's Conviction score — same
       // engine, and now the same inputs. "Overall Score" gave a reader no way to
       // tell it apart from the Screener's Overall, which is a different engine.
-      { label: "Conviction", description: "The same Conviction score /research shows — blended across every dimension below.", getValue: (e) => e.score?.composite ?? null, format: score100, higherBetter: true },
-      { label: "Fundamental Score", description: "Composite of valuation, growth, quality and financial health — excludes momentum and analyst signals.", getValue: (e) => e.score?.total ?? null, format: score100, higherBetter: true },
-      { label: "Valuation Score", description: "How cheap the stock is relative to its own scoring bands.", getValue: (e) => (e.score ? bucketPct(e.score, "Valuation") : null), format: score100, higherBetter: true },
-      { label: "Growth Score", description: "How fast the business is growing relative to its own scoring bands.", getValue: (e) => (e.score ? bucketPct(e.score, "Growth") : null), format: score100, higherBetter: true },
-      { label: "Quality Score", description: "Profitability and capital efficiency relative to its own scoring bands.", getValue: (e) => (e.score ? bucketPct(e.score, "Quality") : null), format: score100, higherBetter: true },
-      { label: "Financial Health Score", description: "Balance-sheet strength relative to its own scoring bands.", getValue: (e) => (e.score ? bucketPct(e.score, "Financial Health") : null), format: score100, higherBetter: true },
-      { label: "Momentum Signal", description: "Price trend strength — how the stock has been trading recently.", getValue: (e) => e.score?.signals.momentum ?? null, format: score100, higherBetter: true },
-      { label: "Analyst Signal", description: "Consensus analyst sentiment, distilled into a single score.", getValue: (e) => e.score?.signals.analysts ?? null, format: score100, higherBetter: true },
-      { label: "Confidence", description: "How much underlying data supports this stock's Conviction score — lower when data is sparse.", getValue: (e) => e.score?.confidence ?? null, format: score100, higherBetter: true },
+      { id: "conviction", label: "Conviction", description: "The same Conviction score /research shows — blended across every dimension below.", getValue: (e) => e.score?.composite ?? null, format: score100, direction: "higher_is_better" },
+      { id: "fundamentalScore", label: "Fundamental Score", description: "Composite of valuation, growth, quality and financial health — excludes momentum and analyst signals.", getValue: (e) => e.score?.total ?? null, format: score100, direction: "higher_is_better" },
+      { id: "valuationScore", label: "Valuation Score", description: "How cheap the stock is relative to its own scoring bands.", getValue: (e) => (e.score ? bucketPct(e.score, "Valuation") : null), format: score100, direction: "higher_is_better" },
+      { id: "growthScore", label: "Growth Score", description: "How fast the business is growing relative to its own scoring bands.", getValue: (e) => (e.score ? bucketPct(e.score, "Growth") : null), format: score100, direction: "higher_is_better" },
+      { id: "qualityScore", label: "Quality Score", description: "Profitability and capital efficiency relative to its own scoring bands.", getValue: (e) => (e.score ? bucketPct(e.score, "Quality") : null), format: score100, direction: "higher_is_better" },
+      { id: "financialHealthScore", label: "Financial Health Score", description: "Balance-sheet strength relative to its own scoring bands.", getValue: (e) => (e.score ? bucketPct(e.score, "Financial Health") : null), format: score100, direction: "higher_is_better" },
+      { id: "momentumSignal", label: "Momentum Signal", description: "Price trend strength — how the stock has been trading recently.", getValue: (e) => e.score?.signals.momentum ?? null, format: score100, direction: "higher_is_better" },
+      { id: "analystSignal", label: "Analyst Signal", description: "Consensus analyst sentiment, distilled into a single score.", getValue: (e) => e.score?.signals.analysts ?? null, format: score100, direction: "higher_is_better" },
+      { id: "confidence", label: "Confidence", description: "How much underlying data supports this stock's Conviction score — lower when data is sparse.", getValue: (e) => e.score?.confidence ?? null, format: score100, direction: "higher_is_better" },
     ],
   },
 ];
@@ -251,37 +275,18 @@ function convictionColor(conviction: string | null | undefined): string {
   return "border-border bg-surface-2 text-muted";
 }
 
-interface WinnerInfo {
-  /** null when the leading (or trailing) values are within tie tolerance of
-   * each other — no entry gets a decisive best/worst badge for a wash. */
-  bestIdx: number | null;
-  worstIdx: number | null;
-}
-
-/** Two values are a "tie" within 5% of each other — same tolerance
- * lib/ai-compare.ts's `bestIndex` uses for the AI-generated metric table, so
- * the deterministic table and the AI verdict never disagree about whether a
- * metric was close. Without this, e.g. a 20.0x vs 20.05x P/E rendered one
- * side green and the other red for a difference that isn't meaningful. */
-function isTie(a: number, b: number): boolean {
-  return Math.abs(a - b) < 0.05 * Math.max(Math.abs(a), Math.abs(b), 1e-9);
-}
-
-function findWinners(values: (number | null)[], higherBetter: boolean | null): WinnerInfo | null {
-  if (higherBetter == null) return null;
-  const valid = values
-    .map((v, i) => ({ v, i }))
-    .filter((x): x is { v: number; i: number } => x.v != null);
-  if (valid.length < 2) return null;
-  const sorted = [...valid].sort((a, b) => (higherBetter ? b.v - a.v : a.v - b.v));
-  const best = sorted[0];
-  const worst = sorted[sorted.length - 1];
-  const bestTied = sorted.filter((x) => isTie(x.v, best.v)).length > 1;
-  const worstTied = sorted.filter((x) => isTie(x.v, worst.v)).length > 1;
-  return {
-    bestIdx: bestTied ? null : best.i,
-    worstIdx: worstTied ? null : worst.i,
-  };
+/**
+ * Cell values for one metric row, with sector applicability applied — a cell
+ * that is not applicable for its entry's sector contributes null to the
+ * comparison (never a best/worst candidate) but remembers why for the UI.
+ */
+function rowValues(metric: MetricDef, entries: CompareEntry[]): { value: number | null; naReason: string | null }[] {
+  return entries.map((e) => {
+    if (e.error) return { value: null, naReason: null };
+    const app = metricApplicability(metric.id, e.snapshot?.sector);
+    if (!app.applicable) return { value: null, naReason: app.reason };
+    return { value: metric.getValue(e), naReason: null };
+  });
 }
 
 /**
@@ -349,10 +354,11 @@ function computeCategoryWinners(sections: SectionDef[], entries: CompareEntry[],
   for (const section of sections) {
     const winCounts = entries.map(() => 0);
     for (const metric of section.metrics) {
-      if (metric.higherBetter == null) continue;
-      const values = entries.map((e) => (e.error ? null : metric.getValue(e)));
-      const w = findWinners(values, metric.higherBetter);
-      if (w?.bestIdx != null) winCounts[w.bestIdx]++;
+      if (metric.direction === "neutral") continue;
+      const values = rowValues(metric, entries).map((c) => c.value);
+      const w = resolveRowHighlights(values, metric.direction, metric.format);
+      // A shared win still counts for everyone tied at the top.
+      for (const i of w?.best ?? []) winCounts[i]++;
     }
     const maxWins = Math.max(...winCounts);
     if (maxWins === 0) continue;
@@ -364,6 +370,9 @@ function computeCategoryWinners(sections: SectionDef[], entries: CompareEntry[],
 
 export default function ComparePage() {
   const focus = useFocusSafe();
+  // Theme-aware categorical palette (see COLORS_DARK/COLORS_LIGHT above).
+  const { theme } = useTheme();
+  const COLORS = theme === "light" ? COLORS_LIGHT : COLORS_DARK;
   const [symbols, setSymbols] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [entries, setEntries] = useState<CompareEntry[]>([]);
@@ -774,7 +783,7 @@ export default function ComparePage() {
       const idx = entries.findIndex((e) => e.symbol === symbol);
       return COLORS[(idx >= 0 ? idx : 0) % COLORS.length];
     },
-    [entries],
+    [entries, COLORS],
   );
 
   // IOS — portfolio fit per entry
@@ -810,7 +819,7 @@ export default function ComparePage() {
           </div>
           <p className="text-sm text-muted">
             {assetClass === "equity"
-              ? "Side-by-side valuation, growth, quality, momentum, and analyst consensus. Green = best on metric, red = worst."
+              ? "Side-by-side valuation, growth, quality, momentum, and analyst consensus. Tinted cells mark each metric's best and worst; click any row for detail."
               : getAssetClass(assetClass).description}
           </p>
         </div>
@@ -1139,8 +1148,9 @@ export default function ComparePage() {
             />
           )}
 
-          {/* Metric table */}
-          <div className="flex flex-col gap-3">
+          {/* Metric table — one sticky symbol header pinned over every section */}
+          <div className="relative flex flex-col gap-3">
+            <StickySymbolHeader entries={entries} colorForSymbol={colorForSymbol} />
             {SECTIONS.map((section) => (
               <MetricSection
                 key={section.title}
@@ -1434,6 +1444,44 @@ function ScoreBar({ label, value, color }: { label: string; value: number | null
 /* Metric table section                                                        */
 /* -------------------------------------------------------------------------- */
 
+/* Shared column geometry: the metric-label column is fixed-width, symbol
+   columns split the rest equally. The sticky header (a CSS grid) and every
+   section table (table-fixed + colgroup) use the same numbers, so columns
+   align exactly across separate tables and the header can stay pinned while
+   sections scroll underneath it. */
+const LABEL_COL_PX = 240;
+
+/** One pinned symbol header for the whole metric table — replaces the per-section header rows, so the reader always knows which column is which. */
+function StickySymbolHeader({ entries, colorForSymbol }: { entries: CompareEntry[]; colorForSymbol: (symbol: string) => string }) {
+  const { hovered, setHovered } = useHoverSymbol();
+  // top-14 clears the app header (sticky, 56px, z-40) so the two stack instead of overlapping.
+  return (
+    <div className="sticky top-14 z-30 overflow-hidden rounded-xl border border-border bg-surface/95 shadow-sm backdrop-blur">
+      <div className="grid" style={{ gridTemplateColumns: `${LABEL_COL_PX}px repeat(${entries.length}, minmax(0, 1fr))` }}>
+        <span className="px-4 py-2.5 text-label font-semibold uppercase tracking-widest text-muted/60">Metric</span>
+        {entries.map((e) => {
+          const emphasis: SymbolEmphasis = hovered == null ? "none" : hovered === e.symbol ? "active" : "dimmed";
+          return (
+            <span
+              key={e.symbol}
+              onMouseEnter={() => setHovered(e.symbol)}
+              onMouseLeave={() => setHovered(null)}
+              className={`truncate px-4 py-2.5 text-right font-mono text-xs font-bold ${emphasisClassName(emphasis)}`}
+              style={{ color: colorForSymbol(e.symbol) }}
+              title={e.symbol}
+            >
+              {e.symbol}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Sections whose rows are pure engine output — the absence of AI commentary there is deliberate, and said so. */
+const DETERMINISTIC_SECTIONS = new Set(["Analyst Consensus", "Conviction & dimensions"]);
+
 function MetricSection({
   section,
   entries,
@@ -1445,138 +1493,222 @@ function MetricSection({
   entries: CompareEntry[];
   open: boolean;
   onToggle: () => void;
-  /** AI-written ranking rationale for this section (lib/ai-compare.ts), e.g. "Rank all N by quality — cite ROE, margins...". Absent while the AI verdict hasn't run yet or when the AI is unavailable — the deterministic table above never depends on it. */
+  /** AI-written ranking rationale for this section (lib/ai-compare.ts). Absent while the AI verdict hasn't run yet or when the AI is unavailable — the deterministic table never depends on it. */
   aiCommentary?: string;
 }) {
-  const { hovered, setHovered } = useHoverSymbol();
+  const rows = section.metrics.map((metric) => ({ metric, cells: rowValues(metric, entries) }));
+  // A row where every loadable cell is sector-inapplicable is dead weight —
+  // aggregate those into one caption instead of rendering rows of "n/a".
+  const isDead = (cells: { value: number | null; naReason: string | null }[]) =>
+    cells.every((c) => c.naReason != null || c.value == null) && cells.some((c) => c.naReason != null);
+  const liveRows = rows.filter(({ cells }) => !isDead(cells));
+  const deadRows = rows.filter(({ cells }) => isDead(cells));
+
   return (
     <div className="overflow-hidden rounded-xl border border-border">
       {/* Section header */}
       <button
         onClick={onToggle}
-        className="flex w-full items-center justify-between bg-surface-2 px-4 py-3 text-left"
+        aria-expanded={open}
+        className="flex w-full items-center justify-between border-b border-border/60 bg-surface-2 px-4 py-3 text-left"
       >
-        <span className="text-sm font-semibold">{section.title}</span>
+        <span className="text-sm font-semibold uppercase tracking-wide">{section.title}</span>
         <svg
           width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
-          className={`text-muted transition-transform duration-200 ease-out ${open ? "rotate-180" : ""}`}
+          className={`text-muted transition-transform duration-200 ease-out motion-reduce:transition-none ${open ? "rotate-180" : ""}`}
         >
           <path d="M2 3.5l3 3 3-3" />
         </svg>
       </button>
 
       <Collapsible open={open}>
-        {aiCommentary && (
-          <p className="border-t border-border bg-brand/5 px-4 py-2.5 text-xs leading-5 text-foreground/80">
-            <span className="mr-1.5 rounded-full border border-brand/30 bg-brand/10 px-1.5 py-0.5 text-micro font-semibold uppercase tracking-widest text-brand">AI</span>
-            {aiCommentary}
+        {aiCommentary ? (
+          <div className="border-b border-border bg-brand/5 px-4 py-3">
+            <div className="flex max-w-3xl items-start gap-2">
+              <span className="mt-0.5 shrink-0 rounded-full border border-brand/30 bg-brand/10 px-1.5 py-0.5 text-micro font-semibold uppercase tracking-widest text-brand">AI</span>
+              <p className="text-xs leading-6 text-foreground/80">{aiCommentary}</p>
+            </div>
+          </div>
+        ) : DETERMINISTIC_SECTIONS.has(section.title) ? (
+          <p className="border-b border-border/60 px-4 py-2 text-label text-muted/70">
+            Computed directly from the data — no AI commentary for this section.
+          </p>
+        ) : null}
+        {liveRows.length > 0 ? (
+          <table className="w-full table-fixed text-sm">
+            <colgroup>
+              <col style={{ width: LABEL_COL_PX }} />
+              {entries.map((e) => (
+                <col key={e.symbol} />
+              ))}
+            </colgroup>
+            <tbody className="divide-y divide-border">
+              {liveRows.map(({ metric, cells }) => (
+                <MetricRow key={metric.id} metric={metric} entries={entries} cells={cells} />
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="px-4 py-3 text-xs text-muted">
+            None of this section&apos;s metrics apply to the selected assets.
           </p>
         )}
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-t border-border bg-surface">
-              <th className="px-4 py-2.5 text-left text-xs font-medium text-muted w-44">Metric</th>
-              {entries.map((e, i) => {
-                const emphasis: SymbolEmphasis = hovered == null ? "none" : hovered === e.symbol ? "active" : "dimmed";
-                return (
-                  <th
-                    key={e.symbol}
-                    onMouseEnter={() => setHovered(e.symbol)}
-                    onMouseLeave={() => setHovered(null)}
-                    className={`px-4 py-2.5 text-right text-xs font-mono font-bold ${emphasisClassName(emphasis)}`}
-                    style={{ color: COLORS[i % COLORS.length] }}
-                  >
-                    {e.symbol}
-                  </th>
-                );
-              })}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {section.metrics.map((metric) => (
-              <MetricRow key={metric.label} metric={metric} entries={entries} />
-            ))}
-          </tbody>
-        </table>
+        {deadRows.length > 0 && (
+          <p
+            className="border-t border-border/60 px-4 py-2 text-label text-muted/70"
+            title={deadRows.map(({ metric, cells }) => `${metric.label}: ${cells.find((c) => c.naReason)?.naReason ?? ""}`).join("\n")}
+          >
+            Not applicable for these assets: {deadRows.map(({ metric }) => metric.label).join(", ")}
+          </p>
+        )}
       </Collapsible>
     </div>
   );
 }
 
-/** e.g. "Technology sector avg 29.4x · 73rd pct" — omitted entirely when no reliable peer benchmark exists for this cell. */
-function BenchmarkNote({ benchmark, format }: { benchmark: PeerBenchmark; format: (v: number) => string }) {
-  return (
-    <p className="mt-0.5 text-label leading-tight text-muted" title={`vs ${benchmark.peerCount} peers`}>
-      {benchmark.peerLabel} avg {format(benchmark.peerAverage)} · {benchmark.percentile}th pct
-    </p>
+function MetricRow({
+  metric,
+  entries,
+  cells,
+}: {
+  metric: MetricDef;
+  entries: CompareEntry[];
+  cells: { value: number | null; naReason: string | null }[];
+}) {
+  // Click-to-expand (multiple rows can stay open; state survives sibling
+  // toggles and scrolling because it lives on the row itself). Hover does
+  // NOTHING to layout — background color only.
+  const [expanded, setExpanded] = useState(false);
+  const detailId = useId();
+  const values = cells.map((c) => c.value);
+  const highlights: RowHighlights | null = resolveRowHighlights(values, metric.direction, metric.format);
+
+  const benchmarks = entries.map((e, i) =>
+    metric.benchmarkKey && !cells[i].naReason ? e.benchmarks?.[metric.benchmarkKey] : undefined,
   );
-}
+  // The sector average is identical text for every column when all entries
+  // share a peer group (the common same-sector comparison) — hoist it to the
+  // label column once instead of printing it five times. Cross-sector rows
+  // keep their per-cell context in the expanded detail + chip tooltip.
+  const peerLabels = [...new Set(benchmarks.filter((b): b is PeerBenchmark => b != null).map((b) => b.peerLabel))];
+  const sharedPeer = peerLabels.length === 1 ? benchmarks.find((b): b is PeerBenchmark => b != null)! : null;
 
-function MetricRow({ metric, entries }: { metric: MetricDef; entries: CompareEntry[] }) {
-  const values = entries.map((e) => (e.error ? null : metric.getValue(e)));
-  const winners = findWinners(values, metric.higherBetter);
-  // Scroll-triggered reveal: the row starts neutral and only plays its
-  // gray→green/red "highlighter" pass once, the first time it enters the
-  // viewport — never on every render, never a second time on re-scroll.
-  const [rowRef, revealed] = useInViewOnce<HTMLTableRowElement>(0.4);
+  function toggle() {
+    setExpanded((v) => !v);
+  }
 
   return (
-    <tr ref={rowRef} className="group bg-surface transition-colors duration-200 ease-out hover:bg-surface-2/60">
-      <td className="relative px-4 py-2.5">
-        <span
-          aria-hidden
-          className="absolute left-0 top-1/2 h-4 w-0.5 origin-center -translate-y-1/2 scale-y-0 rounded-full bg-brand transition-transform duration-200 ease-out group-hover:scale-y-100"
-        />
-        <span className="text-xs text-foreground transition-transform duration-200 ease-out group-hover:translate-x-1">{metric.label}</span>
-        {metric.sub && <p className="text-label text-muted">{metric.sub}</p>}
-        {metric.description && (
-          <p className="max-h-0 overflow-hidden text-label leading-tight text-muted/80 opacity-0 transition-[max-height,opacity,margin-top] duration-200 ease-out group-hover:mt-1 group-hover:max-h-6 group-hover:opacity-100">
-            {metric.description}
-          </p>
-        )}
-      </td>
-      {values.map((val, i) => {
-        const isBest = winners?.bestIdx === i;
-        const isWorst = winners?.worstIdx === i;
-        const benchmark = metric.benchmarkKey ? entries[i].benchmarks?.[metric.benchmarkKey] : undefined;
-
-        /* Rank-only color coding — matches the page's own legend ("Green =
-           best on metric, red = worst") exactly, with nothing else tinted.
-           Mixing this with an absolute positive/negative sign color used to
-           let a cell end up with a green background and red text at once
-           (e.g. the "best" value in an all-negative row) and colored
-           non-best/worst values that weren't actually flagged as anything —
-           both unreadable. Background, triangle, and text now always move
-           together as a single "best" or "worst" signal, or not at all.
-           The color itself only plays once this row has been seen. */
-        const revealClass = !revealed ? "" : isBest ? "animate-winner-positive" : isWorst ? "animate-winner-negative" : "";
-
-        return (
-          <td key={i} className={`px-4 py-2.5 text-right font-mono text-sm ${revealClass}`}>
-            {val == null ? (
-              <span className="text-muted">—</span>
-            ) : (
-              <>
-                <span className={revealed ? "" : "text-foreground"}>
-                  {revealed && isBest && <span className="mr-1 text-label">▲</span>}
-                  {revealed && isWorst && <span className="mr-1 text-label">▼</span>}
-                  <CountUp value={val} format={metric.format} />
-                  {section_is_scores(metric) && (
-                    <span className="ml-1 text-label text-muted">/100</span>
-                  )}
-                </span>
-                {benchmark && <BenchmarkNote benchmark={benchmark} format={metric.format} />}
-              </>
+    <>
+      <tr
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        aria-controls={detailId}
+        onClick={toggle}
+        onKeyDown={(ev) => {
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            toggle();
+          }
+        }}
+        className="cursor-pointer bg-surface transition-colors duration-150 ease-out hover:bg-surface-2/60 motion-reduce:transition-none"
+      >
+        <td className="px-4 py-2 align-top">
+          <div className="flex min-h-10 items-start gap-1.5">
+            <svg
+              width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+              aria-hidden
+              className={`mt-1 shrink-0 text-muted/70 transition-transform duration-200 ease-out motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`}
+            >
+              <path d="M3.5 2l3 3-3 3" />
+            </svg>
+            <div className="min-w-0">
+              <span className="text-xs text-foreground">{metric.label}</span>
+              {metric.sub && <p className="text-label text-muted">{metric.sub}</p>}
+              {sharedPeer && (
+                <p className="text-label leading-tight text-muted/80" title={`Average across ${sharedPeer.peerCount} peers`}>
+                  {sharedPeer.peerLabel} avg {metric.format(sharedPeer.peerAverage)}
+                </p>
+              )}
+            </div>
+          </div>
+        </td>
+        {cells.map((cell, i) => {
+          const isBest = highlights?.best.includes(i) ?? false;
+          const isWorst = highlights?.worst.includes(i) ?? false;
+          // Best/worst is a background tint + neutral dot on the cell itself
+          // (exact cell bounds — no offset wrapper), never a recolored number
+          // and never a directional glyph: a ▲ on the LOWEST P/E read
+          // backwards. For lower_is_better metrics the best (smallest) value
+          // still gets the positive tint.
+          const tint = isBest ? "bg-positive/10" : isWorst ? "bg-negative/10" : "";
+          const val = cell.value;
+          // Signed value color marks the number's own sign (returns/changes
+          // only) — the ONLY place the number itself is colored.
+          const signedClass =
+            metric.signed && val != null ? (val > 0 ? "text-positive" : val < 0 ? "text-negative" : "") : "";
+          const benchmark = benchmarks[i];
+          return (
+            <td key={i} className={`px-4 py-2 text-right align-top ${tint}`}>
+              <div className="flex min-h-10 flex-col items-end gap-0.5">
+                {cell.naReason ? (
+                  <span className="text-label italic text-muted/60" title={cell.naReason}>
+                    n/a
+                  </span>
+                ) : val == null ? (
+                  <span className="text-muted" title="No data available">—</span>
+                ) : (
+                  <>
+                    <span className={`font-mono text-sm tabular-nums ${signedClass}`}>
+                      {(isBest || isWorst) && (
+                        <>
+                          <span
+                            aria-hidden
+                            className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full align-middle ${isBest ? "bg-positive/80" : "bg-negative/80"}`}
+                          />
+                          <span className="sr-only">{isBest ? "best in row" : "worst in row"}</span>
+                        </>
+                      )}
+                      <CountUp value={val} format={metric.format} />
+                      {metric.format === score100 && <span className="ml-1 text-label text-muted">/100</span>}
+                    </span>
+                    {benchmark && (
+                      <span
+                        className="rounded-full bg-surface-2 px-1.5 py-px text-micro tabular-nums text-muted"
+                        title={`${benchmark.peerLabel} avg ${metric.format(benchmark.peerAverage)} · vs ${benchmark.peerCount} peers`}
+                      >
+                        {ordinal(benchmark.percentile)} pct
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
+            </td>
+          );
+        })}
+      </tr>
+      {expanded && (
+        <tr id={detailId} className="bg-surface-2/40">
+          <td colSpan={entries.length + 1} className="px-4 py-2.5">
+            {metric.description && <p className="max-w-3xl text-xs leading-5 text-muted">{metric.description}</p>}
+            {benchmarks.some((b) => b != null) && (
+              <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5">
+                {entries.map((e, i) => {
+                  const b = benchmarks[i];
+                  if (!b) return null;
+                  return (
+                    <span key={e.symbol} className="text-label text-muted">
+                      <span className="font-mono font-semibold">{e.symbol}</span>: {ordinal(b.percentile)} pct of {b.peerCount} {b.peerLabel} peers (avg {metric.format(b.peerAverage)})
+                    </span>
+                  );
+                })}
+              </div>
             )}
           </td>
-        );
-      })}
-    </tr>
+        </tr>
+      )}
+    </>
   );
-}
-
-function section_is_scores(metric: MetricDef): boolean {
-  return metric.format === score100;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1603,7 +1735,7 @@ function PortfolioFitSection({
   overweightSectors?: string[];
   objective?: string;
 }) {
-  const colorOf = colorForSymbol ?? ((symbol: string) => COLORS[entries.findIndex((e) => e.symbol === symbol) % COLORS.length]);
+  const colorOf = colorForSymbol ?? ((symbol: string) => COLORS_DARK[entries.findIndex((e) => e.symbol === symbol) % COLORS_DARK.length]);
   const bestIdx = fits.reduce(
     (best, f, i) => (f.fitScore > (fits[best]?.fitScore ?? -1) ? i : best),
     0,
@@ -1648,6 +1780,7 @@ function PortfolioFitSection({
     <div className="overflow-hidden rounded-xl border border-brand/20 bg-brand/3">
       <button
         onClick={onToggle}
+        aria-expanded={open}
         className="flex w-full items-center justify-between bg-brand/5 px-4 py-3 text-left"
       >
         <div className="flex items-center gap-2">
@@ -1659,7 +1792,12 @@ function PortfolioFitSection({
             {objective ? `${objective.replace(/_/g, " ")} objective · ` : ""}personalised to your portfolio
           </span>
         </div>
-        <span className="text-muted">{open ? "−" : "+"}</span>
+        <svg
+          width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+          className={`text-muted transition-transform duration-200 ease-out motion-reduce:transition-none ${open ? "rotate-180" : ""}`}
+        >
+          <path d="M2 3.5l3 3 3-3" />
+        </svg>
       </button>
 
       {/* Winner narrative — always visible when section is rendered */}
@@ -1669,91 +1807,121 @@ function PortfolioFitSection({
         </div>
       )}
 
-      {open && (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-t border-border bg-surface">
-              <th className="px-4 py-2.5 text-left text-xs font-medium text-muted w-44">Metric</th>
-              {entries.map((e, i) => (
-                <th
-                  key={e.symbol}
-                  className="px-4 py-2.5 text-right text-xs font-mono font-bold"
-                  style={{ color: colorOf(e.symbol) }}
-                >
-                  {e.symbol}
-                  {i === bestIdx && (
-                    <span className="ml-1 text-micro text-brand">★ Best fit</span>
-                  )}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {/* Fit score row */}
-            <tr className="bg-surface">
-              <td className="px-4 py-2.5">
-                <span className="text-xs text-foreground">Portfolio Fit Score</span>
-                <p className="text-label text-muted">0-100 · higher = better fit</p>
-              </td>
-              {fits.map((f, i) => (
-                <td key={i} className={`px-4 py-2.5 text-right ${i === bestIdx ? "bg-positive/5" : ""}`}>
-                  <PortfolioFitBadge score={f.fitScore} tier={f.fitTier} size="sm" />
-                </td>
-              ))}
-            </tr>
-            {/* Top reason row */}
-            <tr className="bg-surface">
-              <td className="px-4 py-2.5">
-                <span className="text-xs text-foreground">Key Reason</span>
-              </td>
-              {fits.map((f, i) => (
-                <td key={i} className="px-4 py-2.5 text-right text-label text-muted max-w-[160px]">
-                  {f.reasons[0] ?? "—"}
-                </td>
-              ))}
-            </tr>
-            {/* Suggested allocation row */}
-            <tr className="bg-surface">
-              <td className="px-4 py-2.5">
-                <span className="text-xs text-foreground">Suggested Allocation</span>
-              </td>
-              {fits.map((f, i) => (
-                <td key={i} className="px-4 py-2.5 text-right font-mono text-xs">
-                  {f.suggestedAllocationPct > 0 ? `${f.suggestedAllocationPct.toFixed(1)}%` : "—"}
-                </td>
-              ))}
-            </tr>
-            {/* Sector dimension */}
-            <tr className="bg-surface">
-              <td className="px-4 py-2.5">
-                <span className="text-xs text-foreground">Sector Fit</span>
-              </td>
-              {fits.map((f, i) => (
-                <td key={i} className="px-4 py-2.5 text-right font-mono text-xs">
-                  <span className={f.dimensions.sector.score >= 65 ? "text-positive" : f.dimensions.sector.score >= 45 ? "text-warning" : "text-negative"}>
-                    {f.dimensions.sector.score}
-                  </span>
-                  <span className="ml-1 text-label text-muted">/100</span>
-                </td>
-              ))}
-            </tr>
-            {/* Objective alignment */}
-            <tr className="bg-surface">
-              <td className="px-4 py-2.5">
-                <span className="text-xs text-foreground">Objective Alignment</span>
-              </td>
-              {fits.map((f, i) => (
-                <td key={i} className="px-4 py-2.5 text-right font-mono text-xs">
-                  <span className={f.dimensions.objective.score >= 65 ? "text-positive" : f.dimensions.objective.score >= 45 ? "text-warning" : "text-negative"}>
-                    {f.dimensions.objective.score}
-                  </span>
-                  <span className="ml-1 text-label text-muted">/100</span>
-                </td>
-              ))}
-            </tr>
-          </tbody>
-        </table>
-      )}
+      {open && (() => {
+        /* Generic identical-row collapse: a row whose displayed value is the
+           same in every column carries zero comparative information — render
+           it once as a shared line above the table instead of n copies.
+           Applies to ANY all-identical row, present or future. */
+        interface FitRow {
+          label: string;
+          hint?: string;
+          display: (f: PortfolioFitAnalysis) => string;
+          render?: (f: PortfolioFitAnalysis, i: number) => ReactNode;
+        }
+        const scoreTone = (score: number) =>
+          score >= 65 ? "text-positive" : score >= 45 ? "text-warning" : "text-negative";
+        const fitRows: FitRow[] = [
+          {
+            label: "Portfolio Fit Score",
+            hint: "0-100 · higher = better fit",
+            display: (f) => `${f.fitScore}/100`,
+            render: (f) => <PortfolioFitBadge score={f.fitScore} tier={f.fitTier} size="sm" />,
+          },
+          {
+            label: "Key Reason",
+            display: (f) => f.reasons[0] ?? "—",
+            render: (f) => <span className="text-label text-muted">{f.reasons[0] ?? "—"}</span>,
+          },
+          {
+            label: "Suggested Allocation",
+            display: (f) => (f.suggestedAllocationPct > 0 ? `${f.suggestedAllocationPct.toFixed(1)}%` : "—"),
+            render: (f) => (
+              <span className="font-mono text-xs tabular-nums">
+                {f.suggestedAllocationPct > 0 ? `${f.suggestedAllocationPct.toFixed(1)}%` : "—"}
+              </span>
+            ),
+          },
+          {
+            label: "Sector Fit",
+            display: (f) => `${f.dimensions.sector.score}/100`,
+            render: (f) => (
+              <span className="font-mono text-xs tabular-nums">
+                <span className={scoreTone(f.dimensions.sector.score)}>{f.dimensions.sector.score}</span>
+                <span className="ml-1 text-label text-muted">/100</span>
+              </span>
+            ),
+          },
+          {
+            label: "Objective Alignment",
+            display: (f) => `${f.dimensions.objective.score}/100`,
+            render: (f) => (
+              <span className="font-mono text-xs tabular-nums">
+                <span className={scoreTone(f.dimensions.objective.score)}>{f.dimensions.objective.score}</span>
+                <span className="ml-1 text-label text-muted">/100</span>
+              </span>
+            ),
+          },
+        ];
+        const isShared = (row: FitRow) => fits.length > 1 && new Set(fits.map(row.display)).size === 1;
+        const sharedRows = fitRows.filter(isShared);
+        const comparedRows = fitRows.filter((r) => !isShared(r));
+
+        return (
+          <>
+            {sharedRows.length > 0 && (
+              <div className="border-t border-border bg-surface px-4 py-2.5">
+                {sharedRows.map((row) => (
+                  <p key={row.label} className="text-caption text-muted">
+                    <span className="font-medium text-foreground/80">{row.label}</span>{" "}
+                    {row.display(fits[0])}
+                    <span className="text-muted/70"> — identical for all {fits.length}</span>
+                  </p>
+                ))}
+              </div>
+            )}
+            {comparedRows.length > 0 && (
+              <table className="w-full table-fixed text-sm">
+                <colgroup>
+                  <col style={{ width: LABEL_COL_PX }} />
+                  {entries.map((e) => (
+                    <col key={e.symbol} />
+                  ))}
+                </colgroup>
+                <thead>
+                  <tr className="border-t border-border bg-surface">
+                    <th className="px-4 py-2.5 text-left text-xs font-medium text-muted">Metric</th>
+                    {entries.map((e, i) => (
+                      <th
+                        key={e.symbol}
+                        className="truncate px-4 py-2.5 text-right text-xs font-mono font-bold"
+                        style={{ color: colorOf(e.symbol) }}
+                      >
+                        {e.symbol}
+                        {i === bestIdx && <span className="ml-1 text-micro text-brand">★ Best fit</span>}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {comparedRows.map((row) => (
+                    <tr key={row.label} className="bg-surface">
+                      <td className="px-4 py-2.5">
+                        <span className="text-xs text-foreground">{row.label}</span>
+                        {row.hint && <p className="text-label text-muted">{row.hint}</p>}
+                      </td>
+                      {fits.map((f, i) => (
+                        <td key={i} className={`px-4 py-2.5 text-right ${row.label === "Portfolio Fit Score" && i === bestIdx ? "bg-positive/5" : ""}`}>
+                          {row.render ? row.render(f, i) : <span className="font-mono text-xs tabular-nums">{row.display(f)}</span>}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </>
+        );
+      })()}
     </div>
   );
 }
