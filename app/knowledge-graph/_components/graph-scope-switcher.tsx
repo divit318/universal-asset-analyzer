@@ -65,14 +65,16 @@ export function GraphScopeSwitcher({
       )}
 
       {scope === "sector" && (
-        <div className="flex flex-wrap gap-1.5">
+        // One horizontally scrollable row on narrow viewports (three stacked
+        // rows of chrome ate the content at 390px - KG-051); wraps at sm+.
+        <div className="flex max-w-full gap-1.5 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
           {GICS_SECTORS.map((sector) => (
             <button
               key={sector}
               type="button"
               aria-pressed={id === sector}
               onClick={() => onSelect("sector", sector)}
-              className={`rounded-full border px-3 py-1 text-xs transition-colors focus-visible:outline-2 focus-visible:outline-accent ${
+              className={`shrink-0 rounded-full border px-3 py-1 text-xs transition-colors focus-visible:outline-2 focus-visible:outline-accent ${
                 scope === "sector" && id === sector
                   ? "border-accent bg-accent/15 font-medium text-accent"
                   : "border-border text-muted hover:border-border/80 hover:text-foreground"

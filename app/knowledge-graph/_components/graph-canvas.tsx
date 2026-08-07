@@ -105,6 +105,11 @@ function GraphCanvasInner(
   const svgRef = useRef<SVGSVGElement>(null);
   const simRef = useRef<Simulation<SimNode, undefined> | null>(null);
   const [size, setSize] = useState({ width: 800, height: 560 });
+  // The d3 "end" handler closes over fitToView once per layout effect; the
+  // ref keeps the viewport it frames against current (a stale 800x560
+  // default made fit a no-op on narrow viewports).
+  const sizeRef = useRef(size);
+  sizeRef.current = size;
   const [positions, setPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
   const [transform, setTransform] = useState({ x: 0, y: 0, k: 1 });
   const [dragNodeId, setDragNodeId] = useState<string | null>(null);
@@ -144,15 +149,16 @@ function GraphCanvasInner(
       }
       if (!Number.isFinite(minX)) return;
 
+      const { width, height } = sizeRef.current;
       const w = Math.max(1, maxX - minX);
       const h = Math.max(1, maxY - minY);
       // Never zoom past 1:1 — a three-node graph blown up to 900px looks broken.
-      const k = Math.max(MIN_ZOOM, Math.min(1, Math.min(size.width / w, size.height / h) * 0.96));
+      const k = Math.max(MIN_ZOOM, Math.min(1, Math.min(width / w, height / h) * 0.96));
       const cx = (minX + maxX) / 2;
       const cy = (minY + maxY) / 2;
       setTransform({ k, x: -cx * k, y: -cy * k });
     },
-    [nodes, size.width, size.height],
+    [nodes],
   );
 
   /**
