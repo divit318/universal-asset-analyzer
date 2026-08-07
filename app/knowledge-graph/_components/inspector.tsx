@@ -13,6 +13,7 @@
  */
 
 import Link from "next/link";
+import { useMemo } from "react";
 import type {
   KnowledgeGraph,
   GraphNode,
@@ -24,8 +25,10 @@ import type {
 // index would drag build.ts (yahoo-finance2, node:sqlite) into the client
 // bundle — see lib/gics-sectors.ts for the incident this pattern avoids.
 import { INSTRUMENT_LABEL } from "@/lib/knowledge-graph/types";
+// diff.ts is pure (imports only types) and safe in the client bundle.
+import { summarizeChanges } from "@/lib/knowledge-graph/diff";
 import { DATA_SOURCES, freshness } from "@/lib/provenance";
-import { NODE_VISUAL, EDGE_VISUAL, shapePath } from "./graph-model";
+import { NODE_VISUAL, EDGE_VISUAL, shapePath, nodeShape } from "./graph-model";
 import type { GraphSelection } from "./graph-canvas";
 
 /* -------------------------------------------------------------------------- */
@@ -36,11 +39,12 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   return <h4 className="text-[10px] font-semibold uppercase tracking-widest text-muted">{children}</h4>;
 }
 
-function TypeGlyph({ type }: { type: GraphNode["type"] }) {
+function TypeGlyph({ type, instrument = null }: { type: GraphNode["type"]; instrument?: GraphNode["instrument"] }) {
   const visual = NODE_VISUAL[type];
+  const shape = nodeShape({ type, instrument });
   return (
     <svg width="14" height="14" viewBox="-8 -8 16 16" aria-hidden="true" className="shrink-0">
-      <path d={shapePath(visual.shape, 6)} fill={visual.color} fillOpacity={0.35} stroke={visual.color} strokeWidth={1.4} />
+      <path d={shapePath(shape, 6)} fillRule="evenodd" fill={visual.color} fillOpacity={0.35} stroke={visual.color} strokeWidth={1.4} />
     </svg>
   );
 }
@@ -67,6 +71,14 @@ function fmtNum(v: number): string {
 /* Graph summary (nothing selected)                                           */
 /* -------------------------------------------------------------------------- */
 
+/** RRG-style quadrant definitions so the rotation terms are never bare jargon (KG-019). */
+const ROTATION_QUADRANT: Record<string, string> = {
+  leading: "outperforming the sector average and still gaining",
+  weakening: "still outperforming, but momentum is fading",
+  lagging: "underperforming the sector average and still losing",
+  strengthening: "still underperforming, but momentum is improving",
+};
+
 export function GraphSummaryPanel({
   graph,
   narrative,
@@ -82,19 +94,17 @@ export function GraphSummaryPanel({
 }) {
   const { insights, changes, meta } = graph;
   const { stats } = insights;
-  const hasChanges =
-    changes != null &&
-    (changes.addedNodes.length > 0 || changes.removedNodes.length > 0 || changes.addedEdges.length > 0 || changes.removedEdges.length > 0);
+  // Deduplicated, per-entity-capped, materiality-ranked feed (KG-014/015/016/017).
+  const feed = useMemo(() => (changes ? summarizeChanges(changes, graph.nodes) : null), [changes, graph.nodes]);
 
   return (
     <div className="flex flex-col gap-5">
       <div>
         <SectionLabel>This graph</SectionLabel>
-        <dl className="mt-2 grid grid-cols-3 gap-2">
+        <dl className="mt-2 grid grid-cols-2 gap-2">
           {[
             ["Nodes", String(stats.nodes)],
-            ["Edges", String(stats.edges)],
-            ["Density", stats.density.toFixed(2)],
+            ["Connections", String(stats.edges)],
           ].map(([label, value]) => (
             <div key={label} className="rounded-lg bg-surface-2 px-2.5 py-2">
               <dt className="text-[10px] uppercase tracking-wider text-muted">{label}</dt>
@@ -124,53 +134,19 @@ export function GraphSummaryPanel({
         )}
       </div>
 
-      <div>
-        <SectionLabel>Since your last visit</SectionLabel>
-        {changes == null ? (
-          <p className="mt-1.5 text-xs text-muted">First snapshot of this view. Changes will appear on your next visit.</p>
-        ) : !hasChanges ? (
-          <p className="mt-1.5 text-xs text-muted">
-            No structural changes since the last snapshot ({freshness(changes.previousAt, 24).label}).
-          </p>
-        ) : (
-          <ul className="mt-1.5 flex flex-col gap-1">
-            {changes.addedNodes.slice(0, 4).map((n) => (
-              <li key={n.id}>
-                <button
-                  type="button"
-                  onClick={() => onSelectNode(n.id)}
-                  className="w-full truncate rounded-md px-2 py-1 text-left text-xs text-positive transition-colors hover:bg-surface-2"
-                >
-                  + {n.label}
-                </button>
-              </li>
-            ))}
-            {changes.addedEdges.slice(0, 3).map((e) => (
-              <li key={e.id} className="truncate px-2 py-0.5 text-xs text-muted">
-                + {e.sourceLabel} <span className="text-muted/70">{e.label}</span> {e.targetLabel}
-              </li>
-            ))}
-            {changes.removedNodes.slice(0, 3).map((n) => (
-              <li key={n.id} className="truncate px-2 py-0.5 text-xs text-negative/80">
-                − {n.label}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
+      {/* Look-through: the highest-value panel leads the rail on the scope
+          that has book weights (KG-022). */}
       {insights.lookThrough && insights.lookThrough.exposures.length > 0 && (
         <div>
           <SectionLabel>Look-through exposure</SectionLabel>
           <p className="mt-1 text-[11px] text-muted/90">Positions your book holds more than once, directly and through funds.</p>
           <ul className="mt-1.5 flex flex-col gap-1.5">
-            {insights.lookThrough.exposures.slice(0, 6).map((e) => {
+            {insights.lookThrough.exposures.slice(0, 8).map((e) => {
               const nodeId = `company:${e.symbol}`;
               const inGraph = graph.nodes.some((n) => n.id === nodeId);
               const routeText = [
                 e.directWeight > 0 ? `direct ${(e.directWeight * 100).toFixed(1)}%` : null,
-                ...e.routes.slice(0, 3).map((r) => `${r.via} ${(r.contribution * 100).toFixed(2)}%`),
-                e.routes.length > 3 ? `+${e.routes.length - 3} more` : null,
+                ...e.routes.map((r) => `${r.via} ${(r.contribution * 100).toFixed(2)}%`),
               ]
                 .filter(Boolean)
                 .join(" + ");
@@ -179,12 +155,13 @@ export function GraphSummaryPanel({
                   <button
                     type="button"
                     onClick={() => inGraph && onSelectNode(nodeId)}
+                    title={routeText}
                     className={`w-full rounded-md px-2 py-1 text-left text-xs transition-colors ${inGraph ? "hover:bg-surface-2" : "cursor-default"}`}
                   >
                     <span className="font-medium text-foreground">{e.symbol}</span>
                     <span className="font-mono text-warning"> {(e.effectiveWeight * 100).toFixed(1)}%</span>
-                    <span className="text-muted"> via {e.routeCount} routes</span>
-                    <span className="block truncate text-[11px] text-muted">{routeText}</span>
+                    <span className="text-muted"> effective, {e.routeCount} routes</span>
+                    <span className="block text-[11px] leading-4 text-muted">{routeText}</span>
                   </button>
                 </li>
               );
@@ -204,6 +181,48 @@ export function GraphSummaryPanel({
         </div>
       )}
 
+      <div>
+        <SectionLabel>Since your last visit</SectionLabel>
+        {changes == null || feed == null ? (
+          <p className="mt-1.5 text-xs text-muted">First snapshot of this view. Changes will appear on your next visit.</p>
+        ) : feed.entries.length === 0 ? (
+          <p className="mt-1.5 text-xs text-muted">
+            No structural changes since the last snapshot ({freshness(changes.previousAt, 24).label}).
+          </p>
+        ) : (
+          <>
+            <p className="mt-1 text-[11px] text-muted/80">
+              Vs. the snapshot of {freshness(feed.previousAt, 24).label}. <span className="text-positive">+ appeared</span>,{" "}
+              <span className="text-negative/90">− left the graph</span>. Ranked by importance.
+            </p>
+            <ul className="mt-1.5 flex flex-col gap-1">
+              {feed.entries.map((entry) => (
+                <li key={entry.key}>
+                  <button
+                    type="button"
+                    disabled={entry.nodeId == null}
+                    onClick={() => entry.nodeId && onSelectNode(entry.nodeId)}
+                    title={entry.fullLabel}
+                    className={`flex w-full items-baseline gap-1.5 rounded-md px-2 py-1 text-left text-xs transition-colors ${
+                      entry.nodeId ? "hover:bg-surface-2" : "cursor-default"
+                    } ${entry.kind === "added" ? "text-positive" : "text-negative/80"}`}
+                  >
+                    <span aria-hidden="true" className="shrink-0">{entry.kind === "added" ? "+" : "−"}</span>
+                    <span className="min-w-0 flex-1 truncate">{entry.label}</span>
+                    {entry.at && <span className="shrink-0 font-mono text-[10px] text-muted">{entry.at.slice(0, 10)}</span>}
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {feed.hiddenCount > 0 && (
+              <p className="mt-1 px-2 text-[10px] text-muted/80">
+                {feed.hiddenCount} more change{feed.hiddenCount === 1 ? "" : "s"} hidden (capped at 2 per name, ranked by importance).
+              </p>
+            )}
+          </>
+        )}
+      </div>
+
       {insights.concentrationRisks.length > 0 && (
         <div>
           <SectionLabel>Concentration</SectionLabel>
@@ -221,12 +240,17 @@ export function GraphSummaryPanel({
 
       {insights.correlationClusters.length > 0 && (
         <div>
-          <SectionLabel>Correlation clusters</SectionLabel>
-          <p className="mt-1 text-[11px] text-muted/80">Sectors moving together, by {insights.correlationClusters[0].window}.</p>
-          <ul className="mt-1.5 flex flex-col gap-1">
+          <SectionLabel>Rotation clusters</SectionLabel>
+          <p className="mt-1 text-[11px] text-muted/80">
+            Sectors in this graph grouped by their relative-rotation quadrant ({insights.correlationClusters[0].window}).
+          </p>
+          <ul className="mt-1.5 flex flex-col gap-1.5">
             {insights.correlationClusters.map((c) => (
               <li key={c.classification} className="text-xs text-muted">
                 <span className="font-medium capitalize text-foreground">{c.classification}</span>: {c.sectors.join(", ")}
+                {ROTATION_QUADRANT[c.classification.toLowerCase()] && (
+                  <span className="block text-[11px] leading-4 text-muted/80">{ROTATION_QUADRANT[c.classification.toLowerCase()]}</span>
+                )}
               </li>
             ))}
           </ul>
@@ -242,6 +266,7 @@ export function GraphSummaryPanel({
                 <button
                   type="button"
                   onClick={() => onSelectNode(r.nodeId)}
+                  title={r.reason}
                   className="w-full truncate rounded-md px-2 py-1 text-left text-xs text-negative/90 transition-colors hover:bg-surface-2"
                 >
                   {r.label}
@@ -255,15 +280,18 @@ export function GraphSummaryPanel({
       {insights.hiddenOpportunities.length > 0 && (
         <div>
           <SectionLabel>Opportunities not owned</SectionLabel>
+          <p className="mt-1 text-[11px] text-muted/80">Scanner opportunities on names connected to this graph that your book does not hold.</p>
           <ul className="mt-1.5 flex flex-col gap-1">
             {insights.hiddenOpportunities.map((o) => (
               <li key={o.nodeId}>
                 <button
                   type="button"
                   onClick={() => onSelectNode(o.nodeId)}
-                  className="w-full truncate rounded-md px-2 py-1 text-left text-xs text-positive/90 transition-colors hover:bg-surface-2"
+                  title={o.reason}
+                  className="w-full rounded-md px-2 py-1 text-left text-xs text-positive/90 transition-colors hover:bg-surface-2"
                 >
-                  {o.label}
+                  <span className="block truncate font-medium">{o.label}</span>
+                  <span className="block truncate text-[11px] text-muted">{o.reason}</span>
                 </button>
               </li>
             ))}
@@ -283,6 +311,12 @@ export function GraphSummaryPanel({
             {narrativeLoading ? "Reading graph…" : narrative ? "Refresh" : "Generate"}
           </button>
         </div>
+        {!narrative && !narrativeLoading && (
+          <p className="mt-1 text-[11px] text-muted/80">
+            2-4 short observations narrating the computed numbers in this graph (runs on your configured model; typically a
+            few seconds, longer on a local model). Every claim must cite nodes or it is dropped.
+          </p>
+        )}
         {narrative && narrative.observations.length > 0 && (
           <div className="mt-2 flex flex-col gap-2">
             {narrative.observations.map((o, i) => (
@@ -345,6 +379,8 @@ const METRIC_LABEL: Record<string, string> = {
   direction: "Direction",
   theme: "Theme",
   timeHorizon: "Time horizon",
+  unresolvedReason: "Unresolved because",
+  suppressedLinks: "Links suppressed",
 };
 
 export function NodeInspectorPanel({
@@ -355,6 +391,8 @@ export function NodeInspectorPanel({
   onSelectEdge,
   onStartConnect,
   onRecenter,
+  onFocusNeighborhood,
+  onHideNode,
 }: {
   node: GraphNode;
   graph: KnowledgeGraph;
@@ -363,6 +401,8 @@ export function NodeInspectorPanel({
   onSelectEdge: (id: string) => void;
   onStartConnect: () => void;
   onRecenter: (node: GraphNode) => void;
+  onFocusNeighborhood?: (nodeId: string) => void;
+  onHideNode?: (nodeId: string) => void;
 }) {
   const related = graph.edges
     .filter((e) => e.source === node.id || e.target === node.id)
@@ -388,7 +428,7 @@ export function NodeInspectorPanel({
     <div className="flex flex-col gap-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-2">
-          <span className="mt-0.5"><TypeGlyph type={node.type} /></span>
+          <span className="mt-0.5"><TypeGlyph type={node.type} instrument={node.instrument} /></span>
           <div>
             <span className="text-[10px] font-semibold uppercase tracking-widest text-accent">
               {NODE_VISUAL[node.type].label}
@@ -458,6 +498,26 @@ export function NodeInspectorPanel({
         >
           {connecting ? "Pick a second node…" : "Find path from here"}
         </button>
+        {onFocusNeighborhood && (
+          <button
+            type="button"
+            onClick={() => onFocusNeighborhood(node.id)}
+            title="Reduce the view to this node and its direct neighbors (double-clicking the node does the same)"
+            className="rounded-md border border-border px-2.5 py-1.5 text-xs text-muted transition-colors hover:border-accent/40 hover:text-accent"
+          >
+            Focus neighborhood
+          </button>
+        )}
+        {onHideNode && node.id !== graph.meta.focusId && (
+          <button
+            type="button"
+            onClick={() => onHideNode(node.id)}
+            title="Remove this node from the view (restore via the 'Unhide all' chip)"
+            className="rounded-md border border-border px-2.5 py-1.5 text-xs text-muted transition-colors hover:border-negative/40 hover:text-negative"
+          >
+            Hide node
+          </button>
+        )}
       </div>
 
       {byRelation.size > 0 && (
@@ -476,7 +536,7 @@ export function NodeInspectorPanel({
                         className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-xs text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
                       >
                         <span aria-hidden="true" className="shrink-0 text-muted/60">{outbound ? "→" : "←"}</span>
-                        <TypeGlyph type={other.type} />
+                        <TypeGlyph type={other.type} instrument={other.instrument} />
                         <span className="truncate">{other.label}</span>
                       </button>
                       <button
@@ -656,6 +716,8 @@ export function Inspector({
   onSelectEdge,
   onStartConnect,
   onRecenter,
+  onFocusNeighborhood,
+  onHideNode,
   onCloseExplanation,
 }: {
   graph: KnowledgeGraph;
@@ -671,6 +733,8 @@ export function Inspector({
   onSelectEdge: (id: string) => void;
   onStartConnect: () => void;
   onRecenter: (node: GraphNode) => void;
+  onFocusNeighborhood?: (nodeId: string) => void;
+  onHideNode?: (nodeId: string) => void;
   onCloseExplanation: () => void;
 }) {
   const selectedNode = selected?.kind === "node" ? graph.nodes.find((n) => n.id === selected.id) ?? null : null;
@@ -697,6 +761,8 @@ export function Inspector({
           onSelectEdge={onSelectEdge}
           onStartConnect={onStartConnect}
           onRecenter={onRecenter}
+          onFocusNeighborhood={onFocusNeighborhood}
+          onHideNode={onHideNode}
         />
       ) : selectedEdge ? (
         <EdgeInspectorPanel edge={selectedEdge} graph={graph} onSelectNode={onSelectNode} />

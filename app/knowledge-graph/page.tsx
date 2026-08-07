@@ -40,6 +40,8 @@ function KnowledgeGraphInner() {
       view: searchParams.get("view") === "table" ? "table" : "graph",
       q: searchParams.get("q") ?? "",
       hiddenTypes: searchParams.get("hide")?.split(",").filter(Boolean) ?? [],
+      hiddenNodes: searchParams.get("hn")?.split(",").filter(Boolean) ?? [],
+      focusNodeId: searchParams.get("focus"),
       minStrength: Number(searchParams.get("min")) || 0,
       selected: searchParams.get("sel"),
     }),
@@ -59,6 +61,8 @@ function KnowledgeGraphInner() {
         if (state.view === "table") params.set("view", "table");
         if (state.q) params.set("q", state.q);
         if (state.hiddenTypes.length > 0) params.set("hide", state.hiddenTypes.join(","));
+        if (state.hiddenNodes.length > 0) params.set("hn", state.hiddenNodes.join(","));
+        if (state.focusNodeId) params.set("focus", state.focusNodeId);
         if (state.minStrength > 0) params.set("min", String(state.minStrength));
         if (state.selected) params.set("sel", state.selected);
       }
