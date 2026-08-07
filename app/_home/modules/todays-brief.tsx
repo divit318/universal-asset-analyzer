@@ -129,10 +129,11 @@ function Kpi({
 }
 
 export function TodaysBriefModule() {
-  const { brief, refreshBrief } = useHome();
+  const { brief, refreshBrief, refreshDigest } = useHome();
   const fallbackSlice = useHomeSlice("fallbackBriefing");
   const pulse = useHomeSlice("portfolioPulse");
   const actions = useHomeSlice("recommendedActions");
+  const attention = useHomeSlice("attention");
   const market = useHomeSlice("marketIntelligence");
   const activity = useHomeSlice("activity");
   const changes = useHomeSlice("changes");
@@ -157,6 +158,10 @@ export function TodaysBriefModule() {
   const headline = brief.data?.headline || fallbackSlice.data || "";
   const isAi = !!brief.data?.headline && brief.data.aiGenerated;
   const loading = !headline && fallbackSlice.status === "loading";
+  // A failed digest is an ERROR, not a quiet day: without this branch the hero
+  // rendered "ACTIONS 0", a "15s read" of nothing, and a live CTA over a dead
+  // page (audit ST-02).
+  const failed = !headline && fallbackSlice.status === "error";
   const narrative = useMemo(() => splitNarrative(headline), [headline]);
 
   const readLabel = useMemo(() => {
@@ -167,7 +172,12 @@ export function TodaysBriefModule() {
 
   const p = pulse.data;
   const hasPulse = !!p && p.status !== "empty";
-  const actionCount = actions.data?.actions.length ?? 0;
+  // The queue's true open count — the SAME number the Attention header shows,
+  // so the stat and the surface it points at can never disagree (audit NI-04:
+  // "ACTIONS 1" sat above a CTA that landed on "19 open"). Null until loaded;
+  // never coerced to 0 (that fabricates an all-clear on error, ST-02).
+  const openCount = attention.data ? attention.data.openCount : null;
+  const decisionCount = actions.data ? actions.data.actions.length : null;
   const regime = market.data?.regime?.trend ?? null;
   const tone = regimeTone(regime);
   const grade = hasPulse ? gradeTone(p!.healthGrade) : null;
@@ -185,6 +195,26 @@ export function TodaysBriefModule() {
   // when there's a portfolio to show.
   const animValue = useCountUp(hasPulse ? p!.totalValue : 0);
   const animToday = useCountUp(hasPulse ? p!.todayChangePct : 0);
+
+  if (failed) {
+    return (
+      <div className="uaa-hero uaa-topline relative flex h-full min-h-48 flex-col items-start justify-center gap-3 overflow-hidden px-7 py-6">
+        <span className={`inline-flex items-center gap-2 ${LABEL}`}>
+          <Sparkles className="h-3.5 w-3.5" strokeWidth={2.5} /> AI Executive Brief
+        </span>
+        <p className="text-base text-foreground/72">
+          Couldn&apos;t load your dashboard. Nothing on this page is current until it reloads.
+        </p>
+        <button
+          type="button"
+          onClick={refreshDigest}
+          className="inline-flex items-center gap-2 rounded-lg border border-foreground/12 px-5 py-2.5 text-sm font-medium text-foreground outline-none transition-colors hover:border-foreground/25 focus-visible:ring-2 focus-visible:ring-brand/40"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   if (dismissed) {
     return (
@@ -253,7 +283,7 @@ export function TodaysBriefModule() {
                 {hairline}
               </>
             ) : null}
-            <span className={NUM}>{readLabel}</span>
+            {headline ? <span className={NUM}>{readLabel}</span> : null}
             {/* The brief's own as-of (audit F-22 amendment 1): a cached
                 generation is honest about WHEN it was written. */}
             {brief.data?.generatedAt ? (
@@ -292,17 +322,18 @@ export function TodaysBriefModule() {
                   </div>
                 ) : null}
                 <Kpi
-                  label="Actions"
-                  value={String(actionCount)}
-                  tone={actionCount > 0 ? "text-brand" : "text-muted"}
+                  label="Open items"
+                  value={openCount != null ? String(openCount) : "—"}
+                  tone={openCount != null && openCount > 0 ? "text-brand" : "text-muted"}
+                  caption={decisionCount != null && decisionCount > 0 ? `${decisionCount} engine decision${decisionCount === 1 ? "" : "s"}` : undefined}
                   className="border-l border-foreground/8 pl-6"
                 />
               </>
             ) : (
               <Kpi
-                label="Actions"
-                value={String(actionCount)}
-                tone={actionCount > 0 ? "text-brand" : "text-muted"}
+                label="Open items"
+                value={openCount != null ? String(openCount) : "—"}
+                tone={openCount != null && openCount > 0 ? "text-brand" : "text-muted"}
               />
             )}
           </div>
@@ -367,15 +398,28 @@ export function TodaysBriefModule() {
           </>
         ) : null}
 
-        {/* ── Band 4b · the three verbs ── */}
+        {/* ── Band 4b · the three verbs. The CTA names its destination (the
+            Attention queue) and carries the SAME count as the stat above and
+            the queue's own header (audit NI-04 / IA-05). It only renders once
+            the queue has actually loaded — a live CTA over a dead page is a
+            fabricated all-clear (ST-02). ── */}
         <div className="flex flex-wrap items-center gap-3 px-7 py-6">
-          <button
-            type="button"
-            onClick={scrollToActions}
-            className="inline-flex items-center gap-2 rounded-lg bg-brand px-7 py-3.5 text-sm font-semibold text-background shadow-sm outline-none transition-colors hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
-          >
-            Open Action Center <ArrowRight className="h-4 w-4" strokeWidth={2.5} />
-          </button>
+          {openCount != null ? (
+            <button
+              type="button"
+              onClick={scrollToActions}
+              className="inline-flex items-center gap-2 rounded-lg bg-brand px-7 py-3.5 text-sm font-semibold text-background shadow-sm outline-none transition-colors hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
+            >
+              {openCount > 0 ? (
+                <>
+                  Open queue <span className={NUM}>({openCount})</span>
+                </>
+              ) : (
+                "Queue is clear"
+              )}{" "}
+              <ArrowRight className="h-4 w-4" strokeWidth={2.5} />
+            </button>
+          ) : null}
           {resume ? (
             <Link
               href={resume.href}

@@ -52,6 +52,8 @@ function pulse(overrides: Partial<PortfolioPulse> = {}): PortfolioPulse {
       { label: "Geography", score: null, weightShare: null, contributionPts: null, covered: false, coveragePct: 0 },
     ],
     topContributors: [],
+    topContributorsResidualBps: null,
+    dayCoveragePct: null,
     ...overrides,
   };
 }

@@ -613,9 +613,11 @@ export function AttentionQueueModule() {
         <div className="flex items-center gap-2.5">
           <Crosshair className="h-4.5 w-4.5 shrink-0 text-brand" strokeWidth={2} aria-hidden />
           <h2 className="text-xl font-semibold leading-none text-foreground">Attention</h2>
-          <span className="font-mono text-sm tabular-nums text-muted" aria-live="polite">
-            {openCount} open
-          </span>
+          {data ? (
+            <span className="font-mono text-sm tabular-nums text-muted" aria-live="polite">
+              {openCount} open
+            </span>
+          ) : null}
           <span className="min-w-0 flex-1" />
           <button
             type="button"
@@ -745,6 +747,16 @@ export function AttentionQueueModule() {
             </p>
           ) : null}
         </>
+      ) : state.status === "error" && !data ? (
+        // A failed digest is an ERROR, never an all-clear (audit ST-01): the
+        // old fall-through rendered the checkmark and "Nothing needs your
+        // attention" over a dead page.
+        <div className="flex flex-1 flex-col items-start justify-center gap-2 px-6 py-8">
+          <p className="text-sm text-muted">Couldn&apos;t load your queue. Its state is unknown, not clear.</p>
+          <button type="button" onClick={refreshDigest} className="text-xs font-medium text-foreground/75 hover:text-brand hover:underline">
+            Retry
+          </button>
+        </div>
       ) : noPortfolio && openCount === 0 && degraded.length === 0 ? (
         // First-run / empty-portfolio: onboarding copy, not a fake clear state (§11).
         <div className="flex flex-1 flex-col items-start justify-center gap-2 px-6 py-8">

@@ -181,10 +181,14 @@ export function RadarModule() {
     (changes.data?.changes ?? []).filter((c) => c.kind === "opportunity-new" && c.symbol).map((c) => c.symbol as string),
   );
 
-  const buyCount =
-    watchlist.data?.buckets.find((b) => b.id === "buy")?.symbols.length ?? 0;
-  const nearBuyCount =
-    watchlist.data?.buckets.find((b) => b.id === "near-buy")?.symbols.length ?? 0;
+  // Null until the slice actually loads: `?? 0` here fabricated a confident
+  // "Watchlist: 0 buys, 0 near-buys" under an error body (audit ST-03).
+  const buyCount = watchlist.data
+    ? watchlist.data.buckets.find((b) => b.id === "buy")?.symbols.length ?? 0
+    : null;
+  const nearBuyCount = watchlist.data
+    ? watchlist.data.buckets.find((b) => b.id === "near-buy")?.symbols.length ?? 0
+    : null;
 
   return (
     // Deliberately not h-full: the card ends after its last tile + footer
@@ -257,8 +261,14 @@ export function RadarModule() {
       {/* Footer — sits directly below the last tile; counts from the real watchlist */}
       <div className="mx-5.5 mt-4 flex items-center justify-between gap-2 border-t border-hairline py-4.5">
         <span className="text-[13px] text-muted">
-          Watchlist: <span className="font-mono tabular-nums">{buyCount}</span> buy{buyCount === 1 ? "" : "s"},{" "}
-          <span className="font-mono tabular-nums">{nearBuyCount}</span> near-buy{nearBuyCount === 1 ? "" : "s"}
+          {buyCount != null && nearBuyCount != null ? (
+            <>
+              Watchlist: <span className="font-mono tabular-nums">{buyCount}</span> buy{buyCount === 1 ? "" : "s"},{" "}
+              <span className="font-mono tabular-nums">{nearBuyCount}</span> near-buy{nearBuyCount === 1 ? "" : "s"}
+            </>
+          ) : (
+            "Watchlist unavailable"
+          )}
         </span>
         <Link
           href="/watchlist"

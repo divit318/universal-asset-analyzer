@@ -97,6 +97,11 @@ export const URGENCY_ZERO_HOURS = 7 * 24;
  * unaffected: they cross the ≤24h ramp on their own.
  */
 export const MARKET_CLOSED_URGENCY_CEIL = 0.85;
+/**
+ * Urgency of a catalyst whose time has already passed: review the outcome,
+ * do not treat it as imminent (audit DU-06).
+ */
+export const PAST_EVENT_URGENCY = 0.5;
 
 /** severity → an impact floor, used when the source gives no measured magnitude. */
 const SEVERITY_IMPACT: Record<"high" | "medium" | "low", number> = {
@@ -107,8 +112,23 @@ const SEVERITY_IMPACT: Record<"high" | "medium" | "low", number> = {
 
 /** % of portfolio at risk that counts as full impact for a threat. */
 const THREAT_IMPACT_FULL_PCT = 25;
-/** Impact of a catalyst/alert on a name that is tracked but not owned. */
-const UNHELD_IMPACT = 0.3;
+/**
+ * Impact of a catalyst/alert on a name that is tracked but not owned.
+ *
+ * Was 0.3 — which OUTRANKED every real position under 30% of the book, so an
+ * unheld name's routine ex-div scored five times a held 3% position's earnings
+ * (audit DU-05). A watched-but-unowned name must rank below any meaningfully
+ * held one.
+ */
+const UNHELD_IMPACT = 0.1;
+/**
+ * Book weight that counts as FULL impact for a held name's catalyst/alert.
+ * Raw weights (0.02-0.15 for most books) lived on a different scale from the
+ * severity floors (0.3-0.8), so held names systematically lost to everything
+ * else. A 25% position is a whole-book concern — same anchor as
+ * THREAT_IMPACT_FULL_PCT.
+ */
+const HELD_IMPACT_FULL_WEIGHT = 0.25;
 
 /* ------------------------------------------------------------------ */
 /* Scoring                                                             */
@@ -144,7 +164,11 @@ export function computeUrgency(
   if (Number.isNaN(at)) return UNDATED_URGENCY;
 
   const hours = (at - now) / (60 * 60 * 1000);
-  if (hours <= URGENCY_RAMP_HOURS) return hours <= 0 ? 1 : 1; // due/overdue and ≤24h both max out
+  // A catalyst that already happened is no longer urgent to PREPARE for — it
+  // is worth reviewing, not racing to. The old `hours <= 0 → 1` kept
+  // yesterday's macro print at maximum urgency all weekend (audit DU-06).
+  if (hours <= 0) return PAST_EVENT_URGENCY;
+  if (hours <= URGENCY_RAMP_HOURS) return 1;
   if (hours >= URGENCY_ZERO_HOURS) return 0;
 
   const ramp = 1 - (hours - URGENCY_RAMP_HOURS) / (URGENCY_ZERO_HOURS - URGENCY_RAMP_HOURS);
@@ -254,11 +278,12 @@ export function seedsFromThreats(threats: ThreatItem[]): AttentionSeed[] {
 /** Triggered watchlist alerts → `alert` seeds. */
 export function seedsFromAlerts(alerts: WatchlistAlert[], weights: WeightBySymbol): AttentionSeed[] {
   return alerts.map((a) => {
-    // Portfolio-weighted exposure: a held name carries its book weight; a
-    // tracked-but-unheld name has no exposure, so it gets a modest flat floor.
+    // Portfolio-weighted exposure: a held name's book weight scaled so a 25%
+    // position reads as full impact (see HELD_IMPACT_FULL_WEIGHT); a
+    // tracked-but-unheld name has no exposure, so it gets a small flat floor.
     // Severity drives the dedupe band (resurfacing), not the impact number.
     const held = weightOf(a.symbol, weights);
-    const impact = held > 0 ? held : UNHELD_IMPACT;
+    const impact = held > 0 ? Math.max(held / HELD_IMPACT_FULL_WEIGHT, UNHELD_IMPACT) : UNHELD_IMPACT;
     return {
       id: `alert:${a.symbol}:${a.type}`,
       dedupeKey: `alert:${a.symbol.toUpperCase()}:${a.type}:${a.severity}`,
@@ -292,7 +317,7 @@ export function seedsFromEvents(
     .map((e) => {
       const sym = e.symbol ? e.symbol.toUpperCase() : null;
       const held = weightOf(sym, weights);
-      const impact = held > 0 ? held : UNHELD_IMPACT;
+      const impact = held > 0 ? Math.max(held / HELD_IMPACT_FULL_WEIGHT, UNHELD_IMPACT) : UNHELD_IMPACT;
       return {
         id: `event:${e.id}`,
         dedupeKey: `${sym ?? "market"}:${e.type}:${e.date.slice(0, 10)}`,

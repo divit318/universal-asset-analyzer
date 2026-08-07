@@ -59,6 +59,8 @@ import {
   type HomeFingerprint,
 } from "./changes";
 import { buildSymbolContext } from "./symbol-context";
+import { buildDashboardFacts } from "./facts";
+import { marketToday, marketDayPlus } from "./clock";
 import { MIN_DAYS_TO_ANNUALIZE, type ChangeFeed, type EquityCurve, type HomeDigest, type PortfolioPerformanceSummary } from "./contracts";
 import type { PortfolioLot, WatchlistItem } from "../types";
 
@@ -203,11 +205,12 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
   const equityCurve = stepValue<EquityCurve>(plan, "equityCurve");
 
   // Events: next 14 days, which is the window both the calendar card and the
-  // watchlist's earnings list read from.
-  const today = new Date().toISOString().slice(0, 10);
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() + 14);
-  const cutoffStr = cutoff.toISOString().slice(0, 10);
+  // watchlist's earnings list read from. "Today" is the US market-session day
+  // (lib/home/clock.ts) — the old UTC slice dropped same-day events from 8pm
+  // ET onward while the rest of the page still described the live session
+  // (audit NI-10).
+  const today = marketToday();
+  const cutoffStr = marketDayPlus(14);
 
   const upcoming: UpcomingEventLite[] = (calendar?.events ?? [])
     .filter((e) => e.date >= today && e.date <= cutoffStr)
@@ -267,7 +270,7 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
     now,
   });
 
-  const core: Omit<HomeDigest, "changes" | "symbolContext"> = {
+  const core: Omit<HomeDigest, "changes" | "symbolContext" | "facts"> = {
     generatedAt: new Date().toISOString(),
 
     attention,
@@ -343,7 +346,16 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
     activity: activity.entries,
   });
 
-  return { ...core, changes: detectChanges(core, now), symbolContext };
+  const changes = detectChanges(core, now);
+
+  // The fact layer: stamps, never new values. Built last so it can carry the
+  // change count alongside the slice-sourced facts.
+  const facts = buildDashboardFacts(core, {
+    changesCount: changes.changes.length,
+    unreadNotifications: notifications.filter((n) => !n.read).length,
+  });
+
+  return { ...core, changes, symbolContext, facts };
 }
 
 /* ------------------------------------------------------------------ */

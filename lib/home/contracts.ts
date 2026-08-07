@@ -214,6 +214,20 @@ export interface PortfolioPulse {
    * magnitude). Same source as the movers — the report's stamped day moves.
    */
   topContributors: DayContributor[];
+  /**
+   * The rest of the day move: the summed contribution of every position NOT in
+   * `topContributors`, in bps of the same base. Guarantees the visible rows
+   * plus this residual reconcile to the day P&L exactly (audit NI-01) — a
+   * truncated list without a residual is an attribution that cannot reach its
+   * own total. Null when there are no contributors at all.
+   */
+  topContributorsResidualBps: number | null;
+  /**
+   * Share of the book's value the day move could actually price (live-quoted
+   * holdings over total value, 0-100). The day P&L percentage describes only
+   * this slice; below ~95 the UI must say so next to the number.
+   */
+  dayCoveragePct: number | null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -755,6 +769,71 @@ export interface HomeDigest {
   calibration: { status: CardStatus; trackRecord: TrackRecord | null; eligible: boolean };
   /** Deterministic fallback text, used until (or instead of) the AI stream. */
   fallbackBriefing: string;
+  /**
+   * The dashboard fact layer (audit Phase 3): every cross-surface fact the
+   * page renders, stamped with its unit, display precision, time window,
+   * as-of, and source. Components render facts through `formatFact()` and are
+   * forbidden from re-deriving or re-rounding them locally — this is what
+   * structurally prevents one fact from appearing as 33% and 32.9% on the
+   * same screen. Built in lib/home/facts.ts; reconciled by
+   * `reconcileDashboardFacts()` in CI.
+   */
+  facts: DashboardFacts;
+}
+
+/* ------------------------------------------------------------------ */
+/* The fact layer                                                      */
+/* ------------------------------------------------------------------ */
+
+export type FactUnit = "percent" | "currency" | "bps" | "count" | "score" | "level" | "days" | "text";
+
+/**
+ * One dashboard fact. `value` is the exact engine output (never pre-rounded);
+ * `precision` is the SINGLE display precision every surface must use;
+ * `window` names the time period the value describes ("today", "90d",
+ * "annualized since first lot"); `source` is the computation reference
+ * (module.field) a provenance affordance can open.
+ */
+export interface Fact<V = number> {
+  value: V | null;
+  unit: FactUnit;
+  precision: number;
+  window: string | null;
+  asOf: string | null;
+  source: string;
+}
+
+export interface DashboardFacts {
+  /** The US market session day the page's "today" figures describe. */
+  sessionDate: Fact<string>;
+  totalValue: Fact;
+  dayPnlPct: Fact;
+  dayPnlDollar: Fact;
+  /** Share of book value the day move could price (see PortfolioPulse.dayCoveragePct). */
+  dayCoveragePct: Fact;
+  healthScore: Fact;
+  healthGrade: Fact<string>;
+  cashPct: Fact;
+  totalReturnOnCostPct: Fact;
+  xirrPct: Fact;
+  holdingDays: Fact;
+  benchmarkSymbol: Fact<string>;
+  benchmarkXirrPct: Fact;
+  excessPct: Fact;
+  curveWindowDays: Fact;
+  curvePortfolioPct: Fact;
+  curveBenchmarkPct: Fact;
+  /** True open count of the attention queue (= items.length after dedupe/dismissals). */
+  openCount: Fact;
+  /** Count of engine-recommended decisions (a SUBSET of the queue, not its total). */
+  decisionCount: Fact;
+  unreadNotifications: Fact;
+  changesCount: Fact;
+  sentimentScore: Fact;
+  sentimentLabel: Fact<string>;
+  vixLevel: Fact;
+  /** The shared VIX band label BOTH the gauge and the tile must render. */
+  vixBandLabel: Fact<string>;
 }
 
 export type { DecisionCard };

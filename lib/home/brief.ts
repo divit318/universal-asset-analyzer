@@ -34,6 +34,7 @@ import { LooseObjectSchema } from "../ai/schemas/loose";
 import { HomeBriefWireSchema, HOME_BRIEF_SCHEMA_VERSION } from "../ai/schemas/home-brief";
 import { verifyGroundingWithFacts, type GroundedFact } from "../ai/grounding";
 import { getScannerCache, putScannerCache } from "../db";
+import { marketToday } from "./clock";
 import type { MissionControlContext } from "../mission-control";
 import type { UniversalPortfolioReport } from "../portfolio/report";
 import type { HomeBrief } from "./contracts";
@@ -148,7 +149,7 @@ Use ONLY the facts below. Do not invent tickers, prices, percentages, or events.
 MARKET REGIME: ${regime}
 SECTOR ROTATION: ${rotation}
 PORTFOLIO: ${portfolioDesc}
-UNREAD ALERTS: ${unreadCount}
+UNREAD NOTIFICATIONS (inbox items, not alerts): ${unreadCount}
 
 Return ONLY valid JSON in exactly this shape:
 {
@@ -179,9 +180,10 @@ export function buildBriefFacts(
   portfolio: BriefPortfolio | null,
   now: number = Date.now(),
 ): GroundedFact[] {
-  const d = new Date(now);
-  const p2 = (n: number) => String(n).padStart(2, "0");
-  const today = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+  // The dashboard's one clock (lib/home/clock.ts): the US market-session day,
+  // not the server's local date — the two disagree every evening and the
+  // grounding facts must describe the same "today" as the digest (audit NI-10).
+  const today = marketToday(new Date(now));
 
   const facts: GroundedFact[] = [];
   if (ctx.regime?.breadthPct != null) {

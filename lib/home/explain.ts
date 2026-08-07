@@ -164,7 +164,7 @@ export function explainHealth(pulse: PortfolioPulse): ScoreExplanation | null {
   return {
     title: "Portfolio health",
     value: `${pulse.healthGrade ?? "?"} · ${pulse.healthScore}/100`,
-    method: "Weighted average of the dimension scores below; each weight is scaled by how much of the book that dimension could actually evidence, then renormalized.",
+    method: "Weighted average of the dimension scores below; each weight is scaled by how much of the book that dimension could actually evidence, then renormalized. Contributions are shown at 0.1-pt precision and sum to the total.",
     confidence:
       pulse.healthCoveragePct != null
         ? {

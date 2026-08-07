@@ -74,6 +74,14 @@ export interface UniversalPortfolioReport {
   todayChangeDollar: number;
   todayChangePct: number;
   /**
+   * The denominator behind `todayChangePct`: the summed current value of the
+   * holdings that actually had a live quote this session. Exposed so surfaces
+   * that attribute the day move per holding (the homepage's contributors) can
+   * divide by the SAME population the percentage was computed over, instead of
+   * re-deriving a denominator that silently disagrees (audit NI-01).
+   */
+  todayChangeBaseValue: number;
+  /**
    * COST-WEIGHTED average holding period, in days — "how long has my money
    * actually been invested?"
    *
@@ -222,7 +230,7 @@ function computeDayMoves(holdings: Holding[], ctx: MarketContext, generatedAtMs:
  * unchanged manual value as "flat" in the denominator would silently dilute the
  * day's percentage move toward zero.
  */
-function todayChange(holdings: Holding[], ctx: MarketContext): { dollar: number; pct: number } {
+function todayChange(holdings: Holding[], ctx: MarketContext): { dollar: number; pct: number; baseValue: number } {
   let dollar = 0;
   let liveValue = 0;
 
@@ -234,7 +242,7 @@ function todayChange(holdings: Holding[], ctx: MarketContext): { dollar: number;
     liveValue += h.valuation.valueBase;
   }
 
-  return { dollar, pct: liveValue > 0 ? (dollar / liveValue) * 100 : 0 };
+  return { dollar, pct: liveValue > 0 ? (dollar / liveValue) * 100 : 0, baseValue: liveValue };
 }
 
 /**
@@ -342,6 +350,7 @@ export async function buildPortfolioReport(
     totalReturnDollar: totalReturnOf(performance, totalValue, totalCost).pnl,
     todayChangeDollar: change.dollar,
     todayChangePct: change.pct,
+    todayChangeBaseValue: change.baseValue,
     holdingPeriodDays,
 
     annualIncome,

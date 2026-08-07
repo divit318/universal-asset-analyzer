@@ -383,7 +383,10 @@ export function computeRecommendations(
     recs.push({
       id: `trim:${h.id}`,
       action: "REDUCE",
-      title: `Trim ${h.symbol ?? h.name} from ${h.weight.toFixed(0)}% to ${target}%`,
+      // Same 1-decimal precision as the rationale below — the title's rounded
+      // "33%" beside the rationale's "32.9%" read as two different facts
+      // (audit NI-02).
+      title: `Trim ${h.symbol ?? h.name} from ${h.weight.toFixed(1)}% to ${target}%`,
       subject: h.symbol ?? h.name,
       symbol: h.symbol,
       rationale:

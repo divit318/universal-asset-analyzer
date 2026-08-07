@@ -46,9 +46,11 @@ export function buildRecommendedActions(
   if (decisions.length > 0) {
     // Before → after is stated on the engine's exact (unrounded) health total —
     // differencing the rounded display total quantizes small deltas to zero,
-    // the exact bug HealthDimension.scoreExact exists to prevent.
-    const healthBefore = report?.health?.total ?? 0;
-    const healthExact = report?.health?.totalExact ?? healthBefore;
+    // the exact bug HealthDimension.scoreExact exists to prevent. Both ends
+    // render at the SAME 0.1 precision so before + delta = after on screen
+    // (audit NI-09: "68 → 71.1 (+3.3)" was internally off by 0.2).
+    const healthExact = report?.health?.totalExact ?? report?.health?.total ?? 0;
+    const healthBefore = Math.round(healthExact * 10) / 10;
 
     const actions: RecommendedAction[] = [...decisions]
       // The engine already assigned decisionPriority (1 = "if you make one
@@ -78,7 +80,9 @@ export function buildRecommendedActions(
         why: d.why,
         impact: {
           healthBefore,
-          healthAfter: Math.round((healthExact + d.recommendation.impact.healthDelta) * 10) / 10,
+          // Differenced from the ROUNDED before, so the three displayed
+          // numbers are arithmetically consistent at display precision.
+          healthAfter: Math.round((healthBefore + d.recommendation.impact.healthDelta) * 10) / 10,
           healthDelta: d.recommendation.impact.healthDelta,
           riskDeltaPp: d.recommendation.impact.riskDelta,
           incomeDeltaAnnual: d.recommendation.impact.incomeDelta,

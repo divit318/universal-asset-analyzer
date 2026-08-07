@@ -43,12 +43,18 @@ const EMPTY: PortfolioPulse = {
   healthCoveragePct: null,
   healthFactors: [],
   topContributors: [],
+  topContributorsResidualBps: null,
+  dayCoveragePct: null,
 };
 
 /**
- * Today's largest contributions to the book's day move, in bps of the book's
- * previous-close value (`totalValue - todayChangeDollar`). Reads the same
- * non-stale day moves the movers use; adds no arithmetic beyond the division.
+ * Today's largest contributions to the book's day move, in bps of the SAME
+ * denominator `todayChangePct` was computed over: the live-quoted holdings'
+ * value (`report.todayChangeBaseValue`). Audit NI-01 found the old version
+ * divided by the whole book's previous close while the day percentage divided
+ * by the quoted slice only, so the rows could never reconcile to the headline
+ * even before truncation. Now: sum(all rows) = day P&L in bps exactly, and
+ * the returned residual carries whatever the visible rows leave out.
  *
  * Shape follows the day's tape when it can: the top two positive rows plus the
  * single largest negative. When the sign mix is one-sided, it degrades to the
@@ -56,21 +62,21 @@ const EMPTY: PortfolioPulse = {
  */
 export function buildTopContributors(
   movers: PulseMover[],
-  totalValue: number,
-  todayChangeDollar: number,
+  dayBaseValue: number,
+  dayDollarTotal: number,
   nameBySymbol: Map<string, string>,
-): DayContributor[] {
-  const prevCloseValue = totalValue - todayChangeDollar;
-  if (!(prevCloseValue > 0)) return [];
+): { contributors: DayContributor[]; residualBps: number | null } {
+  if (!(dayBaseValue > 0)) return { contributors: [], residualBps: null };
 
   const rows = movers
     .filter((m) => m.dayDollar != null && m.dayDollar !== 0)
     .map<DayContributor>((m) => ({
       symbol: m.symbol,
       name: nameBySymbol.get(m.symbol.toUpperCase()) ?? m.symbol,
-      bps: ((m.dayDollar as number) / prevCloseValue) * 10_000,
+      bps: ((m.dayDollar as number) / dayBaseValue) * 10_000,
       dayDollar: m.dayDollar as number,
     }));
+  if (rows.length === 0) return { contributors: [], residualBps: null };
 
   const positive = rows.filter((r) => r.bps > 0).sort((a, b) => b.bps - a.bps);
   const negative = rows.filter((r) => r.bps < 0).sort((a, b) => a.bps - b.bps);
@@ -78,9 +84,19 @@ export function buildTopContributors(
   const picked =
     positive.length >= 2 && negative.length >= 1
       ? [...positive.slice(0, 2), negative[0]]
-      : rows.sort((a, b) => Math.abs(b.bps) - Math.abs(a.bps)).slice(0, 3);
+      : [...rows].sort((a, b) => Math.abs(b.bps) - Math.abs(a.bps)).slice(0, 3);
 
-  return picked.sort((a, b) => b.bps - a.bps);
+  const totalBps = (dayDollarTotal / dayBaseValue) * 10_000;
+  const shown = picked.reduce((s, r) => s + r.bps, 0);
+
+  return {
+    contributors: picked.sort((a, b) => b.bps - a.bps),
+    // The unshown remainder of the REPORT's day move, so visible rows plus
+    // residual reconcile to the headline by construction, including any
+    // stale-session positions the mover list filtered out. Zero is meaningful
+    // (the rows ARE the whole move); null only when there are no rows at all.
+    residualBps: totalBps - shown,
+  };
 }
 
 /**
@@ -166,14 +182,54 @@ export function buildHealthRadar(health: HealthScore): HealthRadarAxis[] {
  * up to the number on screen, rather than approximating it.
  */
 export function buildHealthFactors(health: HealthScore): HealthFactor[] {
-  return (health.dimensions ?? [])
-    .map<HealthFactor>((d) => {
+  const dims = health.dimensions ?? [];
+
+  // Largest-remainder rounding at 0.1-pt granularity so the displayed
+  // contributions sum EXACTLY to the health score on screen (audit NI-07).
+  // Rounding each term independently drifted the decomposition ~0.4 pts from
+  // the headline while explain.ts promised the rows "genuinely add up". The
+  // target is the DISPLAYED total (health.total), so what the user can sum
+  // matches what the user can see; each row moves at most 0.1 pt from the
+  // engine's exact term to absorb the display rounding.
+  const target = Math.round(health.total * 10);
+  const exactTenths = dims.map((d) => (d.score != null ? (d.scoreExact ?? 0) * d.effectiveWeight * 10 : null));
+  const floors = exactTenths.map((v) => (v != null ? Math.floor(v) : null));
+  let deficit = target - floors.reduce<number>((s, v) => s + (v ?? 0), 0);
+  const order = exactTenths
+    .map((v, i) => ({ i, frac: v != null ? v - Math.floor(v) : -1 }))
+    .filter((e) => e.frac >= 0)
+    .sort((a, b) => b.frac - a.frac);
+  const tenths = [...floors];
+  while (deficit > 0 && order.length > 0) {
+    for (const { i } of order) {
+      if (deficit <= 0) break;
+      tenths[i] = (tenths[i] as number) + 1;
+      deficit -= 1;
+    }
+  }
+  // A displayed total ROUNDED DOWN from the exact sum leaves a surplus instead:
+  // shave tenths from the smallest-fraction rows (never below zero).
+  while (deficit < 0 && order.length > 0) {
+    let moved = false;
+    for (let k = order.length - 1; k >= 0 && deficit < 0; k--) {
+      const i = order[k].i;
+      if ((tenths[i] as number) > 0) {
+        tenths[i] = (tenths[i] as number) - 1;
+        deficit += 1;
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+
+  return dims
+    .map<HealthFactor>((d, i) => {
       const scored = d.score != null;
       return {
         label: d.name,
         score: d.score,
         weightShare: scored ? d.effectiveWeight : null,
-        contributionPts: scored ? Math.round((d.scoreExact ?? 0) * d.effectiveWeight * 10) / 10 : null,
+        contributionPts: scored && tenths[i] != null ? (tenths[i] as number) / 10 : null,
         covered: scored && d.coverage > 0,
         coveragePct: Math.round(d.coverage * 100),
       };
@@ -287,11 +343,16 @@ export function buildPortfolioPulse(report: UniversalPortfolioReport | null, now
     biggestWeakness,
     healthCoveragePct: report.health.coveragePct ?? null,
     healthFactors: buildHealthFactors(report.health),
-    topContributors: buildTopContributors(
-      scored,
-      report.totalValue,
-      report.todayChangeDollar,
-      new Map(report.holdings.filter((h) => h.symbol).map((h) => [(h.symbol as string).toUpperCase(), h.name])),
-    ),
+    ...(() => {
+      const { contributors, residualBps } = buildTopContributors(
+        scored,
+        report.todayChangeBaseValue,
+        report.todayChangeDollar,
+        new Map(report.holdings.filter((h) => h.symbol).map((h) => [(h.symbol as string).toUpperCase(), h.name])),
+      );
+      return { topContributors: contributors, topContributorsResidualBps: residualBps };
+    })(),
+    dayCoveragePct:
+      report.totalValue > 0 ? Math.max(0, Math.min(100, (report.todayChangeBaseValue / report.totalValue) * 100)) : null,
   };
 }

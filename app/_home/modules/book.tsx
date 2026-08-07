@@ -19,6 +19,7 @@ import { ArrowRight } from "lucide-react";
 import type { CSSProperties } from "react";
 import { toneClass } from "@/lib/format";
 import type { EquityCurve, PortfolioPulse } from "@/lib/home/contracts";
+import { formatFact } from "@/lib/home/facts";
 import { explainHealth } from "@/lib/home/explain";
 import { getHomeModule } from "@/lib/home/registry";
 import { fmtSignedPct, fmtSignedMoney, gradeTone } from "../_viz/format";
@@ -180,6 +181,7 @@ export function BookModule() {
   const performance = useHomeSlice("performance");
   const equityCurve = useHomeSlice("equityCurve");
   const changes = useHomeSlice("changes");
+  const facts = useHomeSlice("facts");
   const { refreshDigest } = useHome();
 
   // The change engine's health delta, when it found a material one — the card
@@ -278,24 +280,34 @@ export function BookModule() {
                 </div>
                 <div className="flex flex-col gap-1 border-l border-foreground/8 pl-5">
                   <span className={LABEL}>Cash</span>
+                  {/* Rendered through the fact layer at the page's ONE percent
+                      precision — this card's Math.round(33%) beside the queue's
+                      32.9% was audit NI-02. */}
                   <span className={`${NUM} text-[26px] font-semibold leading-none text-foreground`}>
-                    {d.cashPct != null ? `${Math.round(d.cashPct)}%` : "—"}
+                    {facts.data?.cashPct ? formatFact(facts.data.cashPct, "plain") : d.cashPct != null ? fmtSignedPct(d.cashPct).replace("+", "") : "—"}
                   </span>
                 </div>
               </div>
-              {/* One line, left-aligned under the XIRR value. */}
+              {/* The window and methodology, ALWAYS stated (audit NI-03): an
+                  annualized money-weighted figure beside a benchmark must say
+                  what it is even when the comparison renders. */}
               <p className="mt-1 whitespace-nowrap text-sm leading-snug text-foreground/72">
                 {xirr != null ? (
-                  bench ? (
-                    <>
-                      vs {bench.symbol} <span className={NUM}>{fmtSignedPct(bench.benchmarkPct)}</span>, excess{" "}
-                      <span className={NUM}>{fmtSignedPct(bench.excessPct)}</span>
-                    </>
-                  ) : (
-                    "annualized, money-weighted"
-                  )
+                  <>
+                    annualized (money-weighted{perf && perf.holdingDays > 0 ? (
+                      <>
+                        , <span className={NUM}>{perf.holdingDays}</span>d held
+                      </>
+                    ) : null})
+                    {bench ? (
+                      <>
+                        {" "}· vs {bench.symbol} <span className={NUM}>{fmtSignedPct(bench.benchmarkPct)}</span>, excess{" "}
+                        <span className={NUM}>{fmtSignedPct(bench.excessPct)}</span>
+                      </>
+                    ) : null}
+                  </>
                 ) : (
-                  "cumulative, whole book"
+                  "cumulative, whole book, since inception"
                 )}
               </p>
             </div>
@@ -323,16 +335,39 @@ export function BookModule() {
 
             {/* ── Band 5 · today's top contributors, in bps of the book ── */}
             <div className="flex flex-col gap-3.5 border-b border-foreground/8 py-5">
-              <span className={LABEL}>Top contributors (today)</span>
+              <span className={LABEL}>
+                Day P&amp;L attribution
+                {d.dayCoveragePct != null && d.dayCoveragePct < 95 ? (
+                  <span className="ml-2 normal-case tracking-normal text-foreground/40">
+                    prices <span className={NUM}>{Math.round(d.dayCoveragePct)}%</span> of book
+                  </span>
+                ) : null}
+              </span>
               {contributors.length > 0 ? (
-                contributors.map((c) => (
-                  <div key={c.symbol} className="flex items-center gap-2">
-                    <Monogram symbol={c.symbol} />
-                    <span className={`${NUM} shrink-0 text-sm font-semibold text-foreground`}>{c.symbol}</span>
-                    <span className="min-w-0 truncate text-sm text-foreground/60">{c.name}</span>
-                    <span className={`${NUM} ml-auto shrink-0 text-sm ${toneClass(c.bps)}`}>{fmtBps(c.bps)}</span>
-                  </div>
-                ))
+                <>
+                  {contributors.map((c) => (
+                    <div key={c.symbol} className="flex items-center gap-2">
+                      <Monogram symbol={c.symbol} />
+                      <span className={`${NUM} shrink-0 text-sm font-semibold text-foreground`}>{c.symbol}</span>
+                      <span className="min-w-0 truncate text-sm text-foreground/60">{c.name}</span>
+                      <span className={`${NUM} ml-auto shrink-0 text-sm ${toneClass(c.bps)}`}>{fmtBps(c.bps)}</span>
+                    </div>
+                  ))}
+                  {/* The residual: rows + this line = the day P&L, exactly.
+                      An attribution that cannot reach its own total is a
+                      contradiction, not a summary (audit NI-01). */}
+                  {d.topContributorsResidualBps != null && Math.abs(d.topContributorsResidualBps) >= 0.05 ? (
+                    <div className="flex items-center gap-2">
+                      <span aria-hidden className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-foreground/8 text-[10px] font-semibold text-foreground/50">
+                        Σ
+                      </span>
+                      <span className="min-w-0 truncate text-sm text-foreground/60">Everything else</span>
+                      <span className={`${NUM} ml-auto shrink-0 text-sm ${toneClass(d.topContributorsResidualBps)}`}>
+                        {fmtBps(d.topContributorsResidualBps)}
+                      </span>
+                    </div>
+                  ) : null}
+                </>
               ) : pulse.status === "loading" || pulse.revalidating ? (
                 <>
                   <Skeleton height="h-5" />

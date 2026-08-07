@@ -23,6 +23,7 @@ import {
   KIND_PRECEDENCE,
   UNDATED_URGENCY,
   MARKET_CLOSED_URGENCY_CEIL,
+  PAST_EVENT_URGENCY,
   type AttentionFeeder,
   type WeightBySymbol,
 } from "@/lib/home/attention";
@@ -107,8 +108,10 @@ describe("computeUrgency", () => {
     expect(mid).toBeLessThan(0.55);
   });
 
-  it("treats a due/overdue catalyst as maximally urgent", () => {
-    expect(computeUrgency(new Date(NOW - HOUR).toISOString(), NOW, true)).toBe(1);
+  it("demotes an already-passed catalyst to review urgency, never imminent (audit DU-06)", () => {
+    expect(computeUrgency(new Date(NOW - HOUR).toISOString(), NOW, true)).toBe(PAST_EVENT_URGENCY);
+    // Still imminent right up to the catalyst itself.
+    expect(computeUrgency(new Date(NOW + 1).toISOString(), NOW, true)).toBe(1);
   });
 
   it("caps the ramp for still-distant events while the market is closed", () => {
@@ -339,13 +342,28 @@ describe("feeders", () => {
     expect(s.confidence).toBe(0.8);
   });
 
-  it("alerts: a held name carries its portfolio weight as impact", () => {
+  it("alerts: a held name's weight scales to full impact at a 25% position (audit DU-05)", () => {
+    const alerts: WatchlistAlert[] = [
+      { type: "deteriorating", severity: "high", title: "NVDA deteriorating", description: "x", action: "review", symbol: "NVDA" },
+      { type: "deteriorating", severity: "high", title: "UNHELD deteriorating", description: "x", action: "review", symbol: "UNHELD" },
+    ];
+    const [held, unheld] = seedsFromAlerts(alerts, weights);
+    // 31% of the book is beyond the 25% full-impact anchor: saturates at 1.
+    expect(held.impact).toBe(1);
+    expect(held.dedupeKey).toBe("alert:NVDA:deteriorating:high");
+    // A tracked-but-unheld name gets the small floor and must rank below any
+    // meaningfully held one.
+    expect(unheld.impact).toBeCloseTo(0.1);
+    expect(unheld.impact).toBeLessThan(held.impact);
+  });
+
+  it("alerts: a small held position still outranks the unheld floor", () => {
+    const smallWeights = new Map([["NVDA", 0.033]]);
     const alerts: WatchlistAlert[] = [
       { type: "deteriorating", severity: "high", title: "NVDA deteriorating", description: "x", action: "review", symbol: "NVDA" },
     ];
-    const [s] = seedsFromAlerts(alerts, weights);
-    expect(s.impact).toBeCloseTo(0.31);
-    expect(s.dedupeKey).toBe("alert:NVDA:deteriorating:high");
+    const [s] = seedsFromAlerts(alerts, smallWeights);
+    expect(s.impact).toBeCloseTo(0.033 / 0.25); // 0.132 > the 0.1 unheld floor
   });
 
   it("events: dated, time-decayed, held-name impact, and filtered to a 7d horizon", () => {
@@ -357,7 +375,7 @@ describe("feeders", () => {
     expect(seeds).toHaveLength(1); // the 30-day-out event is beyond the horizon
     expect(seeds[0].kind).toBe("event");
     expect(seeds[0].confidence).toBe(1);
-    expect(seeds[0].impact).toBeCloseTo(0.31);
+    expect(seeds[0].impact).toBe(1); // 31% held weight saturates the 25% anchor
     expect(seeds[0].dedupeKey).toBe(`NVDA:earnings:${new Date(NOW + 2 * DAY).toISOString().slice(0, 10)}`);
   });
 

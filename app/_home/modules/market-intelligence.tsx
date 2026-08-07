@@ -28,6 +28,7 @@ import Link from "next/link";
 import { Activity, ChevronRight, Info, RefreshCw } from "lucide-react";
 import { getHomeModule } from "@/lib/home/registry";
 import type { MarketGroup, MarketIntelligence, MarketTicker, SentimentGauge } from "@/lib/home/contracts";
+import { vixBand } from "@/lib/home/sentiment";
 import { metricSessionState, type Metric } from "@/lib/metric";
 import { Section, Skeleton } from "@/app/_components/ui";
 import { useHydrated } from "../_atmosphere/use-hydrated";
@@ -148,16 +149,11 @@ const TILES: TileSpec[] = [
     label: "VIX",
     tooltip: "The CBOE Volatility Index — the market's expected 30-day S&P 500 volatility, implied by options prices.",
     fmt: fmtLevel,
-    caption: (t) =>
-      t.price == null
-        ? "Volatility reading unavailable."
-        : t.price < 14
-          ? "Low volatility (fear index)."
-          : t.price < 20
-            ? "Normal volatility (fear index)."
-            : t.price < 30
-              ? "Elevated volatility (fear index)."
-              : "Extreme volatility (fear index).",
+    // The ONE VIX interpretation, shared with the sentiment gauge's own
+    // scoring anchors (lib/home/sentiment.ts vixBand). Two unshared threshold
+    // tables here produced "Extreme Greed" beside "Normal volatility" for the
+    // same quote (audit NI-05).
+    caption: (t) => (t.price == null ? "Volatility reading unavailable." : `${vixBand(t.price).label} (fear index).`),
   },
   {
     // Yahoo's ^TNX quote is already the yield in percent (e.g. 4.67) — the
@@ -283,16 +279,18 @@ function sentimentCaption(label: SentimentGauge["label"], vix: number | null): s
           : label === "Greed"
             ? "Markets are risk-on"
             : "Markets are euphoric";
+  // Same vixBand the VIX tile's caption reads (audit NI-05): the gauge's mood
+  // and its volatility qualifier must describe the level with one vocabulary.
   const vol =
     vix == null
       ? ""
-      : vix < 14
-        ? " with low volatility"
-        : vix < 20
-          ? " with normal volatility"
-          : vix < 30
-            ? " amid elevated volatility"
-            : " amid extreme volatility";
+      : {
+          complacent: " with complacency-low volatility",
+          low: " with low volatility",
+          normal: " with normal volatility",
+          elevated: " amid elevated volatility",
+          stressed: " amid stressed volatility",
+        }[vixBand(vix).id];
   return `${mood}${vol}.`;
 }
 

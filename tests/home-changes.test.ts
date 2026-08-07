@@ -97,6 +97,8 @@ function digestSource(overrides: Partial<FingerprintSource> = {}): FingerprintSo
       healthCoveragePct: 90,
       healthFactors: [],
       topContributors: [],
+      topContributorsResidualBps: null,
+      dayCoveragePct: null,
     },
     threats: {
       status: "ok",
