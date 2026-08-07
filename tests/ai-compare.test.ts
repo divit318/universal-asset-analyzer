@@ -4,21 +4,30 @@ import { bestIndex, flatFromStreamedFields, parseCompareResponse } from "@/lib/a
 /**
  * Unit tests for the N-way metric table winner logic in ai-compare — the
  * same `bestIndex` the real buildMetricTable() uses, exercised directly
- * (pure, no network) so this stays a real regression test rather than a
- * disconnected duplicate of the comparison rules.
+ * (pure, no network). Since the resolver rewrite, bestIndex is a wrapper
+ * over lib/compare/metrics.ts's resolveRowHighlights, so these assert the
+ * AI table's winners match the rendered table's rules exactly: ties at
+ * display precision mark EVERY tied index, and a row with no contest
+ * (fewer than two values, or all identical on screen) has no winner.
  */
+
+const x1 = (v: number) => `${v.toFixed(1)}x`;
 
 describe("bestIndex — higher is better (e.g. ROE, composite score)", () => {
   it("picks the single best value among many", () => {
-    expect(bestIndex([25, 15, 40, 10], true)).toBe(2);
+    expect(bestIndex([25, 15, 40, 10], true)).toEqual([2]);
   });
 
-  it("returns 'tie' when the top values are within 5% of each other", () => {
-    expect(bestIndex([100, 103, 50], true)).toBe("tie");
+  it("marks EVERY value tied at the top (display precision), not none of them", () => {
+    expect(bestIndex([10.44, 10.4, 50], false, x1)).toEqual([0, 1]);
+  });
+
+  it("close-but-distinct top values are a real win, not a tie (103 beats 100)", () => {
+    expect(bestIndex([100, 103, 50], true)).toEqual([1]);
   });
 
   it("skips nulls and still finds the best among the rest", () => {
-    expect(bestIndex([null, 30, null, 20], true)).toBe(1);
+    expect(bestIndex([null, 30, null, 20], true)).toEqual([1]);
   });
 
   it("returns null when every value is null", () => {
@@ -26,22 +35,22 @@ describe("bestIndex — higher is better (e.g. ROE, composite score)", () => {
   });
 
   it("handles exactly two values, same as the old pairwise comparison", () => {
-    expect(bestIndex([25, 15], true)).toBe(0);
-    expect(bestIndex([15, 25], true)).toBe(1);
+    expect(bestIndex([25, 15], true)).toEqual([0]);
+    expect(bestIndex([15, 25], true)).toEqual([1]);
   });
 });
 
 describe("bestIndex — lower is better (e.g. P/E, D/E)", () => {
   it("picks the single lowest value among many", () => {
-    expect(bestIndex([15, 39, 70, 21], false)).toBe(0);
+    expect(bestIndex([15, 39, 70, 21], false)).toEqual([0]);
   });
 
-  it("returns 'tie' when the lowest values are within 5% of each other", () => {
-    expect(bestIndex([10, 10.4, 50], false)).toBe("tie");
+  it("all-identical values have no winner, matching a row with no highlight", () => {
+    expect(bestIndex([10, 10, 10], false)).toBeNull();
   });
 
-  it("a lone non-null value wins outright, regardless of magnitude", () => {
-    expect(bestIndex([null, 9.6, null], false)).toBe(1);
+  it("a lone non-null value has no contest, matching the table's no-highlight rule", () => {
+    expect(bestIndex([null, 9.6, null], false)).toBeNull();
   });
 });
 
