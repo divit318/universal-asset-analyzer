@@ -380,7 +380,9 @@ export default function ComparePage() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [exportErr, setExportErr] = useState<string | null>(null);
   const [openSections, setOpenSections] = useState<Set<string>>(
-    new Set(["Portfolio Fit", "Valuation", "Growth", "Quality", "Financial Health", "Momentum", "Analyst Consensus", "Composite Scores"]),
+    // "Conviction & dimensions" replaces the stale "Composite Scores" title —
+    // the section had silently defaulted to collapsed since its rename.
+    new Set(["Portfolio Fit", "Valuation", "Growth", "Quality", "Financial Health", "Momentum", "Analyst Consensus", "Conviction & dimensions"]),
   );
   const [aiResult, setAiResult] = useState<AiComparison | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
