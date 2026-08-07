@@ -42,6 +42,14 @@ export interface CompareEntry {
   freshness?: EntryFreshness;
   /** Single-day moves > 25% on the adjusted series with no adjustment to explain them — a possible unhandled corporate action (see lib/prices.ts). */
   priceGaps?: PriceGap[];
+  /**
+   * True when the peer universe wasn't warm in time for this response
+   * (loadBenchmarkUniverse races a cold build against a short timeout, and
+   * the build keeps warming in the background). Benchmarks are absent but
+   * COMING — the client shows skeleton chips and refetches until they
+   * arrive, instead of silently dropping them for the whole session.
+   */
+  benchmarksPending?: boolean;
 }
 
 /** Pull a bucket's percentage-of-max from a ScoreResult — reuses the same bucket shape the Compare page already renders. */
@@ -81,6 +89,10 @@ export async function GET(request: Request) {
   // per compared stock. Best-effort with a short timeout: a cold universe
   // build must never make this lightweight compare request hang.
   const equityUniverse = await loadBenchmarkUniverse("equity");
+  // Empty means the timeout won the race against a cold universe build — the
+  // build is still warming in the background, so benchmarks are pending, not
+  // absent. Flagged per entry so the client can skeleton + refetch.
+  const universeCold = equityUniverse.length === 0;
 
   const entries: CompareEntry[] = await Promise.all(
     symbols.map(async (symbol): Promise<CompareEntry> => {
@@ -226,7 +238,7 @@ export async function GET(request: Request) {
             : null,
         };
 
-        return { symbol, name: quote.name, quote, snapshot: parts.snapshot, statements, analyst: parts.analyst, score, momentum, oneYearReturn, fcfYieldPct, netDebtToEbitda, risks, opportunity, benchmarks, freshness, ...(priceGaps.length > 0 ? { priceGaps } : {}) };
+        return { symbol, name: quote.name, quote, snapshot: parts.snapshot, statements, analyst: parts.analyst, score, momentum, oneYearReturn, fcfYieldPct, netDebtToEbitda, risks, opportunity, benchmarks, freshness, ...(priceGaps.length > 0 ? { priceGaps } : {}), ...(universeCold ? { benchmarksPending: true } : {}) };
       } catch (err) {
         return { symbol, name: symbol, error: err instanceof Error ? err.message : "Failed to load" };
       }
