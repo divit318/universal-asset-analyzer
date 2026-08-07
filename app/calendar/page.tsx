@@ -15,9 +15,9 @@ import { AiBadge } from "@/app/_components/ai-badge";
 const TYPE_STYLES: Record<CalendarEvent["type"], {
   label: string; color: string; bg: string; border: string; dot: string;
 }> = {
-  earnings:   { label: "Earnings",  color: "text-blue-400",    bg: "bg-blue-400/10",   border: "border-blue-400/25",   dot: "bg-blue-400" },
+  earnings:   { label: "Earnings",  color: "text-chart-2",    bg: "bg-chart-2/10",   border: "border-chart-2/25",   dot: "bg-chart-2" },
   exDividend: { label: "Ex-Div",    color: "text-brand",      bg: "bg-brand/10",     border: "border-brand/25",     dot: "bg-brand" },
-  dividend:   { label: "Dividend",  color: "text-emerald-400", bg: "bg-emerald-400/10", border: "border-emerald-400/25", dot: "bg-emerald-400" },
+  dividend:   { label: "Dividend",  color: "text-emerald-400 light:text-emerald-700", bg: "bg-emerald-400/10", border: "border-emerald-400/25", dot: "bg-emerald-400 light:bg-emerald-600" },
   macro:      { label: "Macro",     color: "text-warning",   bg: "bg-warning/10",  border: "border-warning/25",  dot: "bg-warning" },
 };
 
@@ -158,7 +158,7 @@ function EarningsRow({ ev, onClick, isPortfolio, isWatchlist }: {
   return (
     <button
       onClick={onClick}
-      className="group w-full rounded-xl border border-border bg-surface px-4 py-4 text-left transition-all hover:border-blue-400/30 hover:bg-surface-2"
+      className="group w-full rounded-xl border border-border bg-surface px-4 py-4 text-left transition-all hover:border-chart-2/30 hover:bg-surface-2"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1.5">
@@ -171,7 +171,7 @@ function EarningsRow({ ev, onClick, isPortfolio, isWatchlist }: {
               </span>
             )}
             {!isPortfolio && isWatchlist && (
-              <span className="rounded border border-blue-400/20 bg-blue-400/8 px-1.5 py-0.5 text-micro font-bold uppercase tracking-widest text-blue-400">
+              <span className="rounded border border-chart-2/20 bg-chart-2/8 px-1.5 py-0.5 text-micro font-bold uppercase tracking-widest text-chart-2">
                 Watchlist
               </span>
             )}
@@ -183,7 +183,7 @@ function EarningsRow({ ev, onClick, isPortfolio, isWatchlist }: {
           {/* Name row */}
           <div className="flex items-center gap-2">
             {ev.symbol && (
-              <span className="font-mono text-sm font-bold text-blue-400">{ev.symbol}</span>
+              <span className="font-mono text-sm font-bold text-chart-2">{ev.symbol}</span>
             )}
             <span className="truncate text-sm text-foreground">{ev.name}</span>
           </div>
@@ -246,7 +246,7 @@ function DividendRow({ ev, onClick, isPortfolio, isWatchlist }: {
               <span className="rounded border border-brand/20 bg-brand/8 px-1.5 py-0.5 text-micro font-bold uppercase tracking-widest text-brand">Portfolio</span>
             )}
             {!isPortfolio && isWatchlist && (
-              <span className="rounded border border-blue-400/20 bg-blue-400/8 px-1.5 py-0.5 text-micro font-bold uppercase tracking-widest text-blue-400">Watchlist</span>
+              <span className="rounded border border-chart-2/20 bg-chart-2/8 px-1.5 py-0.5 text-micro font-bold uppercase tracking-widest text-chart-2">Watchlist</span>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -405,7 +405,7 @@ function SummaryStrip({ events, portfolioSymbols, watchlistSymbols }: {
     const d = daysFromNow(nextEarnings.date);
     stats.push({
       label: "Next Earnings",
-      value: <span className="text-blue-400">{nextEarnings.symbol ?? nextEarnings.name.slice(0, 8)}</span>,
+      value: <span className="text-chart-2">{nextEarnings.symbol ?? nextEarnings.name.slice(0, 8)}</span>,
       sub: daysLabel(d),
     });
   }

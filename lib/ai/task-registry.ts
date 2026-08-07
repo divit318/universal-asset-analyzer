@@ -97,6 +97,22 @@ export interface TaskConfig {
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
+  /**
+   * Which analysis RUNTIME runs this task at the seam ("chain" = one
+   * completion through the Router's provider chain; "sessions" = a Devin
+   * sessions-API run with platform-validated structured output). Resolution
+   * order lives in lib/ai/analysis-provider.ts:resolveProvider. Unset =
+   * "auto": background-latency tasks → sessions, everything else → chain.
+   */
+  provider?: "chain" | "sessions" | "auto";
+  /**
+   * Total wall-clock budget for a Devin session running this task, AFTER
+   * which the session is terminated and the run marked timeout. Amendment 3
+   * (ai-migration/04): sized off the observed MAX, never the median — the
+   * sessions runtime is for background work, where a slow truth beats a fast
+   * timeout. Meaningless to the chain runtime, which budgets per completion.
+   */
+  devinTimeoutMs?: number;
 }
 
 /**

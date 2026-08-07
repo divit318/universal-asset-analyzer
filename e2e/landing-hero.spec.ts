@@ -13,7 +13,7 @@ import { collectPageErrors, filterAllowedErrors } from "./helpers";
  */
 
 test.describe("landing hero (login rework)", () => {
-  test("renders kicker, two-line serif headline, subhead, CTAs and the stipple", async ({ page }) => {
+  test("renders kicker, two-line serif headline, subhead, CTAs and the thesis wave", async ({ page }) => {
     const errors = collectPageErrors(page);
     await page.goto("/landing");
 
@@ -37,13 +37,12 @@ test.describe("landing hero (login rework)", () => {
     await expect(hero.getByRole("button", { name: /Get started/ })).toBeVisible();
     await expect(hero.locator('a[href="#demo"]')).toBeVisible();
 
-    // The illustration: present, decorative, and path-based (no per-dot nodes).
-    const stipple = hero.getByTestId("hero-stipple");
-    await expect(stipple).toBeVisible();
-    await expect(stipple.locator("svg")).toHaveAttribute("aria-hidden", "true");
-    const pathCount = await stipple.locator("svg path").count();
-    expect(pathCount).toBeLessThanOrEqual(8);
-    expect(pathCount).toBeGreaterThanOrEqual(5);
+    // The scroll-scrubbed thesis flow: a live canvas plus spine-derived
+    // waypoint labels (real DOM text).
+    const wave = hero.locator("canvas");
+    await expect(wave).toBeVisible();
+    await expect(wave).toHaveAttribute("aria-hidden", "true");
+    await expect(hero.getByText("Deterministic Engines", { exact: true })).toBeVisible();
 
     expect(filterAllowedErrors(errors)).toEqual([]);
   });
@@ -103,24 +102,14 @@ test.describe("landing responsive", () => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto("/landing");
 
-    /* KNOWN PRE-EXISTING, NOT OURS: section#comparison overflows the 375px
-       viewport by ~112px (measured via element-isolation; its table escapes
-       the overflow-x-auto wrapper). That section belongs to the other
-       workstream — see HANDOFF-LOGIN.md §8. The assertion here isolates it so
-       THIS workstream's surfaces (pill nav, hero, stipple, sheet) are still
-       held to zero overflow rather than hiding behind someone else's bug. */
-    await page.evaluate(() => {
-      (document.querySelector("section#comparison") as HTMLElement | null)?.style.setProperty("display", "none");
-    });
+    // The comparison table became stacked cards below 768px (design rebuild),
+    // so the whole page is held to zero overflow with no exclusions.
     await expectNoHorizontalOverflow(page);
-    await page.evaluate(() => {
-      (document.querySelector("section#comparison") as HTMLElement | null)?.style.removeProperty("display");
-    });
 
-    // Stipple meeting point stays on screen: the crisp diamond is centred.
-    const stippleBox = await page.getByTestId("hero-stipple").locator("svg").boundingBox();
-    expect(stippleBox).not.toBeNull();
-    const centerX = stippleBox!.x + stippleBox!.width / 2;
+    // The thesis flow canvas stays on screen and centred.
+    const waveBox = await page.locator("section#hero canvas").boundingBox();
+    expect(waveBox).not.toBeNull();
+    const centerX = waveBox!.x + waveBox!.width / 2;
     expect(centerX).toBeGreaterThan(0);
     expect(centerX).toBeLessThan(375);
 
@@ -149,7 +138,7 @@ test.describe("landing motion preferences", () => {
     const errors = collectPageErrors(page);
     await page.goto("/landing");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    await expect(page.getByTestId("hero-stipple")).toBeVisible();
+    await expect(page.locator("section#hero canvas")).toBeVisible();
     expect(filterAllowedErrors(errors)).toEqual([]);
   });
 });

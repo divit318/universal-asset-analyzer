@@ -131,6 +131,16 @@ export function buildVerdictPrompt(
     ? `- verdict: MUST be exactly "${scoreDirection(ctx.score.composite)}" — it is computed from the composite score of ${ctx.score.composite}/100 and is not yours to change`
     : `- verdict: bullish, bearish, or neutral — justify it strictly from the data above`;
 
+  // The unified action (Research Score × Portfolio Fit, lib/ios/unified-action.ts)
+  // is settled by the deterministic engines before the model is asked to write.
+  // Stating it as a hard requirement is what makes the narration, the fit panel,
+  // and the position action card structurally incapable of disagreeing.
+  const unifiedAction = portfolio?.action ?? null;
+  const actionRequirement = unifiedAction
+    ? `
+- Your recommended course of action MUST be exactly "${unifiedAction.toUpperCase()}"${suggestedPct ? ` at ${suggestedPct}% of the portfolio` : ""} — it is computed from the research score and the portfolio fit together and is not yours to change. Argue FOR it; never suggest a different action or allocation.`
+    : "";
+
   const portfolioInstructions = hasPortfolioCtx
     ? `
 PORTFOLIO PERSONALIZATION (mandatory):
@@ -138,7 +148,7 @@ PORTFOLIO PERSONALIZATION (mandatory):
 - The thesis MUST include 1 sentence about how this fits or doesn't fit this user's specific portfolio
 - If it fills a missing sector, call that out explicitly
 - Recommend position sizing consistent with the IOS-suggested allocation of ${suggestedPct ?? "N/A"}%
-- If already held: frame as "add to position" vs "initiate new position"`
+- If already held: frame as "add to position" vs "initiate new position"${actionRequirement}`
     : "";
 
   const prompt = `You are an institutional buy-side equity analyst. Based ONLY on the data below, generate a structured investment verdict.

@@ -89,8 +89,9 @@ test.describe("landing hero (Milestone 2)", () => {
     await expect(hero.getByRole("button", { name: /Get started/ })).toBeVisible();
     await expect(hero.locator('a[href="#demo"]')).toBeVisible();
 
-    // The engraved-stipple hero art renders.
-    await expect(hero.getByTestId("hero-stipple")).toBeVisible();
+    // The particle thesis wave renders with its waypoints.
+    await expect(hero.getByText("Ingest", { exact: true })).toBeVisible();
+    await expect(hero.getByText("Trace", { exact: true })).toBeVisible();
   });
 });
 
@@ -105,28 +106,28 @@ test.describe("landing problem → solution → demo (Milestone 3)", () => {
     await page.goto("/landing");
     const solution = page.locator("section#solution");
     await expect(solution.getByRole("heading", { name: "Meet the Universal Asset Analyzer." })).toBeVisible();
-    await expect(solution.getByText("Live market data")).toBeVisible();
+    await expect(solution.getByText("Market data", { exact: true })).toBeVisible();
   });
 
   test("demo runs a canned analysis with no network", async ({ page }) => {
     await page.goto("/landing");
     const demo = page.locator("section#demo");
 
-    const input = demo.getByPlaceholder("Research any ticker…");
+    const input = demo.getByPlaceholder("Search any ticker…");
     await expect(input).toBeVisible();
     const analyze = demo.getByRole("button", { name: "Analyze" });
     await expect(analyze).toBeVisible();
 
     // No result before submitting.
-    await expect(demo.getByText("Illustrative sample — not live data")).toHaveCount(0);
+    await expect(demo.getByText("Sample output, not live data")).toHaveCount(0);
 
     await input.fill("NVDA");
     await analyze.click();
 
-    // Canned result + honest disclaimer appear.
+    // Canned result (after the skeleton beat) + honest disclaimer appear.
     await expect(demo.getByText("NVIDIA Corp.")).toBeVisible();
-    await expect(demo.getByText("Drafted AI summary")).toBeVisible();
-    await expect(demo.getByText("Illustrative sample — not live data")).toBeVisible();
+    await expect(demo.getByText("Composite", { exact: false })).toBeVisible();
+    await expect(demo.getByText("Sample output, not live data")).toBeVisible();
   });
 });
 
@@ -139,10 +140,10 @@ test.describe("landing feature showcase (Milestone 4)", () => {
     await expect(features.getByRole("heading", { name: "Build any screener" })).toBeVisible();
     await expect(features.getByText("Research Hub").first()).toBeVisible();
 
-    // Five feature rows → five preview placeholders, each an accessible image.
-    await expect(features.getByTestId("feature-preview")).toHaveCount(5);
+    // Five feature rows → five illustrative mockups, each an accessible image.
+    await expect(features.getByRole("img", { name: /Illustrative/ })).toHaveCount(5);
     await expect(
-      features.getByRole("img", { name: /Research Hub — company profile/ }),
+      features.getByRole("img", { name: /Illustrative Research Hub screen/ }),
     ).toBeVisible();
   });
 });
@@ -185,7 +186,7 @@ test.describe("landing motion (Milestone 5)", () => {
       await expect(
         page.locator("section#features").getByRole("heading", { name: "Comprehensive company profiles" }),
       ).toBeVisible();
-      await expect(page.locator("section#demo").getByPlaceholder("Research any ticker…")).toBeVisible();
+      await expect(page.locator("section#demo").getByPlaceholder("Search any ticker…")).toBeVisible();
     });
   });
 });
@@ -193,7 +194,7 @@ test.describe("landing motion (Milestone 5)", () => {
 test.describe("landing performance & SEO (Milestone 6)", () => {
   test("exposes landing-specific title and social meta", async ({ page }) => {
     await page.goto("/landing");
-    await expect(page).toHaveTitle("Universal Asset Analyzer — The AI Terminal for Investors");
+    await expect(page).toHaveTitle("Universal Asset Analyzer: The AI Terminal for Investors");
     await expect(page.locator('head meta[name="description"]')).toHaveAttribute("content", /local database you own/);
     await expect(page.locator('head meta[property="og:title"]')).toHaveAttribute("content", /Universal Asset Analyzer/);
   });
@@ -203,8 +204,8 @@ test.describe("landing performance & SEO (Milestone 6)", () => {
     await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
     // Hero owns the single h1; the other 9 IA sections each contribute one h2.
     expect(await page.getByRole("heading", { level: 2 }).count()).toBe(9);
-    // Exactly the five feature stories contribute h3s — no heading-level skips.
-    expect(await page.getByRole("heading", { level: 3 }).count()).toBe(5);
+    // Problem cards, capability rows, and FAQ questions contribute h3s.
+    expect(await page.getByRole("heading", { level: 3 }).count()).toBe(15);
   });
 
   test("controls are keyboard reachable and named", async ({ page }) => {
@@ -216,7 +217,7 @@ test.describe("landing performance & SEO (Milestone 6)", () => {
 
     // Primary and footer navigation are distinct, named landmarks.
     await expect(page.getByRole("navigation", { name: "Primary" })).toBeAttached();
-    await expect(page.getByRole("navigation", { name: "Footer" })).toBeAttached();
+    await expect(page.getByRole("navigation", { name: "Footer", exact: true })).toBeAttached();
   });
 });
 
@@ -248,9 +249,17 @@ test.describe("landing content finalization (Milestone 7)", () => {
     await page.goto("/landing");
     const faq = page.locator("section#faq");
 
+    // First row open by default; the rest closed, one-open-at-a-time.
+    const firstButton = faq.getByRole("button", { name: "Do I need an account?" });
+    await expect(firstButton).toHaveAttribute("aria-expanded", "true");
+
+    const aiButton = faq.getByRole("button", { name: "What AI does it use?" });
     const answer = faq.getByText(/Claude \(Anthropic\) via your own API key/);
-    await expect(answer).toBeHidden(); // closed <details> by default
-    await faq.getByText("What AI does it use?").click();
+    await expect(aiButton).toHaveAttribute("aria-expanded", "false");
+    await expect(answer).not.toBeInViewport();
+    await aiButton.click();
+    await expect(aiButton).toHaveAttribute("aria-expanded", "true");
+    await expect(firstButton).toHaveAttribute("aria-expanded", "false");
     await expect(answer).toBeVisible();
   });
 
@@ -258,8 +267,23 @@ test.describe("landing content finalization (Milestone 7)", () => {
     await page.goto("/landing");
     // Every IA section now has a real component — the skeleton marker is gone.
     await expect(page.getByText("Section placeholder")).toHaveCount(0);
-    // Copy was corrected to what actually ships (Claude on the user's own key).
-    await expect(page.getByText(/OpenAI/)).toHaveCount(0);
+    // Banned hosted-SaaS claims (design-rebuild brief) never render.
+    const html = await page.content();
+    for (const banned of [
+      /institutional.grade/i,
+      /always encrypted/i,
+      /encrypted and secure/i,
+      /end-to-end encrypted/i,
+      /real-?time infrastructure/i,
+      /instant results/i,
+      /bank-level security/i,
+      /enterprise grade/i,
+      /trusted by investors/i,
+      /professional.grade research/i,
+      /all rights reserved/i,
+    ]) {
+      expect(html, `banned claim rendered: ${banned}`).not.toMatch(banned);
+    }
   });
 
   test("F-01 guard: every retired false-locality claim stays retired", async ({ page }) => {
@@ -325,13 +349,13 @@ test.describe("pricing: two tiers, one of which exists", () => {
 
     const pro = pricing.getByTestId("pricing-pro");
     await expect(pro).toBeVisible();
-    await expect(pro.getByText("Planned — not yet available")).toBeVisible();
+    await expect(pro.getByText("Planned, not yet available")).toBeVisible();
     await expect(pro.getByText("Nothing is purchasable today", { exact: false })).toBeVisible();
     // Planned features are marked planned, per item.
     await expect(pro.getByText("(planned)").first()).toBeVisible();
 
     // The BYOK cost line is present and names the model + published rate.
-    await expect(pricing.getByText(/Claude Opus 5’s published rate/)).toBeVisible();
+    await expect(pricing.getByText(/Claude Opus 5's published rate/)).toBeVisible();
     await expect(pricing.getByText(/\$5 per million input/)).toBeVisible();
   });
 
@@ -352,7 +376,7 @@ test.describe("pricing: two tiers, one of which exists", () => {
 
   test("free CTA opens the auth modal on Create account", async ({ page }) => {
     await page.goto("/landing");
-    await page.locator("section#pricing").getByRole("button", { name: "Get started free" }).click();
+    await page.locator("section#pricing").getByRole("button", { name: "Get started" }).click();
     const dialog = page.getByRole("dialog", { name: "Create account" });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByRole("button", { name: "Create account" })).toBeVisible();
@@ -364,7 +388,7 @@ test.describe("pricing: two tiers, one of which exists", () => {
 
     // Default in this (non-IN locale) environment: USD on both cards.
     await expect(pricing.getByTestId("pricing-free").getByText("$0")).toBeVisible();
-    await expect(pricing.getByTestId("pricing-pro").getByText("$19", { exact: true })).toBeVisible();
+    await expect(pricing.getByTestId("pricing-pro").getByText("$180", { exact: true })).toBeVisible();
 
     await pricing.getByRole("button", { name: "₹ INR" }).click();
     await expect(pricing.getByTestId("pricing-free").getByText("₹0")).toBeVisible();
@@ -402,7 +426,7 @@ test.describe("pricing: two tiers, one of which exists", () => {
     const done = page.waitForResponse((r) => r.url().includes("/api/pricing-interest") && r.ok());
     await submit.click();
     await done;
-    await expect(pro.getByText("You’re on the list", { exact: false })).toBeVisible();
+    await expect(pro.getByText("on the list", { exact: false })).toBeVisible();
     await expect(pro.getByRole("button", { name: "Notify me" })).toHaveCount(0);
   });
 
@@ -413,13 +437,9 @@ test.describe("pricing: two tiers, one of which exists", () => {
     for (const width of [375, 768, 1440]) {
       await page.setViewportSize({ width, height: 900 });
       await page.goto("/landing#pricing");
+      await page.waitForLoadState("networkidle");
+      await page.waitForTimeout(250);
 
-      if (width === 375) {
-        // Documented pre-existing exclusion (HANDOFF-LOGIN §8): section#comparison
-        // overflows at 375px and predates both workstreams. Isolate it so this
-        // assertion keeps guarding the pricing section; do NOT delete this check.
-        await page.addStyleTag({ content: "section#comparison{display:none !important}" });
-      }
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
       );

@@ -89,8 +89,9 @@ export function AuthModalHost() {
   // email field is also the useful behaviour.
   useEffect(() => {
     if (!open) return;
-    const raf = requestAnimationFrame(() => emailRef.current?.focus());
-    return () => cancelAnimationFrame(raf);
+    // setTimeout, not rAF: the motion engine owns the page's ONE rAF loop.
+    const raf = window.setTimeout(() => emailRef.current?.focus(), 16);
+    return () => window.clearTimeout(raf);
   }, [open, tab]);
 
   const close = useCallback(() => {
@@ -159,7 +160,7 @@ export function AuthModalHost() {
       });
       const data: { error?: string } = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setFormError(data.error ?? "The request failed — please try again.");
+        setFormError(data.error ?? "The request failed. Please try again.");
         return;
       }
       setOpen(false);
@@ -267,7 +268,7 @@ export function AuthModalHost() {
                    email infrastructure in a local-first app, so a reset link
                    cannot exist; this states the honest recovery path. */
                 <p className="rounded-control bg-surface-2 px-3 py-2 leading-relaxed">
-                  This account lives in this machine&apos;s local database (<code className="font-mono">data/app.db</code>) —
+                  This account lives in this machine&apos;s local database (<code className="font-mono">data/app.db</code>);
                   there is no reset email. Recovery means editing that database directly.
                 </p>
               )}

@@ -27,6 +27,10 @@ const PERSONALIZATION_KEYS = [
   "suggestedPct",
   "missingSectors",
   "objective",
+  // The unified action (Research × Fit) — the prompt pins the model's
+  // suggested action to it, so it must be part of the cache identity.
+  "action",
+  "actionReason",
 ] as const;
 
 /**

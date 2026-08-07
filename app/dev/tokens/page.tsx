@@ -32,8 +32,8 @@ const SURFACES: SwatchDef[] = [
   { token: "--border", label: "border", dark: "#282d37", light: "#e2e6ec" },
   { token: "--border-strong", label: "border-strong", dark: "#384049", light: "#cdd4dd" },
   { token: "--foreground", label: "foreground (ink)", dark: "#edeff2", light: "#101722" },
-  { token: "--muted", label: "muted", dark: "#99a3b2", light: "#56606f" },
-  { token: "--faint", label: "faint", dark: "#626c7a", light: "#8a94a2" },
+  { token: "--muted", label: "muted", dark: "#99a3b2", light: "#4d5564" },
+  { token: "--faint", label: "faint", dark: "#626c7a", light: "#656f7d" },
 ];
 
 const BRAND: SwatchDef[] = [
@@ -42,9 +42,9 @@ const BRAND: SwatchDef[] = [
 ];
 
 const SEMANTIC: SwatchDef[] = [
-  { token: "--positive", label: "positive", dark: "#4ade80", light: "#16a34a", note: "Gains. Data only, never chrome." },
-  { token: "--negative", label: "negative", dark: "#f87171", light: "#dc2626", note: "Losses. Data only, never chrome." },
-  { token: "--warning", label: "warning (signal orange)", dark: "#fb923c", light: "#c2540a", note: "Cautions. Orange, not amber — never confusable with a brass verdict." },
+  { token: "--positive", label: "positive", dark: "#4ade80", light: "#15803d", note: "Gains. Data only, never chrome." },
+  { token: "--negative", label: "negative", dark: "#f87171", light: "#b91c1c", note: "Losses. Data only, never chrome." },
+  { token: "--warning", label: "warning (signal orange)", dark: "#fb923c", light: "#ad4a08", note: "Cautions. Orange, not amber — never confusable with a brass verdict." },
 ];
 
 const CHARTS: SwatchDef[] = [

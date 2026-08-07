@@ -65,7 +65,7 @@ export function ValuationStrip({ symbol, price }: Props) {
   const mos = summary.result.marginOfSafety;
   const mosTone = mos == null ? "text-muted"
     : mos >= 20 ? "text-positive"
-    : mos >= 0 ? "text-yellow-500"
+    : mos >= 0 ? "text-yellow-500 light:text-yellow-700"
     : "text-negative";
 
   return (

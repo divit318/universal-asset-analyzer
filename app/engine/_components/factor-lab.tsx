@@ -18,13 +18,16 @@
 
 import { CountUp } from "@/app/_components/count-up";
 import { Reveal } from "@/app/_components/reveal";
+import { useTheme } from "@/app/_components/theme";
 import { Badge } from "@/app/_components/ui";
 import { FACTOR_META, WEIGHTED_FACTORS, type FactorWeights } from "@/lib/engine-desk";
 import { Derivation, Rule, fmtZ } from "./desk-primitives";
 
 /** Distinct hues per factor, reused by both the weight bars and the evolution
- *  band so a colour means the same factor in both. */
-const FACTOR_COLOR: Record<string, string> = {
+ *  band so a colour means the same factor in both. Theme-paired: the dark set
+ *  is the original; the light set deepens each hue for a white canvas
+ *  (2026-08-08 light-mode audit — #f59e0b value sat at 2.0:1 on white). */
+const FACTOR_COLOR_DARK: Record<string, string> = {
   momentum: "#38bdf8",
   quality: "#22c55e",
   value: "#f59e0b",
@@ -33,8 +36,22 @@ const FACTOR_COLOR: Record<string, string> = {
   regime: "#2dd4bf",
   mc_upside: "#fb923c",
 };
+const FACTOR_COLOR_LIGHT: Record<string, string> = {
+  momentum: "#0369a1",
+  quality: "#15803d",
+  value: "#b45309",
+  low_vol: "#7c3aed",
+  revision: "#db2777",
+  regime: "#0f766e",
+  mc_upside: "#ad4a08",
+};
+
+function useFactorColors(): Record<string, string> {
+  return useTheme().theme === "light" ? FACTOR_COLOR_LIGHT : FACTOR_COLOR_DARK;
+}
 
 export function FactorLab({ weights }: { weights: FactorWeights }) {
+  const factorColor = useFactorColors();
   const current = weights.current;
   const live = WEIGHTED_FACTORS.map((f) => ({
     factor: f,
@@ -87,7 +104,7 @@ export function FactorLab({ weights }: { weights: FactorWeights }) {
                   <div
                     className="absolute inset-y-0 left-0 animate-bar-fill rounded-full"
                     style={{
-                      backgroundColor: FACTOR_COLOR[w.factor],
+                      backgroundColor: factorColor[w.factor],
                       // Scaled to the largest weight, not to 100%, so the shape of
                       // the weighting is visible rather than five short stubs.
                       ["--bar-value" as string]: `${((w.weight ?? 0) / (ranked[0].weight ?? 1)) * 100}%`,
@@ -131,7 +148,7 @@ export function FactorLab({ weights }: { weights: FactorWeights }) {
                     <span
                       aria-hidden
                       className="h-2 w-2 rounded-sm"
-                      style={{ backgroundColor: FACTOR_COLOR[w.factor] }}
+                      style={{ backgroundColor: factorColor[w.factor] }}
                     />
                     {w.label}
                   </span>
@@ -177,6 +194,7 @@ export function FactorLab({ weights }: { weights: FactorWeights }) {
  * weights being renormalised between runs.
  */
 function WeightEvolution({ history }: { history: FactorWeights["history"] }) {
+  const factorColor = useFactorColors();
   const W = 100;
   const H = 34;
   const factors = WEIGHTED_FACTORS.filter((f) =>
@@ -214,7 +232,7 @@ function WeightEvolution({ history }: { history: FactorWeights["history"] }) {
       aria-label="Factor weight share over recent engine runs"
     >
       {bands.map((b) => (
-        <polygon key={b.factor} points={b.points} fill={FACTOR_COLOR[b.factor]} opacity={0.85} />
+        <polygon key={b.factor} points={b.points} fill={factorColor[b.factor]} opacity={0.85} />
       ))}
     </svg>
   );

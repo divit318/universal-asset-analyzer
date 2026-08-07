@@ -24,6 +24,7 @@ export type AiLogCategory =
   | "no_api_key"
   | "bad_api_key"
   | "rate_limited"
+  | "quota_exhausted"
   | "network"
   | "model_missing"
   | "all_models_failed"
@@ -53,6 +54,7 @@ const WARN_LEVEL = new Set<AiLogCategory>([
   "no_api_key",
   "bad_api_key",
   "rate_limited",
+  "quota_exhausted",
   "network",
   "model_missing",
   "grounding",

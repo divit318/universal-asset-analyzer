@@ -139,7 +139,10 @@ export function BrandMark({ size = "md", tone = "brand", className = "", label }
  */
 function Wordmark({ className = "" }: { className?: string }) {
   return (
-    <span className={`font-mono font-semibold leading-none tracking-tight ${className}`}>
+    // aria-hidden: the lockup's accessible name is the real product name via
+    // aria-label below; exposing the stylized "asset/analyzer" text would
+    // trip WCAG 2.5.3 (label-content-name-mismatch) without helping anyone.
+    <span aria-hidden="true" className={`font-mono font-semibold leading-none tracking-tight ${className}`}>
       <span className="text-foreground">asset</span>
       <span className="text-faint">/</span>
       <span className="text-foreground">analyzer</span>
@@ -205,9 +208,11 @@ export function BrandLockup({
 
   // `aria-label` on the whole lockup, rather than letting the wordmark's own
   // text be the accessible name: "asset/analyzer" is not what the product is
-  // called, and a screen-reader user deserves the real name.
+  // called, and a screen-reader user deserves the real name. The visible
+  // wordmark text leads the label so speech-input users saying what they see
+  // still match (WCAG 2.5.3 label-in-name).
   const shared = {
-    "aria-label": "Universal Asset Analyzer",
+    "aria-label": "asset/analyzer, Universal Asset Analyzer",
     className: `uaa-brand-lockup inline-flex items-center ${gap} outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:rounded-control ${className}`,
   };
 

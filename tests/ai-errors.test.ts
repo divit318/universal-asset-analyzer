@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { classifyAiError } from "@/lib/ai/errors";
+import { DevinQuotaExhaustedError } from "@/lib/ai/devin-cli";
 import { AnthropicKeyMissingError } from "@/lib/ai/providers/anthropic-provider";
 import { AllModelsFailedError } from "@/lib/ai/router";
 
@@ -76,6 +77,29 @@ describe("classifyAiError", () => {
     const c = classifyAiError(invalid);
     expect(c.category).toBe("bad_api_key");
     expect(c.message).toMatch(/Settings/);
+  });
+
+  it("classifies an exhausted provider quota as quota_exhausted, non-retryable, naming the provisioning fix", () => {
+    const c = classifyAiError(new DevinQuotaExhaustedError("Your weekly usage quota has been exhausted."));
+    expect(c.category).toBe("quota_exhausted");
+    // Retrying cannot refill a spent plan quota; "try again in a moment" was
+    // the misleading advice this category exists to prevent.
+    expect(c.retryable).toBe(false);
+    expect(c.message).toMatch(/quota/i);
+    expect(c.message).toMatch(/settings/i);
+    expect(c.message).not.toMatch(/try again in a moment/i);
+  });
+
+  it("sees through the wrapper when every attempt died on the same exhausted quota", () => {
+    const quota = new DevinQuotaExhaustedError("Your weekly usage quota has been exhausted.");
+    const wrapped = new AllModelsFailedError(
+      "opportunity-engine",
+      ["devin/claude-opus-5-medium: quota exhausted"],
+      [quota],
+    );
+    const c = classifyAiError(wrapped);
+    expect(c.category).toBe("quota_exhausted");
+    expect(c.retryable).toBe(false);
   });
 
   it("classifies a bad JSON parse as invalid_response", () => {

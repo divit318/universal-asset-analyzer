@@ -306,7 +306,7 @@ Run these before considering any change complete:
 
 ```bash
 npx tsc --noEmit          # must be silent
-npx vitest run            # 2832 tests as of the 2026-08-06 research demo hardening
+npx vitest run            # 2898 tests as of the 2026-08-07 Wire degraded-scan / provider-failover fix
 npx eslint app lib        # see "known pre-existing" below
 npm run build             # catches Server/Client boundary errors tsc misses
                           # NEVER while `next dev` is running — they race for .next/

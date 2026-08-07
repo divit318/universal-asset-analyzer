@@ -150,6 +150,7 @@ export function ExplainableValue({
   children,
   align = "start",
   className = "",
+  underline = true,
 }: {
   explanation: ScoreExplanation | null;
   children: ReactNode;
@@ -157,6 +158,9 @@ export function ExplainableValue({
    *  viewport collision clamping whenever honoring it would clip the panel. */
   align?: "start" | "end";
   className?: string;
+  /** Set false where the dotted-underline affordance would fight the type
+   *  treatment (e.g. a display-size KPI); the cursor + focus ring remain. */
+  underline?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -203,7 +207,9 @@ export function ExplainableValue({
         aria-controls={open ? panelId : undefined}
         aria-label={`Explain: ${explanation.title}`}
         onClick={() => setOpen((o) => !o)}
-        className="inline-flex cursor-help items-center gap-0.5 rounded-[4px] underline decoration-dotted decoration-foreground/35 underline-offset-4 outline-none transition-colors hover:decoration-brand focus-visible:ring-2 focus-visible:ring-brand/40"
+        className={`inline-flex cursor-help items-center gap-0.5 rounded-[4px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand/40 ${
+          underline ? "underline decoration-dotted decoration-foreground/35 underline-offset-4 hover:decoration-brand" : ""
+        }`}
       >
         {children}
       </button>

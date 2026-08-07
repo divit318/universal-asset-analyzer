@@ -10,7 +10,7 @@ import type { FitTier } from "@/lib/ios/types";
 
 const TIER_STYLES: Record<FitTier, string> = {
   excellent: "border-positive/40 bg-positive/10 text-positive",
-  good:      "border-emerald-500/30 bg-emerald-500/8 text-emerald-400",
+  good:      "border-emerald-500/30 light:border-emerald-700/40 bg-emerald-500/8 text-emerald-400 light:text-emerald-700",
   neutral:   "border-border bg-surface-2 text-muted",
   poor:      "border-warning/30 bg-warning/8 text-warning",
   avoid:     "border-negative/30 bg-negative/8 text-negative",
@@ -56,7 +56,7 @@ export function PortfolioFitBadge({ score, tier, showScore = true, size = "sm" }
 export function FitDot({ tier }: { tier: FitTier }) {
   const colors: Record<FitTier, string> = {
     excellent: "bg-positive",
-    good:      "bg-emerald-500",
+    good:      "bg-emerald-500 light:bg-emerald-600",
     neutral:   "bg-muted",
     poor:      "bg-warning",
     avoid:     "bg-negative",

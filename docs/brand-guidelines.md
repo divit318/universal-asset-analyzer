@@ -150,8 +150,8 @@ asset and is retained unchanged.
 
 | State | Dark | Light | Usage |
 |-------|------|-------|-------|
-| Positive | #4ade80 | #16a34a | Gains, buys, upside. Data only. |
-| Negative | #f87171 | #dc2626 | Losses, sells, risk. Data only. |
+| Positive | #4ade80 | **#15803D** (was #16a34a) | Gains, buys, upside. Data only. |
+| Negative | #f87171 | **#B91C1C** (was #dc2626) | Losses, sells, risk. Data only. |
 | Warning | **#FB923C** (was #fbbf24) | **#C2540A** (was #d97706) | Cautions, degraded signals. Data only. |
 
 Warning migrates from amber to signal orange so no viewer ever confuses a caution with a

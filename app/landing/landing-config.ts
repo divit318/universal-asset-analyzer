@@ -22,8 +22,28 @@
 /** The marketing home. Becomes "/" post-migration. */
 export const LANDING_HOME = "/landing";
 
-/** Where the primary CTA ("Experience UAA") enters the live application. */
+/** Where the primary CTA enters the live application. */
 export const APP_ENTRY = "/";
+
+/**
+ * One name per action, everywhere: nav, hero, pricing, final CTA, footer all
+ * use PRIMARY_ACTION. The secondary CTA scrolls to the in-page demo (no demo
+ * video asset exists in the repo), so it is named for what it does.
+ */
+export const PRIMARY_ACTION = "Get started";
+export const SECONDARY_ACTION = "See it in action";
+
+/**
+ * The four canonical trust claims. Trust strips appear four times on the page
+ * and all argue these same four things, so the page makes one consistent case.
+ * Icons attach at the call site (lucide imports stay out of this config).
+ */
+export const TRUST_CLAIMS = [
+  { label: "Local-first", sub: "Your database, on your disk" },
+  { label: "Deterministic", sub: "Engines compute, AI explains" },
+  { label: "Your own key", sub: "Your provider bills you directly" },
+  { label: "No subscription", sub: "Free and complete today" },
+] as const;
 
 /**
  * The information architecture, in scroll order. This drives both the page

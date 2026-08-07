@@ -18,7 +18,7 @@ import { BREAKPOINTS, SIZE } from "./types";
 import { getHomeModule, homeModuleIds } from "./registry";
 
 /** Tailwind gap tokens — never raw pixels, so the design system owns spacing. */
-export type SpacingToken = "gap-3" | "gap-4" | "gap-6" | "gap-8";
+export type SpacingToken = "gap-3" | "gap-4" | "gap-5" | "gap-6" | "gap-8";
 
 export interface LayoutSlot {
   moduleId: HomeModuleId;
@@ -88,13 +88,15 @@ export const HOME_LAYOUT: HomeLayoutConfig = {
     },
     // Attention row: the ranked queue (the page's centerpiece) beside the
     // Radar. "What needs a decision now, and what's worth a look next."
+    // Spans widen the Radar to 5/12 between lg and xl (a 60/40 row) so its
+    // tiles stay readable, then settle to the 2/3 + 1/3 rhythm at xl.
     {
       id: "attention",
       columns: GRID,
-      gap: "gap-4",
+      gap: "gap-5",
       slots: [
-        { moduleId: "attention-queue" },
-        { moduleId: "radar" },
+        { moduleId: "attention-queue", span: { lg: 7, xl: 8 } },
+        { moduleId: "radar", span: { lg: 5, xl: 4 } },
       ],
     },
     // The market tape — a full-width strip of compact instrument cards.

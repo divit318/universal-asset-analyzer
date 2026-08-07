@@ -304,7 +304,7 @@ export function ClassPerformanceChart({ symbols, colors }: Props) {
                 content={<PriceTooltip symbols={symbols} colors={colors} ct={ct} />}
                 cursor={{ stroke: ct.axis, strokeWidth: 1, strokeDasharray: "4 4" }}
               />
-              <ReferenceLine y={0} stroke="#4b5563" strokeWidth={1} strokeDasharray="4 4" />
+              <ReferenceLine y={0} stroke={ct.referenceLine} strokeWidth={1} strokeDasharray="4 4" />
               {symbols.map((sym, i) => (
                 <Line
                   key={sym}

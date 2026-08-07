@@ -15,7 +15,7 @@
 import type { UniversalPortfolioReport } from "../portfolio/report";
 import type { HealthScore } from "../portfolio/engines/health";
 import { metricSessionState } from "../metric";
-import type { HealthFactor, HealthRadarAxis, PortfolioPulse, PulseMover } from "./contracts";
+import type { DayContributor, HealthFactor, HealthRadarAxis, PortfolioPulse, PulseMover } from "./contracts";
 
 /** An empty portfolio has no pulse. It says so, rather than rendering zeros. */
 const EMPTY: PortfolioPulse = {
@@ -42,7 +42,46 @@ const EMPTY: PortfolioPulse = {
   biggestWeakness: null,
   healthCoveragePct: null,
   healthFactors: [],
+  topContributors: [],
 };
+
+/**
+ * Today's largest contributions to the book's day move, in bps of the book's
+ * previous-close value (`totalValue - todayChangeDollar`). Reads the same
+ * non-stale day moves the movers use; adds no arithmetic beyond the division.
+ *
+ * Shape follows the day's tape when it can: the top two positive rows plus the
+ * single largest negative. When the sign mix is one-sided, it degrades to the
+ * top three by magnitude rather than padding with noise rows.
+ */
+export function buildTopContributors(
+  movers: PulseMover[],
+  totalValue: number,
+  todayChangeDollar: number,
+  nameBySymbol: Map<string, string>,
+): DayContributor[] {
+  const prevCloseValue = totalValue - todayChangeDollar;
+  if (!(prevCloseValue > 0)) return [];
+
+  const rows = movers
+    .filter((m) => m.dayDollar != null && m.dayDollar !== 0)
+    .map<DayContributor>((m) => ({
+      symbol: m.symbol,
+      name: nameBySymbol.get(m.symbol.toUpperCase()) ?? m.symbol,
+      bps: ((m.dayDollar as number) / prevCloseValue) * 10_000,
+      dayDollar: m.dayDollar as number,
+    }));
+
+  const positive = rows.filter((r) => r.bps > 0).sort((a, b) => b.bps - a.bps);
+  const negative = rows.filter((r) => r.bps < 0).sort((a, b) => a.bps - b.bps);
+
+  const picked =
+    positive.length >= 2 && negative.length >= 1
+      ? [...positive.slice(0, 2), negative[0]]
+      : rows.sort((a, b) => Math.abs(b.bps) - Math.abs(a.bps)).slice(0, 3);
+
+  return picked.sort((a, b) => b.bps - a.bps);
+}
 
 /**
  * Short axis labels for the radar. Keyed by the health engine's own dimension
@@ -248,5 +287,11 @@ export function buildPortfolioPulse(report: UniversalPortfolioReport | null, now
     biggestWeakness,
     healthCoveragePct: report.health.coveragePct ?? null,
     healthFactors: buildHealthFactors(report.health),
+    topContributors: buildTopContributors(
+      scored,
+      report.totalValue,
+      report.todayChangeDollar,
+      new Map(report.holdings.filter((h) => h.symbol).map((h) => [(h.symbol as string).toUpperCase(), h.name])),
+    ),
   };
 }

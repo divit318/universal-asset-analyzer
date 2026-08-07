@@ -232,6 +232,11 @@ function buildVerdictParams(
   if (fit.suggestedAllocationPct != null) params.suggestedPct = fit.suggestedAllocationPct.toFixed(1);
   if (profile.missingSectors.length > 0)
     params.missingSectors = profile.missingSectors.slice(0, 4).join(", ");
+  // The unified action (Research × Fit) — pinned in the prompt so the AI
+  // narration cannot recommend a different action than the fit panel and the
+  // position action card render.
+  params.action = fit.action.kind;
+  params.actionReason = fit.action.reason;
   return params;
 }
 
@@ -510,82 +515,9 @@ function ResearchWorkspace({
 
   const [downloading, setDownloading] = useState(false);
 
-  // IOS — portfolio fit
-  const ios = useIOSSafe();
-  const portfolioFit = ios && fundamentals
-    ? ios.getPortfolioFit({
-        symbol: quote.symbol,
-        sector: fundamentals.snapshot?.sector ?? null,
-        marketCap: quote.marketCap,
-        scoreResult: fundamentals.score ?? null,
-        dividendYield: fundamentals.snapshot?.dividendYield != null
-          ? fundamentals.snapshot.dividendYield * 100
-          : null,
-        geography: market as "US" | "IN" | "JP" | "HK" | "AU" | "EU" | "CRYPTO",
-        isOnWatchlist: false,
-      })
-    : null;
-
-  // Portfolio Decision Engine — reuses PortfolioReport.recommendations as-is
-  // (already computed by lib/portfolio-analytics.ts's computeRecommendations()),
-  // scoped to this symbol when it's an actual holding.
-  const portfolioRecommendation = ios?.report?.recommendations.find((r) => r.symbol === quote.symbol) ?? null;
-
-  // Current share count for PositionActionCard — read from the already-loaded
-  // IOS report rather than a separate fetch. A component-local fetch here
-  // used to compete for one of the browser's ~6 per-origin connection slots
-  // against this page's much slower requests (AI verdict, movement
-  // explanation), so under load it could stall indefinitely and the card
-  // would silently never appear.
-  const currentShares = ios?.report?.holdings.find((h) => h.symbol?.toUpperCase() === quote.symbol.toUpperCase())?.quantity ?? 0;
-
-  // Portfolio context for AI — serialized for the copilot and verdict endpoint.
-  // Only populated when the user has an actual portfolio (not generic/empty).
-  const portfolioContextForAI = ios?.profile.hasPortfolio
-    ? {
-        hasPortfolio: true as const,
-        objective: ios.profile.objective,
-        holdingSymbols: ios.profile.holdingSymbols,
-        sectorWeights: ios.profile.sectorWeights,
-        missingSectors: ios.profile.missingSectors,
-        overweightSectors: ios.profile.overweightSectors,
-        fitScore: portfolioFit?.fitScore,
-        fitTier: portfolioFit?.fitTier,
-        fitReasons: portfolioFit?.reasons,
-        isInPortfolio: portfolioFit?.isInPortfolio,
-        suggestedAllocationPct: portfolioFit?.suggestedAllocationPct,
-        suggestedAmount: portfolioFit?.suggestedAmount,
-        concentrationWarning: portfolioFit?.concentrationWarning,
-      }
-    : undefined;
-
-  // Track research behavior
-  useEffect(() => {
-    ios?.trackResearch(quote.symbol);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quote.symbol]);
-
-  /* ── AI verdict, streamed ────────────────────────────────────────────────────
-     The personalization params are built once, memoized on their own values, and
-     the request is gated on the IOS profile having settled. That gate is the
-     whole fix: the previous version deliberately generated a *generic* verdict
-     and then re-generated a *personalized* one the moment portfolio fit arrived.
-     On a backend that serializes generations, that "progressive enhancement"
-     bought nothing and cost a second full inference — and because it never
-     aborted the first, a third request from the same transition ran too.
-
-     No memo is needed here: the hook keys the request on the *serialized* query
-     string, so a fresh object with equal values is not a new request. */
-  const verdictParams = buildVerdictParams(portfolioFit, ios?.profile ?? null);
-
-  const verdictStream = useVerdictStream(quote.symbol, verdictParams, {
-    // Waiting for the profile costs a second or two of "waiting"; not waiting
-    // costs an entire extra local inference and shows a verdict about to be
-    // replaced. `ios == null` means there is no IOS provider at all, so there is
-    // nothing to wait for.
-    enabled: ios == null || ios.profileReady,
-  });
-  const verdict = verdictStream.verdict;
+  // IOS + AI verdict are wired up BELOW the asset-class datasets: the fit
+  // scorer inherits the canonical Research Score (asset-class-aware), so the
+  // fund/crypto/commodity/forex/India scores must exist before fit is computed.
 
   // The asset-class-specific sections below all go through `useDataset`, which
   // gives each of them three things the hand-rolled `useEffect` + `fetch` +
@@ -678,6 +610,114 @@ function ResearchWorkspace({
   const macroSummary = macroEntry.data?.summary ?? null;
   const macroLoading = macroEntry.status === "loading";
 
+  /* ── India shorthand (needed here: the India snapshot is the canonical
+        Research Score for NSE/BSE names, which the fit scorer inherits) ── */
+  const hasIndia = !!india && !indiaLoading;
+  const indiaCompany = india?.company;
+  const indiaDerived = india?.derived;
+  const indiaQuote = india?.quote ?? null;
+  const hasIndiaFinancials = (indiaCompany?.annualPL?.length ?? 0) > 0 || (indiaCompany?.quarterlyPL?.length ?? 0) > 0;
+  const hasIndiaOwnership = (indiaCompany?.shareholding?.length ?? 0) > 0;
+
+  // The single conviction score for Indian stocks (screener.in). Yahoo's
+  // composite is deliberately not shown for NSE/BSE names — its fundamentals
+  // coverage is unreliable and produced a second, contradictory headline score.
+  const indiaSnapshot = useMemo(
+    () => (indiaCompany && indiaDerived ? computeIndiaSnapshot(indiaCompany, indiaDerived) : null),
+    [indiaCompany, indiaDerived],
+  );
+
+  /* ── THE canonical Research Score ─────────────────────────────────────────
+     One standalone-quality number per asset, asset-class-aware: the same
+     ScoreResult the hero badge and the Conviction tab render. Everything
+     downstream — portfolio fit, the unified action, the allocation, the AI
+     verdict — inherits this exact number rather than recomputing its own. */
+  const researchScoreResult = isIndiaEquity || isMacro
+    ? null
+    : isFund ? fundScore : isCrypto ? cryptoScore : isCommodity ? commodityScore : isForex ? forexScore : fundamentals?.score ?? null;
+  const researchComposite = isIndiaEquity
+    ? indiaSnapshot?.composite ?? null
+    : researchScoreResult?.composite ?? null;
+
+  // IOS — portfolio fit. Inherits the Research Score above (fit = research
+  // quality + portfolio effects — see lib/ios/fit-scorer.ts).
+  const ios = useIOSSafe();
+  const portfolioFit = ios && (fundamentals || researchScoreResult || indiaSnapshot)
+    ? ios.getPortfolioFit({
+        symbol: quote.symbol,
+        sector: fundamentals?.snapshot?.sector ?? null,
+        marketCap: quote.marketCap,
+        researchScore: researchComposite,
+        scoreResult: researchScoreResult ?? fundamentals?.score ?? null,
+        dividendYield: fundamentals?.snapshot?.dividendYield != null
+          ? fundamentals.snapshot.dividendYield * 100
+          : null,
+        geography: market as "US" | "IN" | "JP" | "HK" | "AU" | "EU" | "CRYPTO",
+        isOnWatchlist: false,
+      })
+    : null;
+
+  // Portfolio Decision Engine — reuses PortfolioReport.recommendations as-is
+  // (already computed by lib/portfolio-analytics.ts's computeRecommendations()),
+  // scoped to this symbol when it's an actual holding.
+  const portfolioRecommendation = ios?.report?.recommendations.find((r) => r.symbol === quote.symbol) ?? null;
+
+  // Current share count for PositionActionCard — read from the already-loaded
+  // IOS report rather than a separate fetch. A component-local fetch here
+  // used to compete for one of the browser's ~6 per-origin connection slots
+  // against this page's much slower requests (AI verdict, movement
+  // explanation), so under load it could stall indefinitely and the card
+  // would silently never appear.
+  const currentShares = ios?.report?.holdings.find((h) => h.symbol?.toUpperCase() === quote.symbol.toUpperCase())?.quantity ?? 0;
+
+  // Portfolio context for AI — serialized for the copilot and verdict endpoint.
+  // Only populated when the user has an actual portfolio (not generic/empty).
+  const portfolioContextForAI = ios?.profile.hasPortfolio
+    ? {
+        hasPortfolio: true as const,
+        objective: ios.profile.objective,
+        holdingSymbols: ios.profile.holdingSymbols,
+        sectorWeights: ios.profile.sectorWeights,
+        missingSectors: ios.profile.missingSectors,
+        overweightSectors: ios.profile.overweightSectors,
+        fitScore: portfolioFit?.fitScore,
+        fitTier: portfolioFit?.fitTier,
+        fitReasons: portfolioFit?.reasons,
+        isInPortfolio: portfolioFit?.isInPortfolio,
+        suggestedAllocationPct: portfolioFit?.suggestedAllocationPct,
+        suggestedAmount: portfolioFit?.suggestedAmount,
+        concentrationWarning: portfolioFit?.concentrationWarning,
+      }
+    : undefined;
+
+  // Track research behavior
+  useEffect(() => {
+    ios?.trackResearch(quote.symbol);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quote.symbol]);
+
+  /* ── AI verdict, streamed ────────────────────────────────────────────────────
+     The personalization params are built once, memoized on their own values, and
+     the request is gated on the IOS profile having settled. That gate is the
+     whole fix: the previous version deliberately generated a *generic* verdict
+     and then re-generated a *personalized* one the moment portfolio fit arrived.
+     On a backend that serializes generations, that "progressive enhancement"
+     bought nothing and cost a second full inference — and because it never
+     aborted the first, a third request from the same transition ran too.
+
+     No memo is needed here: the hook keys the request on the *serialized* query
+     string, so a fresh object with equal values is not a new request. */
+  const verdictParams = buildVerdictParams(portfolioFit, ios?.profile ?? null);
+
+  const verdictStream = useVerdictStream(quote.symbol, verdictParams, {
+    // Waiting for the profile costs a second or two of "waiting"; not waiting
+    // costs an entire extra local inference and shows a verdict about to be
+    // replaced. `ios == null` means there is no IOS provider at all, so there is
+    // nothing to wait for.
+    enabled: ios == null || ios.profileReady,
+  });
+  const verdict = verdictStream.verdict;
+
   async function downloadReport() {
     setDownloading(true);
     try {
@@ -755,22 +795,6 @@ function ResearchWorkspace({
 
   const hasStatements = !!fundamentals?.statements;
   const valuation = fundamentals?.valuation ?? [];
-  const hasIndia = !!india && !indiaLoading;
-
-  /* ── India shorthand ─────────────────────────────────────── */
-  const indiaCompany = india?.company;
-  const indiaDerived = india?.derived;
-  const indiaQuote = india?.quote ?? null;
-  const hasIndiaFinancials = (indiaCompany?.annualPL?.length ?? 0) > 0 || (indiaCompany?.quarterlyPL?.length ?? 0) > 0;
-  const hasIndiaOwnership = (indiaCompany?.shareholding?.length ?? 0) > 0;
-
-  // The single conviction score for Indian stocks (screener.in). Yahoo's
-  // composite is deliberately not shown for NSE/BSE names — its fundamentals
-  // coverage is unreliable and produced a second, contradictory headline score.
-  const indiaSnapshot = useMemo(
-    () => (indiaCompany && indiaDerived ? computeIndiaSnapshot(indiaCompany, indiaDerived) : null),
-    [indiaCompany, indiaDerived],
-  );
 
   // A re-polled quote briefly marks the price instead of silently swapping the
   // number under the user (see app/_components/use-value-flash.ts). Keyed on the
@@ -934,13 +958,14 @@ function ResearchWorkspace({
           — the hero falls back to the AI's growth-outlook word there. */}
       <Reveal index={2}>
         {(() => {
-          const heroScoreResult = isIndiaEquity || isMacro
-            ? null
-            : isFund ? fundScore : isCrypto ? cryptoScore : isCommodity ? commodityScore : isForex ? forexScore : fundamentals?.score ?? null;
+          // `researchScoreResult` / `indiaSnapshot` are THE canonical Research
+          // Score computed above — the exact same number the fit scorer
+          // inherited, so the hero, the fit panel, and the Conviction tab are
+          // structurally reading one figure.
           const headlineScore = isIndiaEquity
             ? (indiaSnapshot ? { composite: indiaSnapshot.composite, recommendation: indiaSnapshot.recommendation } : null)
-            : heroScoreResult
-              ? { composite: heroScoreResult.composite, recommendation: heroScoreResult.recommendation }
+            : researchScoreResult
+              ? { composite: researchScoreResult.composite, recommendation: researchScoreResult.recommendation }
               : null;
           return (
             <DecisionHero
@@ -952,7 +977,7 @@ function ResearchWorkspace({
               error={verdictStream.error}
               onRetry={verdictStream.retry}
               headlineScore={headlineScore}
-              dataConfidence={heroScoreResult?.confidence ?? null}
+              dataConfidence={researchScoreResult?.confidence ?? null}
             />
           );
         })()}

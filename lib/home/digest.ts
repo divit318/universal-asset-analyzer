@@ -31,6 +31,7 @@ import { getHistory, getQuote, getQuotes } from "../yahoo";
 import { portfolioPerformance } from "../portfolio-performance";
 import { buildMarketIntelligence } from "./market-intel";
 import { buildPortfolioPulse } from "./pulse";
+import { buildEquityCurve, EQUITY_CURVE_DAYS } from "./equity-curve";
 import { buildThreats } from "./threats";
 import { buildAttribution } from "./attribution";
 import { buildTimelineFeeds } from "./timeline";
@@ -58,7 +59,7 @@ import {
   type HomeFingerprint,
 } from "./changes";
 import { buildSymbolContext } from "./symbol-context";
-import { MIN_DAYS_TO_ANNUALIZE, type ChangeFeed, type HomeDigest, type PortfolioPerformanceSummary } from "./contracts";
+import { MIN_DAYS_TO_ANNUALIZE, type ChangeFeed, type EquityCurve, type HomeDigest, type PortfolioPerformanceSummary } from "./contracts";
 import type { PortfolioLot, WatchlistItem } from "../types";
 
 const BENCHMARK = "SPY";
@@ -172,6 +173,10 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
     { id: "notifications", run: async () => listNotifications(20) },
     { id: "performance", run: () => buildPerformance() },
 
+    // The Book card's 90-day return index. Rides the same cached `history`
+    // dataset the performance step uses; a failure degrades the sparkline alone.
+    { id: "equityCurve", run: () => buildEquityCurve(EQUITY_CURVE_DAYS) },
+
     // Market intelligence needs breadth and sector attention, both of which
     // ride on ctx (regime + rotation + the portfolio's sector weights).
     {
@@ -195,6 +200,7 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
   const notifications = stepValue<Parameters<typeof buildRecommendedActions>[2]>(plan, "notifications") ?? [];
   const market = stepValue<HomeDigest["marketIntelligence"]>(plan, "market");
   const performance = stepValue<PortfolioPerformanceSummary>(plan, "performance");
+  const equityCurve = stepValue<EquityCurve>(plan, "equityCurve");
 
   // Events: next 14 days, which is the window both the calendar card and the
   // watchlist's earnings list read from.
@@ -295,6 +301,10 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
 
     performance:
       performance ?? { status: "degraded", xirrPct: null, holdingDays: 0, totalReturnPct: 0, totalReturnDollar: 0, benchmark: null },
+
+    equityCurve:
+      equityCurve ??
+      { status: "degraded", windowDays: EQUITY_CURVE_DAYS, points: [], portfolioPct: null, benchmarkPct: null, benchmarkSymbol: BENCHMARK, coveragePct: null },
 
     activity,
 

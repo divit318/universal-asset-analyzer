@@ -5,13 +5,15 @@ import type { InvestmentPersonality, InvestmentPersonalityTag } from "@/lib/type
 import { LoadingMark } from "@/app/_components/loading-mark";
 
 const TAG_STYLE: Record<InvestmentPersonalityTag, string> = {
-  Compounder:    "text-emerald-400 border-emerald-400/30 bg-emerald-400/8",
+  /* light: variants deepen each identity hue to AA on white — the -400 set is
+     dark-canvas only (2026-08-08 light-mode audit). */
+  Compounder:    "text-emerald-400 light:text-emerald-700 border-emerald-400/30 light:border-emerald-700/40 bg-emerald-400/8",
   Cyclical:      "text-warning border-warning/30 bg-warning/8",
-  Turnaround:    "text-blue-400 border-blue-400/30 bg-blue-400/8",
+  Turnaround:    "text-chart-2 border-chart-2/30 bg-chart-2/8",
   "High Growth": "text-positive border-positive/30 bg-positive/8",
-  Income:        "text-purple-400 border-purple-400/30 bg-purple-400/8",
-  "Deep Value":  "text-cyan-400 border-cyan-400/30 bg-cyan-400/8",
-  Defensive:     "text-slate-400 border-slate-400/30 bg-slate-400/8",
+  Income:        "text-purple-400 light:text-purple-700 border-purple-400/30 light:border-purple-700/40 bg-purple-400/8",
+  "Deep Value":  "text-cyan-400 light:text-cyan-700 border-cyan-400/30 light:border-cyan-700/40 bg-cyan-400/8",
+  Defensive:     "text-slate-400 light:text-slate-600 border-slate-400/30 light:border-slate-600/40 bg-slate-400/8",
   "High Quality": "text-accent border-accent/30 bg-accent/8",
 };
 

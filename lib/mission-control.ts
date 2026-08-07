@@ -18,7 +18,7 @@
 
 import { getPortfolioForIOS } from "./ios/server";
 import { buildInvestmentProfile, fromUniversalReport } from "./ios/profile";
-import { rankByFit } from "./ios/fit-scorer";
+import { DEFAULT_FIT_WEIGHT, rankByFit } from "./ios/fit-scorer";
 import type { FitAssetData } from "./ios/types";
 import { getLatestSectorRotation } from "./sector-rotation";
 import { getLatestScannerSnapshot } from "./scanner/cache";
@@ -51,9 +51,18 @@ export interface ActionQueueItem {
 
 export interface OpportunitySnapshotItem {
   symbol: string;
+  /** 0.6 × scanner quality + 0.4 × portfolio fit — see rankByFit. */
   combinedScore: number;
   fitTier: string;
   fitSummary: string;
+  /** The scanner's standalone quality composite (0-100). Optional: absent on
+   *  digests cached before 2026-08-07; render without the decomposition then. */
+  absoluteScore?: number;
+  /** The IOS portfolio-fit score (0-100) blended into `combinedScore`. */
+  fitScore?: number;
+  /** A second distinct fit driver, so two panels showing the same symbol never
+   *  repeat the same sentence. Null when only one evidenced reason exists. */
+  fitDetail?: string | null;
 }
 
 export interface SectorAttentionChange {
@@ -295,12 +304,15 @@ export function buildOpportunitySnapshot(
       absoluteScore: opp.opportunityScore.composite,
     }));
 
-  const ranked = rankByFit(candidates, profile, 0.4).slice(0, 5);
+  const ranked = rankByFit(candidates, profile, DEFAULT_FIT_WEIGHT).slice(0, 5);
   const opportunities: OpportunitySnapshotItem[] = ranked.map((r) => ({
     symbol: r.symbol,
     combinedScore: r.combinedScore,
     fitTier: r.fitTier,
     fitSummary: r.fitSummary,
+    absoluteScore: r.absoluteScore,
+    fitScore: r.fitScore,
+    fitDetail: r.fitDetail ?? null,
   }));
 
   const status: CardStatus = snapshot.freshness.level === "stale" ? "degraded" : "ok";

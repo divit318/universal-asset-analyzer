@@ -11,8 +11,12 @@ import {
 } from "recharts";
 import type { ScreenerInShareholding } from "@/lib/screener-in";
 import { useChartTheme } from "@/app/_components/chart-theme";
+import { useTheme } from "@/app/_components/theme";
 
-const HOLDER_COLORS: Record<string, string> = {
+/* Holder identity palette, theme-paired: the dark set is the original; the
+   light set deepens each hue for a white canvas (2026-08-08 light-mode audit —
+   #fbbf24 retail sat at 1.9:1 on white). */
+const HOLDER_COLORS_DARK: Record<string, string> = {
   promoter: "#4ade80",
   fii:      "#60a5fa",
   dii:      "#a78bfa",
@@ -20,6 +24,22 @@ const HOLDER_COLORS: Record<string, string> = {
   govt:     "#f97316",
   other:    "#9aa3af",
 };
+const HOLDER_COLORS_LIGHT: Record<string, string> = {
+  promoter: "#15803d",
+  fii:      "#2563eb",
+  dii:      "#7c3aed",
+  retail:   "#b45309",
+  govt:     "#c2410c",
+  other:    "#64748b",
+};
+
+function useHolderColors(): { colors: Record<string, string>; fallback: string } {
+  const light = useTheme().theme === "light";
+  return {
+    colors: light ? HOLDER_COLORS_LIGHT : HOLDER_COLORS_DARK,
+    fallback: light ? "#64748b" : "#9aa3af",
+  };
+}
 
 const HOLDER_LABELS: Record<string, string> = {
   promoter: "Promoters",
@@ -103,6 +123,7 @@ function OwnershipTooltip({
 /* -------------------------------------------------------------------------- */
 
 function CurrentDistribution({ rows }: { rows: ScreenerInShareholding[] }) {
+  const { colors, fallback } = useHolderColors();
   const items = rows
     .map((r) => ({ holding: r.holding, name: HOLDER_LABELS[r.holding] ?? r.name, value: num(r.values.at(-1) ?? "") }))
     .filter((d) => d.value != null && d.value > 0)
@@ -121,7 +142,7 @@ function CurrentDistribution({ rows }: { rows: ScreenerInShareholding[] }) {
                 className="h-full rounded-full"
                 style={{
                   width: `${Math.min(100, item.value ?? 0)}%`,
-                  background: HOLDER_COLORS[item.holding] ?? "#9aa3af",
+                  background: colors[item.holding] ?? fallback,
                 }}
               />
             </div>
@@ -182,6 +203,7 @@ function TrendInsight({ rows }: { rows: ScreenerInShareholding[] }) {
 /* -------------------------------------------------------------------------- */
 
 function QoQChanges({ rows }: { rows: ScreenerInShareholding[] }) {
+  const { colors, fallback } = useHolderColors();
   const changes = rows
     .map((r) => {
       if (r.values.length < 2) return null;
@@ -205,7 +227,7 @@ function QoQChanges({ rows }: { rows: ScreenerInShareholding[] }) {
             <div className="flex items-center gap-2">
               <span
                 className="h-2 w-2 rounded-full"
-                style={{ background: HOLDER_COLORS[c.holding] ?? "#9aa3af" }}
+                style={{ background: colors[c.holding] ?? fallback }}
               />
               <span className="text-xs text-muted">{c.name}</span>
             </div>
@@ -234,6 +256,7 @@ export function OwnershipTimeline({
   periods: string[];
 }) {
   const ct = useChartTheme();
+  const { colors, fallback } = useHolderColors();
   const AXIS = ct.axis, GRID = ct.grid;
   // Only include main categories with sufficient data
   const mainRows = rows.filter(
@@ -267,8 +290,8 @@ export function OwnershipTimeline({
               <defs>
                 {holders.map((h) => (
                   <linearGradient key={h} id={`grad-${h}`} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={HOLDER_COLORS[h] ?? "#9aa3af"} stopOpacity={0.3} />
-                    <stop offset="95%" stopColor={HOLDER_COLORS[h] ?? "#9aa3af"} stopOpacity={0} />
+                    <stop offset="5%" stopColor={colors[h] ?? fallback} stopOpacity={0.3} />
+                    <stop offset="95%" stopColor={colors[h] ?? fallback} stopOpacity={0} />
                   </linearGradient>
                 ))}
               </defs>
@@ -281,7 +304,7 @@ export function OwnershipTimeline({
                   key={h}
                   type="monotone"
                   dataKey={h}
-                  stroke={HOLDER_COLORS[h] ?? "#9aa3af"}
+                  stroke={colors[h] ?? fallback}
                   strokeWidth={1.5}
                   fill={`url(#grad-${h})`}
                   connectNulls
@@ -293,7 +316,7 @@ export function OwnershipTimeline({
           <div className="flex flex-wrap gap-3 text-xs text-muted">
             {holders.map((h) => (
               <span key={h} className="flex items-center gap-1.5">
-                <span className="h-2 w-3 rounded-sm" style={{ background: HOLDER_COLORS[h] ?? "#9aa3af" }} />
+                <span className="h-2 w-3 rounded-sm" style={{ background: colors[h] ?? fallback }} />
                 {HOLDER_LABELS[h] ?? h}
               </span>
             ))}

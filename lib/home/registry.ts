@@ -54,8 +54,8 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
 
   "book": {
     id: "book",
-    title: "Book",
-    description: "Health, return vs. benchmark, cash, and today's P&L.",
+    title: "Portfolio Health",
+    description: "Health, return vs. benchmark, cash, and concentration at a glance.",
     loading: "eager",
     refresh: "on-focus",
     refreshIntervalMs: null,
@@ -72,7 +72,9 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     dataSources: ["portfolio-engine", "yahoo"],
     dependencies: [],
     ai: null,
-    navTarget: { href: "/portfolio", label: "Open portfolio" },
+    // The card's footer carries the single "Open portfolio" link — a second
+    // header link to the same route read as two different destinations.
+    navTarget: null,
   },
 
   /* ---------------- Change band ---------------- */
@@ -131,7 +133,7 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
   "radar": {
     id: "radar",
     title: "Radar",
-    description: "Ideas entering the pipeline — scanner fits and buy candidates.",
+    description: "Ideas entering the pipeline. Scanner fits and buy candidates.",
     loading: "deferred",
     refresh: "on-focus",
     refreshIntervalMs: null,
@@ -153,8 +155,8 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
 
   "market-intelligence": {
     id: "market-intelligence",
-    title: "Market Intelligence",
-    description: "Indices, volatility, breadth, rates, commodities, currencies, and crypto.",
+    title: "Market Overview",
+    description: "Global markets at a glance — indices, sentiment, rates, commodities, currencies, and crypto.",
     loading: "eager",
     // The one module where the number on screen is genuinely live. Quotes carry a
     // 15s TTL in the platform registry, so a 60s poll costs at most one provider

@@ -12,7 +12,8 @@
 "use client";
 
 import { CountUp } from "@/app/_components/count-up";
-import { REGIME_COLOR, REGIME_ORDER, type Breadth, type RegimeBrief } from "@/lib/engine-desk";
+import { useTheme } from "@/app/_components/theme";
+import { regimeColor, REGIME_ORDER, type Breadth, type RegimeBrief } from "@/lib/engine-desk";
 import { Derivation, ProbMeter, RegimeChip, Rule, fmtPct } from "./desk-primitives";
 
 export function RegimeHero({
@@ -26,7 +27,8 @@ export function RegimeHero({
   latestDate: string;
   nSymbols: number;
 }) {
-  const accent = regime?.label ? REGIME_COLOR[regime.label] ?? "var(--brand)" : "var(--brand)";
+  const theme = useTheme().theme;
+  const accent = regime?.label ? regimeColor(regime.label, theme) ?? "var(--brand)" : "var(--brand)";
   const netTilt = breadth.pct_bullish - breadth.pct_bearish;
 
   return (
@@ -138,7 +140,7 @@ export function RegimeHero({
                   <div key={label} className={isModal ? "" : "opacity-70"}>
                     <ProbMeter
                       prob={prob}
-                      color={REGIME_COLOR[label]}
+                      color={regimeColor(label, theme)}
                       height="h-2.5"
                       label={
                         <span className={isModal ? "font-semibold text-foreground" : ""}>{label}</span>

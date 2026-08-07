@@ -1,79 +1,218 @@
-import { Check } from "lucide-react";
+import {
+  CandlestickChart,
+  FileText,
+  SlidersHorizontal,
+  PieChart,
+  Sparkles,
+  AudioLines,
+  ChevronDown,
+  type LucideIcon,
+} from "lucide-react";
 import type { SectionProps } from "../section-registry";
-import { Reveal } from "../reveal";
+import { Reveal } from "../motion/reveal";
+import { SectionShell } from "../primitives/section-shell";
+import { OrnamentalEyebrow } from "../primitives/ornamental-eyebrow";
+import { TwoToneHeadline } from "../primitives/two-tone-headline";
+import { IconTile } from "../primitives/icon-tile";
+import { TrustStrip } from "../primitives/trust-strip";
+import { ParticleField } from "../primitives/particle-field";
 
 /**
- * Solution / Product Reveal — the "one workbench" beat that answers the Problem.
- * Static (Milestone 3): the dashboard is a hollow panel mock; its staged
- * "assembles itself" animation is Milestone 5 and the real screenshot is
- * Milestone 7.
+ * Solution — left: eyebrow, two-line serif headline (explicit break so it is
+ * exactly two lines at 1024+; harness-verified), lead, five-item feature list
+ * staggered 70ms. Right: the illustrative dashboard filling its column, its
+ * top edge aligned to the text column's top (items-start grid).
  *
- * Copy is the approved Creative Direction final wording (§9).
+ * Signature (3.3): the mockup's amber glow ramps 0→full over 900ms after the
+ * panel lands (700ms entrance + 900ms box-shadow ramp, one-off).
  */
-const BULLETS = [
-  "Live market data",
-  "SEC financials",
-  "Dynamic screeners",
-  "Portfolio analytics",
-  "In-app AI analyst",
+const FEATURES: { icon: LucideIcon; title: string; description: string }[] = [
+  { icon: CandlestickChart, title: "Market data", description: "Prices, charts, and fundamentals from public sources." },
+  { icon: FileText, title: "SEC financials", description: "Filing data, income statements, and more." },
+  { icon: SlidersHorizontal, title: "Dynamic screeners", description: "Build and scan with any metric." },
+  { icon: PieChart, title: "Portfolio analytics", description: "Risk, performance, and attribution." },
+  { icon: Sparkles, title: "In-app AI analyst", description: "Narrated insights, tailored to you." },
 ];
+
+/* Hand-authored index rows: name, sparkline path (48x16 box), level, delta. */
+const INDICES = [
+  { name: "S&P 500", path: "M0 12 L8 10 L16 11 L24 7 L32 8 L40 4 L48 5", level: "5,299.70", delta: "+1.12%", up: true },
+  { name: "NASDAQ 100", path: "M0 13 L8 11 L16 12 L24 8 L32 9 L40 5 L48 3", level: "18,573.13", delta: "+1.35%", up: true },
+  { name: "VIX", path: "M0 6 L8 9 L16 7 L24 10 L32 9 L40 12 L48 11", level: "13.42", delta: "-2.30%", up: false },
+];
+
+function MarketsPanel() {
+  return (
+    <div className="rounded-card border border-hairline bg-surface-2/60 p-4">
+      <p className="text-mk-small font-semibold text-foreground">Markets at a glance</p>
+      <ul className="mt-3 flex flex-col divide-y divide-hairline">
+        {INDICES.map((ix) => (
+          <li key={ix.name} className="flex items-center gap-3 py-2.5">
+            <span className="w-20 shrink-0 text-mk-small text-muted">{ix.name}</span>
+            <svg viewBox="0 0 48 16" className="h-4 w-12 shrink-0 text-brand" aria-hidden="true">
+              <path d={ix.path} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+            <span className="ml-auto text-right">
+              <span className="block font-mono text-mk-small font-medium tabular-nums text-foreground">{ix.level}</span>
+              <span className={`block font-mono text-caption tabular-nums ${ix.up ? "text-positive" : "text-negative"}`}>
+                {ix.delta}
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function PerformancePanel() {
+  return (
+    <div className="rounded-card border border-hairline bg-surface-2/60 p-4">
+      <div className="flex items-center justify-between">
+        <p className="text-mk-small font-semibold text-foreground">Market performance</p>
+        <span className="flex items-center gap-1 rounded-control border border-hairline bg-surface-3 px-2 py-0.5 font-mono text-caption tabular-nums text-muted">
+          6M
+          <ChevronDown className="h-3 w-3" strokeWidth={2} />
+        </span>
+      </div>
+      <div className="mt-3 flex gap-2">
+        <div className="flex flex-col justify-between py-0.5 text-right font-mono text-micro tabular-nums text-muted">
+          <span>600</span>
+          <span>550</span>
+          <span>500</span>
+          <span>450</span>
+        </div>
+        <svg viewBox="0 0 260 80" className="h-24 w-full text-brand" preserveAspectRatio="none" aria-hidden="true">
+          <path
+            data-draw-path
+            d="M0 66 L18 58 L34 62 L52 40 L70 46 L88 30 L106 38 L124 44 L142 34 L160 40 L178 28 L196 34 L214 22 L232 28 L252 14"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <circle cx="252" cy="14" r="3.5" fill="currentColor" />
+        </svg>
+      </div>
+      <div className="mt-1.5 flex justify-between pl-8 font-mono text-micro tabular-nums text-muted">
+        {["Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"].map((m) => (
+          <span key={m}>{m}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BriefPanel() {
+  return (
+    <div className="relative overflow-hidden rounded-card border border-hairline bg-surface-2/60 p-4 sm:col-span-2">
+      <ParticleField variant="card-interior" className="inset-x-0 bottom-0 h-2/3 w-full" />
+      <div className="relative flex items-start gap-3">
+        <span aria-hidden="true" className="mt-0.5 text-brand">
+          <AudioLines className="h-5 w-5" strokeWidth={1.75} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-mk-small font-semibold text-foreground">AI Analyst Brief</p>
+          <p className="mt-1 max-w-md text-mk-small text-muted">
+            AI-narrated market and portfolio insights, personalized to what matters most.
+          </p>
+        </div>
+        {/* No audio narration exists in the product, so no play affordance:
+            a "Read brief" text link stands in (decorative inside the mockup). */}
+        <span className="shrink-0 self-center text-mk-small font-medium text-brand underline decoration-brand/40 underline-offset-4">
+          Read brief
+        </span>
+      </div>
+    </div>
+  );
+}
 
 export function Solution({ section, index }: SectionProps) {
   const headingId = `${section.id}-heading`;
-  const banded = index % 2 === 1;
 
   return (
-    <section
-      id={section.id}
-      aria-labelledby={headingId}
-      className={`scroll-mt-20 border-b border-border ${banded ? "bg-surface" : "bg-background"}`}
-    >
-      <Reveal className="mx-auto grid w-full max-w-6xl items-center gap-12 px-6 py-24 lg:grid-cols-2">
-        <div className="flex flex-col gap-5 text-center lg:text-left">
-          <p className="text-label font-semibold uppercase tracking-widest text-brand">{section.kicker}</p>
-          <h2 id={headingId} className="text-balance text-2xl font-semibold tracking-tight text-foreground sm:text-4xl">
-            Meet the Universal Asset Analyzer.
-          </h2>
-          <p className="text-pretty text-base leading-relaxed text-muted">
+    <SectionShell id={section.id} headingId={headingId} band={index % 2 === 1}>
+      {/* Header spans the full measure so the forced two-line break renders
+          as exactly two lines at 1440/1280/1024 (harness-verified). */}
+      <div className="flex flex-col items-start">
+        <Reveal delay={0}>
+          <OrnamentalEyebrow variant="left">The solution</OrnamentalEyebrow>
+        </Reveal>
+        <Reveal delay={90}>
+          <TwoToneHeadline
+            id={headingId}
+            align="left"
+            className="mt-mk-eyebrow"
+            segments={[
+              { text: "Meet the Universal", block: true },
+              { text: "Asset Analyzer", block: true },
+              { text: ".", tone: "accent", tight: true },
+            ]}
+          />
+        </Reveal>
+        <Reveal delay={180}>
+          <p data-lead className="mt-mk-headline max-w-measure-prose text-pretty text-mk-lead text-muted">
             One app for all your investment research, with AI narration on your own key.
           </p>
-          <ul className="flex flex-col gap-2.5 self-center lg:self-start">
-            {BULLETS.map((b) => (
-              <li key={b} className="flex items-center gap-2.5 text-sm text-foreground">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-muted text-brand">
-                  <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
-                </span>
-                {b}
+        </Reveal>
+      </div>
+
+      {/* Feature list and dashboard: top edges aligned exactly (items-start). */}
+      <div className="mt-mk-lead grid items-start gap-12 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-14">
+        <div className="flex flex-col items-start">
+          <Reveal delay={280} stagger={70} as="ul" className="flex w-full flex-col">
+            {FEATURES.map((f, i) => (
+              <li
+                key={f.title}
+                className={`flex items-center gap-4 ${i === 0 ? "pb-4" : "py-4"} ${i < FEATURES.length - 1 ? "border-b border-hairline" : ""}`}
+              >
+                <IconTile icon={f.icon} shape="circle" />
+                <div>
+                  <p className="text-mk-body font-semibold text-foreground">{f.title}</p>
+                  <p className="text-mk-small text-muted">{f.description}</p>
+                </div>
               </li>
             ))}
-          </ul>
+          </Reveal>
         </div>
 
-        {/* Hollow dashboard mock — three panels that will "assemble" in M5. */}
-        <div aria-hidden="true" className="rounded-panel border border-border bg-surface p-3 shadow-card">
-          <div className="grid grid-cols-3 gap-3">
-            <div className="col-span-1 flex flex-col gap-2 rounded-card border border-border bg-surface-2 p-3">
-              <div className="h-2 w-12 rounded-full bg-border-strong" />
-              <div className="h-2 w-16 rounded-full bg-border" />
-              <div className="h-2 w-10 rounded-full bg-border" />
-              <div className="mt-2 h-2 w-14 rounded-full bg-border" />
+        {/* Right column: the illustrative dashboard, filling its column, top-aligned
+            with the text column. The amber glow ramps in over 900ms after landing. */}
+        <Reveal delay={280}>
+          <div
+            role="img"
+            aria-label="Illustrative UAA dashboard: markets at a glance with index levels and sparklines, a market performance chart, and an AI Analyst Brief panel."
+            className="relative w-full rounded-[20px] border border-brand/25 bg-surface p-4 shadow-glow-brand transition-[box-shadow] delay-700 duration-[900ms] [[data-reveal=hidden]_&]:shadow-none [[data-reveal=hidden]_&]:delay-0"
+          >
+            <div aria-hidden="true" className="grid gap-3 sm:grid-cols-2">
+              <MarketsPanel />
+              <PerformancePanel />
+              <BriefPanel />
             </div>
-            <div className="col-span-2 flex flex-col gap-2 rounded-card border border-border bg-surface-2 p-3">
-              <div className="h-2 w-20 rounded-full bg-border-strong" />
-              <div className="flex h-20 items-end gap-1.5">
-                {[40, 65, 50, 80, 60, 90, 72].map((h, i) => (
-                  <div key={i} className="flex-1 rounded-sm bg-brand/40" style={{ height: `${h}%` }} />
-                ))}
-              </div>
-            </div>
-            <div className="col-span-3 flex flex-col gap-2 rounded-card border border-border bg-surface-2 p-3">
-              <div className="h-2 w-24 rounded-full bg-brand/50" />
-              <div className="h-2 w-full rounded-full bg-border" />
-              <div className="h-2 w-4/5 rounded-full bg-border" />
-            </div>
+            <svg
+              data-illustrative
+              aria-hidden="true"
+              className="pointer-events-none absolute bottom-[11px] right-[11px] h-[9px] w-[76px] opacity-30"
+              viewBox="0 0 76 9"
+            >
+              <text x="76" y="8" textAnchor="end" className="fill-foreground font-sans" fontSize="8" letterSpacing="1.5">
+                ILLUSTRATIVE
+              </text>
+            </svg>
           </div>
-        </div>
-      </Reveal>
-    </section>
+        </Reveal>
+      </div>
+
+      {/* The trust beat. */}
+      <div className="mt-mk-lead flex flex-col items-center">
+        <Reveal delay={0}>
+          <OrnamentalEyebrow>Built for depth. Owned by you.</OrnamentalEyebrow>
+        </Reveal>
+        <Reveal delay={90} className="w-full">
+          <TrustStrip className="mt-mk-group" variant="bare" />
+        </Reveal>
+      </div>
+    </SectionShell>
   );
 }

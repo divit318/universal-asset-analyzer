@@ -24,6 +24,7 @@ export type AiErrorCategory =
   | "no_api_key"
   | "bad_api_key"
   | "rate_limited"
+  | "quota_exhausted"
   | "network"
   | "model_missing"
   | "all_models_failed"
@@ -48,6 +49,11 @@ const USER_MESSAGE: Record<AiErrorCategory, string> = {
     "The AI provider rejected your API key (invalid or revoked). Replace it in Settings — every figure on this page is computed locally and unaffected.",
   rate_limited:
     "The AI provider is rate-limiting requests right now; automatic retries were exhausted. Try again in a moment — the computed figures are unaffected.",
+  // Distinct from rate_limited on purpose: a burst 429 clears in seconds, an
+  // exhausted plan quota does not — "try again in a moment" is advice that
+  // cannot work here, and the real fixes are provisioning ones.
+  quota_exhausted:
+    "Your AI provider's usage quota is exhausted (for Devin: purchase on-demand usage or enable auto-reload at app.devin.ai/settings/usage). Connect another provider in Settings to keep AI features running — the computed figures are unaffected.",
   network:
     "Can't reach the AI service right now. The metric table above doesn't depend on it and is already complete.",
   model_missing: "The model this task needs isn't available.",
@@ -131,6 +137,7 @@ const PROMOTABLE_CAUSES: ReadonlySet<AiErrorCategory> = new Set([
   "no_api_key",
   "bad_api_key",
   "rate_limited",
+  "quota_exhausted",
   "network",
 ]);
 
@@ -161,6 +168,7 @@ export function classifyAiError(err: unknown): ClassifiedAiError {
   else if (code === "anthropic_key_missing" || code === "api_key_missing") category = "no_api_key";
   else if (code === "anthropic_key_invalid" || code === "api_key_invalid") category = "bad_api_key";
   else if (code === "rate_limited") category = "rate_limited";
+  else if (code === "quota_exhausted") category = "quota_exhausted";
   else if (code === "network") category = "network";
   else if (code === "model_missing") category = "model_missing";
   else if (code === "all_models_failed") category = "all_models_failed";
@@ -199,6 +207,8 @@ export function classifyAiError(err: unknown): ClassifiedAiError {
       category !== "cancelled" &&
       category !== "model_missing" &&
       category !== "no_api_key" &&
-      category !== "bad_api_key",
+      category !== "bad_api_key" &&
+      // Retrying cannot refill a spent plan quota; the fix is provisioning.
+      category !== "quota_exhausted",
   };
 }

@@ -15,10 +15,9 @@ import type { FundamentalsSnapshot, ValuationPoint } from "@/lib/types";
 import { useChartTheme } from "@/app/_components/chart-theme";
 import { formatRatio } from "@/lib/format";
 
-/* Categorical series colors — theme-neutral. Structural axis/grid/tooltip come
-   from useChartTheme() inside the component (light-mode aware). */
-const BLUE = "#60a5fa";
-const AMBER = "#fbbf24";
+/* Series colors come from useChartTheme() (ct.blue / ct.amber) — the previous
+   module literals were the dark palette and washed out on white (2026-08-08
+   light-mode audit). */
 
 type Metric = "pe" | "ps";
 
@@ -111,7 +110,7 @@ export function ValuationHistoryChart({
   }));
 
   const label = metric === "pe" ? "Trailing P/E" : "Price / Sales";
-  const color = metric === "pe" ? BLUE : AMBER;
+  const color = metric === "pe" ? ct.blue : ct.amber;
 
   // When the Now and Avg reference lines sit close together their labels
   // overlap at the same right edge — split them to opposite ends of the line.

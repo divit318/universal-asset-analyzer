@@ -1,19 +1,35 @@
 /**
- * Analysis-to-action layer — turns "this is attractive and fits your portfolio"
- * into the concrete, sized next step.
+ * Analysis-to-action layer — turns the unified recommendation into the
+ * concrete, sized next step.
  *
- * The IOS fit scorer already produces a suggested allocation % and $ amount, but
- * the user still had to do the arithmetic: how many shares is that, given what I
- * already hold and today's price? This closes that gap — every research verdict
- * can end in an executable order ("Buy 12 shares (~$1,850) to establish a 4.0%
- * position") plus its portfolio impact.
+ * The IOS fit scorer produces a suggested allocation % and $ amount AND the
+ * unified action (lib/ios/unified-action.ts — derived from the Research Score
+ * and the Portfolio Fit Score together), but the user still had to do the
+ * arithmetic: how many shares is that, given what I already hold and today's
+ * price? This closes that gap — every research verdict can end in an
+ * executable order ("Buy 12 shares (~$1,850) to establish a 4.0% position")
+ * plus its portfolio impact.
+ *
+ * The DECISION (buy at all / starter / wait / avoid / exit) belongs to the
+ * unified action matrix and is passed in via `unifiedKind`; this module only
+ * resolves it against live share math (a permitted "add" can still resolve to
+ * trim/hold when the position has drifted past target). Callers without a
+ * unified action fall back to the legacy fit-tier heuristics unchanged.
  *
  * Pure and deterministic — no DB, no network.
  */
 
-import type { FitTier } from "./ios/types";
+import type { FitTier, UnifiedActionKind } from "./ios/types";
 
-export type PositionActionKind = "initiate" | "add" | "trim" | "exit" | "hold" | "avoid";
+export type PositionActionKind =
+  | "initiate"
+  | "add"
+  | "starter"
+  | "trim"
+  | "exit"
+  | "hold"
+  | "wait"
+  | "avoid";
 
 export interface PositionAction {
   kind: PositionActionKind;
@@ -44,6 +60,14 @@ export interface PositionActionInput {
   fitTier: FitTier;
   isInPortfolio: boolean;
   concentrationWarning: boolean;
+  /**
+   * The unified action derived from Research Score + Portfolio Fit
+   * (PortfolioFitAnalysis.action.kind). When present it decides WHETHER to
+   * trade; the share math below only sizes it. Omitted → legacy fit-tier path.
+   */
+  unifiedKind?: UnifiedActionKind | null;
+  /** The unified action's rationale, cited in the wait/hold/avoid detail line. */
+  unifiedReason?: string | null;
 }
 
 function fmtShares(n: number): string {
@@ -59,11 +83,12 @@ function fmtMoney(n: number): string {
 }
 
 /**
- * Produce a sized, portfolio-aware action from a fit suggestion + live price +
- * current holding. `tol` (the no-trade band) prevents churn on tiny deltas.
+ * Produce a sized, portfolio-aware action from the unified recommendation +
+ * live price + current holding. `tol` (the no-trade band) prevents churn on
+ * tiny deltas.
  */
 export function computePositionAction(input: PositionActionInput): PositionAction {
-  const { price, portfolioValue, currentShares, targetPct, fitTier, isInPortfolio } = input;
+  const { price, portfolioValue, currentShares, targetPct, fitTier, isInPortfolio, unifiedKind } = input;
 
   const currentValue = currentShares * price;
   const currentPct = portfolioValue > 0 ? (currentValue / portfolioValue) * 100 : 0;
@@ -83,7 +108,44 @@ export function computePositionAction(input: PositionActionInput): PositionActio
   const PCT_TOL = 1.5; // percentage points
 
   let kind: PositionActionKind;
-  if (fitTier === "avoid") {
+  if (unifiedKind != null) {
+    // The unified matrix already weighed Research Score × Portfolio Fit; the
+    // share math only resolves buy-permitted actions against the live drift.
+    switch (unifiedKind) {
+      case "exit":
+        kind = "exit";
+        break;
+      case "avoid":
+        kind = "avoid";
+        break;
+      case "wait":
+        kind = "wait";
+        break;
+      case "hold":
+        // A hold can still be overweight enough to trim.
+        kind = deltaAmount < -tol && pctGap > PCT_TOL ? "trim" : "hold";
+        break;
+      case "starter":
+        kind = isInPortfolio
+          ? deltaAmount > tol || pctGap < -PCT_TOL ? "add" : "hold"
+          : targetPct > 0 ? "starter" : "wait";
+        break;
+      case "initiate":
+      case "add":
+      case "trim":
+      default:
+        if (!isInPortfolio) {
+          kind = targetPct > 0 && (deltaAmount > tol || pctGap < -PCT_TOL) ? "initiate" : "wait";
+        } else if (deltaAmount > tol || pctGap < -PCT_TOL) {
+          kind = "add";
+        } else if (deltaAmount < -tol || pctGap > PCT_TOL) {
+          kind = targetShares <= 0 ? "exit" : "trim";
+        } else {
+          kind = "hold";
+        }
+        break;
+    }
+  } else if (fitTier === "avoid") {
     kind = isInPortfolio ? "exit" : "avoid";
   } else if (!isInPortfolio) {
     // Same fix as below: a meaningful target weight (e.g. 11% suggested on a
@@ -100,6 +162,7 @@ export function computePositionAction(input: PositionActionInput): PositionActio
 
   const shares = fmtShares(deltaShares);
   const amt = fmtMoney(deltaAmount);
+  const reason = input.unifiedReason ?? null;
   let headline: string;
   let detail: string;
 
@@ -107,6 +170,10 @@ export function computePositionAction(input: PositionActionInput): PositionActio
     case "initiate":
       headline = `Buy ${shares} share${Math.abs(deltaShares) === 1 ? "" : "s"} (~${amt})`;
       detail = `Establishes a ${targetPct.toFixed(1)}% starter position. Requires ~${amt} of cash.`;
+      break;
+    case "starter":
+      headline = `Buy ${shares} share${Math.abs(deltaShares) === 1 ? "" : "s"} (~${amt}) — starter`;
+      detail = reason ?? `Opens a reduced ${targetPct.toFixed(1)}% starter position while conviction builds.`;
       break;
     case "add":
       headline = `Buy ${shares} more (~${amt})`;
@@ -118,16 +185,25 @@ export function computePositionAction(input: PositionActionInput): PositionActio
       break;
     case "exit":
       headline = `Exit — sell ${fmtShares(currentShares)} share${currentShares === 1 ? "" : "s"} (~${fmtMoney(currentValue)})`;
-      detail = fitTier === "avoid" ? "Poor portfolio fit — the model would not hold this." : "Target weight is zero.";
+      detail = reason ?? (fitTier === "avoid" ? "Poor portfolio fit — the model would not hold this." : "Target weight is zero.");
+      break;
+    case "wait":
+      headline = "Wait — not for this portfolio right now";
+      detail = reason ?? "The research may support it, but the portfolio context doesn't justify a position yet.";
       break;
     case "avoid":
       headline = "Skip — doesn't fit the portfolio";
-      detail = "The fit model doesn't recommend a position here right now.";
+      detail = reason ?? "The fit model doesn't recommend a position here right now.";
       break;
     case "hold":
     default:
-      headline = "Hold — already near target";
-      detail = `Current weight ${currentPct.toFixed(1)}% is within range of the ${targetPct.toFixed(1)}% target.`;
+      if (unifiedKind === "hold" && reason) {
+        headline = "Hold — keep the position, don't add";
+        detail = reason;
+      } else {
+        headline = "Hold — already near target";
+        detail = `Current weight ${currentPct.toFixed(1)}% is within range of the ${targetPct.toFixed(1)}% target.`;
+      }
       break;
   }
 
@@ -141,7 +217,8 @@ export function computePositionAction(input: PositionActionInput): PositionActio
     targetShares,
     deltaShares,
     deltaAmount,
-    concentrationWarning: input.concentrationWarning && (kind === "initiate" || kind === "add"),
+    concentrationWarning:
+      input.concentrationWarning && (kind === "initiate" || kind === "add" || kind === "starter"),
     headline,
     detail,
   };

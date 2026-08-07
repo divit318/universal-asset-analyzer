@@ -127,6 +127,15 @@ export interface FitAssetData {
   sector: string | null;
   /** Market cap in dollars; used for size category assignment. */
   marketCap: number | null;
+  /**
+   * THE canonical standalone Research Score (0-100) for this asset — the same
+   * composite the hero badge and Conviction tab render (asset-class-aware:
+   * equity/fund/crypto/commodity/forex scorer, or the screener.in snapshot for
+   * Indian stocks). When provided it overrides the derivation from
+   * scoreResult/compositeScores, so the fit score provably inherits the exact
+   * number the rest of the page shows.
+   */
+  researchScore?: number | null;
   /** From scoring.ts — available on Research, Compare, Portfolio paths. */
   scoreResult?: ScoreResult | null;
   /** From composite.ts — available on Screener, Scanner paths. */
@@ -146,6 +155,49 @@ export interface FitAssetData {
 
 export type FitTier = "excellent" | "good" | "neutral" | "poor" | "avoid";
 
+/* -------------------------------------------------------------------------- */
+/* Unified action — ONE decision derived from BOTH canonical scores           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The single portfolio decision vocabulary. Derived in
+ * lib/ios/unified-action.ts from the Research Score AND the Portfolio Fit
+ * Score together, and carried on every PortfolioFitAnalysis — so the fit
+ * panel, the position action card, and the AI verdict all read the same call.
+ */
+export type UnifiedActionKind =
+  | "initiate" // no position → open one at the suggested weight
+  | "add"      // held → buy up toward the suggested weight
+  | "starter"  // open a deliberately reduced position (conviction or fit is partial)
+  | "hold"     // held → keep, do not add
+  | "wait"     // not held → research supports it, the portfolio doesn't (yet)
+  | "trim"     // held → reduce toward target
+  | "exit"     // held → close the position
+  | "avoid";   // not held → do not open a position
+
+export interface UnifiedAction {
+  kind: UnifiedActionKind;
+  /**
+   * 0–1 multiplier applied to the base allocation — how much of a full-conviction
+   * position the two scores jointly support. 0 for wait/avoid/exit.
+   */
+  sizeFactor: number;
+  /** One sentence citing BOTH scores (and the constraint, when one gated). */
+  reason: string;
+}
+
+/**
+ * One step of the research → fit derivation, so the UI can show exactly how
+ * the standalone Research Score became this portfolio's Fit Score (the
+ * "reasoning should feel continuous" requirement).
+ */
+export interface FitBridgeStep {
+  label: string;
+  /** The 0-100 value at this step, when one applies. */
+  value: number | null;
+  detail: string;
+}
+
 export interface FitDimension {
   label: string;
   score: number;          // 0-100
@@ -163,9 +215,33 @@ export interface FitDimension {
 export interface PortfolioFitAnalysis {
   symbol: string;
 
-  /** Weighted composite of all dimensions. 0-100. */
+  /**
+   * Portfolio Fit = Research Quality + Portfolio Effects. 0-100.
+   *
+   * INHERITS the Research Score: when one is available, this is a configurable
+   * blend of the standalone Research Score and the pure portfolio-effects
+   * composite, bounded so diversification can never rescue a weak asset and
+   * portfolio friction can never bury an exceptional one without a named hard
+   * constraint (see lib/ios/fit-scorer.ts guardrails).
+   */
   fitScore: number;
   fitTier: FitTier;
+
+  /** The standalone Research Score this fit inherited (null when unavailable). */
+  researchScore: number | null;
+  /**
+   * The pure portfolio-context composite (sector, correlation, objective,
+   * style, geography, sizing) BEFORE research quality is blended in — "what
+   * does adding this do to the book", independent of how good the asset is.
+   */
+  portfolioEffectsScore: number | null;
+
+  /** The single decision derived from BOTH scores — shared by the fit panel,
+   *  the position action card, and the AI verdict prompt. */
+  action: UnifiedAction;
+
+  /** The research → fit derivation, step by step, for explainability. */
+  bridge: FitBridgeStep[];
 
   /**
    * 0-100 overall data confidence — the share of scoring weight backed by real
@@ -220,8 +296,14 @@ export interface ContextualRanking {
   fitTier: FitTier;
   /** Weighted combination: (1-fitWeight) × absolute + fitWeight × fit. */
   combinedScore: number;
-  /** One-liner explaining the fit rank. */
+  /** One-liner explaining the fit rank. Unique within a ranked batch. */
   fitSummary: string;
+  /**
+   * The next distinct fit driver after `fitSummary`, when the fit analysis
+   * produced more than one evidenced reason. Lets two surfaces render the same
+   * symbol without repeating the same sentence. Null when only one reason exists.
+   */
+  fitDetail?: string | null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -262,10 +344,10 @@ export interface ObjectiveConfig {
 
 export const OBJECTIVE_CONFIG: Record<PortfolioObjective, ObjectiveConfig> = {
   maximize_growth:         { label: "Maximize Growth",    description: "Focus on high-growth, high-momentum stocks",              icon: "↗", color: "border-border text-muted hover:border-positive/40 hover:text-positive",         activeColor: "border-positive/50 bg-positive/10 text-positive" },
-  reduce_risk:             { label: "Reduce Risk",        description: "Prioritize defensive, low-volatility positions",          icon: "◉", color: "border-border text-muted hover:border-blue-400/40 hover:text-blue-400",          activeColor: "border-blue-400/50 bg-blue-400/10 text-blue-400" },
+  reduce_risk:             { label: "Reduce Risk",        description: "Prioritize defensive, low-volatility positions",          icon: "◉", color: "border-border text-muted hover:border-chart-2/40 hover:text-chart-2",          activeColor: "border-chart-2/50 bg-chart-2/10 text-chart-2" },
   improve_diversification: { label: "Diversify",         description: "Fill sector and factor gaps in the portfolio",            icon: "⊞", color: "border-border text-muted hover:border-accent/40 hover:text-accent",              activeColor: "border-accent/50 bg-accent/10 text-accent" },
-  increase_income:         { label: "Increase Income",   description: "Prioritize high-dividend and income-generating assets",   icon: "$", color: "border-border text-muted hover:border-amber-400/40 hover:text-amber-400",        activeColor: "border-amber-400/50 bg-amber-400/10 text-amber-400" },
-  beat_benchmark:          { label: "Beat Benchmark",    description: "Maximize alpha relative to SPY",                         icon: "⚡", color: "border-border text-muted hover:border-orange-400/40 hover:text-orange-400",      activeColor: "border-orange-400/50 bg-orange-400/10 text-orange-400" },
+  increase_income:         { label: "Increase Income",   description: "Prioritize high-dividend and income-generating assets",   icon: "$", color: "border-border text-muted hover:border-amber-400/40 hover:text-amber-400 light:hover:text-amber-700",        activeColor: "border-amber-400/50 bg-amber-400/10 text-amber-400 light:text-amber-700" },
+  beat_benchmark:          { label: "Beat Benchmark",    description: "Maximize alpha relative to SPY",                         icon: "⚡", color: "border-border text-muted hover:border-warning/40 hover:text-warning",      activeColor: "border-warning/50 bg-warning/10 text-warning" },
   preserve_capital:        { label: "Preserve Capital",  description: "Minimize drawdown risk, protect principal",              icon: "◈", color: "border-border text-muted hover:border-muted/60 hover:text-foreground",            activeColor: "border-border bg-surface-2 text-foreground" },
   ai_optimized:            { label: "AI Optimized",      description: "AI selects the optimal objective based on your profile", icon: "✦", color: "border-border text-muted hover:border-accent/50 hover:text-accent",              activeColor: "border-accent bg-accent/15 text-accent font-semibold" },
 };

@@ -1,81 +1,114 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Menu } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Menu, X } from "lucide-react";
 import { BrandLockup } from "@/app/_components/brand";
 import { ThemeToggle } from "@/app/_components/theme";
 import { Drawer } from "@/app/_components/dialog";
-import { LANDING_HOME, NAV_SECTIONS } from "../landing-config";
+import { LANDING_HOME, NAV_SECTIONS, PRIMARY_ACTION } from "../landing-config";
 import { AuthModalHost, openAuthModal } from "./auth-modal";
+import { useScrollVelocity } from "./motion/hooks";
 
 /**
- * The marketing site's navigation — a floating pill bar, centred and fixed,
- * that gains its shadow/blur only once the hero has scrolled past (a bar that
- * casts a shadow while there is nothing under it reads as a mistake).
+ * The marketing nav — a floating centered pill: logo left, the six anchor
+ * links, theme toggle, ghost "Sign in", brass primary CTA with trailing arrow.
  *
- * Right cluster is the auth entry: ghost "Sign in" opens the modal on the
- * Sign in tab, filled "Get started" on Create account. The modal host lives
- * here (this header is on every landing view); the hero's CTA reaches it via
- * openAuthModal() — see auth-modal.tsx for why that seam is event-based.
- *
- * Mobile: the pill collapses to lockup + hamburger; the menu is the shared
- * Drawer primitive, which brings the focus trap, Escape-to-close and scroll
- * lock with it.
- *
- * Reuses the existing ThemeToggle so dark/light continues to work through the
- * repo's [data-theme] mechanism with no new theming system.
+ * Scroll state: past 100px the pill's background opacity rises and a 1px
+ * border fades in over 200ms. Active-section highlighting runs on a single
+ * IntersectionObserver across the anchor targets. Mobile collapses to lockup +
+ * hamburger opening a full-screen overlay (the shared Drawer primitive at full
+ * width, keeping its focus trap / Escape / scroll lock).
  */
 export function LandingHeader() {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [pastHero, setPastHero] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+  const [active, setActive] = useState<string | null>(null);
+  const linksRef = useRef<HTMLDivElement | null>(null);
+  const underlineRef = useRef<HTMLSpanElement | null>(null);
+
+  // Pill scroll state rides the ONE shared rAF loop (3.4) — no extra
+  // scroll listener. setState only fires on threshold crossings.
+  const scrolledRef = useRef(false);
+  useScrollVelocity((s) => {
+    const past = s.scrollY > 100;
+    if (past !== scrolledRef.current) {
+      scrolledRef.current = past;
+      setScrolled(past);
+    }
+  });
+
+  // Slide the single underline to the active link (transform-only).
+  useEffect(() => {
+    const links = linksRef.current;
+    const underline = underlineRef.current;
+    if (!links || !underline) return;
+    const activeEl = active ? links.querySelector<HTMLAnchorElement>(`a[href="#${active}"]`) : null;
+    if (!activeEl) {
+      underline.style.opacity = "0";
+      return;
+    }
+    const lr = links.getBoundingClientRect();
+    const ar = activeEl.getBoundingClientRect();
+    underline.style.opacity = "1";
+    underline.style.transform = `translateX(${ar.left - lr.left + 12}px) scaleX(${(ar.width - 24) / 100})`;
+  }, [active]);
 
   useEffect(() => {
-    const hero = document.getElementById("hero");
-    if (!hero) {
-      // No hero on this view — treat any scroll as "past it".
-      const onScroll = () => setPastHero(window.scrollY > 8);
-      onScroll();
-      window.addEventListener("scroll", onScroll, { passive: true });
-      return () => window.removeEventListener("scroll", onScroll);
-    }
-    const io = new IntersectionObserver(
-      ([entry]) => setPastHero(!entry.isIntersecting),
-      // Fire once the hero's bottom clears the pill, not the viewport bottom.
-      { rootMargin: "-72px 0px 0px 0px", threshold: 0 },
+    const targets = NAV_SECTIONS.map((s) => document.getElementById(s.id)).filter(
+      (el): el is HTMLElement => el !== null,
     );
-    io.observe(hero);
+    if (targets.length === 0) return;
+    const visible = new Set<string>();
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) visible.add(entry.target.id);
+          else visible.delete(entry.target.id);
+        }
+        // The first IA-ordered section currently on screen wins.
+        const current = NAV_SECTIONS.find((s) => visible.has(s.id));
+        setActive(current ? current.id : null);
+      },
+      { rootMargin: "-20% 0px -55% 0px", threshold: 0 },
+    );
+    targets.forEach((el) => io.observe(el));
     return () => io.disconnect();
   }, []);
-
-  const linkClass =
-    "rounded-full px-3 py-1.5 text-sm font-medium text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40";
 
   return (
     <header className="fixed inset-x-0 top-3 z-40 px-3 sm:top-4">
       <nav
         aria-label="Primary"
-        className={`mx-auto flex h-12 w-full max-w-3xl items-center gap-1 rounded-full border px-2.5 transition-all duration-[280ms] lg:max-w-4xl ${
-          pastHero
-            ? "border-border bg-surface/85 shadow-popover backdrop-blur-xl"
-            : "border-transparent bg-surface/60 backdrop-blur-md"
+        className={`mx-auto flex h-12 w-full max-w-3xl items-center gap-1 rounded-full border px-2.5 backdrop-blur-xl transition-[background-color,border-color,box-shadow] duration-[200ms] lg:max-w-4xl ${
+          scrolled ? "border-border bg-surface/90 shadow-popover" : "border-transparent bg-surface/55"
         }`}
       >
         <BrandLockup href={LANDING_HOME} size="md" className="ml-1 mr-2 shrink-0" />
 
-        {/* Centre: anchor nav derived from the IA registry. lg, not md: with
-            six links plus the auth pair the pill needs ~900px, and at tablet
-            widths the overflow pushed the CTAs past the viewport edge
-            (measured 74px of horizontal scroll at 768). */}
-        <div className="hidden flex-1 items-center justify-center gap-0.5 lg:flex">
+        {/* Centre: anchor nav derived from the IA registry, with the active
+            section highlighted. lg, not md: six links + auth pair need ~900px. */}
+        <div ref={linksRef} className="relative hidden flex-1 items-center justify-center gap-0.5 lg:flex">
+          {/* ONE absolutely positioned underline slides between links. */}
+          <span
+            ref={underlineRef}
+            aria-hidden="true"
+            className="absolute bottom-0 left-0 h-px w-[100px] origin-left bg-brand opacity-0 transition-[transform,opacity] duration-[200ms] motion-reduce:transition-none"
+          />
           {NAV_SECTIONS.map((s) => (
-            <a key={s.id} href={`#${s.id}`} className={linkClass}>
+            <a
+              key={s.id}
+              href={`#${s.id}`}
+              aria-current={active === s.id ? "true" : undefined}
+              className={`rounded-full px-3 py-1.5 text-sm font-medium outline-none transition-colors duration-[200ms] focus-visible:ring-2 focus-visible:ring-brand/40 ${
+                active === s.id ? "text-brand" : "text-muted hover:bg-surface-2 hover:text-foreground"
+              }`}
+            >
               {s.nav}
             </a>
           ))}
         </div>
 
-        {/* Right cluster: theme, then the auth pair */}
-        <div className="ml-auto flex shrink-0 items-center gap-1.5 md:ml-0">
+        <div className="ml-auto flex shrink-0 items-center gap-1.5 lg:ml-0">
           <ThemeToggle />
           <button
             type="button"
@@ -87,15 +120,18 @@ export function LandingHeader() {
           <button
             type="button"
             onClick={() => openAuthModal("signup")}
-            className="hidden rounded-full bg-brand px-3.5 py-1.5 text-sm font-semibold text-background outline-none transition-colors hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40 sm:inline-flex"
+            className="group hidden items-center gap-1.5 rounded-full bg-brand px-3.5 py-1.5 text-sm font-semibold text-background outline-none transition-colors hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40 sm:inline-flex"
           >
-            Get started
+            {PRIMARY_ACTION}
+            <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-[3px]">
+              →
+            </span>
           </button>
 
           {/* Mobile/tablet menu toggle */}
           <button
             type="button"
-            className="rounded-full p-1.5 text-muted transition-colors hover:bg-surface-2 hover:text-foreground lg:hidden"
+            className="rounded-full p-1.5 text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40 lg:hidden"
             onClick={() => setMobileOpen(true)}
             aria-label="Open menu"
             aria-expanded={mobileOpen}
@@ -106,21 +142,18 @@ export function LandingHeader() {
         </div>
       </nav>
 
-      {/* Mobile sheet — the shared Drawer primitive: focus-trapped, Escape
-          closes, background scroll locked. */}
-      <Drawer open={mobileOpen} onClose={() => setMobileOpen(false)} label="Menu" className="max-w-xs">
+      {/* Full-screen mobile overlay — the shared Drawer primitive stretched to
+          the viewport: focus-trapped, Escape closes, background scroll locked. */}
+      <Drawer open={mobileOpen} onClose={() => setMobileOpen(false)} label="Menu" className="max-w-full">
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <BrandLockup href={LANDING_HOME} size="md" />
           <button
             type="button"
             onClick={() => setMobileOpen(false)}
             aria-label="Close menu"
-            className="rounded-control p-1.5 text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+            className="rounded-control p-1.5 text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
           >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-              <line x1="2" y1="2" x2="12" y2="12" />
-              <line x1="12" y1="2" x2="2" y2="12" />
-            </svg>
+            <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
         <nav aria-label="Menu" id="landing-mobile-nav" className="flex flex-col gap-1 px-3 py-4">
@@ -129,7 +162,7 @@ export function LandingHeader() {
               key={s.id}
               href={`#${s.id}`}
               onClick={() => setMobileOpen(false)}
-              className="rounded-control px-3 py-2.5 text-sm font-medium text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+              className="rounded-control px-3 py-3 text-mk-lead font-medium text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
             >
               {s.nav}
             </a>
@@ -139,16 +172,16 @@ export function LandingHeader() {
           <button
             type="button"
             onClick={() => { setMobileOpen(false); openAuthModal("signin"); }}
-            className="inline-flex h-10 items-center justify-center rounded-control border border-border bg-surface text-sm font-semibold text-foreground transition-colors hover:bg-surface-2"
+            className="inline-flex h-11 items-center justify-center rounded-control border border-border bg-surface text-sm font-semibold text-foreground outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand/40"
           >
             Sign in
           </button>
           <button
             type="button"
             onClick={() => { setMobileOpen(false); openAuthModal("signup"); }}
-            className="inline-flex h-10 items-center justify-center rounded-control bg-brand text-sm font-semibold text-background transition-colors hover:bg-brand-strong"
+            className="inline-flex h-11 items-center justify-center rounded-control bg-brand text-sm font-semibold text-background outline-none transition-colors hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
           >
-            Get started
+            {PRIMARY_ACTION}
           </button>
         </div>
       </Drawer>

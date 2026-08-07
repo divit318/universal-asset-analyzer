@@ -93,3 +93,4 @@ __pycache__/
 # Spotlight/Time Machine exclusion markers dropped into generated dirs by
 # `uaa doctor --fix`. Machine-local hygiene, not project source.
 .metadata_never_index
+.design-refs/

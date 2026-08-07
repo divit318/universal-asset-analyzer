@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* Theme variants bound to the app's own data-theme attribute (set pre-paint by
+   THEME_INIT_SCRIPT). Without these, Tailwind's default `dark:` follows the OS
+   `prefers-color-scheme` — which this app deliberately does not — so every
+   `dark:`/`light:` utility was silently keyed to the wrong signal. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+@custom-variant light (&:where([data-theme="light"], [data-theme="light"] *));
+
 /* ============================================================================
    Universal Asset Analyzer — Design System
    "The Bloomberg Terminal, redesigned in 2026."
@@ -40,6 +47,7 @@
   --color-positive: var(--positive);
   --color-negative: var(--negative);
   --color-warning: var(--warning);
+  --color-alert: var(--alert);
 
   /* Categorical series palette — identity of a series/tier, not semantics.
      Same values the charts use (see --chart-* per theme below), exposed as
@@ -75,6 +83,49 @@
   --text-label--line-height: 0.875rem;
   --text-caption: 0.6875rem;     /* 11px — secondary captions */
   --text-caption--line-height: 1rem;
+
+  /* Marketing (landing) type scale — serif display tiers + sans copy tiers.
+     Used only by app/landing; the app keeps its micro-hierarchy above. */
+  --text-mk-hero: clamp(3rem, 6.5vw, 5.25rem);          /* 48–84px */
+  --text-mk-hero--line-height: 1.05;
+  --text-mk-hero--letter-spacing: -0.02em;
+  --text-mk-hero--font-weight: 600;
+  --text-mk-display: clamp(2.125rem, 4.2vw, 3.5rem);    /* 34–56px */
+  --text-mk-display--line-height: 1.12;
+  --text-mk-display--letter-spacing: -0.015em;
+  --text-mk-display--font-weight: 600;
+  --text-mk-feature: clamp(1.5rem, 2.2vw, 2rem);        /* 24–32px */
+  --text-mk-feature--line-height: 1.2;
+  --text-mk-feature--font-weight: 600;
+  --text-mk-eyebrow: 0.75rem;                            /* 12px */
+  --text-mk-eyebrow--line-height: 1rem;
+  --text-mk-eyebrow--letter-spacing: 0.16em;
+  --text-mk-eyebrow--font-weight: 600;
+  --text-mk-lead: 1.125rem;                              /* 18px */
+  --text-mk-lead--line-height: 1.65;
+  --text-mk-body: 0.9375rem;                             /* 15px */
+  --text-mk-body--line-height: 1.6;
+  --text-mk-small: 0.8125rem;                            /* 13px */
+  --text-mk-small--line-height: 1.5;
+
+  /* Marketing spacing rhythm (4px base). --spacing-* names become spacing
+     utilities (py-mk-section etc.), so sections cannot invent their own. */
+  --spacing-mk-section: clamp(6.25rem, 12vh, 10.5rem);   /* 100–168px */
+  --spacing-mk-eyebrow: 1.25rem;   /* eyebrow → headline, 20px */
+  --spacing-mk-headline: 1.5rem;   /* headline → lead, 24px */
+  --spacing-mk-lead: 3rem;         /* lead → content, 48px */
+  --spacing-mk-group: 1.5rem;      /* within a group, 24px */
+  /* Section horizontal padding — identical at every breakpoint. */
+  --spacing-mk-pad: clamp(1.5rem, 5vw, 4rem);            /* 24–64px */
+
+  /* Marketing measure system — the ONLY three content widths on the landing
+     page (audit-landing.mjs verifies every section against these). */
+  --container-measure-prose: 45rem;    /* 720px  — leads, FAQ answers */
+  --container-measure-content: 75rem;  /* 1200px — DEFAULT section container */
+  --container-measure-wide: 90rem;     /* 1440px — capability rows + compare table ONLY */
+
+  /* The demo input's one-shot entrance pulse (keyframes further down). */
+  --animate-mk-glow-pulse: mk-glow-pulse 1200ms var(--ease-out) 700ms 1 both;
 
   /* Motion — mirrored as JS constants in app/_components/motion.ts.
      The companion duration scale is a plain `:root` rule below; see the note
@@ -157,6 +208,15 @@
   /* Signal orange, not amber — a caution must never read as a brass verdict
      seal (brand book §3, semantic colors). 8.70:1 on --background. */
   --warning: #fb923c;
+  /* Alert violet — the "a tripwire you set has fired" semantic (watchlist
+     alerts in the Attention queue). Deliberately NOT orange/amber: orange is
+     the threat/caution seal and brass is chrome, so an amber alert would be
+     unreadable against both. Violet is otherwise unused by any semantic
+     element. 6.2:1 on the queue's tile background (--surface-2/50 over
+     --panel-top), the strictest surface it renders on. Distinct from the
+     categorical --chart-1 purple, which is a series identity, not a semantic,
+     and sits below AA on that surface. */
+  --alert: #b585fa;
 
   /* Categorical chart palette — deliberately avoids green/red */
   --chart-1: #a855f7; /* purple */
@@ -199,8 +259,14 @@
   --border: #e2e6ec;
   --border-strong: #cdd4dd;
   --foreground: #101722;
-  --muted: #56606f;
-  --faint: #8a94a2;
+  /* Ink hierarchy (2026-08-08 light-mode audit): the previous --faint #8a94a2
+     measured 2.89:1 on --background and 3.07:1 on white — used for real helper
+     text (engine captions, journal meta, micro-labels), not decoration, so it
+     must clear 4.5:1. #656f7d is 4.79/5.09/4.70 on background/surface/surface-2.
+     --muted deepened one step (5.99 → 7.18 on background) to keep the
+     muted↔faint hierarchy gap legible now that faint sits darker. */
+  --muted: #4d5564;
+  --faint: #656f7d;
 
   /* Darker brass shades for AA contrast on light surfaces — Brass Dark
      #7A5F33 is 5.98:1 on #ffffff and 5.63:1 on #f7f8fa (brand book §3). */
@@ -212,11 +278,23 @@
   --accent: var(--brand);
   --accent-strong: var(--brand-strong);
 
-  --positive: #16a34a;
-  --negative: #dc2626;
-  /* Signal orange for light theme MUST be #C2540A (4.60:1 on white, AA);
-     the brighter #EA580C fails at 3.56:1 and is prohibited for text. */
-  --warning: #c2540a;
+  /* Deepened (2026-08-07, Market Overview contrast audit): the previous
+     #16a34a / #dc2626 measured 3.04:1 / 4.46:1 against --surface-2, where the
+     Overview tiles set delta text — below the 4.5:1 AA floor. These pass on
+     --surface-2 (4.63:1 / 5.98:1) and on white (5.02:1 / 6.47:1).
+     Keep app/_components/chart-theme.ts LIGHT in sync. */
+  --positive: #15803d;
+  --negative: #b91c1c;
+  /* Signal orange for light theme — #AD4A08 (2026-08-08 audit): the previous
+     #C2540A passed on white (4.60:1) but sat at 4.33:1 on --background and
+     4.25:1 on --surface-2, where warning text actually renders (home Threat
+     badge, watchlist targets, calendar AI chip). #AD4A08 is 5.26/5.59/5.16/4.75
+     on background/white/surface-2/surface-3. The brighter #EA580C fails at
+     3.56:1 and is prohibited for text. Keep chart-theme.ts LIGHT in sync. */
+  --warning: #ad4a08;
+  /* Alert violet, dark enough for AA on white (5.7:1) and on --surface-3
+     (4.9:1). See the dark block for why this is violet, not amber. */
+  --alert: #7c3aed;
 
   --chart-1: #9333ea; /* purple */
   --chart-2: #2563eb; /* steel (brand book §3) */
@@ -381,6 +459,34 @@ body::before {
 .animate-popover-in { animation: popover-in var(--duration-fast, 120ms) var(--ease-out) both; }
 .animate-icon-swap { animation: icon-swap var(--duration-base, 200ms) var(--ease-precise) both; }
 .animate-menu-drop { animation: menu-drop var(--duration-fast, 120ms) var(--ease-out) both; }
+
+/* ── Marketing landing (app/landing) ────────────────────────────────────
+   The demo input's one-shot glow pulse (section signature; neutralized by
+   the blanket prefers-reduced-motion rule below), plus the two constantly
+   seen but rarely designed surfaces: ::selection and the scrollbar. Both
+   are scoped to the marketing subtree via [data-mk-root]. */
+@keyframes mk-glow-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 0%, transparent); }
+  35%  { box-shadow: 0 0 0 6px color-mix(in srgb, var(--brand) 22%, transparent), 0 0 32px 4px color-mix(in srgb, var(--brand) 30%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 0%, transparent); }
+}
+[data-mk-root] ::selection,
+[data-mk-root]::selection {
+  background: color-mix(in srgb, var(--brand) 30%, transparent);
+  color: var(--foreground);
+}
+html:has([data-mk-root]) {
+  scrollbar-color: var(--surface-3) var(--background);
+  scrollbar-width: thin;
+}
+html:has([data-mk-root])::-webkit-scrollbar { width: 10px; }
+html:has([data-mk-root])::-webkit-scrollbar-track { background: var(--background); }
+html:has([data-mk-root])::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border-radius: 5px;
+  border: 2px solid var(--background);
+}
+html:has([data-mk-root])::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
 
 /* ── Page enter ─────────────────────────────────────────────────────────
    The only transition navigation gets. Every route change used to be a hard
@@ -1030,14 +1136,16 @@ body::before {
 }
 
 /* The hero — the one signature slab. Same material, machined a grade finer: a
-   panel radius, a brighter upper face, the deepest grounding. Its top accent
-   line is set by data in the component (gain / loss / neutral). */
+   brighter upper face and the deepest grounding. Card radius, not panel radius,
+   so it sits flush with the book rail beside it — the command row reads as one
+   surface at two widths, not two different components. Its top accent line is
+   set by data in the component (gain / loss / neutral). */
 .uaa-hero {
   position: relative;
   isolation: isolate;
   background: linear-gradient(180deg, var(--panel-hover-top), var(--panel-bottom));
   border: 1px solid var(--edge-hairline);
-  border-radius: var(--radius-panel);
+  border-radius: var(--radius-card);
   box-shadow: inset 0 1px 0 0 var(--edge-top), var(--depth-2);
 }
 .uaa-hero::before {
@@ -1104,7 +1212,7 @@ body::before {
   to   { opacity: 0; transform: translateX(12px); }
 }
 .uaa-queue-exit {
-  animation: uaa-queue-exit 180ms var(--ease-out) forwards;
+  animation: uaa-queue-exit 150ms var(--ease-out) forwards;
   pointer-events: none;
 }
 
@@ -1120,22 +1228,8 @@ body::before {
   .uaa-card:hover { transform: none; }
 }
 
-/* ── IC Report: light-mode WCAG AA overrides (scoped) ─────────────────────
-   The global light-theme positive/negative land below 4.5:1 for normal text
-   (positive 3.3). Scoped to the IC Report so other tabs keep their tuned
-   palette; values are the same hues one step darker.
-
-   The brand and warning overrides this block used to carry are gone: after
-   the brand book Phase 1 swap the global light tokens already pass AA for
-   normal text (brass #7A5F33 at 5.98:1, signal orange #C2540A at 4.60:1),
-   and a stale override here would render the one blue/amber corner of a
-   brass product. */
-[data-theme="light"] .ic-report-scope {
-  /* Override the resolved --color-* aliases: Tailwind's @theme resolves
-     var(--positive) at :root, so descendants inherit the substituted value
-     and re-declaring the base token alone would not cascade. */
-  --positive: #15803d;
-  --negative: #b91c1c;
-  --color-positive: #15803d; /* 4.5:1 on white */
-  --color-negative: #b91c1c; /* 5.9:1 */
-}
+/* The IC Report's scoped light-mode positive/negative overrides are gone
+   (2026-08-08): the global light tokens have carried the identical values
+   (#15803d / #b91c1c) since the 2026-08-07 Market Overview audit, so the
+   scoped block was pure drift risk — a place for the two palettes to diverge
+   silently. One token, one value. */

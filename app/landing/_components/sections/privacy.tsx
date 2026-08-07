@@ -1,73 +1,84 @@
-import { Cloud, ShieldCheck, Lock, WifiOff } from "lucide-react";
+import { Cloud, ShieldCheck } from "lucide-react";
 import type { SectionProps } from "../section-registry";
-import { Reveal } from "../reveal";
+import { Reveal } from "../motion/reveal";
+import { SectionShell } from "../primitives/section-shell";
+import { SectionHeader } from "../primitives/section-header";
+import { IconTile } from "../primitives/icon-tile";
+import { TrustStrip } from "../primitives/trust-strip";
+import { ParticleField } from "../primitives/particle-field";
 
 /**
- * Local-First Privacy — the product's moat, stated plainly (Creative Direction
- * §6.4). Copy is the approved §9 final wording. A split contrast (cloud AI vs
- * UAA) plus the concrete local-first guarantees.
+ * Local-first — the product's moat. Both cards enter together (one Reveal);
+ * then the RIGHT card's amber border draws itself around the perimeter over
+ * 600ms (two clipped border layers sweeping clockwise) and the glow fades in
+ * behind it. The left card does not animate further: the answer is the one
+ * that finishes assembling itself.
+ *
+ * The lesser option is signalled through its neutral border and flat
+ * background, never through illegibility (body stays text-muted, ≥4.5:1).
  */
-const GUARANTEES = [
-  { icon: WifiOff, label: "Research database stored on your disk" },
-  { icon: Lock, label: "Your own AI key, kept on this machine" },
-  { icon: ShieldCheck, label: "No subscriptions" },
-];
-
 export function Privacy({ section, index }: SectionProps) {
   const headingId = `${section.id}-heading`;
-  const banded = index % 2 === 1;
 
   return (
-    <section
-      id={section.id}
-      aria-labelledby={headingId}
-      className={`scroll-mt-20 border-b border-border ${banded ? "bg-surface" : "bg-background"}`}
-    >
-      <Reveal className="mx-auto flex w-full max-w-5xl flex-col items-center gap-10 px-6 py-24 text-center">
-        <div className="flex max-w-2xl flex-col items-center gap-4">
-          <p className="text-label font-semibold uppercase tracking-widest text-brand">{section.kicker}</p>
-          <h2 id={headingId} className="text-balance text-2xl font-semibold tracking-tight text-foreground sm:text-4xl">
-            Local-first. Your data stays yours.
-          </h2>
-          <p className="text-pretty text-base leading-relaxed text-muted">
-            Your portfolios, notes, and research live in a database on your disk — never on our
-            servers, because there are none. AI narration runs on Claude with your own key.
+    <SectionShell id={section.id} headingId={headingId} band={index % 2 === 1}>
+      <SectionHeader
+        eyebrow="Local-first"
+        headingId={headingId}
+        segments={[
+          { text: "Local-first." },
+          { text: "Your data", tone: "accent" },
+          { text: "stays yours." },
+        ]}
+        lead={
+          <>
+            Your portfolios, notes, and research live in a database on your disk, never on our
+            servers, because there are none. AI narration runs on{" "}
+            <span className="text-brand">Claude</span> with your own key.
+          </>
+        }
+        className="items-center"
+      />
+
+      <Reveal delay={280} className="mt-mk-lead grid w-full gap-5 sm:grid-cols-2">
+        <div className="flex h-full flex-col items-center gap-4 rounded-[20px] border border-border bg-surface-2 p-8 text-center">
+          <IconTile icon={Cloud} shape="circle" tone="neutral" />
+          <p className="text-mk-body font-semibold text-foreground">Traditional AI tools</p>
+          <span aria-hidden="true" className="h-px w-14 bg-border-strong" />
+          <p className="max-w-xs text-mk-body text-muted">
+            Your research history lives in someone else&apos;s account system, on someone
+            else&apos;s servers, behind someone else&apos;s subscription.
           </p>
         </div>
 
-        {/* Contrast: traditional cloud AI vs UAA. */}
-        <div className="grid w-full gap-4 sm:grid-cols-2">
-          <div className="flex flex-col items-center gap-3 rounded-panel border border-border bg-surface-2 p-6 text-center">
-            <span className="flex h-11 w-11 items-center justify-center rounded-full bg-surface-3 text-faint">
-              <Cloud className="h-5 w-5" strokeWidth={1.75} />
-            </span>
-            <p className="text-sm font-semibold text-muted">Traditional AI tools</p>
-            <p className="text-caption leading-relaxed text-faint">
-              Your research history lives in someone else’s account system, on someone else’s
-              servers, behind someone else’s subscription.
-            </p>
-          </div>
-          <div className="flex flex-col items-center gap-3 rounded-panel border border-brand/30 bg-brand-muted p-6 text-center shadow-glow-brand">
-            <span className="flex h-11 w-11 items-center justify-center rounded-full bg-brand/15 text-brand">
-              <ShieldCheck className="h-5 w-5" strokeWidth={1.75} />
-            </span>
-            <p className="text-sm font-semibold text-foreground">Universal Asset Analyzer</p>
-            <p className="text-caption leading-relaxed text-muted">
-              Your data and every computed figure stay on your machine. Only the AI prompts you
-              trigger go to the Anthropic API — with your key, under your control.
-            </p>
-          </div>
+        {/* The answer card: border draws itself over 600ms after landing.
+            Implementation: the resting border is transparent; two absolutely
+            positioned, clipped copies of the amber border sweep in via
+            clip-path transitions (left half then right half), then the glow
+            fades in. All compositor-friendly (clip-path + opacity). */}
+        <div className="group relative flex h-full flex-col items-center gap-4 overflow-hidden rounded-[20px] border border-brand/0 bg-brand-muted p-8 text-center shadow-glow-brand transition-[box-shadow] delay-[1300ms] duration-[700ms] [[data-reveal=hidden]_&]:shadow-none [[data-reveal=hidden]_&]:delay-0">
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 rounded-[20px] border border-brand transition-[clip-path] delay-700 duration-[300ms] ease-linear [clip-path:inset(0_50%_0_0)] [[data-reveal=hidden]_&]:delay-0 [[data-reveal=hidden]_&]:[clip-path:inset(0_100%_0_0)]"
+          />
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 rounded-[20px] border border-brand transition-[clip-path] delay-[1000ms] duration-[300ms] ease-linear [clip-path:inset(0_0_0_50%)] [[data-reveal=hidden]_&]:delay-0 [[data-reveal=hidden]_&]:[clip-path:inset(0_0_0_100%)]"
+          />
+          <ParticleField variant="corner" className="bottom-0 right-0 h-40 w-40" />
+          <IconTile icon={ShieldCheck} shape="circle" />
+          <p className="relative text-mk-body font-semibold text-foreground">Universal Asset Analyzer</p>
+          <span aria-hidden="true" className="h-px w-14 bg-brand/60" />
+          <p className="relative max-w-xs text-mk-body text-muted">
+            Your data and every computed figure stay on your machine. Only the AI prompts you
+            trigger go to the Anthropic API, with your key, under your control.
+          </p>
         </div>
-
-        <ul className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
-          {GUARANTEES.map(({ icon: Icon, label }) => (
-            <li key={label} className="flex items-center gap-2 text-sm text-foreground">
-              <Icon className="h-4 w-4 text-brand" strokeWidth={2} />
-              {label}
-            </li>
-          ))}
-        </ul>
       </Reveal>
-    </section>
+
+      <Reveal delay={280} className="mt-mk-lead w-full">
+        <TrustStrip variant="bare" />
+      </Reveal>
+    </SectionShell>
   );
 }

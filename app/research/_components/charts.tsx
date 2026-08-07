@@ -22,11 +22,10 @@ import { useChartTheme } from "@/app/_components/chart-theme";
 import { niceTicks } from "@/lib/chart-scale";
 import { sectorGroup } from "@/lib/sector";
 
-/* Categorical/semantic series colors — theme-neutral. Structural axis/grid/
-   tooltip come from useChartTheme() inside each component (light-mode aware). */
-const POSITIVE = "#4ade80";
-const BLUE = "#60a5fa";
-const AMBER = "#fbbf24";
+/* Series colors come from useChartTheme() inside each component alongside the
+   structural axis/grid/tooltip — the previous module-level literals (#4ade80,
+   #60a5fa, #fbbf24) were the dark palette and washed out to 1.9–2.5:1 on a
+   white canvas (2026-08-08 light-mode audit). */
 
 function map(points: { fy: number; value: number }[]): Map<number, number> {
   return new Map(points.map((p) => [p.fy, p.value]));
@@ -60,10 +59,10 @@ export function MarginTrendChart({ statements, sector }: { statements: Financial
   // visible line reads as a rendering bug.
   const series = [
     ...(includeGross && data.some((d) => (d as Record<string, number | string | null>).Gross != null)
-      ? [{ key: "Gross", color: POSITIVE }]
+      ? [{ key: "Gross", color: ct.positive }]
       : []),
-    ...(data.some((d) => d.Operating != null) ? [{ key: "Operating", color: BLUE }] : []),
-    ...(data.some((d) => d.Net != null) ? [{ key: "Net", color: AMBER }] : []),
+    ...(data.some((d) => d.Operating != null) ? [{ key: "Operating", color: ct.blue }] : []),
+    ...(data.some((d) => d.Net != null) ? [{ key: "Net", color: ct.amber }] : []),
   ];
   if (series.length === 0) return null;
 
@@ -141,8 +140,8 @@ export function RevenueFcfChart({ statements }: { statements: FinancialStatement
           <YAxis stroke={AXIS} tick={{ fontSize: 12 }} unit="B" />
           <Tooltip contentStyle={tooltipStyle} formatter={(v) => `$${v}B`} cursor={{ fill: ct.cursorFill }} />
           <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Bar dataKey="Revenue" fill={BLUE} radius={[3, 3, 0, 0]} />
-          <Bar dataKey="Free cash flow" fill={POSITIVE} radius={[3, 3, 0, 0]} />
+          <Bar dataKey="Revenue" fill={ct.blue} radius={[3, 3, 0, 0]} />
+          <Bar dataKey="Free cash flow" fill={ct.positive} radius={[3, 3, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
     </ChartFrame>
@@ -184,7 +183,7 @@ export function PeerRadarChart({ peers, symbol }: { peers: PeerComparison; symbo
           <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
           <Tooltip contentStyle={tooltipStyle} />
           <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Radar name={symbol} dataKey="This" stroke={POSITIVE} fill={POSITIVE} fillOpacity={0.3} />
+          <Radar name={symbol} dataKey="This" stroke={ct.positive} fill={ct.positive} fillOpacity={0.3} />
           <Radar name="Sector median" dataKey="Peers" stroke={AXIS} fill={AXIS} fillOpacity={0.15} />
         </RadarChart>
       </ResponsiveContainer>

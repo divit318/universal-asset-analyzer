@@ -14,34 +14,10 @@
  * `<h2>`s with no top-level landmark for a screen reader to anchor on.
  */
 
-import { useSyncExternalStore } from "react";
 import { PageHeader } from "@/app/_components/ui";
+import { useHydrated } from "./_atmosphere/use-hydrated";
+import { fmtTodayDate } from "./_viz/format";
 import { useHome } from "./home-provider";
-
-/**
- * True only once hydrated.
- *
- * `toLocaleDateString`/`toLocaleTimeString` resolve against the *renderer's*
- * locale and timezone. This component is server-rendered before it is hydrated,
- * so the server (UTC) and the browser (wherever the user actually is) format
- * the same instant into different strings — and React throws a hydration
- * mismatch (#418), which the e2e suite catches as a console error.
- *
- * `useSyncExternalStore` is the sanctioned way to express "this value differs
- * between server and client": the server snapshot returns false, the client
- * snapshot returns true, and nothing subscribes because the answer never
- * changes after mount. Doing it with `useState` + `useEffect` works too, but
- * sets state synchronously inside an effect, which is a cascading render that
- * React's lint rules (correctly) reject.
- */
-const emptySubscribe = () => () => {};
-function useHydrated(): boolean {
-  return useSyncExternalStore(
-    emptySubscribe,
-    () => true,
-    () => false,
-  );
-}
 
 function asOf(iso: string | undefined): string {
   if (!iso) return "";
@@ -55,10 +31,7 @@ export function HomeHeader() {
   // Server renders the title alone; the browser fills in its own local date and
   // time, which is the only one correct for the person reading it.
   const description = hydrated
-    ? [
-        new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }),
-        asOf(digest.data?.generatedAt),
-      ]
+    ? [fmtTodayDate("long"), asOf(digest.data?.generatedAt)]
         .filter(Boolean)
         .join(" · ")
     : undefined;

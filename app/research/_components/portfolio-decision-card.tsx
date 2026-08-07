@@ -17,7 +17,7 @@ const ACTION_STYLE: Record<Recommendation["action"], string> = {
   ADD:        "border-positive/60 bg-positive/15 text-positive",
   INCREASE:   "border-positive/40 bg-positive/8 text-positive",
   HOLD:       "border-warning/40 bg-warning/8 text-warning",
-  REDUCE:     "border-orange-400/40 bg-orange-400/10 text-orange-400",
+  REDUCE:     "border-warning/40 bg-warning/10 text-warning",
   SELL:       "border-negative/40 bg-negative/10 text-negative",
   REALLOCATE: "border-brand/40 bg-brand/8 text-brand",
 };

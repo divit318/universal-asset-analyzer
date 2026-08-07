@@ -402,9 +402,16 @@ function keepAliveFor(task: TaskConfig): string | undefined {
  * the first answers. Building the full list eagerly would charge every
  * request for a backend that, on a working setup, is never used.
  *
- * An explicit `model` override is still honored strictly: it is matched
- * against each provider in order and, if no provider claims it, attempted on
- * the first provider anyway rather than silently substituted.
+ * An explicit `model` override is still honored strictly — never substituted —
+ * but it is attempted on EVERY provider that serves that id, in chain order.
+ * The same model id can be reachable through several providers (the
+ * claude-opus-5 effort tiers exist in both Devin's catalogue and the direct
+ * Anthropic API), and stopping at the first one turned a per-provider outage
+ * into a total failure: the 2026-08-07 Wire scan pinned its model, Devin's
+ * quota ran out mid-day, and every stage failed without ever asking the
+ * Anthropic entry sitting right behind it in the chain. If no provider
+ * claims the id, it is attempted on the first provider anyway rather than
+ * silently substituted.
  */
 async function* attemptOrder(
   taskType: TaskType,
@@ -413,14 +420,15 @@ async function* attemptOrder(
   explicitModel?: string,
 ): AsyncGenerator<{ provider: AIProvider; model: string }, void, unknown> {
   if (explicitModel) {
+    let claimed = false;
     for (const provider of providers) {
       const installed = await provider.listModels();
       if (installed.some((m) => m.id === explicitModel)) {
+        claimed = true;
         yield { provider, model: explicitModel };
-        return;
       }
     }
-    if (providers[0]) yield { provider: providers[0], model: explicitModel };
+    if (!claimed && providers[0]) yield { provider: providers[0], model: explicitModel };
     return;
   }
 
@@ -598,7 +606,15 @@ export async function route(
       attemptCauses.push(err);
 
       // Same key, same rejection: skip this provider's remaining candidates.
-      if (classified.category === "no_api_key" || classified.category === "bad_api_key") {
+      // Quota exhaustion is provider-level for the same reason — one account,
+      // one quota — so its other effort tiers cannot succeed either (measured
+      // 2026-08-07: every scan stage burned ~2s per candidate on calls the
+      // quota had already doomed).
+      if (
+        classified.category === "no_api_key" ||
+        classified.category === "bad_api_key" ||
+        classified.category === "quota_exhausted"
+      ) {
         keyFailedProviders.add(provider.id);
       }
 
@@ -760,7 +776,12 @@ export async function* routeStream(
       attemptCauses.push(err);
 
       // Same key, same rejection: skip this provider's remaining candidates.
-      if (classified.category === "no_api_key" || classified.category === "bad_api_key") {
+      // Quota exhaustion is provider-level too — see route()'s identical rule.
+      if (
+        classified.category === "no_api_key" ||
+        classified.category === "bad_api_key" ||
+        classified.category === "quota_exhausted"
+      ) {
         keyFailedProviders.add(provider.id);
       }
 

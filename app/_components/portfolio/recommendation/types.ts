@@ -1,4 +1,5 @@
 import type { PositionSizingPlan, SizeScenario } from "@/lib/portfolio/engines/position-size";
+import type { AllocationHeadline } from "@/lib/portfolio/engines/position-size-explain";
 import type { WhyExplanation } from "@/lib/portfolio/engines/decision";
 
 export interface SellSuggestion {
@@ -19,6 +20,7 @@ export interface BuyRecommendationResponse extends PositionSizingPlan {
   why: WhyExplanation;
   aiExplanation: string;
   summary: string;
+  headline: AllocationHeadline;
 }
 
 export type FundingSource = "cash" | "sell_holdings" | "optimizer_decides";

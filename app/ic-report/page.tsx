@@ -251,7 +251,7 @@ export default function ICReportPage() {
   };
 
   return (
-    <PageShell py="py-10" width="wide" className="ic-report-scope">
+    <PageShell py="py-10" width="wide">
       {/* Header */}
       <Reveal index={0} as="header" className="flex flex-col gap-1.5">
         <div className="flex items-center gap-2">

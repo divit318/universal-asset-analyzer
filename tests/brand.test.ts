@@ -121,9 +121,13 @@ describe("brand mark markup", () => {
 describe("BRAND_COLORS tracks app/globals.css", () => {
   const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 
-  /** Read a custom property out of a specific theme block. */
+  /** Read a custom property out of a specific theme block. Anchored to the
+   *  selector opening its own rule (`selector {`) so other appearances of the
+   *  attribute string — e.g. @custom-variant declarations — cannot match. */
   function token(selector: string, name: string): string {
-    const block = css.slice(css.indexOf(selector));
+    const start = css.indexOf(`${selector} {`);
+    if (start < 0) throw new Error(`rule block not found for ${selector}`);
+    const block = css.slice(start);
     const end = block.indexOf("\n}");
     const match = new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{3,8})\\s*;`).exec(block.slice(0, end));
     if (!match) throw new Error(`--${name} not found in ${selector} block`);

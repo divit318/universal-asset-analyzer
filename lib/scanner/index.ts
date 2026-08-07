@@ -88,6 +88,17 @@ function emit(
   onProgress?.({ stage, message, pct });
 }
 
+/**
+ * Always-on scan diagnostics (unlike logPipeline, which needs
+ * DEBUG_PIPELINE=1). Silent under the test runner only — same convention as
+ * the prompt cache in ./llm.ts.
+ */
+function scanLog(level: "info" | "warn", line: string): void {
+  if (process.env.VITEST === "true" || process.env.NODE_ENV === "test") return;
+  if (level === "warn") console.warn(line);
+  else console.info(line);
+}
+
 function partial<K extends ScannerPartialKey>(
   onPartial: ((e: ScannerPartialEvent) => void) | undefined,
   key: K,
@@ -371,11 +382,25 @@ export async function runScannerPipeline(
         // Parallel data collection. Needs no LLM call, so its outputs can
         // stream immediately — News Timeline and Macro Dashboard don't have
         // to wait for anything below.
+        //
+        // Each fetch failure is RECORDED, not swallowed: an empty news list
+        // starves dedup, classification, causal reasoning, sector impact and
+        // company impact all at once, and before this the scan presented
+        // that cascade as a clean run with no opportunities.
         const [newsItems, macroSignals, sectorPerf] = await timeStage(scanId, "collecting", () =>
           Promise.all([
-            fetchMarketNews({ query, india, global: glob, limit: 60 }).catch(() => []),
-            fetchMacroSignals().catch(() => []),
-            fetchSectorPerformance().catch(() => []),
+            fetchMarketNews({ query, india, global: glob, limit: 60 }).catch((err: unknown) => {
+              api.fail(`news retrieval failed: ${describeError(err)} — event-driven sections are empty this scan`);
+              return [] as NewsItem[];
+            }),
+            fetchMacroSignals().catch((err: unknown) => {
+              api.fail(`macro signals failed: ${describeError(err)}`);
+              return [] as Awaited<ReturnType<typeof fetchMacroSignals>>;
+            }),
+            fetchSectorPerformance().catch((err: unknown) => {
+              api.fail(`sector performance failed: ${describeError(err)}`);
+              return [] as SectorPerformance[];
+            }),
           ]),
           { limit: 60 },
         );
@@ -534,7 +559,7 @@ export async function runScannerPipeline(
     },
   ];
 
-  const { failures } = await runStagedPipeline(stages, ctx, {
+  const { failures, stageRecords } = await runStagedPipeline(stages, ctx, {
     signal,
     onEvent: (event) => {
       if (event.type === "progress") {
@@ -547,11 +572,43 @@ export async function runScannerPipeline(
           unitsTotal: event.unitsTotal,
         });
       } else {
+        // Stage degradations hit the server log the moment they happen —
+        // always, not only under DEBUG_PIPELINE. "4 stages degraded" in the
+        // UI with nothing greppable server-side forced a manual re-trace of
+        // the whole pipeline (2026-08-07).
+        if (event.type === "stage_failed") {
+          scanLog("warn", `[wire-scan ${scanId}] stage DEGRADED: ${event.stage} — ${event.reason}`);
+        }
         logPipeline({ scope: scanId, ...event, type: `scan_${event.type}` });
         onStageEvent?.(event);
       }
     },
   });
+
+  // Post-run account, one line per stage plus one line of output counts —
+  // enough to see what ran, how long it took, what it returned, and what
+  // broke, straight from the server log of any scan.
+  for (const rec of stageRecords) {
+    const secs = (rec.durationMs / 1000).toFixed(1);
+    if (rec.failures.length > 0) {
+      scanLog("warn", `[wire-scan ${scanId}] ${rec.stage} ${secs}s DEGRADED — ${rec.failures.join("; ")}`);
+    } else {
+      scanLog("info", `[wire-scan ${scanId}] ${rec.stage} ${secs}s ok`);
+    }
+  }
+  const categoryCounts = new Map<string, number>();
+  for (const e of ctx.classifiedEvents) {
+    categoryCounts.set(e.category, (categoryCounts.get(e.category) ?? 0) + 1);
+  }
+  scanLog(
+    failures.length > 0 ? "warn" : "info",
+    `[wire-scan ${scanId}] outputs: news=${ctx.newsItems.length} events=${ctx.events.length}` +
+      ` categories={${[...categoryCounts.entries()].map(([k, v]) => `${k}:${v}`).join(", ")}}` +
+      ` themes=${ctx.emergingThemes.length} riskAlerts=${ctx.riskAlerts.length}` +
+      ` sectorImpacts=${ctx.sectorImpacts.length} candidates=${ctx.candidates.length}` +
+      ` opportunities=${ctx.all.length} highConviction=${ctx.highConviction.length}` +
+      ` degradedStages=${failures.length}`,
+  );
 
   emit(onProgress, "assembling", "Assembling intelligence report", 99);
 

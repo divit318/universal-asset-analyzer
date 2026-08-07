@@ -74,6 +74,15 @@ interface ModuleShellProps<T> {
   defaultCollapsed?: boolean;
   minHeight?: number;
   onRefresh?: () => void;
+  /** Small caption inline with the header's action cluster, e.g. "Updated 4:51 AM". */
+  headerCaption?: ReactNode;
+  /**
+   * "display" renders the header in the Today page's shared type scale — the
+   * title as a section label, the subtitle as a two-line caption — and widens
+   * the card padding to 24px. The default header is unchanged for every other
+   * module.
+   */
+  variant?: "default" | "display";
   children: (data: T) => ReactNode;
 }
 
@@ -87,6 +96,8 @@ export function ModuleShell<T>({
   defaultCollapsed = false,
   minHeight = 140,
   onRefresh,
+  headerCaption,
+  variant = "default",
   children,
 }: ModuleShellProps<T>) {
   const { emit } = useHome();
@@ -118,16 +129,23 @@ export function ModuleShell<T>({
     });
   };
 
+  const display = variant === "display";
+  const cardPadding = display ? "p-6" : "p-4";
+  const titleClass = display
+    ? "text-[13px] font-semibold uppercase tracking-[0.09em] text-foreground/55"
+    : "text-sm font-semibold text-foreground";
+  const subtitleClass = display ? "text-sm text-foreground/72" : "text-xs text-muted";
+
   const header = (
     <div className="mb-3 flex items-start justify-between gap-3">
-      <div className="flex min-w-0 flex-col gap-0.5">
+      <div className="flex min-w-0 flex-col gap-1">
         <div className="flex items-center gap-2">
           {collapsible ? (
             <button
               type="button"
               onClick={toggle}
               aria-expanded={!collapsed}
-              className="flex items-center gap-1.5 rounded-control text-sm font-semibold text-foreground outline-none transition-colors hover:text-brand focus-visible:ring-2 focus-visible:ring-brand/40"
+              className={`flex items-center gap-1.5 rounded-control outline-none transition-colors hover:text-brand focus-visible:ring-2 focus-visible:ring-brand/40 ${titleClass}`}
             >
               <ChevronDown
                 className={`h-4 w-4 shrink-0 text-muted transition-transform ${collapsed ? "-rotate-90" : ""}`}
@@ -136,10 +154,10 @@ export function ModuleShell<T>({
               {definition.title}
             </button>
           ) : (
-            <h2 className="text-sm font-semibold text-foreground">{definition.title}</h2>
+            <h2 className={titleClass}>{definition.title}</h2>
           )}
         </div>
-        <p className="truncate text-xs text-muted">{definition.description}</p>
+        <p className={subtitleClass}>{definition.description}</p>
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
@@ -153,6 +171,7 @@ export function ModuleShell<T>({
             <RefreshCw className={`h-3.5 w-3.5 ${state.revalidating ? "animate-spin" : ""}`} strokeWidth={2} />
           </button>
         ) : null}
+        {headerCaption ? <span className="text-sm text-foreground/60">{headerCaption}</span> : null}
         {definition.navTarget ? (
           <Link
             href={definition.navTarget.href}
@@ -170,7 +189,7 @@ export function ModuleShell<T>({
   if (unmet) {
     const cta = UNMET[unmet];
     return (
-      <div className="uaa-card flex h-full flex-col p-4">
+      <div className={`uaa-card flex h-full flex-col ${cardPadding}`}>
         {header}
         <div className="flex flex-1 flex-col items-start justify-center gap-2 py-6">
           <p className="text-sm text-muted">{cta.message}</p>
@@ -186,7 +205,7 @@ export function ModuleShell<T>({
   }
 
   return (
-    <div className="uaa-card flex h-full flex-col p-4">
+    <div className={`uaa-card flex h-full flex-col ${cardPadding}`}>
       {header}
       {collapsed ? null : (
         <Section

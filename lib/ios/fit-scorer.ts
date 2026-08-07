@@ -1,17 +1,36 @@
 /**
- * IOS Fit Scorer — computes PortfolioFitAnalysis for any asset.
+ * IOS Fit Scorer — the Portfolio Context Engine + Portfolio Fit Score layers
+ * of the unified recommendation hierarchy.
  *
  * Pure function: no network I/O, no AI calls. Every score is derived
  * deterministically from the InvestmentProfile + FitAssetData.
  *
- * ── Methodology (redesigned) ──────────────────────────────────────────────
- * Fit answers "how well does adding THIS asset serve THIS portfolio right
- * now?" — it is NOT a standalone quality score. Each dimension returns a
- * { score, confidence } pair. The composite is a *confidence-weighted*
- * renormalized average, so a dimension with no evidence (confidence 0) drops
- * out entirely instead of injecting a misleading constant. This is the fix for
- * the old behaviour where data-poor assets all collapsed to ~73 because four of
- * six dimensions silently returned favorable constants.
+ * ── Where this sits (see lib/ios/unified-action.ts for the full ladder) ────
+ *
+ *   Research Score  →  Portfolio Context Engine  →  Portfolio Fit Score
+ *                      (the six dimensions below)    (research + effects blend)
+ *
+ * The fit score INHERITS the Research Score rather than recreating its own
+ * opinion:  fit = researchWeight·research + (1−researchWeight)·portfolioEffects,
+ * bounded by two guardrails (DEFAULT_FIT_CONFIG):
+ *
+ *   • Uplift cap — fit ≤ research + maxDiversificationUplift. Diversification
+ *     benefit can never turn a weak asset into a "good fit".
+ *   • Drag floor — fit ≥ research − maxPortfolioDrag. Portfolio friction can
+ *     never bury an exceptional asset; only a HARD gate (which names its
+ *     constraint in capReason) may cut deeper.
+ *
+ * When no research score exists, fit degrades to the pure portfolio-effects
+ * composite with shrinkage toward a neutral prior (the pre-2026-08 behavior).
+ * The full research → fit derivation is exported step-by-step on `bridge`.
+ *
+ * ── Portfolio-effects methodology ──────────────────────────────────────────
+ * Each dimension returns a { score, confidence } pair. The composite is a
+ * *confidence-weighted* renormalized average, so a dimension with no evidence
+ * (confidence 0) drops out entirely instead of injecting a misleading
+ * constant. This is the fix for the old behaviour where data-poor assets all
+ * collapsed to ~73 because four of six dimensions silently returned favorable
+ * constants.
  *
  * Two invariants the old system violated and this one enforces:
  *   1. Missing data is NEVER advantageous. An unknown sector/geography lowers
@@ -32,12 +51,14 @@
 import type { PortfolioObjective } from "./types";
 import type {
   FitAssetData,
+  FitBridgeStep,
   FitDimension,
-  FitTier,
   InvestmentProfile,
   PortfolioFitAnalysis,
   ContextualRanking,
 } from "./types";
+import { deriveUnifiedAction, fitTier } from "./unified-action";
+import { scoreLabel } from "../recommendation";
 
 /* -------------------------------------------------------------------------- */
 /* Nominal dimension weights                                                   */
@@ -51,6 +72,42 @@ const W = {
   geographic: 0.08,
   sizing: 0.18,
 } as const;
+
+/* -------------------------------------------------------------------------- */
+/* Research-inheritance configuration                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * How the Research Score and the portfolio-effects composite combine into the
+ * Portfolio Fit Score. Exposed (and accepted as an override by
+ * computePortfolioFit) so weights are configuration, not magic numbers.
+ */
+export interface FitScoringConfig {
+  /** Share of the fit score carried by the standalone Research Score. */
+  researchWeight: number;
+  /** Fit may exceed the research score by at most this many points —
+   *  diversification benefit cannot rescue a weak asset. */
+  maxDiversificationUplift: number;
+  /** Fit may fall below the research score by at most this many points before
+   *  only a HARD gate (named in capReason) is allowed to cut deeper. */
+  maxPortfolioDrag: number;
+}
+
+export const DEFAULT_FIT_CONFIG: FitScoringConfig = {
+  researchWeight: 0.45,
+  maxDiversificationUplift: 15,
+  maxPortfolioDrag: 35,
+};
+
+/**
+ * THE standalone Research Score for an asset, resolved from the richest
+ * available source: an explicit override (the page's canonical headline
+ * composite), the batch composite's overall, or the decision engine's
+ * composite. Null when no scorer covered the asset.
+ */
+export function resolveResearchScore(asset: FitAssetData): number | null {
+  return asset.researchScore ?? asset.compositeScores?.overall ?? asset.scoreResult?.composite ?? null;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                     */
@@ -68,14 +125,6 @@ function hasFundamentals(asset: FitAssetData): boolean {
     return true;
   }
   return asset.scoreResult != null;
-}
-
-function fitTier(score: number): FitTier {
-  if (score >= 80) return "excellent";
-  if (score >= 62) return "good";
-  if (score >= 45) return "neutral";
-  if (score >= 30) return "poor";
-  return "avoid";
 }
 
 /** Impact is only asserted when we actually have evidence for the dimension. */
@@ -403,16 +452,32 @@ function scoreSizing(
 /* Suggested allocation                                                        */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Base allocation, before the unified-action sizeFactor scales it.
+ *
+ * The formula, so every suggested weight is auditable:
+ *
+ *   base   = equalWeight(n+1) × conviction multiplier (0.7×–1.5×) × risk damp
+ *   final  = min(base, maxPositionPct), rounded to 0.5pp
+ *
+ * where conviction is a renormalized blend of the Research Score (0.5), the
+ * objective-alignment dimension (0.3) and the sector dimension (0.2) — the
+ * allocation is driven by BOTH scores, not fit alone — and the risk damp
+ * shrinks high-beta names by 1/√β (clamped to [0.75, 1.1]), so the same
+ * conviction buys less of a more volatile asset.
+ */
 function computeSuggestedAllocation(
   profile: InvestmentProfile,
   conviction: number, // 0-1
+  beta: number | null | undefined,
 ): { pct: number; amount: number } {
   const n = profile.positionCount;
   if (n === 0 || !profile.hasPortfolio) return { pct: 5, amount: 0 };
 
   const equalWeight = 100 / (n + 1);
   const multiplier = 0.7 + conviction * 0.8; // 0.7×..1.5× of equal weight
-  const raw = equalWeight * multiplier;
+  const riskDamp = beta != null && beta > 0 ? Math.min(1.1, Math.max(0.75, 1 / Math.sqrt(beta))) : 1;
+  const raw = equalWeight * multiplier * riskDamp;
 
   const pct = Math.min(
     Math.round(Math.min(raw, profile.constraints.maxPositionPct) * 2) / 2,
@@ -484,30 +549,36 @@ function applyGates(
 export function computePortfolioFit(
   asset: FitAssetData,
   profile: InvestmentProfile,
+  config: FitScoringConfig = DEFAULT_FIT_CONFIG,
 ): PortfolioFitAnalysis {
   const isInPortfolio = profile.holdingSymbols.includes(asset.symbol.toUpperCase());
   const isOnWatchlist = asset.isOnWatchlist ?? false;
   const isGeneric = !profile.hasPortfolio;
 
-  // ── Score data-independent dimensions first ───────────────────────────────
+  // ── Layer A input: the standalone Research Score (never recomputed here) ──
+  const researchScore = resolveResearchScore(asset);
+
+  // ── Layer B: Portfolio Context Engine — score the six dimensions ──────────
   const sectorDim = scoreSector(asset, profile);
   const correlationDim = scoreCorrelation(asset, profile);
   const objectiveDim = scoreObjective(asset, profile.objective);
   const styleDim = scoreStyle(asset, profile);
   const geographicDim = scoreGeographic(asset, profile);
 
-  // Conviction for sizing draws on the dimensions we actually have evidence for.
+  // Conviction for sizing is driven by BOTH layers: the Research Score anchors
+  // it, the evidenced context dimensions refine it (renormalized when absent).
   const convParts: Array<[number, number]> = [];
-  if ((objectiveDim.confidence ?? 1) >= 0.4) convParts.push([objectiveDim.score, 0.6]);
-  if ((sectorDim.confidence ?? 1) >= 0.4) convParts.push([sectorDim.score, 0.4]);
+  if (researchScore != null) convParts.push([researchScore, 0.5]);
+  if ((objectiveDim.confidence ?? 1) >= 0.4) convParts.push([objectiveDim.score, 0.3]);
+  if ((sectorDim.confidence ?? 1) >= 0.4) convParts.push([sectorDim.score, 0.2]);
   const conviction = convParts.length
     ? convParts.reduce((a, [s, w]) => a + s * w, 0) / convParts.reduce((a, [, w]) => a + w, 0) / 100
     : 0.5;
 
-  const { pct: finalPct, amount: finalAmount } = computeSuggestedAllocation(profile, conviction);
-  const sizingDim = scoreSizing(asset, profile, finalPct);
+  const { pct: basePct } = computeSuggestedAllocation(profile, conviction, asset.beta);
+  const sizingDim = scoreSizing(asset, profile, basePct);
 
-  // ── Confidence-weighted composite (renormalized) ──────────────────────────
+  // ── Confidence-weighted portfolio-effects composite (renormalized) ────────
   const dims = [sectorDim, correlationDim, objectiveDim, styleDim, geographicDim, sizingDim];
   let num = 0, den = 0, nominal = 0;
   for (const d of dims) {
@@ -518,7 +589,15 @@ export function computePortfolioFit(
     nominal += d.weight;
   }
   const evidenceFrac = nominal > 0 ? den / nominal : 0;
-  const confidence = Math.round(evidenceFrac * 100);
+
+  // Overall confidence counts the research score as evidence at its blend
+  // weight: an inherited 82/100 research composite is real data the fit now
+  // rests on, and its absence should read as uncertainty.
+  const rw = researchScore != null ? config.researchWeight : 0;
+  const confidence = Math.round(
+    (rw * 1 + (1 - config.researchWeight) * evidenceFrac) /
+      (rw + (1 - config.researchWeight)) * 100,
+  );
 
   // Shrinkage toward a neutral prior. With little evidence we should say
   // "neutral, we can't tell" (≈50) rather than emit a confident-looking score
@@ -528,9 +607,85 @@ export function computePortfolioFit(
   const rawComposite = den > 0 ? num / den : 50;
   const NEUTRAL_PRIOR = 50;
   const shrunk = evidenceFrac * rawComposite + (1 - evidenceFrac) * NEUTRAL_PRIOR;
+  const portfolioEffectsScore = Math.round(shrunk);
+
+  // ── Layer C: Portfolio Fit = Research Quality + Portfolio Effects ─────────
+  const bridge: FitBridgeStep[] = [];
+  let preGate: number;
+  if (researchScore != null) {
+    const blended = config.researchWeight * researchScore + (1 - config.researchWeight) * shrunk;
+    const upliftCap = researchScore + config.maxDiversificationUplift;
+    const dragFloor = researchScore - config.maxPortfolioDrag;
+    preGate = Math.min(Math.max(blended, dragFloor), upliftCap);
+
+    bridge.push({
+      label: "Research quality",
+      value: researchScore,
+      detail: `Standalone research score ${researchScore}/100 (${scoreLabel(researchScore)}) — unchanged by your portfolio.`,
+    });
+    const topDims = dims
+      .filter((d) => (d.confidence ?? 1) >= 0.5 && d.impact !== "neutral")
+      .sort((a, b) => Math.abs(b.score - 50) - Math.abs(a.score - 50))
+      .slice(0, 3)
+      .map((d) => `${d.label} ${d.impact === "positive" ? "+" : "−"} (${Math.round(d.score)})`);
+    bridge.push({
+      label: "Portfolio effects",
+      value: portfolioEffectsScore,
+      detail: topDims.length
+        ? `Context dimensions blend to ${portfolioEffectsScore}/100: ${topDims.join(", ")}.`
+        : `Context dimensions blend to ${portfolioEffectsScore}/100 on the evidence available.`,
+    });
+    if (blended > upliftCap) {
+      bridge.push({
+        label: "Quality guardrail",
+        value: Math.round(preGate),
+        detail: `Fit capped at research +${config.maxDiversificationUplift} — diversification benefit cannot rescue a weak asset.`,
+      });
+    } else if (blended < dragFloor) {
+      bridge.push({
+        label: "Quality guardrail",
+        value: Math.round(preGate),
+        detail: `Fit floored at research −${config.maxPortfolioDrag} — only a hard constraint may penalize strong research further.`,
+      });
+    }
+  } else {
+    preGate = shrunk;
+    bridge.push({
+      label: "Research quality",
+      value: null,
+      detail: "No research score available — fit rests on portfolio context alone, at reduced confidence.",
+    });
+    bridge.push({
+      label: "Portfolio effects",
+      value: portfolioEffectsScore,
+      detail: `Context dimensions blend to ${portfolioEffectsScore}/100 on the evidence available.`,
+    });
+  }
 
   // ── Hard gates ────────────────────────────────────────────────────────────
-  const { score: fitScore, reason: capReason } = applyGates(asset, profile, shrunk);
+  const { score: fitScore, reason: capReason } = applyGates(asset, profile, preGate);
+  if (capReason) {
+    bridge.push({ label: "Constraint gate", value: fitScore, detail: capReason });
+  }
+  bridge.push({
+    label: "Portfolio fit",
+    value: clamp(fitScore),
+    detail: `${clamp(fitScore)}/100 (${fitTier(fitScore)}) for this portfolio.`,
+  });
+
+  // ── Layer D/E: one action + one allocation from BOTH scores ──────────────
+  const action = deriveUnifiedAction({ researchScore, fitScore: clamp(fitScore), isInPortfolio, capReason });
+  const finalPct = Math.round(basePct * action.sizeFactor * 2) / 2;
+  const finalAmount = Math.round((profile.totalValue * finalPct) / 100);
+  if (!isGeneric) {
+    bridge.push({
+      label: "Suggested allocation",
+      value: null,
+      detail: finalPct > 0
+        ? `${finalPct.toFixed(1)}% (base ${basePct.toFixed(1)}% × ${action.sizeFactor.toFixed(2)} conviction factor). ${action.reason}`
+        : action.reason,
+    });
+  }
 
   // ── Reasons / trade-offs — only cite evidenced dimensions ─────────────────
   const evidenced = dims.filter((d) => (d.confidence ?? 1) >= 0.5);
@@ -557,6 +712,10 @@ export function computePortfolioFit(
     symbol: asset.symbol,
     fitScore: clamp(fitScore),
     fitTier: fitTier(fitScore),
+    researchScore,
+    portfolioEffectsScore,
+    action,
+    bridge,
     confidence,
     capReason,
     dimensions: {
@@ -585,29 +744,67 @@ export function computePortfolioFit(
 /* rankByFit — re-rank any list by combining absolute + fit scores            */
 /* -------------------------------------------------------------------------- */
 
+/** The default blend weight on the fit score inside `combinedScore`. Exported
+ *  so the surfaces that *explain* a combined score state the real formula
+ *  instead of re-declaring the constant (lib/home/explain.ts). */
+export const DEFAULT_FIT_WEIGHT = 0.4;
+
 export function rankByFit(
   items: Array<FitAssetData & { absoluteScore: number }>,
   profile: InvestmentProfile,
-  fitWeight = 0.4,
+  fitWeight = DEFAULT_FIT_WEIGHT,
 ): ContextualRanking[] {
-  return items
+  const ranked = items
     .map((item) => {
       const fit = computePortfolioFit(item, profile);
       const combined = Math.round(
         item.absoluteScore * (1 - fitWeight) + fit.fitScore * fitWeight,
       );
-      const summary =
-        fit.reasons[0] ??
-        (fit.isGeneric ? "Build portfolio for personalized ranking" : "Neutral portfolio fit");
-
-      return {
-        symbol: item.symbol,
-        absoluteScore: item.absoluteScore,
-        fitScore: fit.fitScore,
-        fitTier: fit.fitTier,
-        combinedScore: combined,
-        fitSummary: summary,
-      } satisfies ContextualRanking;
+      return { item, fit, combined };
     })
-    .sort((a, b) => b.combinedScore - a.combinedScore);
+    .sort((a, b) => b.combined - a.combined);
+
+  // Reason strings must be row-specific within a ranked batch. `reasons[0]` is
+  // often the same sizing/objective clause for every candidate ("8.0%
+  // allocation fits comfortably within your limits" × 5 rows carries no
+  // information), so each row takes its highest-ranked reason that no
+  // higher-ranked row already claimed; when the pool is exhausted, the shared
+  // clause is kept and the row's own fit number is appended so the string
+  // still distinguishes it. `fitDetail` is the next distinct driver, for
+  // surfaces that render the same symbol twice and must not repeat themselves.
+  const used = new Set<string>();
+  return ranked.map(({ item, fit, combined }) => {
+    const pool = fit.reasons.length
+      ? fit.reasons
+      : [fit.isGeneric ? "Build portfolio for personalized ranking" : "Neutral portfolio fit"];
+
+    let summary = pool[0];
+    let detail: string | null = null;
+    if (!fit.isGeneric) {
+      // A "build your portfolio" notice is a shared CTA, not a per-row driver,
+      // so only personalized reasons go through the uniquifier. The ladder:
+      // an unclaimed reason, then a reason qualified by the row's own numbers,
+      // then — for genuinely identical inputs — the symbol itself, which is
+      // unique per batch by construction.
+      const candidates = [
+        ...pool,
+        ...pool.map((s) => `${s}, fit ${fit.fitScore}/100`),
+        ...pool.map((s) => `${s}, fit ${fit.fitScore}/100 on quality ${item.absoluteScore}`),
+      ];
+      summary = candidates.find((s) => !used.has(s)) ?? `${pool[0]} (${item.symbol})`;
+      detail = pool.find((s) => s !== summary && !used.has(s)) ?? null;
+      used.add(summary);
+      if (detail) used.add(detail);
+    }
+
+    return {
+      symbol: item.symbol,
+      absoluteScore: item.absoluteScore,
+      fitScore: fit.fitScore,
+      fitTier: fit.fitTier,
+      combinedScore: combined,
+      fitSummary: summary,
+      fitDetail: detail,
+    } satisfies ContextualRanking;
+  });
 }

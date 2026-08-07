@@ -101,6 +101,23 @@ export interface PulseMover {
 }
 
 /**
+ * One row of the Book card's "top contributors (today)" list. `bps` is the
+ * position's day P&L over the whole book's previous-close value ×10000 — a
+ * *contribution* to the portfolio's day move, not the position's own return.
+ * Computed in lib/home/pulse.ts from the report's stamped day moves; the same
+ * non-stale gate the movers use applies, so a dead quote cannot contribute.
+ */
+export interface DayContributor {
+  symbol: string;
+  /** Holding display name, for the row's secondary text. */
+  name: string;
+  /** Contribution to the book's day move, in basis points of previous-close value. */
+  bps: number;
+  /** The underlying day P&L in base currency. */
+  dayDollar: number;
+}
+
+/**
  * One spoke of the Portfolio Health radar. Read directly from a scored
  * `HealthDimension` — the radar is a projection of the health engine's real
  * dimensions, never a second, invented set of axes.
@@ -191,6 +208,12 @@ export interface PortfolioPulse {
    * the engine itself performs.
    */
   healthFactors: HealthFactor[];
+  /**
+   * Today's largest contributions to the book's day move (top two positive +
+   * the largest negative when the sign mix allows; otherwise the top three by
+   * magnitude). Same source as the movers — the report's stamped day moves.
+   */
+  topContributors: DayContributor[];
 }
 
 /* ------------------------------------------------------------------ */
@@ -514,6 +537,43 @@ export interface PortfolioPerformanceSummary {
 export { MIN_DAYS_TO_ANNUALIZE } from "../portfolio-performance";
 
 /* ------------------------------------------------------------------ */
+/* Equity curve — the Book card's 90-day portfolio-vs-benchmark line   */
+/* ------------------------------------------------------------------ */
+
+/** One day of the normalized comparison. Both values are index levels, 100 = window start. */
+export interface EquityCurvePoint {
+  /** YYYY-MM-DD trading day. */
+  date: string;
+  portfolio: number;
+  /** Null when the benchmark series had no print for this day. */
+  benchmark: number | null;
+}
+
+/**
+ * A flow-adjusted daily return index over the trailing window, portfolio vs.
+ * benchmark, both normalized to 100 at the window start so they share a scale.
+ *
+ * Built from the lot ledger plus daily adjusted closes (lib/home/equity-curve.ts).
+ * Deliberately NOT a value line: a deposit mid-window would jump a value line
+ * without any return having happened — the exact lie trajectory-panel.tsx
+ * documents refusing to plot. Each day's growth factor strips that day's net
+ * flow, so the line moves only when prices do.
+ */
+export interface EquityCurve {
+  status: CardStatus;
+  /** Requested trailing window, in calendar days. */
+  windowDays: number;
+  /** Ascending by date. May start later than the window on a young portfolio. */
+  points: EquityCurvePoint[];
+  /** The window's cumulative return for each line, in percent. Null when unpriceable. */
+  portfolioPct: number | null;
+  benchmarkPct: number | null;
+  benchmarkSymbol: string;
+  /** Share (0-100) of the book's end-of-window value the curve could actually price. */
+  coveragePct: number | null;
+}
+
+/* ------------------------------------------------------------------ */
 /* Module 10 — Continue Where You Left Off                             */
 /* ------------------------------------------------------------------ */
 
@@ -689,6 +749,8 @@ export interface HomeDigest {
   watchlistIntelligence: WatchlistIntelligence;
   upcomingEvents: { status: CardStatus; events: UpcomingEventLite[] };
   performance: PortfolioPerformanceSummary;
+  /** The Book card's 90-day portfolio-vs-benchmark return index. */
+  equityCurve: EquityCurve;
   activity: RecentActivity;
   calibration: { status: CardStatus; trackRecord: TrackRecord | null; eligible: boolean };
   /** Deterministic fallback text, used until (or instead of) the AI stream. */

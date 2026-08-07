@@ -76,7 +76,7 @@ export function SavedScreens({ screens, draft, saving, onSave, onLoad, onDelete 
                 type="button"
                 onClick={() => onDelete(screen.id)}
                 aria-label={`Delete ${screen.name}`}
-                className="shrink-0 text-xs text-muted transition-colors hover:text-rose-500"
+                className="shrink-0 text-xs text-muted transition-colors hover:text-rose-500 light:hover:text-rose-700"
               >
                 ×
               </button>

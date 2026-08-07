@@ -13,14 +13,11 @@ import {
   YAxis,
 } from "recharts";
 import type { ScreenerInAnnualPL, ScreenerInQuarterlyPL } from "@/lib/screener-in";
-import { useChartTheme } from "@/app/_components/chart-theme";
+import { useChartTheme, type ChartTheme } from "@/app/_components/chart-theme";
 
-/* Series colors — legible on both themes. Structural axis/grid/tooltip come from
-   useChartTheme() inside each component so they adapt to light mode. */
-const POSITIVE = "#4ade80";
-const AMBER = "#fbbf24";
-const BLUE = "#60a5fa";
-const NEGATIVE = "#f87171";
+/* All series colors come from useChartTheme() (ct.positive / ct.amber / ct.blue
+   / ct.negative) — the previous module literals were the dark palette and sat
+   at 1.9–2.5:1 on a white canvas (2026-08-08 light-mode audit). */
 
 /* -------------------------------------------------------------------------- */
 /* Compact "cr" formatter                                                      */
@@ -113,21 +110,21 @@ export function AnnualRevenueChart({ data }: { data: ScreenerInAnnualPL[] }) {
           <XAxis dataKey="period" tick={{ fill: AXIS, fontSize: 10 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
           <YAxis tick={{ fill: AXIS, fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(v) => fmtCr(v as number)} />
           <Tooltip content={<PLTooltip style={ct.tooltip} />} />
-          <Bar dataKey="Revenue" fill={BLUE} radius={[2, 2, 0, 0]} maxBarSize={28} />
+          <Bar dataKey="Revenue" fill={ct.blue} radius={[2, 2, 0, 0]} maxBarSize={28} />
           <Bar dataKey="Net Profit" radius={[2, 2, 0, 0]} maxBarSize={28}>
             {chartData.map((d, i) => (
-              <Cell key={i} fill={(d["Net Profit"] ?? 0) >= 0 ? POSITIVE : NEGATIVE} />
+              <Cell key={i} fill={(d["Net Profit"] ?? 0) >= 0 ? ct.positive : ct.negative} />
             ))}
           </Bar>
         </BarChart>
       </ResponsiveContainer>
       <div className="flex gap-4 text-xs text-muted">
         <span className="flex items-center gap-1.5">
-          <span className="h-2 w-3 rounded-sm" style={{ background: BLUE }} />
+          <span className="h-2 w-3 rounded-sm" style={{ background: ct.blue }} />
           Revenue
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="h-2 w-3 rounded-sm" style={{ background: POSITIVE }} />
+          <span className="h-2 w-3 rounded-sm" style={{ background: ct.positive }} />
           Net Profit
         </span>
       </div>
@@ -160,7 +157,7 @@ export function AnnualMarginChart({ data }: { data: ScreenerInAnnualPL[] }) {
           <XAxis dataKey="period" tick={{ fill: AXIS, fontSize: 10 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
           <YAxis tick={{ fill: AXIS, fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}%`} />
           <Tooltip content={<MarginTooltip style={ct.tooltip} />} />
-          <Line dataKey="OPM %" stroke={AMBER} strokeWidth={2} dot={false} type="monotone" />
+          <Line dataKey="OPM %" stroke={ct.amber} strokeWidth={2} dot={false} type="monotone" />
         </ComposedChart>
       </ResponsiveContainer>
     </ChartFrame>
@@ -171,12 +168,12 @@ export function AnnualMarginChart({ data }: { data: ScreenerInAnnualPL[] }) {
 /* Quarterly Revenue & Profit                                                  */
 /* -------------------------------------------------------------------------- */
 
-function getGrowthColor(curr: number | null, prev: number | null): string {
-  if (curr == null || prev == null || prev <= 0) return BLUE;
+function getGrowthColor(ct: ChartTheme, curr: number | null, prev: number | null): string {
+  if (curr == null || prev == null || prev <= 0) return ct.blue;
   const g = (curr - prev) / prev;
-  if (g > 0.15) return POSITIVE;
-  if (g < -0.1) return NEGATIVE;
-  return AMBER;
+  if (g > 0.15) return ct.positive;
+  if (g < -0.1) return ct.negative;
+  return ct.amber;
 }
 
 export function QuarterlyRevenueChart({ data }: { data: ScreenerInQuarterlyPL[] }) {
@@ -191,7 +188,7 @@ export function QuarterlyRevenueChart({ data }: { data: ScreenerInQuarterlyPL[] 
     return {
       period: d.period,
       Sales: d.sales,
-      yoyColor: getGrowthColor(d.sales, prev?.sales ?? null),
+      yoyColor: getGrowthColor(ct, d.sales, prev?.sales ?? null),
     };
   });
 
@@ -242,10 +239,10 @@ export function QuarterlyProfitChart({ data }: { data: ScreenerInQuarterlyPL[] }
           <Tooltip content={<PLTooltip style={ct.tooltip} />} />
           <Bar yAxisId="left" dataKey="Net Profit" radius={[2, 2, 0, 0]} maxBarSize={32}>
             {chartData.map((d, i) => (
-              <Cell key={i} fill={(d["Net Profit"] ?? 0) >= 0 ? POSITIVE : NEGATIVE} />
+              <Cell key={i} fill={(d["Net Profit"] ?? 0) >= 0 ? ct.positive : ct.negative} />
             ))}
           </Bar>
-          <Line yAxisId="right" dataKey="OPM %" stroke={AMBER} strokeWidth={1.5} dot={false} type="monotone" />
+          <Line yAxisId="right" dataKey="OPM %" stroke={ct.amber} strokeWidth={1.5} dot={false} type="monotone" />
         </ComposedChart>
       </ResponsiveContainer>
       <div className="flex gap-4 text-xs text-muted">

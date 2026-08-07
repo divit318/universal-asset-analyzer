@@ -7,17 +7,20 @@ import { ValueBar } from "@/app/_components/value-bar";
 const KIND_STYLE: Record<PositionAction["kind"], { label: string; tone: string; badge: string }> = {
   initiate: { label: "Initiate", tone: "text-positive", badge: "text-positive border-positive/40 bg-positive/10" },
   add: { label: "Add", tone: "text-positive", badge: "text-positive border-positive/40 bg-positive/10" },
+  starter: { label: "Starter", tone: "text-positive", badge: "text-positive border-positive/30 bg-positive/8" },
   trim: { label: "Trim", tone: "text-warning", badge: "text-warning border-warning/40 bg-warning/10" },
   exit: { label: "Exit", tone: "text-negative", badge: "text-negative border-negative/40 bg-negative/10" },
   hold: { label: "Hold", tone: "text-muted", badge: "text-muted border-border bg-surface-2" },
+  wait: { label: "Wait", tone: "text-warning", badge: "text-warning border-warning/30 bg-warning/8" },
   avoid: { label: "Skip", tone: "text-muted", badge: "text-muted border-border bg-surface-2" },
 };
 
 /**
- * The sized, portfolio-aware next step for the stock being researched. Turns the
- * fit scorer's suggested weight into a concrete order in shares at the live
- * price, with the resulting portfolio impact — the bridge from "interesting" to
- * "done".
+ * The sized, portfolio-aware next step for the stock being researched. Turns
+ * the unified action (Research Score × Portfolio Fit, carried on
+ * PortfolioFitAnalysis.action) into a concrete order in shares at the live
+ * price, with the resulting portfolio impact — the bridge from "interesting"
+ * to "done".
  */
 export function PositionActionCard({
   symbol,
@@ -48,6 +51,10 @@ export function PositionActionCard({
     fitTier: fit.fitTier,
     isInPortfolio: fit.isInPortfolio,
     concentrationWarning: fit.concentrationWarning,
+    // The unified decision (Research Score × Portfolio Fit) — this card sizes
+    // it in shares, it never re-decides it.
+    unifiedKind: fit.action.kind,
+    unifiedReason: fit.action.reason,
   });
 
   const style = KIND_STYLE[action.kind];

@@ -166,6 +166,51 @@ describe("provider chain", () => {
     expect(first.completed).toEqual([]);
   });
 
+  it("fails an explicit model over to the NEXT provider serving the same id", async () => {
+    // The claude-opus-5 tiers are served by both Devin and the direct
+    // Anthropic API. Before this, an explicit model stopped at the first
+    // provider claiming the id, so one provider's quota outage (2026-08-07)
+    // hard-failed every pinned scanner call with a working provider queued
+    // right behind it.
+    const first = new ChainProvider("primary", [{ id: "shared-model", sizeGb: 0 }], {
+      "shared-model": new Error("quota exhausted"),
+    });
+    const second = new ChainProvider("secondary", [{ id: "shared-model", sizeGb: 0 }], {
+      "shared-model": { content: "secondary answer", reasoning: "" },
+    });
+    const res = await route(
+      "explain-movement",
+      { messages: [{ role: "user", content: "hi" }] },
+      { providers: [first, second], model: "shared-model" },
+    );
+    expect(res.provider).toBe("secondary");
+    expect(res.model).toBe("shared-model"); // still never substituted
+    expect(res.errors).toEqual(["primary/shared-model: quota exhausted"]);
+  });
+
+  it("skips a provider's remaining candidates once its quota is exhausted", async () => {
+    // One account, one quota: after devin/medium dies on quota, trying
+    // devin/low burns ~2s per stage on a call that cannot succeed. The chain
+    // must hop straight to the next provider.
+    const quota = (detail: string) =>
+      Object.assign(new Error(detail), { code: "quota_exhausted" });
+    const first = new ChainProvider(
+      "primary",
+      [
+        { id: "alpha-model", sizeGb: 0 },
+        { id: "alpha-small", sizeGb: 0 },
+      ],
+      {
+        "alpha-model": quota("weekly usage quota exhausted"),
+        "alpha-small": quota("weekly usage quota exhausted"),
+      },
+    );
+    const second = secondary();
+    const res = await ask([first, second]);
+    expect(res.content).toBe("secondary answer");
+    expect(first.completed).toEqual(["alpha-model"]); // alpha-small never attempted
+  });
+
   it("picks the model without running anything, across the chain", async () => {
     expect(await pickModel("explain-movement", { providers: [primary(), secondary()] })).toBe(
       "alpha-model",

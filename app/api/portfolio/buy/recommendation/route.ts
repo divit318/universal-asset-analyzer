@@ -18,21 +18,63 @@
  *     uses, not a new heuristic
  *   - lib/portfolio/engines/position-size-explain.ts for the deterministic,
  *     "measured not asserted" narration
+ *   - lib/portfolio/engines/asset-signal.ts to carry the Research page's own
+ *     verdict (composite score, valuation upside, risk flags) into the sizing
+ *     decision, so this modal can never contradict the report beside it
  */
 import { NextResponse } from "next/server";
 import { isValidSymbol } from "@/lib/market";
 import { getQuotes } from "@/lib/yahoo";
+import { getValuationCase } from "@/lib/db";
+import { summarizeForDisplay } from "@/lib/valuation/summary";
+import { buildFundamentalsData } from "@/lib/fundamentals-data";
 import { buildEvaluation } from "@/lib/portfolio/report";
 import { computePositionSizing, computePositionSizingAtAmount } from "@/lib/portfolio/engines/position-size";
+import { deriveAssetSignal, type AssetSignal } from "@/lib/portfolio/engines/asset-signal";
 import { computeRecommendations } from "@/lib/portfolio/engines/recommend";
 import { isIndivisibleHolding } from "@/lib/portfolio/engines/transaction";
 import { OBJECTIVES, DEFAULT_CONSTRAINTS, type Objective, type Constraints } from "@/lib/portfolio/engines/optimize";
 import { type PortfolioAssetClass } from "@/lib/portfolio/model/types";
 import { assetClassFromQuoteType } from "@/lib/portfolio/classes/reference/risk-models";
-import { buildAiExplanation, buildPositionSizingWhy, buildSummary } from "@/lib/portfolio/engines/position-size-explain";
+import { buildAiExplanation, buildHeadline, buildPositionSizingWhy, buildSummary } from "@/lib/portfolio/engines/position-size-explain";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/** Hard budget for the research fetch — the modal must not hang on a slow EDGAR day. Underlying data is platform-cached (4-12h), so warm paths return in ms. */
+const SIGNAL_TIMEOUT_MS = 12_000;
+
+/**
+ * The Research page's own analysis for this symbol, shaped for the sizing
+ * engine. Best-effort by design: a bond ETF, a commodity or a Yahoo outage
+ * yields null and the engine falls back to its signal-free geometric path —
+ * a degraded recommendation beats a failed one.
+ */
+async function loadAssetSignal(symbol: string, livePrice: number | null): Promise<AssetSignal | null> {
+  try {
+    const data = await Promise.race([
+      buildFundamentalsData(symbol),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), SIGNAL_TIMEOUT_MS)),
+    ]);
+    if (!data) return null;
+
+    // The user's own valuation case outranks analyst consensus when one exists.
+    let caseUpside: number | null = null;
+    try {
+      const vcase = getValuationCase(symbol);
+      if (vcase) {
+        const summary = summarizeForDisplay(vcase, livePrice, null);
+        if (!summary.result.invalidReason) caseUpside = summary.result.impliedUpside;
+      }
+    } catch {
+      // A broken valuation case must not take down the whole signal.
+    }
+
+    return deriveAssetSignal(symbol, data, caseUpside);
+  } catch {
+    return null;
+  }
+}
 
 interface RecommendationBody {
   symbol?: string;
@@ -89,13 +131,17 @@ export async function POST(request: Request) {
     const assetClass = assetClassFromQuoteType(symbol, quote.name ?? symbol, quote.assetType);
     const name = body.name?.trim() || quote.name || symbol;
 
-    const { ctx, evaluation } = await buildEvaluation({ objective, extraCandidateSymbols: [symbol] });
+    // The portfolio evaluation and the research signal are independent — fetch both at once.
+    const [{ ctx, evaluation }, signal] = await Promise.all([
+      buildEvaluation({ objective, extraCandidateSymbols: [symbol] }),
+      loadAssetSignal(symbol, quote.price),
+    ]);
 
     const constraints = body.constraints ? { ...DEFAULT_CONSTRAINTS, ...body.constraints } : DEFAULT_CONSTRAINTS;
     const hasAmountOverride = body.amount != null && Number.isFinite(body.amount) && body.amount > 0;
     const plan = hasAmountOverride
-      ? computePositionSizingAtAmount(evaluation, { symbol, name, assetClass }, body.amount!, objective, ctx)
-      : computePositionSizing(evaluation, { symbol, name, assetClass }, objective, ctx, constraints, body.customTarget);
+      ? computePositionSizingAtAmount(evaluation, { symbol, name, assetClass }, body.amount!, objective, ctx, signal)
+      : computePositionSizing(evaluation, { symbol, name, assetClass }, objective, ctx, constraints, body.customTarget, signal);
 
     const cashAvailable = Math.round(
       evaluation.holdings.reduce((s, h) => s + (h.assetClass === "cash" ? h.valuation.valueBase : 0), 0),
@@ -142,6 +188,7 @@ export async function POST(request: Request) {
       why: buildPositionSizingWhy(plan),
       aiExplanation: buildAiExplanation(plan),
       summary: buildSummary(plan),
+      headline: buildHeadline(plan),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to build recommendation";

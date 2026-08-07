@@ -22,7 +22,7 @@ import { Skeleton } from "@/app/_components/ui";
 const CLASS_STYLE: Record<RotationClass, { text: string; label: string }> = {
   leading: { text: "text-positive", label: "Leading" },
   strengthening: { text: "text-accent", label: "Strengthening" },
-  weakening: { text: "text-amber-500", label: "Weakening" },
+  weakening: { text: "text-amber-500 light:text-amber-700", label: "Weakening" },
   lagging: { text: "text-negative", label: "Lagging" },
 };
 

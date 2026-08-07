@@ -151,13 +151,15 @@ export const MARKET_LABEL: Record<MarketRegion, string> = {
   CRYPTO: "Crypto",
 };
 
-/** Tailwind class string: text-color + border-color + bg-color for market badges */
+/** Tailwind class string: text-color + border-color + bg-color for market badges.
+ *  light: variants deepen each hue to AA on white — the -300/-400 set is
+ *  dark-canvas only (2026-08-08 light-mode audit). */
 export const MARKET_BADGE: Record<MarketRegion, string> = {
-  IN:     "text-orange-400 border-orange-400/30 bg-orange-400/10",
-  JP:     "text-red-400 border-red-400/30 bg-red-400/10",
-  HK:     "text-rose-300 border-rose-300/30 bg-rose-300/10",
-  AU:     "text-yellow-400 border-yellow-400/30 bg-yellow-400/10",
-  EU:     "text-blue-400 border-blue-400/30 bg-blue-400/10",
+  IN:     "text-warning border-warning/30 bg-warning/10",
+  JP:     "text-red-400 light:text-red-700 border-red-400/30 light:border-red-700/40 bg-red-400/10",
+  HK:     "text-rose-300 light:text-rose-700 border-rose-300/30 light:border-rose-700/40 bg-rose-300/10",
+  AU:     "text-yellow-400 light:text-yellow-700 border-yellow-400/30 light:border-yellow-700/40 bg-yellow-400/10",
+  EU:     "text-chart-2 border-chart-2/30 bg-chart-2/10",
   US:     "text-accent border-accent/30 bg-accent/10",
-  CRYPTO: "text-purple-400 border-purple-400/30 bg-purple-400/10",
+  CRYPTO: "text-purple-400 light:text-purple-700 border-purple-400/30 light:border-purple-700/40 bg-purple-400/10",
 };

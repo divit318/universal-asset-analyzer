@@ -43,6 +43,10 @@ function fit(over: Partial<PortfolioFitAnalysis> & { symbol: string }): Portfoli
     symbol: over.symbol,
     fitScore: score,
     fitTier: tier,
+    researchScore: over.researchScore ?? null,
+    portfolioEffectsScore: over.portfolioEffectsScore ?? score,
+    action: over.action ?? { kind: "initiate", sizeFactor: 1, reason: "fixture" },
+    bridge: over.bridge ?? [],
     confidence: over.confidence ?? 80,
     capReason: over.capReason ?? null,
     dimensions: over.dimensions ?? {

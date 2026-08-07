@@ -23,6 +23,11 @@ export interface PortfolioFacts {
   suggestedPct: string | null;
   missingSectors: string | null;
   objective: string | null;
+  /** The unified action (lib/ios/unified-action.ts) — the ONE decision derived
+   *  from Research Score × Portfolio Fit. The prompt pins the model to it. */
+  action: string | null;
+  /** The unified action's quantitative rationale (cites both scores). */
+  actionReason: string | null;
 }
 
 export function hasPortfolioContext(p: PortfolioFacts | null): p is PortfolioFacts {
@@ -113,9 +118,15 @@ export function buildPortfolioFacts(symbol: string, p: PortfolioFacts | null): s
 
   const out: string[] = ["--- PORTFOLIO CONTEXT (this user's specific situation) ---"];
   if (p.objective) out.push(`User's investment objective: ${p.objective.replace(/_/g, " ")}`);
-  out.push(`Portfolio fit score for ${symbol}: ${p.fitScore}/100 (${p.fitTier})`);
+  out.push(`Portfolio fit score for ${symbol}: ${p.fitScore}/100 (${p.fitTier}) — inherits the research score, adjusted for this portfolio`);
   out.push(`Already held in portfolio: ${p.isInPortfolio ? "Yes" : "No"}`);
   if (p.reasons) out.push(`Why it fits: ${p.reasons}`);
+  if (p.action) {
+    out.push(
+      `Computed portfolio decision for ${symbol}: ${p.action.toUpperCase()}${p.suggestedPct ? ` at ${p.suggestedPct}% of portfolio` : ""} — settled by the deterministic engines, not open for revision`,
+    );
+  }
+  if (p.actionReason) out.push(`Decision rationale: ${p.actionReason}`);
   if (p.suggestedPct) out.push(`IOS-suggested allocation: ${p.suggestedPct}% of portfolio`);
   if (p.missingSectors) out.push(`Sectors the user is missing entirely: ${p.missingSectors}`);
   return out;
@@ -131,5 +142,7 @@ export function readPortfolioFacts(url: URL): PortfolioFacts {
     suggestedPct: url.searchParams.get("suggestedPct"),
     missingSectors: url.searchParams.get("missingSectors"),
     objective: url.searchParams.get("objective"),
+    action: url.searchParams.get("action"),
+    actionReason: url.searchParams.get("actionReason"),
   };
 }

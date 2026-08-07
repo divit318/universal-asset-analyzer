@@ -1,11 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { Check, Clock } from "lucide-react";
-import { Badge } from "@/app/_components/ui/badge";
+import { Check, Clock, KeyRound } from "lucide-react";
 import type { SectionProps } from "../section-registry";
-import { Reveal } from "../reveal";
+import { Reveal } from "../motion/reveal";
+import { SectionShell } from "../primitives/section-shell";
+import { SectionHeader } from "../primitives/section-header";
+import { ParticleField } from "../primitives/particle-field";
 import { openAuthModal } from "../auth-modal";
+import { PRIMARY_ACTION } from "../../landing-config";
 
 /**
  * Pricing — two tiers, one of which exists.
@@ -14,17 +17,17 @@ import { openAuthModal } from "../auth-modal";
  * every bullet is grounded in shipped code: the seven asset classes are
  * lib/assets/types.ts's ASSET_CLASS_IDS verbatim; engines/verification are
  * lib/composite + lib/valuation + lib/ai/grounding; auth is the optional
- * local account (proxy.ts gate, off by default); AI is BYO Anthropic key.
+ * local account (proxy.ts gate, off by default); AI is BYO key.
  *
- * PRO does not exist. The card says so unambiguously, its CTA captures
- * interest into the local SQLite (willingness-to-pay data), and there is no
- * purchase affordance anywhere — no billing exists behind this page.
+ * PRO does not exist. The badge says so at full prominence, the CTA captures
+ * interest into local SQLite (willingness-to-pay data), and there is no
+ * purchase affordance anywhere: no billing exists behind this page.
  *
- * The BYOK cost line is derived, not asserted: input sizes measured from
- * recorded production prompts (bench-out/parity, 2026-08-02) and the real
- * prompt builders; output at each task's configured hard cap
- * (lib/ai/task-registry.ts); price = Anthropic's published $5/$25 per MTok
- * for claude-opus-5. Derivation in the migration session's report.
+ * The BYOK cost tiers are derived, not asserted: input sizes measured from
+ * recorded production prompts (bench-out/parity, 2026-08-02), output at each
+ * task's configured hard cap (lib/ai/task-registry.ts), priced at Anthropic's
+ * published $5/$25 per MTok for claude-opus-5. INR figures convert those
+ * amounts at prevailing rates and are approximate.
  */
 
 /* ------------------------------- currency -------------------------------- */
@@ -32,9 +35,7 @@ import { openAuthModal } from "../auth-modal";
 type Currency = "USD" | "INR";
 const CURRENCY_KEY = "uaa-currency";
 
-/** Locale default: India → INR, everywhere else USD. Browser-only signals
- *  (navigator.language / the resolved timezone) — no IP lookups, no geo
- *  service, nothing that phones home. */
+/** Locale default: India → INR, everywhere else USD. Browser-only signals. */
 function localeDefault(): Currency {
   try {
     if (navigator.language?.toLowerCase().endsWith("-in")) return "INR";
@@ -85,24 +86,56 @@ function useCurrency() {
   return { currency, setCurrency };
 }
 
-/* ----------------------------- copy (verified) ---------------------------- */
+/* --------------------------- copy & figures (verified) --------------------- */
 
 const FREE_INCLUDED = [
-  "All seven asset classes — equities, ETFs, REITs, crypto, commodities, bonds, forex",
+  "All seven asset classes: equities, ETFs, REITs, crypto, commodities, bonds, forex",
   "Deterministic engines compute every figure: screening, composite scoring, DCF valuation, portfolio analytics",
-  "The verification layer — every AI-written figure traced back to its evidence",
+  "The verification layer: every AI-written figure traced back to its evidence",
   "US and Indian market data from public sources",
-  "AI narration on your own provider — Devin CLI login (no API key) or your own Anthropic/OpenAI/Gemini/OpenRouter key; the provider bills you directly",
+  "AI narration on your own provider: Devin CLI login (no API key) or your own Anthropic, OpenAI, Gemini, or OpenRouter key. The provider bills you directly",
   "Your data in a local database you own, with an optional local account for shared machines",
 ];
 
 const PRO_PLANNED = [
-  "Managed AI — narration without bringing your own key",
+  "Managed AI: narration without bringing your own key",
   "Licensed real-time and market-depth data, beyond public sources",
   "Encrypted cross-device sync and backup",
   "Scheduled background refresh and alerts",
   "Shareable, verified report links",
 ];
+
+/** Every displayed figure, per currency, so the toggle converts everything.
+ *  Rates from the repo source (claude-opus-5, $5/$25 per MTok); INR converted
+ *  at prevailing rates and marked approximate. */
+const FIGURES = {
+  USD: {
+    freePrice: "$0",
+    proPrice: "$180",
+    proSuffix: "/ year",
+    proNote: "$19 / month",
+    inputRate: "$5",
+    outputRate: "$25",
+    tierLow: "≈ 2¢",
+    tierMedium: "≈ 3¢",
+    tierHigh: "≈ 5–6¢",
+    monthlyLabel: "Monthly ($19)",
+    annualLabel: "Annual ($180)",
+  },
+  INR: {
+    freePrice: "₹0",
+    proPrice: "₹4,999",
+    proSuffix: "/ year",
+    proNote: "annual only",
+    inputRate: "≈ ₹420",
+    outputRate: "≈ ₹2,100",
+    tierLow: "≈ ₹2",
+    tierMedium: "≈ ₹3",
+    tierHigh: "≈ ₹4–5",
+    monthlyLabel: "Monthly",
+    annualLabel: "Annual (₹4,999)",
+  },
+} as const;
 
 /* ------------------------------ interest form ----------------------------- */
 
@@ -136,12 +169,12 @@ function InterestForm({ currency }: { currency: Currency }) {
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
-        setError(data.error ?? "Could not save that — try again.");
+        setError(data.error ?? "Could not save that. Try again.");
         return;
       }
       setDone(true);
     } catch {
-      setError("Could not save that — try again.");
+      setError("Could not save that. Try again.");
     } finally {
       setBusy(false);
     }
@@ -149,20 +182,18 @@ function InterestForm({ currency }: { currency: Currency }) {
 
   if (done) {
     return (
-      <p aria-live="polite" className="mt-6 rounded-control border border-positive/30 bg-positive/10 px-3 py-2.5 text-sm text-positive">
-        You’re on the list. We’ll email you if Pro ships — nothing else.
+      <p aria-live="polite" className="mt-auto rounded-control border border-positive/30 bg-positive/10 px-3 py-2.5 text-mk-small text-positive">
+        You&apos;re on the list. We&apos;ll email you if Pro ships, nothing else.
       </p>
     );
   }
 
-  const prefName = "pricing-pref";
-  const monthlyLabel = currency === "INR" ? "Monthly" : "Monthly ($19)";
-  const annualLabel = currency === "INR" ? "Annual (₹4,999)" : "Annual ($180)";
+  const figures = FIGURES[currency];
 
   return (
-    <form className="mt-6 flex flex-col gap-3 text-left" onSubmit={submit} noValidate>
+    <form className="mt-auto flex flex-col gap-3 pt-6 text-left" onSubmit={submit} noValidate>
       <div>
-        <label htmlFor="pricing-interest-email" className="text-xs font-medium text-muted">
+        <label htmlFor="pricing-interest-email" className="text-mk-small font-medium text-muted">
           Email me when Pro exists
         </label>
         <input
@@ -186,19 +217,19 @@ function InterestForm({ currency }: { currency: Currency }) {
       </div>
 
       <fieldset className="flex flex-col gap-1.5">
-        <legend className="text-xs font-medium text-muted">Which price would you pay? (optional)</legend>
+        <legend className="text-mk-small font-medium text-muted">Which price would you pay? (optional)</legend>
         <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1.5">
           {(
             [
-              ["monthly", monthlyLabel],
-              ["annual", annualLabel],
+              ["monthly", figures.monthlyLabel],
+              ["annual", figures.annualLabel],
               ["neither", "Neither"],
             ] as const
           ).map(([value, label]) => (
             <label key={value} className="flex items-center gap-1.5 text-sm text-foreground">
               <input
                 type="radio"
-                name={prefName}
+                name="pricing-pref"
                 value={value}
                 checked={pref === value}
                 onChange={() => setPref(value)}
@@ -214,7 +245,7 @@ function InterestForm({ currency }: { currency: Currency }) {
       <button
         type="submit"
         disabled={busy}
-        className="inline-flex h-10 items-center justify-center rounded-control border border-border bg-surface px-4 text-sm font-semibold text-foreground outline-none transition hover:border-border-strong hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand/40 disabled:opacity-60"
+        className="inline-flex h-11 items-center justify-center rounded-control border border-brand/40 bg-surface px-4 text-sm font-semibold text-brand outline-none transition hover:border-brand hover:bg-brand-muted focus-visible:ring-2 focus-visible:ring-brand/40 disabled:opacity-60"
       >
         {busy ? "Saving…" : "Notify me"}
       </button>
@@ -226,140 +257,175 @@ function InterestForm({ currency }: { currency: Currency }) {
 
 export function Pricing({ section, index }: SectionProps) {
   const headingId = `${section.id}-heading`;
-  const banded = index % 2 === 1;
   const { currency, setCurrency } = useCurrency();
+  const figures = FIGURES[currency];
+
+  const tiers = [
+    { effort: "Low effort", desc: "quick parse, calendar brief", cost: figures.tierLow },
+    { effort: "Medium effort", desc: "movement explainer, watchlist digest", cost: figures.tierMedium },
+    { effort: "High effort", desc: "full research verdict", cost: figures.tierHigh },
+  ];
 
   return (
-    <section
+    <SectionShell
       id={section.id}
-      aria-labelledby={headingId}
-      className={`scroll-mt-20 border-b border-border ${banded ? "bg-surface" : "bg-background"}`}
+      headingId={headingId}
+      band={index % 2 === 1}
+      className="overflow-hidden"
+      containerClassName="flex flex-col items-center"
+      breakout={<ParticleField variant="edge-pair" className="inset-x-0 top-24 mx-auto h-[600px] w-full max-w-[1400px]" />}
     >
-      <Reveal className="mx-auto flex w-full max-w-5xl flex-col items-center gap-8 px-6 py-24 text-center">
-        <div className="flex max-w-2xl flex-col items-center gap-4">
-          <p className="text-label font-semibold uppercase tracking-widest text-brand">{section.kicker}</p>
-          <h2 id={headingId} className="text-balance text-2xl font-semibold tracking-tight text-foreground sm:text-4xl">
-            Free to run. Pro when you want us to run it.
-          </h2>
-          <p className="text-pretty text-base leading-relaxed text-muted">
-            The local product is free and complete — your machine, your database, your Anthropic key.
-            A paid tier is planned for the things that genuinely need a server. It doesn’t exist yet,
-            and nothing here is billable.
-          </p>
-        </div>
+        <div className="flex flex-col items-center">
+          <SectionHeader
+            eyebrow="Pricing"
+            headingId={headingId}
+            segments={[
+              { text: "Free to run. Pro when", block: true },
+              { text: "you want us to run it.", tone: "accent", block: true },
+            ]}
+            lead={
+              <>
+                The local product is free and complete: your machine, your database, your Anthropic
+                key. A paid tier is planned for the things that genuinely need a server. It
+                doesn&apos;t exist yet, and nothing here is billable.
+              </>
+            }
+          />
 
-        {/* Currency — browser locale default, persisted like the theme toggle. */}
-        <div role="group" aria-label="Currency" className="flex rounded-control border border-border bg-surface p-0.5">
-          {(["USD", "INR"] as const).map((c) => (
-            <button
-              key={c}
-              type="button"
-              aria-pressed={currency === c}
-              onClick={() => setCurrency(c)}
-              className={`rounded-[inherit] px-3 py-1 text-xs font-semibold transition-colors ${
-                currency === c ? "bg-brand text-background" : "text-muted hover:text-foreground"
-              }`}
-            >
-              {c === "USD" ? "$ USD" : "₹ INR"}
-            </button>
-          ))}
-        </div>
-
-        <div className="grid w-full gap-4 text-left sm:grid-cols-2">
-          {/* ------------------------------ FREE ------------------------------ */}
-          <div data-testid="pricing-free" className="flex flex-col rounded-panel border border-border bg-surface p-8 shadow-card">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-caption uppercase tracking-widest text-faint">Free</p>
-              <Badge variant="positive">Available now</Badge>
-            </div>
-            <div className="mt-2 flex items-baseline gap-2 tabular-nums">
-              <span className="text-4xl font-semibold tracking-tight text-foreground">
-                {currency === "INR" ? "₹0" : "$0"}
-              </span>
-            </div>
-            <p className="mt-1 text-sm text-muted">The full local product. Nothing held back.</p>
-
-            <ul className="mt-6 flex flex-1 flex-col gap-3">
-              {FREE_INCLUDED.map((item) => (
-                <li key={item} className="flex items-start gap-2.5 text-sm text-foreground">
-                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-muted text-brand">
-                    <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
-                  </span>
-                  {item}
-                </li>
-              ))}
-            </ul>
-
-            <button
-              type="button"
-              onClick={() => openAuthModal("signup")}
-              className="mt-8 inline-flex h-11 w-full items-center justify-center rounded-control bg-brand text-sm font-semibold text-background outline-none transition hover:-translate-y-0.5 hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
-            >
-              Get started free
-            </button>
+          {/* Currency toggle — persisted; converts every figure on the page. */}
+          <Reveal delay={230}>
+          <div role="group" aria-label="Currency" className="mt-mk-group flex rounded-full border border-border bg-surface p-1">
+            {(["USD", "INR"] as const).map((c) => (
+              <button
+                key={c}
+                type="button"
+                aria-pressed={currency === c}
+                onClick={() => setCurrency(c)}
+                className={`rounded-full px-4 py-1.5 text-mk-small font-semibold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand/40 ${
+                  currency === c ? "bg-brand text-background" : "text-muted hover:text-foreground"
+                }`}
+              >
+                {c === "USD" ? "$ USD" : "₹ INR"}
+              </button>
+            ))}
           </div>
+          </Reveal>
+        </div>
+
+        <Reveal delay={280} className="mt-mk-lead grid w-full gap-5 text-left lg:grid-cols-2">
+          {/* ------------------------------ FREE ------------------------------ */}
+            <div data-testid="pricing-free" className="flex h-full flex-col rounded-[20px] border border-border bg-surface p-8 shadow-card">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-mk-eyebrow uppercase text-muted">Free</p>
+                <span className="rounded-full border border-positive/30 bg-positive/10 px-2.5 py-1 text-micro font-semibold uppercase tracking-widest text-positive">
+                  Available now
+                </span>
+              </div>
+              <p className="mt-3 font-mono text-5xl font-semibold tabular-nums tracking-tight text-foreground">
+                {figures.freePrice}
+              </p>
+              <p className="mt-2 text-mk-body text-muted">The full local product. Nothing held back.</p>
+
+              <ul className="mt-6 mb-8 flex flex-1 flex-col gap-3">
+                {FREE_INCLUDED.map((item) => (
+                  <li key={item} className="flex items-start gap-2.5 text-mk-body text-foreground">
+                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-muted text-brand">
+                      <Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden="true" />
+                    </span>
+                    {item}
+                  </li>
+                ))}
+              </ul>
+
+              <button
+                type="button"
+                onClick={() => openAuthModal("signup")}
+                className="group mt-auto inline-flex h-12 w-full items-center justify-center gap-2 rounded-control bg-brand text-sm font-semibold text-background outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
+              >
+                {PRIMARY_ACTION}
+                <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-0.5">
+                  →
+                </span>
+              </button>
+            </div>
 
           {/* ------------------------------- PRO ------------------------------- */}
-          <div data-testid="pricing-pro" className="flex flex-col rounded-panel border border-dashed border-border bg-surface/60 p-8">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-caption uppercase tracking-widest text-faint">Pro</p>
-              <Badge variant="warning">
-                <Clock className="h-3 w-3" strokeWidth={2.5} />
-                Planned — not yet available
-              </Badge>
-            </div>
-            <div className="mt-2 flex items-baseline gap-2 tabular-nums">
-              {currency === "INR" ? (
-                <>
-                  <span className="text-4xl font-semibold tracking-tight text-foreground">₹4,999</span>
-                  <span className="text-sm text-muted">/ year</span>
-                </>
-              ) : (
-                <>
-                  <span className="text-4xl font-semibold tracking-tight text-foreground">$19</span>
-                  <span className="text-sm text-muted">/ month, or $180 / year</span>
-                </>
-              )}
-            </div>
-            <p className="mt-1 text-sm text-muted">
-              Intended pricing. Nothing is purchasable today — this card exists to ask, not to sell.
-            </p>
+            <div data-testid="pricing-pro" className="flex h-full flex-col rounded-[20px] border border-brand/50 bg-surface/70 p-8">
+              {/* The card's most important element: this does not exist yet. */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-mk-eyebrow uppercase text-muted">Pro</p>
+                <p className="flex items-center gap-2 rounded-full border border-brand/50 bg-brand/12 px-3.5 py-1.5 text-mk-small font-bold uppercase tracking-widest text-brand">
+                  <Clock className="h-4 w-4" strokeWidth={2.5} aria-hidden="true" />
+                  Planned, not yet available
+                </p>
+              </div>
+              <p className="mt-3 flex items-baseline gap-2">
+                <span className="font-mono text-5xl font-semibold tabular-nums tracking-tight text-foreground">
+                  {figures.proPrice}
+                </span>
+                <span className="text-mk-body text-muted">{figures.proSuffix}</span>
+                <span className="text-mk-small text-muted">({figures.proNote})</span>
+              </p>
+              <p className="mt-2 text-mk-body text-muted">
+                Intended pricing. Nothing is purchasable today; this card exists to ask, not to sell.
+              </p>
 
-            <ul className="mt-6 flex flex-1 flex-col gap-3">
-              {PRO_PLANNED.map((item) => (
-                <li key={item} className="flex items-start gap-2.5 text-sm text-muted">
-                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface-3 text-faint">
-                    <Clock className="h-3 w-3" strokeWidth={2} />
-                  </span>
-                  <span>
-                    {item} <span className="text-caption uppercase tracking-wide text-faint">(planned)</span>
-                  </span>
-                </li>
-              ))}
-            </ul>
+              <ul className="mt-6 flex flex-1 flex-col gap-3">
+                {PRO_PLANNED.map((item) => (
+                  <li key={item} className="flex items-start gap-2.5 text-mk-body text-muted">
+                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-muted text-brand">
+                      <Clock className="h-3 w-3" strokeWidth={2} aria-hidden="true" />
+                    </span>
+                    <span>
+                      {item} <span className="text-caption uppercase tracking-wide text-muted">(planned)</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
 
-            <InterestForm currency={currency} />
+              <InterestForm currency={currency} />
+            </div>
+        </Reveal>
+
+        {/* The BYOK cost explainer: two-sentence lead, then the three cost
+            tiers as a labelled strip. Rates verified against the repo source
+            (claude-opus-5 at $5/$25 per MTok, hard output caps in code). */}
+        <Reveal delay={0} className="mt-mk-lead w-full">
+          <div className="flex flex-col gap-5 rounded-[20px] border border-border bg-surface/70 p-7 text-left sm:flex-row sm:items-start sm:gap-6">
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-brand/18 bg-brand/10 text-brand" aria-hidden="true">
+              <KeyRound className="h-5 w-5" strokeWidth={1.75} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-mk-body font-semibold text-foreground">
+                What does &ldquo;your own Anthropic key&rdquo; cost?
+              </p>
+              <p className="mt-2 text-pretty text-mk-body text-muted">
+                Anthropic bills you directly at Claude Opus 5&apos;s published rate:{" "}
+                <span className="font-mono tabular-nums text-foreground">{figures.inputRate}</span> per million input
+                tokens, <span className="font-mono tabular-nums text-foreground">{figures.outputRate}</span> per million
+                output. Every UAA call has a hard output cap in code, so the worst case per analysis is knowable, not
+                open-ended.
+              </p>
+
+              <Reveal delay={280} stagger={80} className="mt-5 grid gap-3 sm:grid-cols-3">
+                {tiers.map((t) => (
+                  <div key={t.effort} className="rounded-card border border-hairline bg-surface-2/60 px-4 py-3">
+                    <p className="text-micro uppercase tracking-widest text-muted">{t.effort}</p>
+                    <p className="mt-1 font-mono text-mk-lead font-semibold tabular-nums text-foreground">{t.cost}</p>
+                    <p className="mt-0.5 text-caption text-muted">{t.desc}</p>
+                  </div>
+                ))}
+              </Reveal>
+
+              <p className="mt-4 text-mk-small text-muted">
+                Figures use production-recorded prompt sizes with output at each task&apos;s configured cap; richer
+                dossiers cost proportionally more input at {figures.inputRate} per million tokens.
+                {currency === "INR" ? " INR figures are approximate at prevailing exchange rates. " : " "}
+                Every screen&apos;s computed numbers are free: the engines run on your machine.
+              </p>
+            </div>
           </div>
-        </div>
-
-        {/* The BYOK cost line — derived from measured prompts, hard output caps,
-            and Anthropic's published claude-opus-5 price. See lib/ai/. */}
-        <div className="max-w-3xl rounded-panel border border-border bg-surface-2/60 px-5 py-4 text-left">
-          <p className="text-sm font-semibold text-foreground">What does “your own Anthropic key” cost?</p>
-          <p className="mt-1.5 text-pretty text-sm leading-relaxed text-muted">
-            Anthropic bills you directly at Claude Opus 5’s published rate ($5 per million input
-            tokens, $25 per million output). Every UAA call has a hard output cap in code, so the
-            worst case per analysis is knowable, not open-ended:{" "}
-            <span className="tabular-nums text-foreground">≈ 2¢</span> for a quick parse or calendar
-            brief (low effort), <span className="tabular-nums text-foreground">≈ 3¢</span> for a
-            movement explainer or watchlist digest (medium), and{" "}
-            <span className="tabular-nums text-foreground">≈ 5–6¢</span> for a full research verdict
-            (high effort). Figures use production-recorded prompt sizes with output at each task’s
-            configured cap; richer dossiers cost proportionally more input at $5 per million tokens.
-            Every screen’s computed numbers are free — the engines run on your machine.
-          </p>
-        </div>
-      </Reveal>
-    </section>
+        </Reveal>
+    </SectionShell>
   );
 }

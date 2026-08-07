@@ -29,7 +29,7 @@ export function AllocationChoice({
           onClick={() => onChange("recommended")}
           title="Recommended Allocation"
           badge="Recommended"
-          description="The optimizer sizes this position from your targets, concentration limits and available cash."
+          description="The optimizer sizes this position from the research report — valuation, quality, risk — and your portfolio's targets, correlations and concentration limits."
           icon={
             <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden>
               <circle cx="10" cy="10" r="7" className="opacity-30" />

@@ -222,7 +222,7 @@ export default function ValuationPage() {
   const scenarios = computable && dcf ? buildScenarios(dcf) : null;
   const sensitivity = computable && dcf ? buildSensitivity(dcf) : null;
   const mos = vcase?.result.marginOfSafety ?? null;
-  const mosColor = mos == null ? "" : mos >= 20 ? "text-positive" : mos >= 0 ? "text-yellow-500" : "text-negative";
+  const mosColor = mos == null ? "" : mos >= 20 ? "text-positive" : mos >= 0 ? "text-yellow-500 light:text-yellow-700" : "text-negative";
   const fresh = vcase ? caseFreshness(vcase.updatedAt) : null;
 
   const iosFit = ios?.profileReady && symbol
@@ -283,12 +283,12 @@ export default function ValuationPage() {
       {err ? <p className="text-sm text-negative">{err}</p> : null}
       {exportErr ? <p className="text-sm text-negative">{exportErr}</p> : null}
       {data?.unvaluable ? (
-        <p className="rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-4 py-2 text-sm text-yellow-600 dark:text-yellow-400">
+        <p className="rounded-lg border border-yellow-500/40 light:border-yellow-700/30 bg-yellow-500/10 px-4 py-2 text-sm text-yellow-400 light:text-yellow-700">
           ⚠ {data.unvaluable}
         </p>
       ) : null}
       {invalidReason ? (
-        <p className="rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-4 py-2 text-sm text-yellow-600 dark:text-yellow-400">
+        <p className="rounded-lg border border-yellow-500/40 light:border-yellow-700/30 bg-yellow-500/10 px-4 py-2 text-sm text-yellow-400 light:text-yellow-700">
           ⚠ {DCF_INVALID_MESSAGE[invalidReason]} The case is saved — adjust an assumption to value it again.
         </p>
       ) : null}
@@ -516,7 +516,7 @@ export default function ValuationPage() {
                                 const val = sensitivity.table[ri][ci];
                                 const cls = val == null || !price ? "text-muted"
                                   : val > price * 1.3 ? "text-positive font-semibold"
-                                  : val > price ? "text-yellow-500"
+                                  : val > price ? "text-yellow-500 light:text-yellow-700"
                                   : "text-negative";
                                 return (
                                   <td key={ci} className={`px-2 py-1 text-right font-mono ${cls}`}>

@@ -15,24 +15,50 @@
  * ONE `.uaa-card` (§16 — panel-per-item would rebuild the clutter this removes).
  * It selects its slice via `useHomeSlice`, so it fetches nothing and paints from
  * the deterministic digest with no AI in its path (§18, §19.8).
+ *
+ * The number on every rail is the PRIORITY score (the §4.2 geometric ranking:
+ * impact^0.5 × urgency^0.3 × confidence^0.2, 0–100). It is deliberately a
+ * different scale from the Radar's fit score beside it — priority ranks how
+ * urgently an item needs a decision; fit ranks how good an idea is for this
+ * book. Both panels label their scale so the same ticker carrying two numbers
+ * reads as two measurements, not one metric disagreeing with itself.
  */
 
-import { useCallback, useMemo, useRef, useState, type CSSProperties } from "react";
+import { createElement, useCallback, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { X, Check, ChevronDown, ChevronRight, SlidersHorizontal, ArrowRight } from "lucide-react";
+import {
+  ArrowRight,
+  BarChart3,
+  Bell,
+  CalendarDays,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  CircleDollarSign,
+  Crosshair,
+  Percent,
+  PieChart,
+  ShieldAlert,
+  SlidersHorizontal,
+  TrendingDown,
+  TrendingUp,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { useToast } from "@/app/_components/toast";
 import type { AttentionItem, AttentionKind, RecommendedAction, SymbolContext } from "@/lib/home/contracts";
 import { explainAttentionScore, explainDecision } from "@/lib/home/explain";
 import { STAGE_LABEL } from "@/lib/idea-stage";
 import { SymbolTag } from "../_atmosphere/symbol-link";
 import { ExplainableValue } from "../_atmosphere/explain-popover";
+import { CategoryPill, IconWell, NumericText, StatusChip, type PillTone } from "../_atmosphere/stream-primitives";
 import { useHome, useHomeSlice } from "../home-provider";
 import { Skeleton } from "@/app/_components/ui";
 
 const MAX_VISIBLE = 8;
 const UNDO_MS = 10_000;
-const EXIT_MS = 180;
+const EXIT_MS = 150;
 
 const KINDS: AttentionKind[] = ["action", "threat", "alert", "event", "signal"];
 const FILTERS: (AttentionKind | "all")[] = ["all", ...KINDS];
@@ -44,19 +70,90 @@ const KIND_LABEL: Record<AttentionKind, string> = {
   signal: "Signal",
 };
 
-/** Kind chip colour — the only chromatic element on a row (§16). Text label
- *  always present so kind is never conveyed by colour alone (§17). */
-function chipClass(kind: AttentionKind, score: number): string {
+/** Kind chip tone — the semantic palette shared with the Radar (§16). Text
+ *  label always present so kind is never conveyed by colour alone (§17). */
+function kindTone(kind: AttentionKind, score: number): PillTone {
   switch (kind) {
     case "threat":
-      return score >= 80 ? "text-negative bg-negative/10" : "text-warning bg-warning/10";
+      return score >= 80 ? "negative" : "warning";
     case "signal":
-      return "text-positive bg-positive/10";
+      return "positive";
     case "event":
-      return "text-muted bg-surface-2";
+      return "neutral";
+    case "alert":
+      return "alert"; // violet — a tripwire the user set has fired
     default:
-      return "text-brand bg-brand/10"; // action, alert — interaction blue
+      return "blue"; // action — the engine proposes a move
   }
+}
+
+/** The icon well's 10%-tint background + full-saturation glyph, by tone. */
+const ICON_TONE: Record<PillTone, string> = {
+  positive: "bg-positive/10 text-positive",
+  warning: "bg-warning/10 text-warning",
+  negative: "bg-negative/10 text-negative",
+  blue: "bg-chart-2/10 text-chart-2",
+  alert: "bg-alert/10 text-alert",
+  neutral: "bg-muted/10 text-muted",
+  brand: "bg-brand/10 text-brand",
+};
+
+/** Fallback category glyph per kind; threats refine by their engine category
+ *  (parsed from the seed id — `threat:<category>-…`), since the digest carries
+ *  no sector for queue items. */
+const KIND_GLYPH: Record<AttentionKind, LucideIcon> = {
+  signal: TrendingUp,
+  threat: ShieldAlert,
+  action: BarChart3,
+  alert: Bell,
+  event: CalendarDays,
+};
+
+const THREAT_GLYPH: [RegExp, LucideIcon][] = [
+  [/currency/, CircleDollarSign],
+  [/conc(entration)?|correlation/, PieChart],
+  [/rates|inflation/, Percent],
+  [/drawdown/, TrendingDown],
+];
+
+function glyphFor(item: AttentionItem): LucideIcon {
+  if (item.kind === "threat") {
+    // Seed ids carry the engine's threat id, e.g. `threat:threat-currency` or
+    // `threat:threat-conc-currency-0` (lib/home/threats.ts) — the only category
+    // signal the digest ships for a queue row.
+    for (const [re, icon] of THREAT_GLYPH) if (re.test(item.id)) return icon;
+  }
+  return KIND_GLYPH[item.kind];
+}
+
+/** Renders the row's category glyph. All candidates are static module-level
+ *  lucide components; `createElement` keeps that legible to the linter. */
+function CategoryGlyph({ item }: { item: AttentionItem }) {
+  return createElement(glyphFor(item), { className: "h-4.5 w-4.5", strokeWidth: 2 });
+}
+
+/** Ticker-first titles, always: when the headline already leads with the
+ *  symbol, the symbol becomes the linkable tag and the remainder follows;
+ *  otherwise the tag is prepended. Symbol-less items lead with their subject. */
+function RowTitle({ item, className }: { item: AttentionItem; className: string }) {
+  const symbol = item.symbol;
+  if (!symbol) {
+    return (
+      <span className={className}>
+        <NumericText text={item.headline} />
+      </span>
+    );
+  }
+  const leads = item.headline.toUpperCase().startsWith(symbol.toUpperCase());
+  const rest = leads ? item.headline.slice(symbol.length).trimStart() : item.headline;
+  return (
+    <span className={`min-w-0 ${className}`}>
+      <SymbolTag symbol={symbol} className="font-mono">
+        {symbol}
+      </SymbolTag>{" "}
+      <NumericText text={rest} />
+    </span>
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -73,21 +170,27 @@ function daysAgo(iso: string): string {
 /**
  * The unified-intelligence join, rendered: held weight, pipeline stage, and
  * research recency for the row's symbol. Absence renders nothing — an item
- * the platform has no history with simply has no chips.
+ * the platform has no history with simply has no chips. Sentence case
+ * throughout.
  */
-function ContextChips({ ctx }: { ctx: SymbolContext | undefined }) {
-  if (!ctx) return null;
+function contextChips(ctx: SymbolContext | undefined): string[] {
+  if (!ctx) return [];
   const chips: string[] = [];
   if (ctx.heldWeightPct != null) chips.push(`${ctx.heldWeightPct.toFixed(1)}% of book`);
   if (ctx.watchlistStage && ctx.heldWeightPct == null) chips.push(STAGE_LABEL[ctx.watchlistStage] ?? ctx.watchlistStage);
-  if (ctx.lastResearchedAt) chips.push(`researched ${daysAgo(ctx.lastResearchedAt)}`);
+  if (ctx.lastResearchedAt) chips.push(`Researched ${daysAgo(ctx.lastResearchedAt)}`);
+  return chips;
+}
+
+function ContextChips({ ctx }: { ctx: SymbolContext | undefined }) {
+  const chips = contextChips(ctx);
   if (chips.length === 0) return null;
   return (
-    <span className="flex shrink-0 items-center gap-1">
+    <span className="flex shrink-0 flex-wrap items-center gap-1">
       {chips.map((c) => (
-        <span key={c} className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-muted">
-          {c}
-        </span>
+        <StatusChip key={c}>
+          <NumericText text={c} />
+        </StatusChip>
       ))}
     </span>
   );
@@ -99,81 +202,70 @@ function ContextChips({ ctx }: { ctx: SymbolContext | undefined }) {
 
 /**
  * The decision dashboard's answer to "if I do one thing, what is it?". The
- * top-ranked item renders large: full rationale, explainable score, the
- * symbol's context, and — when the item is a decision the engine actually
- * simulated — the measured before → after portfolio state and the full WHY
- * memo. Everything shown is data the digest already carried; promotion is
- * presentation, not re-ranking.
+ * top-ranked item renders large: full rationale, explainable score, and — when
+ * the item is a decision the engine actually simulated — the measured
+ * before → after portfolio state and the full WHY memo. Everything shown is
+ * data the digest already carried; promotion is presentation, not re-ranking.
  */
 function SpotlightCard({
   item,
   decision,
-  ctx,
   active,
   exiting,
   onFocus,
   onDismiss,
   registerRef,
-}: RowProps & { decision: RecommendedAction | null; ctx: SymbolContext | undefined }) {
+}: RowProps & { decision: RecommendedAction | null }) {
   const [showWhy, setShowWhy] = useState(false);
   const impact = decision?.impact ?? null;
   // Each number explains ITSELF: the ranking score decomposes into the
   // attention formula; the simulated deltas decompose into the decision memo.
-  // Wiring the decision explanation onto the attention number showed a popover
-  // whose headline value disagreed with the trigger — worse than no popover.
   const decisionExplanation = decision ? explainDecision(decision) : null;
 
   return (
     <li
       ref={registerRef}
-      role="listitem"
       tabIndex={active ? 0 : -1}
       onFocus={onFocus}
-      className={`group relative flex flex-col gap-2.5 overflow-hidden rounded-card border border-brand/25 bg-gradient-to-br from-brand/[0.07] to-transparent px-4 py-3.5 outline-none transition-colors focus-visible:border-brand/50 focus-visible:ring-2 focus-visible:ring-brand/30 ${
+      className={`group relative mx-5 mt-5 flex flex-col gap-3 overflow-hidden rounded-xl border border-brand/35 bg-gradient-to-br from-brand/[0.06] to-transparent p-5 outline-none transition-colors focus-visible:border-brand/50 focus-visible:ring-2 focus-visible:ring-brand/30 ${
         exiting ? "uaa-queue-exit" : ""
       }`}
     >
-      {/* Eyebrow row */}
+      {/* Row 1 — section label · kind pill · priority score · dismiss */}
       <div className="flex items-center gap-2">
-        <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-brand">Next best step</span>
-        <span className={`rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${chipClass(item.kind, item.score)}`}>
+        <span className="text-caption font-semibold uppercase tracking-[0.08em] text-muted">Next best step</span>
+        <CategoryPill tone={kindTone(item.kind, item.score)} ariaLabel={`Category: ${KIND_LABEL[item.kind]}`}>
           {KIND_LABEL[item.kind]}
-        </span>
+        </CategoryPill>
         <span className="min-w-0 flex-1" />
-        <ExplainableValue explanation={explainAttentionScore(item)} align="end">
-          <span className="font-mono text-sm font-bold tabular-nums text-foreground" aria-label={`score ${Math.round(item.score)} of 100`}>
+        <span className="text-label uppercase tracking-[0.08em] text-muted">Priority</span>
+        <ExplainableValue explanation={explainAttentionScore(item)} align="end" underline={false}>
+          <span className="font-mono text-[22px] font-semibold leading-none tabular-nums text-foreground" aria-label={`Priority score ${Math.round(item.score)} of 100`}>
             {Math.round(item.score)}
           </span>
         </ExplainableValue>
         <button
           type="button"
           onClick={onDismiss}
-          aria-label={`Dismiss: ${item.headline}`}
-          tabIndex={-1}
-          className="shrink-0 rounded-control p-1 text-muted outline-none transition-colors hover:bg-surface-3 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
+          aria-label={`Dismiss ${item.headline}`}
+          className="shrink-0 rounded-control p-1 text-foreground/40 outline-none transition-colors hover:bg-surface-3 hover:text-foreground/70 focus-visible:ring-2 focus-visible:ring-brand/40"
         >
-          <X className="h-3.5 w-3.5" strokeWidth={2} />
+          <X className="h-4 w-4" strokeWidth={2} />
         </button>
       </div>
 
-      {/* Headline + full rationale */}
-      <div className="flex flex-col gap-1">
-        <div className="flex flex-wrap items-center gap-2">
-          {item.symbol ? (
-            <SymbolTag symbol={item.symbol} className="font-mono text-base font-bold text-foreground">
-              {item.symbol}
-            </SymbolTag>
-          ) : null}
-          <span className="text-[15px] font-semibold leading-snug text-foreground">{item.headline}</span>
-          <ContextChips ctx={ctx} />
-        </div>
-        <p className="text-xs leading-relaxed text-muted">{item.rationale}</p>
-      </div>
+      {/* Row 2 — the headline, ticker-first */}
+      <RowTitle item={item} className="text-[22px] font-semibold leading-snug text-foreground" />
+
+      {/* Row 3 — the reason line */}
+      <p className="text-sm leading-normal text-muted">
+        <NumericText text={item.rationale} />
+      </p>
 
       {/* Measured before → after, when the engine simulated this decision */}
       {impact ? (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-control border border-border/70 bg-surface/70 px-3 py-2">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-faint">If executed</span>
+          <span className="text-label font-semibold uppercase tracking-wide text-faint">If executed</span>
           <ExplainableValue explanation={decisionExplanation}>
             <span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums">
               <span className="text-muted">Health {impact.healthBefore}</span>
@@ -195,7 +287,7 @@ function SpotlightCard({
             </span>
           ) : null}
           {decision?.alternativesEvaluated ? (
-            <span className="text-[10px] text-faint">{decision.alternativesEvaluated} alternatives simulated</span>
+            <span className="text-label text-faint">{decision.alternativesEvaluated} alternatives simulated</span>
           ) : null}
         </div>
       ) : null}
@@ -207,14 +299,13 @@ function SpotlightCard({
             type="button"
             onClick={() => setShowWhy((s) => !s)}
             aria-expanded={showWhy}
-            tabIndex={-1}
-            className="inline-flex w-fit items-center gap-1 rounded-control text-[11px] font-semibold text-brand outline-none transition-colors hover:underline focus-visible:ring-2 focus-visible:ring-brand/40"
+            className="inline-flex w-fit items-center gap-1 rounded-control text-caption font-semibold text-foreground/75 outline-none transition-colors hover:text-brand focus-visible:ring-2 focus-visible:ring-brand/40"
           >
             <ChevronRight className={`h-3.5 w-3.5 transition-transform ${showWhy ? "rotate-90" : ""}`} strokeWidth={2} />
             Why this, why now
           </button>
           {showWhy ? (
-            <dl className="flex flex-col gap-1.5 border-l-2 border-brand/20 pl-3 text-[11px] leading-relaxed text-muted">
+            <dl className="flex flex-col gap-1.5 border-l-2 border-brand/20 pl-3 text-caption leading-relaxed text-muted">
               <div><dt className="inline font-semibold text-foreground/80">Why now: </dt><dd className="inline">{decision.why.whyNow}</dd></div>
               <div><dt className="inline font-semibold text-foreground/80">Sizing: </dt><dd className="inline">{decision.why.whyThisAmount}</dd></div>
               <div><dt className="inline font-semibold text-foreground/80">Vs. alternatives: </dt><dd className="inline">{decision.why.whyNotAlternative}</dd></div>
@@ -224,17 +315,16 @@ function SpotlightCard({
         </div>
       ) : null}
 
-      {/* Primary action */}
-      <div className="flex items-center gap-2">
+      {/* Row 4 — the primary action */}
+      <div className="flex items-center gap-3">
         <Link
           href={item.primaryAction.href}
-          tabIndex={-1}
-          className="inline-flex items-center gap-1.5 rounded-control bg-brand px-3 py-1.5 text-xs font-semibold text-white shadow-sm outline-none transition-colors hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
+          className="inline-flex items-center gap-1.5 rounded-control bg-brand px-5 py-3 text-sm font-semibold leading-none text-background shadow-sm outline-none transition-colors hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
         >
           {item.primaryAction.label} <ArrowRight className="h-3.5 w-3.5" strokeWidth={2.5} />
         </Link>
         {item.mergedHrefs?.map((m) => (
-          <Link key={m.href} href={m.href} tabIndex={-1} className="text-[11px] font-medium text-muted outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40">
+          <Link key={m.href} href={m.href} className="text-caption font-medium text-muted outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40">
             {m.label} →
           </Link>
         ))}
@@ -257,58 +347,86 @@ interface RowProps {
   registerRef: (el: HTMLLIElement | null) => void;
 }
 
-function QueueCard({ item, active, exiting, onFocus, onDismiss, registerRef, ctx }: RowProps & { ctx: SymbolContext | undefined }) {
+function QueueRow({
+  item,
+  index,
+  active,
+  exiting,
+  onFocus,
+  onDismiss,
+  registerRef,
+  ctx,
+}: RowProps & { ctx: SymbolContext | undefined }) {
+  const tone = kindTone(item.kind, item.score);
+  const chips = contextChips(ctx);
+
   return (
     <li
       ref={registerRef}
-      role="listitem"
       tabIndex={active ? 0 : -1}
       onFocus={onFocus}
-      className={`uaa-linkable group flex flex-col gap-1.5 rounded-control border border-transparent px-3 py-2.5 outline-none transition-colors hover:border-border-strong focus-visible:border-brand/40 focus-visible:ring-2 focus-visible:ring-brand/30 ${
+      className={`uaa-linkable group px-6 outline-none transition-colors hover:bg-foreground/[0.03] focus-visible:bg-foreground/[0.03] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/30 ${
         exiting ? "uaa-queue-exit" : ""
       }`}
     >
-      {/* Row 1 — kind · symbol · headline · score · dismiss */}
-      <div className="flex items-center gap-2">
-        <span className={`shrink-0 rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${chipClass(item.kind, item.score)}`}>
-          {KIND_LABEL[item.kind]}
-        </span>
-        {item.symbol ? (
-          <SymbolTag symbol={item.symbol} className="shrink-0 font-mono text-[13px] font-semibold text-foreground">
-            {item.symbol}
-          </SymbolTag>
-        ) : null}
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground/90">{item.headline}</span>
-        <ExplainableValue explanation={explainAttentionScore(item)} align="end" className="shrink-0">
-          <span
-            className="font-mono text-xs tabular-nums text-muted"
-            aria-label={`attention score ${Math.round(item.score)} of 100`}
-          >
-            {Math.round(item.score)}
-          </span>
-        </ExplainableValue>
-        <button
-          type="button"
-          onClick={onDismiss}
-          aria-label={`Dismiss: ${item.headline}`}
-          tabIndex={-1}
-          className="shrink-0 rounded-control p-1 text-muted outline-none transition-colors hover:bg-surface-3 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
-        >
-          <X className="h-3.5 w-3.5" strokeWidth={2} />
-        </button>
-      </div>
+      <div
+        className={`grid grid-cols-[40px_minmax(0,1fr)] items-start gap-4 py-4.5 sm:grid-cols-[40px_minmax(0,1fr)_auto_auto] ${
+          index > 1 ? "border-t border-hairline" : ""
+        }`}
+      >
+        {/* Col 1 — category icon */}
+        <IconWell toneClass={ICON_TONE[tone]}>
+          <CategoryGlyph item={item} />
+        </IconWell>
 
-      {/* Row 2 — rationale · context · primary action */}
-      <div className="flex items-center justify-between gap-3 pl-0.5">
-        <span className="min-w-0 flex-1 truncate text-[11px] text-muted">{item.rationale}</span>
-        <ContextChips ctx={ctx} />
-        <Link
-          href={item.primaryAction.href}
-          tabIndex={-1}
-          className="shrink-0 text-[11px] font-semibold text-brand outline-none hover:underline focus-visible:ring-2 focus-visible:ring-brand/40"
-        >
-          {item.primaryAction.label} →
-        </Link>
+        {/* Col 2 — pill · title, then the reason */}
+        <div className="flex min-w-0 flex-col gap-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <CategoryPill tone={tone} ariaLabel={`Category: ${KIND_LABEL[item.kind]}`}>
+              {KIND_LABEL[item.kind]}
+            </CategoryPill>
+            <RowTitle item={item} className="text-base font-semibold leading-snug text-foreground" />
+          </div>
+          <p className="line-clamp-2 text-sm leading-normal text-muted">
+            <NumericText text={item.rationale} />
+          </p>
+        </div>
+
+        {/* Col 3 — status chips. Omitted entirely when there are none. */}
+        {chips.length > 0 ? (
+          <div className="col-start-2 flex flex-wrap items-center gap-1 sm:col-start-3">
+            <ContextChips ctx={ctx} />
+          </div>
+        ) : null}
+
+        {/* Col 4 — the fixed rail: priority score + dismiss, then the action */}
+        <div className="col-start-2 flex flex-col items-start gap-1 sm:col-start-4 sm:w-[120px] sm:items-end">
+          <span className="flex items-center gap-1.5">
+            <ExplainableValue explanation={explainAttentionScore(item)} align="end" underline={false}>
+              <span
+                className="font-mono text-[17px] font-semibold leading-none tabular-nums text-foreground"
+                aria-label={`Priority score ${Math.round(item.score)} of 100`}
+              >
+                {Math.round(item.score)}
+              </span>
+            </ExplainableValue>
+            <button
+              type="button"
+              onClick={onDismiss}
+              aria-label={`Dismiss ${item.headline}`}
+              className="shrink-0 rounded-control p-0.5 text-foreground/35 outline-none transition-colors hover:bg-surface-3 hover:text-foreground/70 focus-visible:ring-2 focus-visible:ring-brand/40"
+            >
+              <X className="h-3.5 w-3.5" strokeWidth={2} />
+            </button>
+          </span>
+          <Link
+            href={item.primaryAction.href}
+            className="group/link inline-flex items-center gap-1 rounded-control text-sm font-medium text-foreground/75 outline-none transition-colors hover:text-brand focus-visible:ring-2 focus-visible:ring-brand/40"
+          >
+            {item.primaryAction.label}
+            <ArrowRight className="h-3.5 w-3.5 text-foreground/45 transition-colors group-hover/link:text-brand" strokeWidth={2} />
+          </Link>
+        </div>
       </div>
     </li>
   );
@@ -380,6 +498,9 @@ export function AttentionQueueModule() {
   const dismiss = useCallback(
     (item: AttentionItem) => {
       const idx = visible.findIndex((i) => i.dedupeKey === item.dedupeKey);
+      // Set when the persist fails BEFORE the exit animation finishes, so the
+      // deferred hide below doesn't re-hide a row the rollback just restored.
+      let failed = false;
 
       // 1. Animate out, then hide.
       setExiting((prev) => new Set(prev).add(item.dedupeKey));
@@ -389,6 +510,7 @@ export function AttentionQueueModule() {
           n.delete(item.dedupeKey);
           return n;
         });
+        if (failed) return;
         setPending((prev) => new Set(prev).add(item.dedupeKey));
         // Focus the row that slides into this slot, or the clear heading.
         window.requestAnimationFrame(() => {
@@ -408,6 +530,7 @@ export function AttentionQueueModule() {
           if (!res.ok) throw new Error();
         })
         .catch(() => {
+          failed = true;
           setPending((prev) => {
             const n = new Set(prev);
             n.delete(item.dedupeKey);
@@ -479,61 +602,44 @@ export function AttentionQueueModule() {
     [safeActive, visible, focusRow, dismiss, router, filter, openCount],
   );
 
-  /* -------------------- topline accent -------------------- */
-
-  const top = visible[0];
-  const accentLine = top
-    ? top.kind === "threat"
-      ? top.score >= 80
-        ? "var(--negative)"
-        : "var(--warning)"
-      : "var(--brand)"
-    : "color-mix(in oklab, var(--foreground) 14%, transparent)";
-
   /* -------------------- render -------------------- */
 
+  const moreCount = filtered.length - MAX_VISIBLE;
+
   return (
-    <div
-      id="action-center"
-      className="uaa-card uaa-topline scroll-mt-20 flex h-full flex-col p-4"
-      style={{ "--accent-line": accentLine } as CSSProperties}
-    >
-      {/* Header */}
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-foreground">Attention</h2>
-            <span className="font-mono text-xs tabular-nums text-muted" aria-live="polite">
-              {openCount} open
-            </span>
-          </div>
-          <p className="truncate text-xs text-muted">One ranked stream — clear it, and you&apos;re done.</p>
+    <div id="action-center" className="uaa-card scroll-mt-20 flex h-full flex-col">
+      {/* Header — full-bleed bottom divider */}
+      <div className="flex flex-col gap-1 border-b border-hairline p-6">
+        <div className="flex items-center gap-2.5">
+          <Crosshair className="h-4.5 w-4.5 shrink-0 text-brand" strokeWidth={2} aria-hidden />
+          <h2 className="text-xl font-semibold leading-none text-foreground">Attention</h2>
+          <span className="font-mono text-sm tabular-nums text-muted" aria-live="polite">
+            {openCount} open
+          </span>
+          <span className="min-w-0 flex-1" />
+          <button
+            type="button"
+            onClick={() => setShowFilters((s) => !s)}
+            aria-expanded={showFilters}
+            aria-label="Filter by kind"
+            className="rounded-control p-1.5 text-foreground/40 outline-none transition-colors hover:text-foreground/70 focus-visible:ring-2 focus-visible:ring-brand/40"
+          >
+            <SlidersHorizontal className="h-4 w-4" strokeWidth={2} />
+          </button>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {openCount > 5 ? (
-            <button
-              type="button"
-              onClick={() => setShowFilters((s) => !s)}
-              aria-expanded={showFilters}
-              aria-label="Filter by kind"
-              className="rounded-control p-1.5 text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
-            >
-              <SlidersHorizontal className="h-3.5 w-3.5" strokeWidth={2} />
-            </button>
-          ) : null}
-        </div>
+        <p className="text-sm text-muted">One ranked stream. Clear it, and you&apos;re done.</p>
       </div>
 
-      {/* Filter chips (only when the queue exceeds 5 items) */}
-      {showFilters && openCount > 5 ? (
-        <div className="mb-3 flex flex-wrap gap-1.5">
+      {/* Filter chips */}
+      {showFilters ? (
+        <div className="flex flex-wrap gap-1.5 px-6 pt-4">
           {FILTERS.map((f) => (
             <button
               key={f}
               type="button"
               aria-pressed={filter === f}
               onClick={() => setFilter(f)}
-              className={`rounded-full px-2 py-0.5 text-[11px] font-medium capitalize outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand/40 ${
+              className={`rounded-full px-2 py-0.5 text-caption font-medium capitalize outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand/40 ${
                 filter === f ? "bg-brand/15 text-brand" : "bg-surface-2 text-muted hover:text-foreground"
               }`}
             >
@@ -545,17 +651,41 @@ export function AttentionQueueModule() {
 
       {/* Body */}
       {loading ? (
-        <div className="flex flex-col gap-2" style={{ minHeight: 220 }} aria-hidden>
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="flex flex-col gap-1.5 rounded-control px-3 py-2.5">
-              <Skeleton height="h-4" width="w-3/4" />
-              <Skeleton height="h-3" width="w-1/2" />
+        <div className="flex flex-col pb-4" aria-hidden>
+          <div className="mx-5 mt-5 flex h-36 flex-col justify-between rounded-xl border border-hairline p-5">
+            <Skeleton height="h-3" width="w-1/4" />
+            <Skeleton height="h-6" width="w-1/2" />
+            <Skeleton height="h-4" width="w-2/3" />
+          </div>
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="px-6">
+              <div className={`grid grid-cols-[40px_minmax(0,1fr)_auto] items-start gap-4 py-4.5 ${i > 0 ? "border-t border-hairline" : ""}`}>
+                <Skeleton height="h-9" width="w-9" radius="rounded-[10px]" />
+                <div className="flex flex-col gap-1.5">
+                  <Skeleton height="h-4" width="w-1/2" />
+                  <Skeleton height="h-3.5" width="w-3/4" />
+                </div>
+                <div className="flex w-[120px] flex-col items-end gap-1.5">
+                  <Skeleton height="h-4" width="w-8" />
+                  <Skeleton height="h-3.5" width="w-20" />
+                </div>
+              </div>
             </div>
           ))}
         </div>
       ) : visible.length > 0 ? (
         <>
-          <ul role="list" aria-label="Attention queue" onKeyDown={onKeyDown} className="flex flex-col gap-1.5">
+          {/* The rail column's persistent scale label (§ scoring): PRIORITY,
+              distinct from the Radar's FIT. Each score decomposes on click. */}
+          <div className="flex justify-end px-6 pt-3">
+            <span
+              className="pr-6 text-label font-semibold uppercase tracking-[0.08em] text-muted"
+              title="Priority: how urgently this item needs a decision, 0–100. Geometric blend of impact, urgency, and confidence — click any score for its decomposition."
+            >
+              Priority
+            </span>
+          </div>
+          <ul role="list" aria-label="Attention queue" onKeyDown={onKeyDown} className="flex flex-col">
             {visible.map((item, i) =>
               i === 0 ? (
                 <SpotlightCard
@@ -563,7 +693,6 @@ export function AttentionQueueModule() {
                   item={item}
                   index={i}
                   decision={decisionById.get(item.id) ?? null}
-                  ctx={ctxFor(item.symbol)}
                   active={i === safeActive}
                   exiting={exiting.has(item.dedupeKey)}
                   onFocus={() => setActiveIndex(i)}
@@ -573,7 +702,7 @@ export function AttentionQueueModule() {
                   }}
                 />
               ) : (
-                <QueueCard
+                <QueueRow
                   key={item.dedupeKey}
                   item={item}
                   index={i}
@@ -590,21 +719,27 @@ export function AttentionQueueModule() {
             )}
           </ul>
 
-          {filtered.length > MAX_VISIBLE ? (
-            <button
-              type="button"
-              onClick={() => setExpanded((e) => !e)}
-              className="mt-2 inline-flex items-center gap-1 self-start rounded-control px-2 py-1 text-xs font-medium text-brand outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand/40"
-            >
-              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`} strokeWidth={2} />
-              {expanded ? "Show less" : `${filtered.length - MAX_VISIBLE} more`}
-            </button>
+          {moreCount > 0 || expanded ? (
+            <div className="mx-6 mt-auto border-t border-hairline">
+              <button
+                type="button"
+                onClick={() => setExpanded((e) => !e)}
+                className="flex w-full items-center justify-center gap-1.5 rounded-control py-4.5 text-sm font-medium text-muted outline-none transition-colors hover:text-foreground/90 focus-visible:ring-2 focus-visible:ring-brand/40"
+              >
+                <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`} strokeWidth={2} />
+                {expanded ? "Show less" : (
+                  <span>
+                    <span className="font-mono tabular-nums">{moreCount}</span> more items
+                  </span>
+                )}
+              </button>
+            </div>
           ) : null}
 
           {degraded.length > 0 ? (
-            <p className="mt-2 border-t border-hairline pt-2 text-[11px] text-muted">
+            <p className="mx-6 border-t border-hairline py-3 text-caption text-muted">
               Some data unavailable ({degraded.join(", ")}) —{" "}
-              <button type="button" onClick={refreshDigest} className="font-medium text-brand hover:underline">
+              <button type="button" onClick={refreshDigest} className="font-medium text-foreground/75 hover:text-brand hover:underline">
                 retry
               </button>
             </p>
@@ -612,7 +747,7 @@ export function AttentionQueueModule() {
         </>
       ) : noPortfolio && openCount === 0 && degraded.length === 0 ? (
         // First-run / empty-portfolio: onboarding copy, not a fake clear state (§11).
-        <div className="flex flex-1 flex-col items-start justify-center gap-2 py-8">
+        <div className="flex flex-1 flex-col items-start justify-center gap-2 px-6 py-8">
           <p className="text-sm text-muted">Add holdings and a watchlist to start your queue.</p>
           <div className="flex gap-2">
             <Link href="/portfolio" className="rounded-control border border-border bg-surface-2 px-3 py-1.5 text-xs font-medium text-foreground hover:border-brand/40 hover:text-brand">
@@ -624,9 +759,9 @@ export function AttentionQueueModule() {
           </div>
         </div>
       ) : degraded.length > 0 ? (
-        <div className="flex flex-1 flex-col items-start justify-center gap-2 py-8">
+        <div className="flex flex-1 flex-col items-start justify-center gap-2 px-6 py-8">
           <p className="text-sm text-muted">Attention data is unavailable right now.</p>
-          <button type="button" onClick={refreshDigest} className="text-xs font-medium text-brand hover:underline">
+          <button type="button" onClick={refreshDigest} className="text-xs font-medium text-foreground/75 hover:text-brand hover:underline">
             Retry
           </button>
         </div>
@@ -636,11 +771,7 @@ export function AttentionQueueModule() {
           <span className="flex h-9 w-9 items-center justify-center rounded-full border border-border text-muted">
             <Check className="h-4 w-4" strokeWidth={2} />
           </span>
-          <p className="text-sm font-medium text-foreground">You&apos;re clear</p>
-          <p className="text-xs text-muted">Nothing needs a decision.</p>
-          {data?.reviewedAt ? (
-            <p className="text-[10px] text-faint">as of {new Date(data.reviewedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
-          ) : null}
+          <p className="text-sm text-foreground/50">Nothing needs your attention.</p>
         </div>
       )}
     </div>

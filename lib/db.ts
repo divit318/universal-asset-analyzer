@@ -21,6 +21,22 @@ import { normalizeStoredProfile } from "./portfolio/simulator/profile";
 
 let db: DatabaseSync | null = null;
 
+/**
+ * Local calendar date (YYYY-MM-DD) — the ONLY default for a lot's trade_date.
+ *
+ * `toISOString().slice(0, 10)` is the UTC date, which for anyone east of UTC is
+ * "yesterday" late in their evening. The buy modal already stamps user trades
+ * with the LOCAL date (see todayStr() in add-to-portfolio-modal.tsx), so an
+ * engine-side sell stamped with the UTC date sorts BEFORE a buy recorded the
+ * same night — aggregateLots() then sells 0 shares while the cash-balancing lot
+ * still credits the proceeds. Every ledger write must use the same calendar.
+ */
+export function localTradeDate(d = new Date()): string {
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${month}-${day}`;
+}
+
 /** Lazily open the SQLite database so importing this module has no side effects. */
 function getDb(): DatabaseSync {
   if (db) return db;
@@ -1649,7 +1665,7 @@ export function addLot(
       lot.price,
       lot.kind ?? "buy",
       lot.fees ?? 0,
-      lot.tradeDate ?? now.slice(0, 10),
+      lot.tradeDate ?? localTradeDate(),
       now,
       portfolioId,
     );
@@ -1681,7 +1697,7 @@ export function upsertPosition(
   db.prepare(
     `INSERT INTO portfolio_lot (symbol, name, shares, price, kind, fees, trade_date, created_at, portfolio_id)
      VALUES (?, ?, ?, ?, 'buy', 0, ?, ?, ?)`,
-  ).run(sym, name, shares, avgCost, addedAt.slice(0, 10), addedAt, portfolioId);
+  ).run(sym, name, shares, avgCost, localTradeDate(), addedAt, portfolioId);
   reconcileOwnedStages(portfolioId);
   return { symbol: sym, name, shares, avgCost, addedAt };
 }
@@ -1751,7 +1767,7 @@ export function upsertUniversalPosition(input: {
     input.name,
     input.quantity,
     input.avgCost,
-    now.slice(0, 10),
+    localTradeDate(),
     now,
     input.assetClass,
     (input.currency ?? "USD").toUpperCase(),
@@ -1804,7 +1820,7 @@ export function addUniversalLot(input: {
       input.price,
       input.kind,
       input.fees ?? 0,
-      input.tradeDate ?? now.slice(0, 10),
+      input.tradeDate ?? localTradeDate(),
       now,
       input.assetClass,
       (input.currency ?? "USD").toUpperCase(),
@@ -1855,7 +1871,7 @@ export function executeTradeBatch(lots: LotWrite[], manualAssetIdsToDelete: stri
         lot.shares,
         lot.price,
         lot.kind,
-        now.slice(0, 10),
+        localTradeDate(),
         now,
         lot.assetClass,
         (lot.currency ?? "USD").toUpperCase(),

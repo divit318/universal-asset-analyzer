@@ -149,3 +149,36 @@ describe("the equity prompt states the established conclusions", () => {
     expect(verdictFromScore(s.composite)).toBe("bullish");
   });
 });
+
+/* ── 4. The narrated ACTION is pinned to the unified decision ────────────── */
+
+describe("the prompt pins the unified portfolio action", () => {
+  const portfolio = {
+    fitScore: "71",
+    fitTier: "good",
+    reasons: "Strengthens underweight Technology",
+    isInPortfolio: false,
+    suggestedPct: "10.5",
+    missingSectors: "Utilities",
+    objective: "ai_optimized",
+    action: "initiate",
+    actionReason: "Research 82/100 (Strong Buy) and portfolio fit 71/100 both support a full-size position.",
+  };
+
+  it("states the computed decision as a hard requirement the model cannot change", () => {
+    const { prompt, evidence } = buildVerdictPrompt(ctx(82), portfolio);
+    expect(prompt).toContain('MUST be exactly "INITIATE"');
+    expect(prompt).toContain("10.5% of the portfolio");
+    expect(prompt).toContain("not yours to change");
+    // The decision and its rationale are also in the evidence block, so the
+    // grounding layer verifies any narrated action figure against them.
+    expect(evidence).toContain("Computed portfolio decision");
+    expect(evidence).toContain("Research 82/100");
+  });
+
+  it("omits the action requirement when no portfolio context was supplied", () => {
+    const { prompt } = buildVerdictPrompt(ctx(82), null);
+    expect(prompt).not.toContain("Computed portfolio decision");
+    expect(prompt).not.toContain("recommended course of action");
+  });
+});

@@ -971,7 +971,7 @@ export default function ScreenerPage() {
           </div>
 
           {error ? (
-            <Card className="border-rose-500/40 p-4 text-sm text-rose-500">{error}</Card>
+            <Card className="border-rose-500/40 light:border-rose-700/40 p-4 text-sm text-rose-500 light:text-rose-700">{error}</Card>
           ) : null}
 
           {summary ? (

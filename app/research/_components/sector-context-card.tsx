@@ -15,7 +15,7 @@ import { Reveal } from "@/app/_components/reveal";
 
 const CLASS_STYLE: Record<SectorRotationEntry["classification"], { label: string; cls: string }> = {
   leading:       { label: "Leading",       cls: "text-positive border-positive/30 bg-positive/8" },
-  strengthening: { label: "Strengthening", cls: "text-emerald-400 border-emerald-400/30 bg-emerald-400/8" },
+  strengthening: { label: "Strengthening", cls: "text-emerald-400 light:text-emerald-700 border-emerald-400/30 light:border-emerald-700/40 bg-emerald-400/8" },
   weakening:     { label: "Weakening",     cls: "text-warning border-warning/30 bg-warning/8" },
   lagging:       { label: "Lagging",       cls: "text-negative border-negative/30 bg-negative/8" },
 };

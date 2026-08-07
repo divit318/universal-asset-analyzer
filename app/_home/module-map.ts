@@ -17,7 +17,7 @@ import { BookModule } from "./modules/book";
 import { WhatsChangedModule } from "./modules/whats-changed";
 import { AttentionQueueModule } from "./modules/attention-queue";
 import { RadarModule } from "./modules/radar";
-import { MarketIntelligenceModule } from "./modules/market-intelligence";
+import { MarketOverviewModule } from "./modules/market-intelligence";
 import { AiInvestmentBriefModule } from "./modules/ai-investment-brief";
 
 /**
@@ -36,7 +36,7 @@ export const HOME_MODULES: Record<HomeModuleId, ComponentType<HomeModuleProps>> 
   "whats-changed": WhatsChangedModule,
   "attention-queue": AttentionQueueModule,
   "radar": RadarModule,
-  "market-intelligence": MarketIntelligenceModule,
+  "market-intelligence": MarketOverviewModule,
   "ai-investment-brief": AiInvestmentBriefModule,
 };
 

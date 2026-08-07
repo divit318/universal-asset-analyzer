@@ -11,7 +11,7 @@
  */
 import { NextResponse } from "next/server";
 import { buildEvaluation } from "@/lib/portfolio/report";
-import { executeTrades, isIndivisibleHolding, summaryOf, type TradeToExecute } from "@/lib/portfolio/engines/transaction";
+import { executeTrades, isIndivisibleHolding, summaryOf, undoTransaction, type TradeToExecute } from "@/lib/portfolio/engines/transaction";
 import type { Objective } from "@/lib/portfolio/engines/optimize";
 import { formatCurrency } from "@/lib/format";
 
@@ -130,6 +130,19 @@ export async function POST(request: Request) {
     // actually written, not the pre-write simulation.
     const after = await buildEvaluation({});
     const remaining = after.evaluation.holdings.find((h) => h.id === holdingId) ?? null;
+
+    // A full sell that leaves the position standing means the ledger write had
+    // no effect (e.g. the sell lot sorted before the opening buy) while the
+    // cash-balancing lot still credited the proceeds. Reporting ok:true here is
+    // how six phantom $150k cash credits once piled up — roll the whole batch
+    // back via its own pre-execution snapshot and fail loudly instead.
+    if (body.full && remaining != null && remaining.quantity >= holding.quantity) {
+      undoTransaction(result.snapshotId);
+      return NextResponse.json(
+        { error: "Sell-all did not reduce the position — the transaction was rolled back. No cash was credited." },
+        { status: 500 },
+      );
+    }
 
     return NextResponse.json({
       ok: true,

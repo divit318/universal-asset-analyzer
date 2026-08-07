@@ -15,8 +15,10 @@
  */
 
 import { SCORE_EXPONENTS } from "./attention";
+import { DEFAULT_FIT_WEIGHT } from "../ios/fit-scorer";
 import type {
   AttentionItem,
+  OpportunitySnapshotItem,
   PortfolioPulse,
   RecommendedAction,
   SentimentGauge,
@@ -84,6 +86,42 @@ export function explainAttentionScore(item: AttentionItem): ScoreExplanation {
       term("Confidence", item.confidence, SCORE_EXPONENTS.confidence, "The source's own confidence when it quantifies one; a per-kind default otherwise."),
     ],
     caveats: [],
+  };
+}
+
+/**
+ * The Radar's fit-blended idea score. The two components ship with the digest
+ * item (rankByFit's own inputs), so the decomposition genuinely reproduces the
+ * number on screen. Returns null for digests cached before the components were
+ * carried — a value with no explanation renders as-is, never a dead affordance.
+ */
+export function explainOpportunityScore(item: OpportunitySnapshotItem): ScoreExplanation | null {
+  if (item.absoluteScore == null || item.fitScore == null) return null;
+  const qw = 1 - DEFAULT_FIT_WEIGHT;
+  return {
+    title: "Fit score",
+    value: `${Math.round(item.combinedScore)}/100`,
+    method: `fit score = ${qw.toFixed(1)} × scanner quality + ${DEFAULT_FIT_WEIGHT.toFixed(1)} × portfolio fit, each 0–100 — how good the idea is, weighted by how well it suits this book.`,
+    confidence: null,
+    factors: [
+      {
+        label: "Scanner quality",
+        display: `${Math.round(item.absoluteScore)} × ${qw.toFixed(1)}`,
+        bar: item.absoluteScore / 100,
+        direction: item.absoluteScore >= 60 ? 1 : item.absoluteScore >= 40 ? 0 : -1,
+        detail: "The idea's standalone composite from the scanner — unchanged by your portfolio.",
+      },
+      {
+        label: "Portfolio fit",
+        display: `${Math.round(item.fitScore)} × ${DEFAULT_FIT_WEIGHT.toFixed(1)}`,
+        bar: item.fitScore / 100,
+        direction: item.fitScore >= 60 ? 1 : item.fitScore >= 40 ? 0 : -1,
+        detail: "Sector, correlation, objective, style, geography, and sizing effects on this book.",
+      },
+    ],
+    caveats: [
+      "A different scale from the Attention queue's priority score, which ranks how urgently an item needs a decision.",
+    ],
   };
 }
 

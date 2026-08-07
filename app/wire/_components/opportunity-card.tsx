@@ -23,7 +23,7 @@ const VOLATILITY_STYLE: Record<string, string> = {
 const DIR_STYLE = {
   bullish: {
     badge: "bg-positive/15 text-positive border-positive/30",
-    glow: "border-positive/20 shadow-[0_0_0_1px_rgba(74,222,128,0.05)]",
+    glow: "border-positive/20 shadow-[0_0_0_1px_color-mix(in_srgb,var(--positive)_5%,transparent)]",
     arrow: "↑",
   },
   bearish: {
@@ -213,8 +213,8 @@ export function OpportunityCard({
         <div className="flex flex-col gap-1">
           <ScoreBar label="Catalyst"  value={score.catalystStrength}  color="bg-accent" />
           <ScoreBar label="Quality"   value={score.fundamentalQuality} color="bg-positive" />
-          <ScoreBar label="Valuation" value={score.valuation}          color="bg-blue-400" />
-          <ScoreBar label="Momentum"  value={score.momentum}           color="bg-purple-400" />
+          <ScoreBar label="Valuation" value={score.valuation}          color="bg-chart-2" />
+          <ScoreBar label="Momentum"  value={score.momentum}           color="bg-purple-400 light:bg-purple-600" />
         </div>
       </div>
 

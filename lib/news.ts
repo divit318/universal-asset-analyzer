@@ -438,7 +438,11 @@ export async function fetchMarketNews(opts: NewsFetchOptions = {}): Promise<News
   if (glob) {
     tasks.push(fetchYahooNews(query ?? "stock market economy", 20));
     tasks.push(fetchNewsApi(query ?? "stock market economy finance", 20));
-    if (query) tasks.push(fetchGoogleNews(query, 15));
+    // Default query included: without it, a global-only scan with no
+    // NEWSAPI_KEY rode on Yahoo alone (~10 items, observed 2026-08-07), so
+    // dedup had no second outlet to corroborate against and every causal
+    // chain rendered "1 source — uncorroborated".
+    tasks.push(fetchGoogleNews(query ?? "stock market economy", 15));
   }
 
   if (india) {

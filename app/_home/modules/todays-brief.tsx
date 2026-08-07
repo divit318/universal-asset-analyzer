@@ -3,26 +3,32 @@
 /**
  * AI Executive Brief — the hero, and the UAA signature screen.
  *
- * The institutional morning note: the AI headline (or the digest's deterministic
- * briefing until/instead of it), a living regime indicator, the strip of figures
- * that headline is about (value, today's move, health grade, actions), the top
- * contributor/detractor, an honest reading-time estimate, and the three verbs
- * that start the day.
+ * The institutional morning note, machined into four bands:
+ *
+ *   1. Header — eyebrow + live regime, and the visit's meta (what changed,
+ *      reading time, generation time) on one line.
+ *   2. KPI strip — the four figures the headline is about (value, today's
+ *      move, health grade, actions), promoted ABOVE the narrative so the
+ *      numbers land before the prose does.
+ *   3. Narrative — the AI headline split client-side into a display-size
+ *      verdict (first sentence) and a receding supporting paragraph.
+ *   4. Context + actions — the session note and the day's movers, then the
+ *      three verbs that start the day (Open Action Center / Resume / Dismiss).
  *
  * Unlike the other modules this one does not use ModuleShell: the hero is a
- * bespoke, cinematic surface — a lit pane of glass floating over the page's
- * Aurora — not a card in the grid. It still selects its slices through
- * `useHomeSlice`, so it fetches nothing and shares the one digest request, and
- * it is always able to render *something true* (the deterministic fallback ships
- * in the digest), so it never blocks on the AI.
+ * bespoke, cinematic surface — a lit pane of glass floating over the page —
+ * not a card in the grid. It still selects its slices through `useHomeSlice`,
+ * so it fetches nothing and shares the one digest request, and it is always
+ * able to render *something true* (the deterministic fallback ships in the
+ * digest), so it never blocks on the AI.
  */
 
 import { useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
-import { Sparkles, ArrowRight, ExternalLink, X, Clock, Trophy, TrendingDown, GitCompareArrows } from "lucide-react";
+import { Sparkles, ArrowRight, CirclePlay } from "lucide-react";
 import { explainHealth } from "@/lib/home/explain";
 import { getHomeModule } from "@/lib/home/registry";
-import { fmtSignedPct, fmtMoney } from "../_viz/format";
+import { fmtSignedPct, fmtSignedMoney, fmtMoney, gradeTone } from "../_viz/format";
 import { MetricDelta } from "../_viz/stamped";
 import { useCountUp } from "../_atmosphere/use-count-up";
 import { SymbolTag } from "../_atmosphere/symbol-link";
@@ -44,39 +50,80 @@ function scrollToActions() {
 }
 
 /** Regime string → mood, matching the Aurora's reading so the room and the
- *  badge always agree. */
+ *  badge always agree. A neutral regime reads as muted slate — the amber
+ *  accent is reserved for the CTA and the ACTIONS count. */
 function regimeTone(trend: string | null | undefined): { dot: string; text: string } {
-  if (!trend) return { dot: "bg-brand", text: "text-brand" };
+  if (!trend) return { dot: "bg-muted", text: "text-foreground/55" };
   const t = trend.toLowerCase();
   if (t.includes("off") || t.includes("bear") || t.includes("defensive"))
     return { dot: "bg-warning", text: "text-warning" };
   if (t.includes("on") || t.includes("bull") || t.includes("expansion"))
     return { dot: "bg-positive", text: "text-positive" };
-  return { dot: "bg-brand", text: "text-brand" };
+  return { dot: "bg-muted", text: "text-foreground/55" };
 }
 
-/** A hero figure: micro label over a large tabular value, separated by a hairline. */
-function Stat({
+/** The shared type scale's section label (11px / 600 / caps / 0.09em / 55%). */
+const LABEL = "text-[11px] font-semibold uppercase tracking-[0.09em] text-foreground/55";
+/** Every number on the page renders in the mono face with tabular figures. */
+const NUM = "font-mono tabular-nums";
+
+/**
+ * Splits the brief's single text block into a verdict (the first sentence) and
+ * the supporting paragraph — presentation only, the generation prompt is
+ * untouched. The lookahead for a capital keeps decimals ("+0.1%,") and most
+ * abbreviations from ending the verdict early.
+ */
+function splitNarrative(text: string): { verdict: string; support: string } {
+  const m = text.match(/^(.+?[.!?])\s+(?=[A-Z0-9"'])([\s\S]+)$/);
+  return m ? { verdict: m[1], support: m[2] } : { verdict: text, support: "" };
+}
+
+/** Matches the numeric tokens prose can carry: +0.1%, $3.49M, 27%, Aug 6… */
+const NUMERIC_TOKEN = /([+\-−]?\$?\d[\d,.]*[%KMB]?)/g;
+
+/**
+ * Renders a prose string with every numeric token in the mono face with
+ * tabular figures — the type system's "no exceptions" rule, applied without
+ * asking the model to mark its own numbers up.
+ */
+function MonoNumbers({ text }: { text: string }) {
+  const parts = text.split(NUMERIC_TOKEN);
+  return (
+    <>
+      {parts.map((part, i) =>
+        i % 2 === 1 ? (
+          <span key={i} className={NUM}>
+            {part}
+          </span>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  );
+}
+
+/** A KPI cell: section label over a 30px tabular-mono value on a shared baseline. */
+function Kpi({
   label,
   value,
   tone = "text-foreground",
-  primary = false,
+  caption,
+  captionTone = "text-foreground/60",
+  className = "",
 }: {
   label: string;
-  value: string;
+  value: React.ReactNode;
   tone?: string;
-  primary?: boolean;
+  caption?: string;
+  captionTone?: string;
+  className?: string;
 }) {
   return (
-    <div className="flex flex-col gap-1">
-      <span className="text-label uppercase tracking-[0.14em] text-faint">{label}</span>
-      <span
-        className={`font-mono font-semibold tabular-nums tracking-tight ${tone} ${
-          primary ? "text-2xl leading-none sm:text-[30px]" : "text-lg leading-none"
-        }`}
-      >
-        {value}
-      </span>
+    <div className={`flex flex-col gap-1 ${className}`}>
+      <span className={LABEL}>{label}</span>
+      <span className={`${NUM} text-[30px] font-semibold leading-none ${tone}`}>{value}</span>
+      {caption ? <span className={`${NUM} text-sm leading-tight ${captionTone}`}>{caption}</span> : null}
     </div>
   );
 }
@@ -91,30 +138,26 @@ export function TodaysBriefModule() {
   const changes = useHomeSlice("changes");
   const [dismissed, setDismissed] = useState(false);
 
-  // The hero's change line: counts only, worst tone first — the full ranked
-  // list lives in the change band this line scrolls to.
+  // The header's change chip: counts only, worst tone first — the full ranked
+  // list lives in the change band this chip scrolls to.
   const changeSummary = useMemo(() => {
     const feed = changes.data;
     if (!feed || feed.firstVisit || feed.changes.length === 0) return null;
-    const worsened = feed.changes.filter((c) => c.tone === "worsened").length;
-    const fresh = feed.changes.filter((c) => c.tone === "new").length;
-    const parts: string[] = [];
-    if (worsened > 0) parts.push(`${worsened} worsened`);
-    if (fresh > 0) parts.push(`${fresh} new`);
     return {
       count: feed.changes.length,
-      note: parts.length > 0 ? parts.join(" · ") : "all informational",
-      hasWorsened: worsened > 0,
+      worsened: feed.changes.filter((c) => c.tone === "worsened").length,
+      fresh: feed.changes.filter((c) => c.tone === "new").length,
     };
   }, [changes.data]);
 
   // Resume chip — the retired `continue` module's job, folded into the brief's
-  // footer (§4.1). The most recent place the user was working.
+  // action row (§4.1). The most recent place the user was working.
   const resume = activity.data?.entries?.[0] ?? null;
 
   const headline = brief.data?.headline || fallbackSlice.data || "";
   const isAi = !!brief.data?.headline && brief.data.aiGenerated;
   const loading = !headline && fallbackSlice.status === "loading";
+  const narrative = useMemo(() => splitNarrative(headline), [headline]);
 
   const readLabel = useMemo(() => {
     const note = brief.data?.note;
@@ -127,6 +170,7 @@ export function TodaysBriefModule() {
   const actionCount = actions.data?.actions.length ?? 0;
   const regime = market.data?.regime?.trend ?? null;
   const tone = regimeTone(regime);
+  const grade = hasPulse ? gradeTone(p!.healthGrade) : null;
 
   // The one place the hero's chrome borrows a data colour: a hairline accent on
   // the top edge, driven by the portfolio's move today (green up / red down),
@@ -159,175 +203,206 @@ export function TodaysBriefModule() {
     );
   }
 
+  const hairline = <span aria-hidden className="h-3 w-px bg-foreground/10" />;
+
   return (
     <div
       className="uaa-hero uaa-topline relative h-full overflow-hidden"
       style={{ "--accent-line": accentLine } as CSSProperties}
     >
-      <div className="relative flex h-full flex-col gap-4 p-5 sm:p-7">
-        {/* Eyebrow + live regime + meta */}
-        <div className="flex items-center justify-between gap-3">
+      <div className="relative flex h-full flex-col">
+        {/* ── Band 1 · header — eyebrow + regime, then the visit's meta ── */}
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-foreground/8 px-7 py-5">
           <div className="flex items-center gap-3">
-            <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-brand">
+            <span className={`inline-flex items-center gap-2 ${LABEL}`}>
               <Sparkles className="h-3.5 w-3.5" strokeWidth={2.5} /> AI Executive Brief
             </span>
             {regime ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-border/80 bg-surface-2 px-2 py-0.5">
+              <span className="inline-flex items-center gap-1.5">
                 <span className={`uaa-breathe h-1.5 w-1.5 rounded-full ${tone.dot}`} />
-                <span className={`text-[10px] font-semibold uppercase tracking-wider ${tone.text}`}>{regime}</span>
+                <span className={`${LABEL} ${tone.text}`}>{regime}</span>
               </span>
             ) : null}
+            {!isAi && headline ? (
+              <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-muted">Computed</span>
+            ) : null}
           </div>
-          <div className="flex items-center gap-2 text-[10px] text-muted">
-            <span className="inline-flex items-center gap-1">
-              <Clock className="h-3 w-3" strokeWidth={2} /> {readLabel}
-            </span>
+          <div className="flex items-center gap-3 text-sm text-foreground/60">
+            {changeSummary ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => document.getElementById("whats-changed")?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                  className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand/40 ${
+                    changeSummary.worsened > 0
+                      ? "border-negative/30 text-negative hover:border-negative/60"
+                      : "border-foreground/10 text-foreground/60 hover:border-foreground/25"
+                  }`}
+                >
+                  <span className={NUM}>{changeSummary.count}</span> change{changeSummary.count === 1 ? "" : "s"}
+                  {changeSummary.worsened > 0 ? (
+                    <>
+                      , <span className={NUM}>{changeSummary.worsened}</span> worsened
+                    </>
+                  ) : changeSummary.fresh > 0 ? (
+                    <>
+                      , <span className={NUM}>{changeSummary.fresh}</span> new
+                    </>
+                  ) : null}
+                </button>
+                {hairline}
+              </>
+            ) : null}
+            <span className={NUM}>{readLabel}</span>
             {/* The brief's own as-of (audit F-22 amendment 1): a cached
                 generation is honest about WHEN it was written. */}
             {brief.data?.generatedAt ? (
-              <span className="font-medium">
-                generated{" "}
-                {new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(new Date(brief.data.generatedAt))}
-              </span>
+              <>
+                {hairline}
+                <span className={NUM}>
+                  {new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(new Date(brief.data.generatedAt))}
+                </span>
+              </>
             ) : null}
-            {isAi ? (
-              <span className="rounded-full bg-brand/10 px-1.5 py-0.5 font-medium text-brand">AI</span>
+          </div>
+        </div>
+
+        {/* ── Band 2 · the KPI strip — the figures the headline is about ── */}
+        <div className="px-7 py-7">
+          <div className="grid grid-cols-2 gap-y-6 lg:grid-cols-4 lg:gap-y-0">
+            {hasPulse ? (
+              <>
+                <Kpi label="Portfolio Value" value={fmtMoney(animValue)} className="pr-6" />
+                <Kpi
+                  label="Today"
+                  value={fmtSignedPct(animToday)}
+                  tone={p!.todayChangePct >= 0 ? "text-positive" : "text-negative"}
+                  caption={fmtSignedMoney(p!.todayChangeDollar)}
+                  captionTone={p!.todayChangeDollar >= 0 ? "text-positive" : "text-negative"}
+                  className="border-l border-foreground/8 px-6"
+                />
+                {p!.healthGrade ? (
+                  <div className="flex flex-col gap-1 pr-6 lg:border-l lg:border-foreground/8 lg:px-6">
+                    <span className={LABEL}>Grade</span>
+                    <ExplainableValue explanation={explainHealth(p!)} underline={false}>
+                      <span className={`${NUM} text-[30px] font-semibold leading-none ${grade!.text}`}>
+                        {p!.healthGrade} {p!.healthScore ?? "—"}
+                      </span>
+                    </ExplainableValue>
+                  </div>
+                ) : null}
+                <Kpi
+                  label="Actions"
+                  value={String(actionCount)}
+                  tone={actionCount > 0 ? "text-brand" : "text-muted"}
+                  className="border-l border-foreground/8 pl-6"
+                />
+              </>
             ) : (
-              <span className="rounded-full bg-surface-2 px-1.5 py-0.5 font-medium text-muted">Computed</span>
+              <Kpi
+                label="Actions"
+                value={String(actionCount)}
+                tone={actionCount > 0 ? "text-brand" : "text-muted"}
+              />
             )}
           </div>
         </div>
+        <div aria-hidden className="mx-7 border-b border-foreground/8" />
 
-        {/* The headline — the moment. */}
+        {/* ── Band 3 · narrative — the verdict, then the reasoning behind it ── */}
         {loading ? (
-          <div className="flex flex-1 flex-col gap-2.5 py-2">
-            <Skeleton height="h-6" width="w-3/4" />
-            <Skeleton height="h-6" />
-            <Skeleton height="h-6" width="w-1/2" />
+          <div className="flex flex-1 flex-col gap-3 px-7 py-7">
+            <Skeleton height="h-9" width="w-3/4" />
+            <Skeleton height="h-9" width="w-1/2" />
+            <div className="mt-3 flex flex-col gap-2">
+              <Skeleton height="h-4" />
+              <Skeleton height="h-4" width="w-11/12" />
+              <Skeleton height="h-4" width="w-4/5" />
+            </div>
           </div>
         ) : (
-          <p className="max-w-[46ch] text-balance text-[26px] font-semibold leading-[1.16] tracking-[-0.022em] text-foreground sm:text-[31px] sm:leading-[1.12]">
-            {headline}
-          </p>
-        )}
-
-        {/* Change line — deltas first: what moved since the last visit. */}
-        {changeSummary ? (
-          <button
-            type="button"
-            onClick={() => document.getElementById("whats-changed")?.scrollIntoView({ behavior: "smooth", block: "center" })}
-            className={`inline-flex w-fit items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand/40 ${
-              changeSummary.hasWorsened
-                ? "border-negative/30 bg-negative/8 text-negative hover:border-negative/60"
-                : "border-brand/30 bg-brand/8 text-brand hover:border-brand/60"
-            }`}
-          >
-            <GitCompareArrows className="h-3.5 w-3.5" strokeWidth={2} />
-            {changeSummary.count} change{changeSummary.count === 1 ? "" : "s"} since your last visit — {changeSummary.note}
-          </button>
-        ) : null}
-
-        {/* Contributor / detractor line — the DAY's movers, stamped (F-22g).
-            When the market is closed the strip carries one deliberate session
-            note instead of a wall of per-figure warnings (amendment 2). */}
-        {p && (p.bestPerformer || p.worstPerformer) ? (
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
-            {p.sessionNote ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-border/80 bg-surface-2 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">
-                {p.sessionNote}
-              </span>
-            ) : null}
-            {p.bestPerformer ? (
-              <span className="inline-flex items-center gap-1.5 text-muted">
-                <Trophy className="h-3.5 w-3.5 text-positive" strokeWidth={2} />
-                Top{" "}
-                <SymbolTag symbol={p.bestPerformer.symbol} className="font-mono font-semibold text-foreground">
-                  {p.bestPerformer.symbol}
-                </SymbolTag>
-                <MetricDelta metric={p.bestPerformer.dayChange} suppressSessionLabel={!!p.sessionNote} />
-              </span>
-            ) : null}
-            {p.worstPerformer ? (
-              <span className="inline-flex items-center gap-1.5 text-muted">
-                <TrendingDown className="h-3.5 w-3.5 text-negative" strokeWidth={2} />
-                Weakest{" "}
-                <SymbolTag symbol={p.worstPerformer.symbol} className="font-mono font-semibold text-foreground">
-                  {p.worstPerformer.symbol}
-                </SymbolTag>
-                <MetricDelta metric={p.worstPerformer.dayChange} suppressSessionLabel={!!p.sessionNote} />
-              </span>
+          <div className="flex flex-1 flex-col gap-6 px-7 py-7">
+            <p className="line-clamp-3 max-w-[68ch] text-balance text-[34px] font-semibold leading-[1.25] tracking-[-0.02em] text-foreground lg:line-clamp-2">
+              <MonoNumbers text={narrative.verdict} />
+            </p>
+            {narrative.support ? (
+              <p className="max-w-[68ch] text-base leading-[1.65] text-foreground/72">
+                <MonoNumbers text={narrative.support} />
+              </p>
             ) : null}
           </div>
+        )}
+        <div aria-hidden className="mx-7 border-b border-foreground/8" />
+
+        {/* ── Band 4a · context — the session, and the day's movers, stamped (F-22g) ── */}
+        {p && (p.sessionNote || p.bestPerformer || p.worstPerformer) ? (
+          <>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-7 py-5">
+              {p.sessionNote ? (
+                <span className={LABEL}>
+                  <MonoNumbers text={p.sessionNote} />
+                </span>
+              ) : null}
+              {p.bestPerformer ? (
+                <span className="inline-flex items-center gap-2 text-sm text-foreground/60">
+                  Top{" "}
+                  <SymbolTag symbol={p.bestPerformer.symbol} className={`${NUM} font-semibold text-foreground`}>
+                    {p.bestPerformer.symbol}
+                  </SymbolTag>
+                  <MetricDelta metric={p.bestPerformer.dayChange} className="text-sm" suppressSessionLabel={!!p.sessionNote} />
+                </span>
+              ) : null}
+              {p.bestPerformer && p.worstPerformer ? hairline : null}
+              {p.worstPerformer ? (
+                <span className="inline-flex items-center gap-2 text-sm text-foreground/60">
+                  Weakest{" "}
+                  <SymbolTag symbol={p.worstPerformer.symbol} className={`${NUM} font-semibold text-foreground`}>
+                    {p.worstPerformer.symbol}
+                  </SymbolTag>
+                  <MetricDelta metric={p.worstPerformer.dayChange} className="text-sm" suppressSessionLabel={!!p.sessionNote} />
+                </span>
+              ) : null}
+            </div>
+            <div aria-hidden className="mx-7 border-b border-foreground/8" />
+          </>
         ) : null}
 
-        {/* The hero figure strip — large tabular numbers, hairline-divided. */}
-        <div className="mt-auto flex flex-wrap items-end gap-x-7 gap-y-4 border-t border-hairline pt-4">
-          {hasPulse ? (
-            <>
-              <Stat label="Portfolio Value" value={fmtMoney(animValue)} primary />
-              <Stat
-                label="Today"
-                value={fmtSignedPct(animToday)}
-                tone={p!.todayChangePct >= 0 ? "text-positive" : "text-negative"}
-              />
-              {p!.healthGrade ? (
-                <ExplainableValue explanation={explainHealth(p!)}>
-                  <Stat label="Grade" value={`${p!.healthGrade} · ${p!.healthScore ?? "—"}`} />
-                </ExplainableValue>
-              ) : null}
-            </>
-          ) : null}
-          <Stat
-            label="Actions"
-            value={String(actionCount)}
-            tone={actionCount > 0 ? "text-brand" : "text-muted"}
-          />
-        </div>
-
-        {/* The three verbs. */}
-        <div className="flex flex-wrap items-center gap-2">
+        {/* ── Band 4b · the three verbs ── */}
+        <div className="flex flex-wrap items-center gap-3 px-7 py-6">
           <button
             type="button"
             onClick={scrollToActions}
-            className="inline-flex items-center gap-1.5 rounded-control bg-brand px-3.5 py-2 text-xs font-semibold text-white shadow-sm outline-none transition-colors hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
+            className="inline-flex items-center gap-2 rounded-lg bg-brand px-7 py-3.5 text-sm font-semibold text-background shadow-sm outline-none transition-colors hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
           >
-            Open Action Center <ArrowRight className="h-3.5 w-3.5" strokeWidth={2.5} />
+            Open Action Center <ArrowRight className="h-4 w-4" strokeWidth={2.5} />
           </button>
-          <Link
-            href="/portfolio"
-            className="inline-flex items-center gap-1.5 rounded-control border border-border bg-surface-2 px-3 py-2 text-xs font-medium text-foreground outline-none transition-colors hover:border-brand/40 hover:text-brand focus-visible:ring-2 focus-visible:ring-brand/40"
-          >
-            <ExternalLink className="h-3.5 w-3.5" strokeWidth={2} /> Open Portfolio
-          </Link>
-          <button
-            type="button"
-            onClick={() => setDismissed(true)}
-            className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-2 text-xs font-medium text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
-          >
-            <X className="h-3.5 w-3.5" strokeWidth={2} /> Dismiss
-          </button>
+          {resume ? (
+            <Link
+              href={resume.href}
+              title={resume.label}
+              className="inline-flex items-center gap-2 rounded-lg border border-foreground/12 px-7 py-3.5 text-sm font-medium text-foreground outline-none transition-colors hover:border-foreground/25 focus-visible:ring-2 focus-visible:ring-brand/40"
+            >
+              <CirclePlay className="h-4 w-4 text-foreground/60" strokeWidth={2} />
+              Resume: <span className={`${NUM} max-w-[10rem] truncate font-semibold`}>{resume.ref || resume.label}</span>
+            </Link>
+          ) : null}
           {brief.status === "loading" && !isAi ? (
             <button
               type="button"
               onClick={refreshBrief}
-              className="inline-flex items-center gap-1.5 text-[11px] text-muted transition-colors hover:text-foreground"
+              className="inline-flex items-center gap-1.5 text-sm text-foreground/60 transition-colors hover:text-foreground"
             >
-              <span className="uaa-breathe h-1.5 w-1.5 rounded-full bg-brand" /> Writing AI brief…
+              <span className="uaa-breathe h-1.5 w-1.5 rounded-full bg-muted" /> Writing AI brief…
             </button>
           ) : null}
-        </div>
-
-        {/* Resume chip — pick up where you left off (§4.1 footer). */}
-        {resume ? (
-          <Link
-            href={resume.href}
-            className="inline-flex w-fit items-center gap-1.5 text-[11px] text-muted outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
+          <button
+            type="button"
+            onClick={() => setDismissed(true)}
+            className="ml-auto inline-flex items-center rounded-lg border border-foreground/8 px-5 py-3.5 text-sm font-medium text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
           >
-            <span className="text-faint">Resume:</span>
-            <span className="font-medium text-foreground/80">{resume.label}</span>
-            <ArrowRight className="h-3 w-3" strokeWidth={2} />
-          </Link>
-        ) : null}
+            Dismiss
+          </button>
+        </div>
       </div>
     </div>
   );
