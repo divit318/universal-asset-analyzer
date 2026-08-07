@@ -60,6 +60,7 @@ export function buildRecommendedActions(
       .map((d) => ({
         id: d.recommendation.id,
         symbol: d.recommendation.symbol,
+        subject: d.recommendation.subject ?? d.recommendation.symbol ?? null,
         action: d.recommendation.action,
         title: d.recommendation.title,
         reason: d.recommendation.rationale,
@@ -106,6 +107,7 @@ export function buildRecommendedActions(
   const actions: RecommendedAction[] = queue.items.slice(0, MAX_ACTIONS).map((item, i) => ({
     id: item.id,
     symbol: item.symbol ?? null,
+    subject: null,
     action: "REVIEW",
     title: item.title,
     reason: item.description,

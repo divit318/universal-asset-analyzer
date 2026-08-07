@@ -386,6 +386,14 @@ export interface AttentionItem {
   primaryAction: { label: string; href: string };
   /** Feeder id, for degraded-state attribution. */
   source: string;
+  /**
+   * Cross-kind story identity (audit DU-03): when two feeders of DIFFERENT
+   * kinds describe one story (the "USD Cash concentration" threat and the
+   * "Trim USD Cash" action are the same story), they share this key and the
+   * engine keeps the most ACTIONABLE one, merging the other's link. Null when
+   * the story has no cross-kind twin.
+   */
+  storyKey?: string | null;
   /** Extra links merged in from deduped sibling stories (§12). */
   mergedHrefs?: { label: string; href: string }[];
 }
@@ -448,6 +456,12 @@ export interface ActionImpact {
 export interface RecommendedAction {
   id: string;
   symbol: string | null;
+  /**
+   * The engine's subject line for symbol-less holdings (e.g. "USD Cash") —
+   * what the action is ABOUT. Used to join the action to the threat that
+   * restates it (audit DU-03). Null for queue-sourced items.
+   */
+  subject: string | null;
   /** e.g. "ADD", "REDUCE", "REVIEW". */
   action: string;
   title: string;

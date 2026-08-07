@@ -170,11 +170,12 @@ function RadarTile({ o, isNew }: { o: OpportunitySnapshotItem; isNew: boolean })
 /* Module                                                              */
 /* ------------------------------------------------------------------ */
 
-export function RadarModule() {
+export function RadarModule({ collapsible = false, defaultCollapsed = false }: { collapsible?: boolean; defaultCollapsed?: boolean }) {
   const state = useHomeSlice("opportunityFeed");
   const watchlist = useHomeSlice("watchlistIntelligence");
   const changes = useHomeSlice("changes");
   const { refreshDigest } = useHome();
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
 
   // Ideas the change engine marked as new since the last visit.
   const newSymbols = new Set(
@@ -190,15 +191,38 @@ export function RadarModule() {
     ? watchlist.data.buckets.find((b) => b.id === "near-buy")?.symbols.length ?? 0
     : null;
 
+  const openCount = state.data?.opportunities.length ?? null;
+  const newCount = newSymbols.size;
+
   return (
     // Deliberately not h-full: the card ends after its last tile + footer
-    // rather than stretching to match the taller queue beside it.
-    <div className="uaa-card flex flex-col">
+    // rather than stretching to match content around it.
+    <div id="radar" className="uaa-card flex scroll-mt-20 flex-col">
       {/* Header */}
       <div className="flex flex-col gap-1 p-5.5 pb-4">
         <div className="flex items-center gap-2.5">
-          <Radar className="h-4.5 w-4.5 shrink-0 text-brand" strokeWidth={2} aria-hidden />
-          <h2 className="text-xl font-semibold leading-none text-foreground">{definition.title}</h2>
+          {collapsible ? (
+            <button
+              type="button"
+              onClick={() => setCollapsed((c) => !c)}
+              aria-expanded={!collapsed}
+              className="flex items-center gap-2.5 rounded-control outline-none transition-colors hover:text-brand focus-visible:ring-2 focus-visible:ring-brand/40"
+            >
+              <Radar className="h-4.5 w-4.5 shrink-0 text-brand" strokeWidth={2} aria-hidden />
+              <h2 className="text-xl font-semibold leading-none text-foreground">{definition.title}</h2>
+            </button>
+          ) : (
+            <>
+              <Radar className="h-4.5 w-4.5 shrink-0 text-brand" strokeWidth={2} aria-hidden />
+              <h2 className="text-xl font-semibold leading-none text-foreground">{definition.title}</h2>
+            </>
+          )}
+          {openCount != null ? (
+            <span className="font-mono text-sm tabular-nums text-muted">
+              {openCount} idea{openCount === 1 ? "" : "s"}
+              {newCount > 0 ? `, ${newCount} new` : ""}
+            </span>
+          ) : null}
           <span className="min-w-0 flex-1" />
           <button
             type="button"
@@ -220,7 +244,8 @@ export function RadarModule() {
         <p className="text-sm text-muted">{definition.description}</p>
       </div>
 
-      {/* Candidates */}
+      {/* Candidates — a horizontal tile row at the context shelf's full width. */}
+      {collapsed ? null : (
       <Section
         bare
         state={state}
@@ -230,7 +255,7 @@ export function RadarModule() {
         onRetry={refreshDigest}
         className="px-5.5"
         skeleton={
-          <ul aria-hidden className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
+          <ul aria-hidden className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
             {[0, 1, 2].map((i) => (
               <li key={i} className="grid grid-cols-[40px_minmax(0,1fr)_36px] items-start gap-3 rounded-[10px] border border-hairline bg-surface-2/50 p-3.5">
                 <Skeleton height="h-9" width="w-9" radius="rounded-[10px]" />
@@ -247,9 +272,9 @@ export function RadarModule() {
         {(d) => (
           <div className="flex flex-col gap-3">
             {d.scannerFreshness && d.scannerFreshness.level === "stale" ? (
-              <p className="text-caption text-warning">From a stale scan — re-run the scanner for current signals.</p>
+              <p className="text-caption text-warning">From a stale scan. Re-run the scanner for current signals.</p>
             ) : null}
-            <ul role="list" aria-label="Radar candidates" className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
+            <ul role="list" aria-label="Radar candidates" className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
               {d.opportunities.slice(0, 5).map((o) => (
                 <RadarTile key={o.symbol} o={o} isNew={newSymbols.has(o.symbol.toUpperCase())} />
               ))}
@@ -257,8 +282,10 @@ export function RadarModule() {
           </div>
         )}
       </Section>
+      )}
 
       {/* Footer — sits directly below the last tile; counts from the real watchlist */}
+      {collapsed ? null : (
       <div className="mx-5.5 mt-4 flex items-center justify-between gap-2 border-t border-hairline py-4.5">
         <span className="text-[13px] text-muted">
           {buyCount != null && nearBuyCount != null ? (
@@ -278,6 +305,7 @@ export function RadarModule() {
           <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} />
         </Link>
       </div>
+      )}
     </div>
   );
 }

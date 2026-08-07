@@ -217,179 +217,167 @@ export function BookModule() {
         const contributors = d.topContributors;
         return (
           <div className="flex h-full flex-col">
-            {/* ── Band 2 · hero — the grade ring and today's P&L ── */}
-            <div className="flex items-center gap-5 border-b border-foreground/8 pb-5 pt-2">
-              <ExplainableValue explanation={explainHealth(d)} underline={false}>
-                <HealthRing score={d.healthScore} grade={d.healthGrade} />
-              </ExplainableValue>
-              <div className="flex min-w-0 flex-col gap-1">
-                {healthChange ? (
-                  <span
-                    className={`w-fit rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                      healthChange.tone === "improved" ? "bg-positive/10 text-positive" : "bg-negative/10 text-negative"
-                    }`}
-                    title={healthChange.detail}
-                  >
-                    {healthChange.tone === "improved" ? "▲" : "▼"} health since last visit
-                  </span>
-                ) : null}
-                <span className={LABEL}>Day P&amp;L</span>
-                <span className="flex items-baseline gap-3">
-                  <MetricDelta
-                    metric={{ value: d.todayChangePct, basis: "day", asOf: d.asOf, source: "yahoo", sessionDate: d.sessionDate }}
-                    className="text-[30px] font-semibold leading-none"
-                    suppressSessionLabel
-                  />
-                  <span className={`${NUM} text-sm leading-none ${toneClass(d.todayChangeDollar)}`}>
-                    {fmtSignedMoney(d.todayChangeDollar)}
-                  </span>
-                </span>
-                {d.sessionDate ? (
-                  <span className={`${NUM} text-sm text-foreground/60`}>{shortSessionDate(d.sessionDate)}</span>
-                ) : null}
-              </div>
-            </div>
-
-            {/* ── Band 3 · return vs benchmark · cash ── */}
-            <div className="border-b border-foreground/8 py-5">
-              {/* Two different, both-correct measures of "return" — so each is
-                  named for what it actually measures. XIRR is money-weighted and
-                  annualized over the lot ledger; the fallback is cumulative
-                  return on cost across the whole book, which is the exact number
-                  /portfolio shows in its "Total return" tile. Labelling one of
-                  them simply "Return" is what made Home and /portfolio look like
-                  they disagreed. The benchmark line — including the EXCESS
-                  return — describes the XIRR comparison, so it lives here, never
-                  under cash. */}
-              <div className="grid grid-cols-[3fr_2fr]">
-                <div className="flex min-w-0 flex-col gap-1 pr-5">
-                  <span className={LABEL}>{xirr != null ? "Return (XIRR)" : "Return on cost"}</span>
-                  {xirr != null ? (
-                    <span className={`${NUM} text-[26px] font-semibold leading-none ${toneClass(xirr)}`}>
-                      {fmtSignedPct(xirr)}
-                    </span>
-                  ) : (
+            {/* Zone 1 strip (audit 06 restructure B): four cells at lg+, a
+                2-column stack below. Left to right: health + day P&L, return
+                vs benchmark + cash, the 90-day comparison, and the day's
+                attribution WITH its residual so it reaches its own total. */}
+            <div className="grid grid-cols-1 gap-x-8 gap-y-5 pt-1 sm:grid-cols-2 lg:grid-cols-[auto_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1.2fr)]">
+              {/* ── Cell 1 · the grade ring and today's P&L ── */}
+              <div className="flex items-center gap-5 lg:pr-2">
+                <ExplainableValue explanation={explainHealth(d)} underline={false}>
+                  <HealthRing score={d.healthScore} grade={d.healthGrade} />
+                </ExplainableValue>
+                <div className="flex min-w-0 flex-col gap-1">
+                  {healthChange ? (
                     <span
-                      className={`${NUM} text-[26px] font-semibold leading-none ${
-                        d.totalReturnOnCostPct != null ? toneClass(d.totalReturnOnCostPct) : "text-muted"
+                      className={`w-fit rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                        healthChange.tone === "improved" ? "bg-positive/10 text-positive" : "bg-negative/10 text-negative"
                       }`}
+                      title={healthChange.detail}
                     >
-                      {d.totalReturnOnCostPct != null ? fmtSignedPct(d.totalReturnOnCostPct) : "—"}
+                      {healthChange.tone === "improved" ? "▲" : "▼"} health since last visit
                     </span>
-                  )}
+                  ) : null}
+                  <span className={LABEL}>Day P&amp;L</span>
+                  <span className="flex items-baseline gap-3">
+                    <MetricDelta
+                      metric={{ value: d.todayChangePct, basis: "day", asOf: d.asOf, source: "yahoo", sessionDate: d.sessionDate }}
+                      className="text-[30px] font-semibold leading-none"
+                      suppressSessionLabel
+                    />
+                    <span className={`${NUM} text-sm leading-none ${toneClass(d.todayChangeDollar)}`}>
+                      {fmtSignedMoney(d.todayChangeDollar)}
+                    </span>
+                  </span>
+                  <span className={`${NUM} text-sm text-foreground/60`}>
+                    {d.sessionDate ? shortSessionDate(d.sessionDate) : null}
+                    {d.dayCoveragePct != null && d.dayCoveragePct < 95 ? (
+                      <> · prices {Math.round(d.dayCoveragePct)}% of book</>
+                    ) : null}
+                  </span>
                 </div>
-                <div className="flex flex-col gap-1 border-l border-foreground/8 pl-5">
+              </div>
+
+              {/* ── Cell 2 · return vs benchmark, and cash ── */}
+              <div className="flex flex-col gap-3 lg:border-l lg:border-foreground/8 lg:pl-6">
+                <div className="flex min-w-0 flex-col gap-1">
+                  <span className={LABEL}>{xirr != null ? "Return (XIRR)" : "Return on cost"}</span>
+                  <span className="flex items-baseline gap-3">
+                    {xirr != null ? (
+                      <span className={`${NUM} text-[26px] font-semibold leading-none ${toneClass(xirr)}`}>
+                        {fmtSignedPct(xirr)}
+                      </span>
+                    ) : (
+                      <span
+                        className={`${NUM} text-[26px] font-semibold leading-none ${
+                          d.totalReturnOnCostPct != null ? toneClass(d.totalReturnOnCostPct) : "text-muted"
+                        }`}
+                      >
+                        {d.totalReturnOnCostPct != null ? fmtSignedPct(d.totalReturnOnCostPct) : "—"}
+                      </span>
+                    )}
+                  </span>
+                  {/* The window and methodology, ALWAYS stated (audit NI-03). */}
+                  <p className="text-sm leading-snug text-foreground/72">
+                    {xirr != null ? (
+                      <>
+                        annualized, money-weighted{perf && perf.holdingDays > 0 ? (
+                          <>
+                            , <span className={NUM}>{perf.holdingDays}</span>d held
+                          </>
+                        ) : null}
+                        {bench ? (
+                          <>
+                            <br />vs {bench.symbol} <span className={NUM}>{fmtSignedPct(bench.benchmarkPct)}</span>, excess{" "}
+                            <span className={NUM}>{fmtSignedPct(bench.excessPct)}</span>
+                          </>
+                        ) : null}
+                      </>
+                    ) : (
+                      "cumulative, whole book, since inception"
+                    )}
+                  </p>
+                </div>
+                <div className="flex items-baseline gap-2">
                   <span className={LABEL}>Cash</span>
                   {/* Rendered through the fact layer at the page's ONE percent
-                      precision — this card's Math.round(33%) beside the queue's
-                      32.9% was audit NI-02. */}
-                  <span className={`${NUM} text-[26px] font-semibold leading-none text-foreground`}>
+                      precision (audit NI-02). */}
+                  <span className={`${NUM} text-lg font-semibold leading-none text-foreground`}>
                     {facts.data?.cashPct ? formatFact(facts.data.cashPct, "plain") : d.cashPct != null ? fmtSignedPct(d.cashPct).replace("+", "") : "—"}
                   </span>
                 </div>
               </div>
-              {/* The window and methodology, ALWAYS stated (audit NI-03): an
-                  annualized money-weighted figure beside a benchmark must say
-                  what it is even when the comparison renders. */}
-              <p className="mt-1 whitespace-nowrap text-sm leading-snug text-foreground/72">
-                {xirr != null ? (
-                  <>
-                    annualized (money-weighted{perf && perf.holdingDays > 0 ? (
-                      <>
-                        , <span className={NUM}>{perf.holdingDays}</span>d held
-                      </>
-                    ) : null})
-                    {bench ? (
-                      <>
-                        {" "}· vs {bench.symbol} <span className={NUM}>{fmtSignedPct(bench.benchmarkPct)}</span>, excess{" "}
-                        <span className={NUM}>{fmtSignedPct(bench.excessPct)}</span>
-                      </>
+
+              {/* ── Cell 3 · the 90-day return index vs the benchmark ── */}
+              <div className="flex flex-col gap-2 lg:border-l lg:border-foreground/8 lg:pl-6">
+                <span className={LABEL}>
+                  <span className={NUM}>90</span>-day vs {curve?.benchmarkSymbol ?? "SPY"}
+                  {curve?.status === "ok" && curve.coveragePct != null && curve.coveragePct < 95 ? (
+                    <span className="ml-2 normal-case tracking-normal text-foreground/40">
+                      prices <span className={NUM}>{curve.coveragePct}%</span> of book
+                    </span>
+                  ) : null}
+                </span>
+                {curve && curve.status === "ok" && curve.points.length >= 2 ? (
+                  <ComparisonSparkline curve={curve} />
+                ) : equityCurve.status === "loading" || equityCurve.revalidating ? (
+                  <Skeleton height="h-[72px]" />
+                ) : (
+                  <p className="flex h-[72px] items-center text-sm text-foreground/60">
+                    Not enough priced history to draw yet.
+                  </p>
+                )}
+              </div>
+
+              {/* ── Cell 4 · day P&L attribution, reconciled ── */}
+              <div className="flex flex-col gap-2 lg:border-l lg:border-foreground/8 lg:pl-6">
+                <span className={LABEL}>Day P&amp;L attribution</span>
+                {contributors.length > 0 ? (
+                  <div className="flex flex-col gap-1.5">
+                    {contributors.map((c) => (
+                      <div key={c.symbol} className="flex items-center gap-2">
+                        <Monogram symbol={c.symbol} />
+                        <span className={`${NUM} shrink-0 text-sm font-semibold text-foreground`}>{c.symbol}</span>
+                        <span className="min-w-0 truncate text-sm text-foreground/60">{c.name}</span>
+                        <span className={`${NUM} ml-auto shrink-0 text-sm ${toneClass(c.bps)}`}>{fmtBps(c.bps)}</span>
+                      </div>
+                    ))}
+                    {/* The residual: rows + this line = the day P&L, exactly
+                        (audit NI-01). */}
+                    {d.topContributorsResidualBps != null && Math.abs(d.topContributorsResidualBps) >= 0.05 ? (
+                      <div className="flex items-center gap-2">
+                        <span aria-hidden className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-foreground/8 text-[10px] font-semibold text-foreground/50">
+                          Σ
+                        </span>
+                        <span className="min-w-0 truncate text-sm text-foreground/60">Everything else</span>
+                        <span className={`${NUM} ml-auto shrink-0 text-sm ${toneClass(d.topContributorsResidualBps)}`}>
+                          {fmtBps(d.topContributorsResidualBps)}
+                        </span>
+                      </div>
                     ) : null}
+                  </div>
+                ) : pulse.status === "loading" || pulse.revalidating ? (
+                  <>
+                    <Skeleton height="h-5" />
+                    <Skeleton height="h-5" width="w-11/12" />
                   </>
                 ) : (
-                  "cumulative, whole book, since inception"
+                  <p className="text-sm text-foreground/60">No live day moves to attribute.</p>
                 )}
-              </p>
+              </div>
             </div>
 
-            {/* ── Band 4 · the 90-day return index vs the benchmark ── */}
-            <div className="flex flex-col gap-2 border-b border-foreground/8 py-6">
-              <span className={LABEL}>
-                <span className={NUM}>90</span>-day vs {curve?.benchmarkSymbol ?? "SPY"}
-                {curve?.status === "ok" && curve.coveragePct != null && curve.coveragePct < 95 ? (
-                  <span className="ml-2 normal-case tracking-normal text-foreground/40">
-                    prices <span className={NUM}>{curve.coveragePct}%</span> of book
-                  </span>
-                ) : null}
-              </span>
-              {curve && curve.status === "ok" && curve.points.length >= 2 ? (
-                <ComparisonSparkline curve={curve} />
-              ) : equityCurve.status === "loading" || equityCurve.revalidating ? (
-                <Skeleton height="h-[72px]" />
-              ) : (
-                <p className="flex h-[72px] items-center text-sm text-foreground/60">
-                  Not enough priced history to draw yet.
-                </p>
-              )}
-            </div>
-
-            {/* ── Band 5 · today's top contributors, in bps of the book ── */}
-            <div className="flex flex-col gap-3.5 border-b border-foreground/8 py-5">
-              <span className={LABEL}>
-                Day P&amp;L attribution
-                {d.dayCoveragePct != null && d.dayCoveragePct < 95 ? (
-                  <span className="ml-2 normal-case tracking-normal text-foreground/40">
-                    prices <span className={NUM}>{Math.round(d.dayCoveragePct)}%</span> of book
-                  </span>
-                ) : null}
-              </span>
-              {contributors.length > 0 ? (
-                <>
-                  {contributors.map((c) => (
-                    <div key={c.symbol} className="flex items-center gap-2">
-                      <Monogram symbol={c.symbol} />
-                      <span className={`${NUM} shrink-0 text-sm font-semibold text-foreground`}>{c.symbol}</span>
-                      <span className="min-w-0 truncate text-sm text-foreground/60">{c.name}</span>
-                      <span className={`${NUM} ml-auto shrink-0 text-sm ${toneClass(c.bps)}`}>{fmtBps(c.bps)}</span>
-                    </div>
-                  ))}
-                  {/* The residual: rows + this line = the day P&L, exactly.
-                      An attribution that cannot reach its own total is a
-                      contradiction, not a summary (audit NI-01). */}
-                  {d.topContributorsResidualBps != null && Math.abs(d.topContributorsResidualBps) >= 0.05 ? (
-                    <div className="flex items-center gap-2">
-                      <span aria-hidden className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-foreground/8 text-[10px] font-semibold text-foreground/50">
-                        Σ
-                      </span>
-                      <span className="min-w-0 truncate text-sm text-foreground/60">Everything else</span>
-                      <span className={`${NUM} ml-auto shrink-0 text-sm ${toneClass(d.topContributorsResidualBps)}`}>
-                        {fmtBps(d.topContributorsResidualBps)}
-                      </span>
-                    </div>
-                  ) : null}
-                </>
-              ) : pulse.status === "loading" || pulse.revalidating ? (
-                <>
-                  <Skeleton height="h-5" />
-                  <Skeleton height="h-5" width="w-11/12" />
-                  <Skeleton height="h-5" width="w-4/5" />
-                </>
-              ) : (
-                <p className="text-sm text-foreground/60">No live day moves to attribute.</p>
-              )}
-            </div>
-
-            {/* ── Band 6 · footer — the card's two destinations ── */}
-            <div className="mt-auto grid grid-cols-2 divide-x divide-foreground/8 pt-5 text-sm">
+            {/* ── Footer · the card's two destinations ── */}
+            <div className="mt-4 flex items-center justify-end gap-6 border-t border-foreground/8 pt-3 text-sm">
               <Link
                 href="/portfolio"
-                className="inline-flex items-center justify-center gap-1.5 font-medium text-brand outline-none transition-colors hover:underline focus-visible:ring-2 focus-visible:ring-brand/40"
+                className="inline-flex items-center gap-1.5 font-medium text-brand outline-none transition-colors hover:underline focus-visible:ring-2 focus-visible:ring-brand/40"
               >
                 Open portfolio <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} />
               </Link>
               <Link
                 href="/portfolio?tab=performance"
-                className="inline-flex items-center justify-center gap-1.5 text-foreground/80 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
+                className="inline-flex items-center gap-1.5 text-foreground/80 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
               >
                 Attribution <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} />
               </Link>

@@ -24,6 +24,7 @@ import {
   UNDATED_URGENCY,
   MARKET_CLOSED_URGENCY_CEIL,
   PAST_EVENT_URGENCY,
+  priorityBucket,
   type AttentionFeeder,
   type WeightBySymbol,
 } from "@/lib/home/attention";
@@ -56,6 +57,7 @@ function seed(partial: Partial<AttentionSeed>): AttentionSeed {
     observedAt: partial.observedAt ?? null,
     primaryAction: partial.primaryAction ?? { label: "Open", href: "/x" },
     source: partial.source ?? "signals",
+    storyKey: partial.storyKey ?? null,
   };
 }
 
@@ -90,6 +92,16 @@ describe("scoreSeed", () => {
     const boostConfidence = scoreSeed({ impact: 0.5, urgency: 0.5, confidence: 0.9 });
     expect(boostImpact).toBeGreaterThan(boostUrgency);
     expect(boostUrgency).toBeGreaterThan(boostConfidence);
+  });
+});
+
+describe("priorityBucket", () => {
+  it("maps the score bands the UI renders in place of raw numbers", () => {
+    expect(priorityBucket(85).id).toBe("act-now");
+    expect(priorityBucket(70).id).toBe("act-now");
+    expect(priorityBucket(60).id).toBe("today");
+    expect(priorityBucket(45).id).toBe("this-week");
+    expect(priorityBucket(20).id).toBe("fyi");
   });
 });
 
@@ -285,7 +297,7 @@ describe("feeders", () => {
   it("actions: impact from decisionScore, band in the dedupe key", () => {
     const actions: RecommendedAction[] = [
       {
-        id: "d1", symbol: "MSFT", action: "REDUCE", title: "Trim MSFT", reason: "conviction fell",
+        id: "d1", symbol: "MSFT", subject: "MSFT", action: "REDUCE", title: "Trim MSFT", reason: "conviction fell",
         decisionScore: 76, priority: 1, confidence: 0.7, expectedImpact: null, expectedImprovement: null,
         severity: "high", href: "/research?symbol=MSFT", source: "decision",
         why: null, impact: null, alternativesEvaluated: null,
@@ -301,7 +313,7 @@ describe("feeders", () => {
 
   it("actions: a 10-pt conviction move changes the band, so a prior dismissal lapses", () => {
     const base: RecommendedAction = {
-      id: "d1", symbol: "MSFT", action: "REDUCE", title: "Trim", reason: "x", decisionScore: 76,
+      id: "d1", symbol: "MSFT", subject: "MSFT", action: "REDUCE", title: "Trim", reason: "x", decisionScore: 76,
       priority: 1, confidence: 0.7, expectedImpact: null, expectedImprovement: null, severity: "high",
       href: "/x", source: "decision", why: null, impact: null, alternativesEvaluated: null,
     };
@@ -312,7 +324,7 @@ describe("feeders", () => {
 
   it("actions: confidence decays with observation age and zeroes when stale (F-22d)", () => {
     const base: RecommendedAction = {
-      id: "n1", symbol: "AAPL", action: "REVIEW", title: "AAPL down 8.7%", reason: "x", decisionScore: null,
+      id: "n1", symbol: "AAPL", subject: null, action: "REVIEW", title: "AAPL down 8.7%", reason: "x", decisionScore: null,
       priority: 1, confidence: null, expectedImpact: null, expectedImprovement: null, severity: "high",
       href: "/x", source: "queue", why: null, impact: null, alternativesEvaluated: null,
     };
@@ -377,6 +389,38 @@ describe("feeders", () => {
     expect(seeds[0].confidence).toBe(1);
     expect(seeds[0].impact).toBe(1); // 31% held weight saturates the 25% anchor
     expect(seeds[0].dedupeKey).toBe(`NVDA:earnings:${new Date(NOW + 2 * DAY).toISOString().slice(0, 10)}`);
+  });
+
+  it("collapses a cross-kind story: the action survives, absorbs the threat's link and score (DU-03)", () => {
+    const threat = seed({
+      id: "t", dedupeKey: "threat:conc-holding:30-35", kind: "threat", storyKey: "concentration:usd-cash",
+      impact: 0.8, urgency: 0.6, confidence: 0.8, primaryAction: { label: "Review threat", href: "/portfolio?tab=risk" },
+    });
+    const action = seed({
+      id: "a", dedupeKey: "action:portfolio:60", kind: "action", storyKey: "concentration:usd-cash",
+      impact: 0.62, urgency: 0.6, confidence: 0.6, primaryAction: { label: "Open decision", href: "/portfolio?tab=decisions" },
+    });
+    const q = buildAttentionQueue({ feeders: [feeder("threats", [threat]), feeder("actions", [action])], dismissals: [], now: NOW });
+
+    expect(q.items).toHaveLength(1);
+    expect(q.items[0].kind).toBe("action");
+    expect(q.items[0].mergedHrefs?.some((h) => h.href === "/portfolio?tab=risk")).toBe(true);
+    // The surviving action inherits the story's strongest score, so the
+    // collapse never demotes the story below where the louder twin ranked.
+    expect(q.items[0].score).toBe(scoreSeed(threat));
+  });
+
+  it("a story dismissal suppresses BOTH twins", () => {
+    const twins = [
+      seed({ id: "t", dedupeKey: "threat:x", kind: "threat", storyKey: "concentration:usd-cash" }),
+      seed({ id: "a", dedupeKey: "action:x", kind: "action", storyKey: "concentration:usd-cash" }),
+    ];
+    const q = buildAttentionQueue({
+      feeders: [feeder("f", twins)],
+      dismissals: [{ dedupeKey: "concentration:usd-cash", dismissedAt: NOW - HOUR, expiresAt: NOW + DAY }],
+      now: NOW,
+    });
+    expect(q.items).toHaveLength(0);
   });
 
   it("signals: impact from fit score, confidence default 0.5", () => {

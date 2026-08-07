@@ -45,7 +45,6 @@ import {
   seedsFromThreats,
   seedsFromAlerts,
   seedsFromEvents,
-  seedsFromSignals,
   type WeightBySymbol,
 } from "./attention";
 import { listActiveDismissals, getHomeFingerprint, putHomeFingerprint } from "../db";
@@ -258,13 +257,16 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
   const marketOpen = estimateMarketStatus("US", new Date(now)) === "open";
   const dismissals = listActiveDismissals(now);
 
+  // Signals are deliberately NOT a queue feeder: the Radar is their sole owner
+  // (audit RD-02/IA-04 — the queue's five "X fits your book" rows were the
+  // same five Radar tiles rendered twice; a scanner idea is browsable context,
+  // not a decision demanding triage).
   const attention = buildAttentionQueue({
     feeders: [
       { id: "actions", run: () => seedsFromActions(recommendedActions.actions) },
       { id: "threats", run: () => seedsFromThreats(threats.threats) },
       { id: "alerts", run: () => seedsFromAlerts(watchlistAlerts, weightBySymbol) },
       { id: "events", run: () => seedsFromEvents(upcoming, weightBySymbol, now, marketOpen) },
-      { id: "signals", run: () => seedsFromSignals(opportunity.opportunities) },
     ],
     dismissals,
     now,

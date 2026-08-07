@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { explainAttentionScore, explainDecision, explainHealth, explainSentiment } from "@/lib/home/explain";
-import { SCORE_EXPONENTS, scoreSeed } from "@/lib/home/attention";
+import { SCORE_EXPONENTS, scoreSeed, priorityBucket } from "@/lib/home/attention";
 import type { AttentionItem, PortfolioPulse, RecommendedAction, SentimentGauge } from "@/lib/home/contracts";
 
 function attentionItem(overrides: Partial<AttentionItem> = {}): AttentionItem {
@@ -67,7 +67,9 @@ describe("explainAttentionScore", () => {
     // the impact factor's bar is the actual multiplier the formula applies
     const impactFactor = ex.factors[0];
     expect(impactFactor.bar).toBeCloseTo(Math.pow(0.7, SCORE_EXPONENTS.impact), 5);
-    expect(ex.value).toBe(`${Math.round(item.score)}/100`);
+    // The value leads with the band the UI renders; the raw number lives in
+    // the drill-through (audit DU-01/DU-02).
+    expect(ex.value).toBe(`${priorityBucket(item.score).label} · ${Math.round(item.score)}/100`);
   });
 });
 
@@ -117,6 +119,7 @@ describe("explainDecision", () => {
   const decision: RecommendedAction = {
     id: "rec-1",
     symbol: "AAPL",
+    subject: "AAPL",
     action: "REDUCE",
     title: "Reduce AAPL",
     reason: "Concentration",

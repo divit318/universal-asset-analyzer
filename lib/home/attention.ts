@@ -136,6 +136,27 @@ const HELD_IMPACT_FULL_WEIGHT = 0.25;
 
 const clamp01 = (n: number) => (Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0);
 
+/**
+ * The score's user-facing form (audit DU-01/DU-02): the raw 0-100 number is a
+ * geometric blend whose 65-vs-67 differences carry almost no discriminating
+ * information (most inputs are per-kind constants), so the UI renders BANDS
+ * and keeps the number for the drill-through and the internal ranking. Bands
+ * are named for what the user should do with the item, not fake precision.
+ * Once telemetry lands (audit 13), the bands get re-anchored to measured
+ * action rates.
+ */
+export interface PriorityBucket {
+  id: "act-now" | "today" | "this-week" | "fyi";
+  label: string;
+}
+
+export function priorityBucket(score: number): PriorityBucket {
+  if (score >= 70) return { id: "act-now", label: "Act now" };
+  if (score >= 55) return { id: "today", label: "Today" };
+  if (score >= 40) return { id: "this-week", label: "This week" };
+  return { id: "fyi", label: "FYI" };
+}
+
 /** The §4.2 formula. Exported so the score can be unit-tested directly. */
 export function scoreSeed(seed: Pick<AttentionSeed, "impact" | "urgency" | "confidence">): number {
   const impact = clamp01(seed.impact);
@@ -192,6 +213,25 @@ function scoreBand(score: number): string {
   return String(Math.floor(score / 10) * 10);
 }
 
+/** Normalizes a subject line into a story-key slug: "USD Cash" → "usd-cash". */
+function storySlug(subject: string): string {
+  return subject.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+/**
+ * When two kinds tell one story, the more EXECUTABLE one survives (audit
+ * DU-03: the informationless "USD Cash concentration" threat outranked the
+ * fully-simulated "Trim USD Cash" action it restated, so the queue's
+ * spotlight never showed the rich decision card). Lower = survives.
+ */
+const STORY_KIND_PREFERENCE: Record<AttentionKind, number> = {
+  action: 0,
+  alert: 1,
+  threat: 2,
+  event: 3,
+  signal: 4,
+};
+
 /* ------------------------------------------------------------------ */
 /* Feeders — pure transforms of already-built digest slices            */
 /* ------------------------------------------------------------------ */
@@ -244,6 +284,12 @@ export function seedsFromActions(actions: RecommendedAction[], now: number = Dat
         href: a.source === "decision" ? "/portfolio?tab=decisions" : a.href,
       },
       source: "actions",
+      // A trim/REDUCE decision is the executable form of a concentration
+      // threat; the shared story key lets the engine collapse the pair.
+      storyKey:
+        a.action === "REDUCE" && (a.subject ?? a.symbol)
+          ? `concentration:${storySlug(a.subject ?? (a.symbol as string))}`
+          : null,
     } satisfies AttentionSeed;
   });
 }
@@ -271,6 +317,12 @@ export function seedsFromThreats(threats: ThreatItem[]): AttentionSeed[] {
       occursAt: null,
       primaryAction: { label: "Review threat", href: t.href },
       source: "threats",
+      // "<subject> concentration" threats share a story with the trim action
+      // that executes them (see seedsFromActions).
+      storyKey:
+        t.category === "concentration" && t.title.endsWith(" concentration")
+          ? `concentration:${storySlug(t.title.slice(0, -" concentration".length))}`
+          : null,
     } satisfies AttentionSeed;
   });
 }
@@ -411,11 +463,14 @@ export function buildAttentionQueue(input: BuildAttentionInput): AttentionQueue 
     }
   }
 
-  // 2. Drop stories with an active (unexpired) dismissal.
+  // 2. Drop stories with an active (unexpired) dismissal. A dismissal of a
+  // merged story stores the storyKey too, so the absorbed twin stays gone.
   const activeDismissals = new Set(
     input.dismissals.filter((d) => d.expiresAt > now).map((d) => d.dedupeKey),
   );
-  const live = seeds.filter((s) => !activeDismissals.has(s.dedupeKey));
+  const live = seeds.filter(
+    (s) => !activeDismissals.has(s.dedupeKey) && !(s.storyKey && activeDismissals.has(s.storyKey)),
+  );
 
   // 3. Score.
   const scored: AttentionItem[] = live.map((s) => ({ ...s, score: scoreSeed(s) }));
@@ -447,8 +502,36 @@ export function buildAttentionQueue(input: BuildAttentionInput): AttentionQueue 
     byKey.set(item.dedupeKey, keep);
   }
 
+  // 4b. Cross-kind story collapse (audit DU-03): when items of different
+  // kinds share a storyKey, the most EXECUTABLE kind survives and absorbs the
+  // others' links. Without this, a threat restating an action outranked the
+  // action itself (the geometric score rewards the threat's constant inputs),
+  // and the queue's spotlight showed the restatement instead of the decision.
+  const byStory = new Map<string, AttentionItem>();
+  const storyless: AttentionItem[] = [];
+  for (const item of byKey.values()) {
+    if (!item.storyKey) {
+      storyless.push(item);
+      continue;
+    }
+    const existing = byStory.get(item.storyKey);
+    if (!existing) {
+      byStory.set(item.storyKey, item);
+      continue;
+    }
+    const keepItem = STORY_KIND_PREFERENCE[item.kind] < STORY_KIND_PREFERENCE[existing.kind];
+    const [keep, drop] = keepItem ? [item, existing] : [existing, item];
+    const merged = keep.mergedHrefs ?? [];
+    if (drop.primaryAction.href !== keep.primaryAction.href) merged.push(drop.primaryAction);
+    keep.mergedHrefs = merged;
+    // The surviving item inherits the story's strongest score, so collapsing
+    // the pair never DEMOTES the story below where the louder twin ranked.
+    keep.score = Math.max(keep.score, drop.score);
+    byStory.set(item.storyKey, keep);
+  }
+
   // 5. Sort: score desc, then kind precedence, then symbol.
-  const items = [...byKey.values()].sort((a, b) => {
+  const items = [...storyless, ...byStory.values()].sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
     if (KIND_PRECEDENCE[a.kind] !== KIND_PRECEDENCE[b.kind])
       return KIND_PRECEDENCE[a.kind] - KIND_PRECEDENCE[b.kind];

@@ -49,6 +49,7 @@ import {
 import { useToast } from "@/app/_components/toast";
 import type { AttentionItem, AttentionKind, RecommendedAction, SymbolContext } from "@/lib/home/contracts";
 import { explainAttentionScore, explainDecision } from "@/lib/home/explain";
+import { priorityBucket } from "@/lib/home/attention";
 import { STAGE_LABEL } from "@/lib/idea-stage";
 import { SymbolTag } from "../_atmosphere/symbol-link";
 import { ExplainableValue } from "../_atmosphere/explain-popover";
@@ -239,9 +240,15 @@ function SpotlightCard({
         </CategoryPill>
         <span className="min-w-0 flex-1" />
         <span className="text-label uppercase tracking-[0.08em] text-muted">Priority</span>
+        {/* The BAND, not the raw score (audit DU-01/DU-02): single-point
+            differences carry no information; the number lives in the
+            decomposition popover. */}
         <ExplainableValue explanation={explainAttentionScore(item)} align="end" underline={false}>
-          <span className="font-mono text-[22px] font-semibold leading-none tabular-nums text-foreground" aria-label={`Priority score ${Math.round(item.score)} of 100`}>
-            {Math.round(item.score)}
+          <span
+            className="text-[15px] font-semibold leading-none text-foreground"
+            aria-label={`Priority: ${priorityBucket(item.score).label}`}
+          >
+            {priorityBucket(item.score).label}
           </span>
         </ExplainableValue>
         <button
@@ -404,10 +411,10 @@ function QueueRow({
           <span className="flex items-center gap-1.5">
             <ExplainableValue explanation={explainAttentionScore(item)} align="end" underline={false}>
               <span
-                className="font-mono text-[17px] font-semibold leading-none tabular-nums text-foreground"
-                aria-label={`Priority score ${Math.round(item.score)} of 100`}
+                className="text-[13px] font-semibold leading-none text-foreground/85"
+                aria-label={`Priority: ${priorityBucket(item.score).label}`}
               >
-                {Math.round(item.score)}
+                {priorityBucket(item.score).label}
               </span>
             </ExplainableValue>
             <button
@@ -524,7 +531,7 @@ export function AttentionQueueModule() {
       fetch("/api/home/attention/dismiss", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dedupeKey: item.dedupeKey, kind: item.kind, occursAt: item.occursAt }),
+        body: JSON.stringify({ dedupeKey: item.dedupeKey, kind: item.kind, occursAt: item.occursAt, storyKey: item.storyKey ?? null }),
       })
         .then((res) => {
           if (!res.ok) throw new Error();
@@ -548,7 +555,7 @@ export function AttentionQueueModule() {
             fetch("/api/home/attention/dismiss", {
               method: "DELETE",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ dedupeKey: item.dedupeKey }),
+              body: JSON.stringify({ dedupeKey: item.dedupeKey, storyKey: item.storyKey ?? null }),
             }).catch(() => {});
             setPending((prev) => {
               const n = new Set(prev);
@@ -682,7 +689,7 @@ export function AttentionQueueModule() {
           <div className="flex justify-end px-6 pt-3">
             <span
               className="pr-6 text-label font-semibold uppercase tracking-[0.08em] text-muted"
-              title="Priority: how urgently this item needs a decision, 0–100. Geometric blend of impact, urgency, and confidence — click any score for its decomposition."
+              title="Priority band: how urgently this item needs a decision. Ranked by a geometric blend of impact, urgency, and confidence. Click any band for its decomposition."
             >
               Priority
             </span>

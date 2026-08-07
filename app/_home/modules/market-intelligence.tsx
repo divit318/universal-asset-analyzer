@@ -23,7 +23,7 @@
  * still owns the loading/empty/error state machine.
  */
 
-import { Fragment, useId, type ReactNode } from "react";
+import { Fragment, useId, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Activity, ChevronRight, Info, RefreshCw } from "lucide-react";
 import { getHomeModule } from "@/lib/home/registry";
@@ -346,9 +346,10 @@ function TileGrid({ d, sessionNote }: { d: MarketIntelligence; sessionNote: stri
 /* The card                                                            */
 /* ------------------------------------------------------------------ */
 
-export function MarketOverviewModule() {
+export function MarketOverviewModule({ collapsible = false, defaultCollapsed = false }: { collapsible?: boolean; defaultCollapsed?: boolean }) {
   const state = useHomeSlice("marketIntelligence");
   const { digest, refreshDigest } = useHome();
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const hydrated = useHydrated();
 
   // Date from the same helper as the page <h1> (weekday always derived, never
@@ -368,13 +369,27 @@ export function MarketOverviewModule() {
   const subtitle = ["Global markets at a glance", stamp, sessionNote].filter(Boolean).join(" · ");
 
   return (
-    <div className="rounded-xl border border-foreground/8 bg-surface">
+    <div className={`rounded-xl border border-foreground/8 bg-surface ${collapsed ? "" : ""}`}>
       {/* Band 1 — header, with a full-bleed divider under the whole band. */}
-      <div className="flex items-start justify-between gap-3 border-b border-foreground/8 px-8 pb-5 pt-8">
+      <div className={`flex items-start justify-between gap-3 px-8 ${collapsed ? "py-5" : "border-b border-foreground/8 pb-5 pt-8"}`}>
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex items-center gap-2.5">
-            <Activity className="h-5 w-5 shrink-0 text-foreground" strokeWidth={2} aria-hidden />
-            <h2 className="text-[22px] font-semibold leading-none tracking-[-0.01em] text-foreground">Market Overview</h2>
+            {collapsible ? (
+              <button
+                type="button"
+                onClick={() => setCollapsed((c) => !c)}
+                aria-expanded={!collapsed}
+                className="flex items-center gap-2.5 rounded-control outline-none transition-colors hover:text-brand focus-visible:ring-2 focus-visible:ring-brand/40"
+              >
+                <Activity className="h-5 w-5 shrink-0 text-foreground" strokeWidth={2} aria-hidden />
+                <h2 className="text-[22px] font-semibold leading-none tracking-[-0.01em] text-foreground">Market Overview</h2>
+              </button>
+            ) : (
+              <>
+                <Activity className="h-5 w-5 shrink-0 text-foreground" strokeWidth={2} aria-hidden />
+                <h2 className="text-[22px] font-semibold leading-none tracking-[-0.01em] text-foreground">Market Overview</h2>
+              </>
+            )}
           </div>
           <p className="text-sm text-foreground/60">{subtitle}</p>
         </div>
@@ -397,19 +412,21 @@ export function MarketOverviewModule() {
         </div>
       </div>
 
+      {/* Collapsed, the card still earns its row: the index strip is the
+          one-line tape summary the context shelf promises. */}
       <Section
         bare
         state={state}
         isEmpty={(d) => d.groups.length === 0}
         emptyMessage="Market data is unavailable right now."
-        minHeight={420}
+        minHeight={collapsed ? 60 : 420}
         onRetry={refreshDigest}
-        className="px-8 pb-8"
+        className={collapsed ? "border-t border-foreground/8 px-8" : "px-8 pb-8"}
       >
         {(d) => (
           <>
             <IndexStrip groups={d.groups} suppressSessionLabel={!!sessionNote} />
-            <TileGrid d={d} sessionNote={sessionNote} />
+            {collapsed ? null : <TileGrid d={d} sessionNote={sessionNote} />}
           </>
         )}
       </Section>

@@ -20,10 +20,11 @@ const KINDS: AttentionKind[] = ["action", "threat", "alert", "event", "signal"];
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as { dedupeKey?: unknown; kind?: unknown; occursAt?: unknown };
+    const body = (await req.json()) as { dedupeKey?: unknown; kind?: unknown; occursAt?: unknown; storyKey?: unknown };
     const dedupeKey = typeof body.dedupeKey === "string" ? body.dedupeKey.trim() : "";
     const kind = body.kind as AttentionKind;
     const occursAt = typeof body.occursAt === "string" ? body.occursAt : null;
+    const storyKey = typeof body.storyKey === "string" && body.storyKey.trim() ? body.storyKey.trim() : null;
 
     if (!dedupeKey) return NextResponse.json({ error: "dedupeKey is required" }, { status: 400 });
     if (!KINDS.includes(kind)) return NextResponse.json({ error: "invalid kind" }, { status: 400 });
@@ -31,6 +32,10 @@ export async function POST(req: Request) {
     const now = Date.now();
     const expiresAt = dismissalExpiresAt(kind, occursAt, now);
     dismissAttention(dedupeKey, now, expiresAt);
+    // A merged story (audit DU-03) is dismissed as a STORY: suppressing only
+    // the surviving item's key would let its absorbed twin resurface next
+    // build under its own kind.
+    if (storyKey) dismissAttention(storyKey, now, expiresAt);
 
     return NextResponse.json({ ok: true, dedupeKey, expiresAt });
   } catch (err) {
@@ -41,11 +46,13 @@ export async function POST(req: Request) {
 
 export async function DELETE(req: Request) {
   try {
-    const body = (await req.json()) as { dedupeKey?: unknown };
+    const body = (await req.json()) as { dedupeKey?: unknown; storyKey?: unknown };
     const dedupeKey = typeof body.dedupeKey === "string" ? body.dedupeKey.trim() : "";
+    const storyKey = typeof body.storyKey === "string" && body.storyKey.trim() ? body.storyKey.trim() : null;
     if (!dedupeKey) return NextResponse.json({ error: "dedupeKey is required" }, { status: 400 });
 
     undismissAttention(dedupeKey);
+    if (storyKey) undismissAttention(storyKey);
     return NextResponse.json({ ok: true, dedupeKey });
   } catch (err) {
     console.error("[api/home/attention/dismiss DELETE]", err);

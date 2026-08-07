@@ -54,8 +54,8 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
 
   "book": {
     id: "book",
-    title: "Portfolio Health",
-    description: "Health, return vs. benchmark, cash, and concentration at a glance.",
+    title: "The Book",
+    description: "Where you stand: health, day P&L and its attribution, return vs. benchmark, cash.",
     loading: "eager",
     refresh: "on-focus",
     refreshIntervalMs: null,
@@ -63,7 +63,7 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     // read — the same digest slices, no new endpoint.
     cache: { via: "digest", datasets: ["quotes.batch", "history"] },
     priority: 2,
-    // The command row's one-third rail beside the brief.
+    // Zone 1 of the state + delta + queue layout: a full-width strip.
     defaultSize: SIZE.rail,
     minSize: SIZE.rail,
     preferredLayout: "rail",

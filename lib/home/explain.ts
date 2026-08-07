@@ -14,7 +14,7 @@
  * Unit-tested in tests/home-explain.test.ts.
  */
 
-import { SCORE_EXPONENTS } from "./attention";
+import { SCORE_EXPONENTS, priorityBucket } from "./attention";
 import { DEFAULT_FIT_WEIGHT } from "../ios/fit-scorer";
 import type {
   AttentionItem,
@@ -76,9 +76,9 @@ export function explainAttentionScore(item: AttentionItem): ScoreExplanation {
   };
 
   return {
-    title: "Attention score",
-    value: `${Math.round(item.score)}/100`,
-    method: `score = 100 × impact^${SCORE_EXPONENTS.impact} × urgency^${SCORE_EXPONENTS.urgency} × confidence^${SCORE_EXPONENTS.confidence} — geometric, so a near-zero in any input sinks the item.`,
+    title: "Attention priority",
+    value: `${priorityBucket(item.score).label} · ${Math.round(item.score)}/100`,
+    method: `score = 100 × impact^${SCORE_EXPONENTS.impact} × urgency^${SCORE_EXPONENTS.urgency} × confidence^${SCORE_EXPONENTS.confidence} — geometric, so a near-zero in any input sinks the item. The queue shows the band; single-point differences are not meaningful.`,
     confidence: null,
     factors: [
       term("Impact", item.impact, SCORE_EXPONENTS.impact, "How much of the portfolio this touches — held names carry their book weight."),
