@@ -120,6 +120,7 @@ interface RawSummary {
     priceToBook?: number;
     bookValue?: number;
     sharesOutstanding?: number;
+    netIncomeToCommon?: number;
     shortPercentOfFloat?: unknown;
     shortRatio?: unknown;
     sharesShort?: unknown;
@@ -171,7 +172,20 @@ export function mapSnapshot(symbol: string, raw: RawSummary): FundamentalsSnapsh
     pegRatio: n(ks.pegRatio),
     priceToBook: n(ks.priceToBook),
     dividendYield: n(sd.dividendYield),
-    returnOnEquity: n(fd.returnOnEquity),
+    // ROE fallback: Yahoo omits financialData.returnOnEquity for some
+    // non-US listings (observed: KOTAKBANK.NS) while still reporting net
+    // income and book value in defaultKeyStatistics — both in the same
+    // reporting currency, so the ratio is safe. ROA has no such fallback
+    // (total assets are not in any fetched module) and stays deliberately
+    // unavailable rather than approximated.
+    returnOnEquity: (() => {
+      if (fd.returnOnEquity != null) return n(fd.returnOnEquity);
+      if (ks.netIncomeToCommon != null && ks.bookValue != null && ks.sharesOutstanding != null) {
+        const bookEq = ks.bookValue * ks.sharesOutstanding;
+        if (bookEq > 0) return ks.netIncomeToCommon / bookEq;
+      }
+      return null;
+    })(),
     returnOnAssets: n(fd.returnOnAssets),
     grossMargins: n(fd.grossMargins),
     operatingMargins: n(fd.operatingMargins),

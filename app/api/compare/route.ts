@@ -8,6 +8,8 @@ import { detectMarket, normalizeSymbol } from "@/lib/market";
 import { findSectorRotationEntry, getLatestSectorRotation } from "@/lib/sector-rotation";
 import { buildOpportunityProfile, type OpportunityProfile } from "@/lib/opportunity-engine";
 import { computeEntryBenchmarks, peerGroupOf, loadBenchmarkUniverse, type PeerBenchmark } from "@/lib/compare/benchmarks";
+import { metricApplicability, zeroAsMissing } from "@/lib/compare/metrics";
+import { totalReturnClose, detectUnexplainedGaps, type PriceGap } from "@/lib/prices";
 import type { EntryFreshness } from "@/lib/compare/types";
 import type { FinancialStatements, FundamentalsSnapshot, AnalystConsensus, ScoreResult, MomentumSignal, Quote, RiskItem } from "@/lib/types";
 
@@ -38,6 +40,8 @@ export interface CompareEntry {
   opportunity?: OpportunityProfile;
   benchmarks?: Record<string, PeerBenchmark>;
   freshness?: EntryFreshness;
+  /** Single-day moves > 25% on the adjusted series with no adjustment to explain them — a possible unhandled corporate action (see lib/prices.ts). */
+  priceGaps?: PriceGap[];
 }
 
 /** Pull a bucket's percentage-of-max from a ScoreResult — reuses the same bucket shape the Compare page already renders. */
@@ -46,21 +50,22 @@ function bucketPct(score: ScoreResult, name: string): number | null {
   return b ? Math.round((b.points / b.max) * 100) : null;
 }
 
-function computeOneYearReturn(history: { date: string; close: number }[]): number | null {
+/** Trailing 1-year total return, computed on the adjusted series (lib/prices.ts) so it shares a basis with momentum and portfolio analytics. */
+function computeOneYearReturn(history: { date: string; close: number; adjClose?: number }[]): number | null {
   if (history.length < 2) return null;
   const sorted = [...history].sort((a, b) => (a.date < b.date ? -1 : 1));
   const latest = sorted[sorted.length - 1];
   const target = new Date(latest.date);
   target.setFullYear(target.getFullYear() - 1);
   const targetMs = target.getTime();
-  let closest: { date: string; close: number } | null = null;
+  let closest: { date: string; close: number; adjClose?: number } | null = null;
   let minDiff = Infinity;
   for (const h of sorted) {
     const diff = Math.abs(new Date(h.date).getTime() - targetMs);
     if (diff < minDiff) { minDiff = diff; closest = h; }
   }
   if (!closest || minDiff > 45 * 24 * 60 * 60 * 1000) return null;
-  return ((latest.close - closest.close) / closest.close) * 100;
+  return ((totalReturnClose(latest) - totalReturnClose(closest)) / totalReturnClose(closest)) * 100;
 }
 
 /** GET /api/compare?symbols=AAPL,MSFT,GOOGL — up to 5 symbols. */
@@ -175,22 +180,42 @@ export async function GET(request: Request) {
         });
 
         const peerGroup = peerGroupOf("equity", { sector: parts.snapshot.sector });
+        // Margins arrive as literal zeros from the provider when unreported
+        // (every bank has grossMargins: 0) — zeroAsMissing keeps a fabricated
+        // "0.0% · 18th pct" out of the benchmark math entirely.
         const benchmarkValues: Record<string, number | null> = {
           forwardPE: parts.snapshot.forwardPE,
           pegRatio: parts.snapshot.pegRatio,
           fcfYield: fcfYieldPct,
           roe: parts.snapshot.returnOnEquity != null ? parts.snapshot.returnOnEquity * 100 : null,
-          grossMargin: parts.snapshot.grossMargins != null ? parts.snapshot.grossMargins * 100 : null,
-          operatingMargin: parts.snapshot.operatingMargins != null ? parts.snapshot.operatingMargins * 100 : null,
+          grossMargin: zeroAsMissing(parts.snapshot.grossMargins) != null ? parts.snapshot.grossMargins! * 100 : null,
+          operatingMargin: zeroAsMissing(parts.snapshot.operatingMargins) != null ? parts.snapshot.operatingMargins! * 100 : null,
           debtToEquity: parts.snapshot.debtToEquity,
           dividendYield: parts.snapshot.dividendYield != null ? parts.snapshot.dividendYield * 100 : null,
           revenueGrowthYoY: parts.snapshot.revenueGrowth != null ? parts.snapshot.revenueGrowth * 100 : null,
           oneYearReturn,
           distanceFrom52WkHigh: momentum?.pctFrom52WkHigh ?? null,
         };
-        const benchmarks = computeEntryBenchmarks(
-          "equity", [...BENCHMARK_METRICS], symbol, benchmarkValues, peerGroup, equityUniverse,
+        // A metric that is not applicable for this sector (a bank's gross
+        // margin) must not get a percentile or a peer average — it is not a
+        // data gap, it is a metric with no meaning here.
+        const applicableKeys = BENCHMARK_METRICS.filter(
+          (k) => metricApplicability(k, parts.snapshot.sector).applicable,
         );
+        const benchmarks = computeEntryBenchmarks(
+          "equity", applicableKeys, symbol, benchmarkValues, peerGroup, equityUniverse,
+        );
+
+        // Corporate-action guard: a >25% single-day move on the ADJUSTED
+        // series means either a genuine shock or an adjustment the provider
+        // missed. Surfaced on the entry so the UI can caveat return metrics.
+        const priceGaps = detectUnexplainedGaps(history);
+        if (priceGaps.length > 0) {
+          console.warn(
+            `[compare] ${symbol}: ${priceGaps.length} unexplained single-day gap(s) > 25% in the adjusted price series — returns may straddle an unadjusted corporate action`,
+            priceGaps.map((g) => `${g.date} ${g.changePct.toFixed(1)}%`).join(", "),
+          );
+        }
 
         const latestFiscalYear = statements?.fiscalYears.length ? statements.fiscalYears[statements.fiscalYears.length - 1] : null;
         const freshness: EntryFreshness = {
@@ -201,7 +226,7 @@ export async function GET(request: Request) {
             : null,
         };
 
-        return { symbol, name: quote.name, quote, snapshot: parts.snapshot, statements, analyst: parts.analyst, score, momentum, oneYearReturn, fcfYieldPct, netDebtToEbitda, risks, opportunity, benchmarks, freshness };
+        return { symbol, name: quote.name, quote, snapshot: parts.snapshot, statements, analyst: parts.analyst, score, momentum, oneYearReturn, fcfYieldPct, netDebtToEbitda, risks, opportunity, benchmarks, freshness, ...(priceGaps.length > 0 ? { priceGaps } : {}) };
       } catch (err) {
         return { symbol, name: symbol, error: err instanceof Error ? err.message : "Failed to load" };
       }
