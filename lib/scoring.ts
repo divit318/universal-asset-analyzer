@@ -163,15 +163,19 @@ export function scoreHealth(s: FundamentalsSnapshot) {
     // core cost. Net debt/EBITDA used to sit here anyway; since EBITDA is
     // null for every bank, mk() half-credited it for every bank identically,
     // which (with the D/E band below saturating) pinned the whole bucket at
-    // exactly 70% for any profitable lender. D/E carries the bucket alone.
+    // exactly 70% for any profitable lender.
     //
-    // Band calibration: lib/fundamentals.ts normalizes Yahoo's percentage
-    // figure to a ratio (÷100), and for banks the figure covers borrowings
-    // (not deposits) over equity — majors land ~0.5-1.5, stressed lenders
-    // 2.5+. The old 20→4 band assumed the unnormalized 8-12x scale and
-    // awarded FULL credit to every bank in existence.
+    // What a bank-health score SHOULD blend (CAR/CET1, GNPA/NNPA, provision
+    // coverage, CASA) is not in the provider dataset, so the bucket uses the
+    // two genuine health signals that are: leverage (D/E — Yahoo's figure,
+    // normalized ÷100 in lib/fundamentals.ts, covers borrowings over equity;
+    // majors land ~0.5-1.5, stressed lenders 2.5+; the old 20→4 band assumed
+    // the unnormalized scale and full-credited every bank in existence) and
+    // operating efficiency (operating margin as a cost-income proxy — the
+    // standard resilience measure regulators track for lenders).
     return bucket("Financial Health", [
-      mk("Debt / equity", s.debtToEquity, 3, 0.3, 20, (v) => `D/E ${ratio(v)} (borrowings / equity)`),
+      mk("Debt / equity", s.debtToEquity, 3, 0.3, 12, (v) => `D/E ${ratio(v)} (borrowings / equity)`),
+      mk("Operating efficiency", s.operatingMargins, 0.20, 0.55, 8, (v) => `Op margin ${pct(v)} (cost-income proxy)`),
     ]);
   }
   if (sg === "utilities") {

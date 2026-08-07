@@ -279,6 +279,14 @@ describe("bank scoring discrimination", () => {
     expect(new Set(scores.map(Math.round)).size).toBeGreaterThan(2);
   });
 
+  it("bank Financial Health also credits operating efficiency, not leverage alone", () => {
+    const lean = scoreHealth(bank({ debtToEquity: 1.0, operatingMargins: 0.50 })).bucket;
+    const bloated = scoreHealth(bank({ debtToEquity: 1.0, operatingMargins: 0.22 })).bucket;
+    expect(lean.points).toBeGreaterThan(bloated.points);
+    // Two genuine inputs, not a one-factor score wearing a composite label.
+    expect(lean.factors.filter((f) => f.detail !== "n/a").length).toBeGreaterThanOrEqual(2);
+  });
+
   it("materially different bank growth rates produce materially different Growth scores", () => {
     const fast = growthPct(0.24, 0.28);
     const mid = growthPct(0.15, 0.18);
