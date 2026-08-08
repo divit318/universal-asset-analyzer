@@ -330,10 +330,11 @@ the candidate) BEFORE the pin changes. Live spend, latency, cache-hit rate
 and fallback depth are on `/dev/ai` (the `ai_call` ledger — see
 `lib/ai/ARCHITECTURE.md` "Instrumentation").
 
-**Known pre-existing lint issues** (do not "fix" as a drive-by, and do not treat
-as a regression you caused):
-- `app/_home/_atmosphere/use-count-up.ts:34` — setState-in-effect error
-- `app/_home/modules/todays-brief.tsx:31` — unused `definition` warning
+**Known pre-existing lint issues**: none. (The two former entries died in the
+2026-08-08 Today rebuild: `use-count-up.ts` was deleted with the count-up
+animation, and `todays-brief.tsx`'s unused `definition` was removed when the
+hero module was retired in place.) `npx eslint app lib` should be clean; treat
+any problem as a regression.
 
 For UI work, verify in the browser (Playwright MCP) as well. `tsc` passes on JSX
 that Turbopack cannot parse, so a green typecheck is **not** proof the page

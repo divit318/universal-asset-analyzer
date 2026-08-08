@@ -147,10 +147,12 @@ export function WhatsChangedModule() {
   if (!data || data.status === "degraded") return null;
 
   const label = (
-    <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-faint">
+    // text-muted, not text-faint: the faint tier fails AA below 12 px and this
+    // label carries real information (DESIGN R1 / audit AC-01).
+    <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">
       <GitCompareArrows className="h-3.5 w-3.5" strokeWidth={2} />
       Since last visit
-      {data.baselineAt ? <span className="font-normal normal-case tracking-normal text-faint">· {sinceLabel(data.baselineAt)}</span> : null}
+      {data.baselineAt ? <span className="font-normal normal-case tracking-normal text-muted">· {sinceLabel(data.baselineAt)}</span> : null}
     </span>
   );
 

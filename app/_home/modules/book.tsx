@@ -42,6 +42,29 @@ function fmtBps(v: number): string {
   return `${sign}${Math.abs(v).toFixed(1)} bps`;
 }
 
+/**
+ * The signature element (DESIGN §6): a hairline bar decomposing the day's move
+ * into its contributors plus the residual, proportional by magnitude. The one
+ * proportional graphic in Zone 1 — it makes the reconciliation (rows + rest =
+ * headline, audit NI-01) visible at a glance. Greyscale-safe: segments are
+ * separated by gaps and the signed figures sit directly below.
+ */
+function ContributionBar({ rows }: { rows: { key: string; bps: number }[] }) {
+  const total = rows.reduce((s, r) => s + Math.abs(r.bps), 0);
+  if (!(total > 0)) return null;
+  return (
+    <div aria-hidden className="flex h-1 w-full gap-[2px] overflow-hidden rounded-full">
+      {rows.map((r) => (
+        <span
+          key={r.key}
+          className={`h-full rounded-full ${r.bps >= 0 ? "bg-positive/70" : "bg-negative/70"}`}
+          style={{ width: `${Math.max(2, (Math.abs(r.bps) / total) * 100)}%` }}
+        />
+      ))}
+    </div>
+  );
+}
+
 /** A monochrome-track health ring, data-coloured by band. 96px, 6px stroke,
  *  filled arc from 12 o'clock clockwise over a 12%-foreground track. */
 function HealthRing({ score, grade }: { score: number | null; grade: string | null }) {
@@ -141,6 +164,9 @@ function ComparisonSparkline({ curve }: { curve: EquityCurve }) {
   return (
     <div className="relative pr-16" style={labelVars}>
       <svg viewBox={`0 0 ${W} ${H}`} className="block h-[72px] w-full" preserveAspectRatio="none" aria-hidden>
+        {/* The benchmark is DASHED so the pair survives greyscale (DESIGN R2 /
+            audit AC-03): hue alone cannot be the only thing telling the
+            portfolio from SPY. */}
         {bench.length >= 2 ? (
           <path
             d={path((p) => p.benchmark)}
@@ -150,6 +176,7 @@ function ComparisonSparkline({ curve }: { curve: EquityCurve }) {
             strokeLinecap="round"
             strokeLinejoin="round"
             vectorEffect="non-scaling-stroke"
+            strokeDasharray="4 3"
           />
         ) : null}
         <path
@@ -338,6 +365,14 @@ export function BookModule() {
                 <span className={LABEL}>Day P&amp;L attribution</span>
                 {contributors.length > 0 ? (
                   <div className="flex flex-col gap-1.5">
+                    <ContributionBar
+                      rows={[
+                        ...contributors.map((c) => ({ key: c.symbol, bps: c.bps })),
+                        ...(d.topContributorsResidualBps != null && Math.abs(d.topContributorsResidualBps) >= 0.05
+                          ? [{ key: "rest", bps: d.topContributorsResidualBps }]
+                          : []),
+                      ]}
+                    />
                     {contributors.map((c) => (
                       <div key={c.symbol} className="flex items-center gap-2">
                         <Monogram symbol={c.symbol} />

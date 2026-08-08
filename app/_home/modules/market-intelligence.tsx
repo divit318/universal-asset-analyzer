@@ -254,7 +254,12 @@ function QuoteTile({ spec, t, suppressSessionLabel }: { spec: TileSpec; t: Marke
         </div>
         {ok ? (
           t.series && t.series.length >= 2 ? (
-            <Sparkline data={t.series} gradient width={100} height={44} className="shrink-0" />
+            // The window is NAMED (DESIGN §4 / audit DU): an unlabelled
+            // sparkline is decoration; "30d" is what makes it read.
+            <div className="flex shrink-0 flex-col items-end gap-0.5">
+              <Sparkline data={t.series} gradient width={100} height={44} />
+              <span className="font-mono text-[10px] leading-none tabular-nums text-muted">30d</span>
+            </div>
           ) : (
             // No 30d history arrived (the data layer logged the TODO) — hold
             // the sparkline's exact box with a shimmer, never a fabricated line.

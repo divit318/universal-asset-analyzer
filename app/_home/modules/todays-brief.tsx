@@ -27,16 +27,12 @@ import { useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { Sparkles, ArrowRight, CirclePlay } from "lucide-react";
 import { explainHealth } from "@/lib/home/explain";
-import { getHomeModule } from "@/lib/home/registry";
 import { fmtSignedPct, fmtSignedMoney, fmtMoney, gradeTone } from "../_viz/format";
 import { MetricDelta } from "../_viz/stamped";
-import { useCountUp } from "../_atmosphere/use-count-up";
 import { SymbolTag } from "../_atmosphere/symbol-link";
 import { ExplainableValue } from "../_atmosphere/explain-popover";
 import { useHome, useHomeSlice } from "../home-provider";
 import { Skeleton } from "@/app/_components/ui";
-
-const definition = getHomeModule("todays-brief");
 
 /** Reading-time estimate at ~200 wpm, floored so a two-sentence brief isn't "0s". */
 function readingTime(text: string): string {
@@ -191,11 +187,6 @@ export function TodaysBriefModule() {
       : "var(--negative)"
     : "color-mix(in oklab, var(--foreground) 16%, transparent)";
 
-  // The signature roll-up. Hooks run unconditionally; the values only surface
-  // when there's a portfolio to show.
-  const animValue = useCountUp(hasPulse ? p!.totalValue : 0);
-  const animToday = useCountUp(hasPulse ? p!.todayChangePct : 0);
-
   if (failed) {
     return (
       <div className="uaa-hero uaa-topline relative flex h-full min-h-48 flex-col items-start justify-center gap-3 overflow-hidden px-7 py-6">
@@ -302,10 +293,13 @@ export function TodaysBriefModule() {
           <div className="grid grid-cols-2 gap-y-6 lg:grid-cols-4 lg:gap-y-0">
             {hasPulse ? (
               <>
-                <Kpi label="Portfolio Value" value={fmtMoney(animValue)} className="pr-6" />
+                {/* Count-up animation removed (DESIGN §5 / DU): a value
+                    interpolating for 760 ms is a false value on a page whose
+                    whole point is true values. */}
+                <Kpi label="Portfolio Value" value={fmtMoney(p!.totalValue)} className="pr-6" />
                 <Kpi
                   label="Today"
-                  value={fmtSignedPct(animToday)}
+                  value={fmtSignedPct(p!.todayChangePct)}
                   tone={p!.todayChangePct >= 0 ? "text-positive" : "text-negative"}
                   caption={fmtSignedMoney(p!.todayChangeDollar)}
                   captionTone={p!.todayChangeDollar >= 0 ? "text-positive" : "text-negative"}

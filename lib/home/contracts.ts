@@ -15,7 +15,6 @@
 import type { CardStatus, ActionQueueItem, OpportunitySnapshotItem, UpcomingEventLite, SectorAttentionChange } from "../mission-control";
 import type { Metric } from "../metric";
 import type { Freshness } from "../provenance";
-import type { TrackRecord } from "../decision-journal";
 import type { DecisionCard, WhyExplanation } from "../portfolio/engines/decision";
 import type { IdeaStage, WatchlistAlert } from "../types";
 

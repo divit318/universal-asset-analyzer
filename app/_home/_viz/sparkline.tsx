@@ -76,6 +76,10 @@ export function Sparkline({ data, tone, width = 96, height = 28, className, area
         <path d={areaPath} fill={color} fillOpacity={0.12} />
       ) : null}
       <path d={line} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+      {/* Terminal dot: marks the newest print, and gives the line a greyscale-
+          safe anchor (DESIGN R2 / audit AC-03) — an up-line and a down-line
+          are otherwise identical without their hue. */}
+      <circle cx={pts[pts.length - 1][0].toFixed(1)} cy={pts[pts.length - 1][1].toFixed(1)} r={2} fill={color} />
     </svg>
   );
 }
