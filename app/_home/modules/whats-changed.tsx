@@ -23,6 +23,7 @@ import { ChevronDown, GitCompareArrows, Sparkles } from "lucide-react";
 import type { HomeChange, HomeChangeTone } from "@/lib/home/contracts";
 import { SymbolTag } from "../_atmosphere/symbol-link";
 import { useHome, useHomeSlice } from "../home-provider";
+import { useTelemetry } from "../use-telemetry";
 
 const MAX_CHIPS = 5;
 
@@ -128,6 +129,7 @@ export function WhatsChangedModule() {
   const state = useHomeSlice("changes");
   const fallback = useHomeSlice("fallbackBriefing");
   const { brief } = useHome();
+  const track = useTelemetry();
   const [expanded, setExpanded] = useState(false);
 
   const data = state.data;
@@ -195,7 +197,16 @@ export function WhatsChangedModule() {
         {hasDisclosure ? (
           <button
             type="button"
-            onClick={() => setExpanded((e) => !e)}
+            onClick={() => {
+              // One disclosure reveals both surfaces, so opening it emits per
+              // surface actually present (audit 13 IN-04: is the AI's morning
+              // note ever read; IN-05: are the deltas ever expanded).
+              if (!expanded) {
+                if (grouped.length > 0) track("changes_expanded", { count: grouped.length });
+                if (note) track("brief_note_expanded", { ai: isAi });
+              }
+              setExpanded((e) => !e);
+            }}
             aria-expanded={expanded}
             className="inline-flex shrink-0 items-center gap-1 rounded-control px-2 py-1 text-[11px] font-medium text-brand outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand/40"
           >

@@ -346,6 +346,20 @@ function getDb(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS idx_attention_dismissal_expires ON attention_dismissal (expires_at);
 
+    -- Dashboard usage events (audit 13, IN-05). Unlike the activity table (a
+    -- set of places, upserted) this is an append-only ledger: one row per interaction,
+    -- so the priority model finally has (score, rank, outcome) ground truth to
+    -- be tuned against (IN-02). Bounded by an inline 180-day sweep on insert,
+    -- the ai_call pattern (IN-06); no scheduler.
+    CREATE TABLE IF NOT EXISTS home_event (
+      id         INTEGER PRIMARY KEY,
+      at         INTEGER NOT NULL,
+      session_id TEXT NOT NULL,
+      event      TEXT NOT NULL,
+      props      TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_home_event_event ON home_event (event, at);
+
     -- Change detection (lib/home/changes.ts). Exactly two slots: 'current' is
     -- the state of the most recent digest build; 'baseline' is the state at the
     -- end of the previous visit, promoted from 'current' when a new visit
@@ -3638,6 +3652,78 @@ export function listAiCalls(opts: { sinceMs?: number; limit?: number } = {}): Ai
     .prepare("SELECT * FROM ai_call WHERE at >= ? ORDER BY at DESC, rowid DESC LIMIT ?")
     .all(since, limit) as unknown as AiCallDbRow[];
   return rows.map(mapAiCall);
+}
+
+/* ── Home usage events (app/api/home/telemetry is the only intended writer) ── */
+
+export interface HomeEventRecord {
+  at: number;
+  /** Random per page load, client-generated. Never a user identity. */
+  sessionId: string;
+  event: string;
+  /** Flat JSON props; null when the event carries none. */
+  props?: Record<string, unknown> | null;
+}
+
+/**
+ * 180 days, not ai_call's 90: calibration (lib/home/telemetry-read.ts) needs
+ * sample size and a single local user generates little data (audit 13 §2).
+ */
+const HOME_EVENT_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
+
+/** Append a batch of dashboard events (IN-05). The route caps batch size. */
+export function insertHomeEvents(batch: HomeEventRecord[]): void {
+  if (batch.length === 0) return;
+  const db = getDb();
+  const stmt = db.prepare("INSERT INTO home_event (at, session_id, event, props) VALUES (?, ?, ?, ?)");
+  for (const row of batch) {
+    stmt.run(row.at, row.sessionId, row.event, row.props != null ? JSON.stringify(row.props) : null);
+  }
+  // Same inline-sweep pattern as insertAiCall (IN-06): one indexed DELETE per
+  // batch write keeps the ledger bounded without a scheduler.
+  db.prepare("DELETE FROM home_event WHERE at < ?").run(Date.now() - HOME_EVENT_RETENTION_MS);
+}
+
+interface HomeEventDbRow {
+  at: number;
+  session_id: string;
+  event: string;
+  props: string | null;
+}
+
+/** Event rows newest-first. Aggregation lives in lib/home/telemetry-read.ts (pure, testable). */
+export function listHomeEvents(
+  opts: { event?: string; sinceMs?: number; limit?: number } = {},
+): HomeEventRecord[] {
+  const since = opts.sinceMs ?? 0;
+  const limit = Math.min(opts.limit ?? 5000, 20_000);
+  // rowid breaks same-millisecond ties, same as listAiCalls: "newest-first"
+  // must mean insertion order, not SQLite's whim for equal `at` values.
+  const rows = (
+    opts.event != null
+      ? getDb()
+          .prepare(
+            "SELECT at, session_id, event, props FROM home_event WHERE event = ? AND at >= ? ORDER BY at DESC, rowid DESC LIMIT ?",
+          )
+          .all(opts.event, since, limit)
+      : getDb()
+          .prepare(
+            "SELECT at, session_id, event, props FROM home_event WHERE at >= ? ORDER BY at DESC, rowid DESC LIMIT ?",
+          )
+          .all(since, limit)
+  ) as unknown as HomeEventDbRow[];
+  return rows.map((r) => {
+    let props: Record<string, unknown> | null = null;
+    if (r.props != null) {
+      // A corrupt props blob loses its props, never the row or the query.
+      try {
+        props = JSON.parse(r.props) as Record<string, unknown>;
+      } catch {
+        props = null;
+      }
+    }
+    return { at: r.at, sessionId: r.session_id, event: r.event, props };
+  });
 }
 
 /* ── Local account & sessions (lib/auth.ts is the only intended caller) ──── */

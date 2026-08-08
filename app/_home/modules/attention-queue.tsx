@@ -24,7 +24,7 @@
  * reads as two measurements, not one metric disagreeing with itself.
  */
 
-import { createElement, useCallback, useMemo, useRef, useState } from "react";
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -66,6 +66,7 @@ import { ExplainableValue } from "../_atmosphere/explain-popover";
 import { AnchoredPopover } from "../_atmosphere/anchored-popover";
 import { CategoryPill, IconWell, NumericText, StatusChip, type PillTone } from "../_atmosphere/stream-primitives";
 import { useHome, useHomeSlice } from "../home-provider";
+import { trackOnce, useTelemetry } from "../use-telemetry";
 import { Skeleton } from "@/app/_components/ui";
 
 const MAX_VISIBLE = 8;
@@ -81,6 +82,13 @@ const KIND_LABEL: Record<AttentionKind, string> = {
   event: "Event",
   signal: "Signal",
 };
+
+/** The (score, rank, outcome) tuple the telemetry exists to record (audit 13
+ *  IN-02): every acted/suppressed emit carries the same identity so the
+ *  calibration read view can join outcomes to the priority model's inputs. */
+function telemetryProps(item: AttentionItem, rank: number) {
+  return { dedupeKey: item.dedupeKey, kind: item.kind, score: item.score, rank };
+}
 
 /** Kind chip tone — the semantic palette shared with the Radar (§16). Text
  *  label always present so kind is never conveyed by colour alone (§17). */
@@ -356,6 +364,7 @@ function LogDecisionButton({
   onLogged: () => void;
 }) {
   const toast = useToast();
+  const track = useTelemetry();
   const btnRef = useRef<HTMLButtonElement | null>(null);
   const [open, setOpen] = useState(false);
   const [action, setAction] = useState<DecisionAction>("watch");
@@ -396,6 +405,9 @@ function LogDecisionButton({
         }),
       });
       if (!res.ok) throw new Error();
+      // decision_logged (IN-05): the one interaction that proves a queue item
+      // produced a recorded decision, not just a click-through.
+      track("decision_logged", { dedupeKey: item.dedupeKey, kind: item.kind, score: item.score, action });
       setOpen(false);
       toast("Logged to journal", "success");
       onLogged();
@@ -492,6 +504,7 @@ function LogDecisionButton({
  */
 function SpotlightCard({
   item,
+  index,
   decision,
   active,
   exiting,
@@ -511,6 +524,7 @@ function SpotlightCard({
   onLogged: () => void;
 }) {
   const [showWhy, setShowWhy] = useState(false);
+  const track = useTelemetry();
   const impact = decision?.impact ?? null;
   // Each number explains ITSELF: the ranking score decomposes into the
   // attention formula; the simulated deltas decompose into the decision memo.
@@ -627,10 +641,13 @@ function SpotlightCard({
       ) : null}
 
       {/* Row 4 — the primary action. Queue links carry from=today (AG-10) so
-          the destination knows the visit started here. */}
+          the destination knows the visit started here. Clicking it is the
+          queue's "acted" outcome: queue_item_acted carries the (score, rank)
+          tuple that is the calibration ground truth (audit 13 IN-02). */}
       <div className="flex flex-wrap items-center gap-3">
         <Link
           href={withFromToday(item.primaryAction.href)}
+          onClick={() => track("queue_item_acted", { ...telemetryProps(item, index), bucket: priorityBucket(item.score).id })}
           className="inline-flex items-center gap-1.5 rounded-control bg-brand px-5 py-3 text-sm font-semibold leading-none text-background shadow-sm outline-none transition-colors hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
         >
           {item.primaryAction.label} <ArrowRight className="h-3.5 w-3.5" strokeWidth={2.5} />
@@ -688,6 +705,7 @@ function QueueRow({
 }) {
   const tone = kindTone(item.kind, item.score);
   const chips = contextChips(ctx);
+  const track = useTelemetry();
 
   return (
     <li
@@ -760,8 +778,11 @@ function QueueRow({
               <X className="h-3.5 w-3.5" strokeWidth={2} />
             </button>
           </span>
+          {/* The "acted" outcome for calibration (audit 13 IN-02), same emit
+              as the spotlight's primary link. */}
           <Link
             href={withFromToday(item.primaryAction.href)}
+            onClick={() => track("queue_item_acted", { ...telemetryProps(item, index), bucket: priorityBucket(item.score).id })}
             className="group/link inline-flex items-center gap-1 rounded-control text-sm font-medium text-foreground/75 outline-none transition-colors hover:text-brand focus-visible:ring-2 focus-visible:ring-brand/40"
           >
             {item.primaryAction.label}
@@ -785,6 +806,14 @@ export function AttentionQueueModule() {
   const { refreshDigest } = useHome();
   const toast = useToast();
   const router = useRouter();
+  const track = useTelemetry();
+
+  // page_visit (IN-05): the per-load denominator for every usage rate. Emitted
+  // here because the queue is the page's centerpiece and always mounts;
+  // trackOnce dedupes strict mode's double-invoked effects and any remounts.
+  useEffect(() => {
+    trackOnce("page_visit", "page_visit");
+  }, []);
 
   const [pending, setPending] = useState<Set<string>>(new Set()); // optimistically dismissed
   const [exiting, setExiting] = useState<Set<string>>(new Set()); // mid-animation
@@ -863,6 +892,12 @@ export function AttentionQueueModule() {
       // deferred hide below doesn't re-hide a row the rollback just restored.
       let failed = false;
 
+      // queue_item_suppressed (IN-02/IN-03): the "not acted" outcome, with the
+      // kind and score the dismissal table itself never kept. The mode is
+      // derived the same way the API infers the verb from the extras.
+      const mode = opts.extras?.mode ?? (opts.extras?.snoozeUntil != null ? "snooze" : "dismiss");
+      track("queue_item_suppressed", { ...telemetryProps(item, idx), mode });
+
       // 1. Animate out, then hide.
       setExiting((prev) => new Set(prev).add(item.dedupeKey));
       window.setTimeout(() => {
@@ -913,6 +948,9 @@ export function AttentionQueueModule() {
           action: {
             label: "Undo",
             onClick: () => {
+              // queue_undo (IN-05): a suppression the user took back is signal
+              // about the verb's copy or TTL, not about the item.
+              track("queue_undo", { dedupeKey: item.dedupeKey, kind: item.kind, score: item.score, mode });
               fetch("/api/home/attention/dismiss", {
                 method: "DELETE",
                 headers: { "Content-Type": "application/json" },
@@ -928,7 +966,7 @@ export function AttentionQueueModule() {
         });
       }
     },
-    [visible, toast],
+    [visible, toast, track],
   );
 
   // Plain dismiss states its TTL (AG-02): the per-kind window was invisible,
@@ -974,6 +1012,10 @@ export function AttentionQueueModule() {
       const idx = visible.findIndex((i) => i.dedupeKey === item.dedupeKey);
       let failed = false;
 
+      // Mute suppresses by symbol, but the emit still records THIS row's
+      // (kind, score, rank) so calibration sees the outcome it triggered.
+      track("queue_item_suppressed", { ...telemetryProps(item, idx), mode: "mute" });
+
       setExiting((prev) => new Set(prev).add(item.dedupeKey));
       window.setTimeout(() => {
         setExiting((prev) => {
@@ -1013,6 +1055,7 @@ export function AttentionQueueModule() {
         action: {
           label: "Undo",
           onClick: () => {
+            track("queue_undo", { dedupeKey: item.dedupeKey, kind: item.kind, score: item.score, mode: "mute" });
             fetch("/api/home/attention/dismiss", {
               method: "DELETE",
               headers: { "Content-Type": "application/json" },
@@ -1027,7 +1070,7 @@ export function AttentionQueueModule() {
         },
       });
     },
-    [visible, toast],
+    [visible, toast, track],
   );
 
   /* -------------------- keyboard (listbox) -------------------- */
@@ -1060,6 +1103,8 @@ export function AttentionQueueModule() {
       } else if (key === "Enter") {
         if (item) {
           e.preventDefault();
+          // Same "acted" outcome as clicking the primary link (IN-02).
+          track("queue_item_acted", { ...telemetryProps(item, safeActive), bucket: priorityBucket(item.score).id });
           router.push(withFromToday(item.primaryAction.href));
         }
       } else if (key === "Delete" || key === "Backspace" || key === "d") {
@@ -1086,7 +1131,7 @@ export function AttentionQueueModule() {
         setFilter(FILTERS[(cur + 1) % FILTERS.length]);
       }
     },
-    [safeActive, visible, focusRow, dismiss, markDone, router, filter, openCount],
+    [safeActive, visible, focusRow, dismiss, markDone, router, filter, openCount, track],
   );
 
   /* -------------------- render -------------------- */
