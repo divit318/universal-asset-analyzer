@@ -1,6 +1,6 @@
 import { chromium } from '@playwright/test';
 import fs from 'fs';
-const digest = JSON.parse(fs.readFileSync('/tmp/home-digest.json', 'utf8'));
+const digest = JSON.parse(fs.readFileSync('/tmp/home-digest-final.json', 'utf8'));
 const deep = (o) => JSON.parse(JSON.stringify(o));
 
 const states = {
@@ -32,7 +32,7 @@ for (const [name, mutate] of Object.entries(states)) {
   await page.route('**/api/home/brief', (route) => route.abort());
   await page.goto('http://localhost:3000/', { timeout: 60000 }).catch(()=>{});
   await page.waitForTimeout(6000);
-  await page.screenshot({ path: `docs/audits/today-dashboard/shots/states/${name}.png`, fullPage: true });
+  await page.screenshot({ path: `docs/audits/today-dashboard/shots/final-states/${name}.png`, fullPage: true });
   await page.close();
 }
 // hard failure: /api/home 500
@@ -41,7 +41,7 @@ for (const [name, mutate] of Object.entries(states)) {
   await page.route('**/api/home', (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"Failed to build home digest"}' }));
   await page.goto('http://localhost:3000/', { timeout: 60000 }).catch(()=>{});
   await page.waitForTimeout(5000);
-  await page.screenshot({ path: 'docs/audits/today-dashboard/shots/states/digest-500.png', fullPage: true });
+  await page.screenshot({ path: 'docs/audits/today-dashboard/shots/final-states/digest-500.png', fullPage: true });
   await page.close();
 }
 // slow network: never resolve -> skeleton state
@@ -50,7 +50,7 @@ for (const [name, mutate] of Object.entries(states)) {
   await page.route('**/api/home', () => {});
   await page.goto('http://localhost:3000/', { timeout: 30000 }).catch(()=>{});
   await page.waitForTimeout(5000);
-  await page.screenshot({ path: 'docs/audits/today-dashboard/shots/states/loading-skeleton.png', fullPage: true });
+  await page.screenshot({ path: 'docs/audits/today-dashboard/shots/final-states/loading-skeleton.png', fullPage: true });
   await page.close();
 }
 await browser.close();
