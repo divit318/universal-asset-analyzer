@@ -27,7 +27,7 @@ export function TwoToneHeadline({
 }: {
   segments: HeadlineSegment[];
   as?: keyof Pick<JSX.IntrinsicElements, "h1" | "h2" | "h3">;
-  size?: "hero" | "display";
+  size?: "hero" | "hero-split" | "display";
   align?: "center" | "left";
   id?: string;
   className?: string;
@@ -35,7 +35,7 @@ export function TwoToneHeadline({
   return (
     <Tag
       id={id}
-      className={`text-balance font-serif ${size === "hero" ? "text-mk-hero" : "text-mk-display"} ${
+      className={`text-balance font-serif ${size === "hero" ? "text-mk-hero" : size === "hero-split" ? "text-mk-hero-split" : "text-mk-display"} ${
         // Optical alignment: serif side bearings inset the glyph edge, so
         // left-aligned headlines carry a small negative indent (Phase 4.1).
         align === "center" ? "text-center" : "-indent-[0.02em] text-left"

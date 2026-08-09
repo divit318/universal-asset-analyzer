@@ -6,13 +6,23 @@ import type { SectionProps } from "../section-registry";
 import { Reveal } from "../motion/reveal";
 import { SectionShell } from "../primitives/section-shell";
 import { SectionHeader } from "../primitives/section-header";
-import { TrustStrip } from "../primitives/trust-strip";
-import { ParticleField } from "../primitives/particle-field";
+import { setInkParam } from "../ink/engine";
 
 /**
- * Demo — "try UAA before you download," with the payoff the reference leaves
- * out: analyzing renders a result preview (ticker header, composite score,
- * three metric tiles, a two-line verdict with a citation chip).
+ * Demo — The Well (ink/movements/well.ts): a shallow fluid pool in a 120px
+ * ink band directly beneath the search input, the one formation on the
+ * page constrained to a 1D height field, and the only one driven by the
+ * keyboard:
+ *   - every keystroke drops a ripple at the caret's horizontal position;
+ *     ripples propagate, reflect off the ends, and interfere
+ *   - hovering a ticker chip settles the surface into that ticker's
+ *     sparkline profile
+ *   - Analyze drops the surface sharply; it rebounds once (plus a one-shot
+ *     scale-and-glow on the input itself)
+ *
+ * The payoff the reference leaves out: analyzing renders a result preview
+ * (ticker header, composite score, three metric tiles, a two-line verdict
+ * with a citation chip).
  *
  * No public analysis endpoint exists for a marketing page (the app's engines
  * are local), so the three suggested tickers resolve against pre-built static
@@ -145,8 +155,25 @@ export function Demo({ section, index }: SectionProps) {
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<{ ticker: string; sample: Sample | null } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const mirrorRef = useRef<HTMLSpanElement | null>(null);
+  const rippleToken = useRef(0);
+  const [analyzeToken, setAnalyzeToken] = useState(0);
 
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+
+  /** Drop a ripple in the Well at the caret's horizontal position. */
+  function dropRipple() {
+    const input = inputRef.current;
+    const mirror = mirrorRef.current;
+    if (!input) return;
+    let x = input.getBoundingClientRect().left + 8;
+    if (mirror) {
+      mirror.textContent = input.value.slice(0, input.selectionStart ?? input.value.length);
+      x += mirror.offsetWidth;
+    }
+    setInkParam("well.ripple", { x, t: ++rippleToken.current });
+  }
 
   function run(raw: string) {
     const ticker = raw.trim().toUpperCase();
@@ -154,6 +181,9 @@ export function Demo({ section, index }: SectionProps) {
     if (timer.current) clearTimeout(timer.current);
     setPending(true);
     setResult(null);
+    setInkParam("well.ticker", null);
+    setInkParam("well.analyze", ++rippleToken.current); // the surface drops
+    setAnalyzeToken((n) => n + 1); // one-shot scale-and-glow on the input
     // A brief, honest "working" beat so the skeleton reads as compute.
     timer.current = setTimeout(() => {
       setPending(false);
@@ -164,8 +194,7 @@ export function Demo({ section, index }: SectionProps) {
   return (
     <SectionShell id={section.id} headingId={headingId} band={index % 2 === 1}>
       <Reveal delay={0}>
-          <div className="relative overflow-hidden rounded-[20px] border border-border bg-surface/50 px-6 py-12 sm:px-12">
-            <ParticleField variant="edge-pair" className="inset-0 h-full w-full" />
+          <div className="relative overflow-hidden rounded-[20px] border border-border bg-surface/30 px-6 py-12 sm:px-12">
 
             <div className="relative flex flex-col items-center">
               <SectionHeader
@@ -189,12 +218,26 @@ export function Demo({ section, index }: SectionProps) {
                 <label htmlFor="demo-ticker" className="sr-only">
                   Research any ticker
                 </label>
-                <div className="flex items-center gap-2 rounded-full border border-brand/35 bg-surface-2 p-1.5 pl-4 shadow-glow-brand focus-within:ring-2 focus-within:ring-brand/40 [[data-reveal=shown]_&]:animate-mk-glow-pulse motion-reduce:animate-none">
+                <div className="relative">
+                  {/* A hidden mirror measures the caret's x for the ripple. */}
+                  <span
+                    ref={mirrorRef}
+                    aria-hidden="true"
+                    className="pointer-events-none invisible absolute left-0 top-0 whitespace-pre text-mk-body"
+                  />
+                <div
+                  key={analyzeToken}
+                  className={`flex items-center gap-2 rounded-full border border-brand/35 bg-surface-2 p-1.5 pl-4 shadow-glow-brand focus-within:ring-2 focus-within:ring-brand/40 motion-reduce:animate-none ${
+                    analyzeToken > 0 ? "animate-mk-analyze-flash" : "[[data-reveal=shown]_&]:animate-mk-glow-pulse"
+                  }`}
+                >
                   <Search className="h-4 w-4 shrink-0 text-faint" strokeWidth={2} aria-hidden="true" />
                   <input
+                    ref={inputRef}
                     id="demo-ticker"
                     value={value}
                     onChange={(e) => setValue(e.target.value)}
+                    onKeyDown={() => dropRipple()}
                     placeholder="Search any ticker…"
                     autoComplete="off"
                     spellCheck={false}
@@ -208,7 +251,11 @@ export function Demo({ section, index }: SectionProps) {
                     Analyze
                   </button>
                 </div>
+                </div>
               </form>
+
+              {/* The Well: the fluid ink band, directly beneath the input. */}
+              <div aria-hidden="true" data-ink-target="demo-well" className="mt-5 h-[120px] w-full max-w-3xl" />
 
               <div className="mt-5 flex flex-wrap items-center justify-center gap-2 text-mk-small text-muted">
                 <span>Try:</span>
@@ -220,6 +267,10 @@ export function Demo({ section, index }: SectionProps) {
                       setValue(t);
                       run(t);
                     }}
+                    onMouseEnter={() => setInkParam("well.ticker", t)}
+                    onMouseLeave={() => setInkParam("well.ticker", null)}
+                    onFocus={() => setInkParam("well.ticker", t)}
+                    onBlur={() => setInkParam("well.ticker", null)}
                     className="rounded-full border border-border bg-surface-2 px-3 py-1 font-mono text-mk-small font-medium tabular-nums text-muted outline-none transition-colors hover:border-border-strong hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
                   >
                     {t}
@@ -242,8 +293,6 @@ export function Demo({ section, index }: SectionProps) {
                     </p>
                   ))}
               </div>
-
-              <TrustStrip className="mt-mk-lead" variant="bare" />
             </div>
           </div>
       </Reveal>

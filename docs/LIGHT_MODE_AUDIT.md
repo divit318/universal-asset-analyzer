@@ -326,3 +326,156 @@ non-text fills) with dark untouched:
 - `lib/ic/export-pdf.ts`: print artifact, out of scope.
 - chart-workspace DEFAULT_LINE / readRectStyle #60a5fa fallbacks: user-picked
   drawing colors from the toolbar; defaults only. Left alone (logged).
+
+---
+
+## Phase 4: Verification
+
+### 4.1 Programmatic contrast re-check (light, 1440px, every route)
+
+`node .audit/capture.mjs contrast theme=light` after implementation:
+
+| Route | Failures before | after |
+|---|---|---|
+| home | 4 | **0** |
+| wire / screener / thematic / research-hub / compare-landing / valuation / valuation-register / ic-report / knowledge-graph / settings | 1 each (⌘K kbd `--faint`) | **0** |
+| engine | 35 | **0** (after Bull → #166534 fix: the RegimeChip text sits on its own 9% tint, where green-700 measured 4.42) |
+| research-aapl | 6 | **0** |
+| research-india | 8 | **0** |
+| compare-run | 13 | **0** |
+| portfolio | 2 | **0** |
+| watchlist | 3 | **0** |
+| calendar | 2 | **0** |
+| journal | 5 | **0** |
+| settings-account / landing | 0 | **0** |
+| dev-tokens | 9 | 4 — all four are dark-theme token swatch tiles deliberately rendered inside light mode (the token gallery shows both themes side by side); documented exclusion, not a defect |
+
+**Zero text-contrast failures below 4.5:1 (normal) / 3:1 (large) on every
+product surface in light mode.**
+
+### 4.2 Dark regression diff (pixel diff vs Phase 2 baseline, threshold Δ12/channel)
+
+| Route | Diff | Explanation |
+|---|---|---|
+| compare-landing, engine, journal, research-hub, settings, thematic, valuation-register | 0.00% | identical |
+| screener | 0.01% | live prices |
+| valuation 0.11%, research-india 0.13% | live quote digits |
+| dev-tokens | 0.32% | the reference sheet intentionally displays the new light hex strings |
+| home | 1.60% | live dashboard (timestamps, quotes, radar) |
+| knowledge-graph | 9.60% | force-directed layout is randomly seeded per load — node positions differ, colors identical |
+| watchlist | 10.32% | list gained a row between runs (MSFT alert appeared); rows shifted |
+| landing / settings-account / research-aapl / portfolio / wire / compare-run / calendar / ic-report | size mismatch | live content changed page height between captures (e.g. ic-report baseline caught the empty state, re-run caught a generated report); side-by-side inspection shows chrome/colors unchanged |
+
+Dark research Financials tab (the surface with the most migrated chart code)
+re-captured and visually compared: bars, margin lines, valuation history, SMA
+chips identical to baseline — the migrated `ct.*` dark values are the exact
+old literals by construction.
+
+### 4.3 Full re-capture
+
+22 routes × 2 themes × 3 viewports (1440/1024/390) in
+`.audit/screenshots/{theme}/{route}@{width}.png`; Phase 2 baseline preserved
+in `.audit/baseline/`. Interaction states re-captured for the fixed surfaces
+(research Financials tab, calendar drawer).
+
+### 4.4 Residual hardcoded-color inventory (intentional, with reasons)
+
+- Theme-paired constant maps (both values documented): compare
+  COLORS_DARK/LIGHT, HOLDER_COLORS_DARK/LIGHT, FACTOR_COLOR_DARK/LIGHT,
+  REGIME_COLOR(+_LIGHT), chart-theme.ts DARK/LIGHT — hex by necessity
+  (SVG/Recharts presentation attributes).
+- `dev/tokens/page.tsx` — displays token hex strings; it is the reference sheet.
+- `lib/brand/mark.ts` — already theme-paired brand asset colors.
+- `lib/ic/export-pdf.ts` — PDF print palette (white paper), not themed UI.
+- knowledge-graph `#888`/`#131519` — defensive fallbacks behind
+  `getComputedStyle` token reads.
+- chart-workspace `#60a5fa` DEFAULT_LINE / rect fallbacks — defaults for
+  user-picked drawing colors (toolbar owns the real value).
+- `fill="#fff"` end-dot price pills in compare charts — white text on series-
+  colored pills; passes in light (all light series ≥4.5 vs white). In dark the
+  pills use the pastel series (pre-existing reference design, unchanged).
+- Every remaining Tailwind color literal carries a `light:` override or is a
+  token utility (re-grepped; see §3.3 convention).
+
+---
+
+## Final: the light token system (documented)
+
+| Token | Light value | Contrast (on bg #f7f8fa / white) | Meaning |
+|---|---|---|---|
+| --background | #f7f8fa | — | page canvas |
+| --surface | #ffffff | — | cards, inputs |
+| --surface-2 | #f4f6f9 | — | nested surface, hovers |
+| --surface-3 | #e9edf2 | — | deepest nesting, active |
+| --border | #e2e6ec | — | default border |
+| --border-strong | #cdd4dd | — | emphasized border, scrollbar |
+| --foreground | #101722 | 16.6 / 17.7 | primary ink |
+| --muted | **#4d5564** | 7.18 / 7.63 | secondary text |
+| --faint | **#656f7d** | 4.79 / 5.09 | tertiary/helper text — now AA |
+| --brand | #7a5f33 | 5.63 / 5.98 | brass accent, focus ring |
+| --brand-strong | #5f4a26 | 7.9 / 8.4 | hover brass |
+| --positive | #15803d | 4.72 / 5.02 | gains |
+| --negative | #b91c1c | 6.09 / 6.47 | losses |
+| --warning | **#ad4a08** | 5.26 / 5.59 | signal orange caution — now AA on every surface |
+| --alert | #7c3aed | 5.36 / 5.70 | tripwire violet |
+| --chart-1..5 | #9333ea / #2563eb / #0d9488 / #db2777 / #64748b | all ≥4.4 non-text, chart-2 5.17 as text | categorical identities |
+| ChartTheme aux (light) | blue #2563eb, amber #b45309, purple #7c3aed, teal #0f766e, orange #ad4a08, pink #db2777, neutral #64748b, referenceLine #94a3b8 | all ≥4.7 text-grade except referenceLine (non-text rule, 2.1 — intentionally quiet, mirrors dark) | named series hues |
+
+Elevation, machined-panel materials, shadows, skeleton, focus ring, selection,
+scrollbar: pre-existing light values audited and kept (they were already
+purpose-designed, not inverted from dark).
+
+### Design decisions & deviations from dark's approach
+
+1. **`light:`/`dark:` custom variants over per-component token forks.** Dark is
+   the reference; encoding light as explicit overrides keeps dark
+   pixel-identical by construction and makes every deviation greppable.
+2. **Categorical identities promoted to tokens where dark values coincided**
+   (blue-400 ≡ chart-2, orange-400 ≡ warning). This shrank the palette rather
+   than translating it: calendar-earnings-blue, causal-macro-blue, EU-badge
+   blue are now one steel; commodity/policy oranges are one warning (they were
+   already identical hexes in dark).
+3. **Light hue scale**: -400 text → -700; -400/-500 non-text fills → -600;
+   identity hues in hex maps deepened to their ~600/700 equivalents. One rule,
+   applied everywhere, so light reads as one deliberate palette.
+4. **--muted deepened although it already passed AA** — a hierarchy decision:
+   with faint at 4.79, muted needed to move to keep three visibly distinct ink
+   tiers (16.6 / 7.2 / 4.8).
+5. **Warning banners kept their amber identity** (`text-yellow-400
+   light:text-yellow-700`) instead of moving to signal orange: the brand book
+   reserves --warning for cautions, but these banners are "partial data"
+   notices; keeping hue continuity with dark outweighed token purity. Logged
+   as the one place amber survives as text.
+6. **Allocation categorical palette deliberately not theme-swapped** — measured
+   ≥3:1 on white for all 8 slots; only its white hatch pattern was re-derived
+   from --foreground.
+7. **Scrims stay black in both themes** — industry-standard dimming; a light
+   scrim reads as fog, not focus.
+
+### Before/after references
+
+- Baseline (defective light + reference dark): `.audit/baseline/{theme}/`
+- Final: `.audit/screenshots/{theme}/`
+- Headline comparisons: `research-financials-tab` (chart palette),
+  `compare-run` (categorical system), `engine` (faint text + regime),
+  `calendar` (event chips), `journal` (meta text).
+
+### Out-of-scope findings (for separate triage)
+
+1. Pre-existing lint errors in `app/_home/_atmosphere/use-count-up.ts`
+   (setState-in-effect), `audit/verify-engines.ts`,
+   `tests/portfolio-sizing-calibration.test.ts` (`any`) — untouched WIP files.
+2. Dark mode's own `--faint` (#626c7a) measures 3.43–3.7:1 — below AA. Dark is
+   the reference implementation so it was left alone, but the same helper-text
+   argument that drove the light fix applies.
+3. compare-chart end-dot pills: white text on pastel series colors in dark
+   (~2.2:1 on #a78bfa). Pre-existing dark design.
+4. The working tree carried ~116 modified files of unrelated WIP (landing
+   redesign, AI platform, portfolio engines) including `globals.css`,
+   `chart-theme.ts`, `dev/tokens` — so this effort's changes are left
+   uncommitted to avoid entangling that work in a commit it doesn't belong to.
+   Everything is verified in the working tree; commit once the parallel
+   workstream lands or is stashed.
+5. `.audit/` tooling (capture/contrast/diff scripts + screenshots) is
+   reusable for future theme regression sweeps; consider gitignoring
+   screenshots if `.audit` is ever committed.

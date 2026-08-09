@@ -5,7 +5,7 @@ import type { ChatMessage } from "@/lib/ai/types";
 import { BrandMark } from "@/app/_components/brand";
 import { GroundingBadge } from "@/app/_components/grounding-badge";
 import { LoadingLine } from "@/app/_components/loading-panel";
-import { Markdown } from "./markdown";
+import { Markdown } from "@/app/_components/markdown";
 import { SaveNoteButton } from "../research-notes";
 
 /** One conversation turn. User turns are compact; assistant turns render the

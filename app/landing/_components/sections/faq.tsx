@@ -1,21 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus, Minus } from "lucide-react";
 import type { SectionProps } from "../section-registry";
 import { Reveal } from "../motion/reveal";
 import { SectionShell } from "../primitives/section-shell";
 import { SectionHeader } from "../primitives/section-header";
-import { ParticleField } from "../primitives/particle-field";
+import { prefersReducedMotion, onNextFrame } from "../motion/engine";
 
 /**
- * FAQ — a one-open-at-a-time controlled accordion. Closed rows show a plus in
- * a circular tile, the open row a minus; height animates via the CSS
- * grid-rows trick (0fr → 1fr) and collapses to an instant state change under
- * prefers-reduced-motion. Full ARIA: the trigger is a button with
- * aria-expanded/aria-controls, the panel a labelled region.
+ * FAQ — The Lattice, in Movement IV's Silence: NO canvas ink. The lattice
+ * is a static SVG background pattern at 6% opacity, motionless.
  *
- * Answers state only what ships: local database, BYO key, US + India markets.
+ * Answer text reveals with a line-by-line wipe (per-line 180ms, staggered
+ * 60ms) so it reads as being written rather than unfolded; the accordion
+ * height still animates via the CSS grid-rows trick and stays fully
+ * keyboard operable with aria-expanded/aria-controls. Reduced motion and
+ * no-JS: answers render complete, instantly.
  */
 const FAQS: { q: string; a: string }[] = [
   {
@@ -40,6 +41,50 @@ const FAQS: { q: string; a: string }[] = [
   },
 ];
 
+/** Answer paragraph whose words wipe in line by line on open. */
+function AnswerText({ text, open }: { text: string; open: boolean }) {
+  const ref = useRef<HTMLParagraphElement | null>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (!open || prefersReducedMotion()) {
+      delete el.dataset.wipe;
+      return;
+    }
+    // Group words into rendered lines by offsetTop, stagger 60ms per line.
+    const words = Array.from(el.querySelectorAll<HTMLElement>("[data-word]"));
+    let lastTop = -Infinity;
+    let line = -1;
+    for (const w of words) {
+      if (w.offsetTop > lastTop + 2) {
+        line++;
+        lastTop = w.offsetTop;
+      }
+      w.style.transitionDelay = `${line * 60}ms`;
+    }
+    el.dataset.wipe = "armed";
+    onNextFrame(() => {
+      if (ref.current) ref.current.dataset.wipe = "go";
+    });
+  }, [open]);
+
+  return (
+    <p ref={ref} className="px-5 pb-4 text-mk-body text-muted">
+      {text.split(" ").map((word, i) => (
+        <span
+          key={i}
+          data-word
+          className="inline-block whitespace-pre transition-[opacity,transform] duration-[180ms] ease-out [[data-wipe=armed]_&]:translate-y-1 [[data-wipe=armed]_&]:opacity-0"
+        >
+          {word}
+          {" "}
+        </span>
+      ))}
+    </p>
+  );
+}
+
 export function Faq({ section, index }: SectionProps) {
   const headingId = `${section.id}-heading`;
   const [open, setOpen] = useState(0);
@@ -50,7 +95,20 @@ export function Faq({ section, index }: SectionProps) {
       headingId={headingId}
       band={index % 2 === 1}
       className="overflow-hidden"
-      breakout={<ParticleField variant="edge-pair" className="inset-x-0 top-16 mx-auto h-[500px] w-full max-w-[1400px]" />}
+      breakout={
+        /* The lattice: a static constellation, structure at rest. */
+        <svg aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-16 mx-auto h-[calc(100%-8rem)] w-full max-w-[1200px] opacity-[0.06]">
+          <defs>
+            <pattern id="faq-lattice" width="92" height="92" patternUnits="userSpaceOnUse">
+              <circle cx="18" cy="22" r="1.6" fill="var(--brand)" />
+              <circle cx="66" cy="58" r="1.6" fill="var(--brand)" />
+              <circle cx="40" cy="80" r="1.2" fill="var(--brand)" />
+              <path d="M18 22 L66 58 L40 80" fill="none" stroke="var(--brand)" strokeWidth="0.75" />
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill="url(#faq-lattice)" />
+        </svg>
+      }
     >
       <div className="relative mx-auto flex w-full max-w-measure-prose flex-col">
           <SectionHeader
@@ -97,7 +155,7 @@ export function Faq({ section, index }: SectionProps) {
                     }`}
                   >
                     <div className="min-h-0 overflow-hidden">
-                      <p className="px-5 pb-4 text-mk-body text-muted">{a}</p>
+                      <AnswerText text={a} open={isOpen} />
                     </div>
                   </div>
                 </div>

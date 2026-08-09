@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { LandingHeader } from "./_components/landing-header";
 import { LandingFooter } from "./_components/landing-footer";
+import { InkField } from "./_components/ink/InkField";
 
 /**
  * The marketing shell. Wraps every /landing route in its own header + footer,
@@ -55,6 +56,7 @@ export const metadata: Metadata = {
 export default function LandingLayout({ children }: { children: React.ReactNode }) {
   return (
     <div data-mk-root className="flex flex-1 flex-col">
+      <InkField />
       <LandingHeader />
       {children}
       <LandingFooter />

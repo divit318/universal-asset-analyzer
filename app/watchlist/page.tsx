@@ -66,7 +66,6 @@ import { AddToPortfolioModal } from "@/app/_components/portfolio/add-to-portfoli
 import { ArrivalHighlight, useArrivalTarget } from "@/app/_components/arrival-highlight";
 import {
   PageShell,
-  Skeleton,
   DataTable,
   DataTableAction,
   ScoreChip,
@@ -75,7 +74,6 @@ import {
   type SortDir,
 } from "@/app/_components/ui";
 import { Reveal } from "@/app/_components/reveal";
-import { LoadingMark } from "@/app/_components/loading-mark";
 
 /* -------------------------------------------------------------------------- */
 /* Row model                                                                   */
@@ -1192,9 +1190,12 @@ function WatchlistPageInner() {
         // ranking notes A→Z answers nothing.
         help: "Your written reason for watching this. Sorts written-up names first.",
         sortValue: (r) => (r.item.notes ? 1 : 0),
+        // No `block` on the clamped span: it would override line-clamp's
+        // `display: -webkit-box` and let a long thesis wrap the row hundreds
+        // of pixels tall (2026-08-10 visual audit).
         render: (r) =>
           r.item.notes ? (
-            <span className="line-clamp-1 block max-w-44 text-[11px] italic text-muted/80" title={r.item.notes}>
+            <span className="line-clamp-1 max-w-44 text-[11px] italic text-muted/80" title={r.item.notes}>
               {r.item.notes}
             </span>
           ) : (
@@ -1215,8 +1216,6 @@ function WatchlistPageInner() {
   // prune its stale quote from state, so counting every cached quote would
   // keep a removed stock's gain/loss in the summary strip until next reload.
   const trackedQuotes = items.map((i) => quotes[i.symbol]).filter((q): q is Quote => q != null);
-  const gainers = trackedQuotes.filter((q) => q.changePercent > 0).length;
-  const losers  = trackedQuotes.filter((q) => q.changePercent < 0).length;
   const hasQuotes = trackedQuotes.length > 0;
 
   return (

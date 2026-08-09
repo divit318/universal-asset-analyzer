@@ -6,7 +6,7 @@ import type { SectionProps } from "../section-registry";
 import { Reveal } from "../motion/reveal";
 import { SectionShell } from "../primitives/section-shell";
 import { SectionHeader } from "../primitives/section-header";
-import { ParticleField } from "../primitives/particle-field";
+import { Odometer } from "../primitives/odometer";
 import { openAuthModal } from "../auth-modal";
 import { PRIMARY_ACTION } from "../../landing-config";
 
@@ -22,6 +22,10 @@ import { PRIMARY_ACTION } from "../../landing-config";
  * PRO does not exist. The badge says so at full prominence, the CTA captures
  * interest into local SQLite (willingness-to-pay data), and there is no
  * purchase affordance anywhere: no billing exists behind this page.
+ *
+ * This section carries NO canvas ink (Movement IV's Silence): the aurora
+ * arcs are two slow CSS radial gradients on a 12s breath, and the cost-tier
+ * condensation is a tiny local dot cluster per card.
  *
  * The BYOK cost tiers are derived, not asserted: input sizes measured from
  * recorded production prompts (bench-out/parity, 2026-08-02), output at each
@@ -255,6 +259,9 @@ function InterestForm({ currency }: { currency: Currency }) {
 
 /* --------------------------------- section -------------------------------- */
 
+/** Dots per cost tier: low, medium, high. Countable, roughly proportional. */
+const TIER_DOTS = [2, 3, 6];
+
 export function Pricing({ section, index }: SectionProps) {
   const headingId = `${section.id}-heading`;
   const { currency, setCurrency } = useCurrency();
@@ -273,7 +280,12 @@ export function Pricing({ section, index }: SectionProps) {
       band={index % 2 === 1}
       className="overflow-hidden"
       containerClassName="flex flex-col items-center"
-      breakout={<ParticleField variant="edge-pair" className="inset-x-0 top-24 mx-auto h-[600px] w-full max-w-[1400px]" />}
+      breakout={
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute left-[8%] top-24 h-[420px] w-[46%] animate-mk-aurora rounded-full bg-[radial-gradient(ellipse_at_center,color-mix(in_srgb,var(--brand)_9%,transparent),transparent_70%)] motion-reduce:animate-none" />
+          <div className="absolute right-[6%] top-64 h-[460px] w-[42%] animate-mk-aurora-alt rounded-full bg-[radial-gradient(ellipse_at_center,color-mix(in_srgb,var(--brand)_7%,transparent),transparent_70%)] motion-reduce:animate-none" />
+        </div>
+      }
     >
         <div className="flex flex-col items-center">
           <SectionHeader
@@ -322,7 +334,7 @@ export function Pricing({ section, index }: SectionProps) {
                 </span>
               </div>
               <p className="mt-3 font-mono text-5xl font-semibold tabular-nums tracking-tight text-foreground">
-                {figures.freePrice}
+                <Odometer value={figures.freePrice} />
               </p>
               <p className="mt-2 text-mk-body text-muted">The full local product. Nothing held back.</p>
 
@@ -354,14 +366,14 @@ export function Pricing({ section, index }: SectionProps) {
               {/* The card's most important element: this does not exist yet. */}
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-mk-eyebrow uppercase text-muted">Pro</p>
-                <p className="flex items-center gap-2 rounded-full border border-brand/50 bg-brand/12 px-3.5 py-1.5 text-mk-small font-bold uppercase tracking-widest text-brand">
+                <p className="flex items-center gap-2 rounded-full border border-brand/50 bg-brand/12 px-3.5 py-1.5 text-mk-small font-bold uppercase tracking-widest text-brand [[data-reveal=shown]_&]:animate-mk-soft-pulse motion-reduce:animate-none">
                   <Clock className="h-4 w-4" strokeWidth={2.5} aria-hidden="true" />
                   Planned, not yet available
                 </p>
               </div>
               <p className="mt-3 flex items-baseline gap-2">
                 <span className="font-mono text-5xl font-semibold tabular-nums tracking-tight text-foreground">
-                  {figures.proPrice}
+                  <Odometer value={figures.proPrice} />
                 </span>
                 <span className="text-mk-body text-muted">{figures.proSuffix}</span>
                 <span className="text-mk-small text-muted">({figures.proNote})</span>
@@ -408,11 +420,26 @@ export function Pricing({ section, index }: SectionProps) {
               </p>
 
               <Reveal delay={280} stagger={80} className="mt-5 grid gap-3 sm:grid-cols-3">
-                {tiers.map((t) => (
-                  <div key={t.effort} className="rounded-card border border-hairline bg-surface-2/60 px-4 py-3">
+                {tiers.map((t, ti) => (
+                  <div
+                    key={t.effort}
+                    className="group relative rounded-card border border-hairline bg-surface-2/60 px-4 py-3 transition-colors hover:border-brand/30"
+                  >
                     <p className="text-micro uppercase tracking-widest text-muted">{t.effort}</p>
                     <p className="mt-1 font-mono text-mk-lead font-semibold tabular-nums text-foreground">{t.cost}</p>
                     <p className="mt-0.5 text-caption text-muted">{t.desc}</p>
+                    {/* The cost, condensed: hovering settles a countable
+                        cluster of brass dots, proportional to the tier.
+                        Unlabelled, unexplained: let it be noticed. */}
+                    <span aria-hidden="true" className="absolute right-3 top-2.5 flex gap-1">
+                      {Array.from({ length: TIER_DOTS[ti] }).map((_, di) => (
+                        <span
+                          key={di}
+                          style={{ transitionDelay: `${di * 70}ms` }}
+                          className="h-1.5 w-1.5 scale-50 rounded-full bg-brand opacity-0 transition-[opacity,transform] duration-300 ease-out group-hover:scale-100 group-hover:opacity-80 motion-reduce:transition-none"
+                        />
+                      ))}
+                    </span>
                   </div>
                 ))}
               </Reveal>

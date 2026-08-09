@@ -27,11 +27,14 @@ export const APP_ENTRY = "/";
 
 /**
  * One name per action, everywhere: nav, hero, pricing, final CTA, footer all
- * use PRIMARY_ACTION. The secondary CTA scrolls to the in-page demo (no demo
- * video asset exists in the repo), so it is named for what it does.
+ * use PRIMARY_ACTION. The hero's secondary CTA scrolls to the in-page demo
+ * (no demo video asset exists in the repo), so it is named for what it does.
+ * The FINAL CTA's secondary action must point forward, not back up the page:
+ * it enters the live app, so the page escalates instead of looping.
  */
 export const PRIMARY_ACTION = "Get started";
 export const SECONDARY_ACTION = "See it in action";
+export const FINAL_SECONDARY_ACTION = "Open the live app";
 
 /**
  * The four canonical trust claims. Trust strips appear four times on the page

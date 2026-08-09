@@ -1,12 +1,22 @@
+"use client";
+
+import { useEffect, useRef } from "react";
 import { ChevronDown } from "lucide-react";
+import { useMockupEntry } from "../motion/mockup";
+import { Odometer } from "../primitives/odometer";
 
 /**
- * Portfolio Intelligence mockup — static, hand-authored sample data. Header
- * metrics, performance area chart, allocation donut, AI insights, and a
- * bottom strip of top movers with signed deltas.
+ * Portfolio Intelligence mockup — static, hand-authored sample data,
+ * choreographed ONCE on first viewport entry:
+ *   - the allocation donut draws clockwise from 12 o'clock over 800ms,
+ *     segments revealing in order of size
+ *   - the performance area chart wipes left to right (clip-path) with a
+ *     leading dot travelling the line (SMIL animateMotion, JS-triggered,
+ *     frozen at the final value)
+ *   - the three AI Insight rows stagger in 120ms apart
+ *   - the top movers strip does ONE slow marquee pass on entry, then stops
+ * No-JS / reduced motion: final state.
  */
-/* Donut segments stroke with currentColor via the text-chart-* utilities:
-   var() is unreliable as an SVG presentation attribute (see globals.css). */
 const ALLOCATION = [
   { label: "Equities", pct: "62.1%", swatch: "bg-chart-1", text: "text-chart-1", dash: 62.1 },
   { label: "Bonds", pct: "18.3%", swatch: "bg-chart-2", text: "text-chart-2", dash: 18.3 },
@@ -25,12 +35,17 @@ const MOVERS: { ticker: string; delta: string; up: boolean }[] = [
   { ticker: "VTI", delta: "+0.87%", up: true },
 ];
 
+const PERF_LINE = "M0 42 L14 36 L26 38 L38 26 L52 30 L66 18 L80 24 L94 14 L108 18 L120 8";
+
 function Donut() {
   const c = 2 * Math.PI * 15.9155; // ≈ 100, the classic donut circumference
   // Each segment starts where the previous ones ended (12 o'clock = offset 25).
   const offsets = ALLOCATION.map((_, i) => 25 - ALLOCATION.slice(0, i).reduce((sum, s) => sum + s.dash, 0));
+  // Reveal order: largest first (they happen to be declared in size order,
+  // but rank explicitly so a data edit cannot silently break the choreography).
+  const rank = ALLOCATION.map((_, i) => [...ALLOCATION.keys()].sort((a, b) => ALLOCATION[b].dash - ALLOCATION[a].dash).indexOf(i));
   return (
-    <svg viewBox="0 0 42 42" className="h-16 w-16 shrink-0" aria-hidden="true">
+    <svg viewBox="0 0 42 42" className="h-16 w-16 shrink-0 -rotate-90" aria-hidden="true">
       {ALLOCATION.map((seg, i) => (
         <circle
           key={seg.label}
@@ -39,10 +54,10 @@ function Donut() {
           r="15.9155"
           fill="none"
           stroke="currentColor"
-          className={`${seg.text} transition-[stroke-dasharray] delay-700 duration-[900ms] ease-out [stroke-dasharray:var(--seg)] [[data-reveal=hidden]_&]:[stroke-dasharray:0_105]`}
-          style={{ "--seg": `${(seg.dash / 100) * c} ${c}` } as React.CSSProperties}
+          style={{ "--seg": `${(seg.dash / 100) * c} ${c}`, transitionDelay: `${rank[i] * 130}ms` } as React.CSSProperties}
+          className={`${seg.text} transition-[stroke-dasharray] duration-[800ms] ease-out [stroke-dasharray:var(--seg)] [[data-mock=armed]_&]:[stroke-dasharray:0_105]`}
           strokeWidth="6"
-          strokeDashoffset={(offsets[i] / 100) * c}
+          strokeDashoffset={(offsets[i] / 100) * c - 25}
         />
       ))}
     </svg>
@@ -50,8 +65,23 @@ function Donut() {
 }
 
 export function PortfolioMockup() {
+  const { ref, phase, played } = useMockupEntry();
+  const motionRef = useRef<SVGAnimateMotionElement | null>(null);
+  const dotRef = useRef<SVGCircleElement | null>(null);
+
+  // The leading dot: travels with the wipe, settles at the final value.
+  useEffect(() => {
+    if (phase !== "play") return;
+    const dot = dotRef.current;
+    const m = motionRef.current;
+    if (!dot || !m) return;
+    dot.setAttribute("cx", "0");
+    dot.setAttribute("cy", "0");
+    m.beginElement();
+  }, [phase]);
+
   return (
-    <div className="flex h-full flex-col p-4 text-left">
+    <div ref={ref} data-mock={phase} className="flex h-full flex-col p-4 text-left">
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <p className="flex items-center gap-1 text-mk-small font-semibold text-foreground">
@@ -61,7 +91,9 @@ export function PortfolioMockup() {
         <div className="flex gap-5 text-right">
           <div>
             <p className="text-micro uppercase tracking-wide text-muted">Value</p>
-            <p className="font-mono text-caption font-semibold tabular-nums text-foreground">$1,245,870</p>
+            <p className="font-mono text-caption font-semibold tabular-nums text-foreground">
+              <Odometer value="$1,245,870" play={played} />
+            </p>
           </div>
           <div>
             <p className="text-micro uppercase tracking-wide text-muted">Day Change</p>
@@ -90,23 +122,27 @@ export function PortfolioMockup() {
               <span>1.1M</span>
               <span>0.8M</span>
             </div>
-            <svg viewBox="0 0 120 48" className="h-full w-full text-positive" preserveAspectRatio="none" aria-hidden="true">
-              <path
-                d="M0 42 L14 36 L26 38 L38 26 L52 30 L66 18 L80 24 L94 14 L108 18 L120 8 V48 H0 Z"
-                fill="currentColor"
-                fillOpacity="0.12"
-                stroke="none"
-              />
-              <path
-                d="M0 42 L14 36 L26 38 L38 26 L52 30 L66 18 L80 24 L94 14 L108 18 L120 8"
-                pathLength={1}
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                className="transition-[stroke-dashoffset] delay-700 duration-[900ms] ease-out [stroke-dasharray:1] [stroke-dashoffset:0] [[data-reveal=hidden]_&]:[stroke-dashoffset:1]"
-              />
-            </svg>
+            {/* The wipe: a clip-path inset travelling left to right. */}
+            <div className="h-full w-full transition-[clip-path] duration-[900ms] ease-out [clip-path:inset(0_0_0_0)] [[data-mock=armed]_&]:[clip-path:inset(0_100%_0_0)]">
+              <svg viewBox="0 0 120 48" className="h-full w-full text-positive" preserveAspectRatio="none" aria-hidden="true">
+                <path d={`${PERF_LINE} V48 H0 Z`} fill="currentColor" fillOpacity="0.12" stroke="none" />
+                <path d={PERF_LINE} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                {/* Leading dot: rides the line via animateMotion, freezes at
+                    the final value. Final position for SSR/no-JS. */}
+                <circle ref={dotRef} cx="120" cy="8" r="2.4" fill="currentColor">
+                  <animateMotion
+                    ref={motionRef}
+                    dur="900ms"
+                    begin="indefinite"
+                    fill="freeze"
+                    keyPoints="0;1"
+                    keyTimes="0;1"
+                    calcMode="linear"
+                    path={PERF_LINE}
+                  />
+                </circle>
+              </svg>
+            </div>
           </div>
           <div className="mt-1 flex justify-between pl-6 font-mono text-micro tabular-nums text-muted">
             {["Jan '24", "Mar '24", "May '24", "Jul '24"].map((m) => (
@@ -136,8 +172,12 @@ export function PortfolioMockup() {
           {/* justify-evenly absorbs the stretched panel's leftover height at
               tablet widths instead of pooling it above the pinned link. */}
           <ul className="mt-2 flex flex-1 flex-col justify-evenly gap-2">
-            {INSIGHTS.map((tip) => (
-              <li key={tip} className="flex items-start justify-between gap-2">
+            {INSIGHTS.map((tip, i) => (
+              <li
+                key={tip}
+                style={{ transitionDelay: `${400 + i * 120}ms` }}
+                className="flex items-start justify-between gap-2 transition-[opacity,transform] duration-500 ease-out [[data-mock=armed]_&]:translate-y-2 [[data-mock=armed]_&]:opacity-0"
+              >
                 <span className="text-micro leading-snug text-muted">{tip}</span>
                 <span className="shrink-0 text-micro font-medium text-brand">View</span>
               </li>
@@ -147,15 +187,17 @@ export function PortfolioMockup() {
         </div>
       </div>
 
-      {/* Top movers strip */}
+      {/* Top movers strip: ONE slow pass on entry, then still. Never loops. */}
       <div className="mt-2.5 flex items-center gap-4 overflow-hidden rounded-card border border-hairline bg-surface-2/60 px-3 py-2">
-        <span className="text-micro uppercase tracking-wide text-muted">Top Movers</span>
-        {MOVERS.map((m) => (
-          <span key={m.ticker} className="flex items-center gap-1.5 font-mono text-micro tabular-nums">
-            <span className="font-semibold text-foreground">{m.ticker}</span>
-            <span className={m.up ? "text-positive" : "text-negative"}>{m.delta}</span>
-          </span>
-        ))}
+        <span className="shrink-0 text-micro uppercase tracking-wide text-muted">Top Movers</span>
+        <div className="flex gap-4 transition-transform duration-[4000ms] ease-out [[data-mock=armed]_&]:translate-x-[70%]">
+          {MOVERS.map((m) => (
+            <span key={m.ticker} className="flex items-center gap-1.5 font-mono text-micro tabular-nums">
+              <span className="font-semibold text-foreground">{m.ticker}</span>
+              <span className={m.up ? "text-positive" : "text-negative"}>{m.delta}</span>
+            </span>
+          ))}
+        </div>
       </div>
     </div>
   );

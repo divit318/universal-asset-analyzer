@@ -9,6 +9,7 @@ import { PageShell, Skeleton } from "@/app/_components/ui";
 import { Reveal } from "@/app/_components/reveal";
 import { AI_RECOVERY_HINT } from "@/lib/ai/availability";
 import { AiBadge } from "@/app/_components/ai-badge";
+import { Markdown } from "@/app/_components/markdown";
 
 // ─── Style constants ────────────────────────────────────────────────────────
 
@@ -428,8 +429,10 @@ function SummaryStrip({ events, portfolioSymbols, watchlistSymbols }: {
 
   return (
     <div className="flex flex-wrap gap-px rounded-xl border border-border bg-border overflow-hidden">
+      {/* `grow` so the tiles fill each row edge-to-edge — without it the strip
+          ended in a wide dead slab of the container's bg-border. */}
       {stats.map((s, i) => (
-        <div key={i} className="flex flex-col gap-0.5 bg-surface px-5 py-3 min-w-[110px]">
+        <div key={i} className="flex min-w-[110px] grow flex-col gap-0.5 bg-surface px-5 py-3">
           <span className="text-label font-semibold uppercase tracking-widest text-muted/60">{s.label}</span>
           <span className="font-mono text-lg font-bold">{s.value}</span>
           {s.sub && <span className="text-label text-muted">{s.sub}</span>}
@@ -526,7 +529,11 @@ function AiBriefSection({ events, autoGenerate }: { events: CalendarEvent[]; aut
             </div>
           )}
           {brief && (
-            <p className="text-sm leading-7 text-foreground/90">{brief}</p>
+            // Rendered, not echoed: the model emits markdown emphasis, and a
+            // bare <p> printed the literal `**…**` asterisks (2026-08-10 audit).
+            <div className="text-sm leading-6 text-foreground/90">
+              <Markdown content={brief} />
+            </div>
           )}
           {brief && (
             <div className="mt-3 flex items-center gap-2">

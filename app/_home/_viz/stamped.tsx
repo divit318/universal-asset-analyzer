@@ -74,15 +74,20 @@ export function MetricDelta({
         ? "text-negative"
         : "text-muted";
 
+  // The annotation scales with its figure but is CAPPED at 12px: at hero sizes
+  // (the Book's 30px day P&L) an uncapped 0.72em suffix set "undated" at ~22px,
+  // reading as part of the value instead of a footnote (2026-08-10 audit).
+  const suffix = "text-[min(0.72em,0.75rem)] font-sans font-normal text-muted";
+
   return (
     <span className={`inline-flex items-baseline gap-1 font-mono tabular-nums ${tone} ${className}`}>
       {signedPct(m.value, digits)}
       {m.basis === "sinceCost" ? (
-        <span className="text-[0.72em] font-sans font-normal text-muted">since cost</span>
+        <span className={suffix}>since cost</span>
       ) : state === "previous" && m.sessionDate && !suppressSessionLabel ? (
-        <span className="text-[0.72em] font-sans font-normal text-muted">{shortSessionDate(m.sessionDate)}</span>
+        <span className={suffix}>{shortSessionDate(m.sessionDate)}</span>
       ) : stale ? (
-        <span className="text-[0.72em] font-sans font-normal text-muted">
+        <span className={suffix}>
           {m.sessionDate ? shortSessionDate(m.sessionDate) : "undated"}
         </span>
       ) : null}

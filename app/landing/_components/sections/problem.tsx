@@ -1,28 +1,31 @@
+"use client";
+
 import { LineChart, FileText, Table, MessageSquare, Newspaper, Target, type LucideIcon } from "lucide-react";
 import type { SectionProps } from "../section-registry";
 import { Reveal } from "../motion/reveal";
 import { SectionShell } from "../primitives/section-shell";
-import { SectionHeader } from "../primitives/section-header";
-import { EyebrowRule } from "../primitives/ornamental-eyebrow";
+import { OrnamentalEyebrow, EyebrowRule } from "../primitives/ornamental-eyebrow";
+import { TwoToneHeadline } from "../primitives/two-tone-headline";
 import { IconTile } from "../primitives/icon-tile";
-import { ParticleField } from "../primitives/particle-field";
+import { setInkParam } from "../ink/engine";
 
 /**
- * Problem — five fragmented-tool cards over the connecting particle streams
- * (brightest in the gaps BETWEEN cards: the mess between the tools is the
- * argument), closed by the rhetorical-turn pill.
+ * Problem — the Five Shards (ink/movements/shards.ts). Column discipline:
+ * heading and copy in the LEFT column, the ink zone is the CENTRE column (a
+ * real element), and the five labelled tools are the RIGHT column. The five
+ * shards are five structurally different geometries, one per tool: a
+ * sawtooth ticker, a page of dense text, a strict lattice, a closed loop
+ * going nowhere, and a dispersing burst.
  *
- * Signature (3.3): cards enter with a slight rotation settle (±1.5° max,
- * fixed pseudo-random per card, resolving to 0) so the scatter reads as
- * physical; the streams then brighten 200ms after the last card lands.
- * Card bodies carry a 2-line min-height so all five bottoms align.
+ * Hovering a tool raises its shard to full core brightness and drops the
+ * other four to 15%: the cost of attention-switching, felt in the hand.
  */
-const TOOLS: { icon: LucideIcon; title: string; description: string; tilt: string }[] = [
-  { icon: LineChart, title: "Yahoo Finance", description: "Price data, charts, and market insights.", tilt: "[[data-reveal=hidden]_&]:-rotate-[1.5deg]" },
-  { icon: FileText, title: "EDGAR filings", description: "Raw filings buried in PDFs and text.", tilt: "[[data-reveal=hidden]_&]:rotate-[1.2deg]" },
-  { icon: Table, title: "Spreadsheets", description: "Manual models and scattered calculations.", tilt: "[[data-reveal=hidden]_&]:-rotate-[0.8deg]" },
-  { icon: MessageSquare, title: "ChatGPT", description: "Answers, but no direct access to your data.", tilt: "[[data-reveal=hidden]_&]:rotate-[1.5deg]" },
-  { icon: Newspaper, title: "News sites", description: "Noise, opinions, and information overload.", tilt: "[[data-reveal=hidden]_&]:-rotate-[1.2deg]" },
+const TOOLS: { icon: LucideIcon; title: string; description: string }[] = [
+  { icon: LineChart, title: "Yahoo Finance", description: "Price data, charts, and market insights." },
+  { icon: FileText, title: "EDGAR filings", description: "Raw filings buried in PDFs and text." },
+  { icon: Table, title: "Spreadsheets", description: "Manual models and scattered calculations." },
+  { icon: MessageSquare, title: "ChatGPT", description: "Answers, but no direct access to your data." },
+  { icon: Newspaper, title: "News sites", description: "Noise, opinions, and information overload." },
 ];
 
 export function Problem({ section, index }: SectionProps) {
@@ -30,62 +33,75 @@ export function Problem({ section, index }: SectionProps) {
 
   return (
     <SectionShell id={section.id} headingId={headingId} band={index % 2 === 1}>
-      <SectionHeader
-        eyebrow="The problem"
-        headingId={headingId}
-        segments={[
-          { text: "Why does research feel", block: true },
-          { text: "so fragmented?", tone: "accent", block: true },
-        ]}
-        afterHeadline={<EyebrowRule className="mt-mk-headline w-full" />}
-        lead={
-          <>
-            Every day you hop between Yahoo Finance, EDGAR PDFs, spreadsheets, and ChatGPT. All
-            that data, and still hours go by without a single insight.
-          </>
-        }
-        className="items-center"
-      />
+      <div className="grid items-center gap-10 lg:grid-cols-[33fr_34fr_33fr] lg:gap-6">
+        {/* LEFT text zone: the argument. */}
+        <div className="flex flex-col items-start">
+          <Reveal delay={0}>
+            <OrnamentalEyebrow variant="left">The problem</OrnamentalEyebrow>
+          </Reveal>
+          <Reveal delay={90}>
+            <TwoToneHeadline
+              id={headingId}
+              align="left"
+              className="mt-mk-eyebrow"
+              segments={[
+                { text: "Why does research feel", block: true },
+                { text: "so fragmented?", tone: "accent", block: true },
+              ]}
+            />
+          </Reveal>
+          <Reveal delay={140}>
+            <EyebrowRule className="mt-mk-headline w-full max-w-64" />
+          </Reveal>
+          <Reveal delay={180}>
+            <p data-lead className="mt-mk-headline text-pretty text-mk-lead text-muted">
+              Every day you hop between Yahoo Finance, EDGAR PDFs, spreadsheets, and ChatGPT. All
+              that data, and still hours go by without a single insight.
+            </p>
+          </Reveal>
 
-      {/* Cards over the connecting streams. */}
-      <div className="relative mt-mk-lead w-full">
-        <Reveal delay={280 + 4 * 70 + 200} className="absolute inset-x-0 top-1/2 hidden h-72 -translate-y-1/2 md:block">
-          <ParticleField variant="streams" className="inset-0 h-full w-full" />
-        </Reveal>
+          {/* The rhetorical turn: the shards briefly try to align here. */}
+          <Reveal delay={280} className="mt-10">
+            <div className="flex items-center gap-4 rounded-full border border-brand/20 bg-surface/80 py-3 pl-3 pr-7">
+              <IconTile icon={Target} shape="circle" />
+              <div>
+                <p className="text-mk-body font-medium text-foreground">
+                  Fragmented tools. Scattered data. Lost insights.
+                </p>
+                <p className="text-mk-body text-brand">There has to be a better way.</p>
+              </div>
+            </div>
+          </Reveal>
+        </div>
 
-        <Reveal
-          delay={280}
-          stagger={70}
-          className="relative grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-5"
-          childClassName="h-full"
-        >
-          {TOOLS.map((tool) => (
-            <div
+        {/* CENTRE ink zone: the five shards live here and nowhere else. */}
+        <div
+          aria-hidden="true"
+          data-ink-target="problem-ink"
+          className="hidden h-[760px] w-full lg:block"
+        />
+
+        {/* RIGHT text zone: the five tools, one per shard. */}
+        <Reveal delay={280} stagger={70} as="ul" className="flex flex-col">
+          {TOOLS.map((tool, i) => (
+            <li
               key={tool.title}
-              className={`flex h-full flex-col gap-4 rounded-panel border border-hairline bg-gradient-to-b from-surface-2/90 to-surface/90 p-7 transition-[border-color] duration-[200ms] hover:border-foreground/15 ${tool.tilt}`}
+              data-problem-item
+              onMouseEnter={() => setInkParam("problem.hover", i)}
+              onMouseLeave={() => setInkParam("problem.hover", -1)}
+              className={`flex items-start gap-4 py-4 transition-colors duration-200 hover:text-foreground ${
+                i < TOOLS.length - 1 ? "border-b border-hairline" : ""
+              }`}
             >
               <IconTile icon={tool.icon} shape="circle" />
               <div>
                 <h3 className="font-serif text-lg font-semibold text-foreground">{tool.title}</h3>
-                <p className="mt-2 min-h-12 text-mk-body text-muted">{tool.description}</p>
+                <p className="mt-1 text-mk-body text-muted">{tool.description}</p>
               </div>
-            </div>
+            </li>
           ))}
         </Reveal>
       </div>
-
-      {/* The rhetorical turn. */}
-      <Reveal delay={280} className="mt-12 flex justify-center">
-        <div className="flex items-center gap-4 rounded-full border border-brand/20 bg-surface/80 py-3 pl-3 pr-7">
-          <IconTile icon={Target} shape="circle" />
-          <div>
-            <p className="text-mk-body font-medium text-foreground">
-              Fragmented tools. Scattered data. Lost insights.
-            </p>
-            <p className="text-mk-body text-brand">There has to be a better way.</p>
-          </div>
-        </div>
-      </Reveal>
     </SectionShell>
   );
 }

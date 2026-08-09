@@ -250,21 +250,14 @@ export function BookModule() {
                 attribution WITH its residual so it reaches its own total. */}
             <div className="grid grid-cols-1 gap-x-8 gap-y-5 pt-1 sm:grid-cols-2 lg:grid-cols-[auto_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1.2fr)]">
               {/* ── Cell 1 · the grade ring and today's P&L ── */}
-              <div className="flex items-center gap-5 lg:pr-2">
+              {/* Top-aligned (not centered) so this cell's label sits on the
+                  same line as the three sibling cells' labels; the change pill
+                  therefore renders BELOW the figures, never above the label. */}
+              <div className="flex items-start gap-5 lg:pr-2">
                 <ExplainableValue explanation={explainHealth(d)} underline={false}>
                   <HealthRing score={d.healthScore} grade={d.healthGrade} />
                 </ExplainableValue>
                 <div className="flex min-w-0 flex-col gap-1">
-                  {healthChange ? (
-                    <span
-                      className={`w-fit rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                        healthChange.tone === "improved" ? "bg-positive/10 text-positive" : "bg-negative/10 text-negative"
-                      }`}
-                      title={healthChange.detail}
-                    >
-                      {healthChange.tone === "improved" ? "▲" : "▼"} health since last visit
-                    </span>
-                  ) : null}
                   <span className={LABEL}>Day P&amp;L</span>
                   <span className="flex items-baseline gap-3">
                     <MetricDelta
@@ -276,12 +269,29 @@ export function BookModule() {
                       {fmtSignedMoney(d.todayChangeDollar)}
                     </span>
                   </span>
-                  <span className={`${NUM} text-sm text-foreground/60`}>
-                    {d.sessionDate ? shortSessionDate(d.sessionDate) : null}
-                    {d.dayCoveragePct != null && d.dayCoveragePct < 95 ? (
-                      <> · prices {Math.round(d.dayCoveragePct)}% of book</>
-                    ) : null}
-                  </span>
+                  {/* Joined, not concatenated: with no session date the old
+                      markup opened with an orphaned "· prices …" separator. */}
+                  {(() => {
+                    const parts = [
+                      d.sessionDate ? shortSessionDate(d.sessionDate) : null,
+                      d.dayCoveragePct != null && d.dayCoveragePct < 95
+                        ? `prices ${Math.round(d.dayCoveragePct)}% of book`
+                        : null,
+                    ].filter(Boolean);
+                    return parts.length > 0 ? (
+                      <span className={`${NUM} text-sm text-foreground/60`}>{parts.join(" · ")}</span>
+                    ) : null;
+                  })()}
+                  {healthChange ? (
+                    <span
+                      className={`mt-0.5 w-fit rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                        healthChange.tone === "improved" ? "bg-positive/10 text-positive" : "bg-negative/10 text-negative"
+                      }`}
+                      title={healthChange.detail}
+                    >
+                      {healthChange.tone === "improved" ? "▲" : "▼"} health since last visit
+                    </span>
+                  ) : null}
                 </div>
               </div>
 

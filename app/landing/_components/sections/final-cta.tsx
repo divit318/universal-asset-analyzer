@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { SectionProps } from "../section-registry";
 import { Reveal } from "../motion/reveal";
 import { SectionShell } from "../primitives/section-shell";
@@ -7,15 +8,21 @@ import { OrnamentalEyebrow } from "../primitives/ornamental-eyebrow";
 import { TwoToneHeadline } from "../primitives/two-tone-headline";
 import { TrustStrip } from "../primitives/trust-strip";
 import { openAuthModal } from "../auth-modal";
-import { PRIMARY_ACTION, SECONDARY_ACTION } from "../../landing-config";
+import { PRIMARY_ACTION, FINAL_SECONDARY_ACTION, APP_ENTRY } from "../../landing-config";
 
 /**
- * Final CTA — a contained card with bright brass light streaks along its top
- * and bottom edges (gradient hairlines fading at the ends), the closing
- * headline, both global actions, and the stacked trust strip.
+ * Final CTA — The Seal (ink/movements/seal.ts). Column discipline: heading
+ * above, the 420x220 ink zone in the centre, buttons below. Ink converges
+ * from the entry seam into a dense disc, the disc compresses once, sharply,
+ * as if stamped, the asset/analyzer mark appears as clean NEGATIVE SPACE
+ * inside it, and then everything goes completely still and the loop parks.
+ * The last frame of the page is a struck brass seal: evidence in ink,
+ * verdicts in brass.
+ *
+ * The primary action is identical to the hero's, the one constant; the
+ * secondary action points FORWARD into the live app rather than back up the
+ * page, so the page ends with escalation instead of a loop.
  */
-/** Signature (3.3): both streaks sweep outward from centre over 800ms once
- *  the card lands (scale-x from 0, centre origin, ancestor [data-reveal]). */
 function EdgeStreak({ edge }: { edge: "top" | "bottom" }) {
   return (
     <div
@@ -34,7 +41,7 @@ export function FinalCta({ section, index }: SectionProps) {
   return (
     <SectionShell id={section.id} headingId={headingId} band={index % 2 === 1}>
         <Reveal delay={0}>
-          <div className="relative overflow-hidden rounded-[20px] border border-border bg-gradient-to-b from-surface to-surface-2 px-6 py-12 text-center sm:px-12">
+          <div className="relative overflow-hidden rounded-[20px] border border-border bg-gradient-to-b from-surface/25 to-surface-2/25 px-6 py-12 text-center sm:px-12">
             <EdgeStreak edge="top" />
             <EdgeStreak edge="bottom" />
 
@@ -53,7 +60,10 @@ export function FinalCta({ section, index }: SectionProps) {
                 Research faster, think deeper, keep your data private.
               </p>
 
-              <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row">
+              {/* The Seal's ink zone: heading above, buttons below. */}
+              <div aria-hidden="true" data-ink-target="cta-seal" className="my-6 h-[220px] w-full max-w-[420px]" />
+
+              <div className="flex flex-col items-center gap-3 sm:flex-row">
                 <button
                   type="button"
                   onClick={() => openAuthModal("signup")}
@@ -64,13 +74,13 @@ export function FinalCta({ section, index }: SectionProps) {
                     →
                   </span>
                 </button>
-                <a
-                  href="#demo"
+                <Link
+                  href={APP_ENTRY}
                   className="inline-flex h-12 items-center justify-center gap-1.5 rounded-control border border-border bg-surface px-7 text-sm font-semibold text-foreground outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:border-border-strong hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand/40"
                 >
-                  {SECONDARY_ACTION}
-                  <span aria-hidden="true">↓</span>
-                </a>
+                  {FINAL_SECONDARY_ACTION}
+                  <span aria-hidden="true">→</span>
+                </Link>
               </div>
 
               <TrustStrip className="mt-10" variant="stacked" />

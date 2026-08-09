@@ -171,7 +171,9 @@ export function ModuleShell<T>({
             <RefreshCw className={`h-3.5 w-3.5 ${state.revalidating ? "animate-spin" : ""}`} strokeWidth={2} />
           </button>
         ) : null}
-        {headerCaption ? <span className="text-sm text-foreground/60">{headerCaption}</span> : null}
+        {/* Header metadata, one tier below the subtitle (text-sm) — at 14px the
+            "Updated …" stamp outweighed the card's own description. */}
+        {headerCaption ? <span className="text-xs text-foreground/60">{headerCaption}</span> : null}
         {definition.navTarget ? (
           <Link
             href={definition.navTarget.href}

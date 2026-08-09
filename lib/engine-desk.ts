@@ -69,7 +69,10 @@ export const REGIME_COLOR: Record<string, string> = {
 };
 
 export const REGIME_COLOR_LIGHT: Record<string, string> = {
-  Bull: "#15803d",
+  /* Bull is green-800, one step past the global --positive green-700: the
+     RegimeChip sets this as text over its own 9% tint, where #15803d measured
+     4.42:1 — #166534 measures 5.83:1 on that same tint. */
+  Bull: "#166534",
   Recovery: "#2563eb",
   Range: "#b45309",
   Bear: "#b91c1c",

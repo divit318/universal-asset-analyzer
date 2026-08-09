@@ -1,3 +1,6 @@
+"use client";
+
+import { useRef } from "react";
 import {
   CandlestickChart,
   FileText,
@@ -14,17 +17,19 @@ import { SectionShell } from "../primitives/section-shell";
 import { OrnamentalEyebrow } from "../primitives/ornamental-eyebrow";
 import { TwoToneHeadline } from "../primitives/two-tone-headline";
 import { IconTile } from "../primitives/icon-tile";
-import { TrustStrip } from "../primitives/trust-strip";
 import { ParticleField } from "../primitives/particle-field";
+import { useSectionProgress, useReducedMotion } from "../motion/hooks";
 
 /**
- * Solution — left: eyebrow, two-line serif headline (explicit break so it is
- * exactly two lines at 1024+; harness-verified), lead, five-item feature list
- * staggered 70ms. Right: the illustrative dashboard filling its column, its
- * top edge aligned to the text column's top (items-start grid).
+ * Solution — the Braid (second half of Movement II). The five currents
+ * re-braid here through the right gutter,
+ * scroll-scrubbed (ink/movements/fracture.ts), and the braid resolves into the
+ * sparkline of the "Market performance" card: the ink becomes the product's
+ * own chart. The five feature rows illuminate in sequence as the braid
+ * passes their scroll thresholds — once each, latched, never replayed.
  *
- * Signature (3.3): the mockup's amber glow ramps 0→full over 900ms after the
- * panel lands (700ms entrance + 900ms box-shadow ramp, one-off).
+ * No-JS and reduced motion: rows render fully lit (illumination only dims
+ * below threshold after hydration, and only when motion is allowed).
  */
 const FEATURES: { icon: LucideIcon; title: string; description: string }[] = [
   { icon: CandlestickChart, title: "Market data", description: "Prices, charts, and fundamentals from public sources." },
@@ -82,7 +87,14 @@ function PerformancePanel() {
           <span>500</span>
           <span>450</span>
         </div>
-        <svg viewBox="0 0 260 80" className="h-24 w-full text-brand" preserveAspectRatio="none" aria-hidden="true">
+        {/* The ink braid resolves INTO this sparkline (ink target). */}
+        <svg
+          viewBox="0 0 260 80"
+          data-ink-target="solution-sparkline"
+          className="h-24 w-full text-brand"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
           <path
             data-draw-path
             d="M0 66 L18 58 L34 62 L52 40 L70 46 L88 30 L106 38 L124 44 L142 34 L160 40 L178 28 L196 34 L214 22 L232 28 L252 14"
@@ -106,7 +118,7 @@ function PerformancePanel() {
 
 function BriefPanel() {
   return (
-    <div className="relative overflow-hidden rounded-card border border-hairline bg-surface-2/60 p-4 sm:col-span-2">
+    <div className="relative overflow-hidden rounded-card border border-hairline bg-surface-2/60 p-4">
       <ParticleField variant="card-interior" className="inset-x-0 bottom-0 h-2/3 w-full" />
       <div className="relative flex items-start gap-3">
         <span aria-hidden="true" className="mt-0.5 text-brand">
@@ -125,6 +137,54 @@ function BriefPanel() {
         </span>
       </div>
     </div>
+  );
+}
+
+/** Feature rows that illuminate, once each, as the braid passes them. */
+function FeatureList() {
+  const listRef = useRef<HTMLUListElement | null>(null);
+  const reduced = useReducedMotion();
+
+  useSectionProgress(listRef, (p) => {
+    const list = listRef.current;
+    if (!list) return;
+    const rows = list.querySelectorAll<HTMLElement>("[data-solution-row]");
+    rows.forEach((row, i) => {
+      // Latched: rows light once and stay lit on every later scroll pass.
+      if (row.dataset.lit === "1") return;
+      if (p > 0.32 + i * 0.07) row.dataset.lit = "1";
+    });
+  });
+
+  const dim = reduced ? "" : "[&:not([data-lit])]:opacity-55";
+  const rule = reduced
+    ? ""
+    : "[[data-solution-row]:not([data-lit])_&]:scale-x-0";
+
+  return (
+    <Reveal delay={280} className="w-full">
+      <ul ref={listRef} className="flex w-full flex-col">
+        {FEATURES.map((f, i) => (
+          <li
+            key={f.title}
+            data-solution-row
+            className={`relative flex items-center gap-4 ${i === 0 ? "pb-4" : "py-4"} transition-opacity duration-500 ${dim}`}
+          >
+            <IconTile icon={f.icon} shape="circle" />
+            <div>
+              <p className="text-mk-body font-semibold text-foreground">{f.title}</p>
+              <p className="text-mk-small text-muted">{f.description}</p>
+            </div>
+            {i < FEATURES.length - 1 && (
+              <span
+                aria-hidden="true"
+                className={`absolute bottom-0 left-0 h-px w-full origin-left bg-brand/35 transition-transform duration-300 ease-out ${rule}`}
+              />
+            )}
+          </li>
+        ))}
+      </ul>
+    </Reveal>
   );
 }
 
@@ -158,34 +218,23 @@ export function Solution({ section, index }: SectionProps) {
         </Reveal>
       </div>
 
-      {/* Feature list and dashboard: top edges aligned exactly (items-start). */}
-      <div className="mt-mk-lead grid items-start gap-12 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-14">
-        <div className="flex flex-col items-start">
-          <Reveal delay={280} stagger={70} as="ul" className="flex w-full flex-col">
-            {FEATURES.map((f, i) => (
-              <li
-                key={f.title}
-                className={`flex items-center gap-4 ${i === 0 ? "pb-4" : "py-4"} ${i < FEATURES.length - 1 ? "border-b border-hairline" : ""}`}
-              >
-                <IconTile icon={f.icon} shape="circle" />
-                <div>
-                  <p className="text-mk-body font-semibold text-foreground">{f.title}</p>
-                  <p className="text-mk-small text-muted">{f.description}</p>
-                </div>
-              </li>
-            ))}
-          </Reveal>
-        </div>
+      {/* Column discipline: feature list LEFT, the Lens's ink zone CENTRE (a
+          real element, continuous with the Problem section's centre column),
+          dashboard RIGHT. The lens resolves into the dashboard's sparkline. */}
+      <div className="mt-mk-lead grid items-center gap-12 lg:grid-cols-[33fr_34fr_33fr] lg:gap-6">
+        <FeatureList />
 
-        {/* Right column: the illustrative dashboard, filling its column, top-aligned
-            with the text column. The amber glow ramps in over 900ms after landing. */}
+        <div aria-hidden="true" data-ink-target="solution-ink" className="hidden h-[460px] w-full lg:block" />
+
+        {/* Right column: the illustrative dashboard. The amber glow ramps in
+            over 900ms after landing. */}
         <Reveal delay={280}>
           <div
             role="img"
             aria-label="Illustrative UAA dashboard: markets at a glance with index levels and sparklines, a market performance chart, and an AI Analyst Brief panel."
             className="relative w-full rounded-[20px] border border-brand/25 bg-surface p-4 shadow-glow-brand transition-[box-shadow] delay-700 duration-[900ms] [[data-reveal=hidden]_&]:shadow-none [[data-reveal=hidden]_&]:delay-0"
           >
-            <div aria-hidden="true" className="grid gap-3 sm:grid-cols-2">
+            <div aria-hidden="true" className="grid gap-3">
               <MarketsPanel />
               <PerformancePanel />
               <BriefPanel />
@@ -201,16 +250,6 @@ export function Solution({ section, index }: SectionProps) {
               </text>
             </svg>
           </div>
-        </Reveal>
-      </div>
-
-      {/* The trust beat. */}
-      <div className="mt-mk-lead flex flex-col items-center">
-        <Reveal delay={0}>
-          <OrnamentalEyebrow>Built for depth. Owned by you.</OrnamentalEyebrow>
-        </Reveal>
-        <Reveal delay={90} className="w-full">
-          <TrustStrip className="mt-mk-group" variant="bare" />
         </Reveal>
       </div>
     </SectionShell>

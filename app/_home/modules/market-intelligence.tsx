@@ -100,9 +100,12 @@ const STRIP: { symbol: string; label: string }[] = [
 function IndexStrip({ groups, suppressSessionLabel }: { groups: MarketGroup[]; suppressSessionLabel: boolean }) {
   return (
     <div className="-mx-8 border-b border-foreground/8">
-      {/* Below md the strip scrolls within itself, hairlines intact, scrollbar hidden. */}
+      {/* Below md the strip scrolls within itself, hairlines intact, scrollbar
+          hidden. At md+ it WRAPS instead: the scrollbar is hidden there too, so
+          an overflowing row (five indices + per-figure session dates) clipped
+          the last index mid-digit with no affordance (2026-08-10 audit). */}
       <div className="overflow-x-auto px-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div className="flex min-w-max items-center justify-between gap-3 py-5 min-[768px]:min-w-0">
+        <div className="flex min-w-max items-center justify-between gap-3 py-5 min-[768px]:min-w-0 min-[768px]:flex-wrap min-[768px]:gap-y-3">
           {STRIP.map((s, i) => {
             const t = findTicker(groups, s.symbol);
             return (

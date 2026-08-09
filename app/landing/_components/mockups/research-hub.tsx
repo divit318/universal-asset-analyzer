@@ -1,9 +1,18 @@
+"use client";
+
 import { Apple, ChevronDown } from "lucide-react";
+import { Odometer } from "../primitives/odometer";
+import { useMockupEntry } from "../motion/mockup";
 
 /**
- * Research Hub mockup — static, hand-authored sample data (see MockupFrame).
- * Company header, tab strip with Overview active, three panels: key metrics,
- * revenue chart, recent news.
+ * Research Hub mockup — static, hand-authored sample data (see MockupFrame),
+ * choreographed ONCE on first viewport entry (useMockupEntry):
+ *   - key metric values roll up on monospace odometers (30ms per column)
+ *   - the revenue line draws left to right over 900ms (easeOutQuart) with
+ *     the area fill fading in behind it at 60% of the draw
+ *   - news items slide up 12px and fade, staggered 80ms
+ *   - the active tab's underline slides in from the left
+ * No-JS / reduced motion: final state, no observer, nothing hidden.
  */
 const TABS = ["Overview", "Financials", "News", "Estimates", "Filings", "Peers"];
 
@@ -22,9 +31,14 @@ const NEWS = [
   ["Apple expands manufacturing", "2d ago"],
 ] as const;
 
+const LINE = "M4 36 L28 30 L52 31 L76 22 L100 16 L116 10";
+const AREA = "M4 36 L28 30 L52 31 L76 22 L100 16 L116 10 V44 H4 Z";
+
 export function ResearchHubMockup() {
+  const { ref, phase, played } = useMockupEntry();
+
   return (
-    <div className="flex h-full flex-col p-4 text-left">
+    <div ref={ref} data-mock={phase} className="flex h-full flex-col p-4 text-left">
       {/* Company header */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2.5">
@@ -46,16 +60,17 @@ export function ResearchHubMockup() {
         </div>
       </div>
 
-      {/* Tab strip */}
+      {/* Tab strip: the active underline slides in from the left on entry. */}
       <div className="mt-3 flex gap-4 border-b border-hairline">
         {TABS.map((t, i) => (
-          <span
-            key={t}
-            className={`pb-1.5 text-caption ${
-              i === 0 ? "border-b-2 border-brand font-semibold text-foreground" : "text-muted"
-            }`}
-          >
+          <span key={t} className={`relative pb-1.5 text-caption ${i === 0 ? "font-semibold text-foreground" : "text-muted"}`}>
             {t}
+            {i === 0 && (
+              <span
+                aria-hidden="true"
+                className="absolute inset-x-0 bottom-0 h-0.5 origin-left bg-brand transition-transform duration-500 ease-out [[data-mock=armed]_&]:scale-x-0"
+              />
+            )}
           </span>
         ))}
       </div>
@@ -71,7 +86,9 @@ export function ResearchHubMockup() {
             {METRICS.map(([label, value]) => (
               <li key={label} className="flex items-center justify-between gap-2">
                 <span className="text-caption text-muted">{label}</span>
-                <span className="font-mono text-caption font-medium tabular-nums text-foreground">{value}</span>
+                <span className="font-mono text-caption font-medium tabular-nums text-foreground">
+                  <Odometer value={value} play={played} />
+                </span>
               </li>
             ))}
           </ul>
@@ -79,7 +96,9 @@ export function ResearchHubMockup() {
 
         <div className="flex flex-col rounded-card border border-hairline bg-surface-2/60 p-3">
           <p className="text-caption font-semibold text-foreground">Revenue (TTM)</p>
-          <p className="mt-1 font-mono text-mk-lead font-semibold tabular-nums text-foreground">$394.3B</p>
+          <p className="mt-1 font-mono text-mk-lead font-semibold tabular-nums text-foreground">
+            <Odometer value="$394.3B" play={played} />
+          </p>
           <p className="font-mono text-caption font-medium tabular-nums text-positive">+7.1% YoY</p>
           <div className="mt-2 flex flex-1 gap-1.5">
             <div className="flex flex-col justify-between text-right font-mono text-micro tabular-nums text-muted">
@@ -88,14 +107,22 @@ export function ResearchHubMockup() {
               <span>200B</span>
             </div>
             <svg viewBox="0 0 120 44" className="h-full w-full text-positive" preserveAspectRatio="none" aria-hidden="true">
+              {/* Area fill fades in behind the line at 60% of the draw. */}
               <path
-                d="M4 36 L28 30 L52 31 L76 22 L100 16 L116 10"
+                d={AREA}
+                fill="currentColor"
+                fillOpacity="0.1"
+                stroke="none"
+                className="transition-opacity duration-[360ms] delay-[540ms] [[data-mock=armed]_&]:opacity-0"
+              />
+              <path
+                d={LINE}
                 pathLength={1}
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="1.5"
                 strokeLinecap="round"
-                className="transition-[stroke-dashoffset] delay-700 duration-[900ms] ease-out [stroke-dasharray:1] [stroke-dashoffset:0] [[data-reveal=hidden]_&]:[stroke-dashoffset:1]"
+                className="transition-[stroke-dashoffset] duration-[900ms] ease-[cubic-bezier(0.25,1,0.5,1)] [stroke-dasharray:1] [stroke-dashoffset:0] [[data-mock=armed]_&]:[stroke-dashoffset:1]"
               />
               {[
                 [4, 36],
@@ -104,8 +131,16 @@ export function ResearchHubMockup() {
                 [76, 22],
                 [100, 16],
                 [116, 10],
-              ].map(([x, y]) => (
-                <circle key={x} cx={x} cy={y} r="1.8" fill="currentColor" />
+              ].map(([x, y], i) => (
+                <circle
+                  key={x}
+                  cx={x}
+                  cy={y}
+                  r="1.8"
+                  fill="currentColor"
+                  style={{ transitionDelay: `${(i / 5) * 900}ms` }}
+                  className="transition-opacity duration-200 [[data-mock=armed]_&]:opacity-0"
+                />
               ))}
             </svg>
           </div>
@@ -119,8 +154,12 @@ export function ResearchHubMockup() {
         <div className="flex flex-col rounded-card border border-hairline bg-surface-2/60 p-3">
           <p className="text-caption font-semibold text-foreground">Recent news</p>
           <ul className="mt-2 flex flex-1 flex-col justify-evenly gap-2.5">
-            {NEWS.map(([headline, when]) => (
-              <li key={headline} className="flex items-start justify-between gap-2">
+            {NEWS.map(([headline, when], i) => (
+              <li
+                key={headline}
+                style={{ transitionDelay: `${300 + i * 80}ms` }}
+                className="flex items-start justify-between gap-2 transition-[opacity,transform] duration-500 ease-out [[data-mock=armed]_&]:translate-y-3 [[data-mock=armed]_&]:opacity-0"
+              >
                 <span className="text-caption leading-snug text-foreground">{headline}</span>
                 <span className="shrink-0 font-mono text-micro tabular-nums text-muted">{when}</span>
               </li>

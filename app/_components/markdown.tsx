@@ -3,10 +3,15 @@
 import { Fragment, type ReactNode } from "react";
 
 /**
- * A dependency-free markdown renderer scoped to what the copilot actually
- * emits: headings, bullet/numbered lists, bold/italic/inline-code, blockquotes,
- * paragraphs, and inline `[source:tag]` citation markers styled as chips. This
- * avoids pulling a heavyweight markdown library for a constrained output space.
+ * A dependency-free markdown renderer scoped to what the app's AI surfaces
+ * actually emit: headings, bullet/numbered lists, bold/italic/inline-code,
+ * blockquotes, paragraphs, and inline `[source:tag]` citation markers styled as
+ * chips. This avoids pulling a heavyweight markdown library for a constrained
+ * output space.
+ *
+ * Shared (moved from research/_components/copilot in the 2026-08-10 visual
+ * audit): every surface that shows model prose must render through this —
+ * the calendar's weekly brief was printing literal `**bold**` asterisks.
  */
 
 /** Parse inline spans: **bold**, *italic*, `code`, and [citation] tags. */
