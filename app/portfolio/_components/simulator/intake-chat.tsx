@@ -103,7 +103,7 @@ export function IntakeChat({
         if (!res.ok) {
           setError({
             message: json.error ?? "The interviewer is not responding",
-            offline: json.code === "ollama_unavailable",
+            offline: json.code === "ai_unavailable",
           });
           return;
         }

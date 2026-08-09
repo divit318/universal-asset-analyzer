@@ -5,7 +5,7 @@
  *
  *   1. The canonical JSON directives. The instruction telling a model to emit
  *      JSON and nothing else was hand-written in ~13 feature modules and twice
- *      more inside the Ollama service layer. It is one rule, and it belongs in
+ *      more inside the provider service layer. It is one rule, and it belongs in
  *      one place — if a model regresses on JSON compliance, the wording should
  *      be tunable from a single line.
  *   2. The template primitives ({@link definePrompt}, {@link renderPrompt}),
@@ -26,10 +26,9 @@
 export { definePrompt, renderPrompt, type PromptTemplate } from "../prompt-builder";
 
 /**
- * Appended by the provider when a task runs in JSON mode, on top of Ollama's
- * `format: "json"` grammar constraint. Belt and braces: the grammar guarantees
- * syntactic validity, this discourages the model from wrapping the object in a
- * ```json fence or a preamble.
+ * Appended by the provider when a task runs in JSON mode. Belt and braces:
+ * this discourages the model from wrapping the object in a ```json fence or a
+ * preamble, and the extraction layer tolerates one anyway.
  */
 export const JSON_ONLY_INSTRUCTION =
   "Respond ONLY with valid JSON. No markdown, no explanation.";

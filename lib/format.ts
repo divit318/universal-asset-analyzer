@@ -13,6 +13,34 @@ function isRenderable(value: number | null | undefined): value is number {
   return value != null && Number.isFinite(value);
 }
 
+/**
+ * Round to display precision and normalize signed zero. A value like -0.004
+ * rendered at one decimal is "-0.0%" — a negative zero, which reads as a
+ * data bug. Rounding FIRST and collapsing -0 to 0 fixes the sign and keeps
+ * the sign prefix ("+"/"-") consistent with the digits actually shown.
+ */
+export function roundForDisplay(value: number, digits: number): number {
+  const r = Number(value.toFixed(digits));
+  return r === 0 ? 0 : r; // `0 === -0`, so this collapses -0 to +0
+}
+
+/**
+ * English ordinal, e.g. 1st, 2nd, 3rd, 4th, 11th, 12th, 13th, 21st, 22nd,
+ * 23rd, 101st. Replaces the naive `${n}th` that produced "1th pct" and
+ * "23th pct" on the Compare page's percentile captions.
+ */
+export function ordinal(n: number): string {
+  const abs = Math.abs(Math.round(n));
+  const mod100 = abs % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${n}th`;
+  switch (abs % 10) {
+    case 1: return `${n}st`;
+    case 2: return `${n}nd`;
+    case 3: return `${n}rd`;
+    default: return `${n}th`;
+  }
+}
+
 /** Text color for a signed value: green above zero, red below, muted at zero or unknown. */
 export function toneClass(value: number | null): string {
   if (value == null) return "text-muted";
@@ -61,8 +89,19 @@ export function formatSignedCurrency(
 /** Signed percentage, e.g. +1.23% / -0.45%. Input is already in percent units. */
 export function formatPercent(value: number | null | undefined, digits = 2): string {
   if (!isRenderable(value)) return "—";
-  const sign = value > 0 ? "+" : "";
-  return `${sign}${value.toFixed(digits)}%`;
+  const r = roundForDisplay(value, digits);
+  const sign = r > 0 ? "+" : "";
+  return `${sign}${r.toFixed(digits)}%`;
+}
+
+/**
+ * Valuation ratio, e.g. "8.13x". THE formatter for P/E, P/B, EV/EBITDA and
+ * friends — one ratio must not render as `8.13`, `8.1x`, and `7.5` on the
+ * same page depending on which component drew it.
+ */
+export function formatRatio(value: number | null | undefined, digits = 2): string {
+  if (!isRenderable(value)) return "—";
+  return `${value.toFixed(digits)}x`;
 }
 
 /** Compact large numbers: 1.2K, 3.4M, 5.6B, 7.8T. */

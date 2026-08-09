@@ -4,6 +4,8 @@ import {
   assessRisks,
   computeMomentum,
   computeScore,
+  scoreGrowth,
+  scoreHealth,
   scoreValuation,
 } from "@/lib/scoring";
 import type {
@@ -247,6 +249,57 @@ describe("scoreValuation", () => {
     const peg = factors.find((f) => f.label === "PEG ratio")!;
     expect(peg.detail).toBe("n/a");
     expect(peg.points).toBe(Math.round(peg.max * 0.5));
+  });
+});
+
+describe("bank scoring discrimination", () => {
+  // Five banks with materially different leverage and growth must NOT
+  // collapse onto one score. The old financials bands saturated: every bank's
+  // D/E cleared the "best" threshold (full credit) while Net Debt/EBITDA was
+  // always null (identical half credit), pinning Financial Health at exactly
+  // 70% for all of them; growth bands topped out at 12/15/8%, which four of
+  // five banks exceeded, pinning Growth at a saturated 100.
+  const bank = (o: Partial<FundamentalsSnapshot>) =>
+    snap({ sector: "Financial Services", ebitda: null, currentRatio: null, quickRatio: null, ...o });
+  const healthPct = (debtToEquity: number) => {
+    const { bucket } = scoreHealth(bank({ debtToEquity }));
+    return (bucket.points / bucket.max) * 100;
+  };
+  const growthPct = (revenueGrowth: number, earningsGrowth: number) => {
+    const { bucket } = scoreGrowth(bank({ revenueGrowth, earningsGrowth }), null);
+    return (bucket.points / bucket.max) * 100;
+  };
+
+  it("materially different bank leverage produces materially different Financial Health scores", () => {
+    const scores = [0.59, 0.62, 0.93, 1.28, 1.44].map(healthPct);
+    // Strictly decreasing as leverage rises...
+    for (let i = 1; i < scores.length; i++) expect(scores[i]).toBeLessThanOrEqual(scores[i - 1]);
+    // ...with a real spread between the least and most levered, not a constant.
+    expect(scores[0] - scores[scores.length - 1]).toBeGreaterThan(15);
+    expect(new Set(scores.map(Math.round)).size).toBeGreaterThan(2);
+  });
+
+  it("bank Financial Health also credits operating efficiency, not leverage alone", () => {
+    const lean = scoreHealth(bank({ debtToEquity: 1.0, operatingMargins: 0.50 })).bucket;
+    const bloated = scoreHealth(bank({ debtToEquity: 1.0, operatingMargins: 0.22 })).bucket;
+    expect(lean.points).toBeGreaterThan(bloated.points);
+    // Two genuine inputs, not a one-factor score wearing a composite label.
+    expect(lean.factors.filter((f) => f.detail !== "n/a").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("materially different bank growth rates produce materially different Growth scores", () => {
+    const fast = growthPct(0.24, 0.28);
+    const mid = growthPct(0.15, 0.18);
+    const slow = growthPct(0.08, 0.06);
+    expect(fast).toBeGreaterThan(mid);
+    expect(mid).toBeGreaterThan(slow);
+    expect(fast - slow).toBeGreaterThan(15);
+  });
+
+  it("normal big-bank growth no longer saturates at the ceiling", () => {
+    // ~15% revenue / ~18% EPS growth — a good but unexceptional year for a
+    // large Indian private bank — must leave headroom above it.
+    expect(growthPct(0.15, 0.18)).toBeLessThan(95);
   });
 });
 

@@ -46,9 +46,11 @@ export function buildRecommendedActions(
   if (decisions.length > 0) {
     // Before → after is stated on the engine's exact (unrounded) health total —
     // differencing the rounded display total quantizes small deltas to zero,
-    // the exact bug HealthDimension.scoreExact exists to prevent.
-    const healthBefore = report?.health?.total ?? 0;
-    const healthExact = report?.health?.totalExact ?? healthBefore;
+    // the exact bug HealthDimension.scoreExact exists to prevent. Both ends
+    // render at the SAME 0.1 precision so before + delta = after on screen
+    // (audit NI-09: "68 → 71.1 (+3.3)" was internally off by 0.2).
+    const healthExact = report?.health?.totalExact ?? report?.health?.total ?? 0;
+    const healthBefore = Math.round(healthExact * 10) / 10;
 
     const actions: RecommendedAction[] = [...decisions]
       // The engine already assigned decisionPriority (1 = "if you make one
@@ -58,6 +60,7 @@ export function buildRecommendedActions(
       .map((d) => ({
         id: d.recommendation.id,
         symbol: d.recommendation.symbol,
+        subject: d.recommendation.subject ?? d.recommendation.symbol ?? null,
         action: d.recommendation.action,
         title: d.recommendation.title,
         reason: d.recommendation.rationale,
@@ -78,7 +81,9 @@ export function buildRecommendedActions(
         why: d.why,
         impact: {
           healthBefore,
-          healthAfter: Math.round((healthExact + d.recommendation.impact.healthDelta) * 10) / 10,
+          // Differenced from the ROUNDED before, so the three displayed
+          // numbers are arithmetically consistent at display precision.
+          healthAfter: Math.round((healthBefore + d.recommendation.impact.healthDelta) * 10) / 10,
           healthDelta: d.recommendation.impact.healthDelta,
           riskDeltaPp: d.recommendation.impact.riskDelta,
           incomeDeltaAnnual: d.recommendation.impact.incomeDelta,
@@ -102,6 +107,7 @@ export function buildRecommendedActions(
   const actions: RecommendedAction[] = queue.items.slice(0, MAX_ACTIONS).map((item, i) => ({
     id: item.id,
     symbol: item.symbol ?? null,
+    subject: null,
     action: "REVIEW",
     title: item.title,
     reason: item.description,
@@ -113,6 +119,7 @@ export function buildRecommendedActions(
     severity: item.severity,
     href: item.href,
     source: "queue",
+    observedAt: item.observedAt ?? null,
     // Queue items were flagged, never argued for or simulated — saying so
     // honestly (nulls) beats fabricating a memo for them.
     why: null,

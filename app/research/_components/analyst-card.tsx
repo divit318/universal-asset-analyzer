@@ -17,7 +17,11 @@ const DIST = [
 
 export function AnalystCard({ analyst }: { analyst: AnalystConsensus }) {
   const counts = [analyst.strongBuy, analyst.buy, analyst.hold, analyst.sell, analyst.strongSell];
+  // ONE source for the analyst count: the sum of the rendered distribution.
+  // The "N analysts" label, the segmented bar, and the legend all derive from
+  // `counts`, so they can never disagree with each other.
   const total  = counts.reduce((s, v) => s + v, 0);
+  const analystCount = total > 0 ? total : analyst.numberOfOpinions;
   const up     = analyst.epsRevisionsUp30d   ?? 0;
   const down   = analyst.epsRevisionsDown30d ?? 0;
 
@@ -53,11 +57,11 @@ export function AnalystCard({ analyst }: { analyst: AnalystConsensus }) {
             }`}
           >
             {analyst.upsidePercent != null
-              ? <CountUp value={analyst.upsidePercent} format={(v) => formatPercent(v)} durationMs={800} />
+              ? <CountUp value={analyst.upsidePercent} format={(v) => formatPercent(v, 1)} durationMs={800} />
               : formatPercent(null)}
           </span>
           <span className="text-xs text-muted">
-            {analyst.numberOfOpinions ?? "—"} analyst{analyst.numberOfOpinions !== 1 ? "s" : ""}
+            {analystCount ?? "—"} analyst{analystCount !== 1 ? "s" : ""}
           </span>
         </div>
       </div>
@@ -73,18 +77,18 @@ export function AnalystCard({ analyst }: { analyst: AnalystConsensus }) {
               title: `${d.label}: ${counts[i]}`,
             }))}
           />
+          {/* Every bucket renders, including zeros — omitting "Sell · 0" made
+              the breakdown look like it was hiding a category. */}
           <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted">
-            {DIST.map((d, i) =>
-              counts[i] > 0 ? (
-                <span key={d.label} className="flex items-center gap-1">
-                  <span
-                    className="inline-block h-1.5 w-1.5 rounded-full"
-                    style={{ background: d.color }}
-                  />
-                  {d.label} · {counts[i]}
-                </span>
-              ) : null,
-            )}
+            {DIST.map((d, i) => (
+              <span key={d.label} className={`flex items-center gap-1 ${counts[i] === 0 ? "text-muted/60" : ""}`}>
+                <span
+                  className="inline-block h-1.5 w-1.5 rounded-full"
+                  style={{ background: d.color, opacity: counts[i] === 0 ? 0.35 : 1 }}
+                />
+                {d.label} · {counts[i]}
+              </span>
+            ))}
           </div>
         </div>
       ) : null}

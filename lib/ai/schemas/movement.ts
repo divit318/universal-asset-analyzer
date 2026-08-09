@@ -1,15 +1,14 @@
 /**
  * Movement explainer output schema (schema v1) — one shape, two zod views:
  *
- *  - `MovementWireSchema` — the clean, constraint-carrying schema converted
- *    to JSON Schema Draft 7 for Devin's structured_output_schema. No
+ *  - `MovementWireSchema` — the clean, constraint-carrying schema, convertible
+ *    to JSON Schema Draft 7 for a structured-output wire format. No
  *    transforms/catches (those are unrepresentable in JSON Schema and would
  *    weaken the platform-side validation).
- *  - `MovementAnalysisSchema` — the tolerant PARSE schema both providers'
- *    outputs run through. It encodes the small-model tolerances the old
+ *  - `MovementAnalysisSchema` — the tolerant PARSE schema the runtime's
+ *    output runs through. It encodes the tolerances the old
  *    hand-rolled parser in lib/movement-explainer.ts had (enum case variants,
- *    evidence arriving as an array, missing fields → defaults), so behavior
- *    under AI_PROVIDER=ollama is unchanged.
+ *    evidence arriving as an array, missing fields → defaults).
  */
 
 import { z } from "zod";

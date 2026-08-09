@@ -17,11 +17,12 @@ import {
 } from "recharts";
 import { Maximize2 } from "lucide-react";
 import type { HistoryPoint, NewsItem } from "@/lib/types";
+import { niceTicks } from "@/lib/chart-scale";
 import type { ChartQARelatedTarget } from "@/lib/ai-chart-qa";
 import { CandleChart } from "./candle-chart";
 import type { AskAIPayload } from "./pattern-analysis-panel";
 import { ChartWorkspace } from "./chart-workspace/chart-workspace";
-import { CHART_SERIES, useChartTheme } from "@/app/_components/chart-theme";
+import { useChartTheme } from "@/app/_components/chart-theme";
 import { usePlotDrawOnce } from "@/app/_components/use-in-view-once";
 import { PLOT_DRAW_MS } from "@/app/_components/motion";
 
@@ -29,10 +30,9 @@ import { PLOT_DRAW_MS } from "@/app/_components/motion";
 /* Constants                                                                  */
 /* -------------------------------------------------------------------------- */
 
-/* Categorical overlay colors — theme-neutral (legible on light & dark). */
-const BLUE = CHART_SERIES[0];
-const AMBER = CHART_SERIES[1];
-const PURPLE = CHART_SERIES[4];
+/* Categorical overlay colors resolve inside the component from ct.series so
+   they theme-swap — CHART_SERIES is the static dark set and its steel slot
+   measured 2.5:1 on a white canvas (2026-08-08 light-mode audit). */
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -145,6 +145,8 @@ function PriceTooltip({
   symbol,
   showSma50,
   showSma200,
+  sma50Color,
+  sma200Color,
   style,
 }: {
   active?: boolean;
@@ -153,6 +155,8 @@ function PriceTooltip({
   symbol: string;
   showSma50: boolean;
   showSma200: boolean;
+  sma50Color: string;
+  sma200Color: string;
   style?: React.CSSProperties;
 }) {
   if (!active || !payload?.length) return null;
@@ -168,13 +172,13 @@ function PriceTooltip({
       )}
       {showSma50 && byKey.sma50 != null && (
         <p className="flex items-center gap-2 text-xs">
-          <span style={{ color: AMBER }}>SMA 50</span>
+          <span style={{ color: sma50Color }}>SMA 50</span>
           <span className="font-mono">{fmtPrice(byKey.sma50 as number)}</span>
         </p>
       )}
       {showSma200 && byKey.sma200 != null && (
         <p className="flex items-center gap-2 text-xs">
-          <span style={{ color: PURPLE }}>SMA 200</span>
+          <span style={{ color: sma200Color }}>SMA 200</span>
           <span className="font-mono">{fmtPrice(byKey.sma200 as number)}</span>
         </p>
       )}
@@ -228,6 +232,9 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
   const AXIS = ct.axis;
   const GRID = ct.grid;
   const POSITIVE = ct.positive;
+  const BLUE = ct.series[0];
+  const AMBER = ct.series[1];
+  const PURPLE = ct.series[4];
   const NEGATIVE = ct.negative;
   const TOOLTIP_STYLE = ct.tooltip;
 
@@ -296,6 +303,22 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
 
   const hasVolume = priceData.some((d) => d.volume > 0);
 
+  // Round-interval y-axis ticks over everything plotted (price + visible
+  // SMAs), replacing Recharts' raw min×0.97/max×1.03 labels ($61.9, $67.9…).
+  const priceTicks = useMemo(() => {
+    const values: number[] = [];
+    for (const d of priceData) {
+      values.push(d.price);
+      if (showSma50 && d.sma50 != null) values.push(d.sma50);
+      if (showSma200 && d.sma200 != null) values.push(d.sma200);
+    }
+    if (values.length === 0) return [];
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const span = max - min || Math.abs(max) * 0.02 || 1;
+    return niceTicks(min - span * 0.04, max + span * 0.04, 6);
+  }, [priceData, showSma50, showSma200]);
+
   /* Recharts animates the *series* only — axes, grid and tooltip are up
      immediately — so handing it the one-shot flag draws the price in without
      ever making the chart feel like it's still loading. */
@@ -346,24 +369,32 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
         <div className="flex items-center gap-1.5">
           {mode === "price" && (
             <>
+              {/* Swatches double as the in-chart legend: solid amber = SMA 50,
+                  dashed purple = SMA 200 — no plotted line is unlabeled. */}
               <button
                 onClick={() => setShowSma50((v) => !v)}
-                className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors ${
                   showSma50
                     ? "bg-amber-500/20 text-warning"
                     : "text-muted hover:bg-surface-2 hover:text-foreground"
                 }`}
               >
+                <span aria-hidden className="inline-block h-0.5 w-3.5 rounded-full" style={{ background: AMBER }} />
                 SMA 50
               </button>
               <button
                 onClick={() => setShowSma200((v) => !v)}
-                className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors ${
                   showSma200
-                    ? "bg-purple-500/20 text-purple-400"
+                    ? "bg-purple-500/20 text-purple-400 light:text-purple-700"
                     : "text-muted hover:bg-surface-2 hover:text-foreground"
                 }`}
               >
+                <span
+                  aria-hidden
+                  className="inline-block h-0.5 w-3.5"
+                  style={{ backgroundImage: `repeating-linear-gradient(to right, ${PURPLE} 0 4px, transparent 4px 7px)` }}
+                />
                 SMA 200
               </button>
               <span className="h-4 w-px bg-border" />
@@ -394,7 +425,7 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
             onClick={() => setMode((m) => (m === "relative" ? "price" : "relative"))}
             className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
               mode === "relative"
-                ? "bg-blue-500/20 text-blue-400"
+                ? "bg-blue-500/20 text-blue-400 light:text-sky-700"
                 : "text-muted hover:bg-surface-2 hover:text-foreground"
             }`}
           >
@@ -455,10 +486,12 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
                 axisLine={false}
                 tickFormatter={fmtPrice}
                 width={56}
-                domain={[
-                  (dataMin: number) => dataMin * 0.97,
-                  (dataMax: number) => dataMax * 1.03,
-                ]}
+                ticks={priceTicks}
+                domain={
+                  priceTicks.length >= 2
+                    ? [priceTicks[0], priceTicks[priceTicks.length - 1]]
+                    : [(dataMin: number) => dataMin * 0.97, (dataMax: number) => dataMax * 1.03]
+                }
               />
               <Tooltip
                 content={
@@ -466,6 +499,8 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
                     symbol={symbol}
                     showSma50={showSma50}
                     showSma200={showSma200}
+                    sma50Color={AMBER}
+                    sma200Color={PURPLE}
                     style={TOOLTIP_STYLE}
                   />
                 }

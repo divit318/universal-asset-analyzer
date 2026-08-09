@@ -4,7 +4,7 @@
  * AI Watchlist Intelligence.
  *
  * Extracted from the page, and given the two states it was missing: failure and
- * idle. The panel used to render a skeleton, then unmount silently if Ollama was
+ * idle. The panel used to render a skeleton, then unmount silently if the AI was
  * offline — so the user saw an analysis start and then evaporate, with nothing to
  * retry and no indication of what had happened.
  *
@@ -65,7 +65,7 @@ export function WatchlistDigestPanel({ digest, loading, error, onGenerate }: Pro
             <div key={w} className="h-3 animate-pulse rounded bg-surface-2" style={{ width: `${w}%` }} />
           ))}
         </div>
-        <p className="mt-3 animate-pulse text-[11px] text-muted">Local AI is reading your watchlist…</p>
+        <p className="mt-3 animate-pulse text-[11px] text-muted">The AI is reading your watchlist…</p>
       </div>
     );
   }
@@ -98,8 +98,8 @@ export function WatchlistDigestPanel({ digest, loading, error, onGenerate }: Pro
             AI Watchlist Intelligence
           </p>
           <p className="mt-0.5 text-xs text-muted">
-            Reads every name on this list and returns picks, concerns and action items. Runs on
-            your machine, so it takes a moment and starts only when you ask for it.
+            Reads every name on this list and returns picks, concerns and action items. Sends
+            the list&apos;s computed metrics to the AI, so it starts only when you ask for it.
           </p>
         </div>
         <button
@@ -128,7 +128,7 @@ export function WatchlistDigestPanel({ digest, loading, error, onGenerate }: Pro
             Regenerate
           </button>
           <span className="rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-label font-semibold uppercase tracking-widest text-brand">
-            Local AI
+            AI
           </span>
         </div>
       </div>

@@ -147,7 +147,7 @@ function MatchDetail({ row }: { row: RankedCandidate }) {
         ) : (
           <ul className="flex flex-col gap-1">
             {warnings.map((w) => (
-              <li key={w} className="text-amber-600 dark:text-amber-500">
+              <li key={w} className="text-amber-500 light:text-amber-700">
                 {w}
               </li>
             ))}
@@ -402,7 +402,7 @@ export function ResultsTable({
                         </Link>
                         {hasWarnings ? (
                           <span
-                            className="text-amber-500"
+                            className="text-amber-500 light:text-amber-700"
                             title={`${row.match.warnings.length} warning(s)`}
                             aria-label={`${row.match.warnings.length} warnings`}
                           >

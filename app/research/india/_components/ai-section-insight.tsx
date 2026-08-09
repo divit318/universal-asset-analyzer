@@ -34,6 +34,16 @@ export function AiSectionInsight({ section, company, quote, derived }: AiSection
   const [model, setModel] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Hard 10s deadline on the "Analyzing…" affordance (same pattern as
+  // AiInsightPanel): past it the container unmounts; the generation keeps
+  // going and mounts the card whenever it lands.
+  const [timedOut, setTimedOut] = useState(false);
+
+  useEffect(() => {
+    if (!loading) return;
+    const timer = setTimeout(() => setTimedOut(true), 10_000);
+    return () => clearTimeout(timer);
+  }, [loading]);
 
   async function generate() {
     setLoading(true);
@@ -89,30 +99,20 @@ export function AiSectionInsight({ section, company, quote, derived }: AiSection
     );
   }
 
+  // Failed or past the deadline → no container at all (same rationale as
+  // AiInsightPanel: a stuck dashed box reads as a broken page).
+  if (error || (loading && timedOut) || !loading) return null;
+
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border px-4 py-3">
-      <span className="text-xs text-muted/60">
-        {loading ? "AI is interpreting this section…" : `Ask AI: what does this ${section === "financials" ? "financial trend" : section === "ownership" ? "ownership pattern" : section === "peers" ? "peer comparison" : "valuation"} mean?`}
-      </span>
-      {!loading ? (
-        <button
-          onClick={generate}
-          className="shrink-0 rounded-lg border border-border bg-surface px-3 py-1.5 text-[11px] font-medium transition-colors hover:border-accent/40 hover:text-accent"
-        >
-          {error ? "Retry" : "Generate AI Insight"}
-        </button>
-      ) : (
-        <span className="flex items-center gap-1.5 text-xs text-accent/70">
-          <span className="relative flex h-1.5 w-1.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
-            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
-          </span>
-          Analyzing…
+      <span className="text-xs text-muted/60">AI is interpreting this section…</span>
+      <span className="flex items-center gap-1.5 text-xs text-accent/70">
+        <span className="relative flex h-1.5 w-1.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
         </span>
-      )}
-      {error && (
-        <p className="text-[10px] text-negative">{error}</p>
-      )}
+        Analyzing…
+      </span>
     </div>
   );
 }

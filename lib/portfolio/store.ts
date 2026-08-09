@@ -26,6 +26,7 @@ import {
   removePosition,
   upsertUniversalPosition,
 } from "../db";
+import { invalidateDataset } from "../platform";
 import { aggregateOpenPositions } from "../portfolio-lots";
 import type { PortfolioLot } from "../types";
 import type { HoldingUnit, PortfolioAssetClass, RawHolding } from "./model/types";
@@ -193,6 +194,11 @@ export function upsertHolding(input: UpsertHoldingInput): void {
     unit: input.unit,
     meta: input.meta ?? null,
   });
+  // The cached report (and the digest that depends on it) now describes a
+  // book that no longer exists; drop them so no surface serves a pre-trade
+  // portfolio (platform registry: portfolioReport → missionContext →
+  // homeDigest cascade).
+  invalidateDataset("portfolioReport");
 }
 
 /** Record or update a cash position. Cash is a holding, not a residual. */
@@ -218,4 +224,5 @@ export function upsertCash(
 
 export function removeHolding(symbol: string): void {
   removePosition(symbol);
+  invalidateDataset("portfolioReport");
 }

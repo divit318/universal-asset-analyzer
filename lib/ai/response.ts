@@ -4,19 +4,21 @@
  * should ever branch on which provider or model answered.
  */
 
+import type { ProviderTokenUsage } from "./provider";
+
 export type ResponseConfidence = "high" | "medium" | "low";
 
 export interface AIResponse {
   /** The answer text, reasoning markup already stripped. */
   content: string;
-  /** Heuristic confidence — local models don't expose logprobs, so this is a coarse signal, not a probability. */
+  /** Heuristic confidence — providers don't expose logprobs here, so this is a coarse signal, not a probability. */
   confidence: ResponseConfidence;
   /** Truncated chain-of-thought trace, when the model produced one. Null when none. */
   reasoningSummary: string | null;
   executionTimeMs: number;
   model: string;
   provider: string;
-  tokenUsage?: { promptTokens?: number; completionTokens?: number };
+  tokenUsage?: ProviderTokenUsage;
   /** Non-fatal issues surfaced during routing (e.g. "fell back from qwen3: timeout"). Empty when the first choice succeeded. */
   errors: string[];
   metadata: Record<string, unknown>;
@@ -38,7 +40,7 @@ export function normalizeResponse(opts: {
   model: string;
   provider: string;
   startedAt: number;
-  tokenUsage?: { promptTokens?: number; completionTokens?: number };
+  tokenUsage?: ProviderTokenUsage;
   /** Errors from models that were tried and skipped before this one succeeded. */
   fallbackErrors?: string[];
   metadata?: Record<string, unknown>;

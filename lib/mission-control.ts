@@ -17,8 +17,9 @@
  */
 
 import { getPortfolioForIOS } from "./ios/server";
+import { getDataset } from "./platform";
 import { buildInvestmentProfile, fromUniversalReport } from "./ios/profile";
-import { rankByFit } from "./ios/fit-scorer";
+import { DEFAULT_FIT_WEIGHT, rankByFit } from "./ios/fit-scorer";
 import type { FitAssetData } from "./ios/types";
 import { getLatestSectorRotation } from "./sector-rotation";
 import { getLatestScannerSnapshot } from "./scanner/cache";
@@ -45,13 +46,24 @@ export interface ActionQueueItem {
   description: string;
   href: string;
   symbol?: string;
+  /** ISO time of the observation behind the item (notifications); ranking decays with it. */
+  observedAt?: string;
 }
 
 export interface OpportunitySnapshotItem {
   symbol: string;
+  /** 0.6 × scanner quality + 0.4 × portfolio fit — see rankByFit. */
   combinedScore: number;
   fitTier: string;
   fitSummary: string;
+  /** The scanner's standalone quality composite (0-100). Optional: absent on
+   *  digests cached before 2026-08-07; render without the decomposition then. */
+  absoluteScore?: number;
+  /** The IOS portfolio-fit score (0-100) blended into `combinedScore`. */
+  fitScore?: number;
+  /** A second distinct fit driver, so two panels showing the same symbol never
+   *  repeat the same sentence. Null when only one evidenced reason exists. */
+  fitDetail?: string | null;
 }
 
 export interface SectorAttentionChange {
@@ -164,7 +176,40 @@ export async function gatherContext(): Promise<MissionControlContext> {
   };
 }
 
+/**
+ * `gatherContext` through the platform cache (audit PF-02): the digest's ctx
+ * step and the brief route each rebuilt this in parallel on every homepage
+ * load. Two minutes of TTL matches the report cache it wraps; the digest
+ * dataset depends on it, so invalidation cascades.
+ */
+export async function getMissionContext(): Promise<MissionControlContext> {
+  const { data } = await getDataset("missionContext", {}, () => gatherContext(), { timeoutMs: 60_000 });
+  return data;
+}
+
 const SEVERITY_RANK: Record<"high" | "medium" | "low", number> = { high: 0, medium: 1, low: 2 };
+
+/** Alert kinds that describe a single session's price action. */
+const SESSION_BOUND_KINDS = new Set(["big_move", "drop_alert"]);
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * True when a session-bound alert's observation is older than the immediately
+ * previous session (>3 calendar days, weekend-tolerant — same policy as
+ * lib/metric.ts metricSessionState). Legacy rows without a session date fall
+ * back to their created date rather than living forever.
+ */
+export function isStaleSessionAlert(
+  n: Pick<Notification, "kind" | "sessionDate" | "createdAt">,
+  now: number = Date.now(),
+): boolean {
+  if (!SESSION_BOUND_KINDS.has(n.kind)) return false;
+  const day = n.sessionDate ?? n.createdAt.slice(0, 10);
+  const t = Date.parse(`${day}T00:00:00`);
+  if (Number.isNaN(t)) return true; // undated session data is untrusted by policy
+  return now - t > 3 * DAY_MS;
+}
 
 /** Exported for unit testing — pure, no I/O. */
 export function buildActionQueue(
@@ -216,6 +261,11 @@ export function buildActionQueue(
 
   for (const n of notifications) {
     if (n.read) continue;
+    // A price-move alert describes one session. Once that session is older
+    // than the immediately previous one (weekend-tolerant), it is history,
+    // not an action — it stays in the bell (retention) but leaves the queue
+    // (audit F-22d: the pre-purge queue led with a five-day-old -8.7%).
+    if (isStaleSessionAlert(n)) continue;
     items.push({
       id: `notification-${n.id}`,
       severity: n.severity === "warning" ? "high" : "low",
@@ -224,6 +274,7 @@ export function buildActionQueue(
       description: n.body,
       href: n.symbol ? `/research?symbol=${n.symbol}` : "/watchlist",
       symbol: n.symbol ?? undefined,
+      observedAt: n.observedAt ?? n.createdAt,
     });
   }
 
@@ -265,12 +316,15 @@ export function buildOpportunitySnapshot(
       absoluteScore: opp.opportunityScore.composite,
     }));
 
-  const ranked = rankByFit(candidates, profile, 0.4).slice(0, 5);
+  const ranked = rankByFit(candidates, profile, DEFAULT_FIT_WEIGHT).slice(0, 5);
   const opportunities: OpportunitySnapshotItem[] = ranked.map((r) => ({
     symbol: r.symbol,
     combinedScore: r.combinedScore,
     fitTier: r.fitTier,
     fitSummary: r.fitSummary,
+    absoluteScore: r.absoluteScore,
+    fitScore: r.fitScore,
+    fitDetail: r.fitDetail ?? null,
   }));
 
   const status: CardStatus = snapshot.freshness.level === "stale" ? "degraded" : "ok";

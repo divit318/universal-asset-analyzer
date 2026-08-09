@@ -20,6 +20,7 @@ import { sectorGroup } from "./sector";
 // (which pulls in node:sqlite via lib/db.ts).
 import type { MarketRegion } from "./market";
 import { lerp, mk, bucket } from "./score-math";
+import { totalReturnClose } from "./prices";
 import { scoreToRecommendation, RECOMMENDATION_LABEL, TIER_EDGES } from "./recommendation";
 
 /* -------------------------------------------------------------------------- */
@@ -28,6 +29,9 @@ import { scoreToRecommendation, RECOMMENDATION_LABEL, TIER_EDGES } from "./recom
 
 const pct = (v: number) => `${(v * 100).toFixed(0)}%`;
 const ratio = (v: number) => v.toFixed(2);
+/** Valuation-multiple rendering — matches lib/format.ts's formatRatio (2dp + "x")
+ *  so a P/E quoted in a factor detail equals the one in the masthead. */
+const pe = (v: number | null | undefined) => (v != null ? `${v.toFixed(2)}x` : "n/a");
 
 /* -------------------------------------------------------------------------- */
 /* Buckets (sector-aware)                                                     */
@@ -43,29 +47,29 @@ export function scoreValuation(s: FundamentalsSnapshot, a: AnalystConsensus) {
   if (sg === "financials") {
     // Banks: P/E is less distorted than for industrials, but still apply tighter range
     return bucket("Valuation", [
-      mk("Analyst upside", a.upsidePercent, -15, 30, 12, (v) => `${v >= 0 ? "+" : ""}${v.toFixed(0)}% to target`),
-      mk("Forward P/E", s.forwardPE, 18, 8, 10, (v) => `Fwd P/E ${v.toFixed(1)}`),
+      mk("Analyst upside", a.upsidePercent, -15, 30, 12, (v) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}% to target`),
+      mk("Forward P/E", s.forwardPE, 18, 8, 10, (v) => `Fwd P/E ${pe(v)}`),
       mk("Forward vs trailing P/E", fwdRatio, 1.2, 0.7, 8, () =>
-        s.forwardPE != null ? `Fwd P/E ${s.forwardPE.toFixed(1)} vs ${s.trailingPE?.toFixed(1)}` : "n/a",
+        s.forwardPE != null ? `Fwd P/E ${pe(s.forwardPE)} vs ${pe(s.trailingPE)}` : "n/a",
       ),
     ]);
   }
   if (sg === "utilities") {
     // Utilities trade at 14-20x P/E as a normal range — don't penalize 18x
     return bucket("Valuation", [
-      mk("Analyst upside", a.upsidePercent, -15, 30, 12, (v) => `${v >= 0 ? "+" : ""}${v.toFixed(0)}% to target`),
-      mk("Forward P/E", s.forwardPE, 28, 13, 10, (v) => `Fwd P/E ${v.toFixed(1)}`),
+      mk("Analyst upside", a.upsidePercent, -15, 30, 12, (v) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}% to target`),
+      mk("Forward P/E", s.forwardPE, 28, 13, 10, (v) => `Fwd P/E ${pe(v)}`),
       mk("Forward vs trailing P/E", fwdRatio, 1.2, 0.6, 8, () =>
-        s.forwardPE != null ? `Fwd P/E ${s.forwardPE.toFixed(1)} vs ${s.trailingPE?.toFixed(1)}` : "n/a",
+        s.forwardPE != null ? `Fwd P/E ${pe(s.forwardPE)} vs ${pe(s.trailingPE)}` : "n/a",
       ),
     ]);
   }
   // default / REITs
   return bucket("Valuation", [
-    mk("Analyst upside", a.upsidePercent, -15, 30, 12, (v) => `${v >= 0 ? "+" : ""}${v.toFixed(0)}% to target`),
+    mk("Analyst upside", a.upsidePercent, -15, 30, 12, (v) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}% to target`),
     mk("PEG ratio", s.pegRatio, 3, 0.8, 10, (v) => `PEG ${ratio(v)}`),
     mk("Forward vs trailing P/E", fwdRatio, 1.2, 0.6, 8, () =>
-      s.forwardPE != null ? `Fwd P/E ${s.forwardPE.toFixed(1)} vs ${s.trailingPE?.toFixed(1)}` : "n/a",
+      s.forwardPE != null ? `Fwd P/E ${pe(s.forwardPE)} vs ${pe(s.trailingPE)}` : "n/a",
     ),
   ]);
 }
@@ -83,11 +87,16 @@ export function scoreQuality(
       : null;
 
   if (sg === "financials") {
-    // Gross margin is not meaningful for banks; ROE is the primary quality signal
+    // Gross margin is not meaningful for banks; ROE is the primary quality
+    // signal. FCF/NI is dropped too: a lender's operating cash flow embeds
+    // loan-book flows, so FCF/NI ≈ 2–3x is routine and the factor saturated
+    // for every bank — a Quality of 25/25 for any profitable lender read as
+    // fake. ROA (the classic bank-quality metric) replaces it, and the ROE
+    // ceiling sits at 22% so a genuinely elite franchise still isn't "perfect".
     return bucket("Quality", [
-      mk("Return on equity", s.returnOnEquity, 0.05, 0.18, 9, (v) => `ROE ${pct(v)}`),
-      mk("Operating margin", s.operatingMargins, 0.10, 0.40, 8, (v) => `Op margin ${pct(v)}`),
-      mk("FCF / net income", fcfQuality, 0.4, 1.1, 8, (v) => `FCF/NI ${ratio(v)}`),
+      mk("Return on equity", s.returnOnEquity, 0.05, 0.22, 9, (v) => `ROE ${pct(v)}`),
+      mk("Return on assets", s.returnOnAssets, 0.005, 0.03, 8, (v) => `ROA ${(v * 100).toFixed(1)}%`),
+      mk("Net margin", s.profitMargins, 0.10, 0.40, 8, (v) => `Net margin ${pct(v)}`),
     ]);
   }
   if (sg === "utilities") {
@@ -121,11 +130,16 @@ export function scoreGrowth(
     ]);
   }
   if (sg === "financials" || sg === "reits") {
-    // Banks and REITs: 10-12% revenue growth is strong
+    // Banks and REITs: 10-12% revenue growth is strong — but "strong" must
+    // not be the ceiling. The old bands topped out at 12/15/8%, which every
+    // large Indian private bank clears in a normal year, so four of five
+    // compared banks scored an identical, saturated 100. The top of the band
+    // now sits where growth is genuinely exceptional for a lender, so 12% vs
+    // 18% vs 25% remain distinguishable.
     return bucket("Growth", [
-      mk("Revenue growth", s.revenueGrowth, -0.02, 0.12, 9, (v) => `Rev growth ${v >= 0 ? "+" : ""}${pct(v)}`),
-      mk("Earnings growth", s.earningsGrowth, -0.05, 0.15, 8, (v) => `EPS growth ${v >= 0 ? "+" : ""}${pct(v)}`),
-      mk("Revenue CAGR", st?.revenueCagr, -0.01, 0.08, 8, (v) => `Rev CAGR ${pct(v)}`),
+      mk("Revenue growth", s.revenueGrowth, -0.02, 0.25, 9, (v) => `Rev growth ${v >= 0 ? "+" : ""}${pct(v)}`),
+      mk("Earnings growth", s.earningsGrowth, -0.05, 0.30, 8, (v) => `EPS growth ${v >= 0 ? "+" : ""}${pct(v)}`),
+      mk("Revenue CAGR", st?.revenueCagr, -0.01, 0.20, 8, (v) => `Rev CAGR ${pct(v)}`),
     ]);
   }
   // default
@@ -144,11 +158,24 @@ export function scoreHealth(s: FundamentalsSnapshot) {
       : null;
 
   if (sg === "financials") {
-    // Banks are structurally leveraged by design; D/E of 8-12x is healthy.
-    // Current ratio is not a meaningful metric for banks — omit it.
+    // Banks: current ratio and EBITDA are not meaningful — deposits are
+    // current liabilities by design, and interest is both core revenue and
+    // core cost. Net debt/EBITDA used to sit here anyway; since EBITDA is
+    // null for every bank, mk() half-credited it for every bank identically,
+    // which (with the D/E band below saturating) pinned the whole bucket at
+    // exactly 70% for any profitable lender.
+    //
+    // What a bank-health score SHOULD blend (CAR/CET1, GNPA/NNPA, provision
+    // coverage, CASA) is not in the provider dataset, so the bucket uses the
+    // two genuine health signals that are: leverage (D/E — Yahoo's figure,
+    // normalized ÷100 in lib/fundamentals.ts, covers borrowings over equity;
+    // majors land ~0.5-1.5, stressed lenders 2.5+; the old 20→4 band assumed
+    // the unnormalized scale and full-credited every bank in existence) and
+    // operating efficiency (operating margin as a cost-income proxy — the
+    // standard resilience measure regulators track for lenders).
     return bucket("Financial Health", [
-      mk("Debt / equity", s.debtToEquity, 20, 4, 8, (v) => `D/E ${ratio(v)}`),
-      mk("Net debt / EBITDA", netDebtToEbitda, 15, 2, 12, (v) => `Net debt/EBITDA ${ratio(v)}`),
+      mk("Debt / equity", s.debtToEquity, 3, 0.3, 12, (v) => `D/E ${ratio(v)} (borrowings / equity)`),
+      mk("Operating efficiency", s.operatingMargins, 0.20, 0.55, 8, (v) => `Op margin ${pct(v)} (cost-income proxy)`),
     ]);
   }
   if (sg === "utilities") {
@@ -229,14 +256,23 @@ const sma = (xs: number[], n: number): number | null =>
  * Derive a price-momentum signal from daily closes. Pure so it can be tested
  * with a synthetic series. Returns null when there isn't enough history to be
  * meaningful (< ~1 month of closes).
+ *
+ * Computed on the total-return series (lib/prices.ts) so returns, SMA
+ * distances, and the 52-week range share one basis with the Screener and
+ * portfolio analytics — raw close understated every dividend payer's return.
  */
 export function computeMomentum(history: HistoryPoint[]): MomentumSignal | null {
-  const closes = history.map((p) => p.close).filter((c) => c > 0);
+  const closes = history.map(totalReturnClose).filter((c) => c > 0);
   if (closes.length < 20) return null;
 
   const price = closes.at(-1)!;
-  const hi = Math.max(...closes);
-  const lo = Math.min(...closes);
+  // 52-week range means the last ~252 trading sessions, NOT the whole series
+  // — callers pass up to 5 years of history (the research/compare bundles use
+  // 1825 days), and Math.max over all of it silently turned "from 52W high"
+  // into "from 5-year high".
+  const window52wk = closes.slice(-252);
+  const hi = Math.max(...window52wk);
+  const lo = Math.min(...window52wk);
   const sma50 = sma(closes, 50);
   const sma200 = sma(closes, 200);
   const back3m = closes.at(-Math.min(63, closes.length))!;
@@ -615,11 +651,13 @@ export function assessRisks(
   let finLevel: RiskLevel = "low";
   const finReasons: string[] = [];
   if (sg === "financials") {
-    // Banks: only flag D/E > 15x as high, > 10x as medium
-    if (s.debtToEquity != null && s.debtToEquity > 15) {
+    // Banks: snapshot D/E is the NORMALIZED borrowings/equity ratio (see
+    // lib/fundamentals.ts ÷100) where majors sit ~0.5-1.5 — the old 10x/15x
+    // thresholds were calibrated to the unnormalized scale and never fired.
+    if (s.debtToEquity != null && s.debtToEquity > 3) {
       finLevel = worse(finLevel, "high");
       finReasons.push(`D/E ${ratio(s.debtToEquity)} (very high for a bank)`);
-    } else if (s.debtToEquity != null && s.debtToEquity > 10) {
+    } else if (s.debtToEquity != null && s.debtToEquity > 2) {
       finLevel = worse(finLevel, "medium");
       finReasons.push(`D/E ${ratio(s.debtToEquity)}`);
     }

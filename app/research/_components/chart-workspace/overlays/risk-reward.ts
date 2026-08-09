@@ -5,7 +5,7 @@
  */
 import { registerOverlay } from "klinecharts";
 import type { OverlayFigure, OverlayTemplate } from "klinecharts";
-import { readTextStyle } from "./style-utils";
+import { readTextStyle, themeToken, withOpacity } from "./style-utils";
 
 const ZONE_WIDTH = 80; // px, extends right from the entry point
 
@@ -21,13 +21,16 @@ const template: OverlayTemplate = {
     const [entry, stop, target] = coordinates;
     const [p0, p1, p2] = overlay.points;
     const text = readTextStyle(overlay.styles);
+    // Semantic zone colors follow the active theme (see themeToken docstring).
+    const negative = themeToken("--negative", "#f87171");
+    const positive = themeToken("--positive", "#4ade80");
 
     const figures: OverlayFigure[] = [
       {
         key: "risk-zone",
         type: "rect",
         attrs: { x: entry.x, y: Math.min(entry.y, stop.y), width: ZONE_WIDTH, height: Math.abs(stop.y - entry.y) },
-        styles: { style: "fill", color: "rgba(248, 113, 113, 0.2)", borderColor: "rgba(248, 113, 113, 0.6)", borderSize: 1 },
+        styles: { style: "fill", color: withOpacity(negative, 0.2), borderColor: withOpacity(negative, 0.6), borderSize: 1 },
       },
     ];
 
@@ -36,7 +39,7 @@ const template: OverlayTemplate = {
         key: "reward-zone",
         type: "rect",
         attrs: { x: entry.x, y: Math.min(entry.y, target.y), width: ZONE_WIDTH, height: Math.abs(target.y - entry.y) },
-        styles: { style: "fill", color: "rgba(74, 222, 128, 0.2)", borderColor: "rgba(74, 222, 128, 0.6)", borderSize: 1 },
+        styles: { style: "fill", color: withOpacity(positive, 0.2), borderColor: withOpacity(positive, 0.6), borderSize: 1 },
       });
 
       if (p0?.value != null && p1?.value != null && p2?.value != null) {

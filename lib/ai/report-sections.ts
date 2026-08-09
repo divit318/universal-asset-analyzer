@@ -7,9 +7,9 @@
  * can be produced and streamed independently. I built that first and measured
  * it, and it is the wrong design *for this platform*:
  *
- *   - Local Ollama **serializes** requests (measured: three concurrent
- *     generations take as long as three sequential ones — 1.13x, not 3x). So
- *     nine independent section generations cost ~9x one generation.
+ *   - The then-local backend **serialized** requests (measured: three
+ *     concurrent generations took as long as three sequential ones — 1.13x,
+ *     not 3x). So nine independent section generations cost ~9x one.
  *   - In practice that turned a ~40s report into a 138s report, with the first
  *     section arriving at 32s — barely better than just waiting for the whole
  *     monolithic verdict.
@@ -38,6 +38,7 @@
  */
 
 import { buildEquityFacts, buildPortfolioFacts, hasPortfolioContext, type PortfolioFacts } from "./facts";
+import { scoreDirection } from "../recommendation";
 import type { DatasetId } from "../platform/types";
 import type { CompanyContext } from "./types";
 
@@ -123,6 +124,23 @@ export function buildVerdictPrompt(
   const hasPortfolioCtx = hasPortfolioContext(portfolio);
   const suggestedPct = portfolio?.suggestedPct ?? null;
 
+  // The verdict direction is settled in code (lib/ai/verdict.ts overrides the
+  // parsed field from the composite score) — the prompt states the conclusion
+  // so the narration argues FOR it instead of contradicting it.
+  const verdictRequirement = ctx.score
+    ? `- verdict: MUST be exactly "${scoreDirection(ctx.score.composite)}" — it is computed from the composite score of ${ctx.score.composite}/100 and is not yours to change`
+    : `- verdict: bullish, bearish, or neutral — justify it strictly from the data above`;
+
+  // The unified action (Research Score × Portfolio Fit, lib/ios/unified-action.ts)
+  // is settled by the deterministic engines before the model is asked to write.
+  // Stating it as a hard requirement is what makes the narration, the fit panel,
+  // and the position action card structurally incapable of disagreeing.
+  const unifiedAction = portfolio?.action ?? null;
+  const actionRequirement = unifiedAction
+    ? `
+- Your recommended course of action MUST be exactly "${unifiedAction.toUpperCase()}"${suggestedPct ? ` at ${suggestedPct}% of the portfolio` : ""} — it is computed from the research score and the portfolio fit together and is not yours to change. Argue FOR it; never suggest a different action or allocation.`
+    : "";
+
   const portfolioInstructions = hasPortfolioCtx
     ? `
 PORTFOLIO PERSONALIZATION (mandatory):
@@ -130,7 +148,7 @@ PORTFOLIO PERSONALIZATION (mandatory):
 - The thesis MUST include 1 sentence about how this fits or doesn't fit this user's specific portfolio
 - If it fills a missing sector, call that out explicitly
 - Recommend position sizing consistent with the IOS-suggested allocation of ${suggestedPct ?? "N/A"}%
-- If already held: frame as "add to position" vs "initiate new position"`
+- If already held: frame as "add to position" vs "initiate new position"${actionRequirement}`
     : "";
 
   const prompt = `You are an institutional buy-side equity analyst. Based ONLY on the data below, generate a structured investment verdict.
@@ -154,7 +172,8 @@ Respond with ONLY a raw JSON object — no markdown, no code fences, no explanat
 }
 
 REQUIREMENTS:
-- verdict: bullish if score>65 AND no high risks overwhelming thesis; bearish if score<40 OR multiple compounding high risks; neutral otherwise
+${verdictRequirement}
+- Every score, subscore, or percentage you mention MUST be copied verbatim from the DATA block above (the "Composite score" and "Score breakdown" lines). Do not compute, round differently, or invent any score figure.
 - headline: NO generic phrases like "shows potential" — make a real investment call${hasPortfolioCtx ? " — MUST reference portfolio fit" : ""}
 - catalysts + risks: MUST cite specific numbers from the data. Generic bullets will be rejected.
 - keyMetrics: exactly 5, covering valuation + quality + growth + momentum + analyst

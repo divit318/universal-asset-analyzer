@@ -237,7 +237,7 @@ export const KLineChart = forwardRef<KLineChartHandle, KLineChartProps>(function
             key={key}
             onClick={() => toggleIndicator(key)}
             className={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
-              active[key] ? "bg-blue-500/20 text-blue-400" : "text-muted hover:bg-surface-2 hover:text-foreground"
+              active[key] ? "bg-blue-500/20 text-blue-400 light:text-sky-700" : "text-muted hover:bg-surface-2 hover:text-foreground"
             }`}
           >
             {label}

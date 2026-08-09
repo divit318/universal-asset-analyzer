@@ -8,15 +8,17 @@ import { EventDrawer } from "./_components/event-drawer";
 import { PageShell, Skeleton } from "@/app/_components/ui";
 import { Reveal } from "@/app/_components/reveal";
 import { AI_RECOVERY_HINT } from "@/lib/ai/availability";
+import { AiBadge } from "@/app/_components/ai-badge";
+import { Markdown } from "@/app/_components/markdown";
 
 // ─── Style constants ────────────────────────────────────────────────────────
 
 const TYPE_STYLES: Record<CalendarEvent["type"], {
   label: string; color: string; bg: string; border: string; dot: string;
 }> = {
-  earnings:   { label: "Earnings",  color: "text-blue-400",    bg: "bg-blue-400/10",   border: "border-blue-400/25",   dot: "bg-blue-400" },
+  earnings:   { label: "Earnings",  color: "text-chart-2",    bg: "bg-chart-2/10",   border: "border-chart-2/25",   dot: "bg-chart-2" },
   exDividend: { label: "Ex-Div",    color: "text-brand",      bg: "bg-brand/10",     border: "border-brand/25",     dot: "bg-brand" },
-  dividend:   { label: "Dividend",  color: "text-emerald-400", bg: "bg-emerald-400/10", border: "border-emerald-400/25", dot: "bg-emerald-400" },
+  dividend:   { label: "Dividend",  color: "text-emerald-400 light:text-emerald-700", bg: "bg-emerald-400/10", border: "border-emerald-400/25", dot: "bg-emerald-400 light:bg-emerald-600" },
   macro:      { label: "Macro",     color: "text-warning",   bg: "bg-warning/10",  border: "border-warning/25",  dot: "bg-warning" },
 };
 
@@ -157,7 +159,7 @@ function EarningsRow({ ev, onClick, isPortfolio, isWatchlist }: {
   return (
     <button
       onClick={onClick}
-      className="group w-full rounded-xl border border-border bg-surface px-4 py-4 text-left transition-all hover:border-blue-400/30 hover:bg-surface-2"
+      className="group w-full rounded-xl border border-border bg-surface px-4 py-4 text-left transition-all hover:border-chart-2/30 hover:bg-surface-2"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1.5">
@@ -170,7 +172,7 @@ function EarningsRow({ ev, onClick, isPortfolio, isWatchlist }: {
               </span>
             )}
             {!isPortfolio && isWatchlist && (
-              <span className="rounded border border-blue-400/20 bg-blue-400/8 px-1.5 py-0.5 text-micro font-bold uppercase tracking-widest text-blue-400">
+              <span className="rounded border border-chart-2/20 bg-chart-2/8 px-1.5 py-0.5 text-micro font-bold uppercase tracking-widest text-chart-2">
                 Watchlist
               </span>
             )}
@@ -182,7 +184,7 @@ function EarningsRow({ ev, onClick, isPortfolio, isWatchlist }: {
           {/* Name row */}
           <div className="flex items-center gap-2">
             {ev.symbol && (
-              <span className="font-mono text-sm font-bold text-blue-400">{ev.symbol}</span>
+              <span className="font-mono text-sm font-bold text-chart-2">{ev.symbol}</span>
             )}
             <span className="truncate text-sm text-foreground">{ev.name}</span>
           </div>
@@ -245,7 +247,7 @@ function DividendRow({ ev, onClick, isPortfolio, isWatchlist }: {
               <span className="rounded border border-brand/20 bg-brand/8 px-1.5 py-0.5 text-micro font-bold uppercase tracking-widest text-brand">Portfolio</span>
             )}
             {!isPortfolio && isWatchlist && (
-              <span className="rounded border border-blue-400/20 bg-blue-400/8 px-1.5 py-0.5 text-micro font-bold uppercase tracking-widest text-blue-400">Watchlist</span>
+              <span className="rounded border border-chart-2/20 bg-chart-2/8 px-1.5 py-0.5 text-micro font-bold uppercase tracking-widest text-chart-2">Watchlist</span>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -404,7 +406,7 @@ function SummaryStrip({ events, portfolioSymbols, watchlistSymbols }: {
     const d = daysFromNow(nextEarnings.date);
     stats.push({
       label: "Next Earnings",
-      value: <span className="text-blue-400">{nextEarnings.symbol ?? nextEarnings.name.slice(0, 8)}</span>,
+      value: <span className="text-chart-2">{nextEarnings.symbol ?? nextEarnings.name.slice(0, 8)}</span>,
       sub: daysLabel(d),
     });
   }
@@ -427,8 +429,10 @@ function SummaryStrip({ events, portfolioSymbols, watchlistSymbols }: {
 
   return (
     <div className="flex flex-wrap gap-px rounded-xl border border-border bg-border overflow-hidden">
+      {/* `grow` so the tiles fill each row edge-to-edge — without it the strip
+          ended in a wide dead slab of the container's bg-border. */}
       {stats.map((s, i) => (
-        <div key={i} className="flex flex-col gap-0.5 bg-surface px-5 py-3 min-w-[110px]">
+        <div key={i} className="flex min-w-[110px] grow flex-col gap-0.5 bg-surface px-5 py-3">
           <span className="text-label font-semibold uppercase tracking-widest text-muted/60">{s.label}</span>
           <span className="font-mono text-lg font-bold">{s.value}</span>
           {s.sub && <span className="text-label text-muted">{s.sub}</span>}
@@ -495,10 +499,10 @@ function AiBriefSection({ events, autoGenerate }: { events: CalendarEvent[]; aut
           <div className="text-left">
             <div className="flex items-center gap-2">
               <p className="text-sm font-semibold">AI Weekly Market Brief</p>
-              <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-label font-semibold uppercase tracking-widest text-warning">Local AI</span>
+              <AiBadge className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-label font-semibold uppercase tracking-widest text-warning" />
               {loading && <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />}
             </div>
-            <p className="text-xs text-muted">Ollama-generated summary of this week&apos;s most important events</p>
+            <p className="text-xs text-muted">AI-written summary of this week&apos;s most important events</p>
           </div>
         </div>
         <svg
@@ -514,18 +518,22 @@ function AiBriefSection({ events, autoGenerate }: { events: CalendarEvent[]; aut
           {loading && (
             <div className="flex items-center gap-3 py-4">
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-amber-400" />
-              <span className="text-sm text-muted">Generating weekly brief via Ollama — typically ~20s…</span>
+              <span className="text-sm text-muted">Generating weekly brief — typically a few seconds…</span>
             </div>
           )}
           {error && (
             <div className="rounded-lg border border-negative/30 bg-negative/8 px-4 py-3 text-sm text-negative">
-              {error.includes("Ollama") || error.includes("provider") || error.includes("fetch") || error.includes("ECONNREFUSED")
+              {error.includes("key") || error.includes("provider") || error.includes("fetch") || error.includes("ECONNREFUSED")
                 ? `No AI provider is reachable, so briefs cannot be generated. ${AI_RECOVERY_HINT}`
                 : error}
             </div>
           )}
           {brief && (
-            <p className="text-sm leading-7 text-foreground/90">{brief}</p>
+            // Rendered, not echoed: the model emits markdown emphasis, and a
+            // bare <p> printed the literal `**…**` asterisks (2026-08-10 audit).
+            <div className="text-sm leading-6 text-foreground/90">
+              <Markdown content={brief} />
+            </div>
           )}
           {brief && (
             <div className="mt-3 flex items-center gap-2">

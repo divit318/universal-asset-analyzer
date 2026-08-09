@@ -8,7 +8,16 @@
 
 import { formatPercent, formatCompact } from "@/lib/format";
 
-/** Signed percent, e.g. +1.2% / −0.5%. Uses a true minus sign for alignment. */
+/**
+ * Signed percent, e.g. +1.2% / −0.5%. Uses a true minus sign for alignment.
+ *
+ * RESTRICTED (audit F-22b): for NON-SESSION quantities only — XIRR, total
+ * return on cost, contribution shares, and animated count-up interpolations.
+ * Anything that describes a market session ("today's move", a quote change)
+ * must render through `MetricDelta` (../_viz/stamped.tsx), which carries the
+ * as-of stamp and staleness treatment. New bare-number day-change call sites
+ * are a regression.
+ */
 export function fmtSignedPct(value: number | null | undefined, digits = 1): string {
   if (value == null || Number.isNaN(value)) return "—";
   return formatPercent(value, digits).replace("-", "−");
@@ -25,6 +34,34 @@ export function fmtSignedMoney(value: number | null | undefined): string {
 export function fmtMoney(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return "—";
   return `$${formatCompact(value)}`;
+}
+
+/**
+ * Grade band → data colour (§16 — data-only colour). One mapping shared by
+ * every surface that renders the health grade, so the brief's KPI strip and
+ * the Portfolio Health ring can never disagree about what a "B" looks like.
+ */
+export function gradeTone(grade: string | null): { stroke: string; text: string } {
+  const g = (grade ?? "").charAt(0).toUpperCase();
+  if (g === "A" || g === "B") return { stroke: "var(--positive)", text: "text-positive" };
+  if (g === "C") return { stroke: "var(--warning)", text: "text-warning" };
+  if (g === "D" || g === "F") return { stroke: "var(--negative)", text: "text-negative" };
+  return { stroke: "var(--brand)", text: "text-foreground" };
+}
+
+/**
+ * Today's date for the Today page's headers — the page `<h1>` uses the long
+ * form ("Friday, August 7"), the Market Overview card the short one
+ * ("Fri, Aug 7"). One formatter, weekday always derived from the actual date,
+ * so the two headers can never disagree about what day it is.
+ */
+export function fmtTodayDate(style: "long" | "short", now: Date = new Date()): string {
+  return now.toLocaleDateString(
+    undefined,
+    style === "long"
+      ? { weekday: "long", month: "long", day: "numeric" }
+      : { weekday: "short", month: "short", day: "numeric" },
+  );
 }
 
 /** "2m ago", "3h ago", "5d ago" — compact relative past. */

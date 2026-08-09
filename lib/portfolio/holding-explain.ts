@@ -2,7 +2,7 @@
  * "Why do I own this?" — on-demand, per-holding explanation.
  *
  * Unlike the Portfolio Thesis (which regenerates automatically), this is
- * strictly user-triggered: a click per holding. Ollama serializes requests, so
+ * strictly user-triggered: a click per holding. Eager generation for every row would be pure spend, so
  * this must never be auto-fired for every row on page load — see
  * lib/platform/ARCHITECTURE notes on per-section AI generation being measured
  * and rejected. One click, one call, cached by (holding, portfolio) content

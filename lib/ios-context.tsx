@@ -27,6 +27,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { usePathname } from "next/navigation";
 
 import type { PortfolioObjective, PortfolioConstraints } from "@/lib/ios/types";
 import { DEFAULT_CONSTRAINTS } from "@/lib/ios/types";
@@ -193,11 +194,18 @@ export function IOSProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // The marketing surface (/landing) is a static page with a zero-API-calls
+  // contract; the IOS profile has no consumer there, so don't spend a full
+  // portfolio-report computation on it. usePathname re-evaluates on client
+  // navigation, so entering the app proper starts the fetch as before.
+  const pathname = usePathname();
+  const onMarketing = pathname === "/landing" || pathname?.startsWith("/landing/");
+
   const { data: report, isInitialLoading, refresh: refreshReport } = useDataset<UniversalPortfolioReport>(
     "portfolioReport",
     "maximize_sharpe",
     fetchDefaultReport,
-    { enabled: deferred },
+    { enabled: deferred && !onMarketing },
   );
   const profileLoading = deferred && isInitialLoading;
   const profileReady = !isInitialLoading;

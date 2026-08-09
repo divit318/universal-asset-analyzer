@@ -17,14 +17,47 @@
  * ignore it, which is worse than not having it.
  */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, GitCompareArrows } from "lucide-react";
+import { ChevronDown, GitCompareArrows, Sparkles } from "lucide-react";
 import type { HomeChange, HomeChangeTone } from "@/lib/home/contracts";
 import { SymbolTag } from "../_atmosphere/symbol-link";
-import { useHomeSlice } from "../home-provider";
+import { useHome, useHomeSlice } from "../home-provider";
+import { useTelemetry } from "../use-telemetry";
 
 const MAX_CHIPS = 5;
+
+/**
+ * First sentence of the brief's headline — the AI's one surviving line on the
+ * default page (audit 06 restructure B: the verdict captions the diff it
+ * summarizes; the retired hero gave a restatement 34px and half the fold).
+ */
+function firstSentence(text: string): string {
+  const m = text.match(/^(.+?[.!?])(?:\s|$)/);
+  return m ? m[1] : text;
+}
+
+/**
+ * Collapses per-symbol chips of one kind into a single reference chip (audit
+ * RD-06): "New idea: ALL fits your book (79)" four times is one fact, "4 new
+ * ideas in the Radar", stated once and pointed at its owner.
+ */
+function groupChanges(changes: HomeChange[]): HomeChange[] {
+  const ideaChips = changes.filter((c) => c.kind === "opportunity-new");
+  if (ideaChips.length < 2) return changes;
+  const grouped: HomeChange = {
+    id: "grouped-ideas",
+    kind: "opportunity-new",
+    tone: "new",
+    headline: `${ideaChips.length} new ideas in the Radar`,
+    detail: ideaChips.map((c) => c.headline).join(" · "),
+    symbol: null,
+    href: "#radar",
+    magnitude: Math.max(...ideaChips.map((c) => c.magnitude)),
+  };
+  const rest = changes.filter((c) => c.kind !== "opportunity-new");
+  return [grouped, ...rest].sort((a, b) => b.magnitude - a.magnitude);
+}
 
 const TONE_CHIP: Record<HomeChangeTone, string> = {
   improved: "border-positive/30 text-positive bg-positive/8",
@@ -94,68 +127,140 @@ function DetailRow({ c }: { c: HomeChange }) {
 
 export function WhatsChangedModule() {
   const state = useHomeSlice("changes");
+  const fallback = useHomeSlice("fallbackBriefing");
+  const { brief } = useHome();
+  const track = useTelemetry();
   const [expanded, setExpanded] = useState(false);
 
   const data = state.data;
+  const grouped = useMemo(() => (data ? groupChanges(data.changes) : []), [data]);
+
+  // The AI's one line on the default page. Deterministic fallback until (or
+  // instead of) the model's text; the full note lives in the disclosure.
+  const headline = brief.data?.headline || fallback.data || "";
+  const verdict = headline ? firstSentence(headline) : null;
+  const isAi = !!brief.data?.headline && brief.data.aiGenerated;
+  const note = brief.data?.note ?? null;
+
   // A loading or degraded change feed renders nothing at all: this band earns
   // its place by having something true to say, never by holding space.
   if (!data || data.status === "degraded") return null;
 
   const label = (
-    <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-faint">
+    // text-muted, not text-faint: the faint tier fails AA below 12 px and this
+    // label carries real information (DESIGN R1 / audit AC-01).
+    <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">
       <GitCompareArrows className="h-3.5 w-3.5" strokeWidth={2} />
       Since last visit
-      {data.baselineAt ? <span className="font-normal normal-case tracking-normal text-faint">· {sinceLabel(data.baselineAt)}</span> : null}
+      {data.baselineAt ? <span className="font-normal normal-case tracking-normal text-muted">· {sinceLabel(data.baselineAt)}</span> : null}
     </span>
   );
 
-  if (data.firstVisit) {
-    return (
-      <div id="whats-changed" className="flex items-center gap-3 rounded-card border border-border/60 bg-surface/60 px-4 py-2.5">
-        {label}
-        <span className="text-[11px] text-muted">First visit — from now on, what moved while you were away shows up here.</span>
-      </div>
-    );
-  }
+  // The verdict row: the AI's (or the deterministic briefing's) one sentence,
+  // labelled for what it is, with the full morning note in the disclosure.
+  const verdictRow = verdict ? (
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 border-t border-hairline pt-2">
+      <span className="inline-flex shrink-0 translate-y-px items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-brand/80">
+        <Sparkles className="h-3 w-3" strokeWidth={2.5} aria-hidden />
+        {isAi ? "AI read" : "Computed"}
+      </span>
+      <p className="min-w-0 flex-1 text-[13px] leading-snug text-foreground/85">{verdict}</p>
+      {brief.data?.generatedAt && isAi ? (
+        <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted">
+          {new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(new Date(brief.data.generatedAt))}
+        </span>
+      ) : null}
+    </div>
+  ) : null;
 
-  if (data.changes.length === 0) {
-    return (
-      <div id="whats-changed" className="flex items-center gap-3 rounded-card border border-border/60 bg-surface/60 px-4 py-2.5">
-        {label}
-        <span className="text-[11px] text-muted">Nothing material changed. Your queue and scores are where you left them.</span>
-      </div>
-    );
-  }
+  const emptyLine = data.firstVisit
+    ? "First visit. From now on, what moved while you were away shows up here."
+    : grouped.length === 0
+      ? "Nothing material changed. Your queue and scores are where you left them."
+      : null;
 
-  const chips = data.changes.slice(0, MAX_CHIPS);
-  const overflow = data.changes.length - chips.length;
+  const chips = grouped.slice(0, MAX_CHIPS);
+  const overflow = grouped.length - chips.length;
+  const hasDisclosure = grouped.length > 0 || note != null;
 
   return (
     <div id="whats-changed" className="uaa-card flex flex-col px-4 py-2.5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         {label}
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-          {chips.map((c) => (
-            <ChangeChip key={c.id} c={c} />
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={() => setExpanded((e) => !e)}
-          aria-expanded={expanded}
-          className="inline-flex shrink-0 items-center gap-1 rounded-control px-2 py-1 text-[11px] font-medium text-brand outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand/40"
-        >
-          <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`} strokeWidth={2} />
-          {expanded ? "Less" : overflow > 0 ? `Details (+${overflow})` : "Details"}
-        </button>
+        {emptyLine ? (
+          <span className="min-w-0 flex-1 text-[11px] text-muted">{emptyLine}</span>
+        ) : (
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+            {chips.map((c) => (
+              <ChangeChip key={c.id} c={c} />
+            ))}
+          </div>
+        )}
+        {hasDisclosure ? (
+          <button
+            type="button"
+            onClick={() => {
+              // One disclosure reveals both surfaces, so opening it emits per
+              // surface actually present (audit 13 IN-04: is the AI's morning
+              // note ever read; IN-05: are the deltas ever expanded).
+              if (!expanded) {
+                if (grouped.length > 0) track("changes_expanded", { count: grouped.length });
+                if (note) track("brief_note_expanded", { ai: isAi });
+              }
+              setExpanded((e) => !e);
+            }}
+            aria-expanded={expanded}
+            className="inline-flex shrink-0 items-center gap-1 rounded-control px-2 py-1 text-[11px] font-medium text-brand outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand/40"
+          >
+            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`} strokeWidth={2} />
+            {expanded ? "Less" : overflow > 0 ? `Details (+${overflow})` : note ? "Morning note" : "Details"}
+          </button>
+        ) : null}
       </div>
 
+      {verdictRow ? <div className="mt-2">{verdictRow}</div> : null}
+
       {expanded ? (
-        <ul className="mt-2 flex flex-col divide-y divide-hairline border-t border-hairline pt-1">
-          {data.changes.map((c) => (
-            <DetailRow key={c.id} c={c} />
-          ))}
-        </ul>
+        <>
+          {grouped.length > 0 ? (
+            <ul className="mt-2 flex flex-col divide-y divide-hairline border-t border-hairline pt-1">
+              {grouped.map((c) => (
+                <DetailRow key={c.id} c={c} />
+              ))}
+            </ul>
+          ) : null}
+          {note ? (
+            <div className="mt-3 grid grid-cols-1 gap-x-8 gap-y-3 border-t border-hairline pt-3 sm:grid-cols-2">
+              {(
+                [
+                  ["Regime", note.regime],
+                  ["Portfolio", note.portfolio],
+                  ["Opportunities", note.opportunities],
+                  ["Risks", note.risks],
+                  ["Sectors", note.sectors],
+                  ["Macro", note.macro],
+                ] as const
+              )
+                .filter(([, text]) => !!text)
+                .map(([title, text]) => (
+                  <div key={title} className="flex flex-col gap-0.5">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">{title}</span>
+                    <p className="text-[12px] leading-relaxed text-foreground/80">{text}</p>
+                  </div>
+                ))}
+              {note.recommendations.length > 0 ? (
+                <div className="flex flex-col gap-0.5 sm:col-span-2">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">Recommendations</span>
+                  <ul className="flex list-disc flex-col gap-0.5 pl-4 text-[12px] leading-relaxed text-foreground/80">
+                    {note.recommendations.map((r, i) => (
+                      <li key={i}>{r}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </>
       ) : null}
     </div>
   );

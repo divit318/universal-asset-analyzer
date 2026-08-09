@@ -89,6 +89,14 @@ export function OwnershipCard({ ownership }: { ownership: OwnershipData }) {
   const shortHighlight =
     shortPct == null ? "neutral" : shortPct > 10 ? "negative" : shortPct > 5 ? "neutral" : "positive";
 
+  // Yahoo occasionally reports institutional ownership above 100% (13F
+  // double-counting). A progress bar cannot honestly show >100%, so the raw
+  // figure renders with a footnote and no bar.
+  const instOverCounted = institutionsPctHeld != null && institutionsPctHeld > 1;
+  // Whole column is dropped when no holder reports a share count (all dashes
+  // reads as broken data, not as sparse data).
+  const hasShares = (ownership.topHolders ?? []).some((h) => h.shares != null);
+
   return (
     <div className="card-lift flex flex-col gap-4 rounded-xl border border-border bg-surface p-4">
       <div>
@@ -102,15 +110,21 @@ export function OwnershipCard({ ownership }: { ownership: OwnershipData }) {
           index={0}
           label="Institutional"
           value={pct(institutionsPctHeld)}
-          barValue={institutionsPctHeld != null ? institutionsPctHeld * 100 : undefined}
+          barValue={institutionsPctHeld != null && !instOverCounted ? institutionsPctHeld * 100 : undefined}
           barColorClass="bg-accent/60"
-          sub={institutionsCount != null ? `${institutionsCount.toLocaleString()} holders` : undefined}
+          sub={
+            instOverCounted
+              ? ">100% — 13F double-counting artifact"
+              : institutionsCount != null ? `${institutionsCount.toLocaleString()} holders` : undefined
+          }
         />
         <MetricBox
           index={1}
           label="Insiders"
+          // A 0.3% stake renders as a sub-pixel sliver; give any nonzero stake
+          // a minimum visible width. Value text stays exact — the bar is a cue.
           value={pct(insidersPctHeld)}
-          barValue={insidersPctHeld != null ? insidersPctHeld * 100 : undefined}
+          barValue={insidersPctHeld != null ? Math.max(insidersPctHeld * 100, insidersPctHeld > 0 ? 2 : 0) : undefined}
           barColorClass="bg-warning/70"
           sub="officers & directors"
         />
@@ -134,8 +148,10 @@ export function OwnershipCard({ ownership }: { ownership: OwnershipData }) {
           label="Days to Cover"
           value={shortRatio != null ? `${shortRatio.toFixed(1)}d` : "—"}
           sub="short interest ratio"
+          // 5 days to cover is unremarkable for a large-cap. Red is reserved
+          // for genuinely elevated squeeze/covering risk (>10 days).
           highlight={
-            shortRatio == null ? "neutral" : shortRatio > 5 ? "negative" : "neutral"
+            shortRatio == null ? "neutral" : shortRatio > 10 ? "negative" : "neutral"
           }
         />
       </div>
@@ -155,9 +171,11 @@ export function OwnershipCard({ ownership }: { ownership: OwnershipData }) {
                 <tr className="border-b border-border bg-surface-2/50">
                   <th className="px-3 py-2 text-left font-medium text-muted">Institution</th>
                   <th className="px-3 py-2 text-right font-medium text-muted">% Held</th>
-                  <th className="hidden px-3 py-2 text-right font-medium text-muted sm:table-cell">
-                    Shares
-                  </th>
+                  {hasShares && (
+                    <th className="hidden px-3 py-2 text-right font-medium text-muted sm:table-cell">
+                      Shares
+                    </th>
+                  )}
                   <th className="hidden px-3 py-2 text-right font-medium text-muted sm:table-cell">
                     Value
                   </th>
@@ -170,9 +188,11 @@ export function OwnershipCard({ ownership }: { ownership: OwnershipData }) {
                     <td className="px-3 py-2 text-right font-mono">
                       {h.pctHeld != null ? pct(h.pctHeld, 2) : "—"}
                     </td>
-                    <td className="hidden px-3 py-2 text-right font-mono text-muted sm:table-cell">
-                      {compact(h.shares)}
-                    </td>
+                    {hasShares && (
+                      <td className="hidden px-3 py-2 text-right font-mono text-muted sm:table-cell">
+                        {compact(h.shares)}
+                      </td>
+                    )}
                     <td className="hidden px-3 py-2 text-right font-mono text-muted sm:table-cell">
                       {h.value != null ? `$${compact(h.value)}` : "—"}
                     </td>

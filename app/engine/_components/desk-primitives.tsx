@@ -16,7 +16,8 @@
 
 import type { CSSProperties, ReactNode } from "react";
 import { CountUp } from "@/app/_components/count-up";
-import { REGIME_COLOR } from "@/lib/engine-desk";
+import { useTheme } from "@/app/_components/theme";
+import { regimeColor } from "@/lib/engine-desk";
 
 /* -------------------------------------------------------------------------- */
 /* Numbers                                                                     */
@@ -249,8 +250,9 @@ export function Sparkline({
 /** The regime label, tinted by state. Colour is the fastest possible read of
  *  "what market are we in", which is the desk's first question. */
 export function RegimeChip({ label, size = "md" }: { label: string | null; size?: "sm" | "md" | "lg" }) {
+  const theme = useTheme().theme;
   if (!label) return <span className="text-muted">Unknown</span>;
-  const color = REGIME_COLOR[label] ?? "var(--muted)";
+  const color = regimeColor(label, theme) ?? "var(--muted)";
   const cls =
     size === "lg" ? "px-3 py-1 text-base font-semibold"
     : size === "sm" ? "px-1.5 py-0.5 text-label font-semibold uppercase tracking-wide"

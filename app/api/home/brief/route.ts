@@ -11,9 +11,9 @@
  * treat the connection as dropped and keep the deterministic fallback it
  * already has from /api/home.
  */
-import { gatherContext } from "@/lib/mission-control";
+import { getMissionContext } from "@/lib/mission-control";
 import { unreadNotificationCount } from "@/lib/db";
-import { buildPortfolioReport } from "@/lib/portfolio/report";
+import { getPortfolioReport } from "@/lib/portfolio/report";
 import { generateHomeBrief, toBriefPortfolio } from "@/lib/home/brief";
 import type { HomeBriefChunk } from "@/lib/home/contracts";
 
@@ -31,11 +31,13 @@ export async function GET() {
 
       try {
         // The portfolio facts come from the *universal* report — the same one
-        // Portfolio Pulse renders — so the narrative and the numbers beside it
-        // can never quote two different health grades. See BriefPortfolio.
+        // the Book strip renders — so the narrative and the numbers beside it
+        // can never quote two different health grades. Both reads go through
+        // the platform cache (audit PF-02): serving a cached brief no longer
+        // costs an 8-second engine rebuild (audit PF-03's real fix).
         const [ctx, report] = await Promise.all([
-          gatherContext(),
-          buildPortfolioReport().catch(() => null),
+          getMissionContext(),
+          getPortfolioReport().catch(() => null),
         ]);
         const unread = unreadNotificationCount();
 

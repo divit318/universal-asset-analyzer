@@ -26,6 +26,7 @@ import {
   listTimelineEvents,
   listTimelineEventsForSymbols,
   getLatestSectorRotationSnapshots,
+  listUniversalLots,
 } from "../db";
 import { getLatestScannerSnapshot } from "../scanner/cache";
 import { getFundamentals } from "../fundamentals";
@@ -45,11 +46,14 @@ import {
   fundSectorExposures,
   displaySymbol,
   isSingleIssuer,
+  type LedgerAssetClass,
   type ResolvedInstrument,
 } from "./instrument";
 import { computeLookThrough, fetchFundHoldings, type FundHolding } from "./overlap";
 import type { LookThroughResult } from "./types";
 import { eventLabels, formatEventDate } from "./label";
+import { timelineEventLinks, eventQualifiesForUsScope, normalizedTitleKey } from "./relevance";
+import { SECTOR_ETF_MAP } from "../sector-rotation";
 import { INSTRUMENT_LABEL } from "./types";
 import type { GraphNode, GraphEdge, GraphMeta, GraphScope, NodeType, Provenance } from "./types";
 
@@ -57,6 +61,11 @@ const MAX_TIMELINE_EVENTS_PER_SYMBOL = 6;
 const MAX_TIMELINE_EVENTS_PER_HOLDING = 3;
 const MAX_MARKET_EVENTS = 8;
 const MAX_WATCHLIST = 36;
+/** Causal-chain fanout bound: only tracked tickers, and never more than this per event (KG-001/002). */
+const MAX_CHAIN_TICKERS_PER_EVENT = 4;
+const MAX_CHAIN_SECTORS_PER_EVENT = 3;
+/** Representative members a sector graph seeds from its SPDR ETF's disclosed top holdings (KG-006). */
+const MAX_SECTOR_CONSTITUENTS = 8;
 
 /** The classification window the rotation engine actually uses (PRIMARY_WINDOW in lib/sector-rotation.ts). */
 export const ROTATION_WINDOW_LABEL = "1m relative strength vs. sector average";
@@ -107,23 +116,69 @@ export class GraphBuilder {
   }
 
   /**
-   * Resolve queued edges, then prune degree-0 nodes (except the focus).
+   * Resolve queued edges, then:
+   * 1. collapse near-duplicate event nodes (same story from two wires = one
+   *    node; edges re-point to the survivor),
+   * 2. suppress hubs — no non-focus node may out-connect the focus. Surplus
+   *    edges are dropped weakest-first (edges to the focus are never dropped)
+   *    and the count is recorded on the node as metrics.suppressedLinks,
+   * 3. prune degree-0 nodes (except the focus).
    * Orphans are impossible by construction after this point.
    */
   build(truncation: GraphMeta["truncation"] = null): BuildResult {
+    // 1. Near-duplicate event collapse (KG-013). First-seen node wins.
+    const canonicalId = new Map<string, string>();
+    const byTitleKey = new Map<string, string>();
+    for (const node of this.nodes.values()) {
+      if (node.type !== "timeline_event" && node.type !== "market_event") continue;
+      const key = normalizedTitleKey(node.fullLabel.replace(/^[A-Z0-9.=-]{1,12}\s*·\s*/, ""));
+      const existing = byTitleKey.get(key);
+      if (existing && existing !== node.id) canonicalId.set(node.id, existing);
+      else byTitleKey.set(key, node.id);
+    }
+    for (const dup of canonicalId.keys()) this.nodes.delete(dup);
+
     const edges = new Map<string, GraphEdge>();
     for (const edge of this.pendingEdges) {
-      if (!this.nodes.has(edge.source) || !this.nodes.has(edge.target)) continue;
-      const id = `${edge.source}::${edge.type}::${edge.target}`;
-      if (!edges.has(id)) edges.set(id, { ...edge, id });
+      const source = canonicalId.get(edge.source) ?? edge.source;
+      const target = canonicalId.get(edge.target) ?? edge.target;
+      if (source === target) continue;
+      if (!this.nodes.has(source) || !this.nodes.has(target)) continue;
+      const id = `${source}::${edge.type}::${target}`;
+      if (!edges.has(id)) edges.set(id, { ...edge, source, target, id });
     }
 
-    const degree = new Map<string, number>();
-    for (const e of edges.values()) {
-      degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
-      degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
+    const degreeOf = (): Map<string, number> => {
+      const degree = new Map<string, number>();
+      for (const e of edges.values()) {
+        degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
+        degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
+      }
+      return degree;
+    };
+
+    // 2. Hub suppression (KG-002/003): the focus must be the graph's centre
+    //    of gravity. Cap every other node's degree just below the focus's,
+    //    dropping its weakest non-focus edges deterministically.
+    let degree = degreeOf();
+    const focusDegree = degree.get(this.focusId) ?? 0;
+    const cap = Math.max(4, focusDegree - 1);
+    for (const node of this.nodes.values()) {
+      if (node.id === this.focusId) continue;
+      const own = [...edges.values()].filter((e) => e.source === node.id || e.target === node.id);
+      if (own.length <= cap) continue;
+      const ranked = own.sort((a, b) => {
+        const aFocus = a.source === this.focusId || a.target === this.focusId ? 1 : 0;
+        const bFocus = b.source === this.focusId || b.target === this.focusId ? 1 : 0;
+        return bFocus - aFocus || b.strength - a.strength || a.id.localeCompare(b.id);
+      });
+      const dropped = ranked.slice(cap);
+      for (const e of dropped) edges.delete(e.id);
+      node.metrics.suppressedLinks = dropped.length;
     }
 
+    // 3. Prune isolates (including any created by suppression).
+    degree = degreeOf();
     let isolatesDropped = 0;
     const nodes: GraphNode[] = [];
     for (const node of this.nodes.values()) {
@@ -170,6 +225,27 @@ function assetNode(resolved: ResolvedInstrument, importance: number, weight: num
     metrics.currency = quote.currency;
   }
   metrics.sector = sector ?? (isSingleIssuer(instrument) ? "Unclassified" : null);
+  // Never a silent default bucket: an unresolved node says why (KG-007).
+  if (instrument === "unknown") {
+    metrics.unresolvedReason = quote ? `Yahoo quoteType "${quote.assetType ?? "?"}" is not recognized` : "No quote data available for this symbol";
+  }
+  if (instrument === "cash") {
+    return {
+      id: companyId(symbol),
+      type: "company",
+      instrument,
+      label: "Cash",
+      fullLabel: "Cash (USD sleeve, face value)",
+      summary: "Uninvested cash in the book. Valued at face; carries no sector or market events.",
+      importance,
+      confidence: null,
+      sector: null,
+      weight,
+      metrics,
+      provenance: PROV.db(),
+      href: "/portfolio",
+    };
+  }
   return {
     id: companyId(symbol),
     type: "company",
@@ -182,28 +258,8 @@ function assetNode(resolved: ResolvedInstrument, importance: number, weight: num
     sector,
     weight,
     metrics,
-    provenance: PROV.yahoo(),
+    provenance: PROV.yahoo(quote?.regularMarketTime ?? null),
     href: `/research?symbol=${encodeURIComponent(symbol)}`,
-  };
-}
-
-/** Fallback asset node for tickers we only know from scanner text (no quote fetch). */
-function bareAssetNode(symbol: string, importance: number): GraphNode {
-  const sym = symbol.toUpperCase();
-  return {
-    id: companyId(sym),
-    type: "company",
-    instrument: "unknown",
-    label: sym,
-    fullLabel: sym,
-    summary: sym,
-    importance,
-    confidence: null,
-    sector: null,
-    weight: null,
-    metrics: { instrument: INSTRUMENT_LABEL.unknown },
-    provenance: PROV.engine(),
-    href: `/research?symbol=${encodeURIComponent(sym)}`,
   };
 }
 
@@ -273,12 +329,14 @@ function marketEventNode(event: MarketEvent): GraphNode {
 }
 
 function opportunityNode(opp: ScannerOpportunity): GraphNode {
+  // "TSM opportunity" carried zero information (KG-023); the label now states
+  // the theme and direction, and the one-line rationale rides in fullLabel.
   return {
     id: opportunityId(opp.id),
     type: "opportunity",
     instrument: null,
-    label: `${opp.ticker} opportunity`,
-    fullLabel: `${opp.ticker} opportunity: ${opp.theme}`,
+    label: `${opp.ticker} · ${opp.theme} (${opp.direction})`,
+    fullLabel: `${opp.ticker} ${opp.direction} on ${opp.theme}: ${opp.rationale}`,
     summary: opp.rationale,
     importance: opp.opportunityScore.composite,
     confidence: opp.opportunityScore.composite,
@@ -376,68 +434,116 @@ function getCachedScanner(): { result: ScannerResult; asOf: string } | null {
   return snap ? { result: snap.result, asOf: snap.generatedAt } : null;
 }
 
-function addScannerEvidence(builder: GraphBuilder, symbol: string, sector: string | null, rotationAsOf: string | null): void {
+/**
+ * Scanner evidence for symbol scope, bounded to a real ego network
+ * (KG-001/002/012):
+ *
+ * - Region gate: events whose affected tickers are all foreign listings never
+ *   enter a US-scoped graph.
+ * - Direct events (affectedTickers includes the subject) edge to the subject.
+ * - Sector-matched macro events edge to the SECTOR node, not the subject: the
+ *   headline is about the sector; the subject reaches it through its own
+ *   classification edge. No co-mention artefact can hub onto the subject.
+ * - Causal-chain fanout is limited to tickers the user actually tracks
+ *   (portfolio or watchlist), capped per event, with resolved instruments.
+ */
+async function addScannerEvidence(builder: GraphBuilder, symbol: string, sector: string | null, rotationAsOf: string | null): Promise<void> {
   const cached = getCachedScanner();
   if (!cached) return;
   const { result, asOf } = cached;
   const { entries } = latestRotation();
+  const tracked = new Set([...listPortfolio().map((p) => p.symbol), ...listWatchlist().map((w) => w.symbol)]);
 
   const relevantEvents = result.events
+    .filter((e) => eventQualifiesForUsScope(e.affectedTickers))
     .filter((e) => e.affectedTickers.includes(symbol) || (sector != null && e.affectedSectors.some((s) => canonicalizeSector(s) === sector)))
     .slice(0, MAX_MARKET_EVENTS);
 
   for (const event of relevantEvents) {
+    const direct = event.affectedTickers.includes(symbol);
     builder.upsertNode(marketEventNode(event));
-    builder.addEdge({
-      source: marketEventId(event.id),
-      target: companyId(symbol),
-      type: "IMPACTS",
-      label: "impacts",
-      confidence: null,
-      strength: event.affectedTickers.includes(symbol) ? 80 : 45,
-      directed: true,
-      evidence: event.headline,
-      provenance: PROV.ai(asOf),
-      timestamp: event.publishedAt,
-    });
-    // First-order causal chain -> other sectors/tickers this same event touches,
-    // which is exactly how "what connects NVIDIA and Microsoft" gets answered.
+    if (direct) {
+      builder.addEdge({
+        source: marketEventId(event.id),
+        target: companyId(symbol),
+        type: "IMPACTS",
+        label: "impacts",
+        confidence: null,
+        strength: 80,
+        directed: true,
+        evidence: `${event.headline} (${symbol} is named as an affected ticker)`,
+        provenance: PROV.ai(asOf),
+        timestamp: event.publishedAt,
+      });
+    } else if (sector != null) {
+      // Sector-mediated relevance stays on the sector node.
+      const entry = entries.find((s) => s.sector === sector) ?? null;
+      builder.upsertNode(sectorNode(entry, sector, rotationAsOf));
+      builder.addEdge({
+        source: marketEventId(event.id),
+        target: sectorId(sector),
+        type: "IMPACTS",
+        label: "impacts sector",
+        confidence: null,
+        strength: 45,
+        directed: true,
+        evidence: `${event.headline} (tagged ${sector}; reaches ${symbol} only through its sector)`,
+        provenance: PROV.ai(asOf),
+        timestamp: event.publishedAt,
+      });
+    }
+
+    // Bounded causal chain: sectors (1st order, capped) and TRACKED tickers
+    // only. An event's 40-ticker chain of names the user does not follow is
+    // noise in a subject-scoped graph.
+    let sectorsAdded = 0;
+    const chainTickers: { ticker: string; order: 1 | 2; description: string }[] = [];
     for (const effect of event.causalChain) {
-      for (const rawSector of effect.affectedSectors) {
-        const canonical = canonicalizeSector(rawSector);
-        if (canonical == null || canonical === sector) continue;
-        const entry = entries.find((s) => s.sector === canonical) ?? null;
-        builder.upsertNode(sectorNode(entry, canonical, rotationAsOf));
-        builder.addEdge({
-          source: marketEventId(event.id),
-          target: sectorId(canonical),
-          type: "IMPACTS",
-          label: `${effect.order === 1 ? "1st" : "2nd"}-order impact`,
-          confidence: null,
-          strength: effect.order === 1 ? 60 : 35,
-          directed: true,
-          evidence: effect.description,
-          provenance: PROV.ai(asOf),
-          timestamp: event.publishedAt,
-        });
+      if (effect.order === 1 && sectorsAdded < MAX_CHAIN_SECTORS_PER_EVENT) {
+        for (const rawSector of effect.affectedSectors) {
+          if (sectorsAdded >= MAX_CHAIN_SECTORS_PER_EVENT) break;
+          const canonical = canonicalizeSector(rawSector);
+          if (canonical == null || canonical === sector) continue;
+          const entry = entries.find((s) => s.sector === canonical) ?? null;
+          builder.upsertNode(sectorNode(entry, canonical, rotationAsOf));
+          builder.addEdge({
+            source: marketEventId(event.id),
+            target: sectorId(canonical),
+            type: "IMPACTS",
+            label: "1st-order impact",
+            confidence: null,
+            strength: 60,
+            directed: true,
+            evidence: effect.description,
+            provenance: PROV.ai(asOf),
+            timestamp: event.publishedAt,
+          });
+          sectorsAdded += 1;
+        }
       }
       for (const otherTicker of effect.affectedTickers) {
-        if (otherTicker === symbol) continue;
-        builder.upsertNode(bareAssetNode(otherTicker, 40));
-        builder.addEdge({
-          source: marketEventId(event.id),
-          target: companyId(otherTicker),
-          type: "IMPACTS",
-          label: `${effect.order === 1 ? "1st" : "2nd"}-order impact`,
-          confidence: null,
-          strength: effect.order === 1 ? 60 : 35,
-          directed: true,
-          evidence: effect.description,
-          provenance: PROV.ai(asOf),
-          timestamp: event.publishedAt,
-        });
+        if (otherTicker === symbol || !tracked.has(otherTicker)) continue;
+        if (chainTickers.some((c) => c.ticker === otherTicker)) continue;
+        chainTickers.push({ ticker: otherTicker, order: effect.order, description: effect.description });
       }
     }
+    const keptChain = chainTickers.slice(0, MAX_CHAIN_TICKERS_PER_EVENT);
+    const resolvedChain = await Promise.all(keptChain.map((c) => resolveInstrument(c.ticker)));
+    keptChain.forEach((c, i) => {
+      builder.upsertNode(assetNode(resolvedChain[i], 40));
+      builder.addEdge({
+        source: marketEventId(event.id),
+        target: companyId(c.ticker),
+        type: "IMPACTS",
+        label: `${c.order === 1 ? "1st" : "2nd"}-order impact`,
+        confidence: null,
+        strength: c.order === 1 ? 60 : 35,
+        directed: true,
+        evidence: `${c.description} (${c.ticker} is on your ${listPortfolio().some((p) => p.symbol === c.ticker) ? "portfolio" : "watchlist"})`,
+        provenance: PROV.ai(asOf),
+        timestamp: event.publishedAt,
+      });
+    });
   }
 
   const opportunity = result.opportunities.find((o) => o.ticker === symbol);
@@ -488,11 +594,20 @@ function addScannerEvidence(builder: GraphBuilder, symbol: string, sector: strin
   }
 }
 
-function addTimelineEvents(builder: GraphBuilder, symbol: string, events: TimelineEvent[]): void {
+/**
+ * Attach a symbol's timeline events, gated by subject linkage (KG-011): the
+ * timeline store attaches broadcast headlines by co-mention, so a
+ * news/scanner event only links here when the headline is materially about
+ * the symbol (ticker or company name present). Filings, earnings dates, and
+ * alerts are intrinsically about their symbol and always link.
+ */
+function addTimelineEvents(builder: GraphBuilder, symbol: string, events: TimelineEvent[], companyName: string | null): void {
   for (const event of events) {
+    if (!timelineEventLinks(event, companyName)) continue;
     builder.upsertNode(timelineEventNode(event));
     const edgeType =
       event.thesisImpact === "strengthened" ? "SUPPORTED_BY" : event.thesisImpact === "weakened" ? "CONTRADICTED_BY" : "IMPACTS";
+    const isBroadcast = event.source.kind === "news" || event.source.kind === "scanner";
     builder.addEdge({
       source: eventId(event.id),
       target: companyId(symbol),
@@ -501,7 +616,9 @@ function addTimelineEvents(builder: GraphBuilder, symbol: string, events: Timeli
       confidence: event.confidenceScore,
       strength: event.importanceScore,
       directed: true,
-      evidence: event.title,
+      // The linkage basis travels on the edge: broadcast headlines only link
+      // when they name the subject; filings/alerts are about it by nature.
+      evidence: isBroadcast ? `${event.title} (linked because the headline names ${companyName ?? symbol})` : event.title,
       provenance: event.source.kind === "filing" ? PROV.edgar(event.timestamp) : PROV.engine(event.timestamp),
       timestamp: event.timestamp,
     });
@@ -567,18 +684,17 @@ export async function buildSymbolGraph(symbol: string): Promise<BuildResult> {
   const sym = symbol.toUpperCase();
   const builder = new GraphBuilder(companyId(sym));
 
-  const [fundamentals, events] = await Promise.all([
-    getFundamentals(sym).catch(() => null),
-    Promise.resolve(
-      listTimelineEvents(sym)
-        .sort((a, b) => b.importanceScore - a.importanceScore)
-        .slice(0, MAX_TIMELINE_EVENTS_PER_SYMBOL),
-    ),
-  ]);
-  const resolved = await resolveInstrument(sym, fundamentals?.snapshot.sector ?? null);
+  const fundamentals = await getFundamentals(sym).catch(() => null);
+  const resolved = await resolveInstrument(sym, fundamentals?.snapshot.sector ?? null, ledgerAssetClasses().get(sym) ?? null);
+  // Linkage-gate BEFORE the top-N slice, so co-mention artefacts cannot crowd
+  // out events that are actually about the subject (KG-011).
+  const events = listTimelineEvents(sym)
+    .filter((e) => timelineEventLinks(e, resolved.name))
+    .sort((a, b) => b.importanceScore - a.importanceScore)
+    .slice(0, MAX_TIMELINE_EVENTS_PER_SYMBOL);
 
   builder.upsertNode(assetNode(resolved, 100));
-  addTimelineEvents(builder, sym, events);
+  addTimelineEvents(builder, sym, events, resolved.name);
 
   const { entries, asOf } = latestRotation();
   await addClassificationEdges(builder, resolved, entries, asOf);
@@ -615,9 +731,27 @@ export async function buildSymbolGraph(symbol: string): Promise<BuildResult> {
     });
   }
 
-  addScannerEvidence(builder, sym, resolved.sector, asOf);
+  await addScannerEvidence(builder, sym, resolved.sector, asOf);
 
   return builder.build();
+}
+
+/**
+ * The ledger's declared asset_class per symbol (first lot wins, matching
+ * lib/portfolio/store.ts). This is the namespace guard that keeps the
+ * synthetic CASH-USD sleeve from resolving to a micro-cap cryptocurrency and
+ * declared equities from flipping to crypto on a ticker collision (KG-008/010).
+ */
+function ledgerAssetClasses(): Map<string, LedgerAssetClass> {
+  const classes = new Map<string, LedgerAssetClass>();
+  try {
+    for (const lot of listUniversalLots()) {
+      if (!classes.has(lot.symbol) && lot.asset_class) classes.set(lot.symbol, lot.asset_class);
+    }
+  } catch {
+    // Best-effort: an unreadable ledger degrades to Yahoo-only resolution.
+  }
+  return classes;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -636,8 +770,23 @@ async function buildHoldingsGraph(
   const capped = holdings.slice(0, cap);
   const truncation = holdings.length > capped.length ? { shown: capped.length, total: holdings.length } : null;
   const { entries, asOf } = latestRotation();
+  const isPortfolio = edgeType === "OWNS";
+  const ledger = isPortfolio ? ledgerAssetClasses() : new Map<string, LedgerAssetClass>();
 
+  const resolvedAll = await Promise.all(
+    capped.map(async (h) => {
+      const ledgerClass = ledger.get(h.symbol) ?? null;
+      if (ledgerClass === "cash") return resolveInstrument(h.symbol, null, "cash");
+      const fundamentals = await getFundamentals(h.symbol).catch(() => null);
+      return resolveInstrument(h.symbol, fundamentals?.snapshot.sector ?? null, ledgerClass);
+    }),
+  );
+
+  // The linkage gate needs company names, so it runs after resolution;
+  // events are gated BEFORE the per-holding cap (KG-011).
+  const linkable = new Map(capped.map((h, i) => [h.symbol, resolvedAll[i].name]));
   const timelineBySymbol = listTimelineEventsForSymbols(capped.map((h) => h.symbol))
+    .filter((e) => timelineEventLinks(e, linkable.get(e.symbol) ?? null))
     .sort((a, b) => b.importanceScore - a.importanceScore)
     .reduce((acc, e) => {
       const list = acc.get(e.symbol) ?? [];
@@ -646,19 +795,16 @@ async function buildHoldingsGraph(
       return acc;
     }, new Map<string, TimelineEvent[]>());
 
-  const resolvedAll = await Promise.all(
-    capped.map(async (h) => {
-      const fundamentals = await getFundamentals(h.symbol).catch(() => null);
-      return resolveInstrument(h.symbol, fundamentals?.snapshot.sector ?? null);
-    }),
-  );
-
-  // Position value per holding: live market value when the quote resolved,
-  // cost basis otherwise (and the evidence string says which one it is).
-  const isPortfolio = edgeType === "OWNS";
+  // Position value per holding: cash at face value (its shares ARE dollars —
+  // pricing the synthetic CASH-USD lot off a quote is the KG-008 defect),
+  // live market value when the quote resolved, cost basis otherwise. The
+  // evidence string says which one it is.
   const values = capped.map((h, i) => {
     if (!isPortfolio) return null;
     const pos = h as PortfolioPosition;
+    if (resolvedAll[i].instrument === "cash") {
+      return pos.shares > 0 ? { value: pos.shares, basis: "face" as const } : null;
+    }
     const price = resolvedAll[i].quote?.price;
     if (price != null && pos.shares > 0) return { value: price * pos.shares, basis: "market" as const };
     if (pos.shares > 0 && pos.avgCost > 0) return { value: pos.avgCost * pos.shares, basis: "cost" as const };
@@ -677,15 +823,18 @@ async function buildHoldingsGraph(
 
     if (isPortfolio && value != null) {
       const pos = holding as PortfolioPosition;
-      node.metrics.shares = pos.shares;
-      node.metrics.avgCost = pos.avgCost;
       node.metrics.positionValue = Math.round(value.value * 100) / 100;
       node.metrics.valuationBasis = value.basis;
-      if (resolved.quote?.price != null && pos.avgCost > 0) {
-        node.metrics.unrealizedPnlPct = Math.round(((resolved.quote.price - pos.avgCost) / pos.avgCost) * 10000) / 100;
+      if (value.basis !== "face") {
+        node.metrics.shares = pos.shares;
+        node.metrics.avgCost = pos.avgCost;
+        if (resolved.quote?.price != null && pos.avgCost > 0) {
+          node.metrics.unrealizedPnlPct = Math.round(((resolved.quote.price - pos.avgCost) / pos.avgCost) * 10000) / 100;
+        }
       }
     }
 
+    const basisLabel = { market: "market value", cost: "cost basis", face: "cash at face value" } as const;
     builder.addEdge({
       source: center.id,
       target: node.id,
@@ -696,14 +845,16 @@ async function buildHoldingsGraph(
       directed: true,
       evidence:
         weight != null
-          ? `${(weight * 100).toFixed(1)}% of portfolio (${value!.basis === "market" ? "market value" : "cost basis"})`
+          ? `${(weight * 100).toFixed(1)}% of portfolio (${basisLabel[value!.basis]})`
           : `${resolved.symbol} is on your ${isPortfolio ? "portfolio" : "watchlist"}`,
       provenance: PROV.db(),
       timestamp: null,
     });
 
+    // Cash is book weight, not a market entity: no sector, no events.
+    if (resolved.instrument === "cash") continue;
     await addClassificationEdges(builder, resolved, entries, asOf);
-    addTimelineEvents(builder, holding.symbol, timelineBySymbol.get(holding.symbol) ?? []);
+    addTimelineEvents(builder, holding.symbol, timelineBySymbol.get(holding.symbol) ?? [], resolved.name);
   }
 
   // Look-through overlap: portfolio scope only (it needs real book weights).
@@ -727,16 +878,23 @@ async function buildHoldingsGraph(
       lookThrough = result;
       // Draw the overlap: HOLDS edges from each fund to every underlying the
       // book reaches at least twice. Underlyings not otherwise in the graph
-      // enter as unresolved asset nodes (no quote fetch for a name that only
-      // exists inside a fund's disclosure).
-      for (const exposure of result.exposures.slice(0, 10)) {
+      // are resolved like any other asset (they are liquid disclosed holdings;
+      // AVGO must never render "Unclassified Instrument" — KG-009).
+      const topExposures = result.exposures.slice(0, 10);
+      const missing = topExposures.filter((e) => !builder.hasNode(companyId(e.symbol)));
+      const resolvedMissing = await Promise.all(
+        missing.map(async (e) => {
+          const fundamentals = await getFundamentals(e.symbol).catch(() => null);
+          return resolveInstrument(e.symbol, fundamentals?.snapshot.sector ?? null);
+        }),
+      );
+      missing.forEach((exposure, i) => {
+        const node = assetNode(resolvedMissing[i], Math.round(30 + exposure.effectiveWeight * 400));
+        if (node.summary === node.id.slice("company:".length)) node.summary = exposure.name;
+        builder.upsertNode(node);
+      });
+      for (const exposure of topExposures) {
         const underlyingId = companyId(exposure.symbol);
-        if (!builder.hasNode(underlyingId)) {
-          const node = bareAssetNode(exposure.symbol, Math.round(30 + exposure.effectiveWeight * 400));
-          node.summary = exposure.name;
-          node.fullLabel = exposure.name !== exposure.symbol ? `${exposure.symbol} (${exposure.name})` : exposure.symbol;
-          builder.upsertNode(node);
-        }
         for (const route of exposure.routes) {
           builder.addEdge({
             source: companyId(route.via),
@@ -778,6 +936,32 @@ export async function buildSectorGraph(sector: string): Promise<BuildResult> {
   builder.upsertNode(sectorNode(entry, canonical, asOf));
   addSectorRotationEdges(builder, canonical, entries, asOf);
 
+  // Representative members (KG-006): the sector's SPDR ETF discloses its top
+  // holdings — real, sourced members with measured weights, so a sector graph
+  // is about the sector rather than only the user's coincidental overlap.
+  const sectorEtf = SECTOR_ETF_MAP[canonical] ?? null;
+  if (sectorEtf) {
+    const constituents = (await fetchFundHoldings(sectorEtf)).filter((c) => c.symbol).slice(0, MAX_SECTOR_CONSTITUENTS);
+    // Membership in the sector SPDR is itself the sector classification.
+    const resolvedConstituents = await Promise.all(constituents.map((c) => resolveInstrument(c.symbol!, canonical)));
+    constituents.forEach((holding, i) => {
+      const resolved = resolvedConstituents[i];
+      builder.upsertNode(assetNode(resolved, Math.round(35 + holding.weight * 250)));
+      builder.addEdge({
+        source: companyId(holding.symbol!),
+        target: sectorId(canonical),
+        type: "CONSTITUENT",
+        label: `${(holding.weight * 100).toFixed(1)}% of ${sectorEtf}`,
+        confidence: null,
+        strength: Math.max(20, Math.min(100, Math.round(holding.weight * 300))),
+        directed: true,
+        evidence: `${holding.name} is ${(holding.weight * 100).toFixed(1)}% of ${sectorEtf}, the ${canonical} sector SPDR ETF (Yahoo disclosed holdings)`,
+        provenance: PROV.yahoo(),
+        timestamp: null,
+      });
+    });
+  }
+
   const portfolio = listPortfolio();
   const watchlist = listWatchlist();
   const seen = new Set<string>();
@@ -787,10 +971,13 @@ export async function buildSectorGraph(sector: string): Promise<BuildResult> {
     return true;
   });
 
+  const memberLedger = ledgerAssetClasses();
   const resolvedAll = await Promise.all(
     members.map(async (h) => {
+      const ledgerClass = memberLedger.get(h.symbol) ?? null;
+      if (ledgerClass === "cash") return resolveInstrument(h.symbol, null, "cash");
       const fundamentals = await getFundamentals(h.symbol).catch(() => null);
-      return resolveInstrument(h.symbol, fundamentals?.snapshot.sector ?? null);
+      return resolveInstrument(h.symbol, fundamentals?.snapshot.sector ?? null, ledgerClass);
     }),
   );
 
@@ -857,6 +1044,9 @@ export async function buildSectorGraph(sector: string): Promise<BuildResult> {
   const cached = getCachedScanner();
   if (cached) {
     const relevant = cached.result.events
+      // Region gate (KG-012): an NSE corporate announcement tagged
+      // "Industrials" must not leak into a US sector graph.
+      .filter((e) => eventQualifiesForUsScope(e.affectedTickers))
       .filter((e) => e.affectedSectors.some((s) => canonicalizeSector(s) === canonical))
       .slice(0, MAX_MARKET_EVENTS);
     for (const event of relevant) {

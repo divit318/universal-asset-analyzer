@@ -5,7 +5,7 @@
  * Starting a job that is already running ATTACHES to it instead of racing it:
  * the second subscriber replays the event history (progress, partials) and
  * then receives live events. Measured need (2026-07-31): the scheduler's
- * auto-scan and a /wire page scan ran the same pipeline concurrently, Ollama
+ * auto-scan and a /wire page scan ran the same pipeline concurrently, the backend
  * serialized them, and every queued call of the losing scan burned its whole
  * 300s budget waiting — it delivered zero opportunities as a silent success.
  *

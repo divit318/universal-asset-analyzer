@@ -13,6 +13,7 @@ export {
 } from "./data-table";
 export { StatTile } from "./stat-tile";
 export { Input, Field } from "./input";
+export { PasswordInput } from "./password-input";
 export { DateInput } from "./date-input";
 export { Tabs, TabPanel, type TabItem } from "./tabs";
 export { Section, SectionSkeleton, type SectionTier, type SectionState } from "./section";

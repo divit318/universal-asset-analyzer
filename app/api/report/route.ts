@@ -168,8 +168,10 @@ function kvBlock(
 export async function GET(request: Request) {
   try { return await generateReport(request); }
   catch (err) {
-    const msg = err instanceof Error ? `${err.message}\n${err.stack}` : String(err);
-    console.error("[report]", msg);
+    // Full detail (incl. stack) goes to the server log only — the client gets
+    // the message, never the stack.
+    console.error("[report]", err instanceof Error ? `${err.message}\n${err.stack}` : String(err));
+    const msg = err instanceof Error ? err.message : "Report generation failed";
     return new Response(msg, { status: 500 });
   }
 }

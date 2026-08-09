@@ -7,17 +7,20 @@ import { ValueBar } from "@/app/_components/value-bar";
 const KIND_STYLE: Record<PositionAction["kind"], { label: string; tone: string; badge: string }> = {
   initiate: { label: "Initiate", tone: "text-positive", badge: "text-positive border-positive/40 bg-positive/10" },
   add: { label: "Add", tone: "text-positive", badge: "text-positive border-positive/40 bg-positive/10" },
+  starter: { label: "Starter", tone: "text-positive", badge: "text-positive border-positive/30 bg-positive/8" },
   trim: { label: "Trim", tone: "text-warning", badge: "text-warning border-warning/40 bg-warning/10" },
   exit: { label: "Exit", tone: "text-negative", badge: "text-negative border-negative/40 bg-negative/10" },
   hold: { label: "Hold", tone: "text-muted", badge: "text-muted border-border bg-surface-2" },
+  wait: { label: "Wait", tone: "text-warning", badge: "text-warning border-warning/30 bg-warning/8" },
   avoid: { label: "Skip", tone: "text-muted", badge: "text-muted border-border bg-surface-2" },
 };
 
 /**
- * The sized, portfolio-aware next step for the stock being researched. Turns the
- * fit scorer's suggested weight into a concrete order in shares at the live
- * price, with the resulting portfolio impact — the bridge from "interesting" to
- * "done".
+ * The sized, portfolio-aware next step for the stock being researched. Turns
+ * the unified action (Research Score × Portfolio Fit, carried on
+ * PortfolioFitAnalysis.action) into a concrete order in shares at the live
+ * price, with the resulting portfolio impact — the bridge from "interesting"
+ * to "done".
  */
 export function PositionActionCard({
   symbol,
@@ -48,6 +51,10 @@ export function PositionActionCard({
     fitTier: fit.fitTier,
     isInPortfolio: fit.isInPortfolio,
     concentrationWarning: fit.concentrationWarning,
+    // The unified decision (Research Score × Portfolio Fit) — this card sizes
+    // it in shares, it never re-decides it.
+    unifiedKind: fit.action.kind,
+    unifiedReason: fit.action.reason,
   });
 
   const style = KIND_STYLE[action.kind];
@@ -71,19 +78,32 @@ export function PositionActionCard({
       {(action.currentPct > 0 || action.targetPct > 0) && (
         <div className="flex flex-col gap-1">
           <div className="flex justify-between text-micro text-faint">
-            <span>Current {action.currentPct.toFixed(1)}%</span>
+            <span>{action.currentPct > 0 ? `Current ${action.currentPct.toFixed(1)}%` : "No position yet"}</span>
             {/* Named for what it is. The two targets on this page are not the same
                 quantity, and the previous copy tried to resolve that with a
                 sentence of explanation instead of a distinct name — a paragraph
                 apologising for a label is a sign the label is wrong. */}
             <span>Policy target {action.targetPct.toFixed(1)}%</span>
           </div>
-          {/* Current weight grows to its value; the target sits as a fixed marker
-              so the gap the action closes is what moves. */}
-          <div className="relative">
-            <ValueBar value={(action.currentPct / barMax) * 100} barClassName="bg-muted/50" height="h-1.5" />
-            <div className="absolute inset-y-0 w-0.5 bg-brand" style={{ left: `${(action.targetPct / barMax) * 100}%` }} />
-          </div>
+          {action.currentPct > 0 ? (
+            /* Current weight grows to its value; the target sits as a fixed
+               marker so the gap the action closes is what moves. */
+            <div className="relative">
+              <ValueBar value={(action.currentPct / barMax) * 100} barClassName="bg-muted/50" height="h-1.5" />
+              <div className="absolute inset-y-0 w-0.5 bg-brand" style={{ left: `${(action.targetPct / barMax) * 100}%` }} />
+            </div>
+          ) : (
+            /* Zero current position is a deliberate starting point, not broken
+               data: the target weight renders as an outlined "to fill" segment
+               instead of an empty track with a stranded tick mark. */
+            <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
+              <div
+                className="absolute inset-y-0 left-0 rounded-full border border-dashed border-brand/60 bg-brand/15"
+                style={{ width: `${(action.targetPct / barMax) * 100}%` }}
+                title={`Buying to the ${action.targetPct.toFixed(1)}% policy target fills this segment`}
+              />
+            </div>
+          )}
           <p className="text-[10px] text-faint">
             Sized by your investment policy — portfolio fit, sector caps and diversification.
           </p>

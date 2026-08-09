@@ -20,7 +20,11 @@ export function describeOwnership(ownership: OwnershipData): string[] {
   const insights: string[] = [];
 
   if (institutionsPctHeld != null) {
-    if (institutionsPctHeld > 0.70) {
+    if (institutionsPctHeld > 1) {
+      // Yahoo can report >100% (double-counted 13F filings). Never narrate an
+      // impossible figure as "conviction" — state the artifact explicitly.
+      insights.push(`Reported institutional ownership is ${pct(institutionsPctHeld)}, above 100% of shares outstanding — a double-counting artifact in 13F filings data. Read it as near-complete institutional ownership.`);
+    } else if (institutionsPctHeld > 0.70) {
       insights.push(`High institutional conviction (${pct(institutionsPctHeld)} held) — closely scrutinized by professional investors.`);
     } else if (institutionsPctHeld > 0.40) {
       insights.push(`Solid institutional backing (${pct(institutionsPctHeld)} held).`);

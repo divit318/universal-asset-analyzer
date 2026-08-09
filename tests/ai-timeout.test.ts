@@ -1,17 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { deadlineSignal, isDeliberateAbort, OllamaUnavailableError, ModelMissingError } from "@/lib/ai/ollama";
+import { deadlineSignal, isDeliberateAbort } from "@/lib/ai/aborts";
 import { AllModelsFailedError } from "@/lib/ai/router";
+import { AnthropicKeyMissingError } from "@/lib/ai/providers/anthropic-provider";
 import { failureAnswer } from "@/lib/ai-app-assistant";
 
 /**
- * A task's declared `timeoutMs` has to be a bound, not a suggestion.
- *
- * `generate()` honoured it, but `ChatOptions` had no field to receive it, so
- * `streamChat` ran unbounded — and `ollama-provider.complete()` sends every
- * MULTI-TURN request down that path. Any conversation with history therefore
- * escaped its own deadline: `app-assistant` declares 45s and was observed
- * taking 4.7 and 6.8 minutes, because the Router then retried each candidate
- * model in turn.
+ * A task's declared `timeoutMs` has to be a bound, not a suggestion — see
+ * lib/ai/aborts.ts for the deadline/caller-abort distinction the Router's
+ * fallback policy and error classification both depend on.
  */
 describe("deadlineSignal", () => {
   it("returns the caller's signal untouched when no deadline is set", () => {
@@ -57,14 +53,9 @@ describe("deadlineSignal", () => {
 });
 
 /**
- * The keystone bug. `withRetry` skipped retrying "an aborted request" but only
- * recognised `AbortError`. `AbortSignal.timeout()` rejects with `TimeoutError`,
- * so every expiry was retried: each attempt waited out the full deadline, and
- * exhausting them threw `OllamaUnavailableError`.
- *
- * That one mismatch produced BOTH reported symptoms — 45s x 3 attempts x 3
- * candidate models = 405s (6m40s measured), and a "start Ollama" message for a
- * daemon that was up the whole time.
+ * The keystone historical bug: a retry loop that only recognised `AbortError`
+ * retried every `TimeoutError` expiry, multiplying a task's declared budget by
+ * the attempt count and then by the Router's candidate count.
  */
 describe("isDeliberateAbort", () => {
   it("treats a deadline expiry as deliberate, so it is never retried", () => {
@@ -89,47 +80,38 @@ describe("isDeliberateAbort", () => {
 });
 
 /**
- * The panel used to answer every failure with "start Ollama with `ollama
- * serve`". The failure actually observed was Ollama up and answering, just
- * past the deadline — so the one instruction shown was the one that could not
- * help.
+ * The assistant panel must name the actual failure class — a missing key gets
+ * the Settings hint, a timeout does not blame configuration it can't see.
  */
 describe("failureAnswer", () => {
-  it("only says 'start Ollama' when Ollama is genuinely unreachable", () => {
-    expect(failureAnswer(new OllamaUnavailableError())).toContain("ollama serve");
+  it("points at Settings when the API key is missing", () => {
+    const answer = failureAnswer(new AnthropicKeyMissingError());
+    expect(answer).toMatch(/settings/i);
+    expect(answer).toMatch(/API key/i);
   });
 
-  it("does NOT blame the daemon when the model merely timed out", () => {
+  it("does NOT mention the key when the model merely timed out", () => {
     const timeout = new Error("The operation was aborted due to timeout");
     timeout.name = "TimeoutError";
     const answer = failureAnswer(timeout);
-    expect(answer).not.toContain("ollama serve");
-    expect(answer).toContain("took too long");
-    expect(answer).toContain("AI_MAX_MODEL_GB");
+    expect(answer).not.toMatch(/API key/i);
+    expect(answer).toContain("too long");
   });
 
-  it("does NOT blame the daemon when every candidate model failed", () => {
+  it("treats exhausted candidates like a transient failure, not a config error", () => {
     const answer = failureAnswer(new AllModelsFailedError("app-assistant", ["timed out"]));
-    expect(answer).not.toContain("ollama serve");
-    expect(answer).toContain("took too long");
-  });
-
-  it("tells the user which model to pull when one is missing", () => {
-    const answer = failureAnswer(new ModelMissingError("qwen3:14b"));
-    expect(answer).toContain("ollama pull qwen3:14b");
-    expect(answer).not.toContain("ollama serve");
+    expect(answer).not.toMatch(/API key/i);
+    expect(answer).toContain("too long");
   });
 
   it("falls back to a generic message for an unrecognised failure", () => {
     const answer = failureAnswer(new Error("empty answer"));
-    expect(answer).not.toContain("ollama serve");
     expect(answer).toContain("⌘K");
   });
 
   it("always leaves the user a way forward", () => {
     const errors: unknown[] = [
-      new OllamaUnavailableError(),
-      new ModelMissingError("qwen3:14b"),
+      new AnthropicKeyMissingError(),
       new AllModelsFailedError("app-assistant", ["timed out"]),
       new Error("empty answer"),
       "not an error at all",

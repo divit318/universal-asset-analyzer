@@ -737,7 +737,7 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
                   cursor={{ stroke: ct.axis, strokeWidth: 1, strokeDasharray: "4 4" }}
                 />
                 {(metric === "return" || metric === "totalReturn") && (
-                  <ReferenceLine y={0} stroke="#4b5563" strokeWidth={1} strokeDasharray="4 4" />
+                  <ReferenceLine y={0} stroke={ct.referenceLine} strokeWidth={1} strokeDasharray="4 4" />
                 )}
                 {symbols.map((sym, i) => (
                   <Line
@@ -808,7 +808,7 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
                   cursor={{ stroke: ct.axis, strokeWidth: 1, strokeDasharray: "4 4" }}
                 />
                 {cfg.isGrowth && (
-                  <ReferenceLine y={0} stroke="#4b5563" strokeWidth={1} strokeDasharray="4 4" />
+                  <ReferenceLine y={0} stroke={ct.referenceLine} strokeWidth={1} strokeDasharray="4 4" />
                 )}
                 {symbols.map((sym, i) => (
                   <Line

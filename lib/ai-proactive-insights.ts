@@ -9,7 +9,7 @@
  *
  * No LLM call — this is deterministic composition over already-cached data
  * (getPortfolioForIOS carries its own 5-minute in-memory cache), so it's
- * fast, free, and works even with Ollama offline. Returns at most one
+ * fast, free, and works even with the AI unavailable. Returns at most one
  * insight: "a senior analyst quietly mentions the one most useful thing",
  * not a dashboard of everything that could be said.
  */

@@ -12,6 +12,22 @@ export interface ProviderChatTurn {
   content: string;
 }
 
+/**
+ * Token accounting for one completion, as reported by the provider.
+ *
+ * The cache fields follow Anthropic's billing split: `promptTokens` is the
+ * UNCACHED input, `cacheCreationTokens` were written to the prompt cache
+ * (billed at the cache-write rate), and `cacheReadTokens` were served from it
+ * (billed at ~10% of the input rate). Providers without a prompt cache simply
+ * leave the cache fields undefined.
+ */
+export interface ProviderTokenUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+}
+
 export interface ProviderCompleteRequest {
   model: string;
   messages: ProviderChatTurn[];
@@ -20,6 +36,14 @@ export interface ProviderCompleteRequest {
   timeoutMs?: number;
   /** Ask the model to respond with JSON only. */
   json?: boolean;
+  /**
+   * JSON Schema for NATIVE structured outputs (constrained decoding), when the
+   * provider supports it. Stronger than `json`: the wire format guarantees the
+   * response parses against this schema instead of asking nicely in the
+   * prompt. Providers without the capability ignore it — `json` + the prompt's
+   * own directives remain the portable fallback, so the two are sent together.
+   */
+  jsonSchema?: Record<string, unknown>;
   /**
    * Toggle chain-of-thought on a reasoning model. `undefined` = the model has no
    * reasoning channel, so don't send the flag at all. The Router forces `false`
@@ -30,11 +54,18 @@ export interface ProviderCompleteRequest {
   numCtx?: number;
   /**
    * How long the provider should keep the model resident after answering.
-   * Provider-agnostic hint; Ollama maps it to `keep_alive`. Omit for the
-   * provider's default.
+   * Provider-agnostic hint for LOCAL runtimes (a daemon's `keep_alive`);
+   * hosted providers ignore it. Omit for the provider's default.
    */
   keepAlive?: string;
   signal?: AbortSignal;
+  /**
+   * Streaming only: called once, at end of stream, with the completion's token
+   * usage. `complete()` reports usage on its result instead; a generator has no
+   * result object to carry it, hence the callback. Best-effort — a provider
+   * that doesn't track usage never calls it.
+   */
+  onUsage?: (usage: ProviderTokenUsage) => void;
 }
 
 /** An installed model and what it costs to run. */
@@ -50,7 +81,7 @@ export interface ProviderCompleteResult {
   /** Chain-of-thought trace, when the model emits one and the provider can segregate it. */
   reasoning: string;
   /** Token usage, when the provider reports it. */
-  tokenUsage?: { promptTokens?: number; completionTokens?: number };
+  tokenUsage?: ProviderTokenUsage;
 }
 
 export interface ProviderHealth {
@@ -70,8 +101,8 @@ export interface AIProvider {
    * Best-effort: is `model` already resident, or would this call have to
    * cold-load it first? Optional — a provider that can't answer this simply
    * omits the method, and the Router falls back to assuming every attempt is
-   * warm (today's behavior unchanged). Implemented by {@link OllamaProvider}
-   * via `/api/ps` so the Router can widen the timeout budget specifically for
+   * warm (today's behavior unchanged). Only meaningful for a local runtime
+   * that cold-loads weights; lets the Router widen the timeout budget for
    * a suspected cold load instead of killing a legitimate one prematurely.
    */
   isModelWarm?(model: string): Promise<boolean>;

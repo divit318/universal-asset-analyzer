@@ -10,9 +10,16 @@ const TYPE_STYLE: Record<InsiderTxType, string> = {
 export function InsiderTable({ insider }: { insider: InsiderActivity }) {
   const net = insider.netValue;
   return (
-    <section className="flex flex-col gap-3">
+    // Card container matches OwnershipCard's, so the two sections' left edges
+    // align on the Ownership tab.
+    <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-medium">Insider activity</h3>
+        <div>
+          <h3 className="text-sm font-medium">Insider activity</h3>
+          <p className="text-xs text-muted">Open-market buys and sells; awards, grants and exercises are counted as neither</p>
+        </div>
+        {/* Header totals are computed by lib/fundamentals.ts mapInsider() over
+            EXACTLY the transactions rendered below (asserted in tests). */}
         <span className="text-xs text-muted">
           {insider.buyCount} buys · {insider.sellCount} sells · net{" "}
           <span className={net >= 0 ? "text-positive" : "text-negative"}>

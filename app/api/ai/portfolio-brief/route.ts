@@ -131,7 +131,7 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
 
   return NextResponse.json({
     ...parsed,
-    model: "ollama",
+    model: "unavailable",
     generatedAt: new Date().toISOString(),
   } satisfies PortfolioBrief);
 }

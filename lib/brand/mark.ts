@@ -99,8 +99,8 @@ export const MARK_TERMINUS_CENTER = {
  * browser tab, the installed-app icon and every exported PDF stay blue.
  */
 export const BRAND_COLORS = {
-  dark: { ink: "#edeff2", brand: "#38bdf8", background: "#0a0b0e" },
-  light: { ink: "#101722", brand: "#0284c7", background: "#f7f8fa" },
+  dark: { ink: "#edeff2", brand: "#c8a96e", background: "#0a0b0e" },
+  light: { ink: "#101722", brand: "#7a5f33", background: "#f7f8fa" },
 } as const;
 
 export type BrandScheme = keyof typeof BRAND_COLORS;

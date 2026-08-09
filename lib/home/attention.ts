@@ -12,7 +12,7 @@
  *
  * Feeders are pure transforms of digest slices the home digest already built —
  * no fetching, no caching, no AI. That is what lets the queue paint in the
- * first eager digest pass (§18) and never block on Ollama (§19.8).
+ * first eager digest pass (§18) and never block on the AI (§19.8).
  *
  * The scoring exponents, the per-kind TTLs, and the per-kind confidence/impact
  * defaults are all named constants so they are tunable in one place and pinned
@@ -65,6 +65,47 @@ export const KIND_TTL_MS: Record<AttentionKind, number> = {
   alert: 7 * DAY,
 };
 
+/**
+ * The longest any user-chosen suppression may last (audit AG-04/AG-05/AG-06):
+ * "done" and per-symbol mutes park a story for 90 days, and a snooze may not
+ * reach past it — a never-revisited choice must not suppress forever. Band
+ * resurfacing still applies throughout: a materially worse version of the
+ * story carries a different dedupe key and bypasses any of these.
+ */
+export const MAX_SUPPRESS_MS = 90 * DAY;
+
+/**
+ * The user-facing form of a kind's dismissal TTL (audit AG-02): the plain
+ * dismiss toast must SAY what the X did ("Dismissed for 7d"), because the
+ * per-kind TTL is otherwise invisible and the affordance unpredictable.
+ */
+export function dismissalTtlLabel(kind: AttentionKind): string {
+  return `${Math.round(KIND_TTL_MS[kind] / DAY)}d`;
+}
+
+/**
+ * A per-symbol mute is a dismissal row with a reserved key shape (audit
+ * AG-05): unlike a story dismissal it matches on the seed's SYMBOL, so it
+ * survives dedupe-band rotation — that durability is exactly what makes it a
+ * mute rather than a dismiss. Same table, same undo path (DELETE the key).
+ */
+export const MUTE_KEY_PREFIX = "mute:symbol:";
+
+export function muteKeyForSymbol(symbol: string): string {
+  return `${MUTE_KEY_PREFIX}${symbol.trim().toUpperCase()}`;
+}
+
+/**
+ * Context-preserving navigation, outbound half (audit AG-10): every queue
+ * link carries `from=today` so the destination can know the visit started at
+ * the dashboard. Internal hrefs only, and never doubled.
+ */
+export function withFromToday(href: string): string {
+  if (!href.startsWith("/")) return href;
+  if (/[?&]from=/.test(href)) return href;
+  return `${href}${href.includes("?") ? "&" : "?"}from=today`;
+}
+
 /** Confidence when the feeder's source doesn't quantify one (§4.2). */
 export const KIND_CONFIDENCE_DEFAULT: Record<AttentionKind, number> = {
   threat: 0.8,
@@ -97,6 +138,11 @@ export const URGENCY_ZERO_HOURS = 7 * 24;
  * unaffected: they cross the ≤24h ramp on their own.
  */
 export const MARKET_CLOSED_URGENCY_CEIL = 0.85;
+/**
+ * Urgency of a catalyst whose time has already passed: review the outcome,
+ * do not treat it as imminent (audit DU-06).
+ */
+export const PAST_EVENT_URGENCY = 0.5;
 
 /** severity → an impact floor, used when the source gives no measured magnitude. */
 const SEVERITY_IMPACT: Record<"high" | "medium" | "low", number> = {
@@ -107,14 +153,50 @@ const SEVERITY_IMPACT: Record<"high" | "medium" | "low", number> = {
 
 /** % of portfolio at risk that counts as full impact for a threat. */
 const THREAT_IMPACT_FULL_PCT = 25;
-/** Impact of a catalyst/alert on a name that is tracked but not owned. */
-const UNHELD_IMPACT = 0.3;
+/**
+ * Impact of a catalyst/alert on a name that is tracked but not owned.
+ *
+ * Was 0.3 — which OUTRANKED every real position under 30% of the book, so an
+ * unheld name's routine ex-div scored five times a held 3% position's earnings
+ * (audit DU-05). A watched-but-unowned name must rank below any meaningfully
+ * held one.
+ */
+const UNHELD_IMPACT = 0.1;
+/**
+ * Book weight that counts as FULL impact for a held name's catalyst/alert.
+ * Raw weights (0.02-0.15 for most books) lived on a different scale from the
+ * severity floors (0.3-0.8), so held names systematically lost to everything
+ * else. A 25% position is a whole-book concern — same anchor as
+ * THREAT_IMPACT_FULL_PCT.
+ */
+const HELD_IMPACT_FULL_WEIGHT = 0.25;
 
 /* ------------------------------------------------------------------ */
 /* Scoring                                                             */
 /* ------------------------------------------------------------------ */
 
 const clamp01 = (n: number) => (Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0);
+
+/**
+ * The score's user-facing form (audit DU-01/DU-02): the raw 0-100 number is a
+ * geometric blend whose 65-vs-67 differences carry almost no discriminating
+ * information (most inputs are per-kind constants), so the UI renders BANDS
+ * and keeps the number for the drill-through and the internal ranking. Bands
+ * are named for what the user should do with the item, not fake precision.
+ * Once telemetry lands (audit 13), the bands get re-anchored to measured
+ * action rates.
+ */
+export interface PriorityBucket {
+  id: "act-now" | "today" | "this-week" | "fyi";
+  label: string;
+}
+
+export function priorityBucket(score: number): PriorityBucket {
+  if (score >= 70) return { id: "act-now", label: "Act now" };
+  if (score >= 55) return { id: "today", label: "Today" };
+  if (score >= 40) return { id: "this-week", label: "This week" };
+  return { id: "fyi", label: "FYI" };
+}
 
 /** The §4.2 formula. Exported so the score can be unit-tested directly. */
 export function scoreSeed(seed: Pick<AttentionSeed, "impact" | "urgency" | "confidence">): number {
@@ -144,7 +226,11 @@ export function computeUrgency(
   if (Number.isNaN(at)) return UNDATED_URGENCY;
 
   const hours = (at - now) / (60 * 60 * 1000);
-  if (hours <= URGENCY_RAMP_HOURS) return hours <= 0 ? 1 : 1; // due/overdue and ≤24h both max out
+  // A catalyst that already happened is no longer urgent to PREPARE for — it
+  // is worth reviewing, not racing to. The old `hours <= 0 → 1` kept
+  // yesterday's macro print at maximum urgency all weekend (audit DU-06).
+  if (hours <= 0) return PAST_EVENT_URGENCY;
+  if (hours <= URGENCY_RAMP_HOURS) return 1;
   if (hours >= URGENCY_ZERO_HOURS) return 0;
 
   const ramp = 1 - (hours - URGENCY_RAMP_HOURS) / (URGENCY_ZERO_HOURS - URGENCY_RAMP_HOURS);
@@ -168,6 +254,25 @@ function scoreBand(score: number): string {
   return String(Math.floor(score / 10) * 10);
 }
 
+/** Normalizes a subject line into a story-key slug: "USD Cash" → "usd-cash". */
+function storySlug(subject: string): string {
+  return subject.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+/**
+ * When two kinds tell one story, the more EXECUTABLE one survives (audit
+ * DU-03: the informationless "USD Cash concentration" threat outranked the
+ * fully-simulated "Trim USD Cash" action it restated, so the queue's
+ * spotlight never showed the rich decision card). Lower = survives.
+ */
+const STORY_KIND_PREFERENCE: Record<AttentionKind, number> = {
+  action: 0,
+  alert: 1,
+  threat: 2,
+  event: 3,
+  signal: 4,
+};
+
 /* ------------------------------------------------------------------ */
 /* Feeders — pure transforms of already-built digest slices            */
 /* ------------------------------------------------------------------ */
@@ -180,11 +285,29 @@ function weightOf(symbol: string | null, weights: WeightBySymbol): number {
   return clamp01(weights.get(symbol.toUpperCase()) ?? 0);
 }
 
+/**
+ * Confidence multiplier for observation age (audit F-22d): a same-day
+ * observation carries full weight, the previous session (weekend-tolerant)
+ * half, and anything older contributes nothing — it should already have been
+ * filtered upstream, but a zero confidence sinks it regardless (geometric
+ * score). Items with no observation time are live-engine output: full weight.
+ */
+export function observationDecay(observedAt: string | null | undefined, now: number): number {
+  if (!observedAt) return 1;
+  const t = Date.parse(observedAt);
+  if (Number.isNaN(t)) return 0;
+  const ageDays = (now - t) / DAY;
+  if (ageDays <= 1) return 1;
+  if (ageDays <= 3) return 0.5;
+  return 0;
+}
+
 /** Portfolio-engine decisions / alert queue → `action` seeds. */
-export function seedsFromActions(actions: RecommendedAction[]): AttentionSeed[] {
+export function seedsFromActions(actions: RecommendedAction[], now: number = Date.now()): AttentionSeed[] {
   return actions.map((a) => {
     const impact = a.decisionScore != null ? a.decisionScore / 100 : SEVERITY_IMPACT[a.severity];
     const band = a.decisionScore != null ? scoreBand(a.decisionScore) : a.severity;
+    const decay = observationDecay(a.observedAt, now);
     return {
       id: `action:${a.id}`,
       dedupeKey: `action:${a.symbol ?? "portfolio"}:${band}`,
@@ -194,13 +317,20 @@ export function seedsFromActions(actions: RecommendedAction[]): AttentionSeed[] 
       rationale: a.reason,
       impact,
       urgency: UNDATED_URGENCY,
-      confidence: a.confidence ?? KIND_CONFIDENCE_DEFAULT.action,
+      confidence: (a.confidence ?? KIND_CONFIDENCE_DEFAULT.action) * decay,
       occursAt: null,
+      observedAt: a.observedAt ?? null,
       primaryAction: {
         label: a.source === "decision" ? "Open decision" : "Review",
         href: a.source === "decision" ? "/portfolio?tab=decisions" : a.href,
       },
       source: "actions",
+      // A trim/REDUCE decision is the executable form of a concentration
+      // threat; the shared story key lets the engine collapse the pair.
+      storyKey:
+        a.action === "REDUCE" && (a.subject ?? a.symbol)
+          ? `concentration:${storySlug(a.subject ?? (a.symbol as string))}`
+          : null,
     } satisfies AttentionSeed;
   });
 }
@@ -228,6 +358,12 @@ export function seedsFromThreats(threats: ThreatItem[]): AttentionSeed[] {
       occursAt: null,
       primaryAction: { label: "Review threat", href: t.href },
       source: "threats",
+      // "<subject> concentration" threats share a story with the trim action
+      // that executes them (see seedsFromActions).
+      storyKey:
+        t.category === "concentration" && t.title.endsWith(" concentration")
+          ? `concentration:${storySlug(t.title.slice(0, -" concentration".length))}`
+          : null,
     } satisfies AttentionSeed;
   });
 }
@@ -235,11 +371,12 @@ export function seedsFromThreats(threats: ThreatItem[]): AttentionSeed[] {
 /** Triggered watchlist alerts → `alert` seeds. */
 export function seedsFromAlerts(alerts: WatchlistAlert[], weights: WeightBySymbol): AttentionSeed[] {
   return alerts.map((a) => {
-    // Portfolio-weighted exposure: a held name carries its book weight; a
-    // tracked-but-unheld name has no exposure, so it gets a modest flat floor.
+    // Portfolio-weighted exposure: a held name's book weight scaled so a 25%
+    // position reads as full impact (see HELD_IMPACT_FULL_WEIGHT); a
+    // tracked-but-unheld name has no exposure, so it gets a small flat floor.
     // Severity drives the dedupe band (resurfacing), not the impact number.
     const held = weightOf(a.symbol, weights);
-    const impact = held > 0 ? held : UNHELD_IMPACT;
+    const impact = held > 0 ? Math.max(held / HELD_IMPACT_FULL_WEIGHT, UNHELD_IMPACT) : UNHELD_IMPACT;
     return {
       id: `alert:${a.symbol}:${a.type}`,
       dedupeKey: `alert:${a.symbol.toUpperCase()}:${a.type}:${a.severity}`,
@@ -273,7 +410,7 @@ export function seedsFromEvents(
     .map((e) => {
       const sym = e.symbol ? e.symbol.toUpperCase() : null;
       const held = weightOf(sym, weights);
-      const impact = held > 0 ? held : UNHELD_IMPACT;
+      const impact = held > 0 ? Math.max(held / HELD_IMPACT_FULL_WEIGHT, UNHELD_IMPACT) : UNHELD_IMPACT;
       return {
         id: `event:${e.id}`,
         dedupeKey: `${sym ?? "market"}:${e.type}:${e.date.slice(0, 10)}`,
@@ -367,16 +504,38 @@ export function buildAttentionQueue(input: BuildAttentionInput): AttentionQueue 
     }
   }
 
-  // 2. Drop stories with an active (unexpired) dismissal.
+  // 2. Drop stories with an active (unexpired) dismissal. A dismissal of a
+  // merged story stores the storyKey too, so the absorbed twin stays gone.
+  // A `mute:symbol:<SYM>` row (audit AG-05) matches on the seed's SYMBOL, not
+  // its key, so it keeps suppressing across dedupe-band rotation.
   const activeDismissals = new Set(
     input.dismissals.filter((d) => d.expiresAt > now).map((d) => d.dedupeKey),
   );
-  const live = seeds.filter((s) => !activeDismissals.has(s.dedupeKey));
+  const mutedSymbols = new Set(
+    [...activeDismissals]
+      .filter((k) => k.startsWith(MUTE_KEY_PREFIX))
+      .map((k) => k.slice(MUTE_KEY_PREFIX.length)),
+  );
+  const live = seeds.filter(
+    (s) =>
+      !activeDismissals.has(s.dedupeKey) &&
+      !(s.storyKey && activeDismissals.has(s.storyKey)) &&
+      !(s.symbol && mutedSymbols.has(s.symbol.toUpperCase())),
+  );
 
   // 3. Score.
   const scored: AttentionItem[] = live.map((s) => ({ ...s, score: scoreSeed(s) }));
 
-  // 4. Dedupe by story key: keep the highest score; fold the rest's links in.
+  // 4. Dedupe by story key: keep the sibling with the NEWEST observation, not
+  // the highest score — max-score kept whichever print was most extreme, which
+  // for a decaying story is provably the oldest one (audit F-22d: a five-day-
+  // old "-8.7%" outranked the fresher "-7.4%" of the same story). Items with
+  // no observation time (live engine output) sort as newest. Score breaks ties.
+  const observedMs = (i: AttentionItem) => {
+    if (!i.observedAt) return Number.POSITIVE_INFINITY;
+    const t = Date.parse(i.observedAt);
+    return Number.isNaN(t) ? Number.NEGATIVE_INFINITY : t;
+  };
   const byKey = new Map<string, AttentionItem>();
   for (const item of scored) {
     const existing = byKey.get(item.dedupeKey);
@@ -384,15 +543,46 @@ export function buildAttentionQueue(input: BuildAttentionInput): AttentionQueue 
       byKey.set(item.dedupeKey, item);
       continue;
     }
-    const [keep, drop] = item.score >= existing.score ? [item, existing] : [existing, item];
+    const a = observedMs(item);
+    const b = observedMs(existing);
+    const keepItem = a !== b ? a > b : item.score >= existing.score;
+    const [keep, drop] = keepItem ? [item, existing] : [existing, item];
     const merged = keep.mergedHrefs ?? [];
     if (drop.primaryAction.href !== keep.primaryAction.href) merged.push(drop.primaryAction);
     keep.mergedHrefs = merged;
     byKey.set(item.dedupeKey, keep);
   }
 
+  // 4b. Cross-kind story collapse (audit DU-03): when items of different
+  // kinds share a storyKey, the most EXECUTABLE kind survives and absorbs the
+  // others' links. Without this, a threat restating an action outranked the
+  // action itself (the geometric score rewards the threat's constant inputs),
+  // and the queue's spotlight showed the restatement instead of the decision.
+  const byStory = new Map<string, AttentionItem>();
+  const storyless: AttentionItem[] = [];
+  for (const item of byKey.values()) {
+    if (!item.storyKey) {
+      storyless.push(item);
+      continue;
+    }
+    const existing = byStory.get(item.storyKey);
+    if (!existing) {
+      byStory.set(item.storyKey, item);
+      continue;
+    }
+    const keepItem = STORY_KIND_PREFERENCE[item.kind] < STORY_KIND_PREFERENCE[existing.kind];
+    const [keep, drop] = keepItem ? [item, existing] : [existing, item];
+    const merged = keep.mergedHrefs ?? [];
+    if (drop.primaryAction.href !== keep.primaryAction.href) merged.push(drop.primaryAction);
+    keep.mergedHrefs = merged;
+    // The surviving item inherits the story's strongest score, so collapsing
+    // the pair never DEMOTES the story below where the louder twin ranked.
+    keep.score = Math.max(keep.score, drop.score);
+    byStory.set(item.storyKey, keep);
+  }
+
   // 5. Sort: score desc, then kind precedence, then symbol.
-  const items = [...byKey.values()].sort((a, b) => {
+  const items = [...storyless, ...byStory.values()].sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
     if (KIND_PRECEDENCE[a.kind] !== KIND_PRECEDENCE[b.kind])
       return KIND_PRECEDENCE[a.kind] - KIND_PRECEDENCE[b.kind];

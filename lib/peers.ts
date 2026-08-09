@@ -1,5 +1,6 @@
 import { getQuoteSummary } from "./yahoo";
 import { SP500, constituentsForSector } from "./sp500";
+import { canonicalizeSector } from "./gics-sectors";
 import type { PeerComparison, PeerMetricSet } from "./types";
 
 const EMPTY: PeerMetricSet = { pe: null, roe: null, revenueGrowth: null, debtToEquity: null };
@@ -38,8 +39,40 @@ export function medianOf(peers: PeerMetricSet[]): PeerMetricSet {
   };
 }
 
-function sectorOf(symbol: string): string | null {
+/** Canonical GICS-11 name → the label lib/sp500.ts's curated universe uses. */
+const SP500_SECTOR_LABEL: Record<string, string> = {
+  Technology: "Information Technology",
+  Healthcare: "Health Care",
+  "Consumer Cyclical": "Consumer Discretionary",
+};
+
+function sp500SectorLabel(canonical: string): string {
+  return SP500_SECTOR_LABEL[canonical] ?? canonical;
+}
+
+function curatedSectorOf(symbol: string): string | null {
   return SP500.find((c) => c.symbol === symbol.toUpperCase())?.sector ?? null;
+}
+
+/**
+ * Sector for ANY US-listed symbol: the curated map when the symbol is in it,
+ * otherwise Yahoo's assetProfile sector canonicalized onto the curated
+ * universe's labels. Peer comparison used to return empty for every symbol
+ * outside the 84 curated names (observed: SYF), which rendered as a permanent
+ * "Peer data unavailable" box and a "Missing: Peer comparison" claim.
+ */
+async function sectorOf(symbol: string): Promise<string | null> {
+  const curated = curatedSectorOf(symbol);
+  if (curated) return curated;
+  try {
+    const raw = (await getQuoteSummary(symbol, ["assetProfile"])) as {
+      assetProfile?: { sector?: string };
+    };
+    const canonical = raw.assetProfile?.sector ? canonicalizeSector(raw.assetProfile.sector) : null;
+    return canonical ? sp500SectorLabel(canonical) : null;
+  } catch {
+    return null;
+  }
 }
 
 const cache = new Map<string, { at: number; map: Record<string, PeerMetricSet> }>();
@@ -72,12 +105,23 @@ async function loadSectorMetrics(
 
 /** Compare a symbol against the median of its S&P 500 sector peers. */
 export async function getPeerComparison(symbol: string): Promise<PeerComparison> {
-  const sector = sectorOf(symbol);
+  const sector = await sectorOf(symbol);
   if (!sector) return { sector: "", peerCount: 0, target: EMPTY, median: EMPTY };
 
   const sym = symbol.toUpperCase();
   const map = await loadSectorMetrics(sector);
-  const target = map[sym] ?? EMPTY;
+  // A symbol outside the curated universe still compares against its
+  // sector's curated peers — its own metrics are fetched directly.
+  let target = map[sym] ?? EMPTY;
+  if (!(sym in map)) {
+    try {
+      target = extractPeer(
+        (await getQuoteSummary(sym, ["financialData", "summaryDetail"])) as RawPeer,
+      );
+    } catch {
+      /* keep EMPTY — the peer medians still render */
+    }
+  }
   const peers = Object.entries(map)
     .filter(([s]) => s !== sym)
     .map(([, m]) => m);

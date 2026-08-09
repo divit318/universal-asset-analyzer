@@ -67,5 +67,18 @@ export function readRectStyle(overlayStyles: DeepPartial<OverlayStyle> | null | 
 
 /** Defensive reader for a custom overlay template's text figures. */
 export function readTextStyle(overlayStyles: DeepPartial<OverlayStyle> | null | undefined): Partial<TextStyle> {
-  return { color: "#e6e9ef", size: 12, ...overlayStyles?.text };
+  return { color: themeToken("--foreground", "#e6e9ef"), size: 12, ...overlayStyles?.text };
+}
+
+/**
+ * Resolve a design token to its current hex at draw time. Overlay templates
+ * register once at module load and never re-render on theme change, but their
+ * `createPointFigures` runs on every draw — reading the token here is what
+ * lets a semantic zone (risk red / reward green) follow the active theme
+ * instead of baking in the dark palette (2026-08-08 light-mode audit).
+ */
+export function themeToken(name: string, fallback: string): string {
+  if (typeof document === "undefined") return fallback;
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return /^#([0-9a-f]{6})$/i.test(v) ? v : fallback;
 }

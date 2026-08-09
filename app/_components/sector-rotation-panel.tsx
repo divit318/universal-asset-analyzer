@@ -7,7 +7,7 @@ import { Skeleton } from "./ui/skeleton";
 const CLASS_STYLE: Record<RotationClass, { bg: string; text: string; label: string }> = {
   leading: { bg: "bg-positive/10 border-positive/25", text: "text-positive", label: "Leading" },
   strengthening: { bg: "bg-accent/10 border-accent/25", text: "text-accent", label: "Strengthening" },
-  weakening: { bg: "bg-amber-500/10 border-amber-500/25", text: "text-amber-500", label: "Weakening" },
+  weakening: { bg: "bg-amber-500/10 border-amber-500/25", text: "text-amber-500 light:text-amber-700", label: "Weakening" },
   lagging: { bg: "bg-negative/10 border-negative/25", text: "text-negative", label: "Lagging" },
 };
 

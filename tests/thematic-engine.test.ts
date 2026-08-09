@@ -273,13 +273,13 @@ describe("runThematicEngine — failure tracking", () => {
   it("records a named failure and falls back to a neutral default without crashing the pipeline", async () => {
     runPromptMock.mockReset();
     runPromptMock.mockImplementation(async (_task: string, prompt: string) => {
-      if (prompt.includes("bottleneck in the")) throw new Error("Ollama request timed out");
+      if (prompt.includes("bottleneck in the")) throw new Error("AI request timed out");
       return routeByPrompt(prompt);
     });
 
     const report = await runThematicEngine({ theme: "AI Compute" });
 
-    expect(report.stageFailures).toEqual([{ stage: "Bottleneck", error: "Ollama request timed out" }]);
+    expect(report.stageFailures).toEqual([{ stage: "Bottleneck", error: "AI request timed out" }]);
     expect(report.bottleneck.score).toBe(5); // neutral default, not a crash
     expect(report.futureState.inevitabilityScore).toBe(8); // other stages still populated from real data
   });

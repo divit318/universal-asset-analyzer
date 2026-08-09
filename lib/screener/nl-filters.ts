@@ -65,7 +65,8 @@ function buildSchema(assetClass: AssetClassId): string {
   return `{\n${lines.join("\n")}\n}`;
 }
 
-function buildSystemPrompt(assetClass: AssetClassId): string {
+/** Exported for benching — pure. */
+export function buildSystemPrompt(assetClass: AssetClassId): string {
   const def = getAssetClass(assetClass);
 
   return `You are a screening assistant for ${def.label.toLowerCase()}. Given a plain-English description of what someone is looking for, output a valid JSON object encoding the screening filters.
@@ -101,13 +102,13 @@ export async function parseNlFilters(
     timeoutMs: 30_000,
   });
 
-  if (!raw) throw new Error("Ollama returned an empty response");
+  if (!raw) throw new Error("The AI returned an empty response");
 
   let parsed: Record<string, unknown>;
   try {
     parsed = extractJson<Record<string, unknown>>(raw);
   } catch {
-    throw new NlFilterParseError("Ollama did not return valid JSON. Try rephrasing your description.", raw);
+    throw new NlFilterParseError("The AI did not return valid JSON. Try rephrasing your description.", raw);
   }
 
   const templateId =

@@ -23,6 +23,7 @@
  */
 
 import { runPlan, stepValue } from "../platform";
+import { dayChange } from "../day-change";
 import { datedReturns } from "./engines/series";
 import { getQuotes, getHistory, getQuoteSummary } from "../yahoo";
 import { getFundamentals } from "../fundamentals";
@@ -211,6 +212,7 @@ export async function buildMarketContext(
   const quoteList = stepValue<Awaited<ReturnType<typeof getQuotes>>>(result, "quotes") ?? [];
   const quotes = new Map<string, ContextQuote>();
   for (const q of quoteList) {
+    const dc = dayChange(q);
     quotes.set(q.symbol.toUpperCase(), {
       symbol: q.symbol.toUpperCase(),
       price: q.price,
@@ -218,6 +220,10 @@ export async function buildMarketContext(
       currency: q.currency ?? null,
       name: q.name ?? null,
       marketCap: q.marketCap ?? null,
+      // Which session changePercent describes, so downstream "today" claims
+      // can be honest about a closed market (audit F-22).
+      sessionDate: dc.sessionDate,
+      asOf: dc.asOf,
       // The instrument TYPE, carried through so the risk-model classifier can tell
       // a money-market fund from a stock without a second provider call.
       assetType: q.assetType ?? null,

@@ -1,25 +1,31 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { CountUp } from "@/app/_components/count-up";
 import { LoadingLine } from "@/app/_components/loading-panel";
 import { ValueBar } from "@/app/_components/value-bar";
-import type { CopilotCoverage } from "./copilot/use-copilot";
+import type { FundamentalsData, PeerComparison } from "@/lib/types";
 
 /**
- * Page-level, always-visible data-quality meter. Reuses the same coverage
- * computation the Copilot's empty state already shows (research-copilot.tsx
- * Hero()) via the same /api/research/context endpoint — this is a render
- * relocation, not new logic.
+ * Page-level data-coverage meter.
+ *
+ * Reads the SAME store entries the page renders from (fundamentals, peers,
+ * filings, news), so it can never contradict the tabs below it. The previous
+ * version asked /api/research/context — a separate fetch with its own failure
+ * modes — and routinely reported "Missing: Financial statements" eight lines
+ * above a fully populated Financials tab.
+ *
+ * A dataset still in flight is counted as PENDING, not missing: "missing" is
+ * only claimed once its fetch has actually settled without data.
  */
 
-const DATASETS: { key: keyof CopilotCoverage; label: string }[] = [
-  { key: "hasFundamentals", label: "Fundamentals" },
-  { key: "hasStatements",   label: "Financial statements" },
-  { key: "hasAnalyst",      label: "Analyst coverage" },
-  { key: "hasPeers",        label: "Peer comparison" },
-  { key: "hasProfile",      label: "Company profile" },
-];
+interface Props {
+  fundamentals: FundamentalsData | null;
+  fundamentalsLoading: boolean;
+  peers: PeerComparison | null;
+  peersLoading: boolean;
+  filingsCount: number;
+  newsCount: number;
+}
 
 function barColor(pct: number) {
   if (pct >= 80) return "bg-positive";
@@ -27,50 +33,50 @@ function barColor(pct: number) {
   return "bg-negative";
 }
 
-export function ResearchConfidenceMeter({ symbol }: { symbol: string }) {
-  const [coverage, setCoverage] = useState<CopilotCoverage | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setLoading(true);
-    setCoverage(null);
-    /* eslint-enable react-hooks/set-state-in-effect */
-    let cancelled = false;
-    void fetch(`/api/research/context?symbol=${encodeURIComponent(symbol)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (!cancelled && data?.coverage) setCoverage(data.coverage as CopilotCoverage);
-      })
-      .catch(() => { /* best-effort */ })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [symbol]);
-
-  if (loading) {
+export function ResearchConfidenceMeter({
+  fundamentals,
+  fundamentalsLoading,
+  peers,
+  peersLoading,
+  filingsCount,
+  newsCount,
+}: Props) {
+  if (fundamentalsLoading && !fundamentals) {
     return (
       <div className="flex h-10 items-center rounded-lg border border-border bg-surface-2 px-4">
         <LoadingLine message="Checking data coverage…" className="text-caption" />
       </div>
     );
   }
-  if (!coverage) return null;
+  if (!fundamentals) return null;
 
-  const available = DATASETS.filter((d) => coverage[d.key]);
-  const missing = DATASETS.filter((d) => !coverage[d.key]);
-  const pct = Math.round((available.length / DATASETS.length) * 100);
+  const analystCovered =
+    !!fundamentals.analyst &&
+    (fundamentals.analyst.numberOfOpinions ?? 0) > 0;
+
+  const datasets: { label: string; ok: boolean; pending: boolean }[] = [
+    { label: "Fundamentals", ok: fundamentals.snapshot != null, pending: false },
+    { label: "Financial statements", ok: fundamentals.statements != null, pending: false },
+    { label: "Analyst coverage", ok: analystCovered, pending: false },
+    { label: "Peer comparison", ok: (peers?.peerCount ?? 0) > 0, pending: peersLoading },
+    { label: "Company profile", ok: fundamentals.snapshot?.sector != null, pending: false },
+  ];
+
+  const available = datasets.filter((d) => d.ok);
+  const missing = datasets.filter((d) => !d.ok && !d.pending);
+  const pct = Math.round((available.length / datasets.length) * 100);
 
   return (
     <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-2 px-4 py-2.5">
       <div className="flex items-center justify-between gap-3">
         <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Research Confidence</span>
         <span className="font-mono text-xs tabular-nums text-muted">
-          {available.length}/{DATASETS.length} datasets ·{" "}
-          <CountUp value={coverage.filings} format={(v) => String(Math.round(v))} /> filings ·{" "}
-          <CountUp value={coverage.news} format={(v) => String(Math.round(v))} /> news
+          {available.length}/{datasets.length} datasets ·{" "}
+          <CountUp value={filingsCount} format={(v) => String(Math.round(v))} /> filings ·{" "}
+          <CountUp value={newsCount} format={(v) => String(Math.round(v))} /> news
         </span>
       </div>
-      <ValueBar key={symbol} value={pct} barClassName={barColor(pct)} trackClassName="bg-surface" />
+      <ValueBar value={pct} barClassName={barColor(pct)} trackClassName="bg-surface" />
       {missing.length > 0 && (
         <p className="text-[10px] text-muted/70">
           Missing: {missing.map((d) => d.label).join(", ")} — AI confidence reflects this gap.

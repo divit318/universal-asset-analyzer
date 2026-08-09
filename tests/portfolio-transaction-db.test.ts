@@ -29,6 +29,8 @@ const {
   listUniversalLots,
   createManualAsset,
   listManualAssets,
+  listPortfolio,
+  localTradeDate,
 } = await import("../lib/db");
 
 describe("Transaction Engine DB layer (isolated test database)", () => {
@@ -114,6 +116,31 @@ describe("Transaction Engine DB layer (isolated test database)", () => {
     expect(lotsAfter.map((l) => l.id).sort()).toEqual(lotsBefore.map((l) => l.id).sort());
     expect(manualAfter.length).toBe(manualBefore.length);
     expect(manualAfter.some((a) => a.id === extraAsset.id)).toBe(false);
+  });
+
+  it("a buy and its same-day sell-all stamp the SAME local trade date, so the position actually closes", () => {
+    // Regression: addUniversalLot (the buy modal's write path) stamped the
+    // LOCAL date while executeTradeBatch (the sell path) stamped the UTC date.
+    // For anyone east of UTC in the evening, the sell then sorted BEFORE the
+    // buy inside aggregateLots(), sold 0 shares, and left the position intact —
+    // while the cash-balancing lot still credited the full proceeds each try.
+    const today = localTradeDate();
+    addUniversalLot({
+      symbol: "MA", name: "Mastercard", shares: 261.380328, price: 575.95, kind: "buy",
+      assetClass: "equity", currency: "USD", unit: "shares",
+    });
+    executeTradeBatch(
+      [{ symbol: "MA", name: "Mastercard", shares: 261.380328, price: 575.95, kind: "sell", assetClass: "equity", currency: "USD", unit: "shares" }],
+      [],
+    );
+
+    const maLots = listUniversalLots().filter((l) => l.symbol === "MA");
+    expect(maLots).toHaveLength(2);
+    for (const lot of maLots) expect(lot.trade_date).toBe(today);
+
+    // The aggregate must show the position CLOSED — before the fix the sell
+    // sorted first and MA survived with its full share count.
+    expect(listPortfolio().some((p) => p.symbol === "MA")).toBe(false);
   });
 
   it("restoreSnapshot returns false for an unknown snapshot id, without touching the ledger", () => {

@@ -1,7 +1,7 @@
 /**
  * Domain types for the AI Equity Research Copilot.
  *
- * The copilot is built from eight cooperating layers (model registry, Ollama
+ * The copilot is built from eight cooperating layers (model registry, provider
  * service, context, retrieval, prompt, memory, actions, chat API). These types
  * are the contracts shared between them and the UI. Everything here is plain
  * data so the pure layers stay trivially unit-testable.
@@ -197,6 +197,6 @@ export type ChatStreamEvent =
   | { type: "reasoning"; text: string }
   | { type: "meta"; citations: Citation[]; suggestions: string[]; model: string; grounding: GroundingReport }
   // `ai_unavailable` is provider-agnostic on purpose: it means "no backend
-  // could answer", which since the Devin provider landed is no longer the same
-  // statement as "Ollama is down".
+  // could answer" — today, that the Anthropic key is missing or the API is
+  // unreachable.
   | { type: "error"; message: string; code: "ai_unavailable" | "model_missing" | "internal" };

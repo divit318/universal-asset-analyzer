@@ -53,7 +53,7 @@ export function Tabs<T extends string>({ tabs, active, onChange, idBase }: TabsP
       ref={listRef}
       role="tablist"
       onKeyDown={onKeyDown}
-      className="flex items-center gap-1 overflow-x-auto border-b border-border"
+      className="flex items-center gap-1 overflow-x-auto border-b border-border [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
       {tabs.map((t) => {
         const isActive = active === t.id;

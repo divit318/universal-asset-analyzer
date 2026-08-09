@@ -47,15 +47,15 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     requires: [],
     dataSources: ["ai", "portfolio-engine", "sector-rotation", "scanner"],
     dependencies: [],
-    // required: false — a down Ollama yields the deterministic briefing, never an error.
+    // required: false — an unavailable AI yields the deterministic briefing, never an error.
     ai: { task: "daily-briefing", required: false },
     navTarget: null,
   },
 
   "book": {
     id: "book",
-    title: "Book",
-    description: "Health, return vs. benchmark, cash, and today's P&L.",
+    title: "The Book",
+    description: "Where you stand: health, day P&L and its attribution, return vs. benchmark, cash.",
     loading: "eager",
     refresh: "on-focus",
     refreshIntervalMs: null,
@@ -63,7 +63,7 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     // read — the same digest slices, no new endpoint.
     cache: { via: "digest", datasets: ["quotes.batch", "history"] },
     priority: 2,
-    // The command row's one-third rail beside the brief.
+    // Zone 1 of the state + delta + queue layout: a full-width strip.
     defaultSize: SIZE.rail,
     minSize: SIZE.rail,
     preferredLayout: "rail",
@@ -72,7 +72,9 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
     dataSources: ["portfolio-engine", "yahoo"],
     dependencies: [],
     ai: null,
-    navTarget: { href: "/portfolio", label: "Open portfolio" },
+    // The card's footer carries the single "Open portfolio" link — a second
+    // header link to the same route read as two different destinations.
+    navTarget: null,
   },
 
   /* ---------------- Change band ---------------- */
@@ -131,7 +133,7 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
   "radar": {
     id: "radar",
     title: "Radar",
-    description: "Ideas entering the pipeline — scanner fits and buy candidates.",
+    description: "Ideas entering the pipeline. Scanner fits and buy candidates.",
     loading: "deferred",
     refresh: "on-focus",
     refreshIntervalMs: null,
@@ -153,8 +155,8 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
 
   "market-intelligence": {
     id: "market-intelligence",
-    title: "Market Intelligence",
-    description: "Indices, volatility, breadth, rates, commodities, currencies, and crypto.",
+    title: "Market Overview",
+    description: "Global markets at a glance — indices, sentiment, rates, commodities, currencies, and crypto.",
     loading: "eager",
     // The one module where the number on screen is genuinely live. Quotes carry a
     // 15s TTL in the platform registry, so a 60s poll costs at most one provider

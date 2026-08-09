@@ -17,7 +17,7 @@
  * Scans are SINGLE-FLIGHT per parameter set (lib/platform/jobs.ts): a second
  * request while one is running attaches to it — replaying its history, then
  * following live — instead of starting a competing pipeline. Two concurrent
- * scans serialized behind one Ollama were how every queued call burned its
+ * scans serialized behind one backend were how every queued call burned its
  * whole timeout budget waiting (measured 2026-07-31). Disconnecting the last
  * subscriber cancels the job server-side after a short grace window, so a
  * user's Cancel genuinely stops the model, while a quick reload re-attaches.
@@ -26,8 +26,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { getScannerCache } from "@/lib/db";
-import { scanCacheKey, scanJobResult, startScanJob } from "@/lib/scanner/job";
+import { readCachedScan, scanCacheKey, scanJobResult, startScanJob } from "@/lib/scanner/job";
 import { logPipeline } from "@/lib/debug-pipeline";
 
 export const runtime = "nodejs";
@@ -57,12 +56,13 @@ export async function POST(request: Request) {
 
   const cacheKey = scanCacheKey(body);
 
-  // Check server-side cache first (unless explicitly bypassed)
+  // Check server-side cache first (unless explicitly bypassed). Degraded
+  // results are only re-served briefly — see readCachedScan.
   if (!body.noCache) {
-    const cached = getScannerCache(cacheKey);
+    const cached = readCachedScan(cacheKey);
     if (cached) {
       return new Response(
-        JSON.stringify({ type: "cached", data: JSON.parse(cached) }) + "\n",
+        JSON.stringify({ type: "cached", data: cached }) + "\n",
         {
           headers: {
             "Content-Type": "application/x-ndjson",
@@ -134,9 +134,9 @@ export async function POST(request: Request) {
 
 /** GET — auto-scan, returns ScannerResult directly (non-streaming, for simple clients). */
 export async function GET() {
-  const cached = getScannerCache(scanCacheKey({ india: true, global: true }));
+  const cached = readCachedScan(scanCacheKey({ india: true, global: true }));
   if (cached) {
-    return NextResponse.json({ ...JSON.parse(cached), fromCache: true });
+    return NextResponse.json({ ...cached, fromCache: true });
   }
 
   try {

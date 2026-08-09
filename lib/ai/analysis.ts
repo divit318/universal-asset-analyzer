@@ -5,12 +5,11 @@
  *   enqueueAnalysis(req, opts)       async: job row → provider → cache; poll
  *                                    /api/ai/jobs/[id] for pending→ready UIs
  *
- * Provider choice is resolveProvider's job (env flag + guardrail); caching is
+ * Provider choice is resolveProvider's job (one runtime today); caching is
  * the ai_result table keyed (analysis_type, subject, input_hash,
  * schema_version); in-process single-flight is lib/platform/dedup.ts — the
  * same coalescer the orchestrator uses, so a concurrent identical request
- * attaches rather than re-running. After every Devin run the session sweeper
- * gets a (self-rate-limited) kick — amendment 1's backstop.
+ * attaches rather than re-running.
  */
 
 import {
@@ -21,24 +20,27 @@ import {
   type AnalysisRequest,
   type AnalysisResult,
 } from "./analysis-provider";
-import { ollamaAnalysisProvider } from "./providers/ollama-analysis";
-import { devinAnalysisProvider } from "./providers/devin/provider";
-import { sweepStaleSessions } from "./providers/devin/sweeper";
+/* Merge resolution (origin/main → f22/day-change, 2026-08-06): main's version
+   imported ./providers/devin/{provider,sweeper}, which this branch removed
+   when the sessions runtime was retired (30e04d2 / 42d579d). The chain is the
+   one runtime; legacy "sessions" ids remain readable below. */
+import { chainAnalysisProvider } from "./providers/chain-analysis";
 import { dedupe } from "../platform/dedup";
 import {
   getAiJob, getAiResult, putAiResult, updateAiJob, upsertAiJob,
   type AiJobRow,
 } from "../db";
+import type { AnalysisProviderId } from "./analysis-provider";
 
 export interface RunAnalysisOptions {
   /** Freshness window for the ai_result cache. Omit to skip cache reads. */
   maxAgeMs?: number;
   /** Test/DI hook. */
-  providers?: Partial<Record<"ollama" | "devin", AnalysisProvider>>;
+  providers?: Partial<Record<AnalysisProviderId, AnalysisProvider>>;
 }
 
-function providerFor(id: "ollama" | "devin", opts?: RunAnalysisOptions): AnalysisProvider {
-  return opts?.providers?.[id] ?? (id === "devin" ? devinAnalysisProvider : ollamaAnalysisProvider);
+function providerFor(id: AnalysisProviderId, opts?: RunAnalysisOptions): AnalysisProvider {
+  return opts?.providers?.[id] ?? chainAnalysisProvider;
 }
 
 function cacheKeyOf<T>(req: AnalysisRequest<T>) {
@@ -62,7 +64,9 @@ export function readCachedAnalysis<T>(
     const parsed = req.schema.safeParse(JSON.parse(row.resultJson));
     if (!parsed.success) return null;
     const meta = row.metaJson ? (JSON.parse(row.metaJson) as AnalysisResult<T>["meta"]) : { durationMs: 0 };
-    return { data: parsed.data, provider: row.provider as "ollama" | "devin", meta };
+    // Rows written by retired runtimes ("devin"/"sessions"/"ollama") stay
+    // readable; everything maps onto the one runtime left.
+    return { data: parsed.data, provider: "chain", meta };
   } catch {
     return null;
   }
@@ -71,17 +75,13 @@ export function readCachedAnalysis<T>(
 async function execute<T>(req: AnalysisRequest<T>, opts?: RunAnalysisOptions): Promise<AnalysisResult<T>> {
   const providerId = resolveProvider(req.taskType);
   const provider = providerFor(providerId, opts);
-  try {
-    const result = await provider.run(req);
-    putAiResult(cacheKeyOf(req), {
-      provider: result.provider,
-      metaJson: JSON.stringify(result.meta),
-      resultJson: JSON.stringify(result.data),
-    });
-    return result;
-  } finally {
-    if (providerId === "devin") void sweepStaleSessions().catch(() => {});
-  }
+  const result = await provider.run(req);
+  putAiResult(cacheKeyOf(req), {
+    provider: result.provider,
+    metaJson: JSON.stringify(result.meta),
+    resultJson: JSON.stringify(result.data),
+  });
+  return result;
 }
 
 /** Blocking run: fresh cache hit → provider → persist. */

@@ -7,13 +7,11 @@ import { JsonFieldStreamer } from "@/lib/ai/streaming-json";
 import {
   assembleVerdict,
   cacheVerdict,
-  generateVerdict,
   offlineVerdict,
   peekVerdict,
   planVerdict,
   verdictCacheParams,
 } from "@/lib/ai/verdict";
-import { resolveProvider } from "@/lib/ai/analysis-provider";
 import { personalizationParams } from "@/lib/ai/verdict-params";
 import { normalizeSymbol } from "@/lib/market";
 import { REPORT_SECTIONS } from "@/lib/ai/report-sections";
@@ -158,56 +156,13 @@ export async function GET(request: Request) {
         return;
       }
 
-      /* Streaming redesign (ai-migration/13): when the verdict task resolves
-         to the Devin provider there is no token stream to parse — a session
-         delivers one schema-validated object. So the seam runs the SAME
-         generateVerdict the blocking route uses (same plan, same assembler,
-         same content-keyed idempotency; a warmer-precomputed verdict makes
-         this instant), and the finished report replays section-by-section in
-         the exact protocol below — the client cannot tell the transports
-         apart. Progressive token rendering remains the local path's behavior;
-         trading it for schema-validated, warmable sessions is the deliberate
-         deal, not an accident. */
-      if (resolveProvider(plan.task) === "devin") {
-        const verdict = await generateVerdict(plan, {
-          signal: request.signal,
-          subjectKey: `verdict:${ctx.symbol}`,
-        });
-        if (verdict.model === "unavailable") {
-          if (!request.signal.aborted) {
-            send({ type: "error", error: "Generation failed", completed: [], fallback: verdict });
-          }
-        } else {
-          cacheVerdict(cacheParams, verdict, ctx.symbol);
-          const record = verdict as unknown as Record<string, unknown>;
-          for (const spec of REPORT_SECTIONS) {
-            if (record[spec.id] === undefined) continue;
-            send({
-              type: "section",
-              id: spec.id,
-              title: spec.title,
-              order: spec.order,
-              data: record[spec.id],
-              elapsedMs: Date.now() - startedAt,
-            });
-          }
-          send({
-            type: "done",
-            verdict,
-            grounding: verdict.grounding,
-            model: verdict.model,
-            durationMs: Date.now() - startedAt,
-          });
-        }
-        closed = true;
-        try {
-          controller.close();
-        } catch {
-          /* already closed by the client */
-        }
-        return;
-      }
-
+      /* Merge resolution (prisha-work × f22/day-change, 2026-08-10): the
+         sessions-only replay branch (ai-migration/13) is gone with the
+         sessions runtime. The provider chain below streams for every backend;
+         a non-token-streaming provider (e.g. the Devin CLI) simply delivers
+         one chunk, which the field streamer turns into sections all at once.
+         Warmer-precomputed and cached verdicts still replay instantly via the
+         `cached` branch above. */
       const parser = new JsonFieldStreamer();
       let model = "unknown";
 
@@ -260,7 +215,7 @@ export async function GET(request: Request) {
 
         // Persist under the registry's `aiVerdict` policy so the next view is
         // instant. `cacheVerdict` refuses to store an offline fallback, so an
-        // Ollama outage cannot pin "start Ollama" for the whole TTL.
+        // an AI outage cannot pin a stale recovery hint for the whole TTL.
         cacheVerdict(cacheParams, verdict, ctx.symbol);
 
         send({
@@ -278,7 +233,7 @@ export async function GET(request: Request) {
           //
           // `fallback` carries the same actionable offline verdict the blocking
           // route returns, so a client that got nothing usable can still render
-          // "start Ollama" instead of an empty panel.
+          // the recovery hint instead of an empty panel.
           send({
             type: "error",
             error: err instanceof Error ? err.message : "Generation failed",

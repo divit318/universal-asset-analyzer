@@ -44,7 +44,14 @@ export type DatasetId =
   | "companyContext"
   | "aiVerdict"
   | "aiSection"
-  | "thematicReport";
+  | "thematicReport"
+  // Composed page payloads (Today dashboard rebuild, audit PF-01/PF-02):
+  // the universal report and the home digest are expensive compositions of
+  // datasets above; caching them HERE (the platform layer) rather than in
+  // their modules is what the "never add a cache to a module" rule demands.
+  | "portfolioReport"
+  | "missionContext"
+  | "homeDigest";
 
 /** How a dataset is allowed to age, and what it depends on. */
 export interface CachePolicy {

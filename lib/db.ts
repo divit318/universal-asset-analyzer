@@ -14,12 +14,28 @@ import type {
   AssumptionSet, CaseAuthor, CaseEventKind, CaseResult, ValuationCase, ValuationEvent,
   ValuationMethod,
 } from "./valuation/case";
-import type { AlertEvent } from "./alerts";
+import { renderAlertText, type AlertEvent, type AlertFacts } from "./alerts";
 import type { AttentionDismissal } from "./home/contracts";
 import type { Simulation, SimProfile, SimHolding, SimThesis, SimHeadline } from "./portfolio/simulator/types";
 import { normalizeStoredProfile } from "./portfolio/simulator/profile";
 
 let db: DatabaseSync | null = null;
+
+/**
+ * Local calendar date (YYYY-MM-DD) — the ONLY default for a lot's trade_date.
+ *
+ * `toISOString().slice(0, 10)` is the UTC date, which for anyone east of UTC is
+ * "yesterday" late in their evening. The buy modal already stamps user trades
+ * with the LOCAL date (see todayStr() in add-to-portfolio-modal.tsx), so an
+ * engine-side sell stamped with the UTC date sorts BEFORE a buy recorded the
+ * same night — aggregateLots() then sells 0 shares while the cash-balancing lot
+ * still credits the proceeds. Every ledger write must use the same calendar.
+ */
+export function localTradeDate(d = new Date()): string {
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${month}-${day}`;
+}
 
 /** Lazily open the SQLite database so importing this module has no side effects. */
 function getDb(): DatabaseSync {
@@ -330,6 +346,20 @@ function getDb(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS idx_attention_dismissal_expires ON attention_dismissal (expires_at);
 
+    -- Dashboard usage events (audit 13, IN-05). Unlike the activity table (a
+    -- set of places, upserted) this is an append-only ledger: one row per interaction,
+    -- so the priority model finally has (score, rank, outcome) ground truth to
+    -- be tuned against (IN-02). Bounded by an inline 180-day sweep on insert,
+    -- the ai_call pattern (IN-06); no scheduler.
+    CREATE TABLE IF NOT EXISTS home_event (
+      id         INTEGER PRIMARY KEY,
+      at         INTEGER NOT NULL,
+      session_id TEXT NOT NULL,
+      event      TEXT NOT NULL,
+      props      TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_home_event_event ON home_event (event, at);
+
     -- Change detection (lib/home/changes.ts). Exactly two slots: 'current' is
     -- the state of the most recent digest build; 'baseline' is the state at the
     -- end of the previous visit, promoted from 'current' when a new visit
@@ -417,7 +447,8 @@ function getDb(): DatabaseSync {
     /* AI analysis jobs (ai-migration/03-architecture.md §4): durable record of
      * a provider-agnostic analysis run. The id IS the idempotency key —
      * hash(task, subject, input, schema version) — so a restarted server
-     * re-attaches to the same Devin session instead of double-spawning. */
+     * re-attached to the same analysis run instead of double-spawning (a
+     * guarantee from the retired sessions runtime; column kept for old rows). */
     CREATE TABLE IF NOT EXISTS ai_job (
       id             TEXT PRIMARY KEY,
       task_type      TEXT NOT NULL,
@@ -454,6 +485,59 @@ function getDb(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS idx_ai_result_subject
       ON ai_result (analysis_type, subject_key, created_at DESC);
+
+    /* AI call ledger (lib/ai/telemetry.ts is the only intended writer): one row
+     * per provider ATTEMPT — including failures — so latency, fallback depth,
+     * token spend, prompt-cache hits and estimated cost are queryable instead
+     * of scrolling past in server logs. This is the measuring instrument the
+     * routing/caching/tiering policies are tuned against; costs are estimates
+     * (registry pricing × reported usage), never billing truth. */
+    CREATE TABLE IF NOT EXISTS ai_call (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      at                    INTEGER NOT NULL,
+      task_type             TEXT NOT NULL,
+      provider              TEXT NOT NULL,
+      model                 TEXT NOT NULL,
+      outcome               TEXT NOT NULL,
+      streamed              INTEGER NOT NULL DEFAULT 0,
+      attempt               INTEGER NOT NULL DEFAULT 1,
+      duration_ms           INTEGER,
+      queue_ms              INTEGER,
+      ttft_ms               INTEGER,
+      prompt_tokens         INTEGER,
+      completion_tokens     INTEGER,
+      cache_creation_tokens INTEGER,
+      cache_read_tokens     INTEGER,
+      cost_usd              REAL,
+      message               TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_call_at   ON ai_call (at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ai_call_task ON ai_call (task_type, at DESC);
+
+    /* Local account (lib/auth.ts). This is a single-user, local-first product:
+     * the "account" exists so the terminal can greet its owner, protect the
+     * demo flow (UAA_AUTH_GATE=on), and hold profile fields — it is not a
+     * multi-tenant boundary. Credentials never leave this database, which is
+     * gitignored (/data). password_hash is scrypt, formatted
+     * "scrypt:N:r:p:salthex:keyhex"; the adapter owns that format. */
+    CREATE TABLE IF NOT EXISTS user (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      email         TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      display_name  TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL
+    );
+    /* Server-side sessions. The cookie carries an opaque random token; only
+     * its SHA-256 lands here, so a leaked database (or backup) cannot be
+     * replayed as a cookie. Expiry is enforced on read AND swept on write. */
+    CREATE TABLE IF NOT EXISTS auth_session (
+      token_hash TEXT PRIMARY KEY,
+      user_id    INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_auth_session_user ON auth_session (user_id);
   `);
   // The valuation case names its methodology rather than leaving "DCF" implicit.
   // ADD COLUMN with a NOT NULL DEFAULT backfills every prior row to the only
@@ -471,6 +555,11 @@ function getDb(): DatabaseSync {
   // today's assumptions when they acted, which is exactly the false precision
   // the rest of this module refuses to manufacture.
   try { db.exec("ALTER TABLE decision ADD COLUMN case_version INTEGER"); } catch { /* already exists */ }
+  // Structured alert facts (audit F-22c). Rows created before this column keep
+  // their frozen prose and render it as-is (with its date); rows with meta get
+  // their title/body re-rendered from facts at every read, so tense stays
+  // honest ("today" only while the session IS today).
+  try { db.exec("ALTER TABLE notification ADD COLUMN meta TEXT"); } catch { /* already exists */ }
   /*
    * Standing definitions: a saved screen remembers the symbols it matched last
    * time it was loaded, so the next load can say what *changed* rather than just
@@ -1590,7 +1679,7 @@ export function addLot(
       lot.price,
       lot.kind ?? "buy",
       lot.fees ?? 0,
-      lot.tradeDate ?? now.slice(0, 10),
+      lot.tradeDate ?? localTradeDate(),
       now,
       portfolioId,
     );
@@ -1622,7 +1711,7 @@ export function upsertPosition(
   db.prepare(
     `INSERT INTO portfolio_lot (symbol, name, shares, price, kind, fees, trade_date, created_at, portfolio_id)
      VALUES (?, ?, ?, ?, 'buy', 0, ?, ?, ?)`,
-  ).run(sym, name, shares, avgCost, addedAt.slice(0, 10), addedAt, portfolioId);
+  ).run(sym, name, shares, avgCost, localTradeDate(), addedAt, portfolioId);
   reconcileOwnedStages(portfolioId);
   return { symbol: sym, name, shares, avgCost, addedAt };
 }
@@ -1692,7 +1781,7 @@ export function upsertUniversalPosition(input: {
     input.name,
     input.quantity,
     input.avgCost,
-    now.slice(0, 10),
+    localTradeDate(),
     now,
     input.assetClass,
     (input.currency ?? "USD").toUpperCase(),
@@ -1745,7 +1834,7 @@ export function addUniversalLot(input: {
       input.price,
       input.kind,
       input.fees ?? 0,
-      input.tradeDate ?? now.slice(0, 10),
+      input.tradeDate ?? localTradeDate(),
       now,
       input.assetClass,
       (input.currency ?? "USD").toUpperCase(),
@@ -1796,7 +1885,7 @@ export function executeTradeBatch(lots: LotWrite[], manualAssetIdsToDelete: stri
         lot.shares,
         lot.price,
         lot.kind,
-        now.slice(0, 10),
+        localTradeDate(),
         now,
         lot.assetClass,
         (lot.currency ?? "USD").toUpperCase(),
@@ -2102,19 +2191,42 @@ interface NotificationRow {
   body: string;
   read: number;
   created_at: string;
+  meta: string | null;
 }
 
 function rowToNotification(r: NotificationRow): Notification {
+  // Render prose from stored facts at READ time (audit F-22c): the same row
+  // says "today" while its session is today and "on Fri, Jul 31" afterwards.
+  // Legacy rows (meta NULL) keep their frozen strings — we cannot re-tense
+  // what was never stored structurally.
+  let title = r.title;
+  let body = r.body;
+  let sessionDate: string | null = null;
+  let observedAt: string | null = null;
+  if (r.meta) {
+    try {
+      const facts = JSON.parse(r.meta) as AlertFacts;
+      const rendered = renderAlertText(facts);
+      title = rendered.title;
+      body = rendered.body;
+      sessionDate = facts.sessionDate ?? null;
+      observedAt = facts.observedAt ?? null;
+    } catch {
+      /* unparseable meta — fall back to the stored strings */
+    }
+  }
   return {
     id: r.id,
     dedupKey: r.dedup_key,
     symbol: r.symbol,
     kind: r.kind,
     severity: r.severity === "warning" ? "warning" : "info",
-    title: r.title,
-    body: r.body,
+    title,
+    body,
     read: r.read === 1,
     createdAt: r.created_at,
+    sessionDate,
+    observedAt,
   };
 }
 
@@ -2131,14 +2243,17 @@ export function createNotifications(events: AlertEvent[], dedupHours = 24): numb
     "SELECT 1 FROM notification WHERE dedup_key = ? AND created_at > ? LIMIT 1",
   );
   const insert = db.prepare(
-    `INSERT INTO notification (dedup_key, symbol, kind, severity, title, body, read, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
+    `INSERT INTO notification (dedup_key, symbol, kind, severity, title, body, read, created_at, meta)
+     VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
   );
   const now = new Date().toISOString();
   let inserted = 0;
   for (const e of events) {
     if (exists.get(e.dedupKey, since)) continue;
-    insert.run(e.dedupKey, e.symbol, e.kind, e.severity, e.title, e.body, now);
+    // title/body stored as a write-time fallback only; read paths re-render
+    // from meta so the prose keeps honest tense as the row ages.
+    const rendered = renderAlertText(e.facts);
+    insert.run(e.dedupKey, e.symbol, e.kind, e.severity, rendered.title, rendered.body, now, JSON.stringify(e.facts));
     inserted++;
   }
   return inserted;
@@ -3477,4 +3592,250 @@ export function putAiResult(
   db.prepare(
     `DELETE FROM ai_result WHERE analysis_type = ? AND subject_key = ? AND input_hash != ? AND created_at < ?`,
   ).run(key.analysisType, key.subjectKey, key.inputHash, Date.now() - 7 * 24 * 60 * 60 * 1000);
+}
+
+/* ── AI call ledger (lib/ai/telemetry.ts is the only intended caller) ────── */
+
+export interface AiCallRecord {
+  at: number;
+  taskType: string;
+  provider: string;
+  model: string;
+  /** Routing outcome — mirrors lib/ai/log.ts AiLogCategory ("success", "timeout", …). */
+  outcome: string;
+  streamed: boolean;
+  /** 1-based position in the fallback chain (1 = first-choice model answered). */
+  attempt: number;
+  durationMs?: number;
+  queueMs?: number;
+  /** Streaming only: milliseconds from attempt start to the first answer delta. */
+  ttftMs?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  /** Estimated from registry pricing × reported usage — an estimate, not billing truth. */
+  costUsd?: number;
+  /** Failure detail (error message), null on success. */
+  message?: string;
+}
+
+/** How long ledger rows are kept. Long enough for month-over-month spend review. */
+const AI_CALL_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+
+export function insertAiCall(row: AiCallRecord): void {
+  const db = getDb();
+  db.prepare(
+    `INSERT INTO ai_call (at, task_type, provider, model, outcome, streamed, attempt,
+       duration_ms, queue_ms, ttft_ms, prompt_tokens, completion_tokens,
+       cache_creation_tokens, cache_read_tokens, cost_usd, message)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    row.at, row.taskType, row.provider, row.model, row.outcome, row.streamed ? 1 : 0, row.attempt,
+    row.durationMs ?? null, row.queueMs ?? null, row.ttftMs ?? null,
+    row.promptTokens ?? null, row.completionTokens ?? null,
+    row.cacheCreationTokens ?? null, row.cacheReadTokens ?? null,
+    row.costUsd ?? null, row.message ?? null,
+  );
+  // Same inline-sweep pattern as putAiResult: one indexed DELETE per write
+  // keeps the ledger bounded without a scheduler.
+  db.prepare("DELETE FROM ai_call WHERE at < ?").run(Date.now() - AI_CALL_RETENTION_MS);
+}
+
+interface AiCallDbRow {
+  at: number; task_type: string; provider: string; model: string; outcome: string;
+  streamed: number; attempt: number; duration_ms: number | null; queue_ms: number | null;
+  ttft_ms: number | null; prompt_tokens: number | null; completion_tokens: number | null;
+  cache_creation_tokens: number | null; cache_read_tokens: number | null;
+  cost_usd: number | null; message: string | null;
+}
+
+function mapAiCall(r: AiCallDbRow): AiCallRecord {
+  return {
+    at: r.at, taskType: r.task_type, provider: r.provider, model: r.model, outcome: r.outcome,
+    streamed: r.streamed === 1, attempt: r.attempt,
+    durationMs: r.duration_ms ?? undefined, queueMs: r.queue_ms ?? undefined,
+    ttftMs: r.ttft_ms ?? undefined,
+    promptTokens: r.prompt_tokens ?? undefined, completionTokens: r.completion_tokens ?? undefined,
+    cacheCreationTokens: r.cache_creation_tokens ?? undefined,
+    cacheReadTokens: r.cache_read_tokens ?? undefined,
+    costUsd: r.cost_usd ?? undefined, message: r.message ?? undefined,
+  };
+}
+
+/** Ledger rows newest-first. Aggregation lives in lib/ai/telemetry.ts (pure, testable). */
+export function listAiCalls(opts: { sinceMs?: number; limit?: number } = {}): AiCallRecord[] {
+  const since = opts.sinceMs ?? 0;
+  const limit = Math.min(opts.limit ?? 5000, 20_000);
+  const rows = getDb()
+    // rowid breaks same-millisecond ties: "newest-first" must mean insertion
+    // order, not whatever SQLite returns for equal `at` values.
+    .prepare("SELECT * FROM ai_call WHERE at >= ? ORDER BY at DESC, rowid DESC LIMIT ?")
+    .all(since, limit) as unknown as AiCallDbRow[];
+  return rows.map(mapAiCall);
+}
+
+/* ── Home usage events (app/api/home/telemetry is the only intended writer) ── */
+
+export interface HomeEventRecord {
+  at: number;
+  /** Random per page load, client-generated. Never a user identity. */
+  sessionId: string;
+  event: string;
+  /** Flat JSON props; null when the event carries none. */
+  props?: Record<string, unknown> | null;
+}
+
+/**
+ * 180 days, not ai_call's 90: calibration (lib/home/telemetry-read.ts) needs
+ * sample size and a single local user generates little data (audit 13 §2).
+ */
+const HOME_EVENT_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
+
+/** Append a batch of dashboard events (IN-05). The route caps batch size. */
+export function insertHomeEvents(batch: HomeEventRecord[]): void {
+  if (batch.length === 0) return;
+  const db = getDb();
+  const stmt = db.prepare("INSERT INTO home_event (at, session_id, event, props) VALUES (?, ?, ?, ?)");
+  for (const row of batch) {
+    stmt.run(row.at, row.sessionId, row.event, row.props != null ? JSON.stringify(row.props) : null);
+  }
+  // Same inline-sweep pattern as insertAiCall (IN-06): one indexed DELETE per
+  // batch write keeps the ledger bounded without a scheduler.
+  db.prepare("DELETE FROM home_event WHERE at < ?").run(Date.now() - HOME_EVENT_RETENTION_MS);
+}
+
+interface HomeEventDbRow {
+  at: number;
+  session_id: string;
+  event: string;
+  props: string | null;
+}
+
+/** Event rows newest-first. Aggregation lives in lib/home/telemetry-read.ts (pure, testable). */
+export function listHomeEvents(
+  opts: { event?: string; sinceMs?: number; limit?: number } = {},
+): HomeEventRecord[] {
+  const since = opts.sinceMs ?? 0;
+  const limit = Math.min(opts.limit ?? 5000, 20_000);
+  // rowid breaks same-millisecond ties, same as listAiCalls: "newest-first"
+  // must mean insertion order, not SQLite's whim for equal `at` values.
+  const rows = (
+    opts.event != null
+      ? getDb()
+          .prepare(
+            "SELECT at, session_id, event, props FROM home_event WHERE event = ? AND at >= ? ORDER BY at DESC, rowid DESC LIMIT ?",
+          )
+          .all(opts.event, since, limit)
+      : getDb()
+          .prepare(
+            "SELECT at, session_id, event, props FROM home_event WHERE at >= ? ORDER BY at DESC, rowid DESC LIMIT ?",
+          )
+          .all(since, limit)
+  ) as unknown as HomeEventDbRow[];
+  return rows.map((r) => {
+    let props: Record<string, unknown> | null = null;
+    if (r.props != null) {
+      // A corrupt props blob loses its props, never the row or the query.
+      try {
+        props = JSON.parse(r.props) as Record<string, unknown>;
+      } catch {
+        props = null;
+      }
+    }
+    return { at: r.at, sessionId: r.session_id, event: r.event, props };
+  });
+}
+
+/* ── Local account & sessions (lib/auth.ts is the only intended caller) ──── */
+
+export interface UserRow {
+  id: number;
+  email: string;
+  displayName: string;
+  passwordHash: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface UserDbRow {
+  id: number;
+  email: string;
+  display_name: string;
+  password_hash: string;
+  created_at: number;
+  updated_at: number;
+}
+
+function mapUser(row: UserDbRow): UserRow {
+  return {
+    id: row.id,
+    email: row.email,
+    displayName: row.display_name,
+    passwordHash: row.password_hash,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function getUserByEmail(email: string): UserRow | null {
+  const row = getDb().prepare("SELECT * FROM user WHERE email = ?").get(email.trim()) as
+    unknown as UserDbRow | undefined;
+  return row ? mapUser(row) : null;
+}
+
+export function getUserById(id: number): UserRow | null {
+  const row = getDb().prepare("SELECT * FROM user WHERE id = ?").get(id) as
+    unknown as UserDbRow | undefined;
+  return row ? mapUser(row) : null;
+}
+
+/** Throws on duplicate email (SQLite UNIQUE) — the API route maps that to 409. */
+export function createUser(email: string, displayName: string, passwordHash: string): UserRow {
+  const now = Date.now();
+  const res = getDb().prepare(
+    "INSERT INTO user (email, display_name, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+  ).run(email.trim(), displayName.trim(), passwordHash, now, now);
+  return getUserById(Number(res.lastInsertRowid))!;
+}
+
+export function updateUserProfile(id: number, patch: { email?: string; displayName?: string }): void {
+  const sets: string[] = ["updated_at = ?"];
+  const params: (string | number)[] = [Date.now()];
+  if (patch.email !== undefined) { sets.push("email = ?"); params.push(patch.email.trim()); }
+  if (patch.displayName !== undefined) { sets.push("display_name = ?"); params.push(patch.displayName.trim()); }
+  params.push(id);
+  getDb().prepare(`UPDATE user SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+}
+
+export function updateUserPassword(id: number, passwordHash: string): void {
+  getDb().prepare("UPDATE user SET password_hash = ?, updated_at = ? WHERE id = ?")
+    .run(passwordHash, Date.now(), id);
+}
+
+export function createAuthSession(tokenHash: string, userId: number, expiresAt: number): void {
+  const db = getDb();
+  db.prepare("INSERT INTO auth_session (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
+    .run(tokenHash, userId, Date.now(), expiresAt);
+  // Sweep on write: expired rows are dead weight nothing will ever read again.
+  db.prepare("DELETE FROM auth_session WHERE expires_at < ?").run(Date.now());
+}
+
+/** Resolves a session to its user, enforcing expiry at read time. */
+export function getAuthSessionUser(tokenHash: string): UserRow | null {
+  const row = getDb().prepare(
+    `SELECT u.* FROM auth_session s JOIN user u ON u.id = s.user_id
+     WHERE s.token_hash = ? AND s.expires_at >= ?`,
+  ).get(tokenHash, Date.now()) as unknown as UserDbRow | undefined;
+  return row ? mapUser(row) : null;
+}
+
+export function deleteAuthSession(tokenHash: string): void {
+  getDb().prepare("DELETE FROM auth_session WHERE token_hash = ?").run(tokenHash);
+}
+
+/** Password change invalidates every other session for the user. */
+export function deleteOtherAuthSessions(userId: number, keepTokenHash: string): void {
+  getDb().prepare("DELETE FROM auth_session WHERE user_id = ? AND token_hash != ?")
+    .run(userId, keepTokenHash);
 }

@@ -215,6 +215,37 @@ export async function getFinancialStatements(
 }
 
 /**
+ * THE statements source every consumer must use: Yahoo Finance first (works
+ * for all markets), SEC EDGAR as the deeper-history fallback for US filers.
+ *
+ * Extracted from buildFundamentalsData (lib/fundamentals-data.ts) so the AI
+ * context builder (lib/ai/context.ts) resolves statements through the SAME
+ * chain as the research page. They used to differ — the context called the
+ * EDGAR-only path, which returns nothing for companies whose XBRL revenue
+ * tags EDGAR doesn't map (observed: SYF) — so the AI scored the stock
+ * without statements while the page scored it with them, and the narration
+ * quoted subscores the Conviction tab didn't show.
+ */
+export async function getStatementsWithFallback(
+  symbol: string,
+): Promise<{ statements: FinancialStatements | null; error: string | null }> {
+  const yahoo = await getFinancialStatementsYahoo(symbol);
+  if (yahoo && yahoo.fiscalYears.length >= 3) return { statements: yahoo, error: null };
+  // fallback to EDGAR for US-listed companies with deeper history
+  const edgar = await getFinancialStatements(symbol).catch((e: unknown) => ({
+    err: e instanceof Error ? e.message : "EDGAR statements unavailable",
+  }));
+  if ("err" in edgar) {
+    // If EDGAR also fails, return Yahoo result even if short (better than nothing)
+    if (yahoo) return { statements: yahoo, error: null };
+    return { statements: null, error: edgar.err };
+  }
+  // prefer whichever source has more years
+  const best = yahoo && yahoo.fiscalYears.length >= edgar.fiscalYears.length ? yahoo : edgar;
+  return { statements: best, error: null };
+}
+
+/**
  * Fetch annual financial statements from Yahoo Finance's fundamentalsTimeSeries.
  * Works for all markets (US and international). Returns up to 6 fiscal years.
  * Used as primary source or fallback when SEC EDGAR returns insufficient history.

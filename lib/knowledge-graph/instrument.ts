@@ -76,6 +76,7 @@ export function classifyInstrument(symbol: string, quoteType: string | null | un
 /** Strip Yahoo feed suffixes for display: "USDCHF=X" -> "USD/CHF", "HO=F" -> "HO". */
 export function displaySymbol(symbol: string, instrument: InstrumentType): string {
   const sym = symbol.toUpperCase();
+  if (instrument === "cash") return "Cash";
   if (instrument === "fx_pair" && sym.endsWith("=X")) {
     const pair = sym.slice(0, -2);
     return pair.length === 6 ? `${pair.slice(0, 3)}/${pair.slice(3)}` : pair;
@@ -83,6 +84,51 @@ export function displaySymbol(symbol: string, instrument: InstrumentType): strin
   if (instrument === "future" && sym.endsWith("=F")) return sym.slice(0, -2);
   if (instrument === "crypto" && sym.endsWith("-USD")) return sym.slice(0, -4);
   return sym;
+}
+
+/**
+ * The ledger's asset_class column, when the holding has one. This is USER
+ * data and it outranks Yahoo across namespaces: the app stores cash as a
+ * synthetic `CASH-USD` lot that Yahoo happily resolves to "Litecash USD" (a
+ * micro-cap cryptocurrency), and equity/crypto ticker collisions (DASH,
+ * COIN-adjacent names) resolve to whichever namespace Yahoo answers first.
+ * The guard never lets a quote flip a holding across the
+ * cash / crypto / fx / security boundary the user already declared.
+ */
+export type LedgerAssetClass = "cash" | "crypto" | "equity" | "etf" | "bond" | "reit" | string;
+
+/** Pure: reconcile the Yahoo-derived instrument with the ledger's declared class. */
+export function applyLedgerGuard(instrument: InstrumentType, ledgerClass: LedgerAssetClass | null | undefined, name: string): InstrumentType {
+  if (!ledgerClass) return instrument;
+  switch (ledgerClass) {
+    case "cash":
+      return "cash";
+    case "crypto":
+      return "crypto";
+    case "equity":
+      // A declared equity can never be crypto/FX/future; Yahoo's EQUITY vs
+      // fund distinction within the security namespace is kept.
+      return instrument === "crypto" || instrument === "fx_pair" || instrument === "future" || instrument === "unknown"
+        ? "common_equity"
+        : instrument;
+    case "bond":
+      // Bond sleeve held through a fund vehicle (IEF, USFR): a fund-shaped
+      // resolution stays a fund but its underlying class is bonds.
+      if (instrument.startsWith("etf_")) return "etf_bond";
+      if (instrument === "mutual_fund") return "mutual_fund";
+      return instrument === "unknown" ? "etf_bond" : instrument;
+    case "etf":
+      if (instrument.startsWith("etf_") || instrument === "mutual_fund") return instrument;
+      return classifyFundUnderlying(name);
+    case "reit":
+      // REIT exposure may be a REIT stock (O) or a REIT fund (VNQ); trust the
+      // vehicle Yahoo saw, but never a non-security namespace.
+      return instrument === "crypto" || instrument === "fx_pair" || instrument === "future" || instrument === "unknown"
+        ? "common_equity"
+        : instrument;
+    default:
+      return instrument;
+  }
 }
 
 /** True when this instrument type is a single-issuer security that can carry one sector. */
@@ -93,11 +139,29 @@ export function isSingleIssuer(instrument: InstrumentType): boolean {
 /**
  * Resolve one symbol. Best-effort: a failed quote fetch degrades to
  * shape-only classification with `quote: null`, never throws.
+ *
+ * `ledgerClass` is the portfolio ledger's declared asset_class for this
+ * holding, when it has one; it acts as a namespace guard over Yahoo's answer
+ * (see applyLedgerGuard). A `cash` holding never touches Yahoo at all.
  */
-export async function resolveInstrument(symbol: string, knownSector?: string | null): Promise<ResolvedInstrument> {
+export async function resolveInstrument(
+  symbol: string,
+  knownSector?: string | null,
+  ledgerClass?: LedgerAssetClass | null,
+): Promise<ResolvedInstrument> {
+  if (ledgerClass === "cash") {
+    return {
+      symbol: symbol.toUpperCase(),
+      name: "Cash",
+      instrument: "cash",
+      sector: null,
+      quote: null,
+      underlyingSource: null,
+    };
+  }
   const quote = await getQuote(symbol).catch(() => null);
   const name = quote?.name || symbol;
-  const instrument = classifyInstrument(symbol, quote?.assetType, name);
+  const instrument = applyLedgerGuard(classifyInstrument(symbol, quote?.assetType, name), ledgerClass, name);
   const sector = isSingleIssuer(instrument) && knownSector ? canonicalizeSector(knownSector) : null;
   return {
     symbol: symbol.toUpperCase(),

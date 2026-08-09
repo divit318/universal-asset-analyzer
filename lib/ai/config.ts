@@ -5,11 +5,12 @@
  * benching a model, or moving the memory ceiling is a config change, never an
  * edit to the Router or to feature code.
  *
- *   AI_MAX_MODEL_GB      — memory ceiling for a routable model (default: 75% of RAM)
+ *   AI_MAX_MODEL_GB      — memory ceiling for a routable model (default: 75% of
+ *                          RAM). Only meaningful for a local provider; dormant
+ *                          today with the hosted-only chain.
  *   AI_DISABLED_MODELS   — comma-separated model ids to take out of routing
- *   AI_PROVIDER_ORDER    — provider chain, best first (default: "devin,ollama")
  *   AI_TASK_<TASK>       — pin one task to an ordered model list, e.g.
- *                          AI_TASK_NL_SCREENER="mistral:latest,qwen3:14b"
+ *                          AI_TASK_NL_SCREENER="claude-opus-5-low"
  *                          (task name upper-cased, '-' → '_')
  */
 
@@ -47,34 +48,57 @@ export function memoryBudgetGb(): number {
   return envNumber("AI_MAX_MODEL_GB") ?? (totalmem() / 1e9) * DEFAULT_MEMORY_FRACTION;
 }
 
-const KNOWN_PROVIDERS: readonly ProviderId[] = ["devin", "ollama"];
+const KNOWN_PROVIDERS: readonly ProviderId[] = [
+  "devin",
+  "anthropic",
+  "openai",
+  "gemini",
+  "openrouter",
+  "ollama",
+];
 
 /**
- * The provider chain the Router walks, best first.
+ * The DEFAULT provider chain, best first (owner decision, 2026-08-06: the
+ * platform is provider-agnostic and never requires an Anthropic key).
  *
- * Devin leads by default. It is not a close call: on this project's own
- * prompts the hosted models answer in 4-8s against Ollama's 28-115s, and nine
- * concurrent calls finish in 5.3s where Ollama serializes them into minutes.
+ *   1. devin      — the Devin CLI (`devin -p`), Cognition-hosted models on the
+ *                   user's own `devin login`. Zero API keys; works out of the
+ *                   box. Measured 8.9s for a light JSON task on this host.
+ *   2. anthropic  — direct Anthropic API when the user configures a key
+ *                   (real token streaming, prompt caching, native structured
+ *                   outputs — the richest wire features of the chain).
+ *   3. openai / gemini / openrouter — BYO-key hosted APIs, dormant until a
+ *                   key exists (health = key presence; they cost nothing to
+ *                   keep in the chain).
+ *   6. ollama     — the local daemon, offline fallback of last resort.
  *
- * Ollama stays in the chain rather than being deleted, and that is the whole
- * reason this is a *chain*: UAA's premise is that a user owns their research
- * offline. On a plane, behind a captive portal, or simply logged out, the
- * local models still answer. Losing that would be a real regression, not a
- * cleanup.
+ * Reorder without code via AI_PROVIDER_ORDER, e.g.:
  *
- * Unknown names are dropped rather than throwing — a typo in an env var
- * should not take the whole platform down — and an order that names nothing
- * valid falls back to the default.
+ *   AI_PROVIDER_ORDER=anthropic,devin   # direct API first
+ *   AI_PROVIDER_ORDER=ollama            # local-only (plane / captive portal)
+ *
+ * Unknown names are dropped rather than throwing — a typo in an env var must
+ * not take the platform down — and an order that names nothing valid falls
+ * back to the default.
  */
+const DEFAULT_PROVIDER_ORDER: readonly ProviderId[] = [
+  "devin",
+  "anthropic",
+  "openai",
+  "gemini",
+  "openrouter",
+  "ollama",
+];
+
 export function providerOrder(): ProviderId[] {
   const raw = process.env.AI_PROVIDER_ORDER;
-  if (!raw) return [...KNOWN_PROVIDERS];
+  if (!raw) return [...DEFAULT_PROVIDER_ORDER];
   const seen = new Set<ProviderId>();
   for (const part of raw.split(",").map((s) => s.trim().toLowerCase())) {
     const match = KNOWN_PROVIDERS.find((p) => p === part);
     if (match) seen.add(match);
   }
-  return seen.size > 0 ? [...seen] : [...KNOWN_PROVIDERS];
+  return seen.size > 0 ? [...seen] : [...DEFAULT_PROVIDER_ORDER];
 }
 
 /** Model ids taken out of routing entirely, via AI_DISABLED_MODELS. */
@@ -90,17 +114,63 @@ export function disabledModels(): Set<string> {
 
 /**
  * Static per-task model pins. An entry here overrides the Router's scoring
- * entirely and is tried in the order given (still subject to the memory and
- * installed checks — a pin cannot conjure a model that can't run).
+ * entirely and is tried in the order given (still subject to the availability
+ * check — a pin cannot conjure a model the provider doesn't offer).
  *
- * Deliberately empty: the scorer derives good routing from each task's declared
- * requirements, and a hand-maintained list per task is exactly the duplication
- * that let the old registry drift out of sync with reality. Add an entry only to
- * override a specific scoring decision, and say why.
+ * One model, three depths: every id below is claude-opus-5 at a different
+ * effort tier (see lib/ai/models.ts). The tier IS the task policy — deep
+ * research earns the largest reasoning budget, interactive parsing the
+ * smallest. Order within each pin = primary, then the fallback the Router
+ * walks on failure: a transiently failing high-effort call degrades to a
+ * shallower tier of the same model rather than to nothing.
  */
-export const TASK_MODEL_PINS: Partial<Record<TaskType, string[]>> = {};
+const LIGHT_PIN = ["claude-opus-5-low"];
+const STANDARD_PIN = ["claude-opus-5-medium", "claude-opus-5-low"];
+const DEEP_PIN = ["claude-opus-5-high", "claude-opus-5-medium"];
 
-/** Env-var pin for a task, e.g. AI_TASK_NL_SCREENER="mistral:latest". */
+export const TASK_MODEL_PINS: Partial<Record<TaskType, string[]>> = {
+  /* ---- deep: institutional reasoning; quality then adherence ------------- */
+  "investment-thesis": DEEP_PIN,
+  "sec-filing-analysis": DEEP_PIN,
+  "risk-review": DEEP_PIN,
+  "accounting-red-flags": DEEP_PIN,
+  "scenario-analysis": DEEP_PIN,
+  "stress-testing": DEEP_PIN,
+  "ic-agent-analysis": DEEP_PIN,
+  "thematic-analysis": DEEP_PIN,
+
+  /* ---- standard: substantive JSON/narrative work -------------------------- */
+  "company-research": STANDARD_PIN,
+  "fund-research": STANDARD_PIN,
+  "crypto-research": STANDARD_PIN,
+  "commodity-research": STANDARD_PIN,
+  "forex-research": STANDARD_PIN,
+  "macro-research": STANDARD_PIN,
+  "manual-asset-research": STANDARD_PIN,
+  comparison: STANDARD_PIN,
+  "portfolio-intelligence": STANDARD_PIN,
+  "portfolio-audit": STANDARD_PIN,
+  "watchlist-intelligence": STANDARD_PIN,
+  "opportunity-engine": STANDARD_PIN,
+  "timeline-analysis": STANDARD_PIN,
+  "explain-movement": STANDARD_PIN,
+  "portfolio-construction": STANDARD_PIN,
+  // Interactive but standard-complexity: real judgment, so medium effort
+  // rather than the light tier.
+  "chart-qa": STANDARD_PIN,
+  "app-assistant": STANDARD_PIN,
+  coding: STANDARD_PIN,
+
+  /* ---- light: parsing and one-liners; latency is the product -------------- */
+  "market-summary": LIGHT_PIN,
+  "daily-briefing": LIGHT_PIN,
+  "knowledge-graph-explain": LIGHT_PIN,
+  "calendar-brief": LIGHT_PIN,
+  "nl-screener": LIGHT_PIN,
+  "quick-summary": LIGHT_PIN,
+};
+
+/** Env-var pin for a task, e.g. AI_TASK_NL_SCREENER="claude-opus-5-medium". */
 function envPin(taskType: TaskType): string[] | null {
   const key = `AI_TASK_${taskType.toUpperCase().replace(/-/g, "_")}`;
   const raw = process.env[key];

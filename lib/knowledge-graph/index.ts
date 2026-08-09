@@ -50,8 +50,9 @@ function computeChanges(key: string, graph: Pick<KnowledgeGraph, "nodes" | "edge
 
 export async function getKnowledgeGraph(scope: GraphScope, id: string): Promise<KnowledgeGraph> {
   const key = scopeKey(scope, id);
-  // "kg2:" so stale v1-shaped cache rows can never be served as a v2 graph.
-  const cacheKey = `kg2:${key}`;
+  // Versioned key so a stale pre-rebuild cache row can never be served as a
+  // current graph ("kg2" predates the ego-network/cash/linkage rebuild).
+  const cacheKey = `kg3:${key}`;
   const cached = getScannerCache(cacheKey);
   if (cached) {
     try {

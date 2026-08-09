@@ -9,6 +9,7 @@
  * suggestion by PATCHing the holdings it previews.
  */
 import { NextResponse } from "next/server";
+import { AI_RECOVERY_HINT } from "@/lib/ai/availability";
 import { runPromptWithMeta } from "@/lib/ai";
 import { AllModelsFailedError } from "@/lib/ai/router";
 import { getSimulation } from "@/lib/db";
@@ -69,7 +70,7 @@ export async function POST(request: Request) {
     if (request.signal.aborted) return new Response(null, { status: 499 });
     if (err instanceof AllModelsFailedError) {
       return NextResponse.json(
-        { error: "Ollama unavailable — start Ollama to get swap suggestions", code: "ollama_unavailable" },
+        { error: `AI unavailable — ${AI_RECOVERY_HINT}`, code: "ai_unavailable" },
         { status: 503 },
       );
     }

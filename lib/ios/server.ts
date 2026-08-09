@@ -32,7 +32,7 @@
  * that could serve a portfolio from before the user's last trade.
  */
 
-import { buildPortfolioReport, type UniversalPortfolioReport } from "@/lib/portfolio/report";
+import { getPortfolioReport, type UniversalPortfolioReport } from "@/lib/portfolio/report";
 import { DEFAULT_CONSTRAINTS, type PortfolioObjective, type PortfolioConstraints } from "./types";
 
 export interface IOSServerContext {
@@ -48,7 +48,9 @@ export async function getPortfolioForIOS(): Promise<IOSServerContext> {
   const constraints: PortfolioConstraints = DEFAULT_CONSTRAINTS;
 
   try {
-    const report = await buildPortfolioReport();
+    // Through the platform's portfolioReport dataset (audit PF-02): every
+    // consumer of the IOS context now shares one 2-minute report build.
+    const report = await getPortfolioReport();
     // An empty book is not an error — IOS simply has nothing to personalise against.
     return { report: report.holdingCount > 0 ? report : null, objective, constraints };
   } catch {

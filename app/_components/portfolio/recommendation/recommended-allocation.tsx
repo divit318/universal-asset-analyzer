@@ -1,17 +1,19 @@
 import { Button, Card, Skeleton } from "@/app/_components/ui";
 import { formatCurrency } from "@/lib/format";
+import type { ConfidenceTier } from "@/lib/portfolio/engines/position-size";
 import type { BuyRecommendationResponse } from "./types";
 
 /**
  * State 2A — the optimizer's answer, presented as a finished decision rather
- * than a control panel: the amount, the shares it buys, the weight it lands
- * the position at, and one plain-English paragraph of why. Nothing here is
- * adjustable; adjusting is what Manual Allocation is for.
+ * than a control panel: a conviction-tiered headline (Strong Buy allocation /
+ * Recommended allocation / Starter position), the amount, the shares it buys,
+ * the weight it lands the position at, the measured/estimated portfolio impact,
+ * and the grounded reasons. Nothing here is adjustable; adjusting is what
+ * Manual Allocation is for.
  *
- * The three non-BUY states matter as much as the happy path. The old modal
- * rendered nothing at all when the engine declined to size a position, which
- * is what made "recommend the optimal amount" look broken — it had in fact
- * answered, and the answer was "not right now", with a reason nobody showed.
+ * The non-BUY states matter as much as the happy path. A HOLD is a real,
+ * reportable recommendation — rendered with its quantitative reasons (research
+ * verdict, class weights, conviction size), never a generic shrug.
  */
 export function RecommendedAllocation({
   recommendation,
@@ -65,17 +67,23 @@ export function RecommendedAllocation({
 
   // The optimizer succeeded and its answer is "don't add here" — a real,
   // reportable recommendation, not an error. holdReason comes from
-  // position-size.ts and already states the binding constraint.
+  // position-size.ts and states the binding constraint or the research
+  // verdict; `reasons` carries the quantitative drivers behind it.
   if (recommendation.action !== "BUY" || recommendation.recommendedAmount <= 0) {
     return (
-      <UnavailableCard
-        title="The optimizer doesn't recommend adding here"
-        body={
-          recommendation.holdReason ??
-          "Adding to this position wouldn't improve your portfolio given your current targets, concentration limits and available cash."
-        }
-        tone="neutral"
-      />
+      <Card className="flex flex-col gap-3 p-4" role="status">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <span className="text-[13px] font-semibold text-foreground">
+            {recommendation.headline?.title ?? "The optimizer recommends waiting"}
+          </span>
+          <ConfidenceBadge tier={recommendation.confidenceTier} value={recommendation.confidence} />
+        </div>
+        <p className="text-[12px] leading-relaxed text-muted">
+          {recommendation.holdReason ??
+            "Adding to this position wouldn't improve your portfolio given your current targets, concentration limits and available cash."}
+        </p>
+        <ReasonsList reasons={recommendation.reasons} />
+      </Card>
     );
   }
 
@@ -85,9 +93,17 @@ export function RecommendedAllocation({
   )?.weight ?? 0;
   const weightDelta = weightAfter - weightBefore;
   const withinCap = weightAfter <= maxHoldingPct;
+  const sectorMove = sectorMoveOf(recommendation);
 
   return (
     <Card className={`flex flex-col gap-4 p-4 transition-opacity ${loading ? "opacity-60" : ""}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[13px] font-semibold text-foreground">
+          {recommendation.headline?.title ?? "Recommended allocation"}
+        </span>
+        <ConfidenceBadge tier={recommendation.confidenceTier} value={recommendation.confidence} />
+      </div>
+
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
           <span className="text-label uppercase tracking-widest text-muted/70">Recommended investment</span>
@@ -118,11 +134,99 @@ export function RecommendedAllocation({
         </div>
       </div>
 
+      {/* Expected impact — measured (health, volatility) and estimated (expected return, labeled as such). */}
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 border-t border-border/60 pt-3 sm:grid-cols-3">
+        {recommendation.expectedReturn && (
+          <ImpactStat
+            label="Expected return"
+            value={`${recommendation.expectedReturn.portfolioDeltaPct >= 0 ? "+" : ""}${recommendation.expectedReturn.portfolioDeltaPct.toFixed(2)} pp/yr`}
+            tone={recommendation.expectedReturn.portfolioDeltaPct >= 0 ? "positive" : "negative"}
+            title={recommendation.expectedReturn.basis}
+          />
+        )}
+        {recommendation.impact.riskDelta != null && (
+          <ImpactStat
+            label="Volatility"
+            value={`${recommendation.impact.riskDelta >= 0 ? "+" : ""}${recommendation.impact.riskDelta.toFixed(1)} pp`}
+            tone={recommendation.impact.riskDelta <= 0 ? "positive" : "neutral"}
+          />
+        )}
+        <ImpactStat
+          label="Portfolio health"
+          value={`${recommendation.impact.healthDelta >= 0 ? "+" : ""}${recommendation.impact.healthDelta.toFixed(1)} pts`}
+          tone={recommendation.impact.healthDelta >= 0 ? "positive" : "negative"}
+        />
+        {recommendation.correlationWithHoldings != null && (
+          <ImpactStat
+            label="Correlation"
+            value={`r=${recommendation.correlationWithHoldings.toFixed(2)}`}
+            tone={Math.abs(recommendation.correlationWithHoldings) <= 0.4 ? "positive" : "neutral"}
+            title="Highest return correlation against your existing large holdings."
+          />
+        )}
+        {sectorMove && (
+          <ImpactStat label={sectorMove.sector} value={`${sectorMove.before.toFixed(1)}% → ${sectorMove.after.toFixed(1)}%`} tone="neutral" />
+        )}
+      </div>
+
       <div className="flex flex-col gap-1.5 border-t border-border/60 pt-3">
         <span className="text-xs font-semibold text-foreground">Why this amount?</span>
         <p className="text-[12px] leading-relaxed text-muted">{recommendation.aiExplanation || recommendation.summary}</p>
+        <ReasonsList reasons={recommendation.reasons} />
       </div>
     </Card>
+  );
+}
+
+/** The target's own sector weight, before → after, when the trade moves it visibly. */
+function sectorMoveOf(rec: BuyRecommendationResponse): { sector: string; before: number; after: number } | null {
+  const holding = rec.after.holdings.find((h) => h.symbol?.toUpperCase() === rec.symbol.toUpperCase());
+  const sector = holding?.attributes.sector;
+  if (!sector) return null;
+  const before = rec.before.allocation.bySector.slices.find((s) => s.key === sector)?.weight ?? 0;
+  const after = rec.after.allocation.bySector.slices.find((s) => s.key === sector)?.weight ?? 0;
+  return Math.abs(after - before) >= 0.1 ? { sector, before, after } : null;
+}
+
+const TIER_LABEL: Record<ConfidenceTier, string> = { high: "High", medium: "Medium", low: "Low" };
+const TIER_TONE: Record<ConfidenceTier, string> = {
+  high: "text-positive border-positive/40 bg-positive/10",
+  medium: "text-warning border-warning/40 bg-warning/10",
+  low: "text-muted border-border bg-surface-2",
+};
+
+function ConfidenceBadge({ tier, value }: { tier: ConfidenceTier; value: number }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${TIER_TONE[tier]}`}
+      title={`Recommendation confidence: ${value}/100 — blends the research score's own confidence with portfolio data coverage.`}
+    >
+      {TIER_LABEL[tier]} confidence
+    </span>
+  );
+}
+
+function ImpactStat({ label, value, tone, title }: { label: string; value: string; tone: "positive" | "negative" | "neutral"; title?: string }) {
+  const toneClass = tone === "positive" ? "text-positive" : tone === "negative" ? "text-negative" : "text-foreground";
+  return (
+    <div className="flex flex-col" title={title}>
+      <span className="text-[10px] uppercase tracking-wider text-muted/70">{label}</span>
+      <span className={`font-mono text-[13px] font-semibold ${toneClass}`}>{value}</span>
+    </div>
+  );
+}
+
+function ReasonsList({ reasons }: { reasons: string[] }) {
+  if (reasons.length === 0) return null;
+  return (
+    <ul className="flex flex-col gap-1">
+      {reasons.map((r) => (
+        <li key={r} className="flex gap-1.5 text-[12px] leading-relaxed text-muted">
+          <span aria-hidden className="mt-[1px] text-muted/60">•</span>
+          <span>{r}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -136,21 +240,16 @@ export function RecommendedAllocation({
 function UnavailableCard({
   title,
   body,
-  tone = "warning",
   onRetry,
 }: {
   title: string;
   body: string;
-  tone?: "warning" | "neutral";
   onRetry?: () => void;
 }) {
   return (
-    <Card
-      className={`flex flex-col gap-3 p-4 ${tone === "warning" ? "border-warning/30 bg-warning/5" : ""}`}
-      role="status"
-    >
+    <Card className="flex flex-col gap-3 border-warning/30 bg-warning/5 p-4" role="status">
       <div className="flex flex-col gap-1">
-        <span className={`text-[13px] font-semibold ${tone === "warning" ? "text-warning" : "text-foreground"}`}>{title}</span>
+        <span className="text-[13px] font-semibold text-warning">{title}</span>
         <p className="text-[12px] leading-relaxed text-muted">{body}</p>
       </div>
       {onRetry && (

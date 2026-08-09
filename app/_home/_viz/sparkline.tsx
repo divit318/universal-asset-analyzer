@@ -6,6 +6,8 @@
  * (fewer than two points) renders nothing rather than a flat line implying data.
  */
 
+import { useId } from "react";
+
 interface SparklineProps {
   data: number[];
   /** Overrides the auto direction tone. */
@@ -15,6 +17,12 @@ interface SparklineProps {
   className?: string;
   /** Fill the area under the line. */
   area?: boolean;
+  /**
+   * Gradient area fill (line colour at 18% fading to 0% at the bottom) instead
+   * of the default flat fill — the Market Overview tile treatment. Opt-in so
+   * existing sparklines render exactly as before.
+   */
+  gradient?: boolean;
 }
 
 const TONE_VAR: Record<string, string> = {
@@ -23,7 +31,8 @@ const TONE_VAR: Record<string, string> = {
   neutral: "var(--muted)",
 };
 
-export function Sparkline({ data, tone, width = 96, height = 28, className, area = true }: SparklineProps) {
+export function Sparkline({ data, tone, width = 96, height = 28, className, area = true, gradient = false }: SparklineProps) {
+  const gradientId = useId();
   if (!data || data.length < 2) return <div style={{ width, height }} className={className} aria-hidden />;
 
   const min = Math.min(...data);
@@ -53,8 +62,24 @@ export function Sparkline({ data, tone, width = 96, height = 28, className, area
       preserveAspectRatio="none"
       aria-hidden
     >
-      {area ? <path d={areaPath} fill={color} fillOpacity={0.12} /> : null}
+      {gradient ? (
+        <>
+          <defs>
+            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity={0.18} />
+              <stop offset="100%" stopColor={color} stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <path d={areaPath} fill={`url(#${gradientId})`} />
+        </>
+      ) : area ? (
+        <path d={areaPath} fill={color} fillOpacity={0.12} />
+      ) : null}
       <path d={line} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+      {/* Terminal dot: marks the newest print, and gives the line a greyscale-
+          safe anchor (DESIGN R2 / audit AC-03) — an up-line and a down-line
+          are otherwise identical without their hue. */}
+      <circle cx={pts[pts.length - 1][0].toFixed(1)} cy={pts[pts.length - 1][1].toFixed(1)} r={2} fill={color} />
     </svg>
   );
 }

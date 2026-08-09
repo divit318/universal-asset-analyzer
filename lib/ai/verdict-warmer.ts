@@ -70,8 +70,15 @@ export async function warmVerdicts(): Promise<{ warmed: number; skipped: number;
       try {
         const ctx = await buildCompanyContext(symbol);
         const plan = await planVerdict(ctx, null);
-        if (resolveProvider(plan.task) !== "devin") {
-          counts.skipped += 1; // restraint 1: never occupy the local daemon
+        /* Merge resolution 2026-08-06: restraint 1 gated warming to main's
+           "sessions" runtime, whose parallel, capped background runs made it
+           nearly free. That runtime is retired on this branch; the one chain
+           runtime is interactive (and may be the user's metered key), so
+           background warming stays skipped until a runtime that tolerates
+           unattended spend exists again. `resolveProvider` is the seam that
+           would re-enable it. */
+        if ((resolveProvider(plan.task) as string) !== "sessions") {
+          counts.skipped += 1; // restraint 1: never occupy the interactive runtime
           continue;
         }
         const params = verdictCacheParams(ctx.symbol, plan.kind);

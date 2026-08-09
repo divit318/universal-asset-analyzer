@@ -5,7 +5,8 @@ import { usePathname } from "next/navigation";
 import { useRef, useState } from "react";
 import { Menu, X, Search, ChevronDown, Sparkles } from "lucide-react";
 import { BrandLockup, BrandMark } from "./brand";
-import { OllamaStatusBadge } from "./ollama-status";
+import { AccountMenu } from "./account-menu";
+import { AiStatusBadge } from "./ai-status-badge";
 import { ThemeToggle } from "./theme";
 import { NotificationBell } from "./notification-bell";
 import { NAV, activeObjective, type NavObjective } from "./nav-config";
@@ -139,8 +140,11 @@ export function SiteHeader() {
             />
           </button>
           <NotificationBell />
-          <OllamaStatusBadge />
+          <AiStatusBadge />
           <ThemeToggle />
+          {/* Renders nothing while signed out (gate-off daily mode) — safe
+              regardless of UAA_AUTH_GATE. See HANDOFF-LOGIN.md §1. */}
+          <AccountMenu />
 
           {/* Mobile controls */}
           <button

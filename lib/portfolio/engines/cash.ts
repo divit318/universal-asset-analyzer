@@ -333,7 +333,7 @@ function simpleReturns(closes: number[]): number[] {
  * is an approximation, not a covariance-matrix-grade figure — used only to decide
  * whether "highly correlated with an existing holding" is a fair rejection reason.
  */
-function highestCorrelationAgainstTopHoldings(
+export function highestCorrelationAgainstTopHoldings(
   symbol: string | null,
   evaluation: PortfolioEvaluation,
   ctx: MarketContext,

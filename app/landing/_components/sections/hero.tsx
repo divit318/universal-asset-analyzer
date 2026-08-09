@@ -1,128 +1,107 @@
-import Link from "next/link";
-import { BrandMark } from "@/app/_components/brand";
-import { Badge } from "@/app/_components/ui";
-import { APP_ENTRY, type LandingSection } from "../../landing-config";
+"use client";
+
+import type { LandingSection } from "../../landing-config";
+import { PRIMARY_ACTION, SECONDARY_ACTION } from "../../landing-config";
+import { OrnamentalEyebrow } from "../primitives/ornamental-eyebrow";
+import { TwoToneHeadline } from "../primitives/two-tone-headline";
+import { TrustStrip } from "../primitives/trust-strip";
+import { PipelineRow } from "../pipeline-row";
+import { HeroField } from "../hero-field";
+import { Reveal } from "../motion/reveal";
+import { openAuthModal } from "../auth-modal";
 
 /**
- * Hero — the page's single <h1> and the scene-setting section.
- *
- * Copy is the approved Creative Direction final wording (§9). Visual language is
- * the repo's own design system (blue --brand, Geist, dark-default) — NOT the
- * PDF's coral/Inter, which would fork the token set.
- *
- * Milestone 2 is deliberately STATIC: the product reveal is an empty framed
- * placeholder. Its entrance choreography arrives in Milestone 5 (via the repo's
- * CSS keyframe system, no animation library) and the real app screenshot in
- * Milestone 7. Nothing here hardcodes motion or imagery those milestones own.
+ * Hero — the filament field is FULL-BLEED: its canvas spans the entire hero
+ * body edge to edge (hero-field.tsx), behind the text, and the ribbon
+ * bleeds off both the left and right viewport edges. The text keeps its
+ * left ~38% column (the headline sets as exactly two lines at every
+ * breakpoint); legibility is guaranteed by the spine passing below the
+ * text block, the thin dim entry, and a left-edge scrim. Column discipline
+ * remains in force for every other section — this full-bleed treatment is
+ * the hero's alone. Beneath the hero body, the 01 to 05 pipeline is a
+ * DETACHED typographic row (pipeline-row.tsx), spatially independent of
+ * the field. The trust strip closes the section.
  */
 export function Hero({ section }: { section: LandingSection }) {
   const headingId = `${section.id}-heading`;
 
   return (
-    <section
-      id={section.id}
-      aria-labelledby={headingId}
-      className="scroll-mt-20 border-b border-border bg-background"
-    >
-      <div className="mx-auto flex w-full max-w-5xl flex-col items-center gap-8 px-6 pb-20 pt-20 text-center sm:pt-28">
-        {/* On-load staged entrance — pure CSS (works without JS), one-shot, and
-            neutralized under prefers-reduced-motion by globals.css. */}
-        {/* The mark, alone and large — the marketing site's one place to simply
-            show the logo. Not a lockup: the header 20px above already carries
-            the wordmark, and the <h1> is the message. */}
-        <div className="animate-fade-rise" style={{ animationDuration: "500ms" }}>
-          <BrandMark size="hero" className="text-foreground" label="Universal Asset Analyzer" />
-        </div>
+    <section id={section.id} aria-labelledby={headingId} className="scroll-mt-22 overflow-hidden border-b border-hairline pt-14 sm:pt-16">
+      {/* The hero body: full-bleed field behind, text column in front. */}
+      <div className="relative pb-64 lg:pb-0">
+        <HeroField />
+        <div data-measure="content" className="relative mx-auto w-full max-w-measure-content px-mk-pad">
+          <div className="grid items-center gap-10 lg:grid-cols-[38fr_62fr] lg:gap-8">
+          <div className="flex flex-col items-start">
+            <Reveal delay={0}>
+              <OrnamentalEyebrow variant="left">
+                <span className="text-muted">Evidence in ink.</span> <span>Verdicts in brass.</span>
+              </OrnamentalEyebrow>
+            </Reveal>
 
-        <div className="animate-fade-rise" style={{ animationDuration: "500ms", animationDelay: "60ms" }}>
-          <Badge variant="brand">Runs 100% on your computer</Badge>
-        </div>
+            <Reveal delay={90}>
+              {/* Sized so the two lines set cleanly in the 38% column at
+                  every breakpoint: two clean lines, never four fragments. */}
+              <TwoToneHeadline
+                as="h1"
+                id={headingId}
+                size="hero-split"
+                align="left"
+                className="mt-mk-eyebrow"
+                segments={[
+                  { text: "Every figure computed.", block: true },
+                  { text: "Every claim traced.", tone: "accent", block: true },
+                ]}
+              />
+            </Reveal>
 
-        <div
-          className="flex animate-fade-rise flex-col items-center gap-5"
-          style={{ animationDuration: "500ms", animationDelay: "120ms" }}
-        >
-          <h1
-            id={headingId}
-            className="max-w-3xl text-balance text-4xl font-semibold tracking-tight text-foreground sm:text-6xl"
-          >
-            Stop juggling a dozen investing tools.
-          </h1>
-          <p className="max-w-2xl text-pretty text-base leading-relaxed text-muted sm:text-lg">
-            Universal Asset Analyzer combines market data, filings, valuation models, and an AI
-            research assistant — all on your computer.
-          </p>
-        </div>
+            <Reveal delay={180}>
+              <p data-lead className="mt-mk-headline max-w-measure-prose text-pretty text-mk-lead text-muted">
+                Stop juggling a dozen investing tools. UAA is one research terminal where deterministic
+                engines compute every metric and the analysis only explains what they found, and every
+                figure traces back to its source, in a database <span className="text-brand">you own</span>.
+              </p>
+            </Reveal>
 
-        {/* CTA hierarchy: primary into the app, secondary to the in-page demo
-            (the PDF's "Watch 90-second Demo" reinterpreted — no video asset yet). */}
-        <div
-          className="flex animate-fade-rise flex-col items-center gap-3 sm:flex-row"
-          style={{ animationDuration: "500ms", animationDelay: "240ms" }}
-        >
-          <Link
-            href={APP_ENTRY}
-            className="inline-flex h-11 items-center justify-center rounded-control bg-brand px-6 text-sm font-semibold text-background outline-none transition hover:-translate-y-0.5 hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
-          >
-            Experience UAA
-          </Link>
-          <a
-            href="#demo"
-            className="inline-flex h-11 items-center justify-center gap-1.5 rounded-control border border-border bg-surface px-6 text-sm font-semibold text-foreground outline-none transition hover:-translate-y-0.5 hover:border-border-strong hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand/40"
-          >
-            Watch demo
-            <span aria-hidden="true">↓</span>
-          </a>
-        </div>
-
-        {/* Product reveal — placeholder frame. A faux app window whose content
-            (real screenshot) lands in Milestone 7. Purely presentational and
-            hidden from assistive tech. Enters last in the on-load sequence. */}
-        <div
-          data-testid="hero-product-reveal"
-          aria-hidden="true"
-          className="mt-6 w-full max-w-4xl animate-fade-rise overflow-hidden rounded-panel border border-border bg-surface shadow-card"
-          style={{ animationDuration: "700ms", animationDelay: "360ms" }}
-        >
-          <div className="flex items-center gap-1.5 border-b border-border bg-surface-2 px-4 py-2.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-border-strong" />
-            <span className="h-2.5 w-2.5 rounded-full bg-border-strong" />
-            <span className="h-2.5 w-2.5 rounded-full bg-border-strong" />
+            <Reveal delay={280}>
+              <div className="mt-10 flex flex-col items-start gap-3 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={() => openAuthModal("signup")}
+                  className="group inline-flex h-12 items-center justify-center gap-2 rounded-control bg-brand px-7 text-sm font-semibold text-background outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
+                >
+                  {PRIMARY_ACTION}
+                  <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-[3px]">
+                    →
+                  </span>
+                </button>
+                <a
+                  href="#demo"
+                  className="inline-flex h-12 items-center justify-center gap-1.5 rounded-control border border-border bg-surface px-7 text-sm font-semibold text-foreground outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:border-border-strong hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand/40"
+                >
+                  {SECONDARY_ACTION}
+                  <span aria-hidden="true">↓</span>
+                </a>
+              </div>
+            </Reveal>
           </div>
-          {/* Finished on-brand faux dashboard — token-driven, theme-aware, image-free.
-              (A real app screenshot can swap in here later via next/image.) */}
-          <div className="flex aspect-[16/9] gap-3 bg-background p-3 text-left">
-            <div className="hidden w-1/6 flex-col gap-2 rounded-card border border-border bg-surface-2 p-2.5 sm:flex">
-              <div className="h-2 w-3/4 rounded-full bg-brand/50" />
-              <div className="h-2 w-full rounded-full bg-border" />
-              <div className="h-2 w-2/3 rounded-full bg-border" />
-              <div className="h-2 w-full rounded-full bg-border" />
-              <div className="mt-auto h-2 w-1/2 rounded-full bg-border" />
-            </div>
-            <div className="flex flex-1 flex-col gap-3">
-              <div className="grid grid-cols-3 gap-3">
-                {[0, 1, 2].map((i) => (
-                  <div key={i} className="flex flex-col gap-1.5 rounded-card border border-border bg-surface-2 p-2.5">
-                    <div className="h-1.5 w-2/3 rounded-full bg-border" />
-                    <div className="h-2.5 w-1/2 rounded-full bg-foreground/70" />
-                  </div>
-                ))}
-              </div>
-              <div className="flex flex-1 items-end gap-1.5 rounded-card border border-border bg-surface-2 p-3">
-                {[42, 60, 48, 75, 58, 84, 66, 92].map((h, i) => (
-                  <div key={i} className="flex-1 rounded-sm bg-brand/40" style={{ height: `${h}%` }} />
-                ))}
-              </div>
-              <div className="flex items-center gap-2 rounded-card border border-border bg-surface-2 p-2.5">
-                <span className="h-4 w-4 shrink-0 rounded-full bg-brand/60" />
-                <div className="flex flex-1 flex-col gap-1">
-                  <div className="h-1.5 w-full rounded-full bg-border" />
-                  <div className="h-1.5 w-4/5 rounded-full bg-border" />
-                </div>
-              </div>
-            </div>
+
+          {/* Height spacer: keeps the hero body at illustration scale on
+              desktop. The field itself is full-bleed behind this grid. */}
+          <div aria-hidden="true" className="relative hidden h-[460px] w-full lg:block xl:h-[540px]" />
           </div>
         </div>
+      </div>
+
+      <div data-measure="content" className="mx-auto w-full max-w-measure-content px-mk-pad">
+        {/* The detached pipeline row: full width, typographic, independent. */}
+        <Reveal delay={360} className="mt-10 border-t border-hairline pt-8">
+          <PipelineRow />
+        </Reveal>
+
+        <Reveal delay={420} className="pb-mk-group pt-10">
+          <TrustStrip variant="contained" />
+        </Reveal>
       </div>
     </section>
   );

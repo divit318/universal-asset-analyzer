@@ -41,3 +41,31 @@ Notes
   aren't time-critical. Tighten if you want faster delivery.
 - Non-macOS platforms: the script still evaluates and persists alerts (they show
   in the header bell); only the OS-toast step is macOS-only for now.
+
+# Demo portfolio seed (YC demo)
+
+`scripts/demo-seed.ts` rebuilds the entire demo state as a 3-month investing
+journey (2026-05-04 → 2026-08-06): the lot ledger, 37 pre/post-execution
+portfolio snapshots (Trajectory), decision journal, pipeline/watchlist,
+research sessions + notes, notifications, one simulation, two valuation cases
+and the cached AI portfolio summary. It is idempotent and backs up
+`data/app.db` first.
+
+```bash
+npx tsx scripts/demo-seed.ts
+```
+
+How it stays honest:
+- Every lot is priced at the real close of its trade date
+  (`scripts/demo-closes.ts` dumps the closes; `scripts/demo-survey.ts` is the
+  window survey used to pick actual winners/losers).
+- Every snapshot summary is computed by the real engines (`normalizeHoldings` →
+  `evaluate` → `summaryOf`) against as-of prices and as-of-truncated history —
+  no hand-typed health scores.
+- Nothing references RGA: the book is engineered (underweight financials, 0.3%
+  income yield, 13% cash sleeve) so that researching RGA live scores well on
+  the same fit engine every other symbol goes through.
+
+Before a live demo: load `/portfolio` once to warm the platform caches, and
+note the AI portfolio summary cache lives in `scanner_cache` with a 15-minute
+TTL — re-run the seed (or just let the AI regenerate) within that window.

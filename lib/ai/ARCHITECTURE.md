@@ -2,99 +2,169 @@
 
 Single entry point for every AI request in UAA. Feature code never talks to a
 backend and never names a model — it names a *task*, and the Router picks the
-best model that can actually run it here, falling back automatically if that
-model fails.
+best routable model for it, falling back automatically if that attempt fails.
 
-**Hosted-first, local-fallback.** The Router walks a chain of providers: Devin
-CLI (hosted frontier models) first, Ollama (local) second. Set
-`AI_PROVIDER_ORDER` to reorder or to run one only. The local path is not
-vestigial — it is what keeps UAA working on a plane or logged out, which is the
-product's premise.
+**Provider-agnostic, six backends, zero required keys (2026-08-06).** The
+Router walks a configurable provider chain (`config.ts:providerOrder()`,
+default `devin → anthropic → openai → gemini → openrouter → ollama`,
+reorderable via `AI_PROVIDER_ORDER`) and uses the first provider that can
+serve the routed model:
+
+| Provider | Transport | Credential |
+|---|---|---|
+| `devin` | `devin -p` subprocess (`devin-cli.ts`) — Cognition-hosted models | the user's `devin login` — **no API key** |
+| `anthropic` | `api.anthropic.com` (SDK, real token streaming, prompt caching, native structured outputs) | `ANTHROPIC_API_KEY` env, then `~/.uaa/anthropic_api_key` (`anthropic-key.ts`) |
+| `openai` / `openrouter` | chat-completions over fetch (`openai-compatible-provider.ts`) | `OPENAI_API_KEY` / `OPENROUTER_API_KEY` env, then `~/.uaa/*` (`keys.ts`) |
+| `gemini` | Generative Language API over fetch (`gemini-provider.ts`) | `GEMINI_API_KEY`/`GOOGLE_API_KEY` env, then `~/.uaa/gemini_api_key` |
+| `ollama` | local daemon (`ollama.ts`) — memory-gated, serialized | none (local) |
+
+The BYO-key providers are dormant until a key exists (health = key presence);
+the Devin CLI is the out-of-the-box default because it needs no key at all.
+Per-task reasoning depth is expressed as three routable ids —
+`claude-opus-5-low|-medium|-high` — which BOTH the Devin catalogue and the
+Anthropic API serve under the same ids (`models.ts:alsoServedBy`): the
+Anthropic provider translates the suffix into `output_config.effort` on the
+wire, the Devin provider passes the uid through.
+
+Every number in the product is computed by the deterministic engines; the model
+only narrates. No prompt asks the model to produce, transform, or round a
+figure that reaches the UI, and the grounding layer (`grounding.ts`) verifies
+generated figures against the evidence they were given.
 
 ## Request flow
 
 ```
+User (page / feature UI)
+  ▼
 Feature code
   │  runPrompt(taskType, prompt)          lib/ai.ts — thin façade
   │  runTask / runTaskText / runTaskStream / runTaskChat
   ▼
-Orchestrator                              lib/ai/orchestrator.ts
+Orchestrator                              lib/ai/orchestrator.ts  (dedup/coalescing)
   ▼
 Router                                    lib/ai/router.ts
-  │  for each provider, in order:
-  │  1. ELIGIBILITY  available ∧ enabled ∧ fits-in-memory ∧ has required caps
+  │  for each provider, in chain order:
+  │  1. ELIGIBILITY  available ∧ enabled ∧ has required caps
   │  2. SCORE        quality vs speed, weighted by the task's own requirements
   │  3. TIEBREAK     registry priority, then id  (fully deterministic)
-  │  ← provider order lib/ai/config.ts  (AI_PROVIDER_ORDER)
-  │  ← config pins   lib/ai/config.ts  (env / static overrides beat the scorer)
-  │  ← task needs    lib/ai/task-registry.ts
-  │  ← model facts   lib/ai/models.ts
+  │  ← provider chain lib/ai/config.ts  (AI_PROVIDER_ORDER; default devin-first)
+  │  ← config pins    lib/ai/config.ts  (env / static overrides beat the scorer)
+  │  ← task needs     lib/ai/task-registry.ts
+  │  ← model facts    lib/ai/models.ts  (incl. alsoServedBy cross-provider ids)
   ▼
 AIProvider                                lib/ai/provider.ts
-  ├─ DevinProvider                        lib/ai/providers/devin-provider.ts
-  │    └─ `devin -p` subprocess           lib/ai/devin-cli.ts — the only spawn site
-  └─ OllamaProvider                       lib/ai/providers/ollama-provider.ts
-       └─ Ollama (localhost:11434)        lib/ai/ollama.ts — the only HTTP layer
+  ├─ DevinProvider                        providers/devin-provider.ts
+  │    └─ `devin -p` subprocess           lib/ai/devin-cli.ts — isolated
+  │         └─ Cognition-hosted model     workspace, tools denied, user's
+  │                                       `devin login`, NO API key
+  ├─ AnthropicProvider                    providers/anthropic-provider.ts
+  │    └─ api.anthropic.com               explicit baseURL; the user's key;
+  │                                       real token streaming
+  ├─ OpenAIProvider / OpenRouterProvider  providers/openai-compatible-provider.ts
+  ├─ GeminiProvider                       providers/gemini-provider.ts
+  └─ OllamaProvider                       providers/ollama-provider.ts (local)
+  ▼
+Normalized AIResponse                     lib/ai/response.ts
+  ▼
+Feature parse (Zod schemas / tolerant JSON) → grounding verification → UI
 ```
-
-Provider enumeration is **lazy**: Ollama's model list is never fetched when
-Devin answers, because that probe costs an HTTP round trip with a 4s timeout on
-every single request.
 
 ## What each tier routes to
 
-| Task complexity | Model | Measured | Cost |
-|---|---|---|---|
-| `deep` (thesis, filings, IC agents) | `claude-opus-5-medium` | 4-6s | $5/$25 per MTok |
-| `standard` (research, comparison, portfolio) | `claude-sonnet-5-low` | ~5s | $2/$10 |
-| `light` / `interactive` (nl-screener, summaries, chart-QA) | `swe-1-6-fast` | ~3s | $0.3/$1.5 |
+One model family, three effort depths. The pin per task complexity
+(`config.ts:TASK_MODEL_PINS`):
 
-For reference, the local models answered the same prompts in 28-115s, and
-serialized: nine concurrent IC-agent calls take ~10s hosted against minutes
-locally. There is a one-off ~5s cost on the first spawn in a server process.
+| Task complexity | Pin (primary → fallback) |
+|---|---|
+| `deep` (thesis, filings, IC agents) | `claude-opus-5-high` → `-medium` |
+| `standard` (research, comparison, portfolio) | `claude-opus-5-medium` → `-low` |
+| `light` / `interactive` (nl-screener, summaries, chart-QA) | `claude-opus-5-low` |
+
+Pins are model ids, not provider choices: each pinned id resolves against the
+provider chain in order, so the same table serves Devin-first (no key) and
+API-first (BYO key) setups without edits. A failing high-effort attempt
+degrades to a shallower tier of the same model rather than to nothing, and a
+provider whose credential is rejected is skipped for the rest of the chain
+walk (same key ⇒ same rejection; the error survives classification as
+`bad_api_key`, never a generic "try again"). The Devin catalogue also offers
+`adaptive` (Devin's own per-prompt model router), `claude-sonnet-5-low`, and
+`swe-1-6-fast` as routable/pinnable ids.
 
 Responses are normalized (`response.ts`) into `{ content, confidence,
 reasoningSummary, executionTimeMs, model, provider, tokenUsage, errors,
 metadata }`. No feature code branches on which model answered.
 
-## Two rules that are not style preferences
+## Instrumentation, caching, and output contracts (2026-08-06)
 
-**1. Memory is a hard gate, not a ranking penalty.**
-A model whose weights exceed the memory budget does not return a worse answer —
-it thrashes. Measured on a 17GB M4: `qwen3:30b-a3b` (18.6GB) ran at **0.9 tok/s,
-302s for a single completion**, while 4.4GB mistral answered the same prompt at
-10.5 tok/s. An MoE with 3.3B active params "should" have been the fast one;
-fitting in RAM matters more than parameter count does. The budget is derived from
-`os.totalmem()`, so the same registry is correct on a laptop and on a workstation.
+**Telemetry** (`telemetry.ts` → `ai_call` in SQLite, rendered at `/dev/ai`):
+every Router attempt — success or failure — records task, provider, model,
+fallback depth, duration, queue time, TTFT (streamed), token usage split by
+prompt-cache creation/read, and estimated USD cost (registry pricing ×
+reported usage; an estimate, never billing truth). Ledger writes never throw,
+and are opt-in under vitest (`AI_TELEMETRY_IN_TESTS=1`). This is the
+instrument every routing/caching/tiering decision is judged against.
 
-**2. JSON mode and thinking are mutually exclusive.**
-Qwen3 under `format: "json"` with thinking on returns the literal string `{}` —
-two tokens, 0/3 valid across trials, versus 3/3 with thinking off. `{}` *parses*,
-so this failed completely silently: ~14 tasks were receiving an empty object and
-quietly rendering their fallback state. `router.ts:resolveThinking()` forces
-`think: false` whenever `json` is set, and a test asserts that no task config can
-combine the two.
+**Prompt caching** (`anthropic-provider.ts:buildCachedPrompt`): up to two
+`cache_control` breakpoints — the system block always (free below the API's
+cacheable minimum, 0.1×-priced reads above it), and the last assistant turn
+only in real multi-turn conversations (the Copilot layout pins system +
+dossier + prior turns). One-shot prompts get no turn breakpoint: a cache
+write with no reader is a pure +25% on the written tokens. Placement never
+changes a prompt byte. `AI_PROMPT_CACHE=off` for A/B runs;
+`scripts/ai-bench.ts --suite cache` verifies write→read on the wire.
 
-Thinking is off everywhere by default: it measured **143s vs 28s (5x)** on
-qwen3:14b for a comparable answer. It is a per-task knob (`thinking: true`), not
-a default.
+**Native structured outputs**: a caller-supplied JSON Schema
+(`RunTaskOptions.jsonSchema` → `output_config.format`) makes schema validity
+a decoding guarantee. The analysis seam compiles each request's `wireSchema`
+via `z.toJSONSchema` (best-effort — anything uncompilable degrades to the
+prompt-directed JSON path unchanged), and the tolerant parse still runs: it
+carries the semantic guards and legacy-row defaults.
+
+**Evals** (`tests/ai-eval/golden.ts`): golden workflow cases built with the
+production prompt builders and graded deterministically (schema, membership
+guards, the grounding verifier). `scripts/ai-eval.ts` runs them live — the
+gate a model swap or effort repin must pass (`--model` pins a candidate);
+`--record` snapshots outputs that CI re-grades offline
+(`tests/ai-eval/recorded-outputs.test.ts`).
+
+## Notes that are not style preferences
+
+**1. Health checks are cheap, not paid round trips.** The Router
+health-checks providers on hot paths; the keyed providers answer from key
+presence (`resolveApiKey()` / `keys.ts`), the Devin provider from a
+ten-minute-cached `devin models list`, and the first real request surfaces
+auth/network failures, which produce far better errors than a probe would.
+
+**2. JSON mode and thinking are mutually exclusive** at the request level
+(`router.ts:resolveThinking()`), a rule kept from the era of hybrid local
+reasoning models where the combination silently returned `{}`. The Claude
+effort tiers have no per-request thinking toggle — depth rides on the model id
+— so the rule is dormant but still asserted by tests.
+
+**3. The local-provider machinery (memory gate, generation gate, cold-start
+budgets, warm probes) is live again for Ollama.** It keys off
+`isHostedProvider()` and never runs for the hosted providers (including the
+Devin CLI: a local subprocess, but the weights run on Cognition's hosts —
+no local RAM, genuinely parallel). It was kept dormant through the
+single-backend era precisely so the local tier could be restored as a
+registry entry rather than a Router rewrite — which is what happened.
 
 ## Where to change what
 
 | To do this... | Edit this | Not this |
 |---|---|---|
-| Change which model a task uses | `config.ts` (`TASK_MODEL_PINS`, or `AI_TASK_<NAME>` env) | any feature module |
+| Change which effort tier a task uses | `config.ts` (`TASK_MODEL_PINS`, or `AI_TASK_<NAME>` env) | any feature module |
 | Add a task | `task-registry.ts` — declare complexity/latency/context/output | — |
 | Add or re-tune a model | `models.ts` (`MODEL_REGISTRY`) | any feature module |
 | Bench a model | `AI_DISABLED_MODELS`, or `enabled: false` | deleting its entry |
-| Change the memory ceiling | `AI_MAX_MODEL_GB` | `router.ts` |
-| Add a provider | new `AIProvider` in `providers/`, added to `PROVIDER_FACTORIES` + `KNOWN_PROVIDERS` | orchestrator, feature code |
-| Reorder / disable a provider | `AI_PROVIDER_ORDER`, or `DEVIN_CLI_DISABLED=1` | `router.ts` |
+| Reorder / restrict the provider chain | `AI_PROVIDER_ORDER` env (`config.ts`) | any feature module |
+| Add a provider | new `AIProvider` in `providers/`, added to `PROVIDER_FACTORIES` (router.ts) + `DEFAULT_PROVIDER_ORDER`/`KNOWN_PROVIDERS` (config.ts) + `PROVIDER_LOCALITY` (models.ts) (+ `keys.ts` if BYO-key) | orchestrator, feature code |
+| Manage API keys | `/settings` in-app, or the provider's env var | anything that would log them |
 
 A task declares what it *needs*; it never names a model. That indirection is the
 whole point: the previous registry hand-maintained a `preferredModels` list per
 task — 30 copies of one policy — and drifted so far that the top preference of
-every reasoning-heavy task (`deepseek-r1`) was **not even installed**.
+every reasoning-heavy task was **not even installed**.
 
 ## Call shapes
 
@@ -123,25 +193,27 @@ the Router will not silently substitute another one if it fails.
 evidence-grounded chat: context assembly, intent classification, token-budgeted
 retrieval, dossier prompting, session persistence, and post-hoc grounding
 verification. None of that is task routing, so it stays its own layer — but it
-gets its model from the Router and streams through `runTaskChat`, like everything
-else. It no longer calls Ollama directly.
+gets its model from the Router and streams through `runTaskChat`, like
+everything else. It never calls a provider directly.
 
 ## What this layer deliberately does not do
 
-- **No token streaming on the hosted path.** `devin -p` buffers the whole
-  answer, so `DevinProvider.stream()` yields exactly one chunk. It still beats
-  Ollama's *first* token by a wide margin. `devin acp` (JSON-RPC over stdio) is
-  the upgrade path if real deltas turn out to matter.
-- **No sampling controls on the hosted path.** Print mode exposes no
-  temperature, top-p or max-tokens. The Router still computes them; the Devin
-  provider accepts and ignores them rather than pretending otherwise.
-- **No chain-of-thought from hosted models.** Their reasoning never reaches
-  stdout, so `reasoning` is `""` — not a summary fabricated from the answer.
+- **No temperature on the wire.** `claude-opus-5` does not accept the field,
+  several current OpenAI reasoning models reject non-default values, and
+  `devin -p` has no sampling controls at all; every hosted provider accepts
+  the Router's computed value and deliberately ignores it rather than
+  pretending otherwise.
 - **No mass prompt migration.** `prompts/` centralizes the shared JSON
   directives. The ~20 hand-tuned feature prompts stay next to their features:
   they are schema-specific, not duplicated templates, and rewording them is a
   quality-sensitive change that needs per-model evaluation.
-- **No two-phase reason-then-format.** Deep JSON tasks therefore cannot use
-  thinking at all. Doing it properly means reasoning in prose then formatting in
-  a second pass — roughly double the latency, and it needs its own evaluation.
 - **No persisted health state.** `health.ts` is in-memory, per-process.
+- **No key exposure.** Keys are read by `anthropic-key.ts` / `keys.ts`, sent
+  only to their own provider's pinned endpoint (the Anthropic client uses an
+  explicit `baseURL` — a stray `ANTHROPIC_BASE_URL` env var cannot redirect
+  it; the Gemini key rides in a header, never a query string), and appear in
+  no log line, no error message, and no API response
+  (`/api/settings/ai-key(s|-providers)` report presence only). The Devin CLI
+  path involves no key at all; its prompt files are written to an isolated
+  scratch workspace and deleted after every call, and the agent's tools are
+  denied so it cannot read files or reach the network from a prompt.

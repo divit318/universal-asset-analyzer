@@ -139,23 +139,81 @@ function mapRawNews(raw: RawNews): NewsItem | null {
     source: raw.publisher ?? "Yahoo Finance",
     url: raw.link,
     publishedAt,
-    tickers: [],
+    tickers: raw.relatedTickers ?? [],
     summary: null,
   };
 }
 
+/** Base ticker for relevance matching: strips exchange/class suffixes
+ *  ("RELIANCE.NS" → "RELIANCE", "BRK-B"/"BRK.B" → "BRK"). */
+function baseTicker(symbol: string): string {
+  return symbol.toUpperCase().replace(/[.\-][A-Z]{1,3}$/, "");
+}
+
+/** Company-name tokens worth matching in a headline (drops legal suffixes). */
+const NAME_STOPWORDS = new Set([
+  "INC", "INC.", "CORP", "CORP.", "CORPORATION", "CO", "CO.", "COMPANY", "LTD", "LTD.",
+  "PLC", "GROUP", "HOLDINGS", "THE", "&", "AND", "CLASS", "A", "B", "FINANCIAL", "SERVICES",
+]);
+
+function nameTokens(name: string | undefined): string[] {
+  if (!name) return [];
+  return name
+    .toUpperCase()
+    .split(/[^A-Z0-9]+/)
+    .filter((t) => t.length > 2 && !NAME_STOPWORDS.has(t));
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Is this story actually about `symbol`?
+ *
+ * Yahoo's symbol search returns a relevance-ranked mix that can include broad
+ * market stories and stories about *other* companies (observed: Petco board
+ * appointments and COIN earnings inside SYF's feed — both tagged with SYF as
+ * a SECONDARY ticker because of a shared director / passing mention). The
+ * rule: the symbol must be the story's PRIMARY tag, or the headline must name
+ * the ticker or the company. Under-showing beats padding with unrelated items.
+ */
+export function isRelevantToSymbol(item: NewsItem, symbol: string, companyName?: string): boolean {
+  const base = baseTicker(symbol);
+  const headlineUpper = item.headline.toUpperCase();
+  const mentionsSymbol = new RegExp(`\\b${escapeRe(base)}\\b`).test(headlineUpper);
+  const mentionsName = nameTokens(companyName).some((t) =>
+    new RegExp(`\\b${escapeRe(t)}\\b`).test(headlineUpper),
+  );
+
+  if (item.tickers.length > 0) {
+    const tagged = item.tickers.some((t) => baseTicker(t) === base);
+    if (!tagged) return false;
+    const primary = baseTicker(item.tickers[0]) === base;
+    return primary || mentionsSymbol || mentionsName;
+  }
+  // Futures/forex/crypto/index symbols (GC=F, EURUSD=X, ^TNX, BTC-USD): the
+  // feed is macro context that rarely names the raw symbol — keep untagged.
+  if (/[=^]/.test(symbol) || symbol.includes("-")) return true;
+  return mentionsSymbol || mentionsName;
+}
+
 /** Recent, de-duplicated news for a specific symbol, newest first. Best-effort. */
 export async function getCompanyNews(symbol: string, count = 8): Promise<NewsItem[]> {
-  const raw = await getNews(symbol, count);
+  // Over-fetch so relevance filtering still leaves ~count items when Yahoo's
+  // feed is diluted with market-wide stories.
+  const raw = await getNews(symbol, Math.max(count * 2, 12));
   const seen = new Set<string>();
   return raw
     .map(mapRawNews)
     .filter((n): n is NewsItem => {
       if (!n || seen.has(n.url)) return false;
+      if (!isRelevantToSymbol(n, symbol)) return false;
       seen.add(n.url);
       return true;
     })
-    .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
+    .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt))
+    .slice(0, count);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -380,7 +438,11 @@ export async function fetchMarketNews(opts: NewsFetchOptions = {}): Promise<News
   if (glob) {
     tasks.push(fetchYahooNews(query ?? "stock market economy", 20));
     tasks.push(fetchNewsApi(query ?? "stock market economy finance", 20));
-    if (query) tasks.push(fetchGoogleNews(query, 15));
+    // Default query included: without it, a global-only scan with no
+    // NEWSAPI_KEY rode on Yahoo alone (~10 items, observed 2026-08-07), so
+    // dedup had no second outlet to corroborate against and every causal
+    // chain rendered "1 source — uncorroborated".
+    tasks.push(fetchGoogleNews(query ?? "stock market economy", 15));
   }
 
   if (india) {

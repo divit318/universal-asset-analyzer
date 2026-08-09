@@ -55,7 +55,7 @@ interface ProgressState {
 
 /**
  * The generation step: a CTA that runs the pipeline and streams its staged
- * progress. Generation may take minutes on a busy local model — the staged
+ * progress. Generation can take a while for a large mandate — the staged
  * bar plus elapsed clock is the honest version of that wait.
  */
 export function GenerateFlow({
@@ -137,7 +137,7 @@ export function GenerateFlow({
             onGenerated(event.simulation, event.evaluation, event.fallbacks, event.excluded ?? []);
           } else {
             settled = true;
-            setError({ message: event.message, offline: event.code === "ollama_unavailable" });
+            setError({ message: event.message, offline: event.code === "ai_unavailable" });
             setProgress(null);
           }
         }
@@ -159,7 +159,7 @@ export function GenerateFlow({
    *
    * The abort propagates: the route passes `request.signal` into
    * `generatePortfolio`, which checks it between stages and re-throws rather
-   * than falling back, so cancelling actually frees the local model instead of
+   * than falling back, so cancelling actually stops the generation instead of
    * just hiding a request that keeps running. Nothing is persisted until a run
    * completes, so there is no half-written book to undo — and the profile lives
    * in the database, so every answer is still there to correct.
@@ -222,7 +222,7 @@ export function GenerateFlow({
           <p className="text-xs text-negative">{error.message}</p>
           {error.offline && (
             <p className="text-[11px] text-muted">
-              Generation needs the local model for allocation and selection — there is no
+              Generation needs the AI for allocation and selection — there is no
               defaults-only path that would still be advice-grade.
             </p>
           )}

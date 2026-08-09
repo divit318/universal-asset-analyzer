@@ -224,21 +224,28 @@ export function EarningsCard({ earnings }: { earnings: EarningsData }) {
         </div>
       )}
 
-      {/* Legend */}
+      {/* Legend — only entries that exist in the plotted series render (a red
+          "Missed estimate" swatch over four green beats reads as a bug). */}
       {hasHistory && (
         <div className="flex items-center gap-4 text-xs text-muted">
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-positive/85" />
-            Beat estimate
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-negative/85" />
-            Missed estimate
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-muted/25" />
-            Consensus estimate
-          </span>
+          {chartData.some((d) => d.beat) && (
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 rounded-sm bg-positive/85" />
+              Beat estimate
+            </span>
+          )}
+          {chartData.some((d) => !d.beat) && (
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 rounded-sm bg-negative/85" />
+              Missed estimate
+            </span>
+          )}
+          {chartData.some((d) => d.epsEstimate != null) && (
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 rounded-sm bg-muted/25" />
+              Consensus estimate
+            </span>
+          )}
         </div>
       )}
     </div>

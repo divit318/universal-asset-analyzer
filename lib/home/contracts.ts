@@ -13,8 +13,8 @@
  */
 
 import type { CardStatus, ActionQueueItem, OpportunitySnapshotItem, UpcomingEventLite, SectorAttentionChange } from "../mission-control";
+import type { Metric } from "../metric";
 import type { Freshness } from "../provenance";
-import type { TrackRecord } from "../decision-journal";
 import type { DecisionCard, WhyExplanation } from "../portfolio/engines/decision";
 import type { IdeaStage, WatchlistAlert } from "../types";
 
@@ -30,6 +30,10 @@ export interface MarketTicker {
   label: string;
   price: number | null;
   changePct: number | null;
+  /** Session day (exchange TZ) `changePct` describes; null = unknown (lib/day-change). */
+  sessionDate?: string | null;
+  /** Epoch ms of the quote's last trade. */
+  asOf?: number | null;
   /**
    * A short recent-close series for the card's sparkline, oldest→newest.
    * Null when no history was fetched for this symbol (only the curated Market
@@ -82,10 +86,34 @@ export interface MarketIntelligence {
 /* Module 4 — Portfolio Pulse                                          */
 /* ------------------------------------------------------------------ */
 
+/**
+ * A homepage mover. `dayChange` and `sinceCost` are structurally distinct
+ * stamped Metrics (audit F-22g) — the old shape's single `changePct` was
+ * silently since-cost P&L rendered under a "today" label.
+ */
 export interface PulseMover {
   symbol: string;
-  changePct: number;
-  changeDollar: number;
+  dayChange: Metric<"day"> | null;
+  sinceCost: Metric<"sinceCost"> | null;
+  dayDollar: number | null;
+  plDollar: number | null;
+}
+
+/**
+ * One row of the Book card's "top contributors (today)" list. `bps` is the
+ * position's day P&L over the whole book's previous-close value ×10000 — a
+ * *contribution* to the portfolio's day move, not the position's own return.
+ * Computed in lib/home/pulse.ts from the report's stamped day moves; the same
+ * non-stale gate the movers use applies, so a dead quote cannot contribute.
+ */
+export interface DayContributor {
+  symbol: string;
+  /** Holding display name, for the row's secondary text. */
+  name: string;
+  /** Contribution to the book's day move, in basis points of previous-close value. */
+  bps: number;
+  /** The underlying day P&L in base currency. */
+  dayDollar: number;
 }
 
 /**
@@ -131,6 +159,17 @@ export interface PortfolioPulse {
   todayChangeDollar: number;
   bestPerformer: PulseMover | null;
   worstPerformer: PulseMover | null;
+  /**
+   * Non-null when the movers describe a FINISHED session — e.g. "Markets
+   * closed · Fri, Aug 1 close" — so a recording made outside US hours reads as
+   * deliberate, not stale (audit F-22 amendment 2). Null while any mover's
+   * session is current.
+   */
+  sessionNote: string | null;
+  /** Epoch ms the pulse's figures were assembled (report generation time). */
+  asOf: number;
+  /** Session day the aggregate day-change figures describe; null = no movers. */
+  sessionDate: string | null;
   largestRisk: { title: string; description: string } | null;
   largestOpportunity: { symbol: string; reason: string } | null;
   cashPct: number | null;
@@ -168,6 +207,26 @@ export interface PortfolioPulse {
    * the engine itself performs.
    */
   healthFactors: HealthFactor[];
+  /**
+   * Today's largest contributions to the book's day move (top two positive +
+   * the largest negative when the sign mix allows; otherwise the top three by
+   * magnitude). Same source as the movers — the report's stamped day moves.
+   */
+  topContributors: DayContributor[];
+  /**
+   * The rest of the day move: the summed contribution of every position NOT in
+   * `topContributors`, in bps of the same base. Guarantees the visible rows
+   * plus this residual reconcile to the day P&L exactly (audit NI-01) — a
+   * truncated list without a residual is an attribution that cannot reach its
+   * own total. Null when there are no contributors at all.
+   */
+  topContributorsResidualBps: number | null;
+  /**
+   * Share of the book's value the day move could actually price (live-quoted
+   * holdings over total value, 0-100). The day P&L percentage describes only
+   * this slice; below ~95 the UI must say so next to the number.
+   */
+  dayCoveragePct: number | null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -315,10 +374,25 @@ export interface AttentionItem {
   confidence: number;
   /** ISO, for dated catalysts; null for undated items. */
   occursAt: string | null;
+  /**
+   * ISO time of the underlying observation, when the item describes one
+   * (notification-backed alerts/actions). Dedupe keeps the NEWEST observation
+   * of a story, and confidence decays with observation age (audit F-22d) —
+   * the old max-score rule guaranteed the oldest, most extreme print won.
+   */
+  observedAt?: string | null;
   /** The one deep link into the owning tool. Verb-labeled. */
   primaryAction: { label: string; href: string };
   /** Feeder id, for degraded-state attribution. */
   source: string;
+  /**
+   * Cross-kind story identity (audit DU-03): when two feeders of DIFFERENT
+   * kinds describe one story (the "USD Cash concentration" threat and the
+   * "Trim USD Cash" action are the same story), they share this key and the
+   * engine keeps the most ACTIONABLE one, merging the other's link. Null when
+   * the story has no cross-kind twin.
+   */
+  storyKey?: string | null;
   /** Extra links merged in from deduped sibling stories (§12). */
   mergedHrefs?: { label: string; href: string }[];
 }
@@ -381,6 +455,12 @@ export interface ActionImpact {
 export interface RecommendedAction {
   id: string;
   symbol: string | null;
+  /**
+   * The engine's subject line for symbol-less holdings (e.g. "USD Cash") —
+   * what the action is ABOUT. Used to join the action to the threat that
+   * restates it (audit DU-03). Null for queue-sourced items.
+   */
+  subject: string | null;
   /** e.g. "ADD", "REDUCE", "REVIEW". */
   action: string;
   title: string;
@@ -395,6 +475,8 @@ export interface RecommendedAction {
   severity: "high" | "medium" | "low";
   href: string;
   source: "decision" | "queue";
+  /** ISO time of the observation behind a queue item; null when engine-scored live. */
+  observedAt?: string | null;
   /**
    * The engine's full IC memo (why / why now / why this amount / why not the
    * alternatives / why not nothing). Null for queue-sourced items, which were
@@ -482,6 +564,43 @@ export interface PortfolioPerformanceSummary {
 export { MIN_DAYS_TO_ANNUALIZE } from "../portfolio-performance";
 
 /* ------------------------------------------------------------------ */
+/* Equity curve — the Book card's 90-day portfolio-vs-benchmark line   */
+/* ------------------------------------------------------------------ */
+
+/** One day of the normalized comparison. Both values are index levels, 100 = window start. */
+export interface EquityCurvePoint {
+  /** YYYY-MM-DD trading day. */
+  date: string;
+  portfolio: number;
+  /** Null when the benchmark series had no print for this day. */
+  benchmark: number | null;
+}
+
+/**
+ * A flow-adjusted daily return index over the trailing window, portfolio vs.
+ * benchmark, both normalized to 100 at the window start so they share a scale.
+ *
+ * Built from the lot ledger plus daily adjusted closes (lib/home/equity-curve.ts).
+ * Deliberately NOT a value line: a deposit mid-window would jump a value line
+ * without any return having happened — the exact lie trajectory-panel.tsx
+ * documents refusing to plot. Each day's growth factor strips that day's net
+ * flow, so the line moves only when prices do.
+ */
+export interface EquityCurve {
+  status: CardStatus;
+  /** Requested trailing window, in calendar days. */
+  windowDays: number;
+  /** Ascending by date. May start later than the window on a young portfolio. */
+  points: EquityCurvePoint[];
+  /** The window's cumulative return for each line, in percent. Null when unpriceable. */
+  portfolioPct: number | null;
+  benchmarkPct: number | null;
+  benchmarkSymbol: string;
+  /** Share (0-100) of the book's end-of-window value the curve could actually price. */
+  coveragePct: number | null;
+}
+
+/* ------------------------------------------------------------------ */
 /* Module 10 — Continue Where You Left Off                             */
 /* ------------------------------------------------------------------ */
 
@@ -506,9 +625,9 @@ export interface RecentActivity {
 /* ------------------------------------------------------------------ */
 
 /**
- * One AI call produces all three narrative surfaces. Ollama serializes
- * requests, so three separate "generate a paragraph" calls would queue behind
- * each other and the homepage would take three model round-trips to settle —
+ * One AI call produces all three narrative surfaces. Three separate
+ * "generate a paragraph" calls would be three separate spends (and on the
+ * old serializing local backend, three sequential round-trips) —
  * a cost this codebase has already measured and rejected once (see
  * lib/platform's notes on per-section AI generation).
  *
@@ -650,17 +769,79 @@ export interface HomeDigest {
     opportunities: OpportunitySnapshotItem[];
     scannerFreshness: Freshness | null;
   };
-  /** Full chronological feed of meaningful events (past + upcoming). */
-  timeline: TimelineFeed;
-  /** The high-signal, needs-interpretation subset — a filtered view of the feed. */
-  intelligence: TimelineFeed;
   watchlistIntelligence: WatchlistIntelligence;
   upcomingEvents: { status: CardStatus; events: UpcomingEventLite[] };
   performance: PortfolioPerformanceSummary;
+  /** The Book card's 90-day portfolio-vs-benchmark return index. */
+  equityCurve: EquityCurve;
   activity: RecentActivity;
-  calibration: { status: CardStatus; trackRecord: TrackRecord | null; eligible: boolean };
   /** Deterministic fallback text, used until (or instead of) the AI stream. */
   fallbackBriefing: string;
+  /**
+   * The dashboard fact layer (audit Phase 3): every cross-surface fact the
+   * page renders, stamped with its unit, display precision, time window,
+   * as-of, and source. Components render facts through `formatFact()` and are
+   * forbidden from re-deriving or re-rounding them locally — this is what
+   * structurally prevents one fact from appearing as 33% and 32.9% on the
+   * same screen. Built in lib/home/facts.ts; reconciled by
+   * `reconcileDashboardFacts()` in CI.
+   */
+  facts: DashboardFacts;
+}
+
+/* ------------------------------------------------------------------ */
+/* The fact layer                                                      */
+/* ------------------------------------------------------------------ */
+
+export type FactUnit = "percent" | "currency" | "bps" | "count" | "score" | "level" | "days" | "text";
+
+/**
+ * One dashboard fact. `value` is the exact engine output (never pre-rounded);
+ * `precision` is the SINGLE display precision every surface must use;
+ * `window` names the time period the value describes ("today", "90d",
+ * "annualized since first lot"); `source` is the computation reference
+ * (module.field) a provenance affordance can open.
+ */
+export interface Fact<V = number> {
+  value: V | null;
+  unit: FactUnit;
+  precision: number;
+  window: string | null;
+  asOf: string | null;
+  source: string;
+}
+
+export interface DashboardFacts {
+  /** The US market session day the page's "today" figures describe. */
+  sessionDate: Fact<string>;
+  totalValue: Fact;
+  dayPnlPct: Fact;
+  dayPnlDollar: Fact;
+  /** Share of book value the day move could price (see PortfolioPulse.dayCoveragePct). */
+  dayCoveragePct: Fact;
+  healthScore: Fact;
+  healthGrade: Fact<string>;
+  cashPct: Fact;
+  totalReturnOnCostPct: Fact;
+  xirrPct: Fact;
+  holdingDays: Fact;
+  benchmarkSymbol: Fact<string>;
+  benchmarkXirrPct: Fact;
+  excessPct: Fact;
+  curveWindowDays: Fact;
+  curvePortfolioPct: Fact;
+  curveBenchmarkPct: Fact;
+  /** True open count of the attention queue (= items.length after dedupe/dismissals). */
+  openCount: Fact;
+  /** Count of engine-recommended decisions (a SUBSET of the queue, not its total). */
+  decisionCount: Fact;
+  unreadNotifications: Fact;
+  changesCount: Fact;
+  sentimentScore: Fact;
+  sentimentLabel: Fact<string>;
+  vixLevel: Fact;
+  /** The shared VIX band label BOTH the gauge and the tile must render. */
+  vixBandLabel: Fact<string>;
 }
 
 export type { DecisionCard };

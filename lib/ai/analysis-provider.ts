@@ -1,26 +1,32 @@
 /**
- * Analysis Provider — the seam where Ollama and Devin are interchangeable.
+ * Analysis Provider — the seam a structured analysis runs behind.
  *
- * The unit of work here is one STRUCTURED ANALYSIS (task + dossier prompt +
- * Zod schema), not one model completion. That is deliberate: Devin has no
- * completion endpoint — its sessions return schema-validated objects — while
- * Ollama's token-level machinery (lib/ai/provider.ts, the Router, model
- * scoring) stays untouched underneath the Ollama adapter. See
- * ai-migration/03-architecture.md §1.
+ * One runtime implements it today:
  *
- * Provider selection (resolveProvider):
- *   1. AI_TASK_<NAME>_PROVIDER env pin        (mirrors the model-pin convention)
- *   2. the task registry's `provider` field   (a task can declare its home)
- *   3. AI_PROVIDER global default             (ollama | devin; default ollama)
- * GUARDRAIL: under AI_PROVIDER=devin, tasks declared latency:"interactive"
- * stay on Ollama unless explicitly pinned (rule 1/2). A human watching a
- * sub-10s spinner must never be handed a VM-backed agent session.
+ *   "chain" — one completion through the Router's provider chain
+ *             (lib/ai/providers/chain-analysis.ts), i.e. the Anthropic API at
+ *             the effort tier the task's pin selects. This is the default for
+ *             everything.
+ *
+ * The seam itself (AnalysisRequest/AnalysisResult, cache keys, idempotency)
+ * outlives any particular runtime: the ai_result cache, the job rows, and the
+ * per-request single-flight all key off it. The former "sessions" runtime
+ * (Devin sessions API) was removed with that provider; cached rows written by
+ * it are still readable (lib/ai/analysis.ts maps legacy provider ids).
+ *
+ * (AI_TASK_<NAME>_PROVIDER and the old AI_PROVIDER flag are retired along
+ * with the second runtime; stale values in .env.local are ignored.)
+ *
+ * Merge resolution (origin/main → f22/day-change, 2026-08-06): main still
+ * carried the two-runtime version of this header and resolver; this branch's
+ * single-runtime contract wins because the sessions provider code no longer
+ * exists here (tests/ai-analysis-provider.test.ts pins this).
  */
 
 import type { z } from "zod";
-import { TASK_REGISTRY, type TaskType } from "./task-registry";
+import type { TaskType } from "./task-registry";
 
-export type AnalysisProviderId = "ollama" | "devin";
+export type AnalysisProviderId = "chain";
 
 export interface AnalysisRequest<T> {
   taskType: TaskType;
@@ -31,37 +37,25 @@ export interface AnalysisRequest<T> {
   /** Tolerant PARSE schema — both providers' outputs run through this. */
   schema: z.ZodType<T>;
   /**
-   * Clean constraint-carrying schema converted to Draft 7 for Devin's
-   * structured_output_schema. Transforms/catches are unrepresentable in JSON
-   * Schema, so a parse schema with tolerances cannot be converted — supply a
-   * wire view when the parse view has them. Defaults to `schema`.
+   * Clean constraint-carrying schema converted to Draft 7 for the sessions
+   * API's structured_output_schema. Transforms/catches are unrepresentable in
+   * JSON Schema, so a parse schema with tolerances cannot be converted —
+   * supply a wire view when the parse view has them. Defaults to `schema`.
    */
   wireSchema?: z.ZodType<unknown>;
   schemaVersion: number;
   /**
    * "json" (default): the model must emit the schema's JSON.
-   * "text": the task's prompt asks for prose (the pre-migration behavior of
-   * free-text call sites). The Ollama adapter runs WITHOUT json mode and
-   * wraps the answer as { text }, keeping those prompts byte-identical;
-   * Devin still delivers through structured output using the wire schema
-   * (canonically lib/ai/schemas/text.ts).
+   * "text": the task's prompt asks for prose. The chain adapter runs WITHOUT
+   * json mode and wraps the answer as { text }; the sessions provider still
+   * delivers { text } through structured output (lib/ai/schemas/text.ts).
    */
   output?: "json" | "text";
   /**
-   * Ollama-adapter-only: whether to request grammar-constrained JSON
-   * (`format:"json"`) for a JSON-output task. Defaults to true. Exists for
-   * exactly one reason: the home brief historically called `runPrompt`
-   * WITHOUT the json flag and mopped up with extractJson — and "the Ollama
-   * path is byte-identical" is the migration discipline, so that quirk is
-   * preserved rather than silently "fixed". Meaningless to Devin, which
-   * enforces the wire schema server-side either way.
-   */
-  ollamaJsonMode?: boolean;
-  /**
-   * Explicit model override (the IC report's model picker). Honored by the
-   * token-stack adapter exactly as runPrompt honored it; the Devin provider
-   * ignores it — a session has no model knob, so pretending otherwise would
-   * be a lie the picker UI then repeats to the user.
+   * Explicit model override, forwarded to the Router (skips auto-routing).
+   * Merge resolution 2026-08-06: main's call sites (IC agents/synthesis/
+   * thesis, valuation inputs) pass this; the chain adapter forwards it to
+   * runTask's existing `model` option.
    */
   model?: string;
   /** Defaults to hash(taskType, subjectKey, inputHash, schemaVersion). */
@@ -113,22 +107,11 @@ export function analysisIdempotencyKey(
   return `ai:${taskType}:${fnv1a(`${subjectKey}\u0000${inputHash}\u0000${schemaVersion}`)}`;
 }
 
-function envProviderPin(taskType: TaskType): AnalysisProviderId | null {
-  const raw = process.env[`AI_TASK_${taskType.toUpperCase().replace(/-/g, "_")}_PROVIDER`];
-  return raw === "ollama" || raw === "devin" ? raw : null;
-}
-
-/** Which provider should run this task right now. Pure of I/O; env-driven. */
-export function resolveProvider(taskType: TaskType): AnalysisProviderId {
-  const pinned = envProviderPin(taskType);
-  if (pinned) return pinned;
-
-  const declared = TASK_REGISTRY[taskType].provider;
-  if (declared && declared !== "auto") return declared;
-
-  const global = process.env.AI_PROVIDER === "devin" ? "devin" : "ollama";
-  if (global === "devin" && TASK_REGISTRY[taskType].latency === "interactive") {
-    return "ollama"; // the guardrail — see module doc
-  }
-  return global;
+/**
+ * Which runtime runs this task. One answer today — kept as a function (with
+ * its TaskType parameter) because analysis.ts records the resolved id on job
+ * rows and cached results, and a second runtime would slot back in here.
+ */
+export function resolveProvider(_taskType: TaskType): AnalysisProviderId {
+  return "chain";
 }

@@ -118,7 +118,7 @@ export default function ValuationRegisterPage() {
 
       {err ? <p className="text-sm text-negative">{err}</p> : null}
       {data?.priceWarning ? (
-        <p className="rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-4 py-2 text-sm text-yellow-600 dark:text-yellow-400">
+        <p className="rounded-lg border border-yellow-500/40 light:border-yellow-700/30 bg-yellow-500/10 px-4 py-2 text-sm text-yellow-400 light:text-yellow-700">
           ⚠ {data.priceWarning}
         </p>
       ) : null}
@@ -236,7 +236,7 @@ function RegisterTableRow({ row }: { row: RegisterRow }) {
   const mos = row.result.marginOfSafety;
   const mosTone = mos == null ? "text-muted"
     : mos >= 20 ? "text-positive"
-    : mos >= 0 ? "text-yellow-500"
+    : mos >= 0 ? "text-yellow-500 light:text-yellow-700"
     : "text-negative";
 
   return (

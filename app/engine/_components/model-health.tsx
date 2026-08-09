@@ -36,7 +36,7 @@ export interface OosMetrics {
 
 const QUALITY: Record<OosMetrics["ic_quality"], { dot: string; text: string; label: string; note: string }> = {
   HIGH: {
-    dot: "bg-emerald-400", text: "text-emerald-400", label: "Signal reliable",
+    dot: "bg-emerald-400 light:bg-emerald-600", text: "text-emerald-400 light:text-emerald-700", label: "Signal reliable",
     note: "Rank correlation with realized forward returns is comfortably above the floor. Position sizing can be taken at face value.",
   },
   MEDIUM: {

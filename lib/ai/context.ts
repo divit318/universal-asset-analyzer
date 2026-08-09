@@ -12,7 +12,7 @@
 
 import { getHistory, getQuote } from "../yahoo";
 import { getFundamentals } from "../fundamentals";
-import { getFinancialStatements } from "../statements";
+import { getStatementsWithFallback } from "../statements";
 import { getRecentFilings } from "../edgar";
 import { getCompanyProfile } from "../profile";
 import { getCompanyNews } from "../news";
@@ -87,11 +87,23 @@ async function assembleCompanyContext(symbol: string): Promise<CompanyContext> {
       ),
       tryOr("profile", warnings, () => getCompanyProfile(symbol), null),
       tryOr("fundamentals", warnings, () => getFundamentals(symbol), null),
-      tryOr("statements", warnings, () => getFinancialStatements(symbol), null),
+      // Same Yahoo-first/EDGAR-fallback chain the research page uses, so the
+      // AI's score inputs are IDENTICAL to the page's (an EDGAR-only fetch
+      // here made the narration quote subscores the Conviction tab never
+      // showed, for any ticker EDGAR's XBRL tags don't cover).
+      tryOr("statements", warnings, async () => {
+        const { statements, error } = await getStatementsWithFallback(symbol);
+        if (!statements && error) throw new Error(error);
+        return statements;
+      }, null),
       tryOr("filings", warnings, () => getRecentFilings(symbol, 10), []),
       tryOr("news", warnings, () => getCompanyNews(symbol, 8), []),
       tryOr("peers", warnings, () => getPeerComparison(symbol), null),
-      tryOr("price history", warnings, () => getHistory(symbol, 420), []),
+      // 1825d — the SAME window buildFundamentalsData feeds computeMomentum,
+      // so the context's composite score is bit-identical to the page's.
+      // (420d here produced a slightly different momentum blend, so the
+      // narration could quote "50/100" beside a hero showing 51/100.)
+      tryOr("price history", warnings, () => getHistory(symbol, 1825), []),
       tryOr("knowledge graph", warnings, () => getKnowledgeGraph("symbol", symbol), null),
     ]);
 

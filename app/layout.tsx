@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Source_Serif_4 } from "next/font/google";
 import { SiteFooter } from "./_components/site-footer";
 import { SiteHeader } from "./_components/site-header";
 import { CommandPalette } from "./_components/command-palette";
@@ -22,13 +22,22 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+/* The judgment serif — the brand book's third voice (§4: "The Analyst").
+   Source Serif 4 is the free stand-in it names for Tiempos Text. Loaded here
+   but applied only through the --font-judgment token (font-serif utility):
+   marketing headlines and judgment prose, never chrome or tables. */
+const sourceSerif = Source_Serif_4({
+  variable: "--font-source-serif",
+  subsets: ["latin"],
+});
+
 export const metadata: Metadata = {
   title: {
     default: "Universal Asset Analyzer",
     template: "%s · UAA",
   },
   description:
-    "Institutional-grade equity research platform: AI-powered deep research, DCF modelling, quant screening, thematic analysis, and portfolio management — all running locally.",
+    "Institutional-grade equity research platform: AI-assisted deep research, DCF modelling, quant screening, thematic analysis, and portfolio management — every figure computed locally, in a database you own.",
   applicationName: "Universal Asset Analyzer",
   /*
    * No `icons` key on purpose. Next's file conventions already emit the tab and
@@ -52,7 +61,11 @@ export default function RootLayout({
     <html
       lang="en"
       data-theme="dark"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      // globals.css sets `scroll-behavior: smooth`; this attribute tells
+      // Next.js it is intentional so router transitions don't log a
+      // "Detected scroll-behavior: smooth" warning on every client-side nav.
+      data-scroll-behavior="smooth"
+      className={`${geistSans.variable} ${geistMono.variable} ${sourceSerif.variable} h-full antialiased`}
       suppressHydrationWarning
     >
       <head>

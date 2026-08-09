@@ -8,7 +8,7 @@
  * generations they drop straight in here with an expected verdict, so a prompt
  * or model change that starts producing ungrounded answers fails CI.
  *
- * Kept as plain data (no Ollama, no network) so `npm run test` exercises it.
+ * Kept as plain data (no model, no network) so `npm run test` exercises it.
  */
 
 export interface GroundingEvalCase {

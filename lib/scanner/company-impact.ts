@@ -64,7 +64,7 @@ function buildCompanyMatchPrompt(
   // The old 200-row list cost real money for nothing: prompt eval measured at
   // ~40 tok/s on this class of host (2026-07-31), so ~1.6k extra tokens of
   // list was ~40s of pure prompt processing per sector — and pushed the
-  // prompt past Ollama's 4096-token default window besides. Callers pre-rank
+  // prompt past a small default context window besides. Callers pre-rank
   // by market cap so the cut keeps the names the model can actually reason
   // about.
   const companyList = companies
@@ -118,7 +118,15 @@ export async function buildCompanyOpportunities(
 ): Promise<ScannerOpportunity[]> {
   // Load screener DB (7-day cache OK — we just need sector/industry for filtering)
   const { rows: dbRows } = getFreshFundamentals(7 * 24 * 60 * 60 * 1000);
-  if (dbRows.length === 0) return [];
+  if (dbRows.length === 0) {
+    // Independently actionable, so it is a recorded degradation rather than a
+    // silent empty return: without screener rows there is nothing to match
+    // companies against, however good the events are.
+    run?.degrade?.(
+      "screener fundamentals cache is empty — company matching skipped (open the Screener once to populate it)",
+    );
+    return [];
+  }
 
   // Build sector → companies map. Rows are pre-ranked by company size so the
   // prompt's 40-company cap (see buildCompanyMatchPrompt) keeps the largest,
@@ -147,13 +155,25 @@ export async function buildCompanyOpportunities(
   // Filter to sectors with meaningful signals
   const significantSectors = sectorImpacts.filter((s) => s.strength >= 45);
 
-  if (significantSectors.length === 0) return [];
+  if (significantSectors.length === 0) {
+    // Distinguish starvation from a genuine no-signal day in the log: an
+    // upstream sector_impact failure already carries its own degradation
+    // marker, so this is not a second one — but "0 opportunities" must be
+    // traceable to its cause without re-running the pipeline.
+    logPipeline({
+      type: "company_impact_skipped",
+      reason: sectorImpacts.length === 0 ? "no sector impacts from upstream stage" : "no sector signal >= 45 strength",
+      sectorImpacts: sectorImpacts.length,
+      events: events.length,
+    });
+    return [];
+  }
 
   const allOpportunities: ScannerOpportunity[] = [];
   const seen = new Set<string>(); // deduplicate by ticker
 
-  // Process sectors with meaningful signals (up to 6 to control Ollama calls).
-  // Sequential — Ollama's default local setup serves one request at a time,
+  // Process sectors with meaningful signals (up to 6 to control AI calls).
+  // Sequential — a policy from the serializing local backend,
   // so firing these concurrently would only queue them behind each other
   // while each one's own timeout keeps counting down.
   const toProcess = significantSectors.slice(0, 6);

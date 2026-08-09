@@ -18,6 +18,7 @@
  */
 
 import { getQuotes, getHistory } from "../yahoo";
+import { dayChange } from "../day-change";
 import { computeSentiment } from "./sentiment";
 import type { MarketGroup, MarketGroupId, MarketIntelligence, MarketTicker, SectorAttentionChange } from "./contracts";
 import type { CardStatus } from "../mission-control";
@@ -38,6 +39,8 @@ const TAPE: { id: MarketGroupId; label: string; tickers: { symbol: string; label
       { symbol: "^IXIC", label: "Nasdaq" },
       { symbol: "^DJI", label: "Dow" },
       { symbol: "^RUT", label: "Russell 2000" },
+      { symbol: "^FTSE", label: "FTSE 100" },
+      { symbol: "^N225", label: "Nikkei 225" },
     ],
   },
   {
@@ -60,6 +63,7 @@ const TAPE: { id: MarketGroupId; label: string; tickers: { symbol: string; label
     tickers: [
       { symbol: "GC=F", label: "Gold" },
       { symbol: "CL=F", label: "Crude (WTI)" },
+      { symbol: "BZ=F", label: "Brent Crude" },
       { symbol: "HG=F", label: "Copper" },
       { symbol: "NG=F", label: "Nat Gas" },
     ],
@@ -87,12 +91,13 @@ const ALL_SYMBOLS = TAPE.flatMap((g) => g.tickers.map((t) => t.symbol));
 
 /**
  * The curated set that gets a sparkline. NOT every tape symbol — fetching a
- * history for all ~17 on every digest is the overhead the platform mandate
- * exists to prevent. These are the instruments the Market Pulse strip leads
- * with, and their histories are platform-cached (so a `getHistory` here
- * collapses into the same entry a chart elsewhere already warmed).
+ * history for all ~20 on every digest is the overhead the platform mandate
+ * exists to prevent. These are the Market Overview card's eight tiles (the
+ * sentiment tile carries a gauge, not a sparkline), and their histories are
+ * platform-cached (so a `getHistory` here collapses into the same entry a
+ * chart elsewhere already warmed).
  */
-const SPARK_SYMBOLS = new Set(["^GSPC", "^VIX", "^TNX", "DX-Y.NYB", "CL=F", "GC=F", "BTC-USD"]);
+const SPARK_SYMBOLS = new Set(["^VIX", "^TNX", "CL=F", "GC=F", "DX-Y.NYB", "BTC-USD", "BZ=F"]);
 const SPARK_DAYS = 30;
 
 /** Compact close series per symbol, best-effort. A missing series is just no sparkline. */
@@ -105,6 +110,13 @@ async function fetchSparklines(symbols: string[]): Promise<Map<string, number[]>
     if (r.status !== "fulfilled") continue;
     const closes = r.value.hist.map((h) => h.close).filter((c) => Number.isFinite(c));
     if (closes.length >= 2) out.set(r.value.s.toUpperCase(), closes.slice(-SPARK_DAYS));
+  }
+  for (const s of symbols) {
+    if (!out.has(s.toUpperCase())) {
+      // TODO: this symbol returned no usable 30d history — its Market Overview
+      // tile renders a sparkline-sized skeleton until the provider recovers.
+      console.warn(`[market-intel] no ${SPARK_DAYS}d history for ${s}; tile sparkline degrades to a skeleton`);
+    }
   }
   return out;
 }
@@ -150,11 +162,14 @@ export async function buildMarketIntelligence(inputs: MarketIntelInputs): Promis
     label: g.label,
     tickers: g.tickers.map<MarketTicker>((t) => {
       const q = bySymbol.get(t.symbol.toUpperCase());
+      const dc = q ? dayChange(q) : null;
       return {
         symbol: t.symbol,
         label: t.label,
         price: q?.price ?? null,
         changePct: q?.changePercent ?? null,
+        sessionDate: dc?.sessionDate ?? null,
+        asOf: dc?.asOf ?? null,
         series: sparks.get(t.symbol.toUpperCase()) ?? null,
       };
     }),

@@ -77,6 +77,23 @@ export function scoreMomentum(changePct: number): number {
   return clamp01to100(50 + (changePct / SATURATE) * 50);
 }
 
+/**
+ * The ONE interpretation of a VIX level shared by every surface (audit NI-05).
+ *
+ * The gauge's greed math and the Market Overview tile's caption used to read
+ * the same quote through two unrelated threshold tables, producing "Extreme
+ * Greed" beside "Normal volatility" for one number. These bands are anchored
+ * to the SAME 12/35 range `scoreVolatility` uses, so the words and the score
+ * can never point in opposite directions again.
+ */
+export function vixBand(level: number): { id: "complacent" | "low" | "normal" | "elevated" | "stressed"; label: string } {
+  if (level <= 12) return { id: "complacent", label: "Complacency-low volatility" };
+  if (level <= 16) return { id: "low", label: "Low volatility" };
+  if (level <= 22) return { id: "normal", label: "Normal volatility" };
+  if (level <= 30) return { id: "elevated", label: "Elevated volatility" };
+  return { id: "stressed", label: "Stressed volatility" };
+}
+
 function labelFor(score: number): SentimentGauge["label"] {
   if (score < 25) return "Extreme Fear";
   if (score < 45) return "Fear";
@@ -109,16 +126,33 @@ export function computeSentiment(inputs: SentimentInputs): SentimentGauge | null
   const confidence: SentimentGauge["confidence"] =
     present.length === 3 ? "high" : present.length === 2 ? "medium" : "low";
 
+  // Largest-remainder rounding so the displayed contributions sum EXACTLY to
+  // the displayed score (audit NI-08) — independently rounding each term left
+  // a decomposition that missed its own total by a point.
+  const exact = parts.map((p) => (p.score != null ? p.score * (p.weight / totalWeight) : 0));
+  const floors = exact.map(Math.floor);
+  let deficit = score - floors.reduce((a, b) => a + b, 0);
+  const order = exact
+    .map((v, i) => ({ i, frac: v - Math.floor(v) }))
+    .filter(({ i }) => parts[i].score != null)
+    .sort((a, b) => b.frac - a.frac);
+  const contributions = [...floors];
+  for (const { i } of order) {
+    if (deficit <= 0) break;
+    contributions[i] += 1;
+    deficit -= 1;
+  }
+
   return {
     score,
     label: labelFor(score),
     confidence,
-    components: parts.map((p) => ({
+    components: parts.map((p, i) => ({
       name: p.name,
       value: p.value,
       // Contribution is 0 for a missing component, which is honest: it
       // contributed nothing, and the remaining weights absorbed its share.
-      contribution: p.score != null ? Math.round((p.score * (p.weight / totalWeight))) : 0,
+      contribution: p.score != null ? contributions[i] : 0,
     })),
   };
 }

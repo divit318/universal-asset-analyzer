@@ -10,6 +10,8 @@
  */
 
 import { listRawHoldings } from "./store";
+import { getDataset } from "../platform";
+import { maybeMetric, type Metric } from "../metric";
 import { buildMarketContext } from "./context";
 import { normalizeHoldings } from "./model/holding";
 import { evaluate, type PortfolioEvaluation } from "./engines/simulate";
@@ -73,6 +75,14 @@ export interface UniversalPortfolioReport {
   todayChangeDollar: number;
   todayChangePct: number;
   /**
+   * The denominator behind `todayChangePct`: the summed current value of the
+   * holdings that actually had a live quote this session. Exposed so surfaces
+   * that attribute the day move per holding (the homepage's contributors) can
+   * divide by the SAME population the percentage was computed over, instead of
+   * re-deriving a denominator that silently disagrees (audit NI-01).
+   */
+  todayChangeBaseValue: number;
+  /**
    * COST-WEIGHTED average holding period, in days — "how long has my money
    * actually been invested?"
    *
@@ -116,6 +126,14 @@ export interface UniversalPortfolioReport {
   unresolvedCurrencies: string[];
 
   holdings: Holding[];
+  /**
+   * Per-holding day moves as stamped Metrics (audit F-22g). `dayChange` is the
+   * session move vs previous close; `sinceCost` is P&L on cost. They are
+   * DIFFERENT quantities — the homepage once ranked "today's movers" on
+   * sinceCost, which put a -7.6% since-purchase figure under a "today" label.
+   * Only market-priced, symbol-bearing holdings appear.
+   */
+  dayMoves: HoldingDayMove[];
   allocation: PortfolioAllocation;
   /**
    * Where the return actually came from, and how concentrated its sources are.
@@ -172,6 +190,40 @@ export interface ReportOptions {
   portfolioId?: number;
 }
 
+export interface HoldingDayMove {
+  symbol: string;
+  /** Session move vs previous close; null when the quote had no change. */
+  dayChange: Metric<"day"> | null;
+  /** Return on average cost; null when cost basis is unusable. */
+  sinceCost: Metric<"sinceCost"> | null;
+  /** Day move in base currency, from the holding's current value. */
+  dayDollar: number | null;
+  /** Unrealized P&L in base currency. */
+  plDollar: number | null;
+}
+
+/** The stamped per-holding movers (audit F-22g). Pure projection of ctx quotes. */
+function computeDayMoves(holdings: Holding[], ctx: MarketContext, generatedAtMs: number): HoldingDayMove[] {
+  const out: HoldingDayMove[] = [];
+  for (const h of holdings) {
+    if (h.valuation.mode !== "market" || !h.symbol) continue;
+    const q = ctx.quotes.get(h.symbol.toUpperCase());
+    if (!q) continue;
+    const asOf = q.asOf ?? generatedAtMs;
+    const day = maybeMetric(q.changePercent, "day", asOf, "yahoo", q.sessionDate ?? null);
+    const sinceCost = maybeMetric(h.unrealizedPct, "sinceCost", asOf, "yahoo");
+    if (!day && !sinceCost) continue;
+    out.push({
+      symbol: h.symbol,
+      dayChange: day,
+      sinceCost,
+      dayDollar: day ? h.valuation.valueBase * (day.value / 100) : null,
+      plDollar: h.unrealizedPL,
+    });
+  }
+  return out;
+}
+
 /**
  * Today's change, computed only over holdings that actually have a live quote.
  *
@@ -179,7 +231,7 @@ export interface ReportOptions {
  * unchanged manual value as "flat" in the denominator would silently dilute the
  * day's percentage move toward zero.
  */
-function todayChange(holdings: Holding[], ctx: MarketContext): { dollar: number; pct: number } {
+function todayChange(holdings: Holding[], ctx: MarketContext): { dollar: number; pct: number; baseValue: number } {
   let dollar = 0;
   let liveValue = 0;
 
@@ -191,7 +243,7 @@ function todayChange(holdings: Holding[], ctx: MarketContext): { dollar: number;
     liveValue += h.valuation.valueBase;
   }
 
-  return { dollar, pct: liveValue > 0 ? (dollar / liveValue) * 100 : 0 };
+  return { dollar, pct: liveValue > 0 ? (dollar / liveValue) * 100 : 0, baseValue: liveValue };
 }
 
 /**
@@ -230,6 +282,32 @@ function totalReturnOf(
   }
 
   return { pnl: performance.total.pnl, pct: performance.total.pct };
+}
+
+/**
+ * The report through the platform cache (audit PF-02): one homepage load used
+ * to build this three times in parallel (digest, IOS context, brief route) at
+ * 8-9s each. `portfolioReport` carries a 2-minute TTL + SWR in the platform
+ * registry; portfolio mutations invalidate it (and the digest cascades) via
+ * `invalidateDataset("portfolioReport")`. Callers that need a guaranteed-fresh
+ * build (a route responding to a mutation) pass `fresh: true`.
+ */
+export async function getPortfolioReport(
+  opts: ReportOptions = {},
+  cacheOpts: { fresh?: boolean } = {},
+): Promise<UniversalPortfolioReport> {
+  const { data } = await getDataset(
+    "portfolioReport",
+    {
+      objective: opts.objective ?? "maximize_sharpe",
+      portfolioId: opts.portfolioId ?? 1,
+      baseCurrency: opts.baseCurrency ?? "USD",
+      extra: opts.extraCandidateSymbols?.slice().sort().join(",") || undefined,
+    },
+    () => buildPortfolioReport(opts),
+    { fresh: cacheOpts.fresh, timeoutMs: 60_000 },
+  );
+  return data;
 }
 
 /** Build the full report. This is the one entry point the API routes call. */
@@ -299,6 +377,7 @@ export async function buildPortfolioReport(
     totalReturnDollar: totalReturnOf(performance, totalValue, totalCost).pnl,
     todayChangeDollar: change.dollar,
     todayChangePct: change.pct,
+    todayChangeBaseValue: change.baseValue,
     holdingPeriodDays,
 
     annualIncome,
@@ -309,6 +388,7 @@ export async function buildPortfolioReport(
     unresolvedCurrencies: ctx.unresolvedCurrencies ?? [],
 
     holdings: evaluation.holdings,
+    dayMoves: computeDayMoves(evaluation.holdings, ctx, Date.now()),
     allocation: evaluation.allocation,
     attribution: computeAttribution(evaluation.holdings),
     // A local SQLite read, so this costs nothing next to the provider fetches the

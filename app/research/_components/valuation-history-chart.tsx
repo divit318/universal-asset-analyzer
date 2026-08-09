@@ -13,11 +13,11 @@ import {
 } from "recharts";
 import type { FundamentalsSnapshot, ValuationPoint } from "@/lib/types";
 import { useChartTheme } from "@/app/_components/chart-theme";
+import { formatRatio } from "@/lib/format";
 
-/* Categorical series colors — theme-neutral. Structural axis/grid/tooltip come
-   from useChartTheme() inside the component (light-mode aware). */
-const BLUE = "#60a5fa";
-const AMBER = "#fbbf24";
+/* Series colors come from useChartTheme() (ct.blue / ct.amber) — the previous
+   module literals were the dark palette and washed out on white (2026-08-08
+   light-mode audit). */
 
 type Metric = "pe" | "ps";
 
@@ -110,7 +110,13 @@ export function ValuationHistoryChart({
   }));
 
   const label = metric === "pe" ? "Trailing P/E" : "Price / Sales";
-  const color = metric === "pe" ? BLUE : AMBER;
+  const color = metric === "pe" ? ct.blue : ct.amber;
+
+  // When the Now and Avg reference lines sit close together their labels
+  // overlap at the same right edge — split them to opposite ends of the line.
+  const labelsCollide =
+    avg != null && current != null && max != null && min != null &&
+    Math.abs(current - avg) < Math.max((max - min) * 0.2, avg * 0.12);
 
   if (valuation.length === 0) return null;
 
@@ -176,7 +182,7 @@ export function ValuationHistoryChart({
                   strokeDasharray="5 3"
                   strokeOpacity={0.6}
                   label={{
-                    value: `Avg ${avg.toFixed(1)}x`,
+                    value: `Avg ${formatRatio(avg)}`,
                     position: "insideTopRight",
                     fontSize: 10,
                     fill: AXIS,
@@ -192,8 +198,8 @@ export function ValuationHistoryChart({
                   strokeDasharray="4 2"
                   strokeOpacity={0.7}
                   label={{
-                    value: `Now ${current.toFixed(1)}x`,
-                    position: "insideBottomRight",
+                    value: `Now ${formatRatio(current)}`,
+                    position: labelsCollide ? "insideBottomLeft" : "insideBottomRight",
                     fontSize: 10,
                     fill: color,
                   }}
@@ -215,11 +221,11 @@ export function ValuationHistoryChart({
           {/* Stats footer */}
           <div className="flex flex-wrap gap-6 border-t border-border pt-3">
             {current != null && (
-              <StatChip label="Current" value={`${current.toFixed(1)}x`} highlight />
+              <StatChip label="Current" value={formatRatio(current)} highlight />
             )}
-            {avg != null && <StatChip label="5yr Avg" value={`${avg.toFixed(1)}x`} />}
-            {min != null && <StatChip label="5yr Min" value={`${min.toFixed(1)}x`} />}
-            {max != null && <StatChip label="5yr Max" value={`${max.toFixed(1)}x`} />}
+            {avg != null && <StatChip label="5yr Avg" value={formatRatio(avg)} />}
+            {min != null && <StatChip label="5yr Min" value={formatRatio(min)} />}
+            {max != null && <StatChip label="5yr Max" value={formatRatio(max)} />}
             {avg != null && current != null && (
               <StatChip
                 label="vs Avg"

@@ -11,8 +11,8 @@
  *
  * Two hard rules it enforces:
  *
- *   1. **No AI.** The digest must paint immediately. AI is slow, serialized on
- *      local Ollama, and optional. The narrative arrives separately over
+ *   1. **No AI.** The digest must paint immediately. AI is slower than paint
+ *      and optional. The narrative arrives separately over
  *      `/api/home/brief` (see brief.ts) and every module that uses it has a
  *      deterministic fallback that ships in *this* payload (`fallbackBriefing`).
  *
@@ -23,17 +23,17 @@
  */
 
 import { runPlan, stepValue } from "../platform/orchestrator";
-import { gatherContext, buildOpportunitySnapshot, buildCalibration, buildSectorAttention, type MissionControlContext, type UpcomingEventLite } from "../mission-control";
-import { buildPortfolioReport, type UniversalPortfolioReport } from "../portfolio/report";
+import { getMissionContext, buildOpportunitySnapshot, buildSectorAttention, type MissionControlContext, type UpcomingEventLite } from "../mission-control";
+import { getPortfolioReport, type UniversalPortfolioReport } from "../portfolio/report";
 import { getCalendarEvents } from "../calendar";
 import { listWatchlist, listLots, listNotifications } from "../db";
 import { getHistory, getQuote, getQuotes } from "../yahoo";
 import { portfolioPerformance } from "../portfolio-performance";
 import { buildMarketIntelligence } from "./market-intel";
 import { buildPortfolioPulse } from "./pulse";
+import { buildEquityCurve, EQUITY_CURVE_DAYS } from "./equity-curve";
 import { buildThreats } from "./threats";
 import { buildAttribution } from "./attribution";
-import { buildTimelineFeeds } from "./timeline";
 import { buildWatchlistIntelligence } from "./watchlist-intel";
 import { buildRecentActivity } from "./activity";
 import { buildRecommendedActions } from "./actions";
@@ -44,7 +44,6 @@ import {
   seedsFromThreats,
   seedsFromAlerts,
   seedsFromEvents,
-  seedsFromSignals,
   type WeightBySymbol,
 } from "./attention";
 import { listActiveDismissals, getHomeFingerprint, putHomeFingerprint } from "../db";
@@ -58,7 +57,9 @@ import {
   type HomeFingerprint,
 } from "./changes";
 import { buildSymbolContext } from "./symbol-context";
-import { MIN_DAYS_TO_ANNUALIZE, type ChangeFeed, type HomeDigest, type PortfolioPerformanceSummary } from "./contracts";
+import { buildDashboardFacts } from "./facts";
+import { marketToday, marketDayPlus } from "./clock";
+import { MIN_DAYS_TO_ANNUALIZE, type ChangeFeed, type EquityCurve, type HomeDigest, type PortfolioPerformanceSummary } from "./contracts";
 import type { PortfolioLot, WatchlistItem } from "../types";
 
 const BENCHMARK = "SPY";
@@ -160,17 +161,23 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
   const plan = await runPlan([
     // The shared deterministic context Mission Control already assembles:
     // legacy portfolio report, sector rotation, market regime, watchlist alerts,
-    // scanner freshness. One call, reused by four modules below.
-    { id: "ctx", run: () => gatherContext() },
+    // scanner freshness. One call, reused by four modules below — and shared
+    // with the brief route through the platform's missionContext dataset.
+    { id: "ctx", run: () => getMissionContext() },
 
     // The universal report is a separate, heavier build (multi-asset-class,
-    // decision cards, optimization). It is what Modules 3 and 4 need.
-    { id: "report", run: () => buildPortfolioReport() },
+    // decision cards, optimization). Shared through the platform's
+    // portfolioReport dataset (audit PF-02).
+    { id: "report", run: () => getPortfolioReport() },
 
     { id: "calendar", run: () => getCalendarEvents() },
     { id: "watchlist", run: async () => listWatchlist() },
     { id: "notifications", run: async () => listNotifications(20) },
     { id: "performance", run: () => buildPerformance() },
+
+    // The Book card's 90-day return index. Rides the same cached `history`
+    // dataset the performance step uses; a failure degrades the sparkline alone.
+    { id: "equityCurve", run: () => buildEquityCurve(EQUITY_CURVE_DAYS) },
 
     // Market intelligence needs breadth and sector attention, both of which
     // ride on ctx (regime + rotation + the portfolio's sector weights).
@@ -195,13 +202,15 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
   const notifications = stepValue<Parameters<typeof buildRecommendedActions>[2]>(plan, "notifications") ?? [];
   const market = stepValue<HomeDigest["marketIntelligence"]>(plan, "market");
   const performance = stepValue<PortfolioPerformanceSummary>(plan, "performance");
+  const equityCurve = stepValue<EquityCurve>(plan, "equityCurve");
 
   // Events: next 14 days, which is the window both the calendar card and the
-  // watchlist's earnings list read from.
-  const today = new Date().toISOString().slice(0, 10);
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() + 14);
-  const cutoffStr = cutoff.toISOString().slice(0, 10);
+  // watchlist's earnings list read from. "Today" is the US market-session day
+  // (lib/home/clock.ts) — the old UTC slice dropped same-day events from 8pm
+  // ET onward while the rest of the page still described the live session
+  // (audit NI-10).
+  const today = marketToday();
+  const cutoffStr = marketDayPlus(14);
 
   const upcoming: UpcomingEventLite[] = (calendar?.events ?? [])
     .filter((e) => e.date >= today && e.date <= cutoffStr)
@@ -211,24 +220,17 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
 
   const watchlistAlerts = ctx?.watchlistAlerts ?? [];
 
-  // buildOpportunitySnapshot and buildCalibration read the *legacy* report shape
-  // that gatherContext already produced — reusing Mission Control's own builders
-  // rather than reimplementing fit-ranked opportunities on the homepage.
+  // buildOpportunitySnapshot reads the *legacy* report shape that the shared
+  // context already produced — reusing Mission Control's own builder rather
+  // than reimplementing fit-ranked opportunities on the homepage.
+  // (timeline/intelligence/calibration slices were CUT in Wave 5, audit
+  // RD-13/CH-14/PF-07: ~30 KB of payload serialized on every load that no
+  // module has selected since the module retirement.)
   const opportunity = ctx
     ? buildOpportunitySnapshot(ctx)
     : { status: "empty" as const, healthIssues: [], opportunities: [], scannerFreshness: null };
 
-  const calibration = ctx
-    ? await buildCalibration(ctx.report).catch(() => ({ status: "empty" as const, trackRecord: null, eligible: false }))
-    : { status: "empty" as const, trackRecord: null, eligible: false };
-
   const activity = buildRecentActivity();
-  const { timeline, intelligence } = buildTimelineFeeds({
-    activity: activity.entries,
-    notifications,
-    watchlistAlerts,
-    upcomingEvents: upcoming,
-  });
 
   // The retired modules' engines now feed the Attention Queue instead of owning
   // cards. These are the *same* already-computed slices the digest was building;
@@ -249,19 +251,22 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
   const marketOpen = estimateMarketStatus("US", new Date(now)) === "open";
   const dismissals = listActiveDismissals(now);
 
+  // Signals are deliberately NOT a queue feeder: the Radar is their sole owner
+  // (audit RD-02/IA-04 — the queue's five "X fits your book" rows were the
+  // same five Radar tiles rendered twice; a scanner idea is browsable context,
+  // not a decision demanding triage).
   const attention = buildAttentionQueue({
     feeders: [
       { id: "actions", run: () => seedsFromActions(recommendedActions.actions) },
       { id: "threats", run: () => seedsFromThreats(threats.threats) },
       { id: "alerts", run: () => seedsFromAlerts(watchlistAlerts, weightBySymbol) },
       { id: "events", run: () => seedsFromEvents(upcoming, weightBySymbol, now, marketOpen) },
-      { id: "signals", run: () => seedsFromSignals(opportunity.opportunities) },
     ],
     dismissals,
     now,
   });
 
-  const core: Omit<HomeDigest, "changes" | "symbolContext"> = {
+  const core: Omit<HomeDigest, "changes" | "symbolContext" | "facts"> = {
     generatedAt: new Date().toISOString(),
 
     attention,
@@ -286,9 +291,6 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
       scannerFreshness: opportunity.scannerFreshness,
     },
 
-    timeline,
-    intelligence,
-
     watchlistIntelligence: buildWatchlistIntelligence(watchlist, watchlistAlerts, upcoming),
 
     upcomingEvents: { status: upcoming.length > 0 ? "ok" : "empty", events: upcoming },
@@ -296,12 +298,14 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
     performance:
       performance ?? { status: "degraded", xirrPct: null, holdingDays: 0, totalReturnPct: 0, totalReturnDollar: 0, benchmark: null },
 
+    equityCurve:
+      equityCurve ??
+      { status: "degraded", windowDays: EQUITY_CURVE_DAYS, points: [], portfolioPct: null, benchmarkPct: null, benchmarkSymbol: BENCHMARK, coveragePct: null },
+
     activity,
 
-    calibration,
-
     // Ships with the digest so Today's Brief has something true to render the
-    // instant the page paints, whether or not Ollama is up and whether or not
+    // instant the page paints, whether or not the AI is available and whether or not
     // the AI stream ever arrives. Reads the same universal report Portfolio
     // Pulse renders, so the prose and the badge cannot disagree.
     fallbackBriefing: ctx
@@ -333,7 +337,16 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
     activity: activity.entries,
   });
 
-  return { ...core, changes: detectChanges(core, now), symbolContext };
+  const changes = detectChanges(core, now);
+
+  // The fact layer: stamps, never new values. Built last so it can carry the
+  // change count alongside the slice-sourced facts.
+  const facts = buildDashboardFacts(core, {
+    changesCount: changes.changes.length,
+    unreadNotifications: notifications.filter((n) => !n.read).length,
+  });
+
+  return { ...core, changes, symbolContext, facts };
 }
 
 /* ------------------------------------------------------------------ */

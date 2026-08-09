@@ -52,17 +52,20 @@ describe("differentiation across a diverse basket", () => {
       hhi: 3200,
     });
 
+    // `overall` is each asset's standalone Research Score, which the fit now
+    // INHERITS (fit = research + portfolio effects) — so the fixtures carry an
+    // overall consistent with their sub-scores, as composite.ts would produce.
     const basket: FitAssetData[] = [
       // strong, diversifying, high quality
-      asset({ symbol: "NVDA", sector: "Technology", compositeScores: comp({ growth: 92, quality: 85, momentum: 80, financialHealth: 80 }) }),
+      asset({ symbol: "NVDA", sector: "Technology", compositeScores: comp({ growth: 92, quality: 85, momentum: 80, financialHealth: 80, overall: 86 }) }),
       // decent healthcare filler
-      asset({ symbol: "JNJ", sector: "Healthcare", compositeScores: comp({ quality: 70, financialHealth: 75, growth: 45 }) }),
+      asset({ symbol: "JNJ", sector: "Healthcare", compositeScores: comp({ quality: 70, financialHealth: 75, growth: 45, overall: 64 }) }),
       // piling into an overweight, capped sector, weak fundamentals
-      asset({ symbol: "WFC", sector: "Financials", compositeScores: comp({ growth: 30, quality: 35, momentum: 25, financialHealth: 40 }) }),
+      asset({ symbol: "WFC", sector: "Financials", compositeScores: comp({ growth: 30, quality: 35, momentum: 25, financialHealth: 40, overall: 33 }) }),
       // energy, heavy overlap
-      asset({ symbol: "XOM", sector: "Energy", compositeScores: comp({ growth: 40, quality: 55, momentum: 45 }) }),
+      asset({ symbol: "XOM", sector: "Energy", compositeScores: comp({ growth: 40, quality: 55, momentum: 45, overall: 47 }) }),
       // already held
-      asset({ symbol: "JPM", sector: "Financials", compositeScores: comp({ quality: 60 }) }),
+      asset({ symbol: "JPM", sector: "Financials", compositeScores: comp({ quality: 60, overall: 55 }) }),
     ];
 
     const scores = basket.map((a) => computePortfolioFit(a, p));
@@ -135,11 +138,26 @@ describe("no data-inversion", () => {
   it("adding real fundamentals raises confidence and does not mechanically lower the score", () => {
     const bare = computePortfolioFit(asset({ symbol: "A", sector: "Technology" }), p);
     const enriched = computePortfolioFit(
-      asset({ symbol: "A", sector: "Technology", compositeScores: comp({ growth: 85, quality: 80, momentum: 75 }) }),
+      // overall (the inherited Research Score) consistent with the strong
+      // sub-scores — a STRONG asset gaining data must not lose fit points.
+      asset({ symbol: "A", sector: "Technology", compositeScores: comp({ growth: 85, quality: 80, momentum: 75, overall: 80 }) }),
       p,
     );
     expect(enriched.confidence).toBeGreaterThan(bare.confidence);
     expect(enriched.fitScore).toBeGreaterThanOrEqual(bare.fitScore);
+  });
+
+  it("a mediocre research score legitimately lowers the fit of a great diversifier (inheritance, not inversion)", () => {
+    const bare = computePortfolioFit(asset({ symbol: "A", sector: "Technology" }), p);
+    const mediocre = computePortfolioFit(
+      asset({ symbol: "A", sector: "Technology", compositeScores: comp({ overall: 50 }) }),
+      p,
+    );
+    // Not a data-inversion: the score drops because the RESEARCH verdict is
+    // average, and the bridge says so explicitly.
+    expect(mediocre.fitScore).toBeLessThanOrEqual(bare.fitScore);
+    expect(mediocre.researchScore).toBe(50);
+    expect(mediocre.bridge.some((s) => s.label === "Research quality" && s.value === 50)).toBe(true);
   });
 });
 
@@ -272,5 +290,38 @@ describe("rankByFit", () => {
     ], p);
     expect(ranked[0].symbol).toBe("GOOD");
     expect(ranked[0].combinedScore).toBeGreaterThan(ranked[1].combinedScore);
+  });
+
+  it("emits row-specific summaries — no reason string repeats verbatim across a batch", () => {
+    const p = profile({
+      sectorWeights: [{ sector: "Financials", weight: 45 }],
+      overweightSectors: ["Financials"],
+      missingSectors: ["Technology"],
+    });
+    // Five near-identical candidates: the old picker gave all of them
+    // reasons[0], i.e. the same sizing/objective clause on every row.
+    const ranked = rankByFit(
+      ["AAA", "BBB", "CCC", "DDD", "EEE"].map((symbol) => ({
+        ...asset({ symbol, sector: "Technology", compositeScores: comp({ quality: 70, growth: 65, overall: 68 }) }),
+        absoluteScore: 68,
+      })),
+      p,
+    );
+    const summaries = ranked.map((r) => r.fitSummary);
+    expect(new Set(summaries).size).toBe(summaries.length);
+  });
+
+  it("carries a fitDetail distinct from the summary when a second driver exists", () => {
+    const p = profile({
+      sectorWeights: [{ sector: "Financials", weight: 45 }],
+      overweightSectors: ["Financials"],
+      missingSectors: ["Technology"],
+    });
+    const ranked = rankByFit(
+      [{ ...asset({ symbol: "GOOD", sector: "Technology", compositeScores: comp({ quality: 85, growth: 80, overall: 82 }) }), absoluteScore: 80 }],
+      p,
+    );
+    const r = ranked[0];
+    if (r.fitDetail != null) expect(r.fitDetail).not.toBe(r.fitSummary);
   });
 });

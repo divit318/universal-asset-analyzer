@@ -92,7 +92,7 @@ export async function generateFinancialInsight(input: FinancialInsightInput): Pr
   let insight: string;
   try {
     // Migrated to the analysis seam (ai-migration/03 §9, tranche 2): text
-    // mode keeps the Ollama prompt/behavior identical (no json flag); the
+    // mode keeps the prompt/behavior identical (no json flag); the
     // ai_result cache is content-keyed on the dossier, while the outer
     // symbol-keyed 15-minute short-circuit above is unchanged.
     const result = await runAnalysis(

@@ -49,10 +49,8 @@ export function buildCalendarBriefPrompt(events: CalendarEvent[], weekStart: str
 
 /**
  * Generate the weekly brief through the analysis seam (tranche 2). Text mode
- * keeps the Ollama path identical to the pre-migration runPrompt; no cache —
- * the panel has an explicit Regenerate button. calendar-brief declares
- * latency:"interactive", so under a global AI_PROVIDER=devin it stays on
- * Ollama unless pinned per-task.
+ * keeps the prompt identical to the pre-migration runPrompt; no cache —
+ * the panel has an explicit Regenerate button.
  */
 export async function generateCalendarBrief(
   events: CalendarEvent[],

@@ -15,7 +15,7 @@ of **arguments** — evolving beliefs about assets, backed by evidence, tested a
 price, and revised when the facts change.
 
 If investment software had never existed, and you designed it today for a thinking
-investor with a local AI, you would not build a dashboard. You would build a
+investor with an AI analyst, you would not build a dashboard. You would build a
 **workbench for arguments**, and you would enforce — structurally, visually, in the
 bones of every screen — the one distinction that all of finance journalism, sell-side
 research, and Twitter fail at:
@@ -717,7 +717,7 @@ Not "shortcuts" — a small consistent grammar, verb-object, hands on home row:
 | `p` | pin to Bench | any hovered symbol |
 | `↵` | open Dossier | any hovered symbol |
 | `d` (hold) | Delta Lens | Bench |
-| `r` | request/refresh the local AI reading | any judgment column |
+| `r` | request/refresh the AI reading | any judgment column |
 | `q` | toggle period | Dossier record |
 | `x` | run examination / remove specimen | Dossier / Bench |
 | `J` | commit session Trail to Journal | anywhere |
@@ -740,7 +740,7 @@ All generation follows three laws:
    the model performing. While working, the *margin* shows the reading list: the
    sources being consulted, ticking through factually ("EDGAR 10-K ¶MD&A ·
    rotation snapshot · 8 news rows"). Honest, informative waiting — the reading
-   list *is* provenance being assembled, and for a local model it makes latency
+   list *is* provenance being assembled, and it makes latency
    legible instead of embarrassing.
 3. **Every sentence is peekable** (§5.1). A sentence that can't cite its underlay
    is rendered in stale ink with a margin `unsourced` mark — the system marks its

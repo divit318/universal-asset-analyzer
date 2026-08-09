@@ -7,7 +7,7 @@
  * - Affected themes (e.g. "AI Infrastructure", "Rate Cycle")
  * - Affected tickers (NSE/NYSE format)
  *
- * Runs a single batch Ollama call for efficiency.
+ * Runs a single batch AI call for efficiency.
  */
 
 import { describeError, scannerPrompt, type ScanRunContext } from "./llm";

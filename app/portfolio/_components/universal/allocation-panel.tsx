@@ -18,7 +18,9 @@ import type { AllocationView, PortfolioAllocation } from "@/lib/portfolio/engine
  * the lightness band, chroma floor, CVD-adjacent separation (worst pair ΔE 8.4,
  * the legal floor for a categorical set carrying a legend as secondary encoding),
  * the normal-vision floor (worst pair ΔE 19.3, well above the 15 minimum), and
- * 3:1+ contrast against the surface for every slot.
+ * 3:1+ contrast against the surface for every slot. Re-verified for light mode
+ * (2026-08-08 audit): every slot also clears 3:1 on white (worst #c98500 at
+ * 3.07), so the set is genuinely theme-neutral and deliberately NOT swapped.
  *
  * Assigned POSITIONALLY (slice order — every AllocationView is pre-sorted by
  * weight descending) and NEVER cycled: slot i always means "the i-th largest
@@ -146,7 +148,10 @@ function AllocationBar({ view, title, hint }: { view: AllocationView; title: str
           <div
             // Hatched rather than a flat tone, so it never reads as a real
             // category the way a solid grey segment would.
-            className="bg-muted/15 [background-image:repeating-linear-gradient(45deg,transparent,transparent_2px,rgb(255_255_255/0.12)_2px,rgb(255_255_255/0.12)_4px)]"
+            // Hatch stripes derive from --foreground so they read as "lighter
+            // than the bar" in dark AND "darker than the bar" in light — the
+            // old rgb(255 255 255/…) stripes vanished on a white canvas.
+            className="bg-muted/15 [background-image:repeating-linear-gradient(45deg,transparent,transparent_2px,color-mix(in_srgb,var(--foreground)_12%,transparent)_2px,color-mix(in_srgb,var(--foreground)_12%,transparent)_4px)]"
             style={{ width: `${unclassifiedPct}%` }}
             title={`Not classified on this dimension: ${unclassifiedPct.toFixed(1)}%`}
           />
@@ -184,7 +189,7 @@ function AllocationBar({ view, title, hint }: { view: AllocationView; title: str
             <span className="flex min-w-0 items-center gap-1.5">
               <span
                 aria-hidden
-                className="h-2 w-2 shrink-0 rounded-sm bg-muted/15 [background-image:repeating-linear-gradient(45deg,transparent,transparent_1px,rgb(255_255_255/0.25)_1px,rgb(255_255_255/0.25)_2px)]"
+                className="h-2 w-2 shrink-0 rounded-sm bg-muted/15 [background-image:repeating-linear-gradient(45deg,transparent,transparent_1px,color-mix(in_srgb,var(--foreground)_25%,transparent)_1px,color-mix(in_srgb,var(--foreground)_25%,transparent)_2px)]"
               />
               <span className="truncate italic">Not applicable / unclassified</span>
             </span>

@@ -37,17 +37,43 @@ export interface DerivativesSummary {
   expirationDates: string[];
 }
 
+/**
+ * Plausible implied-volatility band for a listed equity/ETF option, in decimal
+ * terms (8% – 400% annualized). Yahoo's chain data is frequently stale or
+ * placeholder off-hours: illiquid contracts come back with bid=ask=0 and IVs
+ * like 0.0156 or 0.0625 (binary fractions, i.e. solver garbage, not markets).
+ * Averaging those produced "ATM IV 2.3%" on screen — impossible for any
+ * single name. A contract outside this band is treated as having NO usable IV.
+ */
+const MIN_PLAUSIBLE_IV = 0.08;
+const MAX_PLAUSIBLE_IV = 4.0;
+
+function usableIv(c: OptionContract | null): number | null {
+  const iv = c?.impliedVolatility;
+  if (iv == null || iv < MIN_PLAUSIBLE_IV || iv > MAX_PLAUSIBLE_IV) return null;
+  // A quoted market is the difference between a solver artifact and a price.
+  if ((c?.bid ?? 0) <= 0 && (c?.ask ?? 0) <= 0) return null;
+  return iv;
+}
+
 function closestToPrice(contracts: OptionContract[], price: number): OptionContract | null {
   if (contracts.length === 0) return null;
   return contracts.reduce((best, c) => (Math.abs(c.strike - price) < Math.abs(best.strike - price) ? c : best));
 }
 
+/** Nearest-the-money contract that carries a USABLE IV (see usableIv). */
+function closestWithIv(contracts: OptionContract[], price: number): OptionContract | null {
+  const candidates = contracts.filter((c) => usableIv(c) != null);
+  return closestToPrice(candidates, price);
+}
+
 function atmIvPercent(calls: OptionContract[], puts: OptionContract[], price: number): { iv: number | null; strike: number | null } {
-  const atmCall = closestToPrice(calls, price);
-  const atmPut = closestToPrice(puts, price);
-  const ivs = [atmCall?.impliedVolatility, atmPut?.impliedVolatility].filter((v): v is number => v != null && v > 0);
-  if (ivs.length === 0) return { iv: null, strike: atmCall?.strike ?? atmPut?.strike ?? null };
-  return { iv: (ivs.reduce((s, v) => s + v, 0) / ivs.length) * 100, strike: atmCall?.strike ?? atmPut?.strike ?? null };
+  const atmCall = closestWithIv(calls, price);
+  const atmPut = closestWithIv(puts, price);
+  const ivs = [usableIv(atmCall), usableIv(atmPut)].filter((v): v is number => v != null);
+  const strike = atmCall?.strike ?? atmPut?.strike ?? closestToPrice(calls, price)?.strike ?? closestToPrice(puts, price)?.strike ?? null;
+  if (ivs.length === 0) return { iv: null, strike };
+  return { iv: (ivs.reduce((s, v) => s + v, 0) / ivs.length) * 100, strike };
 }
 
 function topByOpenInterest(contracts: OptionContract[], n = 5): { strike: number; openInterest: number }[] {
@@ -61,6 +87,28 @@ function topByOpenInterest(contracts: OptionContract[], n = 5): { strike: number
 function yearsUntil(isoDate: string): number {
   const ms = new Date(isoDate).getTime() - Date.now();
   return Math.max(ms / (365.25 * 24 * 60 * 60 * 1000), 0);
+}
+
+/**
+ * Every field the Options Chain card renders must be present and plausible,
+ * or the card does not render at all. A half-populated options panel ("ATM IV
+ * 2.3%", zeroed put greeks, "Not available" strike lists) destroys trust in
+ * every other number on the page — hiding is the honest degradation when the
+ * provider's chain data is stale or placeholder.
+ */
+export function isDerivativesSummaryComplete(s: DerivativesSummary | null): s is DerivativesSummary {
+  if (!s) return false;
+  return (
+    s.atmIV != null &&
+    s.atmIVFar != null &&
+    s.termStructure != null &&
+    s.putCallOIRatio != null &&
+    s.topCallStrikes.length > 0 &&
+    s.topPutStrikes.length > 0 &&
+    s.atmStrike != null &&
+    s.atmCallGreeks != null &&
+    s.atmPutGreeks != null
+  );
 }
 
 export function computeDerivativesSummary(chain: OptionsChainData): DerivativesSummary {

@@ -33,11 +33,14 @@ export const SIGNAL_LABEL: Record<string, string> = {
 /** Text + border/background tone per tier. Was duplicated across the engine page
  *  and the (now folded-in) standalone backtest page. */
 export const SIGNAL_TONE: Record<string, { text: string; chip: string; bar: string }> = {
-  STRONG_BUY:  { text: "text-emerald-400", chip: "border-emerald-400/30 bg-emerald-400/10", bar: "bg-emerald-400" },
+  /* STRONG tiers keep their own emerald/red identity in dark; the light:
+     variants deepen them to AA — emerald-400 measured 1.95:1 on white
+     (2026-08-08 light-mode audit). */
+  STRONG_BUY:  { text: "text-emerald-400 light:text-emerald-700", chip: "border-emerald-400/30 bg-emerald-400/10 light:border-emerald-700/40", bar: "bg-emerald-400 light:bg-emerald-600" },
   BUY:         { text: "text-positive",    chip: "border-positive/30 bg-positive/10",       bar: "bg-positive" },
   HOLD:        { text: "text-muted",       chip: "border-border bg-surface-2",              bar: "bg-border" },
   SELL:        { text: "text-negative",    chip: "border-negative/30 bg-negative/10",       bar: "bg-negative" },
-  STRONG_SELL: { text: "text-red-500",     chip: "border-red-500/30 bg-red-500/10",         bar: "bg-red-500" },
+  STRONG_SELL: { text: "text-red-500 light:text-red-700", chip: "border-red-500/30 bg-red-500/10 light:border-red-700/40", bar: "bg-red-500" },
 };
 
 export function signalTone(signal: string) {
@@ -53,7 +56,10 @@ export type RegimeLabel = "Bull" | "Bear" | "Range" | "Crash" | "Recovery";
 export const REGIME_ORDER: RegimeLabel[] = ["Bull", "Recovery", "Range", "Bear", "Crash"];
 
 /** Raw hex, because these also feed inline SVG/gradient styles where a Tailwind
- *  class can't be used. Mirrors the chart palette in app/_components/chart-theme.ts. */
+ *  class can't be used. Mirrors the chart palette in app/_components/chart-theme.ts.
+ *  Theme-paired (2026-08-08 light-mode audit): the dark set is the original;
+ *  the light set deepens each hue for a white canvas ("Bull" as text measured
+ *  2.10:1). Client components resolve via regimeColor(label, theme). */
 export const REGIME_COLOR: Record<string, string> = {
   Bull: "#22c55e",
   Recovery: "#3b82f6",
@@ -61,6 +67,21 @@ export const REGIME_COLOR: Record<string, string> = {
   Bear: "#ef4444",
   Crash: "#dc2626",
 };
+
+export const REGIME_COLOR_LIGHT: Record<string, string> = {
+  /* Bull is green-800, one step past the global --positive green-700: the
+     RegimeChip sets this as text over its own 9% tint, where #15803d measured
+     4.42:1 — #166534 measures 5.83:1 on that same tint. */
+  Bull: "#166534",
+  Recovery: "#2563eb",
+  Range: "#b45309",
+  Bear: "#b91c1c",
+  Crash: "#7f1d1d",
+};
+
+export function regimeColor(label: string, theme: "light" | "dark"): string | undefined {
+  return theme === "light" ? REGIME_COLOR_LIGHT[label] : REGIME_COLOR[label];
+}
 
 /* -------------------------------------------------------------------------- */
 /* Factors                                                                    */

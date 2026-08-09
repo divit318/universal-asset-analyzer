@@ -50,8 +50,9 @@ test.describe("landing skeleton", () => {
     // The authenticated app header (a `banner` landmark) must NOT be present.
     await expect(page.getByRole("banner")).toHaveCount(0);
 
-    // The marketing header's primary CTA and anchor nav are present.
-    await expect(page.getByRole("link", { name: "Experience UAA" }).first()).toBeVisible();
+    // The pill header's auth pair (login rework) and the anchor nav are present.
+    await expect(page.locator("header").getByRole("button", { name: "Sign in" })).toBeVisible();
+    await expect(page.locator("header").getByRole("button", { name: "Get started" })).toBeVisible();
     await expect(page.locator('header a[href="#features"]')).toBeVisible();
   });
 
@@ -69,26 +70,28 @@ test.describe("landing skeleton", () => {
 });
 
 test.describe("landing hero (Milestone 2)", () => {
-  test("shows the approved headline, subhead, CTAs and product placeholder", async ({ page }) => {
+  test("shows the approved headline, subhead, CTAs and hero art", async ({ page }) => {
     await page.goto("/landing");
 
-    // Exact approved headline copy (Creative Direction §9).
+    // Exact shipped headline copy (auth session's hero rewrite — two stacked
+    // spans render with no space between them in textContent).
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-      "Stop juggling a dozen investing tools.",
+      "Every figure computed.Every claim traced.",
     );
 
-    // Subhead names what actually ships.
+    // Subhead names what actually ships: deterministic engines + owned data.
     await expect(
-      page.getByText("combines market data, filings, valuation models", { exact: false }),
+      page.getByText("deterministic engines compute every metric", { exact: false }),
     ).toBeVisible();
 
-    // CTA hierarchy: primary into the app, secondary to the in-page demo.
+    // CTA hierarchy: primary opens the auth modal, secondary jumps to the demo.
     const hero = page.locator("section#hero");
-    await expect(hero.getByRole("link", { name: "Experience UAA" })).toBeVisible();
+    await expect(hero.getByRole("button", { name: /Get started/ })).toBeVisible();
     await expect(hero.locator('a[href="#demo"]')).toBeVisible();
 
-    // The product-reveal placeholder frame exists (real screenshot lands in M7).
-    await expect(hero.getByTestId("hero-product-reveal")).toBeVisible();
+    // The particle thesis wave renders with its waypoints.
+    await expect(hero.getByText("Ingest", { exact: true })).toBeVisible();
+    await expect(hero.getByText("Trace", { exact: true })).toBeVisible();
   });
 });
 
@@ -103,28 +106,28 @@ test.describe("landing problem → solution → demo (Milestone 3)", () => {
     await page.goto("/landing");
     const solution = page.locator("section#solution");
     await expect(solution.getByRole("heading", { name: "Meet the Universal Asset Analyzer." })).toBeVisible();
-    await expect(solution.getByText("Live market data")).toBeVisible();
+    await expect(solution.getByText("Market data", { exact: true })).toBeVisible();
   });
 
   test("demo runs a canned analysis with no network", async ({ page }) => {
     await page.goto("/landing");
     const demo = page.locator("section#demo");
 
-    const input = demo.getByPlaceholder("Research any ticker…");
+    const input = demo.getByPlaceholder("Search any ticker…");
     await expect(input).toBeVisible();
     const analyze = demo.getByRole("button", { name: "Analyze" });
     await expect(analyze).toBeVisible();
 
     // No result before submitting.
-    await expect(demo.getByText("Illustrative sample — not live data")).toHaveCount(0);
+    await expect(demo.getByText("Sample output, not live data")).toHaveCount(0);
 
     await input.fill("NVDA");
     await analyze.click();
 
-    // Canned result + honest disclaimer appear.
+    // Canned result (after the skeleton beat) + honest disclaimer appear.
     await expect(demo.getByText("NVIDIA Corp.")).toBeVisible();
-    await expect(demo.getByText("Drafted AI summary")).toBeVisible();
-    await expect(demo.getByText("Illustrative sample — not live data")).toBeVisible();
+    await expect(demo.getByText("Composite", { exact: false })).toBeVisible();
+    await expect(demo.getByText("Sample output, not live data")).toBeVisible();
   });
 });
 
@@ -137,10 +140,10 @@ test.describe("landing feature showcase (Milestone 4)", () => {
     await expect(features.getByRole("heading", { name: "Build any screener" })).toBeVisible();
     await expect(features.getByText("Research Hub").first()).toBeVisible();
 
-    // Five feature rows → five preview placeholders, each an accessible image.
-    await expect(features.getByTestId("feature-preview")).toHaveCount(5);
+    // Five feature rows → five illustrative mockups, each an accessible image.
+    await expect(features.getByRole("img", { name: /Illustrative/ })).toHaveCount(5);
     await expect(
-      features.getByRole("img", { name: /Research Hub — company profile/ }),
+      features.getByRole("img", { name: /Illustrative Research Hub screen/ }),
     ).toBeVisible();
   });
 });
@@ -183,7 +186,7 @@ test.describe("landing motion (Milestone 5)", () => {
       await expect(
         page.locator("section#features").getByRole("heading", { name: "Comprehensive company profiles" }),
       ).toBeVisible();
-      await expect(page.locator("section#demo").getByPlaceholder("Research any ticker…")).toBeVisible();
+      await expect(page.locator("section#demo").getByPlaceholder("Search any ticker…")).toBeVisible();
     });
   });
 });
@@ -191,8 +194,8 @@ test.describe("landing motion (Milestone 5)", () => {
 test.describe("landing performance & SEO (Milestone 6)", () => {
   test("exposes landing-specific title and social meta", async ({ page }) => {
     await page.goto("/landing");
-    await expect(page).toHaveTitle("Universal Asset Analyzer — The AI Terminal for Investors");
-    await expect(page.locator('head meta[name="description"]')).toHaveAttribute("content", /local AI/);
+    await expect(page).toHaveTitle("Universal Asset Analyzer: The AI Terminal for Investors");
+    await expect(page.locator('head meta[name="description"]')).toHaveAttribute("content", /local database you own/);
     await expect(page.locator('head meta[property="og:title"]')).toHaveAttribute("content", /Universal Asset Analyzer/);
   });
 
@@ -201,8 +204,8 @@ test.describe("landing performance & SEO (Milestone 6)", () => {
     await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
     // Hero owns the single h1; the other 9 IA sections each contribute one h2.
     expect(await page.getByRole("heading", { level: 2 }).count()).toBe(9);
-    // Exactly the five feature stories contribute h3s — no heading-level skips.
-    expect(await page.getByRole("heading", { level: 3 }).count()).toBe(5);
+    // Problem cards, capability rows, and FAQ questions contribute h3s.
+    expect(await page.getByRole("heading", { level: 3 }).count()).toBe(15);
   });
 
   test("controls are keyboard reachable and named", async ({ page }) => {
@@ -214,7 +217,7 @@ test.describe("landing performance & SEO (Milestone 6)", () => {
 
     // Primary and footer navigation are distinct, named landmarks.
     await expect(page.getByRole("navigation", { name: "Primary" })).toBeAttached();
-    await expect(page.getByRole("navigation", { name: "Footer" })).toBeAttached();
+    await expect(page.getByRole("navigation", { name: "Footer", exact: true })).toBeAttached();
   });
 });
 
@@ -223,17 +226,19 @@ test.describe("landing content finalization (Milestone 7)", () => {
     await page.goto("/landing");
 
     await expect(
-      page.locator("section#privacy").getByRole("heading", { name: "100% Local. 100% Private." }),
+      page.locator("section#privacy").getByRole("heading", { name: "Local-first. Your data stays yours." }),
     ).toBeVisible();
 
     const pricing = page.locator("section#pricing");
-    await expect(pricing.getByRole("heading", { name: /Get started in minutes/ })).toBeVisible();
+    await expect(pricing.getByRole("heading", { name: /Free to run\. Pro when you want us to run it\./ })).toBeVisible();
     await expect(pricing.getByText("$0")).toBeVisible();
 
     // Comparison table has real table semantics and a highlighted UAA column.
     const comparison = page.locator("section#comparison");
     await expect(comparison.getByRole("columnheader", { name: "UAA" })).toBeVisible();
-    await expect(comparison.getByRole("rowheader", { name: "Runs 100% locally" })).toBeVisible();
+    await expect(
+      comparison.getByRole("rowheader", { name: "Local-first: your data on your device" }),
+    ).toBeVisible();
 
     await expect(
       page.locator("section#cta").getByRole("heading", { name: /Professional investing doesn.t require ten tools/ }),
@@ -244,9 +249,17 @@ test.describe("landing content finalization (Milestone 7)", () => {
     await page.goto("/landing");
     const faq = page.locator("section#faq");
 
-    const answer = faq.getByText(/Local models via Ollama/);
-    await expect(answer).toBeHidden(); // closed <details> by default
-    await faq.getByText("What AI does it use?").click();
+    // First row open by default; the rest closed, one-open-at-a-time.
+    const firstButton = faq.getByRole("button", { name: "Do I need an account?" });
+    await expect(firstButton).toHaveAttribute("aria-expanded", "true");
+
+    const aiButton = faq.getByRole("button", { name: "What AI does it use?" });
+    const answer = faq.getByText(/Claude \(Anthropic\) via your own API key/);
+    await expect(aiButton).toHaveAttribute("aria-expanded", "false");
+    await expect(answer).not.toBeInViewport();
+    await aiButton.click();
+    await expect(aiButton).toHaveAttribute("aria-expanded", "true");
+    await expect(firstButton).toHaveAttribute("aria-expanded", "false");
     await expect(answer).toBeVisible();
   });
 
@@ -254,7 +267,194 @@ test.describe("landing content finalization (Milestone 7)", () => {
     await page.goto("/landing");
     // Every IA section now has a real component — the skeleton marker is gone.
     await expect(page.getByText("Section placeholder")).toHaveCount(0);
-    // Copy was corrected to the local-Ollama reality (reconciliation §A3).
-    await expect(page.getByText(/OpenAI/)).toHaveCount(0);
+    // Banned hosted-SaaS claims (design-rebuild brief) never render.
+    const html = await page.content();
+    for (const banned of [
+      /institutional.grade/i,
+      /always encrypted/i,
+      /encrypted and secure/i,
+      /end-to-end encrypted/i,
+      /real-?time infrastructure/i,
+      /instant results/i,
+      /bank-level security/i,
+      /enterprise grade/i,
+      /trusted by investors/i,
+      /professional.grade research/i,
+      /all rights reserved/i,
+    ]) {
+      expect(html, `banned claim rendered: ${banned}`).not.toMatch(banned);
+    }
+  });
+
+  test("F-01 guard: every retired false-locality claim stays retired", async ({ page }) => {
+    // Each of these phrases shipped once (pre-demo audit F-01/F-03, plus the
+    // post-auth sweep) while being false: the first block claimed zero egress
+    // while the app verifiably sent prompts to a hosted model; the second
+    // block claimed "no accounts / no sign-up" after local auth shipped.
+    // Replaced with claims that are true — "local-first data, hosted AI on
+    // your own key, optional local account" — and none may regress on any
+    // landing surface.
+    await page.goto("/landing");
+    const html = await page.content();
+    const RETIRED: RegExp[] = [
+      /never leaves your computer/i,
+      /never leaves the device/i,
+      /never leaves this machine/i,
+      /never uploads your data/i,
+      /Runs 100% on your computer/i,
+      /Runs 100% locally/i,
+      /100% Local\. 100% Private\./i,
+      /runs entirely on your machine/i,
+      /running entirely on your computer/i,
+      /all running locally/i,
+      /running entirely on your own machine/i,
+      /powered by local AI/i,
+      /\ball on your computer\b/i,
+      /no cloud/i,
+      /no API keys? (required|to leak)/i,
+      /no cloud keys, no metering/i,
+      /local models? via Ollama/i,
+      /\bOllama\b/,
+      /\blocal AI analysis\b/i,
+      /offline AI/i,
+      /zero egress/i,
+      // Auth shipped (login workstream): account-denial claims are now false.
+      /no sign-?up/i,
+      /no login/i,
+      /\bno accounts\b/i,
+      /no account required/i,
+      // Pricing rebuild: the open-ended lifetime claim is retired for good.
+      /\/ forever/,
+    ];
+    for (const re of RETIRED) {
+      expect(html, `retired claim resurfaced: ${re}`).not.toMatch(re);
+    }
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Pricing — two tiers, one of which exists (migration workstream, Part 2)     */
+/* -------------------------------------------------------------------------- */
+
+test.describe("pricing: two tiers, one of which exists", () => {
+  test("both cards render: Free available, Pro unmistakably not yet available", async ({ page }) => {
+    await page.goto("/landing");
+    const pricing = page.locator("section#pricing");
+
+    const free = pricing.getByTestId("pricing-free");
+    await expect(free).toBeVisible();
+    await expect(free.getByText("Available now")).toBeVisible();
+    await expect(free.getByText("$0")).toBeVisible();
+    await expect(free.getByText("The full local product. Nothing held back.")).toBeVisible();
+
+    const pro = pricing.getByTestId("pricing-pro");
+    await expect(pro).toBeVisible();
+    await expect(pro.getByText("Planned, not yet available")).toBeVisible();
+    await expect(pro.getByText("Nothing is purchasable today", { exact: false })).toBeVisible();
+    // Planned features are marked planned, per item.
+    await expect(pro.getByText("(planned)").first()).toBeVisible();
+
+    // The BYOK cost line is present and names the model + published rate.
+    await expect(pricing.getByText(/Claude Opus 5's published rate/)).toBeVisible();
+    await expect(pricing.getByText(/\$5 per million input/)).toBeVisible();
+  });
+
+  test("no purchase affordance exists anywhere in the pricing section", async ({ page }) => {
+    await page.goto("/landing");
+    const pricing = page.locator("section#pricing");
+    const PURCHASE = /buy|upgrade|subscribe|checkout|purchase|pay now/i;
+    await expect(pricing.getByRole("button", { name: PURCHASE })).toHaveCount(0);
+    await expect(pricing.getByRole("link", { name: PURCHASE })).toHaveCount(0);
+    // And no form field asks for payment details.
+    await expect(pricing.locator('input[autocomplete*="cc-"]')).toHaveCount(0);
+  });
+
+  test('"/ forever" appears nowhere on the landing page', async ({ page }) => {
+    await page.goto("/landing");
+    expect(await page.content()).not.toMatch(/\/ forever/);
+  });
+
+  test("free CTA opens the auth modal on Create account", async ({ page }) => {
+    await page.goto("/landing");
+    await page.locator("section#pricing").getByRole("button", { name: "Get started" }).click();
+    const dialog = page.getByRole("dialog", { name: "Create account" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Create account" })).toBeVisible();
+  });
+
+  test("currency toggle switches both cards and persists across reload", async ({ page }) => {
+    await page.goto("/landing");
+    const pricing = page.locator("section#pricing");
+
+    // Default in this (non-IN locale) environment: USD on both cards.
+    await expect(pricing.getByTestId("pricing-free").getByText("$0")).toBeVisible();
+    await expect(pricing.getByTestId("pricing-pro").getByText("$180", { exact: true })).toBeVisible();
+
+    await pricing.getByRole("button", { name: "₹ INR" }).click();
+    await expect(pricing.getByTestId("pricing-free").getByText("₹0")).toBeVisible();
+    await expect(pricing.getByTestId("pricing-pro").getByText("₹4,999", { exact: true })).toBeVisible();
+    await expect(pricing.getByTestId("pricing-pro").getByText("/ year")).toBeVisible();
+
+    // Persisted the same way the theme toggle is (localStorage).
+    await page.reload();
+    await expect(pricing.getByTestId("pricing-pro").getByText("₹4,999", { exact: true })).toBeVisible();
+    await expect(pricing.getByRole("button", { name: "₹ INR" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("interest form: empty and malformed submits error accessibly; valid submit persists", async ({ page }) => {
+    await page.goto("/landing");
+    const pro = page.getByTestId("pricing-pro");
+    const email = pro.getByLabel("Email me when Pro exists");
+    const submit = pro.getByRole("button", { name: "Notify me" });
+
+    // Empty submit: error rendered in the aria-live region the input points at.
+    await submit.click();
+    await expect(pro.locator("#pricing-interest-error")).toHaveText("Enter an email address.");
+    await expect(email).toHaveAttribute("aria-describedby", "pricing-interest-error");
+    await expect(email).toHaveAttribute("aria-invalid", "true");
+
+    // Malformed email.
+    await email.fill("not-an-email");
+    await submit.click();
+    await expect(pro.locator("#pricing-interest-error")).toHaveText(/doesn't look like an email/);
+
+    // Valid submit reaches the API (which persists into the isolated e2e
+    // SQLite — row-level persistence is pinned by tests/pricing-interest.test.ts)
+    // and swaps the form for the aria-live success state.
+    await email.fill("wtp-probe@example.com");
+    await pro.getByRole("radio", { name: /Annual/ }).check();
+    const done = page.waitForResponse((r) => r.url().includes("/api/pricing-interest") && r.ok());
+    await submit.click();
+    await done;
+    await expect(pro.getByText("on the list", { exact: false })).toBeVisible();
+    await expect(pro.getByRole("button", { name: "Notify me" })).toHaveCount(0);
+  });
+
+  test("responsive: no horizontal overflow at 375/768/1440; cards stack narrow, sit side-by-side wide", async ({ page }) => {
+    // Reveal's fade-rise animates transforms mid-measurement; the section
+    // honors prefers-reduced-motion, so ask for it and measure a still page.
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    for (const width of [375, 768, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("/landing#pricing");
+      await page.waitForLoadState("networkidle");
+      await page.waitForTimeout(250);
+
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(overflow, `horizontal overflow at ${width}px`).toBeLessThanOrEqual(0);
+
+      const free = await page.getByTestId("pricing-free").boundingBox();
+      const pro = await page.getByTestId("pricing-pro").boundingBox();
+      expect(free && pro).toBeTruthy();
+      if (width === 375) {
+        // Stacked ⇒ Pro starts well past Free's vertical midpoint (robust to
+        // sub-pixel rounding); side-by-side would put both tops equal.
+        expect(pro!.y, "cards should stack at 375px").toBeGreaterThan(free!.y + free!.height / 2);
+      } else if (width === 1440) {
+        expect(Math.abs(pro!.y - free!.y), "cards should sit side-by-side at 1440px").toBeLessThan(4);
+      }
+    }
   });
 });

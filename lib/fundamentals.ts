@@ -171,6 +171,13 @@ export function mapSnapshot(symbol: string, raw: RawSummary): FundamentalsSnapsh
     pegRatio: n(ks.pegRatio),
     priceToBook: n(ks.priceToBook),
     dividendYield: n(sd.dividendYield),
+    // No derived fallback for ROE (or ROA): Yahoo omits both for some
+    // non-US listings (observed: KOTAKBANK.NS). A netIncomeToCommon / ending
+    // book equity fallback was tried and reverted — Yahoo's own figure uses
+    // AVERAGE equity over the period, so the derived number systematically
+    // understates ROE for a growing bank and is not provenance-equivalent to
+    // the provider figure shown for peers in the same column. Both render as
+    // unavailable instead.
     returnOnEquity: n(fd.returnOnEquity),
     returnOnAssets: n(fd.returnOnAssets),
     grossMargins: n(fd.grossMargins),
@@ -213,13 +220,21 @@ export function mapAnalyst(raw: RawSummary): AnalystConsensus {
   const price = fd.currentPrice ?? null;
   const target = fd.targetMeanPrice ?? null;
 
+  // Yahoo's `numberOfAnalystOpinions` (price-target sample) and the rating
+  // distribution routinely disagree by one or two (e.g. "23 analysts" over a
+  // 4+12+8 = 24 breakdown). Every rendered count derives from ONE source: the
+  // distribution when it exists, the financialData figure only as a fallback.
+  const distributionTotal =
+    (trend?.strongBuy ?? 0) + (trend?.buy ?? 0) + (trend?.hold ?? 0) +
+    (trend?.sell ?? 0) + (trend?.strongSell ?? 0);
+
   return {
     targetMean: n(target),
     targetHigh: n(fd.targetHighPrice),
     targetLow: n(fd.targetLowPrice),
     upsidePercent: price && target ? ((target - price) / price) * 100 : null,
     recommendationKey: fd.recommendationKey ?? null,
-    numberOfOpinions: n(fd.numberOfAnalystOpinions),
+    numberOfOpinions: distributionTotal > 0 ? distributionTotal : n(fd.numberOfAnalystOpinions),
     strongBuy: trend?.strongBuy ?? 0,
     buy: trend?.buy ?? 0,
     hold: trend?.hold ?? 0,
@@ -233,12 +248,29 @@ export function mapAnalyst(raw: RawSummary): AnalystConsensus {
   };
 }
 
-function classifyTx(text: string): InsiderTxType {
+/**
+ * Classify a Yahoo insider transaction from its text.
+ *
+ * Order matters: compensation events (awards/grants/gifts, option exercises,
+ * conversions, tax withholding) are checked FIRST, because SEC Form 4 codes
+ * A/M/F/G are not open-market sells even when the text also mentions a price.
+ * Miscounting director equity grants as disposals is exactly how a header once
+ * claimed "33 sells" over a table of eight identical 789-share grants.
+ */
+export function classifyTx(text: string): InsiderTxType {
   const t = text.toLowerCase();
+  if (
+    t.includes("award") || t.includes("grant") || t.includes("gift") ||
+    t.includes("exercise") || t.includes("conversion") || t.includes("tax")
+  ) return "other";
   if (t.includes("sale") || t.includes("sell") || t.includes("sold")) return "sell";
   if (t.includes("purchase") || t.includes("buy") || t.includes("bought")) return "buy";
   return "other";
 }
+
+/** How many transactions ship to the client. Header totals are computed over
+ *  EXACTLY this set, so the summary line always reconciles with the table. */
+const INSIDER_TX_LIMIT = 20;
 
 export function mapInsider(raw: RawSummary): InsiderActivity {
   const txs = (raw.insiderTransactions?.transactions ?? [])
@@ -253,8 +285,11 @@ export function mapInsider(raw: RawSummary): InsiderActivity {
         text,
       };
     })
-    .sort((a, b) => (a.date < b.date ? 1 : -1));
+    .sort((a, b) => (a.date < b.date ? 1 : -1))
+    .slice(0, INSIDER_TX_LIMIT);
 
+  // Invariant (asserted in tests/fundamentals-mappers.test.ts): these totals
+  // are computed from the same `transactions` array that renders as the table.
   let netValue = 0;
   let buyCount = 0;
   let sellCount = 0;
@@ -262,7 +297,7 @@ export function mapInsider(raw: RawSummary): InsiderActivity {
     if (t.type === "buy") { buyCount++; netValue += t.value ?? 0; }
     else if (t.type === "sell") { sellCount++; netValue -= t.value ?? 0; }
   }
-  return { transactions: txs.slice(0, 10), netValue, buyCount, sellCount };
+  return { transactions: txs, netValue, buyCount, sellCount };
 }
 
 function quarterLabel(d: Date): string {

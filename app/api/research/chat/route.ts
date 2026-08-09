@@ -1,8 +1,7 @@
 import { isValidSymbol } from "@/lib/market";
 import { detectAssetClass } from "@/lib/asset-class";
 import { buildCompanyContext } from "@/lib/ai/context";
-import { ModelMissingError, OllamaUnavailableError } from "@/lib/ai/ollama";
-import { DevinUnavailableError } from "@/lib/ai/devin-cli";
+import { classifyAiError } from "@/lib/ai/errors";
 import { checkPlatformHealth, unavailableMessage } from "@/lib/ai/platform-health";
 import { specForInstalled } from "@/lib/ai/models";
 import { pickModel } from "@/lib/ai/router";
@@ -383,7 +382,7 @@ function buildPortfolioContextBlock(ctx: PortfolioContextForAI): ContextBlock {
  * Orchestrates the eight layers per turn: build/reuse the company context,
  * classify intent + retrieve the relevant evidence under a token budget,
  * construct the prompt with compressed history, then stream the answer from
- * Ollama as newline-delimited JSON events, finishing with a `meta` event
+ * the model as newline-delimited JSON events, finishing with a `meta` event
  * (citations + suggested follow-ups) and persisting the exchange.
  */
 export async function POST(request: Request) {
@@ -491,7 +490,7 @@ export async function POST(request: Request) {
       try {
         // The platform owns model choice, generation settings, fallback, and the
         // separation of reasoning from answer. This route supplies a task name
-        // and a conversation — it no longer touches Ollama.
+        // and a conversation — it never touches a provider directly.
         const turns = runTaskChat("company-research", messages, {
           model: pinnedModel,
           signal: request.signal,
@@ -542,12 +541,11 @@ export async function POST(request: Request) {
         if (err instanceof DOMException && err.name === "AbortError") {
           // Client navigated away / cancelled — just close.
         } else {
-          const code =
-            err instanceof OllamaUnavailableError || err instanceof DevinUnavailableError
-              ? "ai_unavailable"
-              : err instanceof ModelMissingError
-                ? "model_missing"
-                : "internal";
+          // classifyAiError sees through the Router's exhausted-candidates
+          // wrapper, so a missing key that failed the whole chain still maps
+          // to the recovery affordance rather than a generic failure.
+          const classified = classifyAiError(err);
+          const code = classified.category === "no_api_key" ? "ai_unavailable" : "internal";
           const message = err instanceof Error ? err.message : "Generation failed";
           controller.enqueue(line({ type: "error", message, code }));
         }

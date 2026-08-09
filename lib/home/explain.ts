@@ -14,9 +14,11 @@
  * Unit-tested in tests/home-explain.test.ts.
  */
 
-import { SCORE_EXPONENTS } from "./attention";
+import { SCORE_EXPONENTS, priorityBucket } from "./attention";
+import { DEFAULT_FIT_WEIGHT } from "../ios/fit-scorer";
 import type {
   AttentionItem,
+  OpportunitySnapshotItem,
   PortfolioPulse,
   RecommendedAction,
   SentimentGauge,
@@ -74,9 +76,9 @@ export function explainAttentionScore(item: AttentionItem): ScoreExplanation {
   };
 
   return {
-    title: "Attention score",
-    value: `${Math.round(item.score)}/100`,
-    method: `score = 100 × impact^${SCORE_EXPONENTS.impact} × urgency^${SCORE_EXPONENTS.urgency} × confidence^${SCORE_EXPONENTS.confidence} — geometric, so a near-zero in any input sinks the item.`,
+    title: "Attention priority",
+    value: `${priorityBucket(item.score).label} · ${Math.round(item.score)}/100`,
+    method: `score = 100 × impact^${SCORE_EXPONENTS.impact} × urgency^${SCORE_EXPONENTS.urgency} × confidence^${SCORE_EXPONENTS.confidence} — geometric, so a near-zero in any input sinks the item. The queue shows the band; single-point differences are not meaningful.`,
     confidence: null,
     factors: [
       term("Impact", item.impact, SCORE_EXPONENTS.impact, "How much of the portfolio this touches — held names carry their book weight."),
@@ -84,6 +86,42 @@ export function explainAttentionScore(item: AttentionItem): ScoreExplanation {
       term("Confidence", item.confidence, SCORE_EXPONENTS.confidence, "The source's own confidence when it quantifies one; a per-kind default otherwise."),
     ],
     caveats: [],
+  };
+}
+
+/**
+ * The Radar's fit-blended idea score. The two components ship with the digest
+ * item (rankByFit's own inputs), so the decomposition genuinely reproduces the
+ * number on screen. Returns null for digests cached before the components were
+ * carried — a value with no explanation renders as-is, never a dead affordance.
+ */
+export function explainOpportunityScore(item: OpportunitySnapshotItem): ScoreExplanation | null {
+  if (item.absoluteScore == null || item.fitScore == null) return null;
+  const qw = 1 - DEFAULT_FIT_WEIGHT;
+  return {
+    title: "Fit score",
+    value: `${Math.round(item.combinedScore)}/100`,
+    method: `fit score = ${qw.toFixed(1)} × scanner quality + ${DEFAULT_FIT_WEIGHT.toFixed(1)} × portfolio fit, each 0–100 — how good the idea is, weighted by how well it suits this book.`,
+    confidence: null,
+    factors: [
+      {
+        label: "Scanner quality",
+        display: `${Math.round(item.absoluteScore)} × ${qw.toFixed(1)}`,
+        bar: item.absoluteScore / 100,
+        direction: item.absoluteScore >= 60 ? 1 : item.absoluteScore >= 40 ? 0 : -1,
+        detail: "The idea's standalone composite from the scanner — unchanged by your portfolio.",
+      },
+      {
+        label: "Portfolio fit",
+        display: `${Math.round(item.fitScore)} × ${DEFAULT_FIT_WEIGHT.toFixed(1)}`,
+        bar: item.fitScore / 100,
+        direction: item.fitScore >= 60 ? 1 : item.fitScore >= 40 ? 0 : -1,
+        detail: "Sector, correlation, objective, style, geography, and sizing effects on this book.",
+      },
+    ],
+    caveats: [
+      "A different scale from the Attention queue's priority score, which ranks how urgently an item needs a decision.",
+    ],
   };
 }
 
@@ -126,7 +164,7 @@ export function explainHealth(pulse: PortfolioPulse): ScoreExplanation | null {
   return {
     title: "Portfolio health",
     value: `${pulse.healthGrade ?? "?"} · ${pulse.healthScore}/100`,
-    method: "Weighted average of the dimension scores below; each weight is scaled by how much of the book that dimension could actually evidence, then renormalized.",
+    method: "Weighted average of the dimension scores below; each weight is scaled by how much of the book that dimension could actually evidence, then renormalized. Contributions are shown at 0.1-pt precision and sum to the total.",
     confidence:
       pulse.healthCoveragePct != null
         ? {

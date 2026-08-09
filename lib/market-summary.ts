@@ -67,17 +67,22 @@ export async function generateMarketSummary(
   const cached = getScannerCache(cacheKey);
   if (cached) return cached;
 
-  let summary: string;
   try {
     const raw = await runPrompt("market-summary", buildMarketSummaryPrompt(regime, macroSignals, sectorRotation), {
       maxTokens: 300,
     });
-    summary = raw.trim();
+    const summary = raw.trim();
+    // Only a real synthesis is worth caching. The fallback below must never
+    // be cached: it would keep serving the one-line regime restatement for
+    // the full TTL after the AI provider had already recovered (observed
+    // 2026-08-07, when a scan-time quota outage froze the fallback in cache).
+    if (summary) {
+      putScannerCache(cacheKey, summary);
+      return summary;
+    }
   } catch {
-    // Deterministic fallback already computed by assessMarketRegime() — never fails.
-    summary = regime.summary;
+    // Fall through to the deterministic fallback.
   }
-
-  if (summary) putScannerCache(cacheKey, summary);
-  return summary;
+  // Deterministic fallback already computed by assessMarketRegime() — never fails.
+  return regime.summary;
 }

@@ -975,7 +975,7 @@ describe("portfolio thesis — content hash and fallback", () => {
     // Simulate the SAME portfolio after an intraday price wiggle: weights shift
     // by a fraction of a point, but rounded-to-whole-percent buckets (and thus
     // the cache key) must not change — otherwise every page load would burn a
-    // fresh Ollama call just because AAPL moved 0.1%.
+    // fresh AI call just because AAPL moved 0.1%.
     const jittered = evaluation.holdings.map((h) => ({ ...h, weight: h.weight + 0.05 }));
     const jitteredEval = { ...evaluation, holdings: jittered };
 

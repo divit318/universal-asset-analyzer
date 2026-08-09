@@ -199,7 +199,7 @@ describe("buildPortfolioThesis — AI path", () => {
 
 describe("buildPortfolioThesis — fallback path", () => {
   it("degrades to the health engine's own strongest and weakest dimensions", async () => {
-    runPromptMock.mockRejectedValue(new Error("ollama offline"));
+    runPromptMock.mockRejectedValue(new Error("AI offline"));
     const t = await buildPortfolioThesis(evaluation());
 
     expect(t.source).toBe("fallback");
@@ -210,8 +210,8 @@ describe("buildPortfolioThesis — fallback path", () => {
     expect(t.risks[0]).toContain("20");
   });
 
-  it("never caches a fallback, so Ollama coming back is not pinned out for the TTL", async () => {
-    runPromptMock.mockRejectedValue(new Error("ollama offline"));
+  it("never caches a fallback, so the AI coming back is not pinned out for the TTL", async () => {
+    runPromptMock.mockRejectedValue(new Error("AI offline"));
     await buildPortfolioThesis(evaluation());
     expect(cachePut).not.toHaveBeenCalled();
   });

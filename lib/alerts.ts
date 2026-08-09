@@ -24,6 +24,36 @@ import type { TargetDirection } from "./types";
 export type AlertKind = "price_target" | "drop_alert" | "big_move";
 export type AlertSeverity = "info" | "warning";
 
+/**
+ * The facts an alert is made of — persisted instead of prose (audit F-22c).
+ *
+ * The old shape froze rendered strings ("moved -8.7% today to $304.34") into
+ * the notification table, where "today" stayed true forever. Events now carry
+ * the numbers plus the session they describe; prose is produced at *read* time
+ * by {@link renderAlertText}, which only says "today" when the session date is
+ * actually today.
+ */
+export interface AlertFacts {
+  kind: AlertKind;
+  symbol: string;
+  name: string;
+  /** Day move % (drop/big-move alerts). */
+  pct?: number;
+  price?: number;
+  currency?: string | null;
+  /** Crossing facts (price_target). */
+  fromPrice?: number;
+  toPrice?: number;
+  targetPrice?: number;
+  direction?: TargetDirection;
+  /** The user's drop threshold, absolute % (drop_alert). */
+  thresholdPct?: number;
+  /** ISO time of the quote observation this alert describes. */
+  observedAt: string;
+  /** Calendar day (exchange TZ) of the session it describes; null = unknown. */
+  sessionDate: string | null;
+}
+
 export interface AlertEvent {
   /** Stable identity used to avoid re-firing the same alert (see 24h dedup). */
   dedupKey: string;
@@ -31,15 +61,29 @@ export interface AlertEvent {
   name: string;
   kind: AlertKind;
   severity: AlertSeverity;
-  title: string;
-  body: string;
+  facts: AlertFacts;
 }
 
 /** The slice of a live quote the evaluator needs. */
 export interface QuoteLite {
   price: number;
-  changePercent: number; // today's % change
+  changePercent: number; // % change vs previous close, for the quote's session
   currency?: string | null;
+  /**
+   * Calendar day (exchange TZ) of the session this quote describes, from
+   * lib/day-change. Undefined = caller has no session metadata (legacy).
+   */
+  sessionDate?: string | null;
+  /** ISO of the quote's last trade; falls back to evaluation time. */
+  observedAt?: string | null;
+  /**
+   * Whether the quote describes the CURRENT session (lib/day-change
+   * isCurrentSession). When explicitly false, session-bound alerts (big moves,
+   * drop alerts) are skipped — a Saturday run must not re-announce Friday's
+   * close as news (the F-22 weekend bug). Undefined = unknown = allowed, so
+   * callers without session metadata keep working.
+   */
+  isCurrentSession?: boolean;
 }
 
 /**
@@ -89,6 +133,62 @@ const money = (v: number, ccy?: string | null) =>
   `${ccy === "INR" ? "₹" : "$"}${v.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
 
 const signed = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
+
+/** YYYY-MM-DD of `now` in the runtime's local timezone. */
+function localDate(now: number): string {
+  const d = new Date(now);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/**
+ * "today" only when the session IS today; otherwise the dated session
+ * ("on Fri, Jul 31"); "as of last close" when the session is unknown.
+ */
+function sessionPhrase(sessionDate: string | null, now: number): string {
+  if (!sessionDate) return "as of last close";
+  if (sessionDate === localDate(now)) return "today";
+  const t = Date.parse(`${sessionDate}T12:00:00Z`);
+  if (Number.isNaN(t)) return "as of last close";
+  const label = new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(t));
+  return `on ${label}`;
+}
+
+/**
+ * Render an alert's title/body from its facts, honestly tensed for `now`.
+ * This is the ONLY producer of alert prose — read paths call it per render,
+ * so a five-day-old alert says "on Fri, Jul 31", not "today", forever.
+ */
+export function renderAlertText(f: AlertFacts, now: number = Date.now()): { title: string; body: string } {
+  const when = sessionPhrase(f.sessionDate, now);
+  switch (f.kind) {
+    case "price_target": {
+      const verb = f.direction === "above" ? "rose to" : "fell to";
+      const goal = f.direction === "above" ? "reaching" : "dropping to";
+      return {
+        title: `${f.symbol} crossed your target`,
+        body: `${f.name} ${verb} ${money(f.toPrice ?? f.price ?? 0, f.currency)} from ${money(f.fromPrice ?? 0, f.currency)} ${when}, ${goal} your ${money(f.targetPrice ?? 0, f.currency)} target.`,
+      };
+    }
+    case "drop_alert": {
+      const pct = f.pct ?? 0;
+      return {
+        title: `${f.symbol} dropped ${signed(pct)}`,
+        body: `${f.name} fell ${signed(pct)} ${when} to ${money(f.price ?? 0, f.currency)} — past your ${Math.abs(f.thresholdPct ?? 0)}% drop alert.`,
+      };
+    }
+    case "big_move": {
+      const pct = f.pct ?? 0;
+      const up = pct >= 0;
+      // Magnitude only — "down -8.7%" was double-signed prose (audit F-14/F-22).
+      const mag = `${Math.abs(pct).toFixed(1)}%`;
+      return {
+        title: `${f.symbol} ${up ? "up" : "down"} ${mag}`,
+        body: `Your ${f.name} position moved ${signed(pct)} ${when} to ${money(f.price ?? 0, f.currency)}.`,
+      };
+    }
+  }
+}
 
 /**
  * Watchlist alerts — fired on a *transition*, not on a state.
@@ -140,22 +240,32 @@ export function evaluateWatchlistAlerts(
     });
 
     if (crossing.kind === "crossed" && it.targetPrice != null) {
-      const verb = direction === "above" ? "rose to" : "fell to";
       out.push({
         dedupKey: crossingDedupKey(it.symbol, it.targetPrice, direction, now),
         symbol: it.symbol,
         name: it.name,
         kind: "price_target",
         severity: "info",
-        title: `${it.symbol} crossed your target`,
-        body: `${it.name} ${verb} ${money(crossing.to, q.currency)} from ${money(crossing.from, q.currency)}, ${
-          direction === "above" ? "reaching" : "dropping to"
-        } your ${money(it.targetPrice, q.currency)} target.`,
+        facts: {
+          kind: "price_target",
+          symbol: it.symbol,
+          name: it.name,
+          fromPrice: crossing.from,
+          toPrice: crossing.to,
+          price: q.price,
+          targetPrice: it.targetPrice,
+          direction,
+          currency: q.currency ?? null,
+          observedAt: q.observedAt ?? new Date(now).toISOString(),
+          sessionDate: q.sessionDate ?? null,
+        },
       });
     }
 
-    // Drop alert: today's decline crossed the threshold for the first time today.
+    // Drop alert: the day's decline crossed the threshold for the first time.
+    // Session-gated: a stale quote (weekend/holiday run) is not a new decline.
     if (
+      q.isCurrentSession !== false &&
       detectDropBreach({
         previousChangePercent: prev?.lastChangePercent ?? null,
         currentChangePercent: q.changePercent,
@@ -168,25 +278,41 @@ export function evaluateWatchlistAlerts(
         name: it.name,
         kind: "drop_alert",
         severity: "warning",
-        title: `${it.symbol} dropped ${signed(q.changePercent)}`,
-        body: `${it.name} is down ${signed(q.changePercent)} today to ${money(q.price, q.currency)} — past your ${Math.abs(it.alertPctDrop!)}% drop alert.`,
+        facts: {
+          kind: "drop_alert",
+          symbol: it.symbol,
+          name: it.name,
+          pct: q.changePercent,
+          price: q.price,
+          thresholdPct: Math.abs(it.alertPctDrop!),
+          currency: q.currency ?? null,
+          observedAt: q.observedAt ?? new Date(now).toISOString(),
+          sessionDate: q.sessionDate ?? null,
+        },
       });
     }
   }
   return { events: out, observations };
 }
 
-/** Portfolio alerts: any holding making a large move today (default ≥7%). */
+/**
+ * Portfolio alerts: any holding making a large move in the CURRENT session
+ * (default ≥7%). Session-gated: on 2026-08-01/02 (a weekend) the monitor
+ * re-announced Friday's AAPL close two more times because Yahoo kept serving
+ * the same stale change — a quote from a finished session is never a new move.
+ */
 export function evaluatePortfolioAlerts(
   positions: PositionAlertInput[],
   quotes: Map<string, QuoteLite>,
-  opts: { bigMovePct?: number } = {},
+  opts: { bigMovePct?: number; now?: number } = {},
 ): AlertEvent[] {
   const threshold = opts.bigMovePct ?? 7;
+  const now = opts.now ?? Date.now();
   const out: AlertEvent[] = [];
   for (const p of positions) {
     const q = quotes.get(p.symbol.toUpperCase());
     if (!q) continue;
+    if (q.isCurrentSession === false) continue;
     if (Math.abs(q.changePercent) >= threshold) {
       const up = q.changePercent >= 0;
       out.push({
@@ -195,8 +321,16 @@ export function evaluatePortfolioAlerts(
         name: p.name,
         kind: "big_move",
         severity: up ? "info" : "warning",
-        title: `${p.symbol} ${up ? "up" : "down"} ${signed(q.changePercent)}`,
-        body: `Your ${p.name} position moved ${signed(q.changePercent)} today to ${money(q.price, q.currency)}.`,
+        facts: {
+          kind: "big_move",
+          symbol: p.symbol,
+          name: p.name,
+          pct: q.changePercent,
+          price: q.price,
+          currency: q.currency ?? null,
+          observedAt: q.observedAt ?? new Date(now).toISOString(),
+          sessionDate: q.sessionDate ?? null,
+        },
       });
     }
   }
@@ -217,7 +351,7 @@ export function evaluateAlerts(input: {
   return {
     events: [
       ...watch.events,
-      ...evaluatePortfolioAlerts(input.positions, input.quotes, { bigMovePct: input.bigMovePct }),
+      ...evaluatePortfolioAlerts(input.positions, input.quotes, { bigMovePct: input.bigMovePct, now: input.now }),
     ],
     observations: watch.observations,
   };

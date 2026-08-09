@@ -1,342 +1,415 @@
 # CHANGE_MANIFEST.md — Universal Asset Analyzer
 
-**Prepared:** 2026-08-06 (updated after Tranche 5 landed; kept in lockstep with MERGE_SUMMARY.md)
-**Version audited:** local `main` (`2be6ba1` + uncommitted working tree) vs baseline `origin/main` (`6585052`).
-**Scope:** every meaningful change introduced in this version — **6 unpushed commits** (29 files, +1,388/−124), **24 uncommitted modified files** (+869/−122), and **14 untracked files** across 13 git-status paths (including this document and MERGE_SUMMARY.md).
-**Verification at audit time:** `npx tsc --noEmit` clean; all delta-covering test files pass (`amfi`, `materiality`, `yahoo`, `format`, `verdict-warmer`, `ai-analysis-facade`, `portfolio-thesis`, `ai-compare`, `simulator-generate` — 143/143).
-**Companion document:** `MERGE_SUMMARY.md` — same repository state, structured as a merge audit; it cites these changes as M#1–M#24.
+**Scope:** every meaningful change introduced in this version — the two-branch divergence from merge-base `98500e1` ("Merge origin/main: streaming AI verdicts, score reconciliation, data grid"): `divit-local` (16 commits) and `origin/prisha-work` (10 commits). This is the same change set audited in `MERGE_SUMMARY.md`. The combined result was hand-merged into `main` at `6585052`.
+**Generated:** 2026-08-06. Read-only audit; no source code modified.
 
-Legend — **Risk level**: regression/merge risk of the change itself. **Rank**: importance to the product (Critical / High / Medium / Low). **Coexists**: whether the change can live alongside another implementation of the same concern. **Replaces**: whether it retires an older implementation.
+**Field definitions**
+- **Risk level** — regression/merge risk of the change itself (not importance).
+- **Coexists?** — whether this change can live alongside a competing implementation of the same concern.
+- **Replaces?** — whether it retires an older implementation.
+- **Improves** — which of UX / Performance / AI / Reliability / Maintainability / Accuracy the change advances.
+- **Rank** — overall importance to the product: Critical / High / Medium / Low.
 
----
+**Index by rank**
 
-## Index
-
-| # | Change | Rank | Risk | State |
-|---|--------|------|------|-------|
-| 1 | Verdict generation migrated onto the analysis provider seam | Critical | Medium | Committed |
-| 2 | Investment Verdict schema v2 (wire/parse split) | High | Medium | Committed |
-| 3 | Verdict cache warmer (new background job) | High | Low | Committed |
-| 4 | Devin API client speaks both API generations (v1 `apk_` / v3 `cog_`) | High | Medium | Committed |
-| 5 | Legacy-key spike harness + evidence | Low | Low | Committed |
-| 6 | `AI_PROVIDER=devin` flip on this machine + policy doc amendment | Medium | Medium | Committed (flip itself is machine-local) |
-| 7 | Analysis-seam plumbing for Tranche 4 (`ollamaJsonMode`, loose parse schema, Devin timeouts) | Medium | Low | Committed (`ffb6d77`) |
-| 8 | Home brief migrated onto the analysis seam | High | Medium | Committed (`ffb6d77`) |
-| 9 | Portfolio thesis migrated onto the analysis seam | High | Medium | Committed (`ffb6d77`) |
-| 10 | AI parity harness extended to migrated call sites | Low | Low | Committed (`ffb6d77`, `2be6ba1`) |
-| 11 | Fund profile mapping rewrite (zero-as-missing, live AUM, currency/rating/inception) | Critical | Medium | Uncommitted |
-| 12 | AMFI TER provider (new official data source for Indian mutual funds) | High | Low | Uncommitted (untracked) |
-| 13 | Category-baseline fabrication fix + honest fund scoring labels | High | Low | Uncommitted |
-| 14 | INR crore/lakh formatting in `formatCompactCurrency` | Medium | Low | Uncommitted |
-| 15 | Indian mutual funds no longer routed to screener.in (`isIndiaEquity`) | High | Low | Uncommitted |
-| 16 | Fund-shaped research masthead and stat strip | Medium | Low | Uncommitted |
-| 17 | Fund profile & performance card upgrades | Medium | Low | Uncommitted |
-| 18 | Fund prompt honesty (missing TER, currency-correct figures) | Medium | Low | Uncommitted |
-| 19 | Display-name resolution on watchlist/portfolio writes + backfill script | Medium | Low | Uncommitted (script untracked) |
-| 20 | Materiality lens framework (pure judgment engine + shared UI) | High | Low | Uncommitted (untracked) |
-| 21 | Materiality lens on /research | Medium | Medium | Uncommitted |
-| 22 | Materiality lens on /portfolio + `page_fingerprint` table | Medium | Medium | Uncommitted |
-| 23 | Documentation: AGENTS.md product rules, India plans, YC materials | Low | Low | Mixed (ai-migration/docs committed; AGENTS.md uncommitted; plans untracked) |
-| 24 | Compare (equity + class) and simulator migrated onto the analysis seam (Tranche 5) | High | Medium | Committed (`2be6ba1`) |
+| Rank | Changes |
+|---|---|
+| Critical | 1 Watchlist rebuild · 2 Simulator · 4 Canonical performance engine · 12 AI timeout fix · 17 Hosted-first AI provider chain · 20 Screener legibility · 24 Engine performance overhaul · 25 Engine data-corruption fixes |
+| High | 3 Multi-portfolio · 6 Classification authority · 7 Cash preview/executor parity · 8 Phantom-position fix · 9 Target-direction fix · 11 AI failure legibility · 18 Provider-agnostic AI recovery · 23 Brand identity system · 27 Dataset stale-while-revalidate |
+| Medium | 5 Health triage & dashboard ordering · 10 Pipeline provenance/relevance · 13 Table primitive widening · 14 New-positions route removal · 19 AI migration records & verdict schema · 21 Universe metric expansion · 26 DuckDB compaction |
+| Low | 15 Portfolio state propagation · 16 Inherited main features · 22 Saved-screen run snapshots · 28 Redesign & eye-ease records · 29 Performance baseline harness |
 
 ---
 
-## AI platform changes
+## Part A — Changes from `divit-local`
 
-### 1. Verdict generation migrated onto the analysis provider seam
+### 1. Watchlist rebuilt around "the level you are waiting for"
 
-- **Description:** `generateVerdict()` no longer calls `runPrompt()` directly; it goes through `runAnalysis()` (the structured analysis seam), so `AI_PROVIDER` decides the transport — Devin sessions API with server-enforced structured output, or the local Ollama path. Both providers return the loose field bag that `assembleVerdict → coerceFields` narrows with plan-specific defaults (one defaulting implementation, two transports). A deliberate asymmetry preserves each path's pre-migration semantics: unparseable Ollama output assembles plan defaults; a Devin failure produces the offline fallback, which `cacheVerdict` refuses to persist (a session error must not pin a defaults verdict into a 6h cache). `getVerdict` passes a stable subject key from the cache params (symbol, not display name).
-- **Reason:** Tranche 3 of the documented Ollama→Devin migration (`ai-migration/07-tranche3-verdict.md`): the research verdict is the highest-traffic AI call site and needed to run on the hosted provider without changing local-path behavior byte-for-byte.
-- **Files changed:** `lib/ai/verdict.ts`, `tests/ai-analysis-facade.test.ts`, `ai-migration/07-tranche3-verdict.md`.
-- **Dependencies:** `lib/ai/analysis.ts` / `analysis-provider.ts` (existing seam), change #2 (schemas), `lib/platform/data-layer.ts` (`aiVerdict` policy), `OllamaAnalysisError` categories.
-- **Risk level:** Medium — center of the ongoing migration; the asymmetric failure semantics are subtle and could be flattened by a careless merge.
-- **Coexists:** Yes — the seam is provider-agnostic by design; both transports remain live and selectable per task/env.
-- **Replaces:** Yes — the direct `runPrompt(plan.task, …, {json:true})` call path inside verdict generation (the `parseVerdictFields` raw-string parse is no longer the primary path).
-- **Improves:** AI ✅ · Reliability ✅ (schema enforced server-side on Devin; error taxonomy) · Maintainability ✅ (one seam for all structured calls) · UX — · Performance — (enables #3) · Accuracy —
+- **Description:** Complete rewrite of the Watchlist: named lists as views over tracked symbols (join-table architecture), target prices with explicit direction (above = valuation/exit, below = buy limit), append-only target revision history, live price polling with intelligent backoff (hidden tabs, closed markets, errors), analyst-consensus column, 52-week range bar with target plotted, pipeline stage badges, row-detail expansion, persisted view state, opt-in AI digest.
+- **Reason:** The old watchlist was a flat symbol list that couldn't answer the question the surface exists for — "am I near the level I'm waiting for?" — and its alert semantics contradicted its display semantics (see change 9).
+- **Files changed:** `app/watchlist/page.tsx` (rewritten, ~1,900 lines), 10 new files under `app/watchlist/_components/` (`target-modal`, `target-history`, `list-switcher`, `range-bar`, `row-detail`, `stage-badge`, `digest-panel`, `notes-modal`, `use-live-quotes`, `use-view-state`), `app/api/watchlist/{groups,membership,target-history}/route.ts` (new), `app/api/watchlist/route.ts`, `lib/live-quotes.ts` (new), `lib/watchlist-metrics.ts` (new), `lib/db.ts` (tables `watchlist_group`, `watchlist_member`, `watchlist_target_history`; columns `watchlist.stage/stage_changed_at/target_direction/source/source_detail`), tests (`watchlist-groups-db`, `watchlist-metrics`, `live-quotes`).
+- **Dependencies:** SQLite via `lib/db.ts`; yahoo-finance2 (quotes, consensus); `lib/idea-stage.ts`; `app/_components/ui/data-table.tsx` (change 13); IOS fit (`/api/watchlist/fit`).
+- **Risk level:** Medium — schema migration is additive and self-seeding (default "All Symbols" group), but the page rewrite touches alerting, export, and command-palette integration.
+- **Coexists?** No — it is the only watchlist surface; a competing watchlist implementation would collide on the same tables and routes.
+- **Replaces?** Yes — replaces the previous flat watchlist page and its single implicit target semantics.
+- **Improves:** UX ✔ · Performance ✔ (polling backoff) · AI ✔ (digest) · Reliability ✔ · Maintainability ✔ (one metrics module) · Accuracy ✔ (direction-aware upside)
 - **Rank:** **Critical**
 
-### 2. Investment Verdict schema v2 (wire/parse split)
+### 2. Portfolio Simulator — describe a mandate, generate a book, promote it
 
-- **Description:** `lib/ai/schemas/verdict.ts` rewritten to the movement-schema convention: `VerdictWireSchema` (constraint-carrying Zod, compiled to JSON Schema Draft-7 for Devin's `structured_output_schema`; headline-first emission order matching the streaming route; bullish/bearish/neutral verdict, enum confidence, 3–8 keyMetrics with signals) and `VerdictParseSchema` (deliberate pass-through record so plan-dependent defaulting stays solely in `coerceFields`). `VERDICT_SCHEMA_VERSION` bumped 1→2; the version participates in every cache/idempotency key, so v1 rows miss instead of being served as v2.
-- **Reason:** v1 was the Phase-4 spike's BUY/HOLD/SELL shape; the production verdict UI renders a richer shape, and duplicating the coercion logic in a "tolerant" Zod schema would create the exact two-implementations drift AGENTS.md forbids.
-- **Files changed:** `lib/ai/schemas/verdict.ts` (v1 shape relocated into `scripts/devin-spike-v1compat.ts`).
-- **Dependencies:** Zod (`z.toJSONSchema`), change #1, platform cache keying.
-- **Risk level:** Medium — a merge that alters the shape without bumping the version would serve stale cached rows as current; flagged as never-auto-merge in MERGE_SUMMARY.md.
-- **Coexists:** Yes — versioned side-by-side with old cached rows (they simply expire unused).
-- **Replaces:** Yes — schema v1.
-- **Improves:** AI ✅ · Reliability ✅ (cache-poisoning prevented by versioning) · Maintainability ✅ · Accuracy ✅ (constraints force dossier-cited catalysts/risks) · UX — · Performance —
-- **Rank:** **High**
-
-### 3. Verdict cache warmer (new background job)
-
-- **Description:** `lib/ai/verdict-warmer.ts`, started from `instrumentation.ts`: on an interval (`UAA_VERDICT_WARM_INTERVAL_MS`, default 6h = the `aiVerdict` fresh TTL; floor 15m; `0` disables), sweeps watchlist ∪ portfolio symbols and read-throughs `getVerdict`, writing exactly the rows the research route reads (no parallel cache). Two coded restraints: **Devin-only** (warming through the serializing local daemon would starve interactive users) and **un-personalized** (generic variant only). Never-overlapping ticks, HMR-idempotent (`Symbol.for` guard), worker pool bounded by `DEVIN_API_CONCURRENCY` (default 4), first sweep 90s after boot to avoid competing with the scanner warmup.
-- **Reason:** Make the next research-page visit for symbols the user demonstrably cares about a cache hit (~0.04s) instead of a generation the user watches (tens of seconds); Devin sessions parallelize, so warming is nearly free in wall-clock.
-- **Files changed:** `lib/ai/verdict-warmer.ts` (new), `instrumentation.ts`, `tests/verdict-warmer.test.ts` (new).
-- **Dependencies:** Changes #1/#2, `lib/db.ts` (`listWatchlist`/`listPortfolio`), `lib/ai/context.ts`, `resolveProvider`, `peekVerdict`, scanner-scheduler pattern.
-- **Risk level:** Low for correctness (no-op under Ollama; failures counted, never fatal). Note: consumes Devin ACUs on a schedule — a cost-behavior change, not a code risk.
-- **Coexists:** Yes — sits beside the monitor and scanner schedulers; on-demand generation is unchanged.
-- **Replaces:** No — purely additive.
-- **Improves:** Performance ✅✅ (headline win) · UX ✅ (no spinner on warmed symbols) · Reliability — · AI — · Maintainability — · Accuracy —
-- **Rank:** **High**
-
-### 4. Devin API client speaks both API generations
-
-- **Description:** `lib/ai/providers/devin/client.ts` now keys off the credential prefix: `cog_…` → v3 org-scoped API (full feature set: `structured_output_required`, `devin_mode`, `resumable`, ACU reporting); `apk_…` → legacy v1 personal-key API. v1 responses are translated into the v3 status vocabulary at the client edge (`blocked`→`running/waiting_for_user`, `finished`, `expired`→`exit`), v3-only create fields are stripped for v1 (they 422), the message endpoint's singular/plural naming and offset-vs-cursor pagination are handled, and the health check substitutes the smallest authenticated read for v1's missing identity endpoint. `DEVIN_ORG_ID` becomes optional for `apk_` keys; `devinConfigured()` and the config error message updated accordingly. Degraded v1 session lists (missing tags) make the sweeper a safe no-op rather than a hazard.
-- **Reason:** The two machines this repo is developed on hold different key types; without v1 support one machine could not run the hosted path at all.
-- **Files changed:** `lib/ai/providers/devin/client.ts`, `tests/ai-analysis-facade.test.ts`, `docs/devin-integration.md`.
-- **Dependencies:** Empirically verified v1 API contract (`ai-migration/04b-spike-results-v1-key.md`); env `DEVIN_API_KEY` / `DEVIN_ORG_ID`.
-- **Risk level:** Medium — rests on reverse-engineered v1 behavior that Devin could change; contained to one module and evidence-documented.
-- **Coexists:** Yes — both generations behind one interface; the provider has exactly one lifecycle to reason about.
-- **Replaces:** No — extends the existing v3-only client (v3 path byte-identical).
-- **Improves:** Reliability ✅ (hosted path works on both machines) · AI ✅ · Maintainability ✅ (translation isolated at the edge) · UX — · Performance — (v1 measured slower: p50 33s vs 22s, accepted) · Accuracy —
-- **Rank:** **High**
-
-### 5. Legacy-key spike harness + evidence
-
-- **Description:** `scripts/devin-spike-sessions.ts` renamed/extended to `scripts/devin-spike-v1compat.ts` (carries the retired schema-v1 shape and runs the v1-key compatibility probes); results written up in `ai-migration/04b-spike-results-v1-key.md` (5/5 first-attempt schema-valid, p50 33s, no ACU field on v1 GET).
-- **Reason:** The migration's discipline is measured evidence before adoption; #4 is justified by this spike.
-- **Files changed:** `scripts/devin-spike-v1compat.ts` (renamed from `devin-spike-sessions.ts`), `ai-migration/04b-spike-results-v1-key.md` (new).
-- **Dependencies:** Live Devin API access with an `apk_` key.
-- **Risk level:** Low — dev tooling, not on any runtime path.
-- **Coexists:** Yes. **Replaces:** Yes — the earlier sessions spike script.
-- **Improves:** Maintainability ✅ (documented contract) · Reliability ✅ (indirect) · others —
-- **Rank:** **Low**
-
-### 6. `AI_PROVIDER=devin` flip on this machine + policy doc amendment
-
-- **Description:** `.env.local` (untracked, machine-local) now sets `AI_PROVIDER=devin`, making the hosted provider the default analysis transport on this machine; `docs/devin-integration.md`'s remaining "local-only" policy text amended to match. Interactive-latency tasks still stay on Ollama under the global flag per the router guardrail.
-- **Reason:** Tranches 1–3 proved parity (15/15 both providers) and acceptable latency; the flip is the point of the migration.
-- **Files changed:** `docs/devin-integration.md` (committed); `.env.local` (machine-local, never committed).
-- **Dependencies:** #1–#4; Devin API availability and ACU budget.
-- **Risk level:** Medium — split-brain across machines: any machine still defaulting to Ollama silently lacks warmed verdicts and hosted-quality output; behavior differences won't show in code review.
-- **Coexists:** Yes — that is the design: the chain and per-task pins remain.
-- **Replaces:** No — changes the default, removes nothing.
-- **Improves:** AI ✅ (frontier-model output on migrated tasks) · UX ✅ · Performance ✅ (with #3) · Reliability — (adds a network dependency; offline fallback intact) · others —
-- **Rank:** **Medium**
-
-### 7. Analysis-seam plumbing for Tranche 4
-
-- **Description:** Three small seam extensions enabling #8/#9: (a) `AnalysisRequest.ollamaJsonMode` — Ollama-adapter-only flag to *not* request grammar-constrained JSON, preserving the home brief's historical unconstrained-generation quirk ("the Ollama path is byte-identical" is the migration discipline); (b) `lib/ai/schemas/loose.ts` — shared `LooseObjectSchema` pass-through parse view for call sites whose coercion deliberately stays in feature code; (c) `devinTimeoutMs: 240_000` on `daily-briefing` and `portfolio-intelligence` in the task registry (tail-based sizing; the thesis dossier is the largest prompt in its class).
-- **Reason:** Migrating call sites without changing local-path behavior requires the seam to express their historical quirks rather than silently "fixing" them.
-- **Files changed:** `lib/ai/analysis-provider.ts`, `lib/ai/providers/ollama-analysis.ts`, `lib/ai/task-registry.ts`, `lib/ai/schemas/loose.ts` (new).
-- **Dependencies:** Existing analysis seam; consumed by #8/#9 (and the loose parse schema reused by #24).
-- **Risk level:** Low — defaulted flags; no behavior change for existing callers.
-- **Coexists:** Yes. **Replaces:** No.
-- **Improves:** Maintainability ✅ (one shared passthrough instead of N copies) · Reliability ✅ (timeouts sized to measured tails) · AI ✅ · others —
-- **Rank:** **Medium**
-
-### 8. Home brief migrated onto the analysis seam
-
-- **Description:** `lib/home/brief.ts#generateHomeBrief` now calls `runAnalysis` with a new `HomeBriefWireSchema` (v1: `{headline, note (nullable), portfolioSummary}`; nullable note because the pre-migration parser treated a missing note as "no long-form note today" — requiring it would force the model to pad) and the shared loose parse view; `ollamaJsonMode:false` preserves the call site's historical unconstrained local generation. All parse tolerance (`str()`/`readNote`/grounding gate) stays in feature code; an unparseable local response now throws into the same deterministic fallback it previously reached via empty-headline. Prompt builder exported for the parity harness.
-- **Reason:** Tranche 4 — the homepage's daily brief is user-visible AI quality; the hosted path enforces the shape server-side while the local path remains behavior-identical.
-- **Files changed:** `lib/home/brief.ts`, `lib/ai/schemas/home-brief.ts` (new), `lib/ai/task-registry.ts` (via #7), `ai-migration/08-tranche4-thesis-brief.md` (shared Tranche-4 report).
-- **Dependencies:** #7; `verifyGrounding`; `scanner_cache` (existing brief caching unchanged).
-- **Risk level:** Medium — the fallback-equivalence argument (throw vs empty-headline both → fallback) is correct but load-bearing.
-- **Coexists:** Yes — deterministic fallback brief remains the offline path.
-- **Replaces:** Yes — the `runPrompt` + `extractJsonObject` pair at this call site.
-- **Improves:** AI ✅ · Reliability ✅ (server-side schema on Devin) · Maintainability ✅ · UX — (same surface) · Performance — · Accuracy —
-- **Rank:** **High**
-
-### 9. Portfolio thesis migrated onto the analysis seam
-
-- **Description:** `lib/portfolio/thesis.ts#buildPortfolioThesis` now calls `runAnalysis` with `PortfolioThesisWireSchema` (v1: thesis, identity tags, strengths/risks that must cite a specific number or holding, `bearCase` explicitly allowing `""` so the wire schema cannot convert honesty into fabrication, mustBeTrue) and the loose parse view; all coercion stays in `cleanString`/`cleanList` + per-field fallbacks. No seam-level `maxAgeMs`: the existing content-hash `scanner_cache` short-circuit remains the feature's freshness policy (a second cache layer would fight it). Subject key = portfolio content hash. Prompt builder exported for the parity harness.
-- **Reason:** Tranche 4 — the thesis card sits beside code-computed `ESTABLISHED CONCLUSIONS` and ground-truth verdict tagging; hosted-model quality materially improves the one job left to the model (synthesis).
-- **Files changed:** `lib/portfolio/thesis.ts`, `lib/ai/schemas/portfolio-thesis.ts` (new), `lib/ai/task-registry.ts` (via #7), `ai-migration/08-tranche4-thesis-brief.md` (shared Tranche-4 report).
-- **Dependencies:** #7; `groundTruthVerdicts`/`resolveSectionConflicts` (unchanged); `scanner_cache`.
-- **Risk level:** Medium — same fallback-equivalence subtlety as #8; interacts with the content-hash cache-version rule documented in AGENTS.md.
-- **Coexists:** Yes. **Replaces:** Yes — the `runPrompt` + `extractJsonObject` pair at this call site.
-- **Improves:** AI ✅ · Reliability ✅ · Maintainability ✅ · Accuracy ✅ (schema demands number-citing bullets) · UX — · Performance —
-- **Rank:** **High**
-
-### 10. AI parity harness extended to migrated call sites
-
-- **Description:** `scripts/ai-parity.ts` gained subjects that run the *exact production prompts* — Tranche 4: `buildThesisPrompt` over the real portfolio report and `buildHomeBriefPrompt` over real mission-control context (no synthetic portfolios, because "fabricating holdings would test a dossier no user can produce"); Tranche 5: equity compare, class compare, and the simulator's two structured stages — diffing both providers field-by-field under the new wire schemas.
-- **Reason:** The migration's acceptance gate is measured provider parity per call site, not code review alone.
-- **Files changed:** `scripts/ai-parity.ts` (Tranche-4 extension in `ffb6d77`, Tranche-5 extension in `2be6ba1`).
-- **Dependencies:** #7–#9, #24; live providers.
-- **Risk level:** Low — dev harness.
-- **Coexists:** Yes. **Replaces:** No.
-- **Improves:** Reliability ✅ (regression detection) · Maintainability ✅ · others —
-- **Rank:** **Low**
-
-### 24. Compare (equity + class) and simulator migrated onto the analysis seam (Tranche 5)
-
-- **Description:** Three more call sites move from `runPrompt` to `runAnalysis()` (commit `2be6ba1`). **Equity compare** (`lib/ai-compare.ts`) reuses `flatFromStreamedFields` so the blocking, streamed, and seam paths converge on one shape. **Class compare** (`lib/compare/class-ai-compare.ts`) carries the per-class `keyQuestions` contract on the wire. The **simulator's** two structured stages (`lib/portfolio/simulator/generate.ts`) get wire schemas, and `parseSelectionResponse` splits into a bag-shaped worker so mandate enforcement exists exactly once. New wire schemas (`lib/ai/schemas/comparison.ts`, `lib/ai/schemas/simulator.ts`, both v1) constrain **shape, not policy** — deterministic guards (`normalizeAllocation`, symbol back-filling via `normalizeRankings`) stay downstream, `noClearWinner` accepts boolean *or* `"true"/"false"` strings (a stricter wire would forbid Devin a quirk the app already tolerates), and ranking symbols are deliberately not enum-constrained (one bad symbol must not cost the whole comparison). `classifyAiError` (`lib/ai/errors.ts`) now maps `DevinAnalysisError.category` onto `AiErrorCategory` — duck-typed to avoid an import cycle — so Compare's `aiStatus` copy stays truthful and cancellation still rethrows. `portfolio-construction` stays guardrailed to the local token stack (interactive latency) with the wire ready for pins; task registry declares `devinTimeoutMs` 300s for compare (largest dossiers in the standard tier) and 240s for the simulator when pinned. Notably, the parity gate ran **in reverse**: token-stack outputs tripped three wire caps stricter than observed legitimate behavior, so the *wire* was relaxed (strengths ≤6, `why` min 1) rather than the models constrained.
-- **Reason:** Tranche 5 of the migration — Compare's verdict and the Simulator's book generation are among the most judgment-heavy AI surfaces; the hosted path materially improves them while local behavior stays byte-identical.
-- **Files changed:** `lib/ai-compare.ts`, `lib/compare/class-ai-compare.ts`, `lib/portfolio/simulator/generate.ts`, `lib/ai/schemas/comparison.ts` (new), `lib/ai/schemas/simulator.ts` (new), `lib/ai/errors.ts`, `lib/ai/task-registry.ts`, `scripts/ai-parity.ts`, `ai-migration/09-tranche5-compare-simulator.md` (new).
-- **Dependencies:** #7 (loose parse schema, seam surface); `flatFromStreamedFields`; existing deterministic normalizers; live providers for the parity evidence.
-- **Risk level:** Medium — same fallback-equivalence discipline as #8/#9 across three call sites; the error-category duck-typing depends on `DevinAnalysisError`'s field names staying stable.
-- **Coexists:** Yes — both providers remain live per task; streamed and blocking compare paths coexist by design (converged on one shape).
-- **Replaces:** Yes — the `runPrompt` + manual-parse pairs at these three call sites.
-- **Improves:** AI ✅ · Reliability ✅ (truthful error copy, server-side schema) · Maintainability ✅ (one shape across three compare paths; mandate enforcement in one place) · Accuracy ✅ (measured parity: identical ranking *and* confidence — NVDA>MSFT>AAPL at 82 — across providers; simulator allocations within ±5pp, both inside mandate) · UX — · Performance —
-- **Rank:** **High**
-
----
-
-## Data-accuracy changes (Indian mutual funds / fund research)
-
-### 11. Fund profile mapping rewrite (zero-as-missing, live AUM, currency/rating/inception)
-
-- **Description:** `buildFundProfile` split into a pure, exported `mapFundProfile()` plus a thin fetch wrapper; the quoteSummary request adds `defaultKeyStatistics`, `summaryDetail`, `price`. Semantics fixed: (a) `zeroAsMissing` — Yahoo encodes "not reported" as literal `0` for expense ratio/turnover/AUM (every Indian mutual fund; verified that genuinely-zero-fee Fidelity ZERO funds never report 0), so zeros become `null`; (b) AUM sourced from `summaryDetail.totalAssets` (raw currency units, live) instead of `fundProfile`'s millions figure (observed ~$300B stale for SPY), with layered fallbacks; (c) new fields `currency`, `morningstarRating`, `inceptionDate`, `expenseRatioSource`; (d) category fallback via `fundPerformance.fundCategoryName`. The `fundProfile` dataset cache key is bumped to `v: 3` so persisted rows carrying the old wrong numbers miss instead of being served. Same zero-as-missing rule applied to the fund screener universe so an unknown-fee fund can't rank as the cheapest in the universe. `Quote` gains optional `netAssets`/`ytdReturn` (backward-compatible deserialization).
-- **Reason:** Taken at face value, Yahoo's zero-encoding rendered "0.00% expense ratio" as a *strength* and scored a perfect Cost factor — a scoring layer rewarding missing data is the most dangerous failure class in the product.
-- **Files changed:** `lib/yahoo.ts`, `lib/types.ts`, `lib/screener/universes/fund-shared.ts`, `tests/yahoo.test.ts`.
-- **Dependencies:** yahoo-finance2 quoteSummary modules; platform data layer (cache re-keying); consumed by #12, #13, #16–#18.
-- **Risk level:** Medium — large rewrite of a shared mapping; mitigated by the pure-function extraction and 113 lines of new mapping tests; cache bump prevents stale-row bleed.
-- **Coexists:** No — it *is* the fund mapping; two mappings for one dataset would reintroduce the drift.
-- **Replaces:** Yes — the previous inline mapping (including its `×1e6` AUM conversion and face-value zero handling).
-- **Improves:** Accuracy ✅✅ (headline win) · Reliability ✅ (null-honesty downstream) · Maintainability ✅ (pure + tested) · AI ✅ (honest prompt inputs) · UX ✅ (correct figures) · Performance —
+- **Description:** New end-to-end surface: intake by form or AI interview (capped at 8 questions), profile summary, staged NDJSON generation (allocate → select → size → evaluate → narrate), simulation view with compare-against-real-book, edit mode with cash-sleeve value conservation, and promotion to a real portfolio via `executeTradeBatch`.
+- **Reason:** Lets a user test a portfolio strategy without risking capital, and gives the product a path from "idea about a mandate" to "funded book" that previously required manual entry.
+- **Files changed:** 11 new components in `app/portfolio/_components/simulator/`, 8 new routes under `app/api/portfolio/simulator/` (crud, intake, generate, evaluate, edit, swap, refresh-narrative, promote), new `lib/portfolio/simulator/` package (`generate.ts` 515 lines, `preferences.ts` 576, `profile.ts`, `intake.ts`, `edit.ts`, `evaluate.ts`, `universe.ts`, `types.ts`), `lib/db.ts` (`simulation` table), tests (`simulator-{db,edit,generate,intake,preferences}`).
+- **Dependencies:** AI via `lib/ai` `runPrompt` (interview, narration, evaluation); `lib/portfolio/engines/*` (sizing, evaluation); `lib/portfolio/store.ts` (promotion); multi-portfolio (change 3); `TaskProgress` staged UI (change 13).
+- **Risk level:** Low–Medium — almost entirely additive; the only shared surface it mutates is the real portfolio at promotion time, which goes through the existing trade batch executor.
+- **Coexists?** Yes — self-contained tab; another portfolio-construction tool could coexist.
+- **Replaces?** No — net-new capability.
+- **Improves:** UX ✔ · AI ✔ · Maintainability ✔ (pure simulator package) · Accuracy ✔ (evaluation reuses real engines)
 - **Rank:** **Critical**
 
-### 12. AMFI TER provider (new official data source)
+### 3. Multi-portfolio support
 
-- **Description:** New `lib/amfi.ts`: fetches AMFI's official monthly scheme-level Total Expense Ratio table per AMC (endpoints verified live), matches Yahoo fund names onto AMFI schemes via a curated 56-AMC regex map (word-boundary-safe) with Regular/Direct plan detection, dedupes to latest `TER_Date`. Every public function returns `null` on failure — an AMFI outage degrades to "expense ratio unavailable", never a broken profile. Wired into `buildFundProfile` for INR funds with no Yahoo TER; result badged with provenance (`expenseRatioSource: "amfi"`). New `amfiTer` dataset policy (3d TTL / 7d SWR, persisted, keyed per AMC so one ~1.5MB fetch covers a whole fund house; declared dependent of `fundProfile`) and new `"amfi"` `DataSourceId`.
-- **Reason:** Yahoo/Morningstar carries no TER for Indian mutual funds at all; AMFI is the industry body and the only authoritative source, and expense ratio is a core input to the fund Cost factor.
-- **Files changed:** `lib/amfi.ts` (new), `lib/platform/registry.ts`, `lib/platform/types.ts`, `lib/provenance.ts`, `lib/yahoo.ts` (enrichment hook), `tests/amfi.test.ts` (new).
-- **Dependencies:** amfiindia.com API (unofficial-but-public endpoints); platform data layer; #11 (nulled zeros create the gap this fills).
-- **Risk level:** Low — best-effort by construction; the AMC id map needs occasional curation (~1 new AMC/year).
-- **Coexists:** Yes — a fallback source layered behind Yahoo, with explicit provenance.
-- **Replaces:** No — additive.
-- **Improves:** Accuracy ✅✅ · Reliability ✅ (graceful degradation) · UX ✅ (real TER + provenance badge) · AI ✅ (real fee in prompts) · Performance ✅ (per-AMC amortization) · Maintainability —
+- **Description:** Named portfolios (`portfolios` table) with a switcher on the Portfolio page; `portfolio_id` added to lots, snapshots, and manual assets; non-default portfolios render read-only holdings.
+- **Reason:** Required by the Simulator's "promote" flow (a promoted book must not overwrite the main book) and by users tracking more than one mandate.
+- **Files changed:** `lib/db.ts` (`portfolios` table; `portfolio_id` columns on `portfolio_lot`, `portfolio_snapshot`, `manual_asset`, defaulting to 1), `app/api/portfolio/portfolios/route.ts` (new), `app/portfolio/page.tsx` (switcher), `app/portfolio/_components/universal/read-only-holdings.tsx` (new), `tests/multi-portfolio-db.test.ts`.
+- **Reason for default:** `portfolio_id = 1` keeps every pre-existing row attached to "Main Portfolio" — zero-touch backward compatibility.
+- **Dependencies:** SQLite; consumed by Simulator promote, Home modules, IOS context.
+- **Risk level:** Medium — every query touching lots/snapshots must now be portfolio-scoped; a missed scope silently mixes books.
+- **Coexists?** No — it redefines the portfolio data model; a single-portfolio implementation cannot run beside it.
+- **Replaces?** Yes — replaces the implicit single-portfolio model.
+- **Improves:** UX ✔ · Reliability ✔ · Accuracy ✔ (books can't cross-contaminate)
 - **Rank:** **High**
 
-### 13. Category-baseline fabrication fix + honest fund scoring labels
+### 4. Canonical performance engine — one total return, dated series, historical FX
 
-- **Description:** Yahoo pads missing Morningstar category baselines with zeros (`trailingReturnsCat` all-zero for every Indian mutual fund); diffing against that fabricated "+10.3pp vs category" from a fund's own absolute return. `mapFundProfile` now rejects all-zero baselines (`catAvailable` gate). `lib/fund-scoring.ts` labels every signal with its basis — "1-year return vs category" vs "1-year return … (absolute)" — extends the same fallback to the 3-year signal with absolute-appropriate bands (−5…18 vs relative −6…6), and the composite rationale states "absolute performance — no category baseline available" when applicable.
-- **Reason:** An absolute number presented as a category edge is precisely the fabrication the scoring layer exists to prevent; unlabeled fallbacks are indistinguishable from claims.
-- **Files changed:** `lib/yahoo.ts` (gate), `lib/fund-scoring.ts`, `app/research/fund/_components/fund-performance-card.tsx` (see #17).
-- **Dependencies:** #11.
-- **Risk level:** Low — but note fund composite scores shift for funds without baselines (screener ranks, cached verdicts citing the score regenerate under the new keys).
-- **Coexists:** No — replaces the scoring behavior for the no-baseline case.
-- **Replaces:** Yes — the silent absolute-as-relative fallback.
-- **Improves:** Accuracy ✅✅ · UX ✅ (honest labels) · AI ✅ · Reliability — · Maintainability — · Performance —
+- **Description:** Consolidates three divergent total-return implementations into one function with an explicit balance-sheet denominator and a cost-weighted period; return series align by date (not array index); missing prices are never coerced to zero; realized P&L converts at the historical FX rate of each sale (`PositionAggregate.realizedEvents`); closed positions still get a row. `lib/portfolio-analytics.ts` shrinks 1,655 → 44 lines, its logic redistributed into dedicated engines.
+- **Reason:** Three surfaces disagreed about the same number. `min(acquiredAt)` reported "+0.2% over 6.7y" for a book funded 17 days earlier because one 2019 collectible set the window; a CHF 20,000 realized gain displayed as $20,000.
+- **Files changed:** `lib/portfolio-performance.ts` (+513, canonical), `lib/portfolio/engines/attribution.ts` (new, 243), `lib/portfolio/engines/confidence.ts` (new, 203), `lib/portfolio/engines/series.ts` (new, 154), `lib/portfolio-analytics.ts` (−1,655), `app/api/portfolio/performance/route.ts`, tests (`portfolio-performance` 782 lines, `portfolio-attribution`, `portfolio-confidence`, `portfolio-series-alignment`).
+- **Dependencies:** yahoo-finance2 history; `portfolio_lot.currency` column (added here); consumed by Portfolio page, Home "Book" module, Journal.
+- **Risk level:** Medium — every displayed return figure changes provenance; the risk is downstream consumers still holding the old numbers' assumptions.
+- **Coexists?** No — the entire point is that there is exactly one implementation; a second would reintroduce the bug class.
+- **Replaces?** Yes — retires three ad-hoc total-return computations and most of the old `portfolio-analytics.ts`.
+- **Improves:** Accuracy ✔✔ · Reliability ✔ · Maintainability ✔ · UX ✔ (as-of stamps, honest periods)
+- **Rank:** **Critical**
+
+### 5. Health scorecard triaged by severity; dashboard ordered by question
+
+- **Description:** The 12-dimension health panel now triages into needs-attention / adequate / strong (weakest first, strong collapsed to one line); the Portfolio dashboard reorders sections by the question they answer ("how is it doing?" → "what is it made of?" → "what moves it next?") instead of by data model; AI output is labeled as interpretation; percentages show denominators. New performance/attribution/trajectory panels give the reordered dashboard its content.
+- **Reason:** The previous layout ordered panels by implementation history; the user's first glance landed on whatever was built first, not what needed attention.
+- **Files changed:** `app/portfolio/_components/universal/health-panel.tsx`, `decision-center.tsx`, `holdings-panel.tsx` (574 lines changed), `impact-display.tsx`, `portfolio-thesis.tsx`, new `attribution-panel.tsx`, `performance-panel.tsx`, `trajectory-panel.tsx`, `trajectory-chart.tsx`, `as-of-stamp.tsx`, `app/portfolio/page.tsx` (326 lines changed), `tests/trajectory-chart-scale.test.ts`.
+- **Dependencies:** Changes 4 (performance/attribution data) and 6 (classification); `lib/portfolio/engines/health.ts`.
+- **Risk level:** Low — presentation-layer reordering over unchanged engine outputs.
+- **Coexists?** Yes — layout decisions; an alternative ordering could ship behind config.
+- **Replaces?** Yes — replaces the previous dashboard ordering and flat health list.
+- **Improves:** UX ✔✔ · Accuracy ✔ (denominators shown, AI labeled)
+- **Rank:** **Medium**
+
+### 6. Classification authority — resolve an instrument's class once, on what it holds
+
+- **Description:** Asset-class classification is resolved once at the data boundary and read by every engine, keyed off what the instrument *holds* rather than its wrapper (a bond ETF is bonds). Yahoo's `bondHoldings.duration/.maturity` is no longer misused as effective duration. Adds a shared `market-base.ts` class and a 1,465-line `risk-models.ts` reference.
+- **Reason:** Each engine previously re-derived classification with slightly different rules, so the same holding could be equity in one panel and a fund in another — and risk math inherited whichever answer it got.
+- **Files changed:** `lib/portfolio/classes/market-base.ts` (new), `lib/portfolio/classes/reference/risk-models.ts` (new), all 13 `lib/portfolio/classes/*.ts` adapters, `app/portfolio/_components/universal/risk-lab.tsx` (269 lines changed), `app/api/portfolio/buy/route.ts`, `buy/recommendation/route.ts`, `manage/route.ts`, tests (`portfolio-classification-authority` 328 lines, `portfolio-risk-models` 616, `portfolio-risk-coverage`).
+- **Dependencies:** consumed by risk, allocation, optimize, health engines and buy routes.
+- **Risk level:** Medium — a classification change reclassifies existing holdings' risk treatment; correct, but visibly different numbers.
+- **Coexists?** No — an "authority" is definitionally singular.
+- **Replaces?** Yes — retires per-engine classification heuristics.
+- **Improves:** Accuracy ✔✔ · Reliability ✔ · Maintainability ✔ · Performance ✔ (resolved once)
 - **Rank:** **High**
 
-### 14. INR crore/lakh formatting in `formatCompactCurrency`
+### 7. Cash preview/executor parity
 
-- **Description:** INR amounts now render in Indian units with Indian digit grouping — "₹3,626.2 Cr", "₹19,94,000 Cr", "₹2.5 L" — instead of "₹36.26B"; matches screener.in/AMFI/every Indian filing, and mirrors `lib/ic/format.ts`'s IC-scoped convention app-wide. Non-INR behavior unchanged; unit tests added.
-- **Reason:** Western B/T units for INR figures read as foreign to the numbers' own ecosystem and invite misreading by ~an order of magnitude against local sources.
-- **Files changed:** `lib/format.ts`, `tests/format.test.ts`.
-- **Dependencies:** `toLocaleString("en-IN")`; consumed everywhere `formatCompactCurrency` renders INR.
-- **Risk level:** Low.
-- **Coexists:** Yes — coexists with `lib/ic/format.ts`'s branded IC formatter (documented as the app-wide counterpart, not a duplicate).
-- **Replaces:** Yes — the K/M/B/T rendering for INR only.
-- **Improves:** UX ✅ · Accuracy ✅ (matches sources of record) · others —
-- **Rank:** **Medium**
-
-### 15. Indian mutual funds no longer routed to screener.in (`isIndiaEquity`)
-
-- **Description:** `app/research/page.tsx` introduces `isIndiaEquity = isIndia && isEquity` and re-keys every India-specific module (screener.in fetch, conviction source, valuation insight, financial overlays, shareholding, peer table, loading lines, verdict score/confidence overrides) off it instead of `isIndia`.
-- **Reason:** screener.in covers listed Indian *companies* only; an Indian mutual fund's Morningstar `0P….BO` symbol fuzzy-matched a random company and rendered its equity snapshot on a fund page — silently wrong data on a research surface.
-- **Files changed:** `app/research/page.tsx` (~15 call sites).
-- **Dependencies:** `detectAssetClass` / `quote.assetType`.
-- **Risk level:** Low — a narrowing guard; Indian equities unaffected.
-- **Coexists:** N/A (guard). **Replaces:** Yes — the too-broad `isIndia` gating.
-- **Improves:** Accuracy ✅✅ · Reliability ✅ · UX ✅ · others —
+- **Description:** The cash-deployment preview and the executor now share one computation path; dollar amounts remain display figures and never become execution quantities; the cap that silently absorbed overflow now surfaces it; a deploy guard blocks incoherent deployments; the optimize panel gains a funding summary.
+- **Reason:** The preview computed its numbers differently from the executor, so the trade a user approved was not the trade that ran.
+- **Files changed:** `lib/portfolio/engines/cash.ts` (+183), `lib/portfolio/engines/optimize.ts` (+204 predicate unification), `lib/portfolio/engines/transaction.ts` (+142), `app/portfolio/_components/universal/cash/*` (incl. new `deploy-guard.ts`), `app/portfolio/_components/universal/optimize/funding-summary.tsx` (new), tests (`portfolio-cash`, `portfolio-cash-deploy-guard`, `portfolio-optimize-funding` 380 lines).
+- **Dependencies:** transaction engine (change 8 shares it); optimize engine.
+- **Risk level:** Medium — execution-path change; mitigated by the shared-path design and heavy tests.
+- **Coexists?** No — parity is the invariant; two paths is the bug.
+- **Replaces?** Yes — replaces the divergent preview computation.
+- **Improves:** Accuracy ✔✔ · Reliability ✔✔ · UX ✔ (what you preview is what runs)
 - **Rank:** **High**
 
-### 16. Fund-shaped research masthead and stat strip
+### 8. Phantom positions after rebalance — fixed
 
-- **Description:** The research stat strip now describes what the instrument *is*: mutual funds show Net assets (plan) / YTD return / P/E (holdings) / 52-week range / Previous NAV / Exchange (NAV-priced pools have no market cap, intraday range, or volume — dashes read as broken data); ETFs lead with AUM but keep range/volume; equities format market cap in the **listing currency** (a hardcoded "$" mislabeled every Indian/Japanese/European name). The masthead leads with the fund **name** for mutual funds, demoting the opaque Morningstar ID to a small mono suffix; ticker-first is unchanged for everything with a real ticker.
-- **Reason:** A fund page dominated by "—" and an unmemorable ID reads as broken; labels like "P/E (holdings)" and "Net assets (plan)" stop honest figures being misread (plan-level AUM is ~10x below scheme-level; verified HDFC Large Cap ₹3.6k Cr vs ₹38k Cr).
-- **Files changed:** `app/research/page.tsx`.
-- **Dependencies:** #11 (`netAssets`/`ytdReturn`/`currency`), #14.
-- **Risk level:** Low — presentation branching.
-- **Coexists:** Yes — three-way branch beside the equity strip. **Replaces:** Yes — the one-size-fits-all strip for funds.
-- **Improves:** UX ✅✅ · Accuracy ✅ (labels carry the caveats) · others —
+- **Description:** Full exits were expressed as dollar amounts rounded to the nearest dollar, then converted back to units at execution; the rounding error survived as a real holding (e.g. GLD 0.0005 shares worth $0.18). Now `dollarDelta` is never rounded (it is an execution instruction, not a display figure) and the executor snaps a sell to the whole position when the leftover is < $1 AND < 1% of the position. Also fixes a React key warning by keying trade rows on the fragment map.
+- **Reason:** Every rebalance left dust positions that polluted allocation, health, and attribution forever after.
+- **Files changed:** `lib/portfolio/engines/optimize.ts`, `lib/portfolio/engines/transaction.ts` (+32 snap logic), `app/portfolio/_components/universal/optimize-panel.tsx`, `tests/portfolio-transaction.test.ts` (+61).
+- **Dependencies:** transaction engine (shared with change 7).
+- **Risk level:** Low — narrow, well-tested behavioral fix.
+- **Coexists?** No — it corrects the single execution path.
+- **Replaces?** Yes — replaces round-then-convert exit math.
+- **Improves:** Accuracy ✔✔ · Reliability ✔ · UX ✔
+- **Rank:** **High**
+
+### 9. Watchlist target-direction contradiction — fixed
+
+- **Description:** `lib/alerts.ts` fired "target reached" on `price <= target` (buy-limit semantics) while the watchlist page and CSV export fired on `price >= target` (valuation-target semantics) — so for any target, exactly one surface fired permanently (INCY "buy at $20" trading at $118 exported as TARGET REACHED). Fix: a stored `target_direction` ("above" | "below") and one shared rule in `lib/watchlist-metrics.ts`; alerts gain price-crossing detection persisted in `price_alert_state`.
+- **Reason:** Two surfaces disagreed on what a target means; both were plausibly right, so the fix stores the user's intent instead of guessing.
+- **Files changed:** `lib/alerts.ts` (+132), `lib/watchlist-metrics.ts` (new, 213), `lib/price-crossing.ts` (new, 163), `lib/db.ts` (`watchlist.target_direction`, `price_alert_state` table), `app/watchlist/page.tsx`, `app/api/export/watchlist/route.ts` (137 lines changed), `app/api/watchlist/symbol-alerts/route.ts`, tests (`alerts` +252, `price-crossing`, `export`).
+- **Dependencies:** part of the Watchlist rebuild (change 1); monitor scheduler consumes alerts.
+- **Risk level:** Low — pre-existing rows keep NULL direction and are resolved at read time (honest, non-destructive migration).
+- **Coexists?** No — one rule module is the fix.
+- **Replaces?** Yes — retires both contradictory implicit rules.
+- **Improves:** Accuracy ✔✔ · Reliability ✔✔ · UX ✔
+- **Rank:** **High**
+
+### 10. Pipeline board: idea provenance and relevance score
+
+- **Description:** Every idea on the pipeline board carries provenance (where it came from — scanner, screener, manual, etc., stored as `watchlist.source`/`source_detail`) and a relevance score against the current book (`engines/idea-relevance.ts`, 666 lines); the board ranks by worth-acting-on instead of recency. Stage transitions move to the shared `lib/idea-stage.ts` (+190) now that Watchlist reads them too.
+- **Reason:** A recency-ordered idea list buries the idea that actually fits the book; unattributed ideas can't be trusted or triaged.
+- **Files changed:** `app/portfolio/_components/pipeline-board.tsx`, `app/portfolio/_components/pipeline/idea-card.tsx` (new, 320), `lib/portfolio/engines/idea-relevance.ts` (new), `lib/idea-source.ts` (new, 162), `lib/idea-stage.ts`, `app/api/pipeline/route.ts` (90 lines changed), `app/api/pipeline/fit/route.ts` (new), tests (`idea-relevance` 465, `pipeline-board` 201, `portfolio-stage-db`).
+- **Dependencies:** IOS fit; watchlist source columns; consumed by Home Radar.
+- **Risk level:** Low — additive scoring over existing pipeline data; NULL source on old rows reads as "origin not recorded".
+- **Coexists?** Yes — the relevance ranking could coexist with an alternative ranking behind a toggle.
+- **Replaces?** Partially — replaces recency ordering as the default.
+- **Improves:** UX ✔ · Accuracy ✔ · AI ✔ (better-grounded idea context)
 - **Rank:** **Medium**
 
-### 17. Fund profile & performance card upgrades
+### 11. AI failures made legible; compare verdict streams
 
-- **Description:** Profile card: adds currency-correct Total net assets with a "(this plan)" label when per-share-class (`perShareClass` prop), AMFI provenance badge on the expense ratio ("1.62% · AMFI"), Morningstar star rating, inception date; row order re-ranked. Performance card: titles itself "Performance" (not "vs Category") when no baseline exists and explains why, instead of rendering two dashes under a false heading.
-- **Reason:** Figures with different provenance or different denominators must say so on the card, or the honest number misleads.
-- **Files changed:** `app/research/fund/_components/fund-profile-card.tsx`, `app/research/fund/_components/fund-performance-card.tsx`, `app/research/page.tsx` (prop threading).
-- **Dependencies:** #11–#13.
-- **Risk level:** Low.
-- **Coexists:** Yes. **Replaces:** Yes — the previous card contents (hardcoded `$`, unlabeled figures).
-- **Improves:** UX ✅ · Accuracy ✅ · others —
+- **Description:** New typed AI error taxonomy (`TaskStageError`, `TimeoutError`, `ModelNotFoundError` in `lib/ai/errors.ts`), structured logging (`lib/ai/log.ts`), expanded health tracking (`lib/ai/health.ts` +101, `AI_HEALTH_PATH` env). The Compare verdict streams instead of blocking; the router no longer discards a whole verdict on the blocking path; one rate-limited symbol no longer sinks a comparison (`droppedSymbols` travels through `ComparisonSetup`).
+- **Reason:** AI failures previously surfaced as generic spinners-then-nothing; users couldn't distinguish "model missing" from "timed out" from "one symbol was rate-limited", and one bad symbol destroyed the entire compare output.
+- **Files changed:** `lib/ai/errors.ts`, `lib/ai/log.ts` (new), `lib/ai/health.ts`, `lib/ai/router.ts`, `lib/ai-compare.ts` (+197), `app/api/compare/stream/route.ts` (new), `app/compare/page.tsx` (310 lines changed), compare radar/class views, `app/_components/ai-assistant.tsx`, tests (`ai-errors`, `ai-health`, `ai-compare` +55).
+- **Dependencies:** router (change 12 shares it); collides with prisha's availability work (change 18) in `lib/ai-compare.ts` — the merge composed them: specific errors kept, advice routed through `AI_RECOVERY_HINT`.
+- **Risk level:** Medium — router changes; conflicted with change 17 in the actual merge.
+- **Coexists?** Yes — composed with change 18 in the resolution (typed errors + centralized recovery copy).
+- **Replaces?** Yes — replaces generic string errors and the blocking compare path.
+- **Improves:** UX ✔ · AI ✔ · Reliability ✔✔ · Maintainability ✔
+- **Rank:** **High**
+
+### 12. AI timeout as a bound, not a model failure (6m40s → 22s)
+
+- **Description:** `withRetry` now recognizes `TimeoutError` (previously only `AbortError`, so a 45s timeout × 3 attempts × 3 fallback models = 405s of futile retries); `streamChat` accepts `timeoutMs`; the router treats a timeout as a fact about the host, not the model, and stops walking fallbacks; `keep_alive` holds the model resident (30m interactive / 10m background); fallback messages name the actual cause. App-assistant budget raised 45s → 150s. Measured: worst case 6m40s → 22s cold / 16.3s warm.
+- **Reason:** Users saw multi-minute hangs that were pure retry arithmetic, and the blame landed on the provider ("Ollama is slow") rather than the router's semantics.
+- **Files changed:** `lib/ai/router.ts` (+185 total with change 11), `lib/ai/ollama.ts` (+135), `lib/ai/provider.ts` (timeoutMs field), `lib/ai/providers/ollama-provider.ts`, `lib/ai/task-registry.ts`, `lib/ai-app-assistant.ts`, `tests/ai-timeout.test.ts` (new, 139), `tests/ai-router.test.ts` (+166).
+- **Dependencies:** provider interface; conflicts head-on with change 17 (the merge conditioned all of this on `isHostedProvider() === false`, since hosted providers have no load phase).
+- **Risk level:** High — the exact seam where the merge's one silently-wrong auto-merge occurred (`routeStream` applying local gating to hosted providers).
+- **Coexists?** Yes, but only with explicit locality discrimination — proven by the merge resolution's `PROVIDER_LOCALITY` total Record.
+- **Replaces?** Yes — replaces timeout-as-retryable-model-failure semantics.
+- **Improves:** Performance ✔✔ · UX ✔✔ · AI ✔ · Reliability ✔ · Accuracy ✔ (honest failure attribution)
+- **Rank:** **Critical**
+
+### 13. Table primitive widened; density owned per surface
+
+- **Description:** `DataTable` gains persisted view state (`defaultSortKey`), row windowing with size announcement (`lib/table-window.ts`), a density toggle that states which density is selected (active segment brand-tinted — previously an invisible 3% luminance step), extraction of `DensityToggle` as an exported component, and a `showDensityToggle` prop so a surface owns exactly one toggle. New `date-input.tsx`; `task-progress.tsx` enhanced for staged pipelines.
+- **Reason:** The new surfaces (Watchlist, Simulator, register views) all sit on this primitive; without windowing and persistence the rebuilt Watchlist would regress on large lists, and the old density control gave no feedback about its own state.
+- **Files changed:** `app/_components/ui/data-table.tsx` (528 lines changed), `app/_components/ui/date-input.tsx` (new), `app/_components/ui/task-progress.tsx` (108 changed), `app/_components/ui/index.ts`, `lib/table-window.ts` (new, 159), `lib/format.ts` (+76 NaN guards), `tests/table-window.test.ts` (206).
+- **Dependencies:** consumed by Watchlist, Screener, Portfolio, register pages.
+- **Risk level:** Low–Medium — shared primitive; a regression here is visible everywhere, but changes are additive props.
+- **Coexists?** No — it is the single table primitive by design.
+- **Replaces?** Yes — replaces the narrower DataTable and the per-grid always-on density toggle.
+- **Improves:** UX ✔✔ · Performance ✔ (windowing) · Maintainability ✔ · Accuracy ✔ (NaN guards)
 - **Rank:** **Medium**
 
-### 18. Fund prompt honesty (missing TER, currency-correct figures)
+### 14. Removal of `/api/portfolio/new-positions` route
 
-- **Description:** Fund verdict and fund-research prompts replace "Expense ratio: n/a" with "not reported by our data source — do NOT assume it is zero or low" (an unqualified "n/a" reads as "free" to a model told the fund is an index-style pool), and format net assets with `formatCompactCurrency(value, fund.currency)` instead of a hardcoded `$…B`.
-- **Reason:** Stops the model inventing fee claims and mislabeling INR figures by the FX rate — the AI layer must receive the same honesty the UI renders.
-- **Files changed:** `lib/ai/verdict.ts` (`planFundVerdict`), `lib/ai-fund-research.ts`.
-- **Dependencies:** #11, #14.
-- **Risk level:** Low.
-- **Coexists:** Yes. **Replaces:** Yes — the prior prompt lines.
-- **Improves:** AI ✅ · Accuracy ✅ · Reliability ✅ (fewer fabrications) · others —
-- **Rank:** **Medium**
+- **Description:** Deleted the 267-line new-positions route (and its last test) as superseded by the recommendation route during the multi-portfolio refactor.
+- **Reason:** Route considered dead after the recommendation flow absorbed its job.
+- **Files changed:** `app/api/portfolio/new-positions/route.ts` (deleted), `tests/new-positions.test.ts` (deleted).
+- **Dependencies:** **`lib/ai-watchlist.ts` still documented it as a live caller** — which is why the merge into `main` restored the route and moved its objective/constraint/recommendation vocabulary into `lib/ios/types.ts`.
+- **Risk level:** High — this became the modify/delete conflict of the merge; the deletion was judged premature and reverted.
+- **Coexists?** N/A — a deletion cannot coexist with the modification the other branch made to the same file.
+- **Replaces?** Intended to (recommendation route as successor); resolution says not yet.
+- **Improves:** Maintainability ✔ (intent) — but at a Reliability ✘ cost as shipped, corrected in the merge.
+- **Rank:** **Medium** (as a lesson: verify the call graph before deleting; doc comments are intent, not fact)
 
-### 19. Display-name resolution on watchlist/portfolio writes + backfill script
+### 15. Portfolio state propagated into Home, palette, Research, Screener
 
-- **Description:** New `lib/yahoo.ts#resolveDisplayName(symbol, provided?)` — one cached quote lookup resolves a real display name; best-effort (offline degrades to the symbol). `/api/watchlist` and `/api/portfolio` POST use it when the caller has no name (command-palette quick-add POSTs `{symbol}` alone), so an Indian mutual fund no longer persists "0P0001BA9B.BO" as its *name* on every later read. `app/journal/page.tsx` drops a dead `shortName` preference (never returned by `/api/quote`; would have shown Morningstar IDs had it resolved). One-off `scripts/backfill-display-names.ts` repairs pre-fix rows (dry-run default, `--apply` to write; only touches rows whose name equals the symbol; never overwrites a user-typed name; idempotent).
-- **Reason:** Names are read far more often than written; fixing the write path plus a safe backfill removes the ID-as-name class permanently.
-- **Files changed:** `lib/yahoo.ts`, `app/api/watchlist/route.ts`, `app/api/portfolio/route.ts`, `app/journal/page.tsx`, `scripts/backfill-display-names.ts` (new).
-- **Dependencies:** `getQuote` (platform-cached); DB write paths.
-- **Risk level:** Low — adds one usually-cached lookup to two write endpoints; the script mutates the DB but is dry-run-first and idempotent (run once per machine, post-merge).
-- **Coexists:** Yes. **Replaces:** Yes — the `body.name?.trim() || symbol` defaulting.
-- **Improves:** UX ✅ · Accuracy ✅ · Reliability ✅ (offline-safe fallback) · others —
-- **Rank:** **Medium**
+- **Description:** The new portfolio model (multi-portfolio, stages, fit) is carried into the Home modules, command palette (watchlist-group awareness), Research page fields, Screener held-badges, add-to-portfolio modal fit summary, and data-provenance component. IOS profile simplified; `lib/ios/server.ts`/`types.ts` extended.
+- **Reason:** Without propagation, the new model exists but the rest of the app still renders the old world — the audit's core "shipped-but-unwired" failure mode.
+- **Files changed:** `app/_components/command-palette.tsx`, `app/_components/data-provenance.tsx`, `app/_components/portfolio/add-to-portfolio-modal.tsx`, `app/research/page.tsx`, `app/screener/page.tsx`, `lib/ios/{profile,server,types}.ts`, `lib/home/{contracts,digest}.ts`, `lib/mission-control.ts` (+72), `tests/mission-control.test.ts`.
+- **Dependencies:** changes 1, 3, 10.
+- **Risk level:** Low — thin plumbing over already-tested engines.
+- **Coexists?** Yes.
+- **Replaces?** No — extends existing surfaces.
+- **Improves:** UX ✔ · Reliability ✔ (one state everywhere)
+- **Rank:** **Low**
+
+### 16. Inherited from origin/main via merge `74ad42c` (Valuation module, Engine quant desk, icon system)
+
+- **Description:** `divit-local` merged origin/main mid-stream, pulling in the Valuation case/register module, the Engine quant-desk page, and the icon system. Authored on main, not on this branch — listed because they are part of the divergence versus the merge-base.
+- **Reason:** Keep the branch current; the Simulator and register views depend on primitives from main.
+- **Files changed:** merge commit `74ad42c` (large; see main's history).
+- **Dependencies:** upstream main.
+- **Risk level:** Low (already stabilized on main).
+- **Coexists?** / **Replaces?** N/A — inherited.
+- **Improves:** (inherited features' own merits)
+- **Rank:** **Low** (informational)
 
 ---
 
-## Materiality lens (new feature)
+## Part B — Changes from `origin/prisha-work`
 
-### 20. Materiality lens framework (pure judgment engine + shared UI)
+### 17. Hosted-first AI provider chain (Devin CLI provider)
 
-- **Description:** New `lib/materiality.ts`: a single pure `isMaterial(item, context)` function behind every flag — item kinds: peer-group dimension percentiles (refuses to claim extremes off tiny peer groups), risk levels, data freshness, timeline changes since last visit, concentration breaches, holding-score tier crossings. Verdicts are **three-state**: material / not material / **not applicable** — a bank with a null P/E is unscoreable, not "boring", and fading it would present missing data as examined-and-fine. Client-safe, no I/O, callers pass `now`; imports only the canonical recommendation bands. New shared component `app/_components/materiality-lens.tsx`: `LensControl` ("N flagged" pill computed on load, advertising signal before any interaction), `MaterialFade` (opacity fade with hover reason), `useMaterialityLens` (`d` toggles, Esc clears; keyboard handler yields to typing surfaces and *visible* dialogs — the AI dock keeps a hidden `role="dialog"` permanently mounted, so visibility is checked, not presence). Per-page component state; not persisted.
-- **Reason:** Pages accumulated dozens of panels; the user's question is "what here deserves my attention *now*?" Routing every judgment through one tested function keeps the header count, the fade state, and the hover reason from ever disagreeing.
-- **Files changed:** `lib/materiality.ts` (new), `app/_components/materiality-lens.tsx` (new), `tests/materiality.test.ts` (new).
-- **Dependencies:** `lib/recommendation.ts` (tier edges); consumed by #21/#22.
-- **Risk level:** Low — pure and unit-tested; UI is additive.
-- **Coexists:** Yes — deliberately coexists with the Home page's separate materiality filtering (`lib/home/changes.ts`), whose two-slot fingerprint design it borrows.
-- **Replaces:** No — new capability.
-- **Improves:** UX ✅✅ · Maintainability ✅ (one judgment function) · Accuracy ✅ (three-state honesty) · others —
+- **Description:** New Devin CLI subprocess provider (`lib/ai/devin-cli.ts`, 466 lines: isolated scratch workspace so repo AGENTS.md/CLAUDE.md rules don't leak into prompts, tools denied for pure inference, `--prompt-file` because stdin panics and argv can't hold dossier prompts, concurrency cap), `providers/devin-provider.ts`, provider registry (`ProviderId`, per-model provider, `endpointForProvider()`, `LOCAL_PROVIDERS`), lazy `attemptOrder()` generator in the router so enumerating a provider costs nothing until reached, and a default chain of devin → ollama reorderable via `AI_PROVIDER_ORDER`. Measured: 3.9–8.3s hosted vs 28–115s local; nine concurrent IC-agent prompts in 5.3s.
+- **Reason:** Local Ollama inference on a 16 GB host was the product's biggest latency and reliability bottleneck; hosted inference removes the load-phase and serialization constraints entirely.
+- **Files changed:** `lib/ai/devin-cli.ts`, `lib/ai/providers/devin-provider.ts` (new), `lib/ai/config.ts` (+32), `lib/ai/models.ts` (+172), `lib/ai/router.ts` (+140), `lib/ai/platform-health.ts` (new), tests (`ai-devin-cli` 90, `ai-provider-chain` 201, `ai-models` +25).
+- **Dependencies:** Devin CLI binary; env vars `DEVIN_CLI_*`, `AI_PROVIDER_ORDER`; collides directly with changes 11–12 in `lib/ai/router.ts`/`models.ts`.
+- **Risk level:** **Critical** — (a) the router conflict produced the merge's one silently-wrong auto-merge; (b) the `devin,ollama` default smuggled a product decision gated on unresolved calibration/cost blockers and had to be reverted post-merge (`1e1a34b`).
+- **Coexists?** Yes — explicitly designed to chain with the local provider; the merge made locality (`isHostedProvider()`) the discriminator.
+- **Replaces?** No at merge time (chained, not replaced). **Superseded later:** the post-merge Anthropic consolidation (`0ce3c0c`) retired both the Devin CLI and Ollama tiers — on today's HEAD this machinery no longer exists.
+- **Improves:** Performance ✔✔ · AI ✔✔ · UX ✔ · Reliability ✔ (fallback chain)
+- **Rank:** **Critical** (for this version; historically superseded)
+
+### 18. Provider-agnostic AI availability and recovery copy
+
+- **Description:** New `lib/ai/availability.ts` with `AI_RECOVERY_HINT` and `aiUnavailableMessage()`, replacing ~15 call sites that hardcoded "run `ollama serve`" advice; `ollama-status.tsx` reworked into an honest provider-agnostic status badge.
+- **Reason:** Every hardcoded recovery string became a lie the moment a second provider existed; centralizing the advice is the only way failure copy can track the provider chain.
+- **Files changed:** `lib/ai/availability.ts` (new), `app/_components/ollama-status.tsx` (+34), and edits across `lib/ai-app-assistant.ts`, `lib/ai-compare.ts`, `lib/ai-financial-insight.ts`, `lib/ai-watchlist.ts`, `lib/compare/class-ai-compare.ts`, `lib/event-screener.ts`, `lib/portfolio/holding-explain.ts`, `lib/portfolio/thesis.ts`, `app/landing/_components/sections/hero.tsx`, `app/research/_components/copilot/use-copilot.ts`.
+- **Dependencies:** touches the same files as change 11 — the merge kept divit's per-error-type messages and routed the *advice* through the hint.
+- **Risk level:** Medium — wide but shallow; the risk is a missed call site keeping stale advice.
+- **Coexists?** Yes — composed with change 11 in the resolution.
+- **Replaces?** Yes — retires hand-written per-file recovery strings.
+- **Improves:** UX ✔ · Maintainability ✔✔ · Reliability ✔ · Accuracy ✔ (copy can't drift from reality)
 - **Rank:** **High**
 
-### 21. Materiality lens on /research
+### 19. AI migration records, verdict Zod schema, and sessions-API spikes
 
-- **Description:** Lens control in the masthead action row. Flags computed once per symbol from data the page already fetches plus two async server inputs — `GET /api/materiality/research` (new route: peer-group percentiles for 7 headline metrics from the *same* Screener universe stats, honestly `null` when the symbol isn't in the cached equity universe; plus prior-visit timestamp) and the symbol timeline (now fetched at page load so the count can say "changed since your last visit" before any tab opens; `TimelinePreviewCard` gains `initialEvents` and reuses those events instead of re-fetching). `MaterialFade` wraps conviction breakdown, score card, earnings card, provenance rows, analyst card, risk heat map (per-tile fading via new `lensActive` prop, routed through the same `isMaterial` so a tile can never disagree with the header), SEC filings, timeline preview. `GET` handler added to `/api/home/activity` (`getActivityAt`), read before the visit's debounced POST lands so it reports the *previous* visit.
-- **Reason:** The research page is the densest surface in the app; the lens answers "what changed / what's extreme / what's stale" without hiding anything or re-deriving judgments locally.
-- **Files changed:** `app/research/page.tsx`, `app/research/_components/risk-heatmap.tsx`, `app/research/_components/timeline-preview-card.tsx`, `app/api/materiality/research/route.ts` (new), `app/api/home/activity/route.ts`, `lib/db.ts` (`getActivityAt`).
-- **Dependencies:** #20; `lib/screener/universe-stats.ts`; `activity` table; `/api/timeline`.
-- **Risk level:** Medium — threads through the app's largest page (a top merge-conflict file); logic itself is additive and fail-soft (fetch failures leave the lens at zero flags).
-- **Coexists:** Yes. **Replaces:** No (the timeline card's self-fetch remains for callers without pre-fetched events).
-- **Improves:** UX ✅✅ · Performance ✅ (timeline dedupe) · Accuracy ✅ (screener-consistent percentiles, no invented cutoffs) · others —
+- **Description:** Phase records `ai-migration/01-inventory.md` (all ~45 AI call sites with latency class and parse brittleness), `02-devin-capabilities.md`, `03-architecture.md`; `lib/ai/schemas/verdict.ts` (Zod `InvestmentVerdict` with `VERDICT_SCHEMA_VERSION`, compiles to Draft-7 JSON Schema via `z.toJSONSchema()`); `scripts/devin-spike.ts` (362 lines: sessions-API end-to-end with latency/ACU/first-try-validity measurement, jittered backoff polling) later extended to accept legacy v1 `apk_` keys alongside v3 `cog_` service users, routing `/v1/sessions` vs `/v3/organizations/{org}/sessions` through one status classifier.
+- **Reason:** The migration was executed as measured phases with written evidence rather than a leap; the schema makes AI output contractually validatable.
+- **Files changed:** `ai-migration/0{1,2,3}-*.md` (new), `lib/ai/schemas/verdict.ts` (new), `scripts/devin-spike.ts` (new, +70 later), `tests/ai-verdict.test.ts` (+4).
+- **Dependencies:** introduces **zod ^4.4.3** (change also listed under dependencies); schema mirrors `lib/ai/verdict.ts` for compatibility.
+- **Risk level:** Low — docs, a schema, and a standalone script; the schema is additive.
+- **Coexists?** Yes — the merge deliberately kept **both** authors' migration records side by side (`0{1,2,3}-*.prisha.md`).
+- **Replaces?** No — records and scaffolding.
+- **Improves:** AI ✔ (validated output) · Reliability ✔ · Maintainability ✔ · Accuracy ✔
 - **Rank:** **Medium**
 
-### 22. Materiality lens on /portfolio + `page_fingerprint` table
+### 20. Screener legibility — show the universe's shape, explain empty results
 
-- **Description:** Lens control in the header; fades stat tiles and dashboard panels (allocation inherits the concentration verdict so it stays crisp when a breach exists); holdings panel fades under the tier-crossing verdict; a "tier change" callout list renders while the lens is on; concentration rows carry hover reasons. Baseline exchange: the client POSTs the per-symbol holding scores it just rendered to new `POST /api/materiality/portfolio`, which returns the previous visit's scores and stores the new ones — nothing rebuilt server-side; one exchange per report build (keyed on `generatedAt`); **Main portfolio only** (a view-only portfolio must not overwrite Main's baseline). Storage: new SQLite `page_fingerprint` table (`page`,`slot∈{current,baseline}`,`data`,`taken_at`; PK (page,slot)) with the same two-slot visit-gap promotion semantics as `home_fingerprint` — reloading within one sitting keeps comparing against the previous *visit*. Created via `CREATE TABLE IF NOT EXISTS`; no migration needed. New `get/putPageFingerprint` in `lib/db.ts`.
-- **Reason:** "Did any holding's score cross a tier since I last looked?" is the portfolio-page version of the lens question, and it needs a durable per-page baseline the client can't fake.
-- **Files changed:** `app/portfolio/page.tsx`, `app/api/materiality/portfolio/route.ts` (new), `lib/db.ts` (DDL + accessors).
-- **Dependencies:** #20; `VISIT_GAP_MS` from `lib/home/changes.ts`; portfolio report pipeline.
-- **Risk level:** Medium — additive schema (safe) but threads through another high-churn page; DDL block in `lib/db.ts` is a standing conflict point.
-- **Coexists:** Yes. **Replaces:** No.
-- **Improves:** UX ✅✅ · Accuracy ✅ · Performance — (one small POST per report) · others —
+- **Description:** Distribution-bar histograms under every filter (24 buckets, span highlight, coverage %); removable filter chips stating the applied screen in one line; frame cycling per filter (absolute # → class percentile % → peer percentile ≈) with per-filter missing-data policy; preference toggles (2× ranking weight); "why empty" diagnosis naming the binding filters and the slack that would fix them, with one-click relax; held/marginal badges and binding-constraint display in results; batch staging; `universe-stats.ts` computing class and peer-group percentiles cached per universe build; `filter-engine.ts` `diagnose()`/`parsePreferences()`/frame-based filtering.
+- **Reason:** The screener was blind — users couldn't see the universe's shape, why a screen returned nothing, or how close a near-miss was; empty results looked like breakage.
+- **Files changed:** new `app/screener/_components/{distribution-bar,filter-chips,why-empty,screen-diff}.tsx`, `filter-panel.tsx` (+215), `results-table.tsx` (+161), `filter-state.ts` (+39), `app/screener/page.tsx` (+302), `lib/screener/universe-stats.ts` (new, 225), `lib/screener/filter-engine.ts` (+298), `lib/screener/pipeline.ts` (+45), `tests/screener-engine.test.ts` (+222).
+- **Dependencies:** `lib/assets/` registry (change 21 provides new metrics to filter on); universe cache.
+- **Risk level:** Low–Medium — large but additive UI + pure-function engine additions with tests.
+- **Coexists?** Yes — additive layers over the existing pipeline.
+- **Replaces?** Partially — replaces the silent empty state and unexplained ranking.
+- **Improves:** UX ✔✔ · Accuracy ✔ (percentile frames) · Maintainability ✔ · AI ✔ (explain gets better ground truth)
+- **Rank:** **Critical**
+
+### 21. Universe metric expansion and asset-type formalization
+
+- **Description:** New computed metrics per class — crypto `supplyOverhang`; bond `yieldPerDuration`, `spreadPerDuration`, `netYield`, `cashWeight`, `fundAge`; commodity `returnPerVol`, `carryQuality`; equity risk-adjusted metrics; fund `family`/`effectiveSectors` (inverse-Herfindahl) and `structure` (leveraged/inverse/covered-call/…) + canonicalized `issuer`; ETF structure/issuer enums (+140). New `lib/assets/{bond,commodity,crypto,equity,reit}.ts`; `assets/types.ts` gains `peerGroupBy` so peer-percentile frames know their peer set.
+- **Reason:** Peer-relative screening (change 20's frames) is meaningless without formal peer grouping, and the new risk-adjusted metrics are what practitioners actually screen bonds/commodities on.
+- **Files changed:** `lib/screener/universes/{bond,commodity,crypto,equity,etf,fund-shared}.ts`, `lib/assets/*` (5 new files, `etf.ts` +217, `types.ts` +83), `tests/screener-universes.test.ts`.
+- **Dependencies:** consumed by screener pipeline, filter panel, results columns.
+- **Risk level:** Low — additive metric definitions.
+- **Coexists?** Yes.
+- **Replaces?** No.
+- **Improves:** Accuracy ✔ · UX ✔ (more meaningful screens)
 - **Rank:** **Medium**
 
----
+### 22. Saved-screen run snapshots (entries/exits diff)
 
-## Documentation
+- **Description:** `saved_screen` gains `last_symbols` (JSON, capped at 500) and `last_run_at`; `recordScreenRun()` and a `PATCH /api/screener/saved` route that records a run without touching `updated_at`; loading a saved screen shows which symbols entered/exited since its last run.
+- **Reason:** A saved screen's value is the delta — new names appearing and old names dropping out — which was previously invisible.
+- **Files changed:** `lib/db.ts` (+54 on this side), `app/api/screener/saved/route.ts`, `app/screener/_components/{saved-screens,screen-diff}.tsx`.
+- **Dependencies:** change 20's screen-diff component; SQLite.
+- **Risk level:** Low — additive columns; auto-merged cleanly with divit's much larger `db.ts` change.
+- **Coexists?** Yes.
+- **Replaces?** No.
+- **Improves:** UX ✔ · Accuracy ✔ (change detection)
+- **Rank:** **Low**
 
-### 23. AGENTS.md product rules, India plans, YC materials
+### 23. Brand identity system ("Convergence Point")
 
-- **Description:** AGENTS.md gains a "Product Rules Learned The Hard Way" entry documenting the entire Yahoo fund-feed zero-encoding failure class and the verified unit/staleness conventions (§11–§13's institutional memory). New untracked planning docs: `INDIA_GAP_ANALYSIS.md` (52KB gap audit), `INDIA_IMPLEMENTATION_PLAN.md`, `YC_DEMO_SCRIPT.md`, `YC_MASTER_PROMPT.md`. Committed: `ai-migration/04b`, `ai-migration/07`, `ai-migration/08` and `ai-migration/09` phase reports; `docs/devin-integration.md` policy amendment.
-- **Reason:** The repo's convention is that hard-won data-source behavior is written where the next agent reads first; the migration keeps a phase-by-phase decision log.
-- **Files changed:** `AGENTS.md`, `ai-migration/04b-spike-results-v1-key.md`, `ai-migration/07-tranche3-verdict.md`, `ai-migration/08-tranche4-thesis-brief.md`, `ai-migration/09-tranche5-compare-simulator.md`, `docs/devin-integration.md`, `INDIA_GAP_ANALYSIS.md`, `INDIA_IMPLEMENTATION_PLAN.md`, `YC_DEMO_SCRIPT.md`, `YC_MASTER_PROMPT.md`.
-- **Dependencies:** None.
-- **Risk level:** Low (AGENTS.md is append-prone in merges — union-merge produces contradictory guidance; merge by reading).
-- **Coexists:** Yes. **Replaces:** Partially — amends the local-only policy text.
-- **Improves:** Maintainability ✅✅ · others —
+- **Description:** A single source of truth for logo geometry (`lib/brand/mark.ts` — four bars converging to a diamond terminus), React brand components (`BrandMark`, `BrandLockup`, `BrandEmptyState`, animated `LoadingMark` that resolves pixel-exactly into the static mark), a generator script producing favicon.ico / icon.svg / apple-icon.png / PWA icons / `public/brand/*.svg` from the geometry, a PWA `manifest.ts`, PDF-export brand integration (`lib/brand/pdf.ts`), a site footer, and header/boot-splash/palette/assistant adoption. Full spec in `docs/LOGO-IMPLEMENTATION.md` and `docs/brand-guidelines.md`.
+- **Reason:** The app shipped with the stock Next.js favicon and no visual identity; empty states and loading indicators were unbranded and inconsistent.
+- **Files changed:** `lib/brand/{mark,pdf}.ts` (new), `app/_components/brand.tsx` (new, 278), `app/_components/{site-footer}.tsx` (new), `loading-mark.tsx`, `site-header.tsx`, `boot-splash.tsx`, `ai-assistant.tsx`, `command-palette.tsx`, `app/layout.tsx`, `app/globals.css` (+60), `app/manifest.ts` (new), `app/{favicon.ico,icon.svg,apple-icon.png}`, `public/brand/*` (7 assets), `scripts/generate-brand-assets.ts` (new), `package.json` (`brand:assets` script), `docs/LOGO-IMPLEMENTATION.md`, `docs/brand-guidelines.md`, `tests/brand.test.ts` (142).
+- **Dependencies:** none at runtime; generated binaries must be regenerated (never merged) via `npm run brand:assets`.
+- **Risk level:** Low — presentational; the only merge hazard is the binary assets.
+- **Coexists?** No — a brand is singular; note the later Brand Phase 1 (post-merge, `5549b36`) re-tinted brass-in/sky-blue-out on top of this system, which is exactly what a geometry-as-code brand enables.
+- **Replaces?** Yes — replaces placeholder branding.
+- **Improves:** UX ✔✔ · Maintainability ✔ (assets generated from one geometry)
+- **Rank:** **High**
+
+### 24. Python engine performance overhaul (~200s → ~10s Fast Run)
+
+- **Description:** Batched price loading (one ordered scan replacing ~2,000 per-symbol round-trips on a 250-name universe); one HMM regime fit per market instead of 12 per stock (−47s); stopped writing the `features_daily` full 5-year expansion nobody read (−28s/run; 15.4M rows / 1.1 GB reclaimed); same-day rerun compares against the market's last close to skip re-downloads; `fast_info` no longer refetched per symbol on top-ups (−49s); universe resolution no longer hits the Yahoo screener every run (−3–9s); fundamentals enrichment visits only rows with missing fields; `raise_fd_limit()` for macOS; vectorized `features/factory.py`, `models/regime.py`, `data/loader.py`; per-stage `StageTimer` profiling (`UAA_ENGINE_TIMING=0` to silence). `verify_engine_equivalence.py` pins vectorized-vs-loop equivalence (max |diff| 0 to 1e-13). Measured: Fast Run (`--no-forecast`) ~182–223s → **~9–13s** on full_us (248 names, warm).
+- **Reason:** The engine re-did work on every run; a 3-minute daily job that should take seconds discourages running it at all.
+- **Files changed:** `engine/daily_run.py` (+597), `engine/profiling.py` (new, 89), `engine/data/loader.py` (+328), `engine/data/{macro_loader,nse_enrichment}.py`, `engine/features/factory.py` (+311), `engine/models/regime.py` (+312), `engine/universe.py` (+110), `verify_engine_equivalence.py` (new, 347).
+- **Dependencies:** DuckDB; yfinance; pure-Python — no npm impact.
+- **Risk level:** Medium — heavy rewrite of numerical code, mitigated decisively by the equivalence verifier.
+- **Coexists?** No — rewrites the single engine pipeline.
+- **Replaces?** Yes — replaces loop implementations and per-symbol query patterns.
+- **Improves:** Performance ✔✔✔ · Reliability ✔ (FD limits, recency guards) · Accuracy ✔ (equivalence pinned) · Maintainability ✔ (stage timing)
+- **Rank:** **Critical**
+
+### 25. Engine data-corruption fixes
+
+- **Description:** Three correctness fixes in the Python engine: (a) `fetch_ohlcv`'s single-symbol branch read `row.get("Open")` against yfinance's MultiIndex columns and silently wrote **all-NULL prices**; (b) `_yf_close` returned an (n,1) array so macro augmentation never ran — swallowed by a bare `except`; (c) "NULL means retry" conditions lacked recency guards, causing infinite refetch loops.
+- **Reason:** Silent NULL price writes and a silently-dead macro feature corrupt every downstream score; these are integrity bugs, not performance bugs.
+- **Files changed:** `engine/data/loader.py`, `engine/daily_run.py` (within the change-24 commits `c399e40`/`4c10c1d`).
+- **Dependencies:** none beyond the engine.
+- **Risk level:** Low — strictly corrective.
+- **Coexists?** No — fixes the single data path.
+- **Replaces?** Yes — replaces the broken read/guard logic.
+- **Improves:** Accuracy ✔✔✔ · Reliability ✔✔
+- **Rank:** **Critical**
+
+### 26. DuckDB compaction and derived-history pruning
+
+- **Description:** `engine/compact_db.py` rewrites the DuckDB database into a fresh file (DuckDB frees blocks after DELETE but never shrinks the file), verifying per-table row counts before swapping and keeping a backup on mismatch; `prune_derived_history()` removes derived rows no reader consumes.
+- **Reason:** The engine DB grew monotonically (1.1 GB of unread `features_daily` expansion alone) on a laptop where disk and RAM headroom are the operating constraint.
+- **Files changed:** `engine/compact_db.py` (new, 99), `engine/daily_run.py` (prune integration).
+- **Dependencies:** DuckDB; change 24 (pruning is only safe because the expansion write was removed).
+- **Risk level:** Medium — it rewrites the database file; mitigated by row-count verification and backup-on-mismatch.
+- **Coexists?** Yes — an operational tool.
+- **Replaces?** No.
+- **Improves:** Performance ✔ · Reliability ✔ (verified swap) · Maintainability ✔
+- **Rank:** **Medium**
+
+### 27. Dataset stale-while-revalidate on the screener price layer
+
+- **Description:** `lib/dataset.ts` (+50) serves the cached price layer immediately and refreshes in the background when the 5-minute TTL expires; N concurrent screens trigger exactly one refresh.
+- **Reason:** Screener interactions randomly hung ~3.7s whenever a user happened to be the one who tripped the TTL.
+- **Files changed:** `lib/dataset.ts`.
+- **Dependencies:** legacy `fundamentals_cache` path (predates the platform layer, which already had SWR — this brings the legacy path to parity).
+- **Risk level:** Low — serving slightly stale prices for one refresh window on a screening (not trading) surface is an explicit, acceptable trade.
+- **Coexists?** Yes.
+- **Replaces?** Yes — replaces blocking-refresh semantics on this path.
+- **Improves:** Performance ✔✔ · UX ✔✔ · Reliability ✔
+- **Rank:** **High**
+
+### 28. Redesign and eye-ease design records (docs-only; redesign later ABANDONED)
+
+- **Description:** `docs/redesign/PLAN.md` (phased plan + decision log), `docs/brand-preview/**` HTML prototypes (terminal spec/demo, working, engines), `docs/concept/EYE-EASE.md` (876 lines) + interactive prototype and screenshots. No app code.
+- **Reason:** Record the design exploration and the light-theme decision with prototypes rather than assertions.
+- **Files changed:** `docs/redesign/`, `docs/brand-preview/`, `docs/concept/` (new, docs-only).
+- **Dependencies:** none.
+- **Risk level:** Low for code; **High for guidance** — the terminal redesign was abandoned by owner decision (2026-08-02, too close to Bloomberg's identity). AGENTS.md now marks these as historical records; nothing may reintroduce the `.tm-*` chrome.
+- **Coexists?** Yes (inert documents).
+- **Replaces?** No — and must not be treated as replacing the shipped UI direction.
+- **Improves:** Maintainability ✔ (decision history)
+- **Rank:** **Low**
+
+### 29. Performance baseline harness
+
+- **Description:** `scripts/perf-baseline.mjs` (142 lines) measures build time, per-route initial JS, LCP/TTI on the five heaviest pages, screener scroll FPS, and 30-minute heap; the recorded baseline (60.1 avg FPS at 50 rows; heap 11.3/15.4 MB) lives in `docs/redesign/PLAN.md` §6.
+- **Reason:** "Record the performance baseline" before any redesign so regressions are measurable rather than argued.
+- **Files changed:** `scripts/perf-baseline.mjs` (new).
+- **Dependencies:** Playwright/Chrome for measurement; dev server running.
+- **Risk level:** Low — standalone script.
+- **Coexists?** Yes.
+- **Replaces?** No.
+- **Improves:** Performance ✔ (measurability) · Maintainability ✔
 - **Rank:** **Low**
 
 ---
 
-## Cross-cutting observations
+## Part C — Cross-cutting records
 
-- **No new dependencies** were introduced by any change (`package.json`/`package-lock.json`/`requirements.txt` untouched); AMFI uses plain `fetch`, schemas use the existing Zod, the lens is dependency-free.
-- **One DB schema change** (#22, additive `page_fingerprint`); several **cache-version bumps/introductions** that function as schema changes for cached data: `VERDICT_SCHEMA_VERSION` 2 (#2), `fundProfile` `v:3` (#11), and new versioned keys `HOME_BRIEF_SCHEMA_VERSION` 1 / `PORTFOLIO_THESIS_SCHEMA_VERSION` 1 (#8/#9) and `COMPARISON_SCHEMA_VERSION` 1 / `SIMULATOR_SCHEMA_VERSION` 1 (#24).
-- **Environment surface changes:** new `UAA_VERDICT_WARM_INTERVAL_MS` (#3, not yet in `.env.example`); `DEVIN_API_KEY` accepts `apk_` keys with `DEVIN_ORG_ID` optional (#4); `AI_PROVIDER=devin` flipped machine-locally (#6); `DEVIN_API_CONCURRENCY` reused by the warmer (#3).
-- **Atomicity requirement:** the uncommitted changes and untracked files are one unit — tracked, modified files (`app/research/page.tsx`, `app/portfolio/page.tsx`, `lib/db.ts`, `lib/yahoo.ts`) import untracked files (`lib/materiality.ts`, `lib/amfi.ts`, `app/_components/materiality-lens.tsx`, `app/api/materiality/*`). Committing the former without the latter breaks the build. (Tranche 4's schema files — `lib/ai/schemas/{loose,home-brief,portfolio-thesis}.ts` — were in the same position until `ffb6d77` committed them; the fund/lens work should follow the same path.)
-- **Two changes carry real-world side effects beyond code:** #3 (scheduled Devin ACU consumption) and #19's backfill script (DB writes; dry-run first, once per machine).
+### New dependencies introduced in this version
+
+| Dependency | Introduced by | Change # |
+|---|---|---|
+| `zod` `^4.4.3` | prisha-work | 19 |
+| npm script `brand:assets` | prisha-work | 23 |
+| *(divit-local added no dependencies)* | — | — |
+
+### Database schema deltas (summary; details in the owning changes)
+
+- **New tables:** `watchlist_group`, `watchlist_member`, `watchlist_target_history` (1) · `price_alert_state` (9) · `portfolios` (3) · `simulation` (2)
+- **New columns:** `watchlist.stage/stage_changed_at/target_direction/source/source_detail` (1, 9, 10) · `portfolio_lot.currency/asset_class/portfolio_id` (3, 4) · `manual_asset.portfolio_id`, `portfolio_snapshot.portfolio_id` (3) · `saved_screen.last_symbols/last_run_at` (22) · `decision.case_version` (kept from both sides in the merge)
+- All migrations are additive (`CREATE TABLE IF NOT EXISTS` / `ADD COLUMN` with safe defaults); there is no downgrade path.
+
+### Environment variable deltas (summary)
+
+- divit-local: `AI_HEALTH_PATH` (11).
+- prisha-work: `AI_PROVIDER_ORDER`, `AI_DISABLED_MODELS`, `AI_MAX_MODEL_GB`, `DEVIN_CLI_{BIN,WORKSPACE,CONCURRENCY,DISABLED}`, `DEVIN_API_{KEY,BASE,MODE,MAX_ACU,CONCURRENCY}`, `DEVIN_ORG_ID`, `DEVIN_PLAYBOOK_ANALYSIS`, `AI_PROVIDER`, `OLLAMA_HOST`, `UAA_ENGINE_TIMING` (17, 19, 24).
+- **Post-merge note:** the Anthropic consolidation on the current HEAD retired the Devin/Ollama variables; validate any env documentation against `lib/ai/config.ts` on the target branch.
+
+### Changes that collide (must be composed, not picked)
+
+| Collision | Changes | How the `main` resolution composed them |
+|---|---|---|
+| `lib/ai/router.ts` / `models.ts` | 11 + 12 vs 17 | prisha's lazy provider chain as the outer loop; divit's local-reliability work conditioned on `isHostedProvider() === false` via a compiler-total `PROVIDER_LOCALITY`; hosted timeouts fall through the chain |
+| AI failure copy (~15 call sites) | 11 vs 18 | per-error-type messages kept; recovery *advice* routed through `AI_RECOVERY_HINT` |
+| `app/api/portfolio/new-positions` | 14 vs prisha's modification | route restored; vocabulary moved to `lib/ios/types.ts` |
+| `lib/db.ts` | 1/3/9 vs 22 | both sides' additive schema kept (`decision.case_version`, `saved_screen.last_*`) |
+| `app/portfolio/page.tsx` | 2/5 vs 23 | empty book keeps tab bar + usable Simulator with `BrandEmptyState` as the card inside |
+| `AGENTS.md` | both appended sections | both kept (product rules + quant-engine performance rules) |
+
+---
+
+*Generated from the same evidence base as `MERGE_SUMMARY.md`: `git diff 98500e1..{divit-local,origin/prisha-work}`, per-commit logs, `git merge-tree` conflict analysis, the `6585052` merge-resolution record, and direct source inspection. No source code was modified.*

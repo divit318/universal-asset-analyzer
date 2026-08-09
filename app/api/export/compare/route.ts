@@ -1,5 +1,7 @@
 import ExcelJS from "exceljs";
 import type { CompareEntry } from "@/app/api/compare/route";
+import { resolveRowHighlights } from "@/lib/compare/metrics";
+import { SECTIONS, rowValues, score100, pctSigned, pctAbs, xRatio } from "@/lib/compare/registry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,93 +11,18 @@ interface CompareExportPayload {
   aiVerdict?: string;
 }
 
-function pctSigned(v: number | null): string {
-  if (v == null) return "—";
-  return `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
-}
-function pctAbs(v: number | null): string {
-  if (v == null) return "—";
-  return `${v.toFixed(1)}%`;
-}
-function xRatio(v: number | null): string {
-  if (v == null) return "—";
-  return `${v.toFixed(1)}x`;
-}
-
-interface MetricDef {
-  label: string;
-  getValue: (e: CompareEntry) => number | null;
-  format: (v: number | null) => string;
-  higherBetter: boolean | null;
-}
-interface SectionDef { title: string; metrics: MetricDef[] }
-
-const SECTIONS: SectionDef[] = [
-  {
-    title: "Valuation",
-    metrics: [
-      { label: "Forward P/E", getValue: (e) => e.snapshot?.forwardPE ?? null, format: xRatio, higherBetter: false },
-      { label: "Trailing P/E", getValue: (e) => e.snapshot?.trailingPE ?? null, format: xRatio, higherBetter: false },
-      { label: "PEG Ratio", getValue: (e) => e.snapshot?.pegRatio ?? null, format: xRatio, higherBetter: false },
-      { label: "Price / Book", getValue: (e) => e.snapshot?.priceToBook ?? null, format: xRatio, higherBetter: false },
-      { label: "FCF Yield", getValue: (e) => e.fcfYieldPct ?? null, format: pctAbs, higherBetter: true },
-      { label: "Analyst Upside", getValue: (e) => e.analyst?.upsidePercent ?? null, format: pctSigned, higherBetter: true },
-    ],
-  },
-  {
-    title: "Growth",
-    metrics: [
-      { label: "Revenue Growth YoY", getValue: (e) => e.snapshot?.revenueGrowth != null ? e.snapshot.revenueGrowth * 100 : null, format: pctSigned, higherBetter: true },
-      { label: "Earnings Growth YoY", getValue: (e) => e.snapshot?.earningsGrowth != null ? e.snapshot.earningsGrowth * 100 : null, format: pctSigned, higherBetter: true },
-      { label: "Revenue CAGR 3Y", getValue: (e) => e.statements?.revenueCagr != null ? e.statements.revenueCagr * 100 : null, format: pctSigned, higherBetter: true },
-      { label: "FCF CAGR 3Y", getValue: (e) => e.statements?.fcfCagr != null ? e.statements.fcfCagr * 100 : null, format: pctSigned, higherBetter: true },
-    ],
-  },
-  {
-    title: "Quality & Profitability",
-    metrics: [
-      { label: "Return on Equity", getValue: (e) => e.snapshot?.returnOnEquity != null ? e.snapshot.returnOnEquity * 100 : null, format: pctAbs, higherBetter: true },
-      { label: "Return on Assets", getValue: (e) => e.snapshot?.returnOnAssets != null ? e.snapshot.returnOnAssets * 100 : null, format: pctAbs, higherBetter: true },
-      { label: "Gross Margin", getValue: (e) => e.snapshot?.grossMargins != null ? e.snapshot.grossMargins * 100 : null, format: pctAbs, higherBetter: true },
-      { label: "Operating Margin", getValue: (e) => e.snapshot?.operatingMargins != null ? e.snapshot.operatingMargins * 100 : null, format: pctAbs, higherBetter: true },
-      { label: "Net Margin", getValue: (e) => e.snapshot?.profitMargins != null ? e.snapshot.profitMargins * 100 : null, format: pctAbs, higherBetter: true },
-    ],
-  },
-  {
-    title: "Financial Strength",
-    metrics: [
-      { label: "Debt / Equity", getValue: (e) => e.snapshot?.debtToEquity ?? null, format: xRatio, higherBetter: false },
-      { label: "Net Debt / EBITDA", getValue: (e) => e.netDebtToEbitda ?? null, format: xRatio, higherBetter: false },
-      { label: "Current Ratio", getValue: (e) => e.snapshot?.currentRatio ?? null, format: xRatio, higherBetter: true },
-    ],
-  },
-  {
-    title: "Momentum",
-    metrics: [
-      { label: "1-Year Return", getValue: (e) => e.oneYearReturn ?? null, format: pctSigned, higherBetter: true },
-      { label: "vs SMA-200", getValue: (e) => e.momentum?.vsSma200 ?? null, format: pctSigned, higherBetter: true },
-      { label: "3-Month Return", getValue: (e) => e.momentum?.return3m ?? null, format: pctSigned, higherBetter: true },
-      { label: "% from 52W High", getValue: (e) => e.momentum?.pctFrom52WkHigh ?? null, format: pctSigned, higherBetter: false },
-    ],
-  },
-  {
-    title: "Composite Scores",
-    metrics: [
-      { label: "Overall Score (/100)", getValue: (e) => e.score?.total ?? null, format: (v) => v != null ? `${Math.round(v)}/100` : "—", higherBetter: true },
-      { label: "Composite Score (/100)", getValue: (e) => e.score?.composite ?? null, format: (v) => v != null ? `${Math.round(v)}/100` : "—", higherBetter: true },
-      { label: "Recommendation", getValue: () => null, format: () => "—", higherBetter: null },
-    ],
-  },
-];
+/** Null-safe wrapper for the registry's number-only formatters. */
+const orDash = (v: number | null | undefined, f: (v: number) => string): string =>
+  v == null ? "—" : f(v);
 
 const NAVY: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
 const BLUE: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1E40AF" } };
 const SECTION_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1E3A5F" } };
 const WHITE_FONT: Partial<ExcelJS.Font> = { bold: true, color: { argb: "FFFFFFFF" }, size: 10 };
 
-// Stock column colors (for the symbol header rows)
-const COL_ARGB = ["FF3B82F6", "FFF59E0B", "FF10B981", "FFF43F5E", "FFA855F7"];
-const COL_BEST_FILL_ARGB = ["FFD1FAE5", "FFFEF9C3", "FFD1FAE5", "FFFEE2E2", "FFF3E8FF"];
+// Stock column colors (for the symbol header rows) — same hue order as the
+// page's categorical palette (violet, sky, teal, amber, pink).
+const COL_ARGB = ["FF7C3AED", "FF0284C7", "FF0F766E", "FFB45309", "FFBE185D"];
 
 /** POST /api/export/compare — body: CompareExportPayload */
 export async function POST(req: Request): Promise<Response> {
@@ -182,13 +109,12 @@ export async function POST(req: Request): Promise<Response> {
     rowIdx++;
 
     section.metrics.forEach((metric, mi) => {
-      const values = entries.slice(0, 5).map((e) => metric.getValue(e));
-      const numericVals = values.filter((v): v is number => v != null);
-
-      const best = numericVals.length > 1
-        ? metric.higherBetter === true ? Math.max(...numericVals)
-        : metric.higherBetter === false ? Math.min(...numericVals)
-        : null : null;
+      // Same applicability + winner resolution as the page's table — a bank's
+      // gross margin exports as "n/a", ties mark every tied cell, and best
+      // AND worst both get a treatment.
+      const cells = rowValues(metric, entries.slice(0, 5));
+      const values = cells.map((c) => c.value);
+      const winners = resolveRowHighlights(values, metric.direction, metric.format);
 
       const rowBg = mi % 2 === 0 ? "FFFFFFFF" : "FFF8FAFC";
 
@@ -202,31 +128,30 @@ export async function POST(req: Request): Promise<Response> {
       // Value cells
       values.forEach((val, i) => {
         const cell = ws.getCell(rowIdx, i + 2);
-        const isBest = val != null && val === best && numericVals.length > 1;
+        const isBest = winners?.best.includes(i) ?? false;
+        const isWorst = winners?.worst.includes(i) ?? false;
 
-        const formatted = metric.label === "Recommendation"
-          ? (entries[i]?.score?.recommendation?.replace(/_/g, " ").toUpperCase() ?? "—")
-          : metric.format(val);
+        const suffix = metric.format === score100 ? "/100" : "";
+        const formatted = cells[i].naReason ? "n/a" : val == null ? "—" : `${metric.format(val)}${suffix}`;
 
         cell.value = formatted;
         cell.alignment = { horizontal: "center", vertical: "middle" };
 
         if (isBest) {
-          // Best performer: colored highlight
-          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COL_BEST_FILL_ARGB[0] } };
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD1FAE5" } };
           cell.font = { bold: true, size: 9, color: { argb: "FF065F46" } };
+        } else if (isWorst) {
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEE2E2" } };
+          cell.font = { bold: true, size: 9, color: { argb: "FF991B1B" } };
         } else {
           cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: rowBg } };
-          // Color positive/negative for relevant metrics
-          const isPositiveMetric = metric.higherBetter === true && val != null && val > 0;
-          const isNegativeMetric = val != null && val < 0 &&
-            (metric.label.includes("Return") || metric.label.includes("Growth") || metric.label.includes("Upside"));
-          if (isPositiveMetric) {
-            cell.font = { size: 9, color: { argb: "FF1D4ED8" } };
-          } else if (isNegativeMetric) {
+          // Signed metrics keep their own sign color — the only case the number itself is colored, matching the page.
+          if (metric.signed && val != null && val > 0) {
+            cell.font = { size: 9, color: { argb: "FF047857" } };
+          } else if (metric.signed && val != null && val < 0) {
             cell.font = { size: 9, color: { argb: "FFDC2626" } };
           } else {
-            cell.font = { size: 9, color: { argb: "FF374151" } };
+            cell.font = { size: 9, color: { argb: cells[i].naReason ? "FF9CA3AF" : "FF374151" } };
           }
         }
       });
@@ -307,12 +232,12 @@ export async function POST(req: Request): Promise<Response> {
     }},
     { label: "Overall Score", getValue: (e) => e.score?.composite != null ? `${Math.round(e.score.composite)}/100` : "—", bold: true },
     { label: "Recommendation", getValue: (e) => e.score?.recommendation?.replace(/_/g, " ").toUpperCase() ?? "—", bold: true },
-    { label: "Forward P/E", getValue: (e) => xRatio(e.snapshot?.forwardPE ?? null) },
-    { label: "Revenue Growth YoY", getValue: (e) => pctSigned(e.snapshot?.revenueGrowth != null ? e.snapshot.revenueGrowth * 100 : null) },
-    { label: "Net Margin", getValue: (e) => pctAbs(e.snapshot?.profitMargins != null ? e.snapshot.profitMargins * 100 : null) },
-    { label: "ROE", getValue: (e) => pctAbs(e.snapshot?.returnOnEquity != null ? e.snapshot.returnOnEquity * 100 : null) },
-    { label: "1-Year Return", getValue: (e) => pctSigned(e.oneYearReturn ?? null) },
-    { label: "Analyst Upside", getValue: (e) => pctSigned(e.analyst?.upsidePercent ?? null) },
+    { label: "Forward P/E", getValue: (e) => orDash(e.snapshot?.forwardPE, xRatio) },
+    { label: "Revenue Growth YoY", getValue: (e) => orDash(e.snapshot?.revenueGrowth != null ? e.snapshot.revenueGrowth * 100 : null, pctSigned) },
+    { label: "Net Margin", getValue: (e) => orDash(e.snapshot?.profitMargins != null ? e.snapshot.profitMargins * 100 : null, pctAbs) },
+    { label: "ROE", getValue: (e) => orDash(e.snapshot?.returnOnEquity != null ? e.snapshot.returnOnEquity * 100 : null, pctAbs) },
+    { label: "1-Year Return", getValue: (e) => orDash(e.oneYearReturn, pctSigned) },
+    { label: "Analyst Upside", getValue: (e) => orDash(e.analyst?.upsidePercent, pctSigned) },
   ];
 
   summaryRows.forEach((sr, si) => {

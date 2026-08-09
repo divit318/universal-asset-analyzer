@@ -140,7 +140,7 @@ describe("runChartQA", () => {
   });
 
   it("falls back gracefully when the model call throws", async () => {
-    runPromptWithMetaMock.mockRejectedValueOnce(new Error("Ollama unreachable"));
+    runPromptWithMetaMock.mockRejectedValueOnce(new Error("AI unreachable"));
     const result = await runChartQA(baseContext(), "q");
     expect(result.model).toBe("unavailable");
     expect(result.answer.length).toBeGreaterThan(0);

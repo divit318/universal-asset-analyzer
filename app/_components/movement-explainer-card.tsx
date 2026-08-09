@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { MovementDriver, MovementExplanation } from "@/lib/types";
-import { Skeleton, SkeletonText } from "./ui/skeleton";
+import { LoadingLine } from "./loading-panel";
 
 const PERSISTENCE_LABEL: Record<MovementExplanation["persistence"], string> = {
   transient: "Likely transient",
@@ -47,7 +47,7 @@ function groupDrivers(drivers: MovementDriver[]): { group: ContributionGroup; dr
  * Explain Every Movement. Defaults to the original click-to-reveal button —
  * several callers (Portfolio's live Decision Queue in actions-tab.tsx renders
  * one of these per recommendation, unconditionally) would otherwise fire N
- * parallel Ollama calls on every page load. Pass `autoLoad` to switch to
+ * parallel AI calls on every page load. Pass `autoLoad` to switch to
  * "instead of a button, display" behavior — used by Research, where the spec
  * calls for it and there's only ever one instance on the page.
  */
@@ -74,6 +74,10 @@ export function MovementExplainerCard({
   const [explanation, setExplanation] = useState<MovementExplanation | null>(null);
   const [loading, setLoading] = useState(autoLoad);
   const [opened, setOpened] = useState(autoLoad);
+  // After 10s of loading the placeholder unmounts rather than sitting on the
+  // page as a permanent skeleton; the fetch continues and the card appears
+  // whenever the explanation actually lands.
+  const [timedOut, setTimedOut] = useState(false);
 
   // Reset when the symbol changes — adjusted during render, not in an effect,
   // to avoid the cascading-render pattern (react.dev "You Might Not Need an Effect").
@@ -81,7 +85,14 @@ export function MovementExplainerCard({
     setTrackedSymbol(symbol);
     setExplanation(null);
     setOpened(autoLoad);
+    setTimedOut(false);
   }
+
+  useEffect(() => {
+    if (!loading) return;
+    const timer = setTimeout(() => setTimedOut(true), 10_000);
+    return () => clearTimeout(timer);
+  }, [loading]);
 
   /**
    * Auto-load, exactly once per (symbol, sector) pair.
@@ -171,10 +182,13 @@ export function MovementExplainerCard({
   }
 
   if (loading) {
+    // Never a permanent skeleton: a compact single line while fresh, nothing
+    // at all after the 10s deadline (content still mounts if it arrives).
+    // Click-to-load callers keep their line — the user explicitly asked.
+    if (timedOut && autoLoad) return null;
     return (
-      <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-4">
-        <Skeleton height="h-3" width="w-1/3" />
-        <SkeletonText lines={2} />
+      <div className="flex items-center rounded-lg border border-border bg-surface px-4 py-3">
+        <LoadingLine message={`Explaining today's move in ${symbol}…`} className="text-caption" />
       </div>
     );
   }

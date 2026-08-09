@@ -49,7 +49,7 @@ const STARTERS = [
   "What can I do on this page?",
   "Where's my portfolio?",
   "How do I run a DCF?",
-  "What's the difference between Screener and Scanner?",
+  "What's the difference between the Screener and the Wire?",
 ];
 
 /**

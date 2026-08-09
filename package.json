@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "scripts/ops/uaa preflight",
     "dev": "next dev",
+    "demo": "UAA_AUTH_GATE=on next dev",
+    "predemo": "scripts/ops/uaa preflight",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -11,9 +14,14 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "monitor": "node scripts/monitor.mjs",
-    "brand:assets": "node scripts/generate-brand-assets.ts"
+    "brand:assets": "node scripts/generate-brand-assets.ts",
+    "host": "scripts/ops/uaa",
+    "host:status": "scripts/ops/uaa status",
+    "host:doctor": "scripts/ops/uaa doctor",
+    "host:stop": "scripts/ops/uaa stop"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "@sentry/nextjs": "^10.68.0",
     "@types/d3-force": "^3.0.10",
     "d3-force": "^3.0.0",

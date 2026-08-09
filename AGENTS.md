@@ -83,9 +83,15 @@ Read this before reading CLAUDE.md, ARCHITECTURE.md, or PROJECT_ROADMAP.md.
   Full map + decision log: `docs/ic-report/00-map.md`, `docs/ic-report/99-report.md`.
 - `lib/db.ts` — All SQLite operations. All reads/writes go here.
 - `lib/ai/` — All inference. Call `runPrompt(taskType, …)`; never a provider
-  directly. The Router walks a chain: Devin CLI (hosted) → Ollama (local).
-  `lib/ai/devin-cli.ts` is the only place that spawns a process;
-  `lib/ai/ollama.ts` the only place that talks HTTP to the daemon.
+  directly. The backend is a provider-agnostic CHAIN (2026-08-06:
+  `AI_PROVIDER_ORDER`, default devin → anthropic → openai → gemini →
+  openrouter → ollama). The Devin CLI (`lib/ai/devin-cli.ts` +
+  `providers/devin-provider.ts`) is the keyless default — it uses the user's
+  `devin login`; the BYO-key APIs resolve keys via `lib/ai/anthropic-key.ts` /
+  `lib/ai/keys.ts` (env var, then ~/.uaa/<provider>_api_key), never logged.
+  The task pins name model ids (claude-opus-5 effort tiers) that BOTH devin
+  and anthropic serve; the chain decides who answers. See
+  `lib/ai/ARCHITECTURE.md`.
 
 **Caching**:
 - Fundamentals: 24h TTL in SQLite (refreshed on screener load)
@@ -96,7 +102,7 @@ Read this before reading CLAUDE.md, ARCHITECTURE.md, or PROJECT_ROADMAP.md.
 **Error Handling**:
 - API failures: Non-fatal. Return partial data + error message.
 - EDGAR/news/analyst data: Optional. UI renders without them.
-- Every AI provider offline: Fallback UI message, no crash. Never say "start Ollama" — use `AI_RECOVERY_HINT` from `lib/ai/availability.ts`, which names the hosted path too.
+- AI unavailable (no key / API down): Fallback UI message, no crash. Never hand-write recovery advice — use `AI_RECOVERY_HINT` from `lib/ai/availability.ts` (it points at Settings).
 
 ---
 
@@ -300,19 +306,79 @@ Run these before considering any change complete:
 
 ```bash
 npx tsc --noEmit          # must be silent
-npx vitest run            # 1715 tests as of the 2026-07-28 watchlist Phase 2 audit
+npx vitest run            # 2898 tests as of the 2026-08-07 Wire degraded-scan / provider-failover fix
 npx eslint app lib        # see "known pre-existing" below
 npm run build             # catches Server/Client boundary errors tsc misses
+                          # NEVER while `next dev` is running — they race for .next/
 ```
 
-**Known pre-existing lint issues** (do not "fix" as a drive-by, and do not treat
-as a regression you caused):
-- `app/_home/_atmosphere/use-count-up.ts:34` — setState-in-effect error
-- `app/_home/modules/todays-brief.tsx:31` — unused `definition` warning
+**Live AI verification** (spends the user's Devin plan / API keys — small prompts):
+
+```bash
+LIVE_AI=1 npx vitest run tests/ai-platform-live.test.ts   # end-to-end through the chain
+```
+
+**For AI-layer changes specifically** (routing, prompts, provider, schemas):
+
+```bash
+npx tsx scripts/ai-eval.ts          # golden workflow cases, live (needs a key; ~$0.05/run)
+npx tsx scripts/ai-bench.ts --suite cache   # prompt-cache write→read + TTFT verification
+```
+
+A model swap or effort-tier repin must pass `ai-eval` (use `--model` to gate
+the candidate) BEFORE the pin changes. Live spend, latency, cache-hit rate
+and fallback depth are on `/dev/ai` (the `ai_call` ledger — see
+`lib/ai/ARCHITECTURE.md` "Instrumentation").
+
+**Known pre-existing lint issues**: none. (The two former entries died in the
+2026-08-08 Today rebuild: `use-count-up.ts` was deleted with the count-up
+animation, and `todays-brief.tsx`'s unused `definition` was removed when the
+hero module was retired in place.) `npx eslint app lib` should be clean; treat
+any problem as a regression.
 
 For UI work, verify in the browser (Playwright MCP) as well. `tsc` passes on JSX
 that Turbopack cannot parse, so a green typecheck is **not** proof the page
 renders — `npm run build` or a real page load is.
+
+---
+
+## Host Health: Start The Dev Server With `uaa start`
+
+This is a 16 GB M4 Air, and the dev stack (Turbopack + Chrome + several agent
+sessions, each spawning its own serena + TypeScript LSP stack) has roughly 4 GB of
+slack. Use `scripts/ops/uaa` — see `scripts/ops/README.md`:
+
+```bash
+uaa start        # health gate, reap stale processes, exactly one dev server
+uaa status       # RAM, swap, Metal, Ollama, dev servers, tsservers, warnings
+uaa doctor       # every finding gets a why and a concrete fix
+uaa stop         # teardown in the order that cannot orphan anything
+```
+
+`npm run dev` is gated by a `predev` hook (`uaa preflight`) that reaps orphans and
+**blocks** if a dev server is already running — Next.js otherwise falls back to
+:3001 and silently gives you two Turbopack instances racing for one `.next`.
+Override with `UAA_SKIP_PREFLIGHT=1`.
+
+**Never leave a local model resident, and never `kill -9` `ollama serve`.** On
+2026-08-04 this host was found with 11.5 GB of 16 GB *wired* and 158 GB swapped,
+caused by one orphaned `llama-server` holding 9.49 GB. Ollama loads weights
+`--no-mmap` into Metal buffers, which are wired and un-evictable; `keep_alive`
+expiry lives inside `ollama serve`; and **macOS jetsam kills with SIGKILL**, which
+orphans the runner and strands its memory until reboot. Measured:
+
+| signal to `ollama serve` | runner | wired |
+|---|---|---|
+| SIGTERM | exits cleanly | 5.73 → 1.93 GB |
+| SIGKILL | survives as PPID 1, immortal | stays 5.57 GB |
+
+So it is a feedback loop — pressure causes the SIGKILL that makes the pressure
+permanent. `uaa stop` drains runners *before* the daemon; a launchd guard reaps
+orphans within 60 s. Regression test: `scripts/ops/stress-orphan.sh`.
+
+The diagnostic signature to remember: **an idle GPU pinning multiple GB**. Metal
+residency and GPU utilization are independent, so that combination means a leaked
+runner, not GPU load.
 
 ---
 
@@ -340,26 +406,7 @@ not as fact** — verify against the call graph.
 
 ## Product Rules Learned The Hard Way
 
-**Yahoo's fund feed encodes "not reported" as a literal 0 — and pads missing
-category baselines with zeros.** Every Indian mutual fund (Morningstar `0P…` `.BO`
-symbols) returns `annualReportExpenseRatio: 0` / `netExpRatio: 0` / `grossExpRatio: 0`
-(real TERs are 0.5–2%) and `trailingReturnsCat` of all-zeros (Yahoo has no category
-data for them). Taken at face value this rendered "0.00% expense ratio" as a
-*strength*, scored it a perfect Cost factor, and fabricated "+10.3pp vs category"
-from the fund's own absolute return. `mapFundProfile` in lib/yahoo.ts nulls exact
-zeros and all-zero category baselines — verified safe because even genuinely
-zero-fee funds (Fidelity ZERO) never come back as 0. The real TER is then
-recovered from AMFI's official monthly table (lib/amfi.ts: per-AMC fetch,
-Yahoo→AMFI scheme-name matching, Regular/Direct plan detection; provenance in
-`FundProfileData.expenseRatioSource`). Related conventions, all
-verified live: `summaryDetail.totalAssets` is raw currency units and current;
-`fundProfile.feesExpensesInvestment.totalNetAssets` is in *millions* and can be
-hundreds of billions stale; for mutual funds Morningstar's net assets are per
-SHARE CLASS (plan/option), ~10x below scheme-level AUM on AMFI/Groww — label it.
-Mutual funds also have no market cap / day range / volume (NAV-priced, not
-exchange-traded): the research stat strip renders fund-shaped stats instead.
-
-**Never let the local model derive a directional verdict.** Given the numbers and
+**Never let the model derive a directional verdict.** Given the numbers and
 asked for judgement, a 7B model asserted "USD Cash is fully hedged against
 inflation" (health had scored Inflation 32/100 for the opposite reason), read 11.3
 effective drivers as "a small number of holdings" (it means BROAD), and called
@@ -461,6 +508,28 @@ from a union must take that union.
 and one order of magnitude apart and neither is legible in a number input. The
 intake form now echoes "$100,000,000 · 100 million" live. A Cancel button on the
 multi-minute generation is the safety net; the echo is the fix.
+
+**The AI context must consume the SAME pipelines the page renders from — checked
+per input, not per intention** (2026-08-06 research demo hardening). The verdict's
+`buildCompanyContext` and the page's `buildFundamentalsData` both "fetched
+statements", but the context used the EDGAR-only path (empty for SYF — its revenue
+tag isn't in `lib/statements.ts`'s XBRL list) and scored WITHOUT statements while
+the page scored WITH them; it also fed `computeMomentum` a 420-day window against
+the page's 1825 days, drifting the composite by a point. Result: a hero saying
+"Buy 67" over a thesis free-quoting "62/100" and "84% Quality" against a card
+showing 25/25. The invariants that now hold (pinned in
+`tests/verdict-consistency.test.ts`): the verdict direction is
+`scoreDirection(composite)` from `lib/recommendation.ts` and the model's emitted
+verdict field is OVERRIDDEN in `coerceFields`; statements resolve only through
+`getStatementsWithFallback`; every subscore the prompt exposes uses the identical
+`Math.round(points/max*100)` the UI renders. Related classifier traps fixed in the
+same pass: Yahoo insider `transactionText` must check award/grant/exercise/tax
+BEFORE "sale" (Form 4 code A/M/F/G grants read as "33 sells · -$53M"); Yahoo
+`institutionsPercentHeld` can exceed 1.0 (13F double-counting — footnote it, never
+bar-chart it); Yahoo `relatedTickers` tags stories about OTHER companies with your
+symbol as a secondary ticker (require primary tag or a name mention); Yahoo option
+chains off-hours carry binary-fraction placeholder IVs with bid=ask=0 (gate the
+whole card on `isDerivativesSummaryComplete`).
 
 **A native `<input type="date">` renders in the BROWSER's locale, not the app's.**
 It is not reachable from CSS or JS — no attribute, no pseudo-element, no override.
@@ -787,8 +856,8 @@ argument, including the market region and the same history window (1825 days).
 **Nulls sink in both sort directions.** "Worst first" must not surface every row
 whose value is merely unknown. A missing value is not a small value.
 
-**Never cache a failure.** Persisting an Ollama-offline fallback pins "Start
-Ollama" for the whole TTL after Ollama comes back. See `cacheVerdict`.
+**Never cache a failure.** Persisting an AI-unavailable fallback pins the
+recovery hint for the whole TTL after the user has fixed it. See `cacheVerdict`.
 
 **`isInitialLoading` includes the `idle` tick.** The client store starts at
 `idle`, not `loading`. A page deriving `empty` from `!isInitialLoading && !data`
@@ -978,7 +1047,7 @@ and how to regenerate `favicon.ico`/`icon.svg`/`apple-icon.png`
 
 ## One More Thing
 
-This is a single-user, self-hosted equity research platform. All data stays local. No cloud APIs, no subscriptions, no selling data. Code quality and architectural clarity matter because there's no DevOps team to fix problems.
+This is a single-user, self-hosted equity research platform. All user data stays local; market data comes from public APIs and AI narration runs on the Anthropic API with the user's own key. No accounts, no subscriptions, no selling data. Code quality and architectural clarity matter because there's no DevOps team to fix problems.
 
 Keep things simple. Prefer existing patterns. Document as you go (update ARCHITECTURE.md). Future agents will thank you.
 

@@ -12,7 +12,11 @@
 
 import { z } from "zod";
 
-export const HOME_BRIEF_SCHEMA_VERSION = 1;
+// v2 (Wave 4 of the Today rebuild): `macro` dropped (audit LQ-03: no macro
+// facts exist in the prompt, so the section was structurally forced to
+// invent) and `portfolioSummary` dropped (audit LQ-06: generated, streamed,
+// rendered by nothing — the deterministic line covers the contract field).
+export const HOME_BRIEF_SCHEMA_VERSION = 2;
 
 const NoteWire = z.object({
   regime: z.string().min(10).describe("What kind of market this currently is, in plain language"),
@@ -20,14 +24,12 @@ const NoteWire = z.object({
   risks: z.string(),
   portfolio: z.string(),
   sectors: z.string(),
-  macro: z.string(),
   recommendations: z.array(z.string()).max(5),
 });
 
 export const HomeBriefWireSchema = z.object({
-  headline: z.string().min(10).describe("One-sentence daily brief, grounded in the supplied facts only"),
+  headline: z.string().min(10).describe("The most decision-relevant read of the day, grounded in the supplied facts only"),
   note: NoteWire.nullable(),
-  portfolioSummary: z.string().describe("One line on the portfolio; empty string when no portfolio is tracked"),
 });
 
 export type HomeBriefWire = z.infer<typeof HomeBriefWireSchema>;

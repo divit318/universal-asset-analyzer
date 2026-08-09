@@ -30,6 +30,7 @@ import { classifyAiError } from "./errors";
 import { acquireGenerationSlot } from "./gate";
 import { isHealthy, markFailure, markSuccess, recentSuccessWithinMs } from "./health";
 import { logAiEvent } from "./log";
+import { recordAiCall } from "./telemetry";
 import {
   fitsInMemory,
   isHostedProvider,
@@ -38,10 +39,13 @@ import {
   type ModelSpec,
   type ProviderId,
 } from "./models";
-import { isCallerAbort, isTimeout } from "./ollama";
+import { isCallerAbort, isTimeout } from "./aborts";
+import { AnthropicProvider } from "./providers/anthropic-provider";
 import { DevinProvider } from "./providers/devin-provider";
+import { GeminiProvider } from "./providers/gemini-provider";
 import { OllamaProvider } from "./providers/ollama-provider";
-import type { AIProvider, ProviderChatTurn, ProviderModelInfo } from "./provider";
+import { OpenAIProvider, OpenRouterProvider } from "./providers/openai-compatible-provider";
+import type { AIProvider, ProviderChatTurn, ProviderModelInfo, ProviderTokenUsage } from "./provider";
 import { normalizeResponse, type AIResponse } from "./response";
 import {
   TASK_REGISTRY,
@@ -53,18 +57,21 @@ import {
 
 const PROVIDER_FACTORIES: Record<ProviderId, () => AIProvider> = {
   devin: () => new DevinProvider(),
+  anthropic: () => new AnthropicProvider(),
+  openai: () => new OpenAIProvider(),
+  gemini: () => new GeminiProvider(),
+  openrouter: () => new OpenRouterProvider(),
   ollama: () => new OllamaProvider(),
 };
 
 let providerCache: { key: string; providers: AIProvider[] } | null = null;
 
 /**
- * The provider chain, best first. Order comes from config so it is an env
- * change, not a code change (AI_PROVIDER_ORDER).
+ * The provider chain, best first. Order comes from config (one entry today)
+ * so adding a provider is a config + factory change, not a Router change.
  *
- * Instances are cached because providers hold caches of their own — Devin's
- * model catalogue in particular costs a process spawn to populate, and a fresh
- * instance per request would throw that away every time.
+ * Instances are cached because a provider may hold caches of its own; a fresh
+ * instance per request would throw those away every time.
  */
 export function defaultProviders(): AIProvider[] {
   const order = providerOrder();
@@ -86,6 +93,8 @@ export interface RouteRequest {
   maxTokens?: number;
   timeoutMs?: number;
   json?: boolean;
+  /** JSON Schema for native structured outputs — see ProviderCompleteRequest.jsonSchema. */
+  jsonSchema?: Record<string, unknown>;
   signal?: AbortSignal;
   /** Receives reasoning deltas when the chosen model is thinking. */
   onReasoning?: (delta: string) => void;
@@ -100,9 +109,17 @@ export interface RouteOptions {
 
 export class AllModelsFailedError extends Error {
   code = "all_models_failed" as const;
-  constructor(taskType: TaskType, attempts: string[]) {
+  /**
+   * The original error from each attempt, in order. Kept so classifyAiError
+   * can see through the wrapper when every attempt failed the same way — an
+   * invalid key exhausting the chain is a key problem, not a transient outage,
+   * and must not surface as "try again shortly".
+   */
+  readonly causes: unknown[];
+  constructor(taskType: TaskType, attempts: string[], causes: unknown[] = []) {
     super(`All compatible models failed for task "${taskType}": ${attempts.join("; ")}`);
     this.name = "AllModelsFailedError";
+    this.causes = causes;
   }
 }
 
@@ -274,8 +291,9 @@ function settingsFor(task: TaskConfig, model: string, request: RouteRequest) {
     maxTokens: request.maxTokens ?? task.maxTokens,
     timeoutMs: request.timeoutMs ?? task.timeoutMs ?? spec.timeoutMs,
     json,
+    jsonSchema: request.jsonSchema,
     // Only pay for a large KV cache on tasks that declared they need one;
-    // otherwise let Ollama use its default window. On a memory-tight host an
+    // otherwise let the provider use its default window. On a memory-tight host an
     // unnecessary 32k context is real RAM taken from the weights.
     numCtx: task.contextTokens ? Math.min(task.contextTokens, spec.contextWindow) : undefined,
     thinking: resolveThinking(task, spec, json),
@@ -316,19 +334,19 @@ function widenForColdStart(model: string, timeoutMs: number): number {
   return Math.min(Math.round(timeoutMs * COLD_START_MULTIPLIER), COLD_START_MAX_MS);
 }
 
-/** How recent a local success has to be to override a "cold" probe result — just under Ollama's 5-minute default `keep_alive`, so it can't outlive the window the model is actually likely to still be resident. */
+/** How recent a local success has to be to override a "cold" probe result — just under a local daemon's typical 5-minute default `keep_alive`, so it can't outlive the window the model is actually likely to still be resident. */
 const RECENT_SUCCESS_WINDOW_MS = 4 * 60_000;
 
 /**
  * Is `model` already resident? Combines two independent signals rather than
  * trusting either alone:
  *
- *   1. The provider's best-effort probe (Ollama's `/api/ps`) — one HTTP
- *      round trip at one instant.
+ *   1. The provider's best-effort probe ({@link AIProvider.isModelWarm}) —
+ *      one round trip at one instant.
  *   2. Whether THIS process itself completed a call to this exact model
  *      very recently (see health.ts's `recentSuccessWithinMs`) — free, and
  *      immune to the probe racing a genuinely concurrent use or lagging
- *      Ollama's own bookkeeping by a beat.
+ *      the daemon's own bookkeeping by a beat.
  *
  * "Assume warm" (`true`) whenever there's no real information at all — no
  * provider capability, or the probe itself failed — which is also what the
@@ -354,8 +372,8 @@ async function isWarm(provider: AIProvider, model: string): Promise<boolean> {
  * How long to keep the model resident after answering.
  *
  * Cold load, not generation, is what makes a local model feel broken: measured
- * on this host, a 4.4GB model took 69.6s to load and 0.4s to answer. Ollama
- * evicts after five idle minutes by default, so a task the user reaches
+ * on a 17GB host, a 4.4GB model took 69.6s to load and 0.4s to answer. A
+ * local daemon evicts after a few idle minutes by default, so a task the user reaches
  * occasionally pays that load almost every time — and an `interactive` task,
  * whose entire budget is 45s, then cannot finish however small the question.
  *
@@ -364,7 +382,7 @@ async function isWarm(provider: AIProvider, model: string): Promise<boolean> {
  * runs once an hour. This is the reason a warm assistant answers in ~1s.
  *
  * Background/standard work now holds the model for 10 minutes rather than
- * accepting Ollama's 5-minute default: a multi-stage pipeline (the Wire scan,
+ * accepting the typical 5-minute default: a multi-stage pipeline (the Wire scan,
  * an IC report) issues its calls back-to-back, but a single interleaved
  * interactive request on a memory-tight host evicts the pipeline's model and
  * the next stage pays a cold load mid-scan (observed 2026-07-31: a mid-scan
@@ -378,15 +396,22 @@ function keepAliveFor(task: TaskConfig): string | undefined {
 /**
  * The ordered (provider, model) attempts for a task.
  *
- * A generator, and that is the point: enumerating a provider costs a round
- * trip — Ollama's `/api/tags` has a 4s timeout, Devin's catalogue a process
- * spawn — and the whole reason Devin is first is that we want to *not* pay
- * Ollama's when Devin answers. Building the full list eagerly would charge
- * every request for a daemon that, on a working setup, is never used.
+ * A generator, and that is the point: enumerating a provider can cost a round
+ * trip, and with more than one provider in the chain the whole reason the
+ * first is first is that we want to *not* pay the second's enumeration when
+ * the first answers. Building the full list eagerly would charge every
+ * request for a backend that, on a working setup, is never used.
  *
- * An explicit `model` override is still honored strictly: it is matched
- * against each provider in order and, if no provider claims it, attempted on
- * the first provider anyway rather than silently substituted.
+ * An explicit `model` override is still honored strictly — never substituted —
+ * but it is attempted on EVERY provider that serves that id, in chain order.
+ * The same model id can be reachable through several providers (the
+ * claude-opus-5 effort tiers exist in both Devin's catalogue and the direct
+ * Anthropic API), and stopping at the first one turned a per-provider outage
+ * into a total failure: the 2026-08-07 Wire scan pinned its model, Devin's
+ * quota ran out mid-day, and every stage failed without ever asking the
+ * Anthropic entry sitting right behind it in the chain. If no provider
+ * claims the id, it is attempted on the first provider anyway rather than
+ * silently substituted.
  */
 async function* attemptOrder(
   taskType: TaskType,
@@ -395,14 +420,15 @@ async function* attemptOrder(
   explicitModel?: string,
 ): AsyncGenerator<{ provider: AIProvider; model: string }, void, unknown> {
   if (explicitModel) {
+    let claimed = false;
     for (const provider of providers) {
       const installed = await provider.listModels();
       if (installed.some((m) => m.id === explicitModel)) {
+        claimed = true;
         yield { provider, model: explicitModel };
-        return;
       }
     }
-    if (providers[0]) yield { provider: providers[0], model: explicitModel };
+    if (!claimed && providers[0]) yield { provider: providers[0], model: explicitModel };
     return;
   }
 
@@ -454,6 +480,13 @@ export async function route(
   const startedAt = Date.now();
 
   const attemptErrors: string[] = [];
+  const attemptCauses: unknown[] = [];
+  // A rejected or missing key is a provider-level configuration failure:
+  // every remaining candidate on the SAME provider presents the same
+  // credential, so walking them is pure spend on requests that cannot
+  // succeed. Other providers keep their chance — their credentials are their
+  // own.
+  const keyFailedProviders = new Set<string>();
   // A cold-start timeout earns the chain exactly one extra candidate — not
   // an unbounded walk. Without a cap, a genuinely overloaded host would cold-
   // time-out on every candidate in turn and multiply the wait by the full
@@ -466,6 +499,7 @@ export async function route(
   let considered = 0;
 
   for await (const { provider, model } of attemptOrder(taskType, task, providers, opts.model)) {
+    if (keyFailedProviders.has(provider.id)) continue;
     considered += 1;
     // An abort is the caller's decision, not a model failure. Retrying the
     // next candidate would keep spending on work nobody is waiting for.
@@ -483,7 +517,7 @@ export async function route(
     let attemptStartedAt = queuedAt;
     try {
       // Wait for the generation gate BEFORE starting the attempt's clock:
-      // Ollama serializes generations, so a deadline that starts at enqueue
+      // a local daemon serializes generations, so a deadline that starts at enqueue
       // races the queue rather than the model — measured burning a full 300s
       // budget while waiting, then aborting having never generated a token.
       const release = local ? await acquireGenerationSlot(request.signal) : null;
@@ -509,6 +543,17 @@ export async function route(
           durationMs: Date.now() - attemptStartedAt,
           queueMs: attemptStartedAt - queuedAt,
         });
+        recordAiCall({
+          taskType,
+          provider: provider.id,
+          model,
+          outcome: "success",
+          streamed: false,
+          attempt: considered,
+          durationMs: Date.now() - attemptStartedAt,
+          queueMs: attemptStartedAt - queuedAt,
+          usage: result.tokenUsage,
+        });
         return normalizeResponse({
           content: result.content,
           reasoning: result.reasoning,
@@ -533,13 +578,24 @@ export async function route(
         queueMs: attemptStartedAt - queuedAt,
         message: err instanceof Error ? err.message : String(err),
       });
+      recordAiCall({
+        taskType,
+        provider: provider.id,
+        model,
+        outcome: classified.category === "cancelled" ? "cancelled" : classified.category,
+        streamed: false,
+        attempt: considered,
+        durationMs: Date.now() - attemptStartedAt,
+        queueMs: attemptStartedAt - queuedAt,
+        message: err instanceof Error ? err.message : String(err),
+      });
 
       // A caller abort says nothing about the model — the request was
       // withdrawn, not refused. It must never count against the model's
       // health (a cooldown here would penalize a perfectly good model for
       // the user having changed their mind) and never fall back (nobody is
       // waiting for any answer any more, and continuing would just occupy
-      // Ollama, which serializes generations and so delays everyone else's
+      // a serializing local daemon and so delay everyone else's
       // queue behind a zombie request).
       if (isCallerAbort(err)) throw err;
 
@@ -547,6 +603,20 @@ export async function route(
       // Qualified by provider: the same model id can now be reached two ways,
       // and "which provider failed" is the first thing you need to know.
       attemptErrors.push(`${provider.id}/${model}: ${err instanceof Error ? err.message : String(err)}`);
+      attemptCauses.push(err);
+
+      // Same key, same rejection: skip this provider's remaining candidates.
+      // Quota exhaustion is provider-level for the same reason — one account,
+      // one quota — so its other effort tiers cannot succeed either (measured
+      // 2026-08-07: every scan stage burned ~2s per candidate on calls the
+      // quota had already doomed).
+      if (
+        classified.category === "no_api_key" ||
+        classified.category === "bad_api_key" ||
+        classified.category === "quota_exhausted"
+      ) {
+        keyFailedProviders.add(provider.id);
+      }
 
       // Fall back on a model that FAILED, never on a LOCAL one that ran out of
       // time while WARM. A warm local model timing out says something about
@@ -572,7 +642,7 @@ export async function route(
   if (attemptErrors.length === 0) {
     throw new AllModelsFailedError(taskType, ["no compatible model is available"]);
   }
-  throw new AllModelsFailedError(taskType, attemptErrors);
+  throw new AllModelsFailedError(taskType, attemptErrors, attemptCauses);
 }
 
 /**
@@ -591,10 +661,17 @@ export async function* routeStream(
   const task = TASK_REGISTRY[taskType];
 
   const attemptErrors: string[] = [];
+  const attemptCauses: unknown[] = [];
+  // Same rule as route(): a rejected/missing key fails every candidate that
+  // presents the same credential — skip the rest of that provider's chain.
+  const keyFailedProviders = new Set<string>();
   let coldTimeoutFallbacksUsed = 0;
   const MAX_COLD_TIMEOUT_FALLBACKS = 1;
+  let considered = 0;
 
   for await (const { provider, model } of attemptOrder(taskType, task, providers, opts.model)) {
+    if (keyFailedProviders.has(provider.id)) continue;
+    considered += 1;
     if (request.signal?.aborted) break;
     let started = false;
     // Local-only, exactly as in route(): the gate, the residency probe and the
@@ -604,11 +681,16 @@ export async function* routeStream(
     const queuedAt = Date.now();
     let warm = true;
     let attemptStartedAt = queuedAt;
+    // Streaming observability: time-to-first-token is measured HERE (first
+    // answer delta out of the provider) and usage arrives via the provider's
+    // end-of-stream callback — a generator has no result object to carry it.
+    let firstDeltaAt: number | null = null;
+    let usage: ProviderTokenUsage | undefined;
     try {
       // Same gate as route(): the deadline must race the model, not the queue.
-      // The slot is held for the whole stream — Ollama is busy until the last
-      // token, so releasing earlier would only let a second request pile up
-      // behind this one inside Ollama where its timeout can't see the queue.
+      // The slot is held for the whole stream — a local daemon is busy until the
+      // last token, so releasing earlier would only let a second request pile up
+      // behind this one inside the daemon where its timeout can't see the queue.
       const release = local ? await acquireGenerationSlot(request.signal) : null;
       try {
         if (local) warm = await isWarm(provider, model);
@@ -621,11 +703,15 @@ export async function* routeStream(
             signal: request.signal,
             ...settings,
             timeoutMs,
+            onUsage: (u) => {
+              usage = u;
+            },
           },
           request.onReasoning,
         );
 
         for await (const delta of stream) {
+          if (!started) firstDeltaAt = Date.now();
           started = true;
           yield delta;
         }
@@ -638,6 +724,18 @@ export async function* routeStream(
           coldStart: !warm,
           durationMs: Date.now() - attemptStartedAt,
           queueMs: attemptStartedAt - queuedAt,
+        });
+        recordAiCall({
+          taskType,
+          provider: provider.id,
+          model,
+          outcome: "success",
+          streamed: true,
+          attempt: considered,
+          durationMs: Date.now() - attemptStartedAt,
+          queueMs: attemptStartedAt - queuedAt,
+          ttftMs: firstDeltaAt != null ? firstDeltaAt - attemptStartedAt : undefined,
+          usage,
         });
         return model;
       } finally {
@@ -653,6 +751,19 @@ export async function* routeStream(
         durationMs: Date.now() - attemptStartedAt,
         message: err instanceof Error ? err.message : String(err),
       });
+      recordAiCall({
+        taskType,
+        provider: provider.id,
+        model,
+        outcome: classified.category,
+        streamed: true,
+        attempt: considered,
+        durationMs: Date.now() - attemptStartedAt,
+        queueMs: attemptStartedAt - queuedAt,
+        ttftMs: firstDeltaAt != null ? firstDeltaAt - attemptStartedAt : undefined,
+        usage,
+        message: err instanceof Error ? err.message : String(err),
+      });
 
       // A caller abort is withdrawal, not a model failure — see route()'s
       // identical reasoning. Never health-penalized, never a candidate for
@@ -662,11 +773,22 @@ export async function* routeStream(
 
       markFailure(model);
       attemptErrors.push(`${provider.id}/${model}: ${err instanceof Error ? err.message : String(err)}`);
+      attemptCauses.push(err);
+
+      // Same key, same rejection: skip this provider's remaining candidates.
+      // Quota exhaustion is provider-level too — see route()'s identical rule.
+      if (
+        classified.category === "no_api_key" ||
+        classified.category === "bad_api_key" ||
+        classified.category === "quota_exhausted"
+      ) {
+        keyFailedProviders.add(provider.id);
+      }
 
       // Mid-stream failure: the consumer already has partial output from THIS
       // model. Retrying another would append a second model's answer to the
       // first one's. Fail honestly instead.
-      if (started) throw new AllModelsFailedError(taskType, attemptErrors);
+      if (started) throw new AllModelsFailedError(taskType, attemptErrors, attemptCauses);
 
       // Same policy as route(): a warm LOCAL timeout stops the chain; a cold
       // one earns exactly one more candidate before it does too. A hosted
@@ -681,5 +803,5 @@ export async function* routeStream(
   if (attemptErrors.length === 0) {
     throw new AllModelsFailedError(taskType, ["no compatible model is available"]);
   }
-  throw new AllModelsFailedError(taskType, attemptErrors);
+  throw new AllModelsFailedError(taskType, attemptErrors, attemptCauses);
 }

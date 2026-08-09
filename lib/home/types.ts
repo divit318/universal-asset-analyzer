@@ -145,8 +145,8 @@ export type Capability =
   | "watchlist"
   /** A Scanner snapshot has been persisted at least once. */
   | "scanner-snapshot"
-  /** Ollama is reachable. AI modules degrade to a deterministic fallback, never fail. */
-  | "ollama"
+  /** An AI provider is configured (Anthropic key present). AI modules degrade to a deterministic fallback, never fail. */
+  | "ai"
   /** At least one recorded decision (the journal's calibration floor). */
   | "decisions";
 
@@ -221,7 +221,7 @@ export interface HomeModuleDefinition {
   /** Other modules whose data this one reads. Cycles are rejected by the registry. */
   dependencies: HomeModuleId[];
 
-  /** Null for deterministic modules. AI modules must still render without Ollama. */
+  /** Null for deterministic modules. AI modules must still render without the AI. */
   ai: { task: TaskType; /** false = module has a deterministic fallback */ required: boolean } | null;
 
   /** Where "open this" goes. Null for modules that are terminal. */

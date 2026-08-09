@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent: UAA host watchdog.
+
+  Do not copy this file by hand — `uaa install` substitutes __REPO__ and loads
+  it. This template is what it reads.
+
+  Runs `uaa guard --once` every 60s rather than a long-lived loop, so a wedged
+  sample cannot wedge the watchdog itself. --auto-reap is ON, because the whole
+  reason to run this from launchd is that by the time you notice the machine is
+  thrashing, opening a terminal to fix it already takes 30 seconds.
+
+  Nice 5 + LowPriorityIO + Background ProcessType so the watchdog can never
+  become part of the problem it exists to detect.
+
+    uaa install     # writes ~/Library/LaunchAgents/com.uaa.guard.plist + loads
+    uaa uninstall   # unloads and removes it
+    tail -f /tmp/uaa-guard.log
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.uaa.guard</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO__/scripts/ops/uaa</string>
+        <string>guard</string>
+        <string>--once</string>
+        <string>--auto-reap</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__REPO__</string>
+    <key>StartInterval</key>
+    <integer>60</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>Nice</key>
+    <integer>5</integer>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>/tmp/uaa-guard.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/uaa-guard.err.log</string>
+</dict>
+</plist>

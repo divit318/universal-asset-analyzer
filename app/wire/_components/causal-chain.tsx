@@ -10,12 +10,15 @@ const DIR_COLOR = {
 };
 
 const CAT_STYLE: Record<string, string> = {
-  macro:       "text-blue-400 bg-blue-400/10 border-blue-400/20",
+  /* macro rides the categorical steel token (dark value is identical to the
+     old blue-400); commodity rides --warning (dark value is identical to the
+     old orange-400) — both adapt to light automatically. */
+  macro:       "text-chart-2 bg-chart-2/10 border-chart-2/20",
   policy:      "text-warning bg-warning/10 border-warning/20",
   company:     "text-accent bg-accent/10 border-accent/20",
-  commodity:   "text-orange-400 bg-orange-400/10 border-orange-400/20",
+  commodity:   "text-warning bg-warning/10 border-warning/20",
   geopolitics: "text-negative bg-negative/10 border-negative/20",
-  market:      "text-purple-400 bg-purple-400/10 border-purple-400/20",
+  market:      "text-purple-400 light:text-purple-700 bg-purple-400/10 border-purple-400/20",
   sentiment:   "text-muted bg-muted/10 border-muted/20",
 };
 

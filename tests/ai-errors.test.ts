@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { classifyAiError } from "@/lib/ai/errors";
-import { ModelMissingError, OllamaUnavailableError } from "@/lib/ai/ollama";
+import { DevinQuotaExhaustedError } from "@/lib/ai/devin-cli";
+import { AnthropicKeyMissingError } from "@/lib/ai/providers/anthropic-provider";
 import { AllModelsFailedError } from "@/lib/ai/router";
 
 describe("classifyAiError", () => {
@@ -14,17 +15,19 @@ describe("classifyAiError", () => {
     const c = classifyAiError(new DOMException("timed out", "TimeoutError"));
     expect(c.category).toBe("timeout");
     expect(c.retryable).toBe(true);
-    expect(c.message).toMatch(/cold start|loading/i);
   });
 
-  it("classifies an unreachable daemon as network, with actionable advice", () => {
-    const c = classifyAiError(new OllamaUnavailableError());
-    expect(c.category).toBe("network");
-    expect(c.message).toMatch(/ollama serve/i);
+  it("classifies a missing API key as no_api_key, pointing at Settings, non-retryable", () => {
+    const c = classifyAiError(new AnthropicKeyMissingError());
+    expect(c.category).toBe("no_api_key");
+    expect(c.retryable).toBe(false);
+    expect(c.message).toMatch(/settings/i);
+    expect(c.message).toMatch(/computed locally/i);
   });
 
   it("classifies a missing model as model_missing, and marks it non-retryable", () => {
-    const c = classifyAiError(new ModelMissingError("qwen3:99b"));
+    const err = Object.assign(new Error("no such model"), { code: "model_missing" });
+    const c = classifyAiError(err);
     expect(c.category).toBe("model_missing");
     expect(c.retryable).toBe(false);
   });
@@ -32,6 +35,71 @@ describe("classifyAiError", () => {
   it("classifies exhausted candidates as all_models_failed", () => {
     const c = classifyAiError(new AllModelsFailedError("comparison", ["m1: timeout", "m2: connection refused"]));
     expect(c.category).toBe("all_models_failed");
+  });
+
+  it("sees through the wrapper when every attempt failed on the same rejected key", () => {
+    const invalid = Object.assign(new Error("rejected"), { code: "anthropic_key_invalid" });
+    const wrapped = new AllModelsFailedError(
+      "investment-thesis",
+      ["anthropic/claude-opus-5-high: rejected", "anthropic/claude-opus-5-medium: rejected"],
+      [invalid, invalid],
+    );
+    const c = classifyAiError(wrapped);
+    expect(c.category).toBe("bad_api_key");
+    expect(c.retryable).toBe(false);
+    expect(c.message).not.toMatch(/try again/i);
+  });
+
+  it("keeps mixed-cause exhaustion as all_models_failed — no single fix to name", () => {
+    const invalid = Object.assign(new Error("rejected"), { code: "anthropic_key_invalid" });
+    const timeout = new DOMException("timed out", "TimeoutError");
+    const wrapped = new AllModelsFailedError("comparison", ["a: rejected", "b: timeout"], [invalid, timeout]);
+    expect(classifyAiError(wrapped).category).toBe("all_models_failed");
+  });
+
+  it("names the environment variable when the rejected key came from it — Settings can't fix that", () => {
+    const invalid = Object.assign(new Error("rejected"), {
+      code: "anthropic_key_invalid",
+      source: "env",
+    });
+    const c = classifyAiError(invalid);
+    expect(c.category).toBe("bad_api_key");
+    expect(c.message).toMatch(/ANTHROPIC_API_KEY/);
+    // The env var masks the Settings-saved key, so "replace it in Settings" is the one fix that CANNOT work.
+    expect(c.message).not.toMatch(/replace it in settings/i);
+  });
+
+  it("still points a file-sourced rejected key at Settings", () => {
+    const invalid = Object.assign(new Error("rejected"), {
+      code: "anthropic_key_invalid",
+      source: "file",
+    });
+    const c = classifyAiError(invalid);
+    expect(c.category).toBe("bad_api_key");
+    expect(c.message).toMatch(/Settings/);
+  });
+
+  it("classifies an exhausted provider quota as quota_exhausted, non-retryable, naming the provisioning fix", () => {
+    const c = classifyAiError(new DevinQuotaExhaustedError("Your weekly usage quota has been exhausted."));
+    expect(c.category).toBe("quota_exhausted");
+    // Retrying cannot refill a spent plan quota; "try again in a moment" was
+    // the misleading advice this category exists to prevent.
+    expect(c.retryable).toBe(false);
+    expect(c.message).toMatch(/quota/i);
+    expect(c.message).toMatch(/settings/i);
+    expect(c.message).not.toMatch(/try again in a moment/i);
+  });
+
+  it("sees through the wrapper when every attempt died on the same exhausted quota", () => {
+    const quota = new DevinQuotaExhaustedError("Your weekly usage quota has been exhausted.");
+    const wrapped = new AllModelsFailedError(
+      "opportunity-engine",
+      ["devin/claude-opus-5-medium: quota exhausted"],
+      [quota],
+    );
+    const c = classifyAiError(wrapped);
+    expect(c.category).toBe("quota_exhausted");
+    expect(c.retryable).toBe(false);
   });
 
   it("classifies a bad JSON parse as invalid_response", () => {
@@ -45,17 +113,18 @@ describe("classifyAiError", () => {
     expect(classifyAiError(undefined).category).toBe("unknown");
   });
 
-  it("never returns an empty user-facing message", () => {
+  it("never returns an empty user-facing message, and never leaks the key", () => {
     for (const err of [
       new DOMException("x", "AbortError"),
       new DOMException("x", "TimeoutError"),
-      new OllamaUnavailableError(),
-      new ModelMissingError("m"),
+      new AnthropicKeyMissingError(),
       new AllModelsFailedError("comparison", []),
       new SyntaxError("x"),
       new Error("x"),
     ]) {
-      expect(classifyAiError(err).message.length).toBeGreaterThan(0);
+      const c = classifyAiError(err);
+      expect(c.message.length).toBeGreaterThan(0);
+      expect(c.message).not.toMatch(/sk-ant-/);
     }
   });
 });

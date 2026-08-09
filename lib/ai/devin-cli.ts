@@ -64,6 +64,22 @@ export class DevinUnavailableError extends Error {
   }
 }
 
+/**
+ * Raised when the account's usage quota is exhausted (the CLI reports
+ * errorKind "resource_exhausted"). Typed because it needs TWO behaviours a
+ * generic failure must not get: the Router skips this provider's REMAINING
+ * candidates (same account, same quota — walking the other effort tiers is
+ * pure spend on calls that cannot succeed), and lib/ai/errors.ts tells the
+ * user the real fix (top up / another provider) instead of "try again".
+ */
+export class DevinQuotaExhaustedError extends Error {
+  code = "quota_exhausted" as const;
+  constructor(detail: string) {
+    super(`Devin usage quota exhausted: ${detail}`);
+    this.name = "DevinQuotaExhaustedError";
+  }
+}
+
 /** Raised when a specific model id is rejected by the account or the CLI. */
 export class DevinModelUnavailableError extends Error {
   code = "devin_model_unavailable" as const;
@@ -446,6 +462,11 @@ export async function generateViaDevin(
 
     if (res.code !== 0) {
       const detail = cleanDevinOutput(res.stderr) || output || `exit code ${res.code}`;
+      // Checked before the model/auth patterns: the quota message mentions
+      // "usage", which the looser patterns below would misclassify.
+      if (/quota has been exhausted|resource_exhausted/i.test(detail)) {
+        throw new DevinQuotaExhaustedError(detail.slice(0, 300));
+      }
       if (/model|not allowed|unknown model|unavailable/i.test(detail)) {
         throw new DevinModelUnavailableError(opts.model, detail.slice(0, 200));
       }

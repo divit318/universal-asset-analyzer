@@ -199,6 +199,11 @@ export async function runEventScan(
   }
 
   // Filter by confidence.
+  // CALIBRATION NOTE (2026-08-02, hosted-model switch): hosted-model
+  // confidences run ~28 points lower than the old local-model numbers on the same
+  // inputs (better calibration, ai-migration/06 §1b), so any caller-supplied
+  // minConfidence tuned to the old distribution now drops more signals — by
+  // design. Retune the caller's threshold, never rescale the model output.
   const filtered = (parsed.signals ?? []).filter((s) => s.confidence >= minConfidence);
 
   // Enrich with live quotes (parallel, best-effort).

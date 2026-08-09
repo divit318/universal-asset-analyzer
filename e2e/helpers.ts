@@ -2,18 +2,15 @@ import { expect, type Page } from "@playwright/test";
 
 /**
  * Console/page-error noise that's an expected part of running fully offline
- * (no Ollama, and sometimes no network for live Yahoo quotes). Every entry
- * here is a documented degrade path — see CLAUDE.md's "Direct Ollama calls"
- * and lib/ai/ARCHITECTURE.md. Anything NOT matched here fails the test; that
- * includes hydration mismatches and React render crashes, which is the point
- * of this tripwire.
+ * (no AI key, and sometimes no network for live Yahoo quotes). Every entry
+ * here is a documented degrade path — see lib/ai/ARCHITECTURE.md. Anything
+ * NOT matched here fails the test; that includes hydration mismatches and
+ * React render crashes, which is the point of this tripwire.
  */
 export const ALLOWED_CONSOLE_PATTERNS: RegExp[] = [
-  // Ollama isn't running — AI panels must render their fallback state instead.
-  /11434/,
   /ECONNREFUSED/,
   /Failed to fetch/i,
-  // Chrome's generic network-error text for a failed fetch/XHR (offline Yahoo, no Ollama).
+  // Chrome's generic network-error text for a failed fetch/XHR (offline Yahoo, unreachable AI).
   /net::ERR_/,
 ];
 

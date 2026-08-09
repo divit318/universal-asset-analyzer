@@ -374,10 +374,10 @@ export function ClassCompareView({ assetClass, entries }: { assetClass: AssetCla
       )}
 
       {entries.some((e) => e.error) && (
-        <div className="rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 text-sm">
-          <span className="font-semibold text-yellow-600 dark:text-yellow-400">⚠ Some symbols couldn&apos;t load: </span>
+        <div className="rounded-lg border border-yellow-500/40 light:border-yellow-700/30 bg-yellow-500/10 px-4 py-3 text-sm">
+          <span className="font-semibold text-yellow-400 light:text-yellow-700">⚠ Some symbols couldn&apos;t load: </span>
           {entries.filter((e) => e.error).map((e) => (
-            <span key={e.symbol} className="mr-2 font-mono text-yellow-600 dark:text-yellow-400">{e.symbol} ({e.error})</span>
+            <span key={e.symbol} className="mr-2 font-mono text-yellow-400 light:text-yellow-700">{e.symbol} ({e.error})</span>
           ))}
         </div>
       )}

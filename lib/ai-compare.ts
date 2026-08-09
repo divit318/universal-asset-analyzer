@@ -20,6 +20,7 @@ import { JsonFieldStreamer } from "./ai/streaming-json";
 import { getFundamentals, MODULES } from "./fundamentals";
 import { getFinancialStatements } from "./statements";
 import { getHistory, getQuote, getQuoteMeta, getQuoteSummaryMeta } from "./yahoo";
+import { resolveRowHighlights } from "./compare/metrics";
 import { computeScore, computeMomentum, assessRisks, classifyInvestmentPersonality } from "./scoring";
 import { formatCurrency, formatPercent, formatMarketCap } from "./format";
 import { extractJsonObject } from "./json-extract";
@@ -54,7 +55,7 @@ export interface ComparisonResult {
   /**
    * Why the written comparison is degraded or absent — undefined when the AI
    * answered normally. Lets the Compare page show an accurate, specific
-   * status ("model warming up", "can't reach Ollama") instead of one generic
+   * status ("no API key", "can't reach the AI service") instead of one generic
    * failure message for every possible cause. See lib/ai/errors.ts.
    */
   aiStatus?: AiErrorCategory;
@@ -97,8 +98,8 @@ export interface CompareMetricRow {
   metric: string;
   /** Formatted display value per symbol. */
   values: Record<string, string>;
-  /** Symbol with the best value, "tie" when within 5% of each other, or null when no symbol has data. */
-  best: string | "tie" | null;
+  /** Symbol(s) with the best value — every symbol tied at the extreme (display-precision ties, same resolver as the Compare table). Null when fewer than two values exist or all render identically. */
+  best: string[] | null;
   /** Sector-peer benchmark per symbol, present only where a reliable peer group exists. */
   benchmarks?: Record<string, PeerBenchmark>;
 }
@@ -326,19 +327,21 @@ Write a structured comparison covering all ${n} stocks. Be specific — cite num
   return { prompt, evidence };
 }
 
-/** Best index among values (5%-tolerance tie, matching the deterministic category-winner logic on the Compare page). */
-export function bestIndex(values: (number | null)[], higherIsBetter: boolean): number | "tie" | null {
-  const present = values
-    .map((v, i) => ({ v, i }))
-    .filter((x): x is { v: number; i: number } => x.v != null);
-  if (present.length === 0) return null;
-  const best = present.reduce((a, b) =>
-    (higherIsBetter ? b.v > a.v : b.v < a.v) ? b : a,
-  );
-  const tied = present.filter(
-    (x) => Math.abs(x.v - best.v) < 0.05 * Math.max(Math.abs(x.v), Math.abs(best.v), 1e-9),
-  );
-  return tied.length > 1 ? "tie" : best.i;
+/**
+ * Indices of the winning value(s) — a thin wrapper over the SAME
+ * resolveRowHighlights the Compare page's table uses (lib/compare/metrics.ts),
+ * so the AI's metric table and the rendered table can never disagree about
+ * who wins a row. Ties are judged at display precision via `format` and
+ * return EVERY tied index; null when fewer than two values are present or
+ * all render identically (no contest, matching a row with no highlight).
+ */
+export function bestIndex(
+  values: (number | null)[],
+  higherIsBetter: boolean,
+  format: (v: number) => string = (v) => String(v),
+): number[] | null {
+  const w = resolveRowHighlights(values, higherIsBetter ? "higher_is_better" : "lower_is_better", format);
+  return w ? w.best : null;
 }
 
 /** Registry metric key for the rows that have a like-for-like universe-wide equivalent to benchmark against — see lib/compare/benchmarks.ts. Composite/Analyst/Momentum rows are this file's own scoring, not directly comparable to the Screener universe's numbers, so they're deliberately left unbenchmarked. */
@@ -378,7 +381,7 @@ function buildMetricTable(
 
   return rows.map((row) => {
     const raw = stocks.map((s) => row.get(s));
-    const winner = bestIndex(raw, row.higherBetter);
+    const winners = bestIndex(raw, row.higherBetter, (v) => row.format(v));
     const values: Record<string, string> = {};
     stocks.forEach((s, i) => { values[s.symbol] = row.format(raw[i]); });
 
@@ -397,7 +400,7 @@ function buildMetricTable(
     return {
       metric: row.label,
       values,
-      best: winner === null ? null : winner === "tie" ? "tie" : stocks[winner].symbol,
+      best: winners ? winners.map((i) => stocks[i].symbol) : null,
       benchmarks,
     };
   });
@@ -510,8 +513,8 @@ export function finalizeComparison(
 ): ComparisonResult {
   const { stocks, benchmarksBySymbol, evidence, droppedSymbols } = setup;
 
-  // `model` only stays "unavailable" when the AI call itself failed (Ollama
-  // down, timed out, etc); see `aiFailure` for why. A connected-but-garbage
+  // `model` only stays "unavailable" when the AI call itself failed (service
+  // down, no key, timed out, etc); see `aiFailure` for why. A connected-but-garbage
   // response still gets a real `model` and falls through to the field
   // defaults below.
   const aiUnavailable = model === "unavailable";
@@ -689,7 +692,7 @@ export async function compareStocks(
   let flat: FlatAI = {};
   // Populated only when the AI call itself failed. Drives both the fallback
   // narrative text and the machine-readable `aiStatus` the Compare page uses
-  // to show an accurate status ("model warming up" vs "can't reach Ollama")
+  // to show an accurate status ("no API key" vs "can't reach the AI service")
   // instead of one generic message for every cause.
   let aiFailure: ClassifiedAiError | undefined;
   try {
@@ -707,7 +710,9 @@ export async function compareStocks(
       schemaVersion: COMPARISON_SCHEMA_VERSION,
       signal: opts.signal,
     });
-    model = analysis.provider === "devin" ? "devin" : (analysis.meta.model ?? "ollama");
+    // Merge resolution 2026-08-06: single-runtime seam — the answering model
+    // is in meta; main's provider-id branch referenced a retired runtime.
+    model = analysis.meta.model ?? "unknown";
     flat = flatFromStreamedFields(analysis.data as Record<string, unknown>);
   } catch (err) {
     aiFailure = classifyAiError(err);

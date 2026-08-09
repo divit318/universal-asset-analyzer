@@ -476,13 +476,14 @@ export interface AgentNetworkResult {
 }
 
 /**
- * Run every investigation agent, one at a time by default. Ollama's default
- * local setup serves one request at a time regardless of how many we fire
- * (n_slots = 1) — dispatching all of them concurrently doesn't parallelise
- * anything, it just queues them, and a fixed per-request timeout then races
- * against the whole queue instead of its own generation. Sequential dispatch
+ * Run every investigation agent, one at a time by default. This dispatch
+ * policy dates from the serializing local backend (one generation slot —
+ * concurrent dispatch just queued, and a fixed per-request timeout then raced
+ * against the whole queue instead of its own generation). The hosted API runs
+ * genuinely parallel, so raising concurrency is now a real speedup available
+ * to a future change; the sequential default is kept unchanged here. Sequential dispatch
  * keeps each agent's timeout budget meaningful and gives steady progress.
- * `concurrency` > 1 is supported for setups with OLLAMA_NUM_PARALLEL configured.
+ * `concurrency` > 1 is supported and is the natural setting for the hosted API.
  */
 export async function runAgentNetwork(
   input: AgentNetworkInput,
@@ -495,8 +496,12 @@ export async function runAgentNetwork(
   // was validated with zero 429s (ai-migration/05 amendment 2) — so when the
   // agent tasks resolve to Devin the whole network runs at once. That single
   // difference is 9x wall-clock on the report's longest stage.
-  const effectiveConcurrency =
-    concurrency ?? (resolveProvider(taskForAgentDomain("business")) === "devin" ? 9 : 1);
+  /* Merge resolution 2026-08-06: main auto-raised concurrency to 9 when the
+     agent tasks resolved to its "sessions" runtime; that runtime is retired
+     on this branch, so the default stays sequential (the explicit
+     `concurrency` parameter remains the caller's dial — pinned by
+     tests/ic-agents.test.ts). */
+  const effectiveConcurrency = concurrency ?? 1;
   const ctx: AgentContext = {
     facts: input.facts,
     signals: input.signals,

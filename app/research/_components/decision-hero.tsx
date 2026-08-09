@@ -2,12 +2,13 @@
 
 import { useCallback, useRef, type PointerEvent } from "react";
 import type { InvestmentVerdict } from "@/app/api/ai/verdict/route";
-import type { ScoreResult } from "@/lib/types";
+import type { Recommendation } from "@/lib/types";
+import { RECOMMENDATION_LABEL, RECOMMENDATION_TONE, scoreDirection } from "@/lib/recommendation";
 import { CountUp } from "@/app/_components/count-up";
-import { ValueBar } from "@/app/_components/value-bar";
 import { LoadingMark } from "@/app/_components/loading-mark";
 import { Reveal } from "@/app/_components/reveal";
 import { TaskProgress } from "@/app/_components/ui";
+import { GroundingBadge } from "@/app/_components/grounding-badge";
 
 /* -------------------------------------------------------------------------- */
 /* Verdict color palette                                                       */
@@ -69,7 +70,7 @@ function Skeleton({ stage, elapsedMs }: { stage: string; elapsedMs: number }) {
       <div className="flex flex-col items-center gap-1 text-center">
         <p className="text-sm font-medium text-foreground">Building the investment verdict</p>
         <p className="text-caption text-muted">
-          Reasoning over fundamentals, filings, and news — typically 20–40 s on a local model.
+          Reasoning over fundamentals, filings, and news — typically 15–40 s depending on the model.
         </p>
       </div>
       <StreamStatus stage={stage} elapsedMs={elapsedMs} />
@@ -107,11 +108,17 @@ function StreamStatus({ stage, elapsedMs }: { stage: string; elapsedMs: number }
 interface Props {
   verdict: InvestmentVerdict | null;
   loading: boolean;
-  /** Optional: score.confidence used to show numeric confidence when available */
-  score?: ScoreResult | null;
-  /** Overrides the numeric confidence (India uses the screener.in composite so
-   *  the hero never shows the Yahoo score alongside the India snapshot). */
-  confidenceOverride?: number | null;
+  /**
+   * THE canonical headline call — the deterministic composite score and its
+   * recommendation, computed once (lib/scoring.ts or the asset-class scorer,
+   * screener.in snapshot for India) and shared with the Conviction tab. The
+   * hero renders this; the AI verdict word is only a fallback when no score
+   * exists (e.g. macro).
+   */
+  headlineScore?: { composite: number; recommendation: Recommendation } | null;
+  /** Data confidence (0–100) — metadata about input completeness, NOT
+   *  conviction. Rendered as a small labelled line, never as a headline. */
+  dataConfidence?: number | null;
   /** Which fields have streamed in. Omit to treat the verdict as complete. */
   received?: ReadonlySet<string>;
   /** True while more fields are still arriving. */
@@ -126,8 +133,8 @@ interface Props {
 export function DecisionHero({
   verdict,
   loading,
-  score,
-  confidenceOverride,
+  headlineScore,
+  dataConfidence,
   received,
   streaming = false,
   elapsedMs = 0,
@@ -179,8 +186,10 @@ export function DecisionHero({
 
   // When `received` is omitted the verdict is complete, so every field renders.
   const has = (id: string) => (received ? received.has(id) : true);
-  const c = COLORS[verdict.verdict];
-  const confidenceNum = confidenceOverride ?? score?.confidence ?? null;
+  // Color follows the CANONICAL direction: the score's tier when a score
+  // exists, the AI verdict word only when there is nothing to compute from.
+  const direction = headlineScore ? scoreDirection(headlineScore.composite) : verdict.verdict;
+  const c = COLORS[direction];
 
   return (
     <div
@@ -192,23 +201,25 @@ export function DecisionHero({
       {/* ── Header row ── */}
       <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-col gap-1.5">
-          {/* Primary verdict label */}
+          {/* THE verdict + THE headline score — one call, one number, shared
+              with the Conviction tab (both read the same ScoreResult). */}
           <div className="flex items-center gap-3">
-            {/* The call itself streams LAST (it is the model's conclusion), so
-                until it lands this shows the numeric score's own tier rather
-                than a placeholder "neutral" the model never said. */}
-            {has("verdict") ? (
+            {headlineScore ? (
+              <>
+                <span className={`rounded-lg border px-3 py-1 text-sm font-bold uppercase tracking-widest ${RECOMMENDATION_TONE[headlineScore.recommendation]}`}>
+                  {RECOMMENDATION_LABEL[headlineScore.recommendation]}
+                </span>
+                <span className={`font-mono text-2xl font-bold tabular-nums ${c.label}`}>
+                  <CountUp value={headlineScore.composite} format={(v) => String(Math.round(v))} durationMs={800} />
+                  <span className="text-base font-normal text-muted">/100</span>
+                </span>
+              </>
+            ) : has("verdict") ? (
               <span className={`rounded-lg border px-3 py-1 text-sm font-bold uppercase tracking-widest ${c.badge}`}>
                 {verdict.verdict}
               </span>
             ) : (
               <span className="h-7 w-24 animate-pulse rounded-lg bg-surface-2" />
-            )}
-            {confidenceNum != null && (
-              <span className={`font-mono text-2xl font-bold tabular-nums ${c.label}`}>
-                <CountUp value={confidenceNum} format={(v) => String(Math.round(v))} durationMs={800} />
-                <span className="text-base font-normal text-muted">%</span>
-              </span>
             )}
           </div>
           {/* Investment headline */}
@@ -221,35 +232,23 @@ export function DecisionHero({
           )}
         </div>
 
-        {/* Metadata: confidence level + time horizon */}
-        <div className="flex shrink-0 flex-col items-end gap-2">
-          <div className="flex items-center gap-3 text-caption">
-            <span className="uppercase tracking-widest text-muted">Confidence</span>
-            <span className={`font-semibold uppercase ${
-              verdict.confidence === "high" ? "text-positive" :
-              verdict.confidence === "medium" ? "text-warning" : "text-negative"
-            }`}>
-              {verdict.confidence}
-            </span>
-          </div>
+        {/* Metadata rail — at most three lines, all label: value, all one case. */}
+        <div className="flex shrink-0 flex-col items-end gap-1.5">
           <div className="flex items-center gap-3 text-caption">
             <span className="uppercase tracking-widest text-muted">Horizon</span>
-            <span className="text-foreground">{verdict.timeHorizon}</span>
+            <span className="uppercase text-foreground">{verdict.timeHorizon.replace("-", " ")}</span>
           </div>
-          {/* Confidence bar (numeric, when score available) */}
-          {confidenceNum != null && (
-            <div className="mt-1 flex items-center gap-2">
-              <div className="w-28">
-                <ValueBar value={confidenceNum} barClassName={c.bar} />
-              </div>
-              <span className="text-label text-muted tabular-nums">
-                <CountUp value={confidenceNum} format={(v) => String(Math.round(v))} durationMs={800} />/100
-              </span>
+          {dataConfidence != null && (
+            <div className="flex items-center gap-3 text-caption" title="How complete the underlying data is — metadata, not conviction.">
+              <span className="uppercase tracking-widest text-muted">Data confidence</span>
+              <span className="font-mono uppercase tabular-nums text-foreground">{Math.round(dataConfidence)}/100</span>
             </div>
           )}
-          <span className="rounded-full border border-brand/25 bg-brand/8 px-2 py-0.5 text-micro font-semibold uppercase tracking-widest text-brand">
-            Local AI
-          </span>
+          {/* The verification layer's receipt: every figure in the prose above
+              was traced back to the evidence block. This is the product's
+              central claim — it belongs on the flagship verdict, not only on
+              the copilot/IC/compare surfaces. */}
+          {verdict.grounding && <GroundingBadge grounding={verdict.grounding} />}
         </div>
       </div>
 
@@ -264,7 +263,8 @@ export function DecisionHero({
         </div>
       )}
 
-      {/* ── Catalysts / Risks ── */}
+      {/* ── Catalysts / Risks — top two per side. The FULL lists live on the
+             Analysis tab (WhySection); the hero is the summary, not the copy. ── */}
       <div className="mb-5 grid gap-4 sm:grid-cols-2">
         <div>
           <p className="mb-2.5 text-label font-semibold uppercase tracking-widest text-positive/70">
@@ -272,7 +272,7 @@ export function DecisionHero({
           </p>
           {has("catalysts") ? (
             <ul className="space-y-1.5">
-              {verdict.catalysts.map((cat, i) => (
+              {verdict.catalysts.slice(0, 2).map((cat, i) => (
                 <Reveal key={i} as="li" index={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
                   <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${c.bullet}`} />
                   {cat}
@@ -289,7 +289,7 @@ export function DecisionHero({
           </p>
           {has("risks") ? (
             <ul className="space-y-1.5">
-              {verdict.risks.map((risk, i) => (
+              {verdict.risks.slice(0, 2).map((risk, i) => (
                 <Reveal key={i} as="li" index={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
                   <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-negative/50" />
                   {risk}

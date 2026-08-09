@@ -1,38 +1,38 @@
 /**
- * Devin Provider — hosted inference through the Devin CLI.
+ * Devin Provider — hosted inference through the Devin CLI (`devin -p`).
  *
  * Wraps the process layer (../devin-cli.ts) behind the provider-agnostic
- * {@link AIProvider} interface, exactly as OllamaProvider wraps ../ollama.ts.
- * The Router does not know these models run in a subprocess against a hosted
- * API rather than against a daemon on localhost.
+ * {@link AIProvider} interface. The Router does not know these models run in
+ * a subprocess against Cognition's hosted API rather than over HTTPS.
  *
- * ## Two honest gaps versus OllamaProvider
+ * ## Why this provider exists (restored 2026-08-06)
+ * It needs NO API key: authentication is the user's own `devin login`, so AI
+ * works out of the box on any machine with the CLI installed — the default
+ * head of the provider chain (lib/ai/config.ts). The Claude effort tiers the
+ * task pins name (`claude-opus-5-low|medium|high`) exist in Devin's own
+ * catalogue under the same uids, so the pins resolve through Devin first and
+ * fall back to the direct Anthropic API only when a key is configured.
  *
- *   1. **No temperature / maxTokens / numCtx.** `devin -p` exposes no sampling
- *      controls. They are accepted and ignored rather than faked. In practice
- *      the tasks that cared were the JSON ones (nl-screener pins temperature
- *      0.1 for determinism), and the frontier models return clean JSON at
- *      their defaults — but this is a real behavioural difference, not a
- *      formality, and it belongs in the diff rather than in a surprise later.
+ * ## Two honest gaps versus the API providers
+ *
+ *   1. **No sampling controls, no native structured outputs.** `devin -p`
+ *      exposes no temperature/maxTokens and no schema-constrained decoding.
+ *      They are accepted and ignored rather than faked; `json` rides on the
+ *      prompt directive (../devin-cli.ts:flattenMessages), and the platform's
+ *      tolerant parse + Zod validation remain the guarantee.
  *   2. **No token streaming.** Print mode buffers the whole answer, so
- *      `stream()` yields exactly one chunk. That is a deliberate trade: the
- *      full answer arrives in 4-8s against 28-115s for Ollama's *first* token,
- *      so every streaming caller still gets its content sooner, just without
- *      the typewriter effect. `devin acp` (JSON-RPC over stdio) is the upgrade
- *      path if the UX turns out to need real deltas.
+ *      `stream()` yields exactly one chunk. Deliberate trade: the full answer
+ *      arrives in seconds (measured 8.9s for a light JSON task, 2026-08-06),
+ *      so streaming callers still get their content promptly, just without
+ *      the typewriter effect.
  *
- * Reasoning is likewise not exposed: the hosted models' chain-of-thought never
- * reaches stdout, so `reasoning` is always "". Callers already treat it as
- * optional (see normalizeResponse), and returning an empty string is honest
- * where fabricating a summary from the answer would not be.
+ * Reasoning is likewise not exposed: hosted chain-of-thought never reaches
+ * stdout, so `reasoning` is always "". Token usage is not reported (Devin
+ * bills ACUs, not tokens) — telemetry records the call with null cost.
  */
 
-import {
-  checkDevinHealth,
-  generateViaDevin,
-  listAllowedModelIds,
-} from "../devin-cli";
-import { MODEL_REGISTRY } from "../models";
+import { checkDevinHealth, generateViaDevin, listAllowedModelIds } from "../devin-cli";
+import { registryModelsFor } from "../models";
 import type {
   AIProvider,
   ProviderCompleteRequest,
@@ -45,15 +45,16 @@ export class DevinProvider implements AIProvider {
   readonly id = "devin" as const;
 
   /**
-   * Models this provider will route to: the curated registry entries that the
-   * account is actually allowed to run.
+   * Models this provider will route to: the curated registry entries (its own
+   * plus the `alsoServedBy: ["devin"]` Claude tiers) that the account's live
+   * catalogue actually allows.
    *
    * Deliberately an intersection rather than the raw catalogue. `devin models
-   * list` returns ~170 variants across 37 families; handing all of them to the
-   * Router would mean scoring 170 models — nearly all of which resolve to
-   * genericSpec (quality 3, no capabilities) — on every request. Routing would
-   * become both slow and arbitrary. The registry is the policy; the catalogue
-   * is the availability check.
+   * list` returns ~170 variants across dozens of families; handing all of
+   * them to the Router would mean scoring 170 models — nearly all resolving
+   * to genericSpec (quality 3, no capabilities) — on every request. The
+   * registry is the policy; the catalogue is the availability check. An
+   * explicit user/env model override can still name any live catalogue id.
    *
    * `sizeGb: 0` is meaningful, not a placeholder: it is how a hosted model
    * declares itself exempt from the Router's memory gate (see fitsInMemory).
@@ -61,15 +62,14 @@ export class DevinProvider implements AIProvider {
   async listModels(): Promise<ProviderModelInfo[]> {
     const allowed = new Set(await listAllowedModelIds());
     if (allowed.size === 0) return [];
-    return MODEL_REGISTRY.filter((m) => m.provider === "devin" && allowed.has(m.id)).map((m) => ({
-      id: m.id,
-      sizeGb: 0,
-    }));
+    return registryModelsFor("devin")
+      .filter((m) => allowed.has(m.id))
+      .map((m) => ({ id: m.id, sizeGb: 0 }));
   }
 
   async healthCheck(): Promise<ProviderHealth> {
     const { reachable, models } = await checkDevinHealth();
-    const registered = new Set(MODEL_REGISTRY.filter((m) => m.provider === "devin").map((m) => m.id));
+    const registered = new Set(registryModelsFor("devin").map((m) => m.id));
     return { reachable, models: models.filter((id) => registered.has(id)) };
   }
 

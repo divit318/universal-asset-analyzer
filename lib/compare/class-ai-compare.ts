@@ -272,7 +272,9 @@ export async function compareClassAssets(
       wireSchema: ClassComparisonWireSchema,
       schemaVersion: COMPARISON_SCHEMA_VERSION,
     });
-    model = analysis.provider === "devin" ? "devin" : (analysis.meta.model ?? "ollama");
+    // Merge resolution 2026-08-06: single-runtime seam — the answering model
+    // is in meta; main's provider-id branch referenced a retired runtime.
+    model = analysis.meta.model ?? "unknown";
     flat = {
       keyQuestions: [], rankings: [], noClearWinner: false, tradeoffSummary: "",
       executiveSummary: "", conditionsForChange: "", confidenceScore: undefined,

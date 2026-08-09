@@ -34,7 +34,7 @@ The existing architecture (per `ARCHITECTURE.md`, `CLAUDE.md`) is sound and the 
 
 - **Layering holds**: `lib/*.ts` pure domain logic → `app/api/*/route.ts` validation/orchestration → `app/*/page.tsx` fetch/render → `_components/` presentation. Every existing engine (`portfolio-analytics.ts`, `scanner/`, `ios/`) already follows this. New work should slot into the same layers, not introduce a new one.
 - **Single-source-of-truth is already partially enforced** for scoring (`composite.ts`), portfolio math (`portfolio-analytics.ts`), and personalization (`ios/fit-scorer.ts`). The one place this principle is currently at risk: if Sector Rotation and Movement Explainer are built as bolt-ons instead of shared engines, every consumer (Research, Portfolio, Watchlist, Compare, Dashboard) will reimplement "why did this move" logic independently — exactly the anti-pattern AGENTS.md §4 warns against.
-- **AI usage pattern is consistent**: Ollama-only, feature-specific prompt builders (`ai-research.ts`, `ai-compare.ts`, `ai-watchlist.ts`, scanner's `buildCausalPrompt`/`buildThesisPrompt`/`buildSectorImpactPrompt`/`buildScanPrompt`), streaming via `ReadableStream` for long-running work, non-fatal degradation when Ollama is offline. New AI responsibilities must follow this exact pattern — no new AI plumbing needed, only new prompt builders.
+- **AI usage pattern is consistent**: one platform entry point (`runPrompt` via `lib/ai/`, Anthropic API on the user's key), feature-specific prompt builders (`ai-research.ts`, `ai-compare.ts`, `ai-watchlist.ts`, scanner's `buildCausalPrompt`/`buildThesisPrompt`/`buildSectorImpactPrompt`/`buildScanPrompt`), streaming via `ReadableStream` for long-running work, non-fatal degradation when the AI is unavailable. New AI responsibilities must follow this exact pattern — no new AI plumbing needed, only new prompt builders.
 - **Persistence gap**: `lib/db.ts`'s SQLite schema has no tables for sector-rotation history, movement-explanation cache, or watchlist alert state. All three need schema additions (see §6).
 
 ---
@@ -71,7 +71,7 @@ Portfolio math    → lib/portfolio-analytics.ts       (health, risk, scenarios,
 Opportunity       → lib/opportunity-engine.ts + lib/scanner/opportunity-scorer.ts
 Personalization   → lib/ios/fit-scorer.ts            (PortfolioFitScore)
 Movement/causal   → lib/scanner/causal-engine.ts + thesis-builder.ts + company-impact.ts + sector-impact.ts  (scanner-scoped today)
-AI inference      → lib/ollama.ts (+ feature prompt builders per module)
+AI inference      → lib/ai/ (+ feature prompt builders per module)
 Persistence       → lib/db.ts (all SQLite CRUD)
 ```
 
@@ -165,7 +165,7 @@ Everything else is wiring:
                            as evidence, doesn't recompute)
 ```
 
-**Foundational (everything depends on these, nothing depends on them)**: `lib/yahoo.ts`, `lib/db.ts`, `lib/composite.ts`, `lib/ollama.ts`.
+**Foundational (everything depends on these, nothing depends on them)**: `lib/yahoo.ts`, `lib/db.ts`, `lib/composite.ts`, `lib/ai/`.
 
 **Second tier (depend only on foundational)**: `lib/sector-rotation.ts` (new), generalized Movement Explainer, `lib/opportunity-engine.ts`, `lib/portfolio-analytics.ts`.
 
@@ -193,7 +193,7 @@ User opens Research/Portfolio/Watchlist/Dashboard
                                 ▼
   On "why did X move" trigger (explicit user question, or automatic on
   significant delta): Movement Explainer called with subject+timeframe
-  ──▶ Ollama (causal/thesis prompts) ──▶ cached result
+  ──▶ AI platform (causal/thesis prompts) ──▶ cached result
                                 │
                                 ▼
   Portfolio Decision Engine / Watchlist Intelligence / Stress Testing
@@ -213,7 +213,7 @@ User opens Research/Portfolio/Watchlist/Dashboard
   same as daily-pulse today)
 ```
 
-Key rule carried over from existing architecture (ARCHITECTURE.md §"Design Principles"): **AI explains, engines decide.** Sector Rotation's relative-strength ranking is deterministic; only the "why" narrative touches Ollama. Same split for Movement Explainer (evidence gathering deterministic where possible — price/volume deltas, filing dates — narrative synthesis is AI). This matches the existing `composite.ts` (deterministic) + `ai-research.ts` (AI narrative) split exactly.
+Key rule carried over from existing architecture (ARCHITECTURE.md §"Design Principles"): **AI explains, engines decide.** Sector Rotation's relative-strength ranking is deterministic; only the "why" narrative touches the model. Same split for Movement Explainer (evidence gathering deterministic where possible — price/volume deltas, filing dates — narrative synthesis is AI). This matches the existing `composite.ts` (deterministic) + `ai-research.ts` (AI narrative) split exactly.
 
 ---
 
@@ -269,7 +269,7 @@ Deterministic core (pure, tested, no I/O):
   lib/portfolio-analytics.ts  classifyAction(), computeScenarios(), computeHealthScore()
 
 Orchestration (I/O + composition, still lib/, still testable with mocks):
-  lib/movement-explainer.ts   explainMovement(subject, timeframe) — calls scanner/* + ollama.ts
+  lib/movement-explainer.ts   explainMovement(subject, timeframe) — calls scanner/* + lib/ai
   lib/scanner/index.ts        runScannerPipeline() — unchanged role, now one caller of movement-explainer's building blocks
 
 Personalization (wraps any of the above):
@@ -322,7 +322,7 @@ This order is a hard dependency chain, not just a priority list: Phase 3 and 4 l
 | `event-screener.ts`'s existing "sector rotation" signal vs. new Sector Rotation Engine naming collision | Medium — confusing for future agents/devs searching "rotation" | Fold the signal into the new engine as one input (§4); document the rename in ARCHITECTURE.md |
 | Movement Explainer extraction breaks Scanner's existing causal-chain behavior | Medium — `causal-engine.ts`/`thesis-builder.ts` are live in Scanner today | Generalize call signatures additively (new optional subject param, existing scanner call path unchanged); add regression test on scanner's current output shape before refactoring |
 | Sector Rotation snapshot table grows unbounded (daily snapshots, no retention policy) | Low-Medium | Define retention (e.g. 2 years) at table-creation time, matching `fundamentals_cache`'s TTL-cleanup precedent |
-| Ollama latency compounding — Movement Explainer + Sector Rotation narrative + CIO brief all calling Ollama for one dashboard load | Medium — Market Dashboard could become slow | Cache aggressively (rotation snapshot daily, movement explanations by subject+timeframe key); Dashboard should render deterministic panels immediately and stream AI narrative sections in, matching IC Report's existing `ReadableStream` pattern |
+| AI latency compounding — Movement Explainer + Sector Rotation narrative + CIO brief all calling the AI for one dashboard load | Medium — Market Dashboard could become slow | Cache aggressively (rotation snapshot daily, movement explanations by subject+timeframe key); Dashboard should render deterministic panels immediately and stream AI narrative sections in, matching IC Report's existing `ReadableStream` pattern |
 | Scope creep back to "7 independent systems" during implementation, losing the shared-engine discipline this document establishes | Medium | Each phase's PR/commit should explicitly reference which existing `lib/` file it extended vs. which new file it created, and justify any new file against §5's gap list |
 
 ---

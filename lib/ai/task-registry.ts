@@ -85,35 +85,34 @@ export interface TaskConfig {
   /**
    * Opt into chain-of-thought for reasoning models.
    *
-   * Off everywhere by default, and deliberately so: measured on qwen3:14b,
-   * thinking cost 143s vs 28s (5x) for a comparable answer, and under
-   * `jsonMode` it is not merely slow but *broken* — the model returns the
-   * literal `{}` (0/3 valid vs 3/3 with thinking off). The Router hard-forces
-   * this to false whenever `jsonMode` is set; setting both is a config error,
-   * not a preference.
+   * Off everywhere by default, and deliberately so: measured on a hybrid
+   * reasoning model, thinking cost 143s vs 28s (5x) for a comparable answer,
+   * and under `jsonMode` it was not merely slow but *broken* — the model
+   * returned the literal `{}` (0/3 valid vs 3/3 with thinking off). The Router
+   * hard-forces this to false whenever `jsonMode` is set; setting both is a
+   * config error, not a preference. (The Claude effort tiers have no
+   * per-request toggle at all — depth rides on the model id.)
    */
   thinking?: boolean;
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
   /**
-   * Which analysis backend runs this task ("ollama" | "devin" | "auto").
-   * Resolution order and the interactive-tier guardrail live in
-   * lib/ai/analysis-provider.ts:resolveProvider. Unset = "auto" (follow the
-   * AI_PROVIDER global default).
+   * Which analysis RUNTIME runs this task at the seam ("chain" = one
+   * completion through the Router's provider chain; "sessions" = a Devin
+   * sessions-API run with platform-validated structured output). Resolution
+   * order lives in lib/ai/analysis-provider.ts:resolveProvider. Unset =
+   * "auto": background-latency tasks → sessions, everything else → chain.
    */
-  provider?: "ollama" | "devin" | "auto";
+  provider?: "chain" | "sessions" | "auto";
   /**
    * Total wall-clock budget for a Devin session running this task, AFTER
    * which the session is terminated and the run marked timeout. Amendment 3
    * (ai-migration/04): sized off the observed MAX, never the median — the
-   * spike's 84 runs peaked at 48.8s for a movement-class analysis, so a
-   * small-analysis budget of 240s is ~5x the worst case. Unset = 8 min for
-   * standard tasks, 15 min for latency:"background" tasks.
+   * sessions runtime is for background work, where a slow truth beats a fast
+   * timeout. Meaningless to the chain runtime, which budgets per completion.
    */
   devinTimeoutMs?: number;
-  /** Hard per-session ACU cap for this task (default: DEVIN_MAX_ACU env or 4). */
-  devinMaxAcu?: number;
 }
 
 /**
@@ -235,9 +234,6 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     latency: "standard",
     jsonMode: true,
     maxTokens: 1024,
-    // Tranche-2 migrated task: tail-based Devin budget (amendment 3), same
-    // movement-class sizing (~5x the observed 48.8s session max).
-    devinTimeoutMs: 240_000,
   },
   "opportunity-engine": {
     complexity: "standard",
@@ -245,7 +241,7 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     jsonMode: true,
     maxTokens: 2048,
     timeoutMs: 300_000,
-    // Without this the scanner ran at Ollama's 4096 default while its
+    // Without this the scanner ran at a 4096 default window while its
     // company-impact prompts alone measured ~2.7k tokens (2026-07-31) — plus
     // the 2048-token generation cap, the window was silently overflowing and
     // shifting the oldest prompt tokens (the instructions) out of context.
@@ -262,9 +258,6 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     complexity: "standard",
     latency: "standard",
     maxTokens: 1024,
-    // First migrated call site (ai-migration/03 §9). Budget sized off the
-    // spike's observed MAX (48.8s across 84 runs), not the 22s median.
-    devinTimeoutMs: 240_000,
   },
 
   /* ---- Light: short output where latency is what the user actually feels -- */
@@ -273,9 +266,7 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
   // global AI_PROVIDER=devin; the homepage streams it and tolerates the tail.
   "daily-briefing": { complexity: "light", latency: "standard", maxTokens: 800, devinTimeoutMs: 240_000 },
   "knowledge-graph-explain": { complexity: "light", latency: "interactive", maxTokens: 600 },
-  // Tranche-2 migrated (text mode); interactive → stays on Ollama under a
-  // global AI_PROVIDER=devin unless pinned. devinTimeoutMs applies when pinned.
-  "calendar-brief": { complexity: "light", latency: "interactive", maxTokens: 600, devinTimeoutMs: 240_000 },
+  "calendar-brief": { complexity: "light", latency: "interactive", maxTokens: 600 },
   "nl-screener": {
     // Parsing a search box into filters. The user is staring at a spinner and
     // there is no research quality to protect — pure latency play.
@@ -285,7 +276,7 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     maxTokens: 512,
     temperature: 0.1,
   },
-  "quick-summary": { complexity: "light", latency: "interactive", maxTokens: 400, devinTimeoutMs: 240_000 },
+  "quick-summary": { complexity: "light", latency: "interactive", maxTokens: 400 },
   // Simulator intake + generation — a human is in a live back-and-forth (or
   // watching a staged progress bar) with this exact task, so latency is
   // interactive; but choosing WHICH gap in an investor profile matters next,

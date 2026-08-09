@@ -8,9 +8,9 @@ import { Drawer } from "@/app/_components/dialog";
 // ─── Style maps ────────────────────────────────────────────────────────────
 
 const TYPE_STYLES: Record<CalendarEvent["type"], { label: string; color: string; bg: string; border: string; dot: string }> = {
-  earnings:    { label: "EARNINGS",  color: "text-blue-400",   bg: "bg-blue-400/10",   border: "border-blue-400/25",   dot: "bg-blue-400" },
+  earnings:    { label: "EARNINGS",  color: "text-chart-2",   bg: "bg-chart-2/10",   border: "border-chart-2/25",   dot: "bg-chart-2" },
   exDividend:  { label: "EX-DIV",   color: "text-accent",     bg: "bg-accent/10",     border: "border-accent/25",     dot: "bg-accent" },
-  dividend:    { label: "DIVIDEND",  color: "text-emerald-400", bg: "bg-emerald-400/10", border: "border-emerald-400/25", dot: "bg-emerald-400" },
+  dividend:    { label: "DIVIDEND",  color: "text-emerald-400 light:text-emerald-700", bg: "bg-emerald-400/10", border: "border-emerald-400/25", dot: "bg-emerald-400 light:bg-emerald-600" },
   macro:       { label: "MACRO",    color: "text-warning",  bg: "bg-warning/10",  border: "border-warning/25",  dot: "bg-warning" },
 };
 
@@ -230,7 +230,7 @@ export function EventDrawer({ event, onClose }: EventDrawerProps) {
               <Row
                 label="In"
                 value={
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${event.source === "portfolio" ? "bg-accent/10 text-accent border border-accent/20" : "bg-blue-400/10 text-blue-400 border border-blue-400/20"}`}>
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${event.source === "portfolio" ? "bg-accent/10 text-accent border border-accent/20" : "bg-chart-2/10 text-chart-2 border border-chart-2/20"}`}>
                     {event.source === "portfolio" ? "Portfolio" : "Watchlist"}
                   </span>
                 }

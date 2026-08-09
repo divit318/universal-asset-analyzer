@@ -20,10 +20,20 @@ import { useTheme, type Theme } from "./theme";
  */
 export const CHART_SERIES = [
   "#a855f7", // purple
-  "#f97316", // orange
+  "#60a5fa", // steel — the retired brand sky-blue hue, returned to the data (brand book §3)
   "#14b8a6", // teal
   "#ec4899", // pink
   "#64748b", // slate
+] as const;
+
+/* Steel needs a darker shade on a white canvas (brand book: #2563EB light);
+   the other four slots stay legible on both canvases unswapped. */
+const LIGHT_SERIES = [
+  CHART_SERIES[0],
+  "#2563eb", // steel (light)
+  CHART_SERIES[2],
+  CHART_SERIES[3],
+  CHART_SERIES[4],
 ] as const;
 
 export interface ChartTheme {
@@ -38,6 +48,18 @@ export interface ChartTheme {
   cursorFill: string;
   tooltip: React.CSSProperties;
   axisTick: { fontSize: number; fill: string };
+  /* ── Named auxiliary hues (2026-08-08 light-mode audit) ─────────────────
+     Every page-level chart used to hardcode these as dark-palette literals
+     (BLUE #60a5fa, AMBER #fbbf24, …), which sit at 1.9–2.5:1 on a white
+     canvas. One theme-swapped set here instead of five private copies. */
+  blue: string;   // = series[1] steel — the "second line" of any two-series chart
+  amber: string;  // annual/estimate overlays, SMA-50 — amber, NOT signal orange
+  purple: string; // SMA-200, volume bars
+  teal: string;   // Bollinger bands, tertiary series
+  orange: string; // = warning hue as a series identity
+  pink: string;   // quaternary series
+  neutral: string; // "no direction" markers
+  referenceLine: string; // zero/threshold rules — quieter than axis
 }
 
 const DARK: ChartTheme = {
@@ -46,8 +68,8 @@ const DARK: ChartTheme = {
   surface: "#131519", // --surface
   positive: "#4ade80",
   negative: "#f87171",
-  warning: "#fbbf24",
-  brand: "#38bdf8",
+  warning: "#fb923c",
+  brand: "#c8a96e",
   series: CHART_SERIES,
   cursorFill: "rgba(255,255,255,0.05)",
   tooltip: {
@@ -60,17 +82,25 @@ const DARK: ChartTheme = {
     color: "#edeff2",
   },
   axisTick: { fontSize: 11, fill: "#99a3b2" },
+  blue: "#60a5fa",
+  amber: "#fbbf24",
+  purple: "#a78bfa",
+  teal: "#2dd4bf",
+  orange: "#fb923c",
+  pink: "#f472b6",
+  neutral: "#9aa3af",
+  referenceLine: "#4b5563",
 };
 
 const LIGHT: ChartTheme = {
-  axis: "#56606f", // --muted (light)
+  axis: "#4d5564", // --muted (light, deepened 2026-08-08 light-mode audit)
   grid: "#e2e6ec", // --border (light)
   surface: "#ffffff", // --surface (light)
-  positive: "#16a34a",
-  negative: "#dc2626",
-  warning: "#d97706",
-  brand: "#0284c7",
-  series: CHART_SERIES,
+  positive: "#15803d", // deepened with --positive (2026-08-07 contrast audit)
+  negative: "#b91c1c", // deepened with --negative (2026-08-07 contrast audit)
+  warning: "#ad4a08", // --warning (light, deepened 2026-08-08 light-mode audit)
+  brand: "#7a5f33",
+  series: LIGHT_SERIES,
   cursorFill: "rgba(16,23,34,0.05)",
   tooltip: {
     background: "#ffffff",
@@ -81,7 +111,15 @@ const LIGHT: ChartTheme = {
     boxShadow: "0 12px 32px -8px rgba(16,23,34,0.18), 0 4px 12px -4px rgba(16,23,34,0.12)",
     color: "#101722",
   },
-  axisTick: { fontSize: 11, fill: "#56606f" },
+  axisTick: { fontSize: 11, fill: "#4d5564" },
+  blue: "#2563eb",   // steel (light) — matches LIGHT_SERIES[1]
+  amber: "#b45309",  // amber-700: 5.02:1 on white where #fbbf24 was 1.9:1
+  purple: "#7c3aed", // violet-600: 5.70:1 on white
+  teal: "#0f766e",   // teal-700: 5.47:1 on white
+  orange: "#ad4a08", // = light --warning
+  pink: "#db2777",   // matches light --chart-4
+  neutral: "#64748b",
+  referenceLine: "#94a3b8", // slate-400 — a quiet rule on white, like #4b5563 on dark
 };
 
 export function getChartTheme(theme: Theme): ChartTheme {
@@ -93,15 +131,7 @@ export function useChartTheme(): ChartTheme {
   return getChartTheme(useTheme().theme);
 }
 
-/* ── Legacy static exports (dark) — retained so any unmigrated reference still
-      compiles. Prefer useChartTheme() in client chart components. ─────────── */
-export const CHART_AXIS = DARK.axis;
-export const CHART_GRID = DARK.grid;
-export const CHART_SURFACE = DARK.surface;
-export const CHART_POSITIVE = DARK.positive;
-export const CHART_NEGATIVE = DARK.negative;
-export const CHART_WARNING = DARK.warning;
-export const CHART_BRAND = DARK.brand;
-export const chartTooltipStyle = DARK.tooltip;
-export const chartAxisTick = DARK.axisTick;
-export const chartCursorFill = DARK.cursorFill;
+/* The legacy static dark-only exports (CHART_AXIS, chartTooltipStyle, …) are
+   gone (2026-08-08 light-mode audit): they had zero remaining consumers, and
+   their existence invited new call sites that would render dark chrome on a
+   light canvas. useChartTheme() is the only door. */

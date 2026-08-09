@@ -8,10 +8,11 @@
  */
 
 import { dailyReturns, maxDrawdown, stddev } from "../portfolio-analytics";
+import { totalReturnClose } from "../prices";
 import type { HistoryPoint } from "../types";
 
 const closes = (history: HistoryPoint[]): number[] =>
-  history.map((h) => h.adjClose ?? h.close).filter((c) => c > 0);
+  history.map(totalReturnClose).filter((c) => c > 0);
 
 /** Percentage price change over the trailing `sessions` bars. Null if we don't have that much history. */
 export function trailingReturn(history: HistoryPoint[], sessions: number): number | null {
@@ -99,7 +100,7 @@ export function seasonality(history: HistoryPoint[], month: number): Seasonality
   // Group returns by year+month, so each (year, month) gives one observation.
   const byYearMonth = new Map<string, { first: number; last: number }>();
   for (const h of history) {
-    const close = h.adjClose ?? h.close;
+    const close = totalReturnClose(h);
     if (!(close > 0)) continue;
     const d = new Date(h.date);
     if (Number.isNaN(d.getTime())) continue;

@@ -120,8 +120,9 @@ export function LensControl({
         aria-hidden
         className={`h-1.5 w-1.5 rounded-full ${nothing ? "bg-border" : active ? "bg-brand" : "bg-warning"}`}
       />
+      {/* Keyboard accelerator lives in the title tooltip only — a bare "d"
+          chip appended to the count read as a rendering artifact. */}
       {nothing ? "Nothing flagged" : active ? `Lens on · ${count} flagged` : `${count} flagged`}
-      <kbd className="rounded border border-border px-1 font-mono text-[10px] leading-4 text-faint">d</kbd>
     </button>
   );
 }

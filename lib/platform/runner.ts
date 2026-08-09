@@ -32,6 +32,20 @@ export interface StageFailure {
   reason: string;
 }
 
+/**
+ * What one stage actually did — duration plus any degradations it recorded.
+ * Returned for EVERY stage (clean or not) so a caller can print a complete
+ * post-run account ("what ran, how long, what broke") without re-tracing the
+ * pipeline by hand. "N stages degraded" with no per-stage story was the
+ * observability gap in the 2026-08-07 Wire investigation.
+ */
+export interface StageRunRecord {
+  stage: string;
+  label: string;
+  durationMs: number;
+  failures: string[];
+}
+
 export type PipelineRunnerEvent =
   | {
       type: "progress";
@@ -104,13 +118,14 @@ export async function runStagedPipeline<C>(
   stages: StageDef<C>[],
   ctx: C,
   opts: RunPipelineOptions = {},
-): Promise<{ failures: StageFailure[] }> {
+): Promise<{ failures: StageFailure[]; stageRecords: StageRunRecord[] }> {
   const { signal, onEvent } = opts;
   const stallAfterMs = opts.stallAfterMs ?? DEFAULT_STALL_AFTER_MS;
 
   const weights = stages.map((s) => Math.max(1, s.units ?? 1));
   const totalWeight = weights.reduce((a, b) => a + b, 0);
   const failures: StageFailure[] = [];
+  const stageRecords: StageRunRecord[] = [];
 
   let completedWeight = 0;
   let currentStage: StageDef<C> | null = null;
@@ -156,6 +171,8 @@ export async function runStagedPipeline<C>(
       currentItem = null;
       stageDone = 0;
       stageTotal = Math.max(1, stage.units ?? 1);
+      const stageStartedAt = Date.now();
+      const failuresBefore = failures.length;
       emitProgress();
 
       const deadline = stage.timeoutMs ? AbortSignal.timeout(stage.timeoutMs) : undefined;
@@ -199,12 +216,18 @@ export async function runStagedPipeline<C>(
         onEvent?.({ type: "stage_failed", stage: stage.id, reason });
       }
 
+      stageRecords.push({
+        stage: stage.id,
+        label: stage.label,
+        durationMs: Date.now() - stageStartedAt,
+        failures: failures.slice(failuresBefore).map((f) => f.reason),
+      });
       completedWeight += Math.max(1, stage.units ?? 1);
     }
 
     currentStage = null;
     currentItem = null;
-    return { failures };
+    return { failures, stageRecords };
   } finally {
     clearInterval(stallTimer);
   }

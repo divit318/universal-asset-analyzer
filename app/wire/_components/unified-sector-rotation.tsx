@@ -27,7 +27,7 @@ import { Skeleton } from "@/app/_components/ui";
 const CLASS_STYLE: Record<RotationClass, { text: string; label: string; explain: string }> = {
   leading: { text: "text-positive", label: "Leading", explain: "Stronger than peers and still accelerating" },
   strengthening: { text: "text-accent", label: "Strengthening", explain: "Weaker than peers but momentum is improving — a candidate to rotate into leadership" },
-  weakening: { text: "text-amber-500", label: "Weakening", explain: "Still stronger than peers, but momentum is fading — rank can stay high while the trend cools" },
+  weakening: { text: "text-amber-500 light:text-amber-700", label: "Weakening", explain: "Still stronger than peers, but momentum is fading — rank can stay high while the trend cools" },
   lagging: { text: "text-negative", label: "Lagging", explain: "Weaker than peers and still decelerating" },
 };
 

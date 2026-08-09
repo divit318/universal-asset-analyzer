@@ -19,13 +19,12 @@
  */
 import { NextResponse } from "next/server";
 import { getActivityAt } from "@/lib/db";
+import { normalizeSymbol } from "@/lib/market";
 import { getUniverseProvider } from "@/lib/screener/universes";
 import { getUniverseStats } from "@/lib/screener/universe-stats";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const SYMBOL_RE = /^[A-Z0-9.\-]{1,12}$/;
 
 /** Headline metrics only — one per concern, all defined in lib/assets/equity.ts. */
 const DIMENSION_KEYS: { key: string; label: string }[] = [
@@ -53,8 +52,12 @@ interface ResearchMaterialityPayload {
 }
 
 export async function GET(request: Request) {
-  const symbol = new URL(request.url).searchParams.get("symbol")?.trim().toUpperCase() ?? "";
-  if (!symbol || !SYMBOL_RE.test(symbol)) {
+  // The app's canonical symbol validator (accepts futures/forex/index shapes
+  // like GC=F, EURUSD=X, ^TNX — a local, stricter regex 400'd on every one of
+  // them, putting a console error on each commodity/forex research load).
+  // Non-equity symbols simply fall through to `dimensions: null` below.
+  const symbol = normalizeSymbol(new URL(request.url).searchParams.get("symbol"));
+  if (!symbol) {
     return NextResponse.json({ error: "Invalid symbol" }, { status: 400 });
   }
 

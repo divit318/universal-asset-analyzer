@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* Theme variants bound to the app's own data-theme attribute (set pre-paint by
+   THEME_INIT_SCRIPT). Without these, Tailwind's default `dark:` follows the OS
+   `prefers-color-scheme` — which this app deliberately does not — so every
+   `dark:`/`light:` utility was silently keyed to the wrong signal. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+@custom-variant light (&:where([data-theme="light"], [data-theme="light"] *));
+
 /* ============================================================================
    Universal Asset Analyzer — Design System
    "The Bloomberg Terminal, redesigned in 2026."
@@ -40,6 +47,7 @@
   --color-positive: var(--positive);
   --color-negative: var(--negative);
   --color-warning: var(--warning);
+  --color-alert: var(--alert);
 
   /* Categorical series palette — identity of a series/tier, not semantics.
      Same values the charts use (see --chart-* per theme below), exposed as
@@ -53,11 +61,21 @@
 
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  /* The judgment serif (brand book §4, "--font-judgment"): marketing headlines
+     and judgment prose only — never UI chrome, never tables. Exposed as the
+     `font-serif` utility. */
+  --font-serif: var(--font-source-serif), Georgia, serif;
 
   /* Radius scale — named by role, not size */
   --radius-control: 0.5rem;   /* buttons, inputs, small chips */
   --radius-card: 0.875rem;    /* cards, panels */
   --radius-panel: 1rem;       /* dialogs, drawers, elevated surfaces */
+  /* ~170 hand-rolled panels predate the role-named scale and say `rounded-xl`
+     (Tailwind default 12px) while the Card primitive and .uaa-card say
+     `rounded-card` (14px) — two corner geometries on one screen (2026-08-10
+     visual audit). Pinning the utility to the card token unifies them at the
+     source instead of editing every call site. */
+  --radius-xl: var(--radius-card);
 
   /* Elevation — theme-specific shadow values injected below */
   --shadow-card: var(--shadow-card);
@@ -71,6 +89,70 @@
   --text-label--line-height: 0.875rem;
   --text-caption: 0.6875rem;     /* 11px — secondary captions */
   --text-caption--line-height: 1rem;
+
+  /* Marketing (landing) type scale — serif display tiers + sans copy tiers.
+     Used only by app/landing; the app keeps its micro-hierarchy above. */
+  --text-mk-hero: clamp(3rem, 6.5vw, 5.25rem);          /* 48–84px */
+  --text-mk-hero--line-height: 1.05;
+  --text-mk-hero--letter-spacing: -0.02em;
+  --text-mk-hero--font-weight: 600;
+  --text-mk-display: clamp(2.125rem, 4.2vw, 3.5rem);    /* 34–56px */
+  --text-mk-display--line-height: 1.12;
+  --text-mk-display--letter-spacing: -0.015em;
+  /* The split hero's h1: sized so "Every figure computed." sets as ONE
+     line inside the 38% text column at every breakpoint >= 1024px. */
+  --text-mk-hero-split: clamp(1.75rem, 2.4vw, 2.2rem);   /* 28–35px */
+  --text-mk-hero-split--line-height: 1.12;
+  --text-mk-hero-split--letter-spacing: -0.02em;
+  --text-mk-hero-split--font-weight: 600;
+  --text-mk-display--font-weight: 600;
+  --text-mk-feature: clamp(1.5rem, 2.2vw, 2rem);        /* 24–32px */
+  --text-mk-feature--line-height: 1.2;
+  --text-mk-feature--font-weight: 600;
+  --text-mk-eyebrow: 0.75rem;                            /* 12px */
+  --text-mk-eyebrow--line-height: 1rem;
+  --text-mk-eyebrow--letter-spacing: 0.16em;
+  --text-mk-eyebrow--font-weight: 600;
+  --text-mk-lead: 1.125rem;                              /* 18px */
+  --text-mk-lead--line-height: 1.65;
+  --text-mk-body: 0.9375rem;                             /* 15px */
+  --text-mk-body--line-height: 1.6;
+  --text-mk-small: 0.8125rem;                            /* 13px */
+  --text-mk-small--line-height: 1.5;
+
+  /* Marketing spacing rhythm (4px base). --spacing-* names become spacing
+     utilities (py-mk-section etc.), so sections cannot invent their own. */
+  --spacing-mk-section: clamp(6.25rem, 12vh, 10.5rem);   /* 100–168px */
+  --spacing-mk-eyebrow: 1.25rem;   /* eyebrow → headline, 20px */
+  --spacing-mk-headline: 1.5rem;   /* headline → lead, 24px */
+  --spacing-mk-lead: 3rem;         /* lead → content, 48px */
+  --spacing-mk-group: 1.5rem;      /* within a group, 24px */
+  /* Section horizontal padding — identical at every breakpoint. */
+  --spacing-mk-pad: clamp(1.5rem, 5vw, 4rem);            /* 24–64px */
+
+  /* Marketing measure system — the ONLY three content widths on the landing
+     page (audit-landing.mjs verifies every section against these). */
+  --container-measure-prose: 45rem;    /* 720px  — leads, FAQ answers */
+  --container-measure-content: 75rem;  /* 1200px — DEFAULT section container */
+  --container-measure-wide: 90rem;     /* 1440px — capability rows + compare table ONLY */
+
+  /* The demo input's one-shot entrance pulse (keyframes further down). */
+  --animate-mk-glow-pulse: mk-glow-pulse 1200ms var(--ease-out) 700ms 1 both;
+  /* Pricing PLANNED badges: ONE soft pulse on entry, then still. */
+  --animate-mk-soft-pulse: mk-soft-pulse 900ms var(--ease-out) 900ms 1 both;
+  /* Compare's UAA column: a slow brass leaf sweep — light moving across
+     foil. 6s of travel on a 14s period; the one looping effect on the page
+     besides the pricing breath and ambient idle drift. */
+  --animate-mk-leaf-sweep: mk-leaf-sweep 14s linear 1.2s infinite;
+  /* The AI assistant mockup's follow-up caret: a real 530ms blink. */
+  --animate-mk-caret-blink: mk-caret-blink 1060ms step-end infinite;
+  /* Screener threshold pulse: one beat, brand -> inherit. */
+  --animate-mk-value-pulse: mk-value-pulse 700ms var(--ease-out) 1 both;
+  /* Try it: the Analyze click's one-shot scale-and-glow on the input. */
+  --animate-mk-analyze-flash: mk-analyze-flash 500ms var(--ease-precise) 1 both;
+  /* Pricing: the two aurora arcs' 12s breath (gradient drift, no jitter). */
+  --animate-mk-aurora: mk-aurora 12s ease-in-out infinite;
+  --animate-mk-aurora-alt: mk-aurora 12s ease-in-out -6s infinite;
 
   /* Motion — mirrored as JS constants in app/_components/motion.ts.
      The companion duration scale is a plain `:root` rule below; see the note
@@ -136,30 +218,43 @@
   --muted: #99a3b2;
   --faint: #626c7a;
 
-  --brand: #38bdf8;
-  --brand-strong: #0ea5e9;
-  --brand-muted: color-mix(in srgb, var(--brand) 14%, transparent);
+  /* Brand book Phase 1 (docs/brand-guidelines.md §3): brass in, sky-blue out.
+     Brass #C8A96E is 8.77:1 on --background and 8.14:1 on --surface (AAA). */
+  --brand: #c8a96e;
+  --brand-strong: #e2c489;
+  --brand-muted: color-mix(in srgb, var(--brand) 12%, transparent);
 
   /* Legacy chrome accent — now an alias of brand so the ~70 files still using
-     `accent` classes render the same blue as the migrated nav/home/masthead.
+     `accent` classes render the same brass as the migrated nav/home/masthead.
      (Gain/positive semantics use the separate --positive token, unaffected.) */
   --accent: var(--brand);
   --accent-strong: var(--brand-strong);
 
   --positive: #4ade80;
   --negative: #f87171;
-  --warning: #fbbf24;
+  /* Signal orange, not amber — a caution must never read as a brass verdict
+     seal (brand book §3, semantic colors). 8.70:1 on --background. */
+  --warning: #fb923c;
+  /* Alert violet — the "a tripwire you set has fired" semantic (watchlist
+     alerts in the Attention queue). Deliberately NOT orange/amber: orange is
+     the threat/caution seal and brass is chrome, so an amber alert would be
+     unreadable against both. Violet is otherwise unused by any semantic
+     element. 6.2:1 on the queue's tile background (--surface-2/50 over
+     --panel-top), the strictest surface it renders on. Distinct from the
+     categorical --chart-1 purple, which is a series identity, not a semantic,
+     and sits below AA on that surface. */
+  --alert: #b585fa;
 
   /* Categorical chart palette — deliberately avoids green/red */
   --chart-1: #a855f7; /* purple */
-  --chart-2: #f97316; /* orange */
+  --chart-2: #60a5fa; /* steel — the freed sky-blue hue returns to the data (brand book §3) */
   --chart-3: #2dd4bf; /* teal */
   --chart-4: #f472b6; /* pink */
   --chart-5: #64748b; /* slate */
 
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
   --shadow-popover: 0 12px 32px -8px rgba(0, 0, 0, 0.6), 0 4px 12px -4px rgba(0, 0, 0, 0.5);
-  --shadow-glow-brand: 0 0 0 1px rgba(56, 189, 248, 0.16), 0 8px 24px -8px rgba(56, 189, 248, 0.25);
+  --shadow-glow-brand: 0 0 0 1px rgba(200, 169, 110, 0.16), 0 8px 24px -8px rgba(200, 169, 110, 0.25);
 
   --grid-line: rgba(255, 255, 255, 0.04);
 
@@ -191,31 +286,52 @@
   --border: #e2e6ec;
   --border-strong: #cdd4dd;
   --foreground: #101722;
-  --muted: #56606f;
-  --faint: #8a94a2;
+  /* Ink hierarchy (2026-08-08 light-mode audit): the previous --faint #8a94a2
+     measured 2.89:1 on --background and 3.07:1 on white — used for real helper
+     text (engine captions, journal meta, micro-labels), not decoration, so it
+     must clear 4.5:1. #656f7d is 4.79/5.09/4.70 on background/surface/surface-2.
+     --muted deepened one step (5.99 → 7.18 on background) to keep the
+     muted↔faint hierarchy gap legible now that faint sits darker. */
+  --muted: #4d5564;
+  --faint: #656f7d;
 
-  /* Darker brand/semantic shades for AA contrast on light surfaces */
-  --brand: #0284c7;
-  --brand-strong: #0369a1;
+  /* Darker brass shades for AA contrast on light surfaces — Brass Dark
+     #7A5F33 is 5.98:1 on #ffffff and 5.63:1 on #f7f8fa (brand book §3). */
+  --brand: #7a5f33;
+  --brand-strong: #5f4a26;
   --brand-muted: color-mix(in srgb, var(--brand) 10%, transparent);
 
   /* Legacy chrome accent — aliases brand (see dark block note). */
   --accent: var(--brand);
   --accent-strong: var(--brand-strong);
 
-  --positive: #16a34a;
-  --negative: #dc2626;
-  --warning: #d97706;
+  /* Deepened (2026-08-07, Market Overview contrast audit): the previous
+     #16a34a / #dc2626 measured 3.04:1 / 4.46:1 against --surface-2, where the
+     Overview tiles set delta text — below the 4.5:1 AA floor. These pass on
+     --surface-2 (4.63:1 / 5.98:1) and on white (5.02:1 / 6.47:1).
+     Keep app/_components/chart-theme.ts LIGHT in sync. */
+  --positive: #15803d;
+  --negative: #b91c1c;
+  /* Signal orange for light theme — #AD4A08 (2026-08-08 audit): the previous
+     #C2540A passed on white (4.60:1) but sat at 4.33:1 on --background and
+     4.25:1 on --surface-2, where warning text actually renders (home Threat
+     badge, watchlist targets, calendar AI chip). #AD4A08 is 5.26/5.59/5.16/4.75
+     on background/white/surface-2/surface-3. The brighter #EA580C fails at
+     3.56:1 and is prohibited for text. Keep chart-theme.ts LIGHT in sync. */
+  --warning: #ad4a08;
+  /* Alert violet, dark enough for AA on white (5.7:1) and on --surface-3
+     (4.9:1). See the dark block for why this is violet, not amber. */
+  --alert: #7c3aed;
 
   --chart-1: #9333ea; /* purple */
-  --chart-2: #ea580c; /* orange */
+  --chart-2: #2563eb; /* steel (brand book §3) */
   --chart-3: #0d9488; /* teal */
   --chart-4: #db2777; /* pink */
   --chart-5: #64748b; /* slate */
 
   --shadow-card: 0 1px 2px rgba(16, 23, 34, 0.05), 0 4px 16px -8px rgba(16, 23, 34, 0.12);
   --shadow-popover: 0 12px 32px -8px rgba(16, 23, 34, 0.18), 0 4px 12px -4px rgba(16, 23, 34, 0.12);
-  --shadow-glow-brand: 0 0 0 1px rgba(2, 132, 199, 0.18), 0 8px 24px -8px rgba(2, 132, 199, 0.22);
+  --shadow-glow-brand: 0 0 0 1px rgba(122, 95, 51, 0.18), 0 8px 24px -8px rgba(122, 95, 51, 0.22);
 
   --grid-line: rgba(16, 23, 34, 0.04);
 
@@ -235,6 +351,9 @@
 
 html {
   scroll-behavior: smooth;
+  /* The sticky site header is ~57px tall; without scroll padding any anchored
+     or restored scroll position slides page headings underneath it. */
+  scroll-padding-top: 72px;
   /* Prevent the color flash before the no-flash script runs by defaulting
      the canvas to the dark base; the script sets data-theme synchronously. */
   background: var(--background);
@@ -367,6 +486,74 @@ body::before {
 .animate-popover-in { animation: popover-in var(--duration-fast, 120ms) var(--ease-out) both; }
 .animate-icon-swap { animation: icon-swap var(--duration-base, 200ms) var(--ease-precise) both; }
 .animate-menu-drop { animation: menu-drop var(--duration-fast, 120ms) var(--ease-out) both; }
+
+/* ── Marketing landing (app/landing) ────────────────────────────────────
+   The demo input's one-shot glow pulse (section signature; neutralized by
+   the blanket prefers-reduced-motion rule below), plus the two constantly
+   seen but rarely designed surfaces: ::selection and the scrollbar. Both
+   are scoped to the marketing subtree via [data-mk-root]. */
+@keyframes mk-glow-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 0%, transparent); }
+  35%  { box-shadow: 0 0 0 6px color-mix(in srgb, var(--brand) 22%, transparent), 0 0 32px 4px color-mix(in srgb, var(--brand) 30%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 0%, transparent); }
+}
+/* One soft pulse for the pricing PLANNED badges: unavailable things must
+   never look busier than available ones, so exactly one beat, then still. */
+@keyframes mk-soft-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 0%, transparent); }
+  40%  { box-shadow: 0 0 0 5px color-mix(in srgb, var(--brand) 16%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 0%, transparent); }
+}
+/* The compare table's brass leaf sweep: a soft highlight travelling top to
+   bottom over ~6s of a 14s period. Applied to an absolutely-positioned
+   overlay spanning the UAA column (background-position animation only). */
+@keyframes mk-leaf-sweep {
+  0%   { transform: translateY(-100%); opacity: 0; }
+  4%   { opacity: 1; }
+  39%  { opacity: 1; }
+  43%  { transform: translateY(240%); opacity: 0; }
+  100% { transform: translateY(240%); opacity: 0; }
+}
+/* A real caret blink for the AI assistant mockup's follow-up input. */
+@keyframes mk-caret-blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0; }
+}
+/* One brightness pulse for screener values nearest a hovered filter's
+   threshold: teaches what the screener does without a word of copy. */
+@keyframes mk-value-pulse {
+  0%   { color: var(--brand); }
+  100% { color: inherit; }
+}
+/* Try it: the Analyze click, a decisive one-shot press-and-glow. */
+@keyframes mk-analyze-flash {
+  0%   { transform: scale(1); }
+  30%  { transform: scale(0.985); box-shadow: 0 0 0 8px color-mix(in srgb, var(--brand) 25%, transparent), 0 0 36px 6px color-mix(in srgb, var(--brand) 32%, transparent); }
+  100% { transform: scale(1); }
+}
+/* Pricing: long-exposure aurora drift, a full breath every 12 seconds.
+   Amplitude modulation only — the gradients travel and swell, never jitter. */
+@keyframes mk-aurora {
+  0%, 100% { transform: translate3d(-4%, 0, 0) scale(1); opacity: 0.5; }
+  50%      { transform: translate3d(4%, -3%, 0) scale(1.12); opacity: 0.85; }
+}
+[data-mk-root] ::selection,
+[data-mk-root]::selection {
+  background: color-mix(in srgb, var(--brand) 30%, transparent);
+  color: var(--foreground);
+}
+html:has([data-mk-root]) {
+  scrollbar-color: var(--surface-3) var(--background);
+  scrollbar-width: thin;
+}
+html:has([data-mk-root])::-webkit-scrollbar { width: 10px; }
+html:has([data-mk-root])::-webkit-scrollbar-track { background: var(--background); }
+html:has([data-mk-root])::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border-radius: 5px;
+  border: 2px solid var(--background);
+}
+html:has([data-mk-root])::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
 
 /* ── Page enter ─────────────────────────────────────────────────────────
    The only transition navigation gets. Every route change used to be a hard
@@ -1016,14 +1203,16 @@ body::before {
 }
 
 /* The hero — the one signature slab. Same material, machined a grade finer: a
-   panel radius, a brighter upper face, the deepest grounding. Its top accent
-   line is set by data in the component (gain / loss / neutral). */
+   brighter upper face and the deepest grounding. Card radius, not panel radius,
+   so it sits flush with the book rail beside it — the command row reads as one
+   surface at two widths, not two different components. Its top accent line is
+   set by data in the component (gain / loss / neutral). */
 .uaa-hero {
   position: relative;
   isolation: isolate;
   background: linear-gradient(180deg, var(--panel-hover-top), var(--panel-bottom));
   border: 1px solid var(--edge-hairline);
-  border-radius: var(--radius-panel);
+  border-radius: var(--radius-card);
   box-shadow: inset 0 1px 0 0 var(--edge-top), var(--depth-2);
 }
 .uaa-hero::before {
@@ -1090,7 +1279,7 @@ body::before {
   to   { opacity: 0; transform: translateX(12px); }
 }
 .uaa-queue-exit {
-  animation: uaa-queue-exit 180ms var(--ease-out) forwards;
+  animation: uaa-queue-exit 150ms var(--ease-out) forwards;
   pointer-events: none;
 }
 
@@ -1106,22 +1295,8 @@ body::before {
   .uaa-card:hover { transform: none; }
 }
 
-/* ── IC Report: light-mode WCAG AA overrides (scoped) ─────────────────────
-   The global light-theme accent tokens land below 4.5:1 for normal text
-   (positive 3.3, warning 3.0, brand 4.1). Scoped to the IC Report so other
-   tabs keep their tuned palette; values are the same hues one step darker. */
-[data-theme="light"] .ic-report-scope {
-  /* Override the resolved --color-* aliases: Tailwind's @theme resolves
-     var(--positive) at :root, so descendants inherit the substituted value
-     and re-declaring the base token alone would not cascade. */
-  --positive: #15803d;
-  --negative: #b91c1c;
-  --warning: #a16207;
-  --brand: #0369a1;
-  --brand-strong: #075985;
-  --color-positive: #15803d; /* 4.5:1 on white */
-  --color-negative: #b91c1c; /* 5.9:1 */
-  --color-warning: #a16207;  /* 4.6:1 */
-  --color-brand: #0369a1;    /* 5.0:1 */
-  --color-brand-strong: #075985;
-}
+/* The IC Report's scoped light-mode positive/negative overrides are gone
+   (2026-08-08): the global light tokens have carried the identical values
+   (#15803d / #b91c1c) since the 2026-08-07 Market Overview audit, so the
+   scoped block was pure drift risk — a place for the two palettes to diverge
+   silently. One token, one value. */

@@ -1,20 +1,28 @@
 # Universal Asset Analyzer
 
-An institutional-grade research platform that runs entirely locally across seven
-asset classes (equities, crypto, forex, commodities, funds/ETFs, derivatives, real
-estate, private markets) plus manual/macro tracking: live market data (Yahoo Finance
-for US equities, screener.in for Indian markets, RentCast for real estate), offline
-AI (Ollama — no external LLM APIs, no paid LLM providers), quant scoring (Python +
-DuckDB), and user-owned state (SQLite, no cloud sync). Built on Next.js 16 (App
-Router, Turbopack, React 19).
+An institutional-grade research platform, local-first, across seven asset
+classes (equities, ETFs, REITs, crypto, commodities, bonds, forex — the
+registry in `lib/assets/types.ts`) plus derivatives views, manual assets
+(real estate, private markets) and macro tracking: live market data (Yahoo
+Finance for US equities, screener.in for Indian markets, RentCast for real
+estate), AI narration on Claude via the Anthropic API using **your own API
+key**, quant scoring (Python + DuckDB), and user-owned state (SQLite on your
+disk, no cloud sync; an optional local account — credentials in your own
+database — protects shared machines, gated off by default via
+`UAA_AUTH_GATE`). Every metric, score, and valuation is
+computed locally by deterministic engines — the model only writes the
+narrative. Built on Next.js 16 (App Router, Turbopack, React 19).
 
 ## Getting started
 
 Prerequisites:
 - Node.js 20+
-- [Ollama](https://ollama.com) running locally, with at least one model pulled
-  (e.g. `ollama pull mistral`) — required for AI-backed features (research copilot,
-  IC report, portfolio brief, verdict/compare, etc.)
+- An [Anthropic API key](https://console.anthropic.com) (optional) — required
+  only for AI-backed features (research copilot, IC report, portfolio brief,
+  verdict/compare, etc.). Enter it once at `/settings` in the app; it is stored
+  at `~/.uaa/anthropic_api_key` with owner-only permissions, sent to
+  `api.anthropic.com` and nowhere else. Everything computed (screener, scores,
+  DCF, portfolio analytics) works without it.
 - Python 3.12+ (optional) — only needed to run the quant engine (`engine/daily_run.py`);
   the Next.js app runs fully without it, `/engine` will just show no data
 

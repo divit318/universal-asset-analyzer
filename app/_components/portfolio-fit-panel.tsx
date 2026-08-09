@@ -28,10 +28,10 @@ const TIER_COLORS: Record<FitTier, { ring: string; badge: string; label: string;
     bar:   "bg-positive",
   },
   good: {
-    ring:  "text-emerald-400",
-    badge: "border-emerald-400/30 bg-emerald-400/8 text-emerald-400",
+    ring:  "text-emerald-400 light:text-emerald-700",
+    badge: "border-emerald-400/30 light:border-emerald-700/40 bg-emerald-400/8 text-emerald-400 light:text-emerald-700",
     label: "Good Portfolio Fit",
-    bar:   "bg-emerald-400",
+    bar:   "bg-emerald-400 light:bg-emerald-600",
   },
   neutral: {
     ring:  "text-muted",
@@ -78,7 +78,7 @@ function DimensionRow({ dim }: { dim: FitDimension }) {
       <div className="flex items-center justify-between mb-0.5">
         <span className="text-[11px] text-muted">{dim.label}</span>
         <span className={`text-[10px] font-mono font-semibold ${IMPACT_TEXT[dim.impact]}`}>
-          {IMPACT_ICON[dim.impact]} {dim.score}
+          {IMPACT_ICON[dim.impact]} {Math.round(dim.score)}
         </span>
       </div>
       <ValueBar value={dim.score} barClassName={barColor} />
@@ -211,6 +211,29 @@ export function PortfolioFitPanel({ fit, collapsible = false, headline, classNam
 
       <div className={`collapse-grid ${open ? "is-open" : ""}`} aria-hidden={!expanded}>
         <div className="min-h-0 overflow-hidden">
+          {/* Research → fit bridge: the fit score INHERITS the research score
+              (lib/ios/fit-scorer.ts), and this shows exactly how — the
+              continuous reasoning from research quality to portfolio fit. */}
+          {fit.bridge.length > 0 && (
+            <div className="px-4 pb-3 space-y-1.5 border-t border-border pt-3">
+              <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">How this score was derived</p>
+              <ol className="space-y-1">
+                {fit.bridge.map((step, i) => (
+                  <li key={`${step.label}-${i}`} className="flex gap-2 text-[11px] leading-4">
+                    <span className="shrink-0 font-mono text-muted/60">{i + 1}.</span>
+                    <span className="min-w-0">
+                      <span className="font-medium text-foreground">{step.label}</span>
+                      {step.value != null && (
+                        <span className="ml-1 font-mono text-muted">{step.value}/100</span>
+                      )}
+                      <span className="ml-1 text-muted">— {step.detail}</span>
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
           {/* Dimension breakdown */}
           <div className="px-4 pb-3 space-y-2.5 border-t border-border pt-3">
             <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">Fit Breakdown</p>

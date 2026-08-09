@@ -65,7 +65,7 @@ export function extractJson<T>(raw: string): T {
  * Like {@link extractJson}, but SCHEMA-SAFE: coerces the parsed object against a
  * caller-supplied `defaults` shape so callers never crash on a field the model
  * omitted. `extractJson` only guarantees *parseable* JSON, not *complete* JSON —
- * small local models routinely drop fields, and a bare `as T` cast then lies to
+ * small models routinely drop fields, and a bare `as T` cast then lies to
  * TypeScript (observed: a missing `actionItems` array crashed the portfolio brief).
  *
  * Guarantees the returned object has every top-level key present with a value of
@@ -145,7 +145,7 @@ export function extractJsonArray<T>(
 /**
  * Salvage every complete JSON object out of a possibly-truncated array.
  *
- * A small local model asked for a 20-item array of objects routinely runs out
+ * A small model asked for a 20-item array of objects routinely runs out
  * of output budget mid-string, and one unterminated value at position 7716
  * makes `JSON.parse` reject the 12 perfectly good objects that came before it.
  * Discarding a whole stage's work over its last, incomplete entry is the wrong

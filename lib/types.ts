@@ -52,6 +52,12 @@ export interface Quote {
   exchange: string | null;
   /** Yahoo Finance quoteType: "EQUITY", "ETF", "CRYPTOCURRENCY", "MUTUALFUND", etc. */
   assetType?: string | null;
+  /** Yahoo marketState at fetch time: "REGULAR" | "CLOSED" | "PRE" | "POST" | … */
+  marketState?: string | null;
+  /** ISO timestamp of the last regular-session trade this quote describes. */
+  regularMarketTime?: string | null;
+  /** IANA timezone of the listing exchange, e.g. "America/New_York". */
+  exchangeTimezone?: string | null;
   /**
    * Fund AUM in the listing currency (funds only). Mutual funds have no market
    * cap — the fund-shaped stat strips render this instead. Optional so quotes
@@ -311,6 +317,10 @@ export interface Notification {
   body: string;
   read: boolean;
   createdAt: string;
+  /** Session day (exchange TZ) the alert describes; null for legacy rows. */
+  sessionDate?: string | null;
+  /** ISO time of the observation the alert describes; null for legacy rows. */
+  observedAt?: string | null;
 }
 
 

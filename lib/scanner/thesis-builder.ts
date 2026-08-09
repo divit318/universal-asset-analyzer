@@ -5,7 +5,7 @@
  * structured InvestmentThesis using the full context: events, causal chains,
  * sector analysis, and company fundamentals.
  *
- * Runs sequentially — Ollama's default local setup serves one request at a
+ * Runs sequentially — a policy from the serializing local backend (one request at a
  * time, so firing several concurrently doesn't parallelize anything; it only
  * queues them while each one's own timeout keeps counting down regardless of
  * whether it has actually started generating yet.

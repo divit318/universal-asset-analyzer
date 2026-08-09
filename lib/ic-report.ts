@@ -204,8 +204,7 @@ export async function generateICReport(
     const modelLabel = input.model ?? (await pickModel("ic-agent-analysis")) ?? "the selected model";
     throw new Error(
       `All ${AGENT_COUNT} investigation agents failed to produce findings using ${modelLabel}. ` +
-      `This usually means the model is too large or slow for this machine, or Ollama became unresponsive. ` +
-      `Try a smaller model, or check \`ollama ps\` for load issues. ` +
+      `This usually means the AI service is unreachable or the API key is missing/invalid — check Settings. ` +
       `First failure: ${agentFailures[0]?.agentLabel}: ${agentFailures[0]?.error}`,
     );
   }

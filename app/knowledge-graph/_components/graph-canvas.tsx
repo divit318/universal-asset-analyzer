@@ -44,7 +44,8 @@ import {
   type SimulationNodeDatum,
 } from "d3-force";
 import type { GraphNode, GraphEdge } from "@/lib/knowledge-graph";
-import { NODE_VISUAL, EDGE_VISUAL, shapePath, nodeRadius, hashAngle } from "./graph-model";
+import { detectCommunities } from "@/lib/knowledge-graph/community";
+import { NODE_VISUAL, EDGE_VISUAL, shapePath, shapeStrokeDash, nodeShape, nodeRadius, hashAngle } from "./graph-model";
 
 export type GraphLayout = "force" | "radial";
 
@@ -76,6 +77,8 @@ interface Props {
   onSelectNode: (nodeId: string) => void;
   onSelectEdge: (edgeId: string) => void;
   onClearSelection: () => void;
+  /** Double-click: reduce the view to this node's neighborhood (focus mode). */
+  onFocusNeighborhood?: (nodeId: string) => void;
   onOpenNode?: (node: GraphNode) => void;
 }
 
@@ -94,6 +97,7 @@ function GraphCanvasInner(
     onSelectNode,
     onSelectEdge,
     onClearSelection,
+    onFocusNeighborhood,
   }: Props,
   ref: React.Ref<GraphCanvasHandle>,
 ) {
@@ -101,11 +105,17 @@ function GraphCanvasInner(
   const svgRef = useRef<SVGSVGElement>(null);
   const simRef = useRef<Simulation<SimNode, undefined> | null>(null);
   const [size, setSize] = useState({ width: 800, height: 560 });
+  // The d3 "end" handler closes over fitToView once per layout effect; the
+  // ref keeps the viewport it frames against current (a stale 800x560
+  // default made fit a no-op on narrow viewports). Written by the
+  // ResizeObserver below, never during render.
+  const sizeRef = useRef(size);
   const [positions, setPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
   const [transform, setTransform] = useState({ x: 0, y: 0, k: 1 });
   const [dragNodeId, setDragNodeId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [keyboardFocusId, setKeyboardFocusId] = useState<string | null>(null);
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
   const panStart = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
   const dragMoved = useRef(false);
 
@@ -114,7 +124,11 @@ function GraphCanvasInner(
     if (!el) return;
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
-      if (entry) setSize({ width: entry.contentRect.width, height: Math.max(440, entry.contentRect.height) });
+      if (entry) {
+        const next = { width: entry.contentRect.width, height: Math.max(440, entry.contentRect.height) };
+        sizeRef.current = next;
+        setSize(next);
+      }
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -139,60 +153,72 @@ function GraphCanvasInner(
       }
       if (!Number.isFinite(minX)) return;
 
+      const { width, height } = sizeRef.current;
       const w = Math.max(1, maxX - minX);
       const h = Math.max(1, maxY - minY);
       // Never zoom past 1:1 — a three-node graph blown up to 900px looks broken.
-      const k = Math.max(MIN_ZOOM, Math.min(1, Math.min(size.width / w, size.height / h) * 0.96));
+      const k = Math.max(MIN_ZOOM, Math.min(1, Math.min(width / w, height / h) * 0.96));
       const cx = (minX + maxX) / 2;
       const cy = (minY + maxY) / 2;
       setTransform({ k, x: -cx * k, y: -cy * k });
     },
-    [nodes, size.width, size.height],
+    [nodes],
   );
 
-  /** Radial layout: focus centered, assets ringed by weight, satellites near their parent. */
+  /**
+   * Radial layout: GENUINELY radial (KG-035) — concentric rings by BFS hop
+   * depth from the focus. Within a ring, nodes are ordered by their parent's
+   * angle (children stay near their parent's bearing, siblings never pile up)
+   * and spaced evenly, so rings cannot self-overlap. Ring 1 is additionally
+   * ordered by position weight, heaviest first, so the book reads clockwise
+   * from 12 o'clock.
+   */
   const computeRadial = useCallback((): Map<string, { x: number; y: number }> => {
     const pts = new Map<string, { x: number; y: number }>();
-    const neighborOf = new Map<string, string>();
-    for (const e of edges) {
-      if (e.source === focusId) neighborOf.set(e.target, focusId);
-      if (e.target === focusId) neighborOf.set(e.source, focusId);
-    }
-    pts.set(focusId, { x: 0, y: 0 });
-
-    const ring1 = nodes.filter((n) => n.id !== focusId && neighborOf.has(n.id));
-    ring1.sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0) || a.label.localeCompare(b.label));
-    const n1 = Math.max(1, ring1.length);
-    ring1.forEach((node, i) => {
-      const angle = (i / n1) * Math.PI * 2 - Math.PI / 2;
-      // Heavier positions sit closer to the center: weight is the radius driver.
-      const w = Math.min(1, (node.weight ?? 0) * 4);
-      const r = 150 + (1 - w) * 130;
-      pts.set(node.id, { x: Math.cos(angle) * r, y: Math.sin(angle) * r });
-    });
-
-    // Everything else clusters around its nearest placed neighbor, fanned
-    // outward (away from the center) so siblings never pile onto one spot.
-    const remaining = nodes.filter((n) => !pts.has(n.id));
     const adjacency = new Map<string, string[]>();
     for (const e of edges) {
       adjacency.set(e.source, [...(adjacency.get(e.source) ?? []), e.target]);
       adjacency.set(e.target, [...(adjacency.get(e.target) ?? []), e.source]);
     }
-    const byParent = new Map<string, typeof remaining>();
-    for (const node of remaining) {
-      const parentId = (adjacency.get(node.id) ?? []).find((pid) => pts.has(pid)) ?? focusId;
-      byParent.set(parentId, [...(byParent.get(parentId) ?? []), node]);
+
+    // BFS depth + parent from the focus.
+    const depth = new Map<string, number>([[focusId, 0]]);
+    const parent = new Map<string, string>();
+    const queue = [focusId];
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      for (const next of adjacency.get(id) ?? []) {
+        if (depth.has(next)) continue;
+        depth.set(next, depth.get(id)! + 1);
+        parent.set(next, id);
+        queue.push(next);
+      }
     }
-    for (const [parentId, children] of byParent) {
-      const parent = pts.get(parentId) ?? { x: 0, y: 0 };
-      const outward = Math.atan2(parent.y, parent.x) || hashAngle(parentId);
-      const spread = Math.PI / 2.2; // fan width
-      children.forEach((node, i) => {
-        const t = children.length === 1 ? 0.5 : i / (children.length - 1);
-        const angle = outward + (t - 0.5) * spread;
-        const dist = 85 + (i % 2) * 34;
-        pts.set(node.id, { x: parent.x + Math.cos(angle) * dist, y: parent.y + Math.sin(angle) * dist });
+    // Unreached nodes (possible under client-side filters) join the outermost ring.
+    const maxSeen = Math.max(1, ...[...depth.values()]);
+    for (const n of nodes) if (!depth.has(n.id)) depth.set(n.id, maxSeen);
+
+    pts.set(focusId, { x: 0, y: 0 });
+    const maxDepth = Math.max(...nodes.map((n) => depth.get(n.id) ?? 1));
+    const angleOf = new Map<string, number>([[focusId, -Math.PI / 2]]);
+
+    for (let d = 1; d <= maxDepth; d++) {
+      const ring = nodes.filter((n) => depth.get(n.id) === d);
+      if (ring.length === 0) continue;
+      ring.sort((a, b) => {
+        if (d === 1) return (b.weight ?? 0) - (a.weight ?? 0) || a.label.localeCompare(b.label);
+        const pa = angleOf.get(parent.get(a.id) ?? focusId) ?? hashAngle(a.id);
+        const pb = angleOf.get(parent.get(b.id) ?? focusId) ?? hashAngle(b.id);
+        return pa - pb || a.label.localeCompare(b.label);
+      });
+      // Ring radius grows with depth; wide rings get extra room so even
+      // spacing keeps at least ~48px of arc between neighbors.
+      const minArc = 48;
+      const r = Math.max(150 + (d - 1) * 115, (ring.length * minArc) / (2 * Math.PI));
+      ring.forEach((node, i) => {
+        const angle = (i / ring.length) * Math.PI * 2 - Math.PI / 2;
+        angleOf.set(node.id, angle);
+        pts.set(node.id, { x: Math.cos(angle) * r, y: Math.sin(angle) * r });
       });
     }
     return pts;
@@ -201,6 +227,11 @@ function GraphCanvasInner(
   useEffect(() => {
     const reducedMotion =
       typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    // A new layout/graph invalidates pinned positions. Scheduled (not
+    // synchronous) so the effect body never sets state directly; clearing
+    // pins is idempotent, so a stale callback is harmless.
+    requestAnimationFrame(() => setPinnedIds((prev) => (prev.size > 0 ? new Set() : prev)));
 
     if (layout === "radial") {
       simRef.current?.stop();
@@ -213,11 +244,28 @@ function GraphCanvasInner(
       return () => cancelAnimationFrame(id);
     }
 
-    // Deterministic seed: same graph, same layout, every visit.
+    // Community-informed seeding + cohesion (KG-005): each detected community
+    // is assigned an angular sector; members seed inside it and feel a gentle
+    // pull toward its centroid, so clusters lay out as visible groups instead
+    // of interleaving in one gravity well. Deterministic: same graph, same
+    // communities, same layout, every visit.
+    const communities = detectCommunities(nodes, edges);
+    const communityCount = Math.max(1, new Set(communities.values()).size);
+    const communityAnchor = (id: string): { x: number; y: number } => {
+      const c = communities.get(id) ?? 0;
+      const angle = (c / communityCount) * Math.PI * 2 - Math.PI / 2;
+      return { x: Math.cos(angle) * 150, y: Math.sin(angle) * 150 };
+    };
     const simNodes: SimNode[] = nodes.map((n) => {
-      const angle = hashAngle(n.id);
-      const r = n.id === focusId ? 0 : 160 + (hashAngle(`${n.id}:seed`) / (Math.PI * 2)) * 120;
-      return { id: n.id, node: n, x: Math.cos(angle) * r, y: Math.sin(angle) * r };
+      if (n.id === focusId) return { id: n.id, node: n, x: 0, y: 0 };
+      const anchor = communityAnchor(n.id);
+      const jitter = hashAngle(`${n.id}:seed`);
+      return {
+        id: n.id,
+        node: n,
+        x: anchor.x + Math.cos(jitter) * 70,
+        y: anchor.y + Math.sin(jitter) * 70,
+      };
     });
     const linkForce = forceLink<SimNode, { source: string; target: string }>(
       edges.map((e) => ({ source: e.source, target: e.target })),
@@ -234,11 +282,11 @@ function GraphCanvasInner(
       .force("link", linkForce)
       .force("charge", forceManyBody().strength(-260))
       .force("center", forceCenter(0, 0))
-      // Gentle pull toward the origin so poorly-connected nodes settle a
-      // readable distance out instead of at infinity (forceCenter only
+      // Community cohesion doubles as the origin pull that keeps
+      // poorly-connected nodes from drifting to infinity (forceCenter only
       // recentres the centroid; it does not bound individual nodes).
-      .force("x", forceX(0).strength(0.045))
-      .force("y", forceY(0).strength(0.045))
+      .force("x", forceX<SimNode>((d) => (d.id === focusId ? 0 : communityAnchor(d.id).x)).strength(0.05))
+      .force("y", forceY<SimNode>((d) => (d.id === focusId ? 0 : communityAnchor(d.id).y)).strength(0.05))
       .force("collide", forceCollide<SimNode>().radius((d) => nodeRadius(d.node) + 12));
 
     const snapshot = () => new Map(simNodes.map((n) => [n.id, { x: n.x ?? 0, y: n.y ?? 0 }]));
@@ -371,7 +419,11 @@ function GraphCanvasInner(
     if (dragNodeId && layout === "force") {
       const sim = simRef.current;
       const simNode = sim?.nodes().find((n) => n.id === dragNodeId);
-      if (simNode) {
+      if (simNode && dragMoved.current) {
+        // A deliberate drag pins the node where the user put it (KG-039);
+        // fx/fy stay set. "Clear pins" and Alt-click release.
+        setPinnedIds((prev) => new Set(prev).add(dragNodeId));
+      } else if (simNode) {
         simNode.fx = null;
         simNode.fy = null;
       }
@@ -381,6 +433,29 @@ function GraphCanvasInner(
     panStart.current = null;
   }
 
+  const unpinNode = useCallback((nodeId: string) => {
+    const simNode = simRef.current?.nodes().find((n) => n.id === nodeId);
+    if (simNode) {
+      simNode.fx = null;
+      simNode.fy = null;
+      simRef.current?.alpha(0.2).restart();
+    }
+    setPinnedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(nodeId);
+      return next;
+    });
+  }, []);
+
+  const clearPins = useCallback(() => {
+    for (const simNode of simRef.current?.nodes() ?? []) {
+      simNode.fx = null;
+      simNode.fy = null;
+    }
+    simRef.current?.alpha(0.3).restart();
+    setPinnedIds(new Set());
+  }, []);
+
   function onBackgroundPointerDown(e: React.PointerEvent) {
     panStart.current = { x: e.clientX, y: e.clientY, tx: transform.x, ty: transform.y };
     dragMoved.current = false;
@@ -389,7 +464,17 @@ function GraphCanvasInner(
   function onWheel(e: React.WheelEvent) {
     e.preventDefault();
     const delta = -e.deltaY * 0.001;
-    setTransform((t) => ({ ...t, k: Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, t.k + delta * t.k)) }));
+    const rect = containerRef.current?.getBoundingClientRect();
+    setTransform((t) => {
+      const k = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, t.k + delta * t.k));
+      if (!rect || k === t.k) return { ...t, k };
+      // Anchor the zoom on the cursor: the graph point under the pointer
+      // stays under the pointer (KG-045).
+      const px = e.clientX - rect.left - size.width / 2;
+      const py = e.clientY - rect.top - size.height / 2;
+      const scale = k / t.k;
+      return { k, x: px - (px - t.x) * scale, y: py - (py - t.y) * scale };
+    });
   }
 
   const zoomBy = (factor: number) =>
@@ -486,13 +571,14 @@ function GraphCanvasInner(
     return suppressed;
   }, [nodes, positions, transform.k, focusId]);
 
+  // Every node gets a label unless the occlusion pass (importance-priority)
+  // had to suppress it (KG-033); suppressed labels come back on hover,
+  // selection, keyboard focus, or emphasis, and are always in the tooltip.
   const showLabel = (node: GraphNode) => {
     if (selected?.kind === "node" && selected.id === node.id) return true;
     if (node.id === hoverId || node.id === keyboardFocusId || node.id === connectFromId) return true;
-    if (suppressedLabelIds.has(node.id)) return false;
-    if (node.type === "company" || node.type === "sector" || node.type === "portfolio" || node.type === "watchlist") return true;
-    if (emphasizedNodeIds?.has(node.id)) return true;
-    return transform.k >= 1.05 || node.importance >= 75;
+    if (emphasizedNodeIds?.has(node.id) && !suppressedLabelIds.has(node.id)) return true;
+    return !suppressedLabelIds.has(node.id);
   };
 
   return (
@@ -542,6 +628,17 @@ function GraphCanvasInner(
         >
           Fit
         </button>
+        {pinnedIds.size > 0 && (
+          <button
+            type="button"
+            title="Release all pinned nodes"
+            onClick={(e) => { e.stopPropagation(); clearPins(); }}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="rounded-md px-2 py-1.5 text-[10px] uppercase tracking-widest text-warning transition-colors hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            Unpin {pinnedIds.size}
+          </button>
+        )}
       </div>
 
       <svg
@@ -611,9 +708,11 @@ function GraphCanvasInner(
             if (!pos) return null;
             const r = nodeRadius(node);
             const visual = NODE_VISUAL[node.type];
+            const shape = nodeShape(node);
             const isSelected = selected?.kind === "node" && selected.id === node.id;
             const isConnectFrom = node.id === connectFromId;
             const isKeyFocus = node.id === keyboardFocusId;
+            const isPinned = pinnedIds.has(node.id);
             const dimmed = emphasizedNodeIds != null && !emphasizedNodeIds.has(node.id) && !isSelected;
             return (
               <g
@@ -624,25 +723,41 @@ function GraphCanvasInner(
                 onPointerLeave={() => setHoverId((h) => (h === node.id ? null : h))}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (!dragMoved.current) onSelectNode(node.id);
+                  if (dragMoved.current) return;
+                  if (e.altKey && isPinned) {
+                    unpinNode(node.id);
+                    return;
+                  }
+                  onSelectNode(node.id);
+                }}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  onFocusNeighborhood?.(node.id);
                 }}
                 className="cursor-pointer"
               >
                 {/* Invisible 24px-minimum hit target regardless of node size. */}
                 <circle r={Math.max(r + 4, 13)} fill="transparent" />
                 <path
-                  d={shapePath(visual.shape, r)}
+                  d={shapePath(shape, r)}
+                  fillRule="evenodd"
                   fill={visual.color}
                   fillOpacity={dimmed ? 0.12 : node.type === "sector" ? 0.34 : 0.3}
                   stroke={visual.color}
                   strokeOpacity={dimmed ? 0.4 : 1}
                   strokeWidth={isSelected || isConnectFrom ? 3 : 1.6}
+                  strokeDasharray={shapeStrokeDash(shape)}
                 />
                 {isSelected && (
-                  <path d={shapePath(visual.shape, r + 5)} fill="none" stroke="var(--accent)" strokeWidth={1.4} opacity={0.9} />
+                  <path d={shapePath(shape, r + 5)} fill="none" stroke="var(--accent)" strokeWidth={1.4} opacity={0.9} />
                 )}
                 {isKeyFocus && (
-                  <path d={shapePath(visual.shape, r + 8)} fill="none" stroke="var(--foreground)" strokeWidth={1.2} strokeDasharray="3 3" />
+                  <path d={shapePath(shape, r + 8)} fill="none" stroke="var(--foreground)" strokeWidth={1.2} strokeDasharray="3 3" />
+                )}
+                {isPinned && (
+                  <circle cx={r * 0.85} cy={-r * 0.85} r={3} fill="var(--warning)" stroke="var(--surface)" strokeWidth={1}>
+                    <title>Pinned (Alt-click to release)</title>
+                  </circle>
                 )}
                 <title>{node.fullLabel}</title>
                 {showLabel(node) && (
@@ -655,6 +770,11 @@ function GraphCanvasInner(
                       fill: dimmed ? "var(--muted)" : "var(--foreground)",
                       fontFamily: "var(--font-sans)",
                       fontWeight: node.id === focusId ? 600 : 400,
+                      // Halo plate so labels stay legible over edge strokes (KG-031).
+                      paintOrder: "stroke",
+                      stroke: "var(--surface)",
+                      strokeWidth: 3,
+                      strokeLinejoin: "round",
                     }}
                   >
                     {node.label.length > 26 ? `${node.label.slice(0, 24)}…` : node.label}
@@ -682,11 +802,22 @@ function GraphCanvasInner(
             {hoverNode.metrics.instrument ? ` · ${hoverNode.metrics.instrument}` : ""}
             {hoverNode.weight != null ? ` · ${(hoverNode.weight * 100).toFixed(1)}% of book` : ""}
           </p>
+          {(hoverNode.metrics.price != null || hoverNode.metrics.date != null) && (
+            <p className="mt-0.5 text-[11px] text-muted">
+              {hoverNode.metrics.price != null
+                ? `${hoverNode.metrics.price} ${hoverNode.metrics.currency ?? ""}${
+                    hoverNode.metrics.changePercent != null ? ` (${Number(hoverNode.metrics.changePercent) >= 0 ? "+" : ""}${hoverNode.metrics.changePercent}%)` : ""
+                  }`
+                : null}
+              {hoverNode.metrics.date != null ? `${hoverNode.metrics.price != null ? " · " : ""}${hoverNode.metrics.date}` : null}
+              {hoverNode.metrics.impact != null ? ` · ${hoverNode.metrics.impact}` : null}
+            </p>
+          )}
         </div>
       )}
 
       <div className="pointer-events-none absolute bottom-3 right-3 text-[11px] text-muted">
-        Scroll to zoom · drag to pan · click a node or edge to inspect
+        Scroll to zoom · drag to pan · click to inspect · double-click to focus · drag a node to pin it
       </div>
     </div>
   );

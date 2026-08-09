@@ -1,18 +1,20 @@
 /**
- * Generation Gate — a process-wide semaphore in front of the local model.
+ * Generation Gate — a process-wide semaphore in front of a LOCAL model.
  *
- * Ollama serves one generation at a time (default n_slots = 1), so every
- * concurrent request the app fires is silently queued inside Ollama — and a
- * request's deadline (`AbortSignal.timeout` in ../ollama.ts) starts counting
- * the moment fetch() is called, i.e. while it is still WAITING ITS TURN.
- * Measured on 2026-07-31: two concurrent Wire scans serialized behind each
- * other and every queued call burned its entire 300s budget in the queue,
- * timing out having never generated a token; the losing scan completed
- * "successfully" with zero opportunities.
+ * A local daemon typically serves one generation at a time, so every
+ * concurrent request the app fires is silently queued inside it — and a
+ * request's deadline (`AbortSignal.timeout`) starts counting the moment
+ * fetch() is called, i.e. while it is still WAITING ITS TURN. Measured on
+ * 2026-07-31 (then-local backend): two concurrent Wire scans serialized
+ * behind each other and every queued call burned its entire 300s budget in
+ * the queue, timing out having never generated a token; the losing scan
+ * completed "successfully" with zero opportunities.
  *
  * Queueing in-process instead makes each call's timeout race only its own
- * generation time. The limit is configurable (`OLLAMA_CONCURRENCY`) for hosts
- * that run Ollama with OLLAMA_NUM_PARALLEL > 1.
+ * generation time. DORMANT today: the Router only takes the gate for local
+ * providers (see isHostedProvider), and none is registered — the hosted
+ * Anthropic API runs genuinely parallel. Kept for the day a local runtime
+ * returns; the semantics are provider-agnostic.
  *
  * Held on a `globalThis` symbol so dev-server hot reloads share one gate.
  */
@@ -31,7 +33,7 @@ interface GateState {
 const GATE_KEY = Symbol.for("uaa.ai.generation-gate");
 
 function limit(): number {
-  const n = Number(process.env.OLLAMA_CONCURRENCY);
+  const n = Number(process.env.AI_LOCAL_CONCURRENCY);
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
 }
 

@@ -49,6 +49,8 @@ export type InstrumentType =
   | "crypto"
   | "future"
   | "index"
+  /** The ledger's synthetic cash sleeve (CASH-USD lots). Face value, never quoted. */
+  | "cash"
   | "unknown";
 
 export const INSTRUMENT_LABEL: Record<InstrumentType, string> = {
@@ -63,6 +65,7 @@ export const INSTRUMENT_LABEL: Record<InstrumentType, string> = {
   crypto: "Digital Asset",
   future: "Futures Contract",
   index: "Index",
+  cash: "Cash",
   unknown: "Unclassified Instrument",
 };
 
@@ -74,6 +77,8 @@ export type EdgeType =
   | "EXPOSED_TO"
   /** Fund-to-underlying-security edge from the fund's disclosed top holdings. */
   | "HOLDS"
+  /** Asset-to-sector edge: the asset is a disclosed top holding of the sector's SPDR ETF. */
+  | "CONSTITUENT"
   | "IMPACTS"
   | "GENERATES"
   | "SUPPORTED_BY"
@@ -87,7 +92,7 @@ export type EdgeType =
 export interface Provenance {
   /** The upstream feed or engine the fact came from. */
   source: DataSourceId;
-  /** "computed" = deterministic engine output; "ai" = Ollama-generated; "user" = user-entered. */
+  /** "computed" = deterministic engine output; "ai" = model-generated; "user" = user-entered. */
   origin: "computed" | "ai" | "user";
   /** When the underlying fact was produced/fetched. Null = unknown. */
   asOf: string | null;
@@ -141,6 +146,32 @@ export interface GraphChanges {
   removedNodes: { id: string; label: string; type: NodeType }[];
   addedEdges: { id: string; label: string; sourceLabel: string; targetLabel: string }[];
   removedEdges: { id: string; label: string; sourceLabel: string; targetLabel: string }[];
+}
+
+/**
+ * One display-ready row of the "Since your last visit" feed: deduplicated
+ * (an added node subsumes its own added edges), per-entity capped, ranked by
+ * materiality, timestamped. Produced by summarizeChanges (diff.ts, pure).
+ */
+export interface ChangeEntry {
+  key: string;
+  kind: "added" | "removed";
+  /** Node id to focus when the entry is clicked; null when the node left the graph. */
+  nodeId: string | null;
+  label: string;
+  /** Untruncated text for the tooltip. */
+  fullLabel: string;
+  /** ISO timestamp of the underlying fact when known. */
+  at: string | null;
+  /** 0-100 ranking weight (node importance / edge strength; 50 when unknown). */
+  materiality: number;
+}
+
+export interface ChangeFeed {
+  previousAt: string;
+  entries: ChangeEntry[];
+  /** Entries hidden by the per-entity cap and the overall cap. */
+  hiddenCount: number;
 }
 
 export interface GraphMeta {

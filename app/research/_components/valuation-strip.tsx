@@ -25,37 +25,36 @@ interface Props {
 export function ValuationStrip({ symbol, price }: Props) {
   const [data, setData] = useState<StripResponse | null>(null);
   const [failed, setFailed] = useState(false);
+  const [timedOut, setTimedOut] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setTimedOut(false);
+    /* eslint-enable react-hooks/set-state-in-effect */
     const query = new URLSearchParams({ symbol });
     if (price != null) query.set("price", String(price));
+    // Hard deadline on the placeholder: after 10s the pulse unmounts (the
+    // fetch keeps going — the strip appears if it eventually lands).
+    const timer = setTimeout(() => { if (!cancelled) setTimedOut(true); }, 10_000);
     fetch(`/api/valuation/strip?${query.toString()}`)
       .then((r) => (r.ok ? (r.json() as Promise<StripResponse>) : Promise.reject(new Error("failed"))))
       .then((json) => { if (!cancelled) setData(json); })
       .catch(() => { if (!cancelled) setFailed(true); });
-    return () => { cancelled = true; };
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [symbol, price]);
 
   // A valuation is optional context on this page: if it fails, say nothing.
   if (failed) return null;
+  if (!data && timedOut) return null;
 
   const summary = data?.summary ?? null;
   const href = `/valuation?symbol=${encodeURIComponent(symbol)}`;
 
-  if (data && !summary) {
-    return (
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-surface px-4 py-3">
-        <p className="text-xs text-muted">
-          No valuation case for {symbol} yet — one is created from the price and balance sheet, with
-          no setup.
-        </p>
-        <Link href={href} className="shrink-0 text-xs font-medium text-brand hover:underline">
-          Open valuation →
-        </Link>
-      </div>
-    );
-  }
+  // No case yet → render nothing. The Valuation workspace is reachable from
+  // the nav; an inline "nothing here yet" banner is dead space on a research
+  // page that should only show what exists.
+  if (data && !summary) return null;
 
   if (!summary) {
     return (
@@ -66,7 +65,7 @@ export function ValuationStrip({ symbol, price }: Props) {
   const mos = summary.result.marginOfSafety;
   const mosTone = mos == null ? "text-muted"
     : mos >= 20 ? "text-positive"
-    : mos >= 0 ? "text-yellow-500"
+    : mos >= 0 ? "text-yellow-500 light:text-yellow-700"
     : "text-negative";
 
   return (

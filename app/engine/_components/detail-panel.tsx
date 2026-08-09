@@ -18,9 +18,10 @@ import Link from "next/link";
 import { useCallback, useState } from "react";
 import { LoadingMark } from "@/app/_components/loading-mark";
 import { useDataset } from "@/lib/platform/client/use-dataset";
+import { useTheme } from "@/app/_components/theme";
 import {
   FACTOR_META,
-  REGIME_COLOR,
+  regimeColor,
   REGIME_ORDER,
   WEIGHTED_FACTORS,
   scoreKey,
@@ -85,6 +86,7 @@ const HORIZON_LABEL: Record<number, string> = { 5: "1w", 10: "2w", 21: "1m", 63:
 type FeatureTab = "all" | "momentum" | "vol" | "stat";
 
 export function DetailPanel({ symbol, onClose }: { symbol: string; onClose: () => void }) {
+  const theme = useTheme().theme;
   const [featTab, setFeatTab] = useState<FeatureTab>("all");
 
   // Through useDataset rather than a hand-rolled effect: switching the expanded row
@@ -317,7 +319,7 @@ export function DetailPanel({ symbol, onClose }: { symbol: string; onClose: () =
                       <ProbMeter
                         key={label}
                         prob={prob}
-                        color={REGIME_COLOR[label]}
+                        color={regimeColor(label, theme)}
                         height="h-2.5"
                         label={
                           <span className={label === latestRegime.regime_label ? "font-semibold text-foreground" : ""}>

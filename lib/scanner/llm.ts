@@ -5,7 +5,7 @@
  *
  *   CANCELLATION   The scan's AbortSignal threads into runPrompt, so a
  *                  cancelled job stops the in-flight generation server-side
- *                  instead of leaving Ollama grinding for nobody.
+ *                  instead of leaving the model grinding for nobody.
  *
  *   MODEL PINNING  The pipeline resolves its model ONCE (lib/scanner/index.ts)
  *                  and every opportunity-engine call runs on it. Without the
@@ -24,7 +24,7 @@
 
 import type { z } from "zod";
 import { runAnalysis } from "../ai/analysis";
-import { resolveProvider } from "../ai/analysis-provider";
+import { providerOrder } from "../ai/config";
 import { LooseObjectSchema } from "../ai/schemas/loose";
 import { getScannerCache, putScannerCache } from "../db";
 import type { TaskType } from "../ai/task-registry";
@@ -119,15 +119,17 @@ const SCANNER_SEAM_VERSION = 1;
 
 /**
  * How many per-item calls a stage may run at once. Sequential dispatch exists
- * because Ollama serializes generations (see the pin note above); Devin
- * sessions run genuinely in parallel (validated to 40 concurrent, zero 429s —
- * ai-migration/05 amendment 2), so the loops open up when the pipeline's
- * tasks resolve there.
+ * because Ollama serializes generations (see the pin note above); hosted
+ * providers run genuinely in parallel (validated to 40 concurrent, zero 429s —
+ * ai-migration/05 amendment 2), so the loops open up when the provider chain
+ * is headed by anything other than the local daemon. (Merge resolution,
+ * 2026-08-10: the sessions-runtime `resolveProvider(...) === "devin"` gate
+ * became the chain-head check when the provider-agnostic chain landed.)
  */
 export function scannerFanout(): number {
-  return resolveProvider("opportunity-engine") === "devin"
-    ? Math.max(1, Number(process.env.SCANNER_FANOUT) || 8)
-    : 1;
+  return providerOrder()[0] === "ollama"
+    ? 1
+    : Math.max(1, Number(process.env.SCANNER_FANOUT) || 8);
 }
 
 /**

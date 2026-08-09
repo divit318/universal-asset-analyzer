@@ -1,20 +1,18 @@
 /**
  * AI façade for single-shot inference — the app-wide entry point.
  *
- * UAA's AI runs 100% on local Ollama by policy (see AGENTS.md): there is
- * deliberately no code path to any hosted/paid provider today. Every call
- * routes through the Orchestrator (lib/ai/orchestrator.ts), which asks the
- * Router (lib/ai/task-registry.ts + lib/ai/router.ts) which model best fits
- * the given TaskType and falls back automatically if it's unavailable —
- * feature code never names a model or talks to Ollama directly.
- *
- * Env vars:
- *   OLLAMA_HOST   — local Ollama host (default: http://localhost:11434)
+ * The backend is the provider CHAIN (lib/ai/config.ts:providerOrder() —
+ * Devin CLI first by default, needing no API key; then the BYO-key hosted
+ * APIs; then local Ollama). Every call routes through the Orchestrator
+ * (lib/ai/orchestrator.ts), which asks the Router (lib/ai/task-registry.ts +
+ * lib/ai/router.ts) which model/effort tier best fits the given TaskType and
+ * falls back automatically if it's unavailable — feature code never names a
+ * model or talks to a backend directly.
  */
 
 import type { AiAnalysis } from "./types";
-import type { AnalysisInput } from "./ollama";
-import { buildAnalysisPrompt } from "./ollama";
+import type { AnalysisInput } from "./analysis-prompt";
+import { buildAnalysisPrompt } from "./analysis-prompt";
 import { runTask, runTaskText, type RunTaskOptions } from "./ai/orchestrator";
 import type { TaskType } from "./ai/task-registry";
 
@@ -38,7 +36,7 @@ export async function runPrompt(
     timeoutMs: opts.timeoutMs,
     // Forwarded so a caller that abandons a long multi-stage pipeline (the
     // thematic engine's Cancel button) actually stops the generation instead
-    // of leaving the local model grinding through work nobody will read.
+    // of leaving the model grinding through work nobody will read.
     signal: opts.signal,
   });
 }

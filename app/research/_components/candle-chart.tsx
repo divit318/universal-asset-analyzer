@@ -22,16 +22,11 @@ import { usePlotDrawOnce } from "@/app/_components/use-in-view-once";
 import { PatternAnalysisPanel, type AskAIPayload } from "./pattern-analysis-panel";
 
 /* -------------------------------------------------------------------------- */
-/* Categorical overlay colors — theme-neutral (legible on light & dark).      */
-/* Structural (axis/grid/tooltip) and semantic (positive/negative) colors are */
-/* taken from useChartTheme() inside the component and threaded into helpers.  */
+/* All colors — categorical overlays included — come from useChartTheme()     */
+/* (ct.blue / ct.amber / ct.purple / ct.teal / ct.orange), threaded into the  */
+/* tooltip helpers. The previous module-level literals were the dark palette  */
+/* and sat at 1.9–2.5:1 on a white canvas (2026-08-08 light-mode audit).      */
 /* -------------------------------------------------------------------------- */
-
-const BLUE = "#60a5fa";
-const AMBER = "#fbbf24";
-const PURPLE = "#a78bfa";
-const TEAL = "#2dd4bf";
-const ORANGE = "#fb923c";
 
 type CandleColors = { positive: string; negative: string; axis: string };
 
@@ -245,17 +240,17 @@ function CandleTooltip({
           <span className="font-mono text-muted">{fmtVol(row.volume)}</span>
         </>}
         {showSma50 && row.sma50 != null && <>
-          <span style={{ color: AMBER }}>SMA 50</span>
+          <span style={{ color: ct.amber }}>SMA 50</span>
           <span className="font-mono">{fmtPrice(row.sma50)}</span>
         </>}
         {showSma200 && row.sma200 != null && <>
-          <span style={{ color: PURPLE }}>SMA 200</span>
+          <span style={{ color: ct.purple }}>SMA 200</span>
           <span className="font-mono">{fmtPrice(row.sma200)}</span>
         </>}
         {showBB && row.bbUpper != null && <>
-          <span style={{ color: TEAL }}>BB Upper</span>
+          <span style={{ color: ct.teal }}>BB Upper</span>
           <span className="font-mono">{fmtPrice(row.bbUpper)}</span>
-          <span style={{ color: TEAL }}>BB Lower</span>
+          <span style={{ color: ct.teal }}>BB Lower</span>
           <span className="font-mono">{fmtPrice(row.bbLower!)}</span>
         </>}
       </div>
@@ -295,11 +290,11 @@ function MacdTooltip({ active, payload, label, ct }: {
       <p className="mb-1 text-xs text-muted">{label ? fmtDate(label) : ""}</p>
       <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs">
         {row.macd != null && <>
-          <span style={{ color: BLUE }}>MACD</span>
+          <span style={{ color: ct.blue }}>MACD</span>
           <span className="font-mono">{row.macd.toFixed(3)}</span>
         </>}
         {row.macdSignal != null && <>
-          <span style={{ color: ORANGE }}>Signal</span>
+          <span style={{ color: ct.orange }}>Signal</span>
           <span className="font-mono">{row.macdSignal.toFixed(3)}</span>
         </>}
         {row.macdHistogram != null && <>
@@ -519,8 +514,8 @@ export function CandleChart({
         <span className="text-xs text-muted mr-1">Overlays</span>
         {([
           { key: "sma50",  label: "SMA 50",   active: showSma50,  toggle: () => setShowSma50((v) => !v),  cls: "bg-amber-500/20 text-warning" },
-          { key: "sma200", label: "SMA 200",  active: showSma200, toggle: () => setShowSma200((v) => !v), cls: "bg-purple-500/20 text-purple-400" },
-          { key: "bb",     label: "BB(20,2)", active: showBB,     toggle: () => setShowBB((v) => !v),     cls: "bg-teal-500/20 text-teal-400" },
+          { key: "sma200", label: "SMA 200",  active: showSma200, toggle: () => setShowSma200((v) => !v), cls: "bg-purple-500/20 text-purple-400 light:text-purple-700" },
+          { key: "bb",     label: "BB(20,2)", active: showBB,     toggle: () => setShowBB((v) => !v),     cls: "bg-teal-500/20 text-teal-400 light:text-teal-700" },
         ] as const).map(({ key, label, active, toggle, cls }) => (
           <button
             key={key}
@@ -542,7 +537,7 @@ export function CandleChart({
             key={key}
             onClick={toggle}
             className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
-              active ? "bg-blue-500/20 text-blue-400" : "text-muted hover:bg-surface-2 hover:text-foreground"
+              active ? "bg-blue-500/20 text-blue-400 light:text-sky-700" : "text-muted hover:bg-surface-2 hover:text-foreground"
             }`}
           >
             {label}
@@ -635,22 +630,22 @@ export function CandleChart({
 
             {/* SMA overlays */}
             {showSma50 && (
-              <Line type="monotone" dataKey="sma50" stroke={AMBER} strokeWidth={1.5}
+              <Line type="monotone" dataKey="sma50" stroke={ct.amber} strokeWidth={1.5}
                 dot={false} activeDot={false} connectNulls isAnimationActive={false} />
             )}
             {showSma200 && (
-              <Line type="monotone" dataKey="sma200" stroke={PURPLE} strokeWidth={1.5}
+              <Line type="monotone" dataKey="sma200" stroke={ct.purple} strokeWidth={1.5}
                 strokeDasharray="5 3" dot={false} activeDot={false} connectNulls isAnimationActive={false} />
             )}
 
             {/* Bollinger Bands — three lines (upper, middle, lower) */}
             {showBB && (
               <>
-                <Line type="monotone" dataKey="bbUpper" stroke={TEAL} strokeWidth={1}
+                <Line type="monotone" dataKey="bbUpper" stroke={ct.teal} strokeWidth={1}
                   strokeOpacity={0.7} dot={false} activeDot={false} connectNulls isAnimationActive={false} />
-                <Line type="monotone" dataKey="bbMiddle" stroke={TEAL} strokeWidth={0.8}
+                <Line type="monotone" dataKey="bbMiddle" stroke={ct.teal} strokeWidth={0.8}
                   strokeDasharray="4 3" strokeOpacity={0.45} dot={false} activeDot={false} connectNulls isAnimationActive={false} />
-                <Line type="monotone" dataKey="bbLower" stroke={TEAL} strokeWidth={1}
+                <Line type="monotone" dataKey="bbLower" stroke={ct.teal} strokeWidth={1}
                   strokeOpacity={0.7} dot={false} activeDot={false} connectNulls isAnimationActive={false} />
               </>
             )}
@@ -680,7 +675,7 @@ export function CandleChart({
             <Tooltip content={() => null} cursor={{ fill: ct.cursorFill }} />
             <Bar
               dataKey="volume"
-              fill={BLUE}
+              fill={ct.blue}
               fillOpacity={0.4}
               radius={[1, 1, 0, 0]}
               maxBarSize={8}
@@ -729,7 +724,7 @@ export function CandleChart({
               <ReferenceLine y={70} stroke={NEGATIVE} strokeDasharray="3 2" strokeOpacity={0.5} />
               <ReferenceLine y={30} stroke={POSITIVE} strokeDasharray="3 2" strokeOpacity={0.5} />
               <Tooltip content={<RsiTooltip ct={ct} />} />
-              <Line type="monotone" dataKey="rsi" stroke={BLUE} strokeWidth={1.5}
+              <Line type="monotone" dataKey="rsi" stroke={ct.blue} strokeWidth={1.5}
                 dot={false} activeDot={{ r: 3, strokeWidth: 0 }} connectNulls isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
@@ -792,11 +787,11 @@ export function CandleChart({
               />
               <ReferenceLine y={0} stroke={GRID} strokeDasharray="4 2" />
               <Tooltip content={<MacdTooltip ct={ct} />} />
-              <Bar dataKey="macdHistogram" fill={BLUE} fillOpacity={0.5}
+              <Bar dataKey="macdHistogram" fill={ct.blue} fillOpacity={0.5}
                 maxBarSize={6} isAnimationActive={false} />
-              <Line type="monotone" dataKey="macd" stroke={BLUE} strokeWidth={1.5}
+              <Line type="monotone" dataKey="macd" stroke={ct.blue} strokeWidth={1.5}
                 dot={false} activeDot={false} connectNulls isAnimationActive={false} />
-              <Line type="monotone" dataKey="macdSignal" stroke={ORANGE} strokeWidth={1.5}
+              <Line type="monotone" dataKey="macdSignal" stroke={ct.orange} strokeWidth={1.5}
                 strokeDasharray="4 2" dot={false} activeDot={false} connectNulls isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
@@ -838,10 +833,11 @@ export function CandleChart({
                   <span
                     className="mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-xs font-medium"
                     style={{
-                      background:
-                        sig.direction === "bullish" ? "rgba(74,222,128,0.15)"
-                        : sig.direction === "bearish" ? "rgba(248,113,113,0.15)"
-                        : "rgba(154,163,175,0.15)",
+                      background: `color-mix(in srgb, ${
+                        sig.direction === "bullish" ? POSITIVE
+                        : sig.direction === "bearish" ? NEGATIVE
+                        : AXIS
+                      } 15%, transparent)`,
                       color:
                         sig.direction === "bullish" ? POSITIVE
                         : sig.direction === "bearish" ? NEGATIVE

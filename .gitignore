@@ -34,6 +34,11 @@ yarn-error.log*
 .env*
 !.env.example
 
+# Anthropic API key file. Lives OUTSIDE the repo by default
+# (~/.uaa/anthropic_api_key; see lib/ai/anthropic-key.ts) — this pattern is a
+# belt-and-braces guard for a UAA_CONFIG_DIR pointed inside the tree.
+anthropic_api_key
+
 # vercel
 .vercel
 
@@ -81,3 +86,11 @@ __pycache__/
 
 # stray self-referencing symlink (repo root -> repo root); breaks recursive tooling
 /universal-asset-analyzer
+
+# uaa host toolkit: dev-server pid handle (see scripts/ops/uaa)
+/.uaa-dev.pid
+
+# Spotlight/Time Machine exclusion markers dropped into generated dirs by
+# `uaa doctor --fix`. Machine-local hygiene, not project source.
+.metadata_never_index
+.design-refs/

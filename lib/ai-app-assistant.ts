@@ -9,7 +9,7 @@
  * It can also DO things — navigate the user somewhere, optionally with
  * symbols or parsed screener filters preloaded, add a symbol to the
  * watchlist, or kick off an IC report — rather than only explain where to
- * go. The model never outputs a resolved ticker itself (small local models
+ * go. The model never outputs a resolved ticker itself (small models
  * guess wrong tickers confidently); it names companies/tickers as the user
  * said them, and resolveAction() below resolves each mention through the
  * same searchSymbols() the ⌘K palette and search box use, so a hallucinated
@@ -36,6 +36,7 @@ import { isAssetClassId } from "./assets/registry";
 import type { AssetClassId, FilterValues } from "./assets/types";
 import { parseNlFilters } from "./screener/nl-filters";
 import { AI_RECOVERY_HINT } from "./ai/availability";
+import { classifyAiError } from "./ai/errors";
 
 export interface AppAssistantTurn {
   question: string;
@@ -79,7 +80,7 @@ export interface AppAssistantResult {
   model: string;
 }
 
-const APP_SUMMARY = `Universal Asset Analyzer (UAA) is a local, institutional-grade equity research platform. Modules: Home (daily brief), Research (deep single-stock research + AI copilot + charting), Screener (fundamental screening/ranking across equities, ETFs, REITs, crypto, commodities, bonds, forex), Wire (event-driven signals/scanning, news, portfolio headlines), Compare (multi-asset comparison), Portfolio (holdings, P&L, risk), Watchlist, DCF (intrinsic value), Calendar (earnings dates), IC Report (multi-agent institutional research), Engine (quant scorecard), Thematic (theme/supply-chain analysis), Decision Journal. AI runs through hosted frontier models via the Devin CLI, falling back to local Ollama models when offline.`;
+const APP_SUMMARY = `Universal Asset Analyzer (UAA) is a local, institutional-grade equity research platform. Modules: Home (daily brief), Research (deep single-stock research + AI copilot + charting), Screener (fundamental screening/ranking across equities, ETFs, REITs, crypto, commodities, bonds, forex), Wire (event-driven signals/scanning, news, portfolio headlines), Compare (multi-asset comparison), Portfolio (holdings, P&L, risk), Watchlist, DCF (intrinsic value), Calendar (earnings dates), IC Report (multi-agent institutional research), Engine (quant scorecard), Thematic (theme/supply-chain analysis), Decision Journal. AI narration runs on Claude via the Anthropic API, using the user's own key (Settings); every number is computed locally by deterministic engines.`;
 
 // Kept intentionally separate from app/_components/nav-config.ts (the header
 // nav + ⌘K palette's source of truth): lib/ is domain logic consumed by
@@ -337,27 +338,35 @@ export async function runAppAssistant(
 /**
  * Say what actually went wrong.
  *
- * Every failure here used to report "I couldn't reach the local model — start
- * Ollama with `ollama serve`". That is only one of the things that can go
- * wrong, and on a memory-tight host it is the *least* likely: the observed case
- * was Ollama up and answering, just slower than the task's deadline, so the
- * panel told the user to start a daemon that was already running while the real
- * cause — the machine paging — went unmentioned. Advice you can't act on is
- * worse than no advice, because the user "fixes" the wrong thing.
+ * Every failure here used to report one hardcoded fix regardless of the real
+ * cause. Advice you can't act on is worse than no advice, because the user
+ * "fixes" the wrong thing — so this names the actual failure class.
  */
 export function failureAnswer(err: unknown): string {
-  const name = err instanceof Error ? err.name : "";
-  if (name === "OllamaUnavailableError") {
-    // Names both providers, not just Ollama: with a hosted provider in the
-    // chain, "start Ollama" is at best half the fix and is irrelevant advice
-    // for a user who never installed it. See lib/ai/availability.ts.
-    return `I couldn't reach any AI provider. ${AI_RECOVERY_HINT} Or use ⌘K to jump straight to a tool.`;
+  // classifyAiError sees through the Router's exhausted-candidates wrapper
+  // (a bad key exhausting the fallback chain used to land in the generic
+  // "took too long" branch here — advice you can't act on).
+  const classified = classifyAiError(err);
+  switch (classified.category) {
+    case "no_api_key":
+      return `I can't answer without an API key. ${AI_RECOVERY_HINT} Or use ⌘K to jump straight to a tool.`;
+    case "bad_api_key":
+      return `${classified.message} ⌘K still works for jumping straight to a tool.`;
+    case "cancelled":
+    case "timeout":
+    case "rate_limited":
+    case "network":
+    case "all_models_failed":
+      return "The AI took too long to answer or is unreachable — try again in a moment. ⌘K still works.";
+    default: {
+      // Some transports throw plain Errors merely NAMED like abort/timeout
+      // (not DOMExceptions, so the classifier files them under "unknown").
+      // For user-facing copy the name is signal enough.
+      const name = err instanceof Error ? err.name : "";
+      if (name === "TimeoutError" || name === "AbortError") {
+        return "The AI took too long to answer or is unreachable — try again in a moment. ⌘K still works.";
+      }
+      return "I hit an error generating that answer. Try rephrasing, or use ⌘K to jump straight to a tool.";
+    }
   }
-  if (name === "ModelMissingError") {
-    return `${err instanceof Error ? err.message : "A required model isn't installed."} Then try again, or use ⌘K to jump straight to a tool.`;
-  }
-  if (name === "TimeoutError" || name === "AbortError" || name === "AllModelsFailedError") {
-    return "Every provider took too long to answer — for the local model this is usually the machine being low on free memory, so it's paging. Close some apps or set `AI_MAX_MODEL_GB` lower in `.env.local` to route to a smaller model. ⌘K still works.";
-  }
-  return "I hit an error generating that answer. Try rephrasing, or use ⌘K to jump straight to a tool.";
 }
