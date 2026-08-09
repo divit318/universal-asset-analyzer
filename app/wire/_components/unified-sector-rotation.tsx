@@ -19,11 +19,16 @@ import { Skeleton } from "@/app/_components/ui";
  * inferred divergence.
  */
 
-const CLASS_STYLE: Record<RotationClass, { text: string; label: string }> = {
-  leading: { text: "text-positive", label: "Leading" },
-  strengthening: { text: "text-accent", label: "Strengthening" },
-  weakening: { text: "text-amber-500", label: "Weakening" },
-  lagging: { text: "text-negative", label: "Lagging" },
+/**
+ * RRG-quadrant labels (relative strength × momentum). The tooltip matters:
+ * "#1 Weakening" is not a contradiction — it means still strong vs. peers but
+ * decelerating — and without the explanation it reads as a bug.
+ */
+const CLASS_STYLE: Record<RotationClass, { text: string; label: string; explain: string }> = {
+  leading: { text: "text-positive", label: "Leading", explain: "Stronger than peers and still accelerating" },
+  strengthening: { text: "text-accent", label: "Strengthening", explain: "Weaker than peers but momentum is improving — a candidate to rotate into leadership" },
+  weakening: { text: "text-amber-500", label: "Weakening", explain: "Still stronger than peers, but momentum is fading — rank can stay high while the trend cools" },
+  lagging: { text: "text-negative", label: "Lagging", explain: "Weaker than peers and still decelerating" },
 };
 
 const DIR_STYLE = {
@@ -59,7 +64,7 @@ function DivergenceBadge({ tile }: { tile: UnifiedSectorTile }) {
   const newsAhead = tile.divergence.kind === "news_ahead_of_price";
   return (
     <span
-      className="rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-warning"
+      className="rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning"
       title={`Sentiment and price disagree by ${tile.divergence.magnitude} points (threshold 60)`}
     >
       {newsAhead ? "News ↑ · Price ↓" : "Price ↑ · News ↓"}
@@ -73,12 +78,15 @@ function SectorTile({
   style,
   onShowEvidence,
   highlighted = false,
+  suppressSentimentAbsence = false,
 }: {
   tile: UnifiedSectorTile;
   scanLoading: boolean;
   style?: CSSProperties;
   onShowEvidence?: () => void;
   highlighted?: boolean;
+  /** When NO tile has sentiment, the grid says so once — not 11 times. */
+  suppressSentimentAbsence?: boolean;
 }) {
   const flagged = tile.divergence?.flagged ?? false;
   const dir = tile.sentiment ? DIR_STYLE[tile.sentiment.direction] : null;
@@ -109,7 +117,10 @@ function SectorTile({
           </span>
           <span className="flex items-center gap-1.5">
             <RankChangeBadge change={tile.price.rankChange} />
-            <span className={`text-[9px] font-medium uppercase tracking-wide ${CLASS_STYLE[tile.price.classification].text}`}>
+            <span
+              className={`text-[10px] font-medium uppercase tracking-wide ${CLASS_STYLE[tile.price.classification].text}`}
+              title={CLASS_STYLE[tile.price.classification].explain}
+            >
               {CLASS_STYLE[tile.price.classification].label}
             </span>
           </span>
@@ -129,13 +140,13 @@ function SectorTile({
               <button
                 type="button"
                 onClick={onShowEvidence}
-                className="text-[9px] uppercase tracking-wide text-muted/60 transition-colors hover:text-accent"
+                className="text-[10px] uppercase tracking-wide text-muted/60 transition-colors hover:text-accent"
                 title="Open source articles"
               >
                 News sentiment ↗
               </button>
             ) : (
-              <span className="text-[9px] uppercase tracking-wide text-muted/60">News sentiment</span>
+              <span className="text-[10px] uppercase tracking-wide text-muted/60">News sentiment</span>
             )}
           </div>
           <StrengthBar value={tile.sentiment.strength} />
@@ -143,7 +154,7 @@ function SectorTile({
         </div>
       ) : scanLoading ? (
         <Skeleton height="h-8" radius="rounded" />
-      ) : (
+      ) : suppressSentimentAbsence ? null : (
         <span className="text-[10px] text-muted/60">No sentiment data from this scan</span>
       )}
     </div>
@@ -194,12 +205,15 @@ export function UnifiedSectorRotation({
   if (tiles.length === 0) return null;
 
   const diverging = tiles.filter((t) => t.divergence?.flagged).length;
+  const noSentimentAnywhere = !scanLoading && tiles.every((t) => t.sentiment == null);
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-2 flex-wrap text-[10px] uppercase tracking-widest text-muted/60">
-        <span>Price rank (continuous) + news sentiment (this scan) · sorted by divergence</span>
-        {snapshot && snapshot.leaders.length > 0 && <span>Leaders: {snapshot.leaders.join(", ")}</span>}
+        <span title="Each tile joins the continuous 1-month relative-strength rank with this scan's news-sentiment signal. Tiles where the two disagree sort first.">
+          1-month price rank × this scan&apos;s news sentiment · disagreements first
+        </span>
+        {snapshot && snapshot.leaders.length > 0 && <span>1m leaders: {snapshot.leaders.join(", ")}</span>}
       </div>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {tiles.map((tile, i) => (
@@ -210,11 +224,18 @@ export function UnifiedSectorRotation({
             style={{ animationDelay: `${i * 40}ms` }}
             onShowEvidence={tile.sentiment && onShowEvidence ? () => onShowEvidence(tile.sector) : undefined}
             highlighted={highlightedSectors?.has(tile.sector) ?? false}
+            suppressSentimentAbsence={noSentimentAnywhere}
           />
         ))}
       </div>
+      {noSentimentAnywhere && (
+        <p className="text-caption text-muted/60">
+          This scan&apos;s events carried no sector-level sentiment signals — tiles show the live
+          price ranking only. Divergence flags need both sides, so none are inferred.
+        </p>
+      )}
       {diverging === 0 && !scanLoading && (impacts?.length ?? 0) > 0 && (
-        <p className="text-[11px] text-muted/60">
+        <p className="text-caption text-muted/60">
           No sector diverges meaningfully between price trend and news sentiment in this scan.
         </p>
       )}

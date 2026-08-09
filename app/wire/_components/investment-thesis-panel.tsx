@@ -90,13 +90,16 @@ export function InvestmentThesisPanel({
       {/* Horizon + Confidence */}
       <div className="flex items-center gap-4 border-t border-border pt-3">
         <div className="flex flex-col gap-0.5">
-          <span className="text-[9px] font-medium uppercase tracking-widest text-muted/60">
+          <span className="text-[10px] font-medium uppercase tracking-widest text-muted/60">
             Time Horizon
           </span>
           <span className="text-xs font-semibold">{HORIZON_LABEL[thesis.timeHorizon]}</span>
         </div>
-        <div className="flex flex-col gap-0.5">
-          <span className="text-[9px] font-medium uppercase tracking-widest text-muted/60">
+        <div
+          className="flex flex-col gap-0.5"
+          title="Model-estimated confidence in this thesis — not a measured statistic"
+        >
+          <span className="text-[10px] font-medium uppercase tracking-widest text-muted/60">
             Confidence
           </span>
           <span className="text-xs font-semibold">{thesis.confidence}%</span>

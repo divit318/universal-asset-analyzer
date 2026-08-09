@@ -3,7 +3,7 @@ import { getFundamentals, MODULES } from "@/lib/fundamentals";
 import { getFinancialStatements, getFinancialStatementsYahoo } from "@/lib/statements";
 import { getHistory, getQuote, getQuoteMeta, getQuoteSummaryMeta } from "@/lib/yahoo";
 import { computeMomentum, computeScore, assessRisks } from "@/lib/scoring";
-import { compareStocks } from "@/lib/ai-compare";
+import { compareStocks, COMPARISON_CACHE_MAX_AGE_MS } from "@/lib/ai-compare";
 import { detectMarket, normalizeSymbol } from "@/lib/market";
 import { findSectorRotationEntry, getLatestSectorRotation } from "@/lib/sector-rotation";
 import { buildOpportunityProfile, type OpportunityProfile } from "@/lib/opportunity-engine";
@@ -219,7 +219,7 @@ export async function GET(request: Request) {
  * covering every symbol requested, not just a pair.
  */
 export async function POST(request: Request) {
-  let body: { symbols?: string[]; symbolA?: string; symbolB?: string };
+  let body: { symbols?: string[]; symbolA?: string; symbolB?: string; noCache?: boolean };
   try {
     body = await request.json();
   } catch {
@@ -250,7 +250,10 @@ export async function POST(request: Request) {
     // Ollama serializes generations, so a single abandoned request used to
     // occupy the queue behind every other AI call on the box until it
     // finished on its own.
-    const result = await compareStocks(unique, { signal: request.signal });
+    const result = await compareStocks(unique, {
+      signal: request.signal,
+      maxAgeMs: body.noCache ? undefined : COMPARISON_CACHE_MAX_AGE_MS,
+    });
     return NextResponse.json(result);
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {

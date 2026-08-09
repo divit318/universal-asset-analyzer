@@ -1,4 +1,4 @@
-import { streamComparisonFields } from "@/lib/ai-compare";
+import { COMPARISON_CACHE_MAX_AGE_MS, streamComparisonFields } from "@/lib/ai-compare";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -7,7 +7,7 @@ export const maxDuration = 300;
 
 /**
  * POST /api/compare/stream
- * Body: { symbols: string[] } (2-5 symbols)
+ * Body: { symbols: string[] } (2-5 symbols), { noCache?: boolean }
  *
  * The AI ranked verdict, streamed as **complete fields** rather than one
  * multi-minute wait — mirrors `/api/ai/report`'s protocol exactly (see that
@@ -28,9 +28,13 @@ export const maxDuration = 300;
  * A cold-loading model (the case this whole thing exists for) now shows the
  * user real, growing content instead of one spinner for however long the
  * load takes.
+ *
+ * Repeat comparisons of the same symbols within the freshness window replay
+ * the stored narrative instead of regenerating (see streamComparisonFields);
+ * `noCache: true` — the Re-analyze button — forces a fresh generation.
  */
 export async function POST(request: Request) {
-  let body: { symbols?: string[] };
+  let body: { symbols?: string[]; noCache?: boolean };
   try {
     body = await request.json();
   } catch {
@@ -64,7 +68,10 @@ export async function POST(request: Request) {
       };
 
       try {
-        const generator = streamComparisonFields(unique, { signal: request.signal });
+        const generator = streamComparisonFields(unique, {
+          signal: request.signal,
+          maxAgeMs: body.noCache ? undefined : COMPARISON_CACHE_MAX_AGE_MS,
+        });
         for (;;) {
           const next = await generator.next();
           if (next.done) {

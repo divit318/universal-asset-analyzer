@@ -18,11 +18,11 @@ function TickerChips({ tickers }: { tickers: string[] }) {
   return (
     <span className="flex items-center gap-1">
       {tickers.slice(0, 4).map((t) => (
-        <span key={t} className="rounded border border-border bg-surface-2 px-1 py-px font-mono text-[9px] text-muted">
+        <span key={t} className="rounded border border-border bg-surface-2 px-1 py-px font-mono text-[10px] text-muted">
           {t}
         </span>
       ))}
-      {tickers.length > 4 && <span className="text-[9px] text-muted/60">+{tickers.length - 4}</span>}
+      {tickers.length > 4 && <span className="text-[10px] text-muted/60">+{tickers.length - 4}</span>}
     </span>
   );
 }
@@ -91,7 +91,7 @@ function StoryRow({
             {relativeAge(Math.max(0, now - new Date(story.latestAt).getTime()))}
           </span>
           {story.stale && (
-            <span className="rounded border border-border px-1 py-px text-[9px] uppercase tracking-wide text-muted/60">
+            <span className="rounded border border-border px-1 py-px text-[10px] uppercase tracking-wide text-muted/60">
               stale
             </span>
           )}
@@ -125,17 +125,26 @@ export function Tape({
   view,
   onTrace,
   tracedStoryId,
+  maxVisible,
 }: {
   view: TapeView;
   onTrace?: (story: TapeStory) => void;
   /** The story currently being traced, if any. */
   tracedStoryId?: string | null;
+  /** Cap the initially rendered rows; the rest sit behind "Show all". */
+  maxVisible?: number;
 }) {
   const [showFiltered, setShowFiltered] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+
+  // Stories are already bucket-ordered newest-first, so a cap keeps the
+  // freshest rows and hides the tail — never a random subset.
+  const capped = maxVisible != null && !showAll && view.stories.length > maxVisible;
+  const visibleStories = capped ? view.stories.slice(0, maxVisible) : view.stories;
 
   const buckets: TapeBucket[] = ["hour", "today", "yesterday", "earlier"];
   const grouped = buckets
-    .map((b) => ({ bucket: b, stories: view.stories.filter((s) => s.bucket === b) }))
+    .map((b) => ({ bucket: b, stories: visibleStories.filter((s) => s.bucket === b) }))
     .filter((g) => g.stories.length > 0);
 
   if (view.stories.length === 0 && view.filtered.length === 0) return null;
@@ -154,6 +163,16 @@ export function Tape({
           </ul>
         </div>
       ))}
+
+      {capped && (
+        <button
+          type="button"
+          onClick={() => setShowAll(true)}
+          className="self-start text-xs text-muted transition-colors hover:text-foreground"
+        >
+          Show all {view.stories.length} stories
+        </button>
+      )}
 
       {/* Noise is down-ranked behind a toggle, never silently deleted. */}
       {view.filtered.length > 0 && (

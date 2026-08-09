@@ -392,6 +392,11 @@ export default function ComparePage() {
   // to the in-flight Ollama call (see app/api/compare/route.ts).
   const aiGen = useRef(0);
   const aiAbortRef = useRef<AbortController | null>(null);
+  // Sorted key of a comparison restored from sessionStorage this mount, if
+  // any. Consumed (once) by the [symbols] effects so a session restore
+  // re-renders the saved comparison instead of refetching entries and
+  // wiping/re-running the AI verdict — the whole point of saving it.
+  const restoredKeyRef = useRef<string | null>(null);
   const [aiLoadingStartedAt, setAiLoadingStartedAt] = useState<number | null>(null);
   const [aiLoadingElapsedMs, setAiLoadingElapsedMs] = useState(0);
 
@@ -457,6 +462,14 @@ export default function ComparePage() {
           if (st.symbols?.length) setSymbols(st.symbols);
           if (st.entries?.length) setEntries(st.entries);
           if (st.aiResult) setAiResult(st.aiResult);
+          // The [symbols] effects below fire for this restore exactly as they
+          // would for a user edit — which used to null the restored aiResult
+          // and re-trigger both fetches on every revisit. Record what was
+          // restored so those effects can tell "navigated back" from "changed
+          // the comparison" (see restoredKeyRef consumers below).
+          if (st.symbols?.length && (st.entries?.length || st.aiResult)) {
+            restoredKeyRef.current = [...st.symbols].sort().join("-");
+          }
         }
       } catch { /* ignore corrupt storage */ }
     }
@@ -509,6 +522,20 @@ export default function ComparePage() {
     if (symbols.length > 0) url.searchParams.set("symbols", symbols.join(","));
     else url.searchParams.delete("symbols");
     window.history.replaceState({}, "", url.toString());
+    // A session restore already carries the entries for exactly these
+    // symbols — keep rendering them rather than replacing the whole
+    // comparison with a "Comparing…" spinner to refetch what we have.
+    // (restoredKeyRef is cleared by the reset effect below, which runs after
+    // this one; a later genuine symbol edit therefore always fetches.)
+    const restored = _s.current.entries;
+    if (
+      restoredKeyRef.current != null &&
+      restoredKeyRef.current === [...symbols].sort().join("-") &&
+      restored.length > 0 &&
+      restored.map((e) => e.symbol).sort().join("-") === [...symbols].sort().join("-")
+    ) {
+      return;
+    }
     // fetchCompare only sets state after an await, so this is safe to call here.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchCompare(symbols);
@@ -563,7 +590,33 @@ export default function ComparePage() {
   // verdict still in flight for the OLD symbol set — otherwise it kept
   // running server-side against symbols no longer on screen, occupying
   // Ollama's serialized generation queue for an answer nobody could see.
+  //
+  // Two exemptions, both "nothing actually changed":
+  //   - the mount run (symbols is still its initial []) — there is nothing in
+  //     flight to cancel, and resetting here raced the session-restore effect
+  //     and nulled the aiResult it had just restored;
+  //   - the restore run (symbols just became the restored comparison) — the
+  //     saved verdict is FOR these symbols; wiping it and re-triggering a
+  //     generation on every navigation back to this page was the bug.
+  const prevSymbolsRef = useRef<string[] | null>(null);
   useEffect(() => {
+    const prev = prevSymbolsRef.current;
+    prevSymbolsRef.current = symbols;
+    if (prev === null) return; // mount — nothing in flight, nothing to reset
+
+    const restoredKey = restoredKeyRef.current;
+    restoredKeyRef.current = null; // one-shot: any later change is a real edit
+    if (restoredKey != null && restoredKey === [...symbols].sort().join("-")) {
+      // Mark the restored set as already analyzed so the auto-trigger effect
+      // doesn't immediately regenerate what we just put back on screen.
+      aiAutoTriggered.current = _s.current.entries
+        .filter((e) => !e.error)
+        .map((e) => e.symbol)
+        .sort()
+        .join("-");
+      return;
+    }
+
     aiAutoTriggered.current = "";
     aiAbortRef.current?.abort();
     aiGen.current += 1; // invalidate any response still in flight
@@ -585,7 +638,7 @@ export default function ComparePage() {
     void fetchAiVerdict(valid.map((e) => e.symbol));
   }, [entries, aiLoading, loading]);
 
-  async function fetchAiVerdict(syms: string[]) {
+  async function fetchAiVerdict(syms: string[], opts: { noCache?: boolean } = {}) {
     // Supersede, don't stack: a second call to this function (re-analyze
     // click, or the auto-trigger firing again for a new symbol set) cancels
     // whatever this component was previously waiting on rather than leaving
@@ -614,7 +667,10 @@ export default function ComparePage() {
       const res = await fetch("/api/compare/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbols: syms }),
+        // Re-analyze passes noCache so an explicit click always regenerates;
+        // the auto-trigger accepts a recent stored comparison (server-side
+        // replay — see app/api/compare/stream/route.ts).
+        body: JSON.stringify({ symbols: syms, noCache: opts.noCache || undefined }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) {
@@ -999,7 +1055,7 @@ export default function ComparePage() {
                   </p>
                 </div>
                 <button
-                  onClick={() => void fetchAiVerdict(validEntries.map((e) => e.symbol))}
+                  onClick={() => void fetchAiVerdict(validEntries.map((e) => e.symbol), { noCache: Boolean(aiResult) })}
                   disabled={aiLoading}
                   className="rounded-lg bg-brand-strong px-4 py-2 text-xs font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
                 >

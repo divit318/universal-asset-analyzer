@@ -3437,6 +3437,27 @@ export function getAiResult(
   return { provider: row.provider, metaJson: row.meta_json, resultJson: row.result_json, createdAt: row.created_at };
 }
 
+/**
+ * Latest row for (type, subject, schema) regardless of input hash — for
+ * prompts that embed live data (the compare prompt carries current prices),
+ * where an exact-hash read can never hit twice across a price tick. The
+ * caller's `maxAgeMs` is what bounds staleness, exactly as in getAiResult.
+ */
+export function getLatestAiResult(
+  key: { analysisType: string; subjectKey: string; schemaVersion: number },
+  maxAgeMs: number,
+): AiResultRow | null {
+  const row = getDb().prepare(
+    `SELECT provider, meta_json, result_json, created_at FROM ai_result
+     WHERE analysis_type = ? AND subject_key = ? AND schema_version = ?
+     ORDER BY created_at DESC LIMIT 1`,
+  ).get(key.analysisType, key.subjectKey, key.schemaVersion) as unknown as
+    { provider: string; meta_json: string | null; result_json: string; created_at: number } | undefined;
+  if (!row) return null;
+  if (Number.isFinite(maxAgeMs) && Date.now() - row.created_at > maxAgeMs) return null;
+  return { provider: row.provider, metaJson: row.meta_json, resultJson: row.result_json, createdAt: row.created_at };
+}
+
 export function putAiResult(
   key: { analysisType: string; subjectKey: string; inputHash: string; schemaVersion: number },
   value: { provider: string; metaJson?: string | null; resultJson: string },

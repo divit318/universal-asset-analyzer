@@ -22,7 +22,9 @@ export function MacroTile({ signal }: { signal: MacroSignal }) {
       </span>
       <div className="flex items-baseline gap-1.5">
         <span className="font-mono text-sm font-semibold text-foreground">
-          {signal.price != null ? signal.price.toFixed(signal.ticker.includes("^T") ? 2 : 2) : "—"}
+          {signal.price != null
+            ? signal.price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+            : "—"}
         </span>
         {signal.changePercent != null && (
           <span
@@ -67,8 +69,11 @@ export function MarketRegimeBanner({
             )}
           </div>
           {regime.dominantSectors.length > 0 && (
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[10px] text-muted/60 uppercase tracking-widest">Leading:</span>
+            <div
+              className="flex items-center gap-1.5 flex-wrap"
+              title="Sectors advancing most in today's session — distinct from the 1-month price leaders in Sector Rotation below"
+            >
+              <span className="text-[10px] text-muted/60 uppercase tracking-widest">Leading today:</span>
               {regime.dominantSectors.map((s) => (
                 <span
                   key={s}

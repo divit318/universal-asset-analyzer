@@ -125,6 +125,7 @@ export function CommandBar({
             <input
               value={query}
               onChange={(e) => onQueryChange(e.target.value)}
+              aria-label="Scan focus — a theme, sector, or event; leave blank to auto-scan"
               placeholder="Focus on a theme, sector, or event — or leave blank to auto-scan"
               className="w-full rounded-lg border border-border bg-surface py-2 pl-9 pr-4 text-sm outline-none placeholder:text-muted focus:border-brand"
             />

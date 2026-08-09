@@ -46,13 +46,28 @@ export function MarketSummaryCard({
   if (loading) {
     return <Skeleton height="h-20" radius="rounded-xl" className="border border-border" />;
   }
-  if (!summary) return null;
+  // A failed fetch must not silently unmount the card — the section header
+  // above it would remain, pointing at nothing. The regime's deterministic
+  // summary is always available as the honest floor.
+  if (!summary) {
+    return (
+      <div className="rounded-xl border border-border bg-surface px-5 py-4">
+        <p className="text-sm leading-6 text-muted">{regime.summary}</p>
+        <p className="mt-2 text-caption text-muted/60">
+          AI interpretation unavailable — showing the measured regime readout instead.
+        </p>
+      </div>
+    );
+  }
 
   // Section title ("AI Market Summary") is provided by the WireSection wrapper
   // in page.tsx — this card only owns the interpreted-content styling.
   return (
     <div className="animate-fade-rise rounded-xl border border-accent/20 bg-accent/5 px-5 py-4">
       <p className="text-sm leading-6 text-foreground/85">{summary}</p>
+      <p className="mt-2 border-t border-accent/10 pt-2 text-caption text-muted/70">
+        AI interpretation of the measured panels on this page — where they disagree, the panels win.
+      </p>
     </div>
   );
 }

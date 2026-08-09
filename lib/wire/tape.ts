@@ -185,21 +185,27 @@ export const DEFAULT_NOISE_RULES: NoiseRule[] = [
     label: "Personal finance",
     weight: 2,
     headline:
-      /\b(credit cards?|credit score|social security check|retire (early|at \d+)|retirement savings|net worth by age|side hustle|paycheck to paycheck|emergency fund|dave ramsey|suze orman)\b/i,
+      /\b(credit cards?|credit score|social security check|retire (early|at \d+)|retirement (savings|accounts?|savers)|401\(k|roth ira|net worth by age|side hustle|paycheck to paycheck|emergency fund|dave ramsey|suze orman)\b/i,
   },
   {
     id: "listicle-screener",
     label: "Screener listicle",
     weight: 2,
+    // Leading-number listicles tolerate up to two adjectives ("2 Unstoppable
+    // Growth ETFs…"); superlative screeners ("The Cheapest ETFs for…") and
+    // "worth buying" bait are the same genre without the number.
     headline:
-      /^\d+\s+(stocks?|etfs?|funds?|cryptos?|dividend)|\b(top|best)\s+\d+\s+(stocks?|etfs?|funds?|dividend stocks?)\b|\bstocks? to buy (now|today|right now)\b|\byou (won'?t believe|need to see)\b/i,
+      /^(?:the\s+)?\d+\s+(?:\w+\s+){0,2}(stocks?|etfs?|funds?|cryptos?|dividends?)\b|\b(top|best|cheapest)\s+(?:\d+\s+)?(stocks?|etfs?|funds?|dividend stocks?)\b|\b(stocks?|etfs?|funds?)\s+(to buy|worth buying|to watch)\b|\byou (won'?t believe|need to see)\b/i,
   },
   {
     id: "content-mill-advice",
     label: "Content-mill advice",
-    weight: 1,
+    // Weight 2 so an advice-framed headline from a known mill filters on its
+    // own — at weight 1 this rule could never trip the threshold unaided.
+    weight: 2,
     source: /motley fool|gobankingrates|24\/7 wall|insider monkey|newsbreak/i,
-    headline: /\b(if you|should you|here'?s (what|how much)|why you should|mistakes?)\b/i,
+    headline:
+      /\b(if you|should you|here'?s (what|how much)|why you should|mistakes?|need to know|worth buying|your money|passive income)\b/i,
   },
 ];
 
@@ -333,7 +339,24 @@ export function buildTape(
   const now = opts.now ?? Date.now();
   const rules = opts.rules ?? DEFAULT_NOISE_RULES;
 
-  const working: WorkingItem[] = items.map((item) => ({
+  // Exact duplicates first: the same article can arrive twice (two holdings'
+  // feeds, a flaky upstream). Clustering would merge them into one story but
+  // still render a phantom "2 sources" expander of identical rows — and the
+  // duplicate would double-count in totalArticles. Tickers union so a shared
+  // article keeps every symbol that surfaced it.
+  const byKey = new Map<string, NewsItem>();
+  for (const item of items) {
+    const key = item.url || `${item.headline}\u0000${item.source}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, item);
+    } else if (item.tickers.some((t) => !existing.tickers.includes(t))) {
+      byKey.set(key, { ...existing, tickers: [...new Set([...existing.tickers, ...item.tickers])] });
+    }
+  }
+  const deduped = [...byKey.values()];
+
+  const working: WorkingItem[] = deduped.map((item) => ({
     item,
     tokens: normalizeTitle(item.headline),
     tickers: new Set(item.tickers.map(normalizeTicker)),
@@ -413,8 +436,8 @@ export function buildTape(
   return {
     stories: visible,
     filtered,
-    totalArticles: items.length,
-    clusteredArticles: items.length - stories.length,
+    totalArticles: deduped.length,
+    clusteredArticles: deduped.length - stories.length,
     builtAt: now,
   };
 }
