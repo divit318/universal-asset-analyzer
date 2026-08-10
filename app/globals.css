@@ -537,6 +537,48 @@ body::before {
   0%, 100% { transform: translate3d(-4%, 0, 0) scale(1); opacity: 0.5; }
   50%      { transform: translate3d(4%, -3%, 0) scale(1.12); opacity: 0.85; }
 }
+/* Problem: the fragmentation diagram (problem-diagram.tsx). Islands settle
+   once with a short stagger; severed connectors draw in after them and stop
+   visibly short of ever connecting; a very slow, low-amplitude drift keeps
+   the composition from freezing. data-frag="visible" (SSR, no-JS, reduced
+   motion) is the fully settled state, so nothing here can trap content —
+   and the blanket prefers-reduced-motion rule at the bottom of this file
+   neutralizes every animation and transition below. */
+.mk-frag-island {
+  rotate: var(--fr, 0deg);
+}
+[data-frag="hidden"] .mk-frag-island {
+  opacity: 0;
+  transform: translateY(16px);
+  rotate: 0deg;
+}
+[data-frag="live"] .mk-frag-island {
+  transition-property: opacity, transform, rotate;
+  transition-duration: 700ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  transition-delay: var(--frag-d, 0ms);
+}
+.mk-frag-edge {
+  stroke-dasharray: 1;
+}
+[data-frag="hidden"] .mk-frag-edge { stroke-dashoffset: 1; }
+[data-frag="live"] .mk-frag-edge {
+  transition: stroke-dashoffset 900ms cubic-bezier(0.33, 1, 0.68, 1) var(--frag-d, 600ms);
+}
+[data-frag="hidden"] .mk-frag-edge-soft { opacity: 0; }
+[data-frag="live"] .mk-frag-edge-soft {
+  transition: opacity 800ms ease var(--frag-d, 700ms);
+}
+/* Ambient: one gentle vertical breath, period and phase varied per island so
+   the composition never synchronizes. Amplitude 2px — if a viewer can
+   consciously track it, it is too much. */
+@keyframes mk-frag-drift {
+  from { transform: translate3d(0, -1px, 0); }
+  to   { transform: translate3d(0, 1px, 0); }
+}
+[data-frag="live"] .mk-frag-drift {
+  animation: mk-frag-drift var(--drift-t, 18s) ease-in-out var(--drift-d, 0s) infinite alternate;
+}
 [data-mk-root] ::selection,
 [data-mk-root]::selection {
   background: color-mix(in srgb, var(--brand) 30%, transparent);

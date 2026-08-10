@@ -18,6 +18,7 @@ import { OrnamentalEyebrow } from "../primitives/ornamental-eyebrow";
 import { TwoToneHeadline } from "../primitives/two-tone-headline";
 import { IconTile } from "../primitives/icon-tile";
 import { ParticleField } from "../primitives/particle-field";
+import { TrustStrip } from "../primitives/trust-strip";
 import { useSectionProgress, useReducedMotion } from "../motion/hooks";
 
 /**
@@ -252,6 +253,15 @@ export function Solution({ section, index }: SectionProps) {
           </div>
         </Reveal>
       </div>
+
+      {/* The four trust claims close the section: they substantiate "one
+          intelligent analysis workbench" — how it is built (local-first,
+          deterministic) and how it is paid for (your key, no subscription).
+          Bare here: a quiet typographic footer to the argument above, not
+          the hero's bordered pill. */}
+      <Reveal delay={360} className="mt-mk-lead border-t border-hairline pt-mk-group">
+        <TrustStrip variant="bare" />
+      </Reveal>
     </SectionShell>
   );
 }

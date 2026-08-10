@@ -10,8 +10,12 @@ import { AuthModalHost, openAuthModal } from "./auth-modal";
 import { useScrollVelocity } from "./motion/hooks";
 
 /**
- * The marketing nav — a floating centered pill: logo left, the six anchor
- * links, theme toggle, ghost "Sign in", brass primary CTA with trailing arrow.
+ * The marketing nav — a floating pill whose LEFT edge aligns to the content
+ * column (the same measure-content + mk-pad grid every section uses), so the
+ * lockup sits on the same vertical axis as the left-aligned hero's eyebrow,
+ * headline and CTAs: logo left, the six anchor links, theme toggle, ghost
+ * "Sign in", and a brass-BORDERED "Get started" (the hero's filled button is
+ * the page's one primary action; the nav instance is its quiet echo).
  *
  * Scroll state: past 100px the pill's background opacity rises and a 1px
  * border fades in over 200ms. Active-section highlighting runs on a single
@@ -76,10 +80,12 @@ export function LandingHeader() {
   }, []);
 
   return (
-    <header className="fixed inset-x-0 top-3 z-40 px-3 sm:top-4">
+    <header className="fixed inset-x-0 top-3 z-40 sm:top-4">
+      {/* The pill lives inside the content measure, left-aligned to it. */}
+      <div className="mx-auto w-full max-w-measure-content px-mk-pad">
       <nav
         aria-label="Primary"
-        className={`mx-auto flex h-12 w-full max-w-3xl items-center gap-1 rounded-full border px-2.5 backdrop-blur-xl transition-[background-color,border-color,box-shadow] duration-[200ms] lg:max-w-4xl ${
+        className={`flex h-12 w-full max-w-3xl items-center gap-1 rounded-full border px-2.5 backdrop-blur-xl transition-[background-color,border-color,box-shadow] duration-[200ms] lg:max-w-4xl ${
           scrolled ? "border-border bg-surface/90 shadow-popover" : "border-transparent bg-surface/55"
         }`}
       >
@@ -120,7 +126,7 @@ export function LandingHeader() {
           <button
             type="button"
             onClick={() => openAuthModal("signup")}
-            className="group hidden items-center gap-1.5 rounded-full bg-brand px-3.5 py-1.5 text-sm font-semibold text-background outline-none transition-colors hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40 sm:inline-flex"
+            className="group hidden items-center gap-1.5 rounded-full border border-brand/45 px-3.5 py-1.5 text-sm font-semibold text-brand outline-none transition-colors hover:border-brand hover:bg-brand/10 focus-visible:ring-2 focus-visible:ring-brand/40 sm:inline-flex"
           >
             {PRIMARY_ACTION}
             <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-[3px]">
@@ -141,6 +147,7 @@ export function LandingHeader() {
           </button>
         </div>
       </nav>
+      </div>
 
       {/* Full-screen mobile overlay — the shared Drawer primitive stretched to
           the viewport: focus-trapped, Escape closes, background scroll locked. */}

@@ -30,10 +30,15 @@ function Diamond() {
 export function OrnamentalEyebrow({
   children,
   variant = "centered",
+  terminus = "rule",
   className = "",
 }: {
   children: ReactNode;
   variant?: "centered" | "left";
+  /** "rule": diamond + trailing hairline. "diamond": the diamond alone —
+   *  for compositions where a fading rule would dangle into open space
+   *  with nothing to anchor it (the hero's full-bleed field). */
+  terminus?: "rule" | "diamond";
   className?: string;
 }) {
   return (
@@ -50,7 +55,7 @@ export function OrnamentalEyebrow({
       )}
       <span>{children}</span>
       <Diamond />
-      <Hairline direction="away" />
+      {terminus === "rule" && <Hairline direction="away" />}
     </p>
   );
 }
