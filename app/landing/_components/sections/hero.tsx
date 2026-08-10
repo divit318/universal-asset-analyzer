@@ -33,7 +33,9 @@ export function Hero({ section }: { section: LandingSection }) {
         <HeroField />
         <div data-measure="content" className="relative mx-auto w-full max-w-measure-content px-mk-pad">
           <div className="grid items-center gap-10 lg:grid-cols-[52fr_48fr] lg:gap-8">
-          <div className="flex flex-col items-start">
+          {/* data-hero-copy scopes the field's text-exclusion measurement
+              (ink/hero-sdf.ts): every text rect inside thins the material. */}
+          <div data-hero-copy className="flex flex-col items-start">
             <Reveal delay={0}>
               {/* Diamond terminus, no trailing rule: over the full-bleed
                   field the fading hairline had no right-hand anchor and

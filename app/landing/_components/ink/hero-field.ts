@@ -1,6 +1,9 @@
 "use client";
 
 import { subscribe, wake, prefersReducedMotion } from "../motion/engine";
+import { packHeroSeries } from "./hero-data";
+import { collectHeroKeepoutRects, rectFalloffField, SDF_TEX_W } from "./hero-sdf";
+import series from "./hero-series.json";
 
 /**
  * The hero flow field. NOT a particle system, NOT stroked polylines: one
@@ -39,6 +42,24 @@ import { subscribe, wake, prefersReducedMotion } from "../motion/engine";
  *
  * Fallbacks: prefers-reduced-motion renders ONE composed frame and stops.
  * No WebGL renders a static painted ribbon on a 2D context.
+ *
+ * DATA (hero-series.json, baked by scripts/build-hero-series.ts): the
+ * field's low-frequency structure is the NIFTY 50. The spine parameter t
+ * IS the series axis, so the sweep's left-to-right run is the index's
+ * 2007-to-now run. The smoothed first derivative tilts the material's
+ * local frame (strong trends bend the streaming), volatility widens the
+ * envelope and deepens the braid gaps (turbulence fans the sheet), and
+ * the unsmoothed residual survives as a very-low-amplitude jitter in the
+ * texture. Amplitudes are deliberately small: the composition — luminous
+ * core lower right, entry thread far left — is art-directed; the data is
+ * the weather inside it. `?heroData=off` (or localStorage uaa.heroData =
+ * "off") zeroes the mapping for an A/B against the pure-noise field.
+ *
+ * TEXT EXCLUSION (hero-sdf.ts): a distance field over the hero's text
+ * rects modulates density with a smooth ~150px falloff, so the material
+ * structurally thins into air around the type. Recomputed after fonts
+ * load, on resize, and on theme change; uploads cross-fade over 200ms so
+ * a recompute can never pop.
  */
 
 /* ---- spine: the strand-era control points, translated DOWN so the
@@ -62,6 +83,11 @@ uniform vec3 uBrass;
 uniform vec3 uCore;
 uniform float uDetail;   // 1 = all three layers; 0 = far + mid only
 uniform float uDensity;  // global density trim
+uniform sampler2D uSeries; // baked market series: R smooth, G deriv, B vol, A residual
+uniform float uDataAmp;    // 1 = data-driven macro field; 0 = pure noise (A/B flag)
+uniform sampler2D uSdfA;   // text-exclusion falloff field (current)
+uniform sampler2D uSdfB;   // text-exclusion falloff field (incoming)
+uniform float uSdfMix;     // cross-fade between the two uploads
 
 const vec2 P0 = vec2(${BEZ.p0[0]}, ${BEZ.p0[1]});
 const vec2 P1 = vec2(${BEZ.p1[0]}, ${BEZ.p1[1]});
@@ -131,18 +157,33 @@ void main() {
   float ct = dpx.x / length(dpx);         // cos of local slope
   float v = (uv.y - bezY(t)) * ct;        // approx perpendicular offset, h units
 
+  /* Market series at this point of the run (t IS the series axis). */
+  vec4 mkt = texture2D(uSeries, vec2(t, 0.5));
+  float trend = (mkt.g * 2.0 - 1.0) * uDataAmp;
+  float volat = mkt.b * uDataAmp;
+  float hf    = (mkt.a * 2.0 - 1.0) * uDataAmp;
+  /* Trend bends the sweep. The TEXTURE frame takes the full bend (the
+     filaments visibly lean through strong trends); the ENVELOPE takes a
+     third of it, so the composition holds. The window keeps the entry
+     thread anchored; the residual is a whisper of real daily texture. */
+  float bendW = ss(0.06, 0.30, t);
+  float vTex = v - (0.052 * trend + 0.008 * hf) * bendW;
+  float vEnv = v - 0.018 * trend * bendW;
+
   /* Envelope. vE compresses the upward side over the text block only;
-     the texture itself samples the raw v so the material never warps. */
-  float sigma = 0.015 + 0.088 * ss(0.05, 0.85, t);
-  float vE = v < 0.0 ? v / (0.22 + 0.78 * ss(0.44, 0.66, t)) : v;
+     the texture itself samples the unwarped vTex so the material never
+     smears. Volatility fans the sheet wider. */
+  float sigma = (0.015 + 0.088 * ss(0.05, 0.85, t)) * (1.0 + 0.28 * volat);
+  float vE = vEnv < 0.0 ? vEnv / (0.22 + 0.78 * ss(0.44, 0.66, t)) : vEnv;
   float g = vE / sigma;
   float env = exp(-g * g);
   env += 0.16 * exp(-(g * g) / 9.0);      // volumetric halo
-  /* Lower fan: a soft lobe peeling below the spine on the right. */
+  /* Lower fan: a soft lobe peeling below the spine on the right.
+     Volatile stretches peel harder — more material fanning away. */
   float fanC = 0.11 * ss(0.52, 0.95, t);
   float fanW = sigma * 1.7;
-  float gf = (v - fanC) / fanW;
-  env += 0.34 * exp(-gf * gf) * ss(0.55, 0.8, t);
+  float gf = (vEnv - fanC) / fanW;
+  env += 0.34 * exp(-gf * gf) * ss(0.55, 0.8, t) * (1.0 + 0.7 * volat);
   /* Entry ramp: the far left is a faint single thread, but PRESENT. */
   env *= mix(0.22, 1.0, ss(0.02, 0.34, t));
   /* The canvas is a cross-section of a larger system: the material must
@@ -154,12 +195,12 @@ void main() {
 
   /* Three advection layers of the same material: depth without seams. */
   float evo = uTime * 0.011;
-  float far = silk(vec2(t * 2.4 - uTime * 0.020, v * 36.0) + 5.0, 1.7, 0.42, evo * 0.6);
-  float mid = silk(vec2(t * 3.6 - uTime * 0.041, v * 70.0) + 13.0, 3.0, 0.55, evo);
+  float far = silk(vec2(t * 2.4 - uTime * 0.020, vTex * 36.0) + 5.0, 1.7, 0.42, evo * 0.6);
+  float mid = silk(vec2(t * 3.6 - uTime * 0.041, vTex * 70.0) + 13.0, 3.0, 0.55, evo);
   float body = 0.30 * far + 0.46 * mid;
   float glint = 0.0;
   if (uDetail > 0.5) {
-    float near = silk(vec2(t * 5.0 - uTime * 0.072, v * 120.0) + 27.0, 4.5, 0.6, evo * 1.5);
+    float near = silk(vec2(t * 5.0 - uTime * 0.072, vTex * 120.0) + 27.0, 4.5, 0.6, evo * 1.5);
     body += 0.42 * near;
     /* Convergence glints: where the mid and near sheets ridge TOGETHER
        the material runs hot — rare by construction (a product of two
@@ -169,13 +210,31 @@ void main() {
     body *= 1.35;
     glint = mid * mid * mid * 1.4;
   }
-  /* Braids and gaps: low-frequency mass so density is never uniform. */
-  float m0 = fbm(vec2(t * 1.7 - uTime * 0.013, v * 9.0) + 31.0);
-  float mass = 0.22 + 1.05 * m0 * m0;
+  /* Braids and gaps: low-frequency mass so density is never uniform.
+     Volatility sharpens the braid exponent: turbulent stretches read as
+     more separated filament bundles with deeper gaps between them. The
+     trailing gain REDISTRIBUTES that density instead of deleting it —
+     without it, 2008 sits on the entry thread and erases the left edge
+     of the full bleed. */
+  float m0 = fbm(vec2(t * 1.7 - uTime * 0.013, vTex * 9.0) + 31.0);
+  float mSep = pow(m0, 1.0 + 1.1 * volat);
+  float mass = 0.22 + 1.05 * mSep * mSep * (1.0 + 0.9 * volat);
+
+  /* The braid pow and the wider fan both LOWER mean density, which was
+     read as the core cooling off. Return that energy to the glints —
+     scaled by the same data terms, so uDataAmp = 0 stays bit-identical
+     to the pure-noise artwork. */
+  glint *= 1.0 + 1.15 * volat;
 
   float dens = env * body * mass * uDensity;
   dens += exp(-g * g) * glint * mass;
   dens += env * 0.028;                     // haze floor inside the envelope
+
+  /* Text exclusion: density falls off smoothly toward every text rect.
+     The full-range smoothstep over a 150px falloff is what makes this
+     read as atmosphere; a visible edge means the falloff got too tight. */
+  float ex = mix(texture2D(uSdfA, uv).r, texture2D(uSdfB, uv).r, uSdfMix);
+  dens *= ss(0.0, 1.0, ex);
 
   /* Soft-knee tone map; dither kills 8-bit banding in the halo. */
   float d = 1.0 - exp(-dens * 2.2);
@@ -319,6 +378,32 @@ function createFlowField(canvas: HTMLCanvasElement, gl: WebGLRenderingContext): 
   let prog: WebGLProgram | null = null;
   let quad: WebGLBuffer | null = null;
   let U: Record<string, WebGLUniformLocation | null> = {};
+  let seriesTex: WebGLTexture | null = null;
+  let sdfTexA: WebGLTexture | null = null;
+  let sdfTexB: WebGLTexture | null = null;
+
+  /* A/B flag (bail-out rule): ?heroData=off or localStorage uaa.heroData
+     = "off" renders the pure-noise field of the pre-data artwork. */
+  const dataAmp = (() => {
+    try {
+      if (new URLSearchParams(window.location.search).get("heroData") === "off") return 0;
+      if (window.localStorage.getItem("uaa.heroData") === "off") return 0;
+    } catch {
+      /* storage can throw in hardened contexts; the data field is the default */
+    }
+    return 1;
+  })();
+
+  const makeTex = (unit: number) => {
+    const tex = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return tex;
+  };
 
   const compile = (type: number, src: string) => {
     const sh = gl.createShader(type);
@@ -369,7 +454,30 @@ function createFlowField(canvas: HTMLCanvasElement, gl: WebGLRenderingContext): 
       core: gl.getUniformLocation(p, "uCore"),
       detail: gl.getUniformLocation(p, "uDetail"),
       density: gl.getUniformLocation(p, "uDensity"),
+      series: gl.getUniformLocation(p, "uSeries"),
+      dataAmp: gl.getUniformLocation(p, "uDataAmp"),
+      sdfA: gl.getUniformLocation(p, "uSdfA"),
+      sdfB: gl.getUniformLocation(p, "uSdfB"),
+      sdfMix: gl.getUniformLocation(p, "uSdfMix"),
     };
+
+    /* Unit 1: the baked series, one RGBA row, LINEAR so the shader's
+       sample at t interpolates between the 512 bake points. Units 2 and
+       3: the exclusion field pair, seeded as single "no exclusion"
+       texels until the first DOM measure lands. */
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    seriesTex = makeTex(1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, series.points, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, packHeroSeries(series));
+    const blank = new Uint8Array([255]);
+    sdfTexA = makeTex(2);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, 1, 1, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, blank);
+    sdfTexB = makeTex(3);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, 1, 1, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, blank);
+    gl.uniform1i(U.series, 1);
+    gl.uniform1i(U.sdfA, 2);
+    gl.uniform1i(U.sdfB, 3);
+    gl.uniform1f(U.dataAmp, dataAmp);
+    gl.uniform1f(U.sdfMix, 0);
     return true;
   }
 
@@ -403,6 +511,49 @@ function createFlowField(canvas: HTMLCanvasElement, gl: WebGLRenderingContext): 
     gl.uniform2f(U.res, canvas.width, canvas.height);
   }
 
+  /* ---- text exclusion: DOM-measured falloff field, cross-faded in ---- */
+  let sdfFadeStart = 0; // performance.now() at fade start; 0 = settled
+  let lastSdf: { data: Uint8Array; w: number; h: number } | null = null;
+
+  function uploadSdf(unit: number, tex: WebGLTexture | null, f: { data: Uint8Array; w: number; h: number }) {
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, f.w, f.h, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, f.data);
+  }
+
+  function recomputeSdf(fade: boolean) {
+    if (gl.isContextLost() || w < 2 || h < 2) return;
+    const texW = SDF_TEX_W;
+    const texH = Math.max(8, Math.round((texW * h) / w));
+    const field = { data: rectFalloffField(collectHeroKeepoutRects(canvas), texW, texH, w, h), w: texW, h: texH };
+    if (fade && !reduced && lastSdf) {
+      /* A carries what is on screen, B the new measure; the draw loop
+         ramps uSdfMix 0 -> 1 over 200ms, then B is folded back into A. */
+      uploadSdf(2, sdfTexA, lastSdf);
+      uploadSdf(3, sdfTexB, field);
+      gl.uniform1f(U.sdfMix, 0);
+      sdfFadeStart = performance.now();
+    } else {
+      uploadSdf(2, sdfTexA, field);
+      gl.uniform1f(U.sdfMix, 0);
+      sdfFadeStart = 0;
+    }
+    lastSdf = field;
+    if (reduced) draw();
+    wake();
+  }
+
+  function stepSdfFade() {
+    if (!sdfFadeStart || !lastSdf) return;
+    const k = Math.min(1, (performance.now() - sdfFadeStart) / 200);
+    gl.uniform1f(U.sdfMix, k);
+    if (k >= 1) {
+      uploadSdf(2, sdfTexA, lastSdf);
+      gl.uniform1f(U.sdfMix, 0);
+      sdfFadeStart = 0;
+    }
+  }
+
   let time = 40; // start in a developed region of the field
   function draw() {
     gl.uniform1f(U.time, time);
@@ -413,6 +564,16 @@ function createFlowField(canvas: HTMLCanvasElement, gl: WebGLRenderingContext): 
 
   readPalette();
   measure();
+  recomputeSdf(false);
+
+  /* The type settles in stages: fonts swap in, then the Reveal entrances
+     finish translating (last delay 360ms + 700ms transition). Re-measure
+     after each, cross-faded, so the exclusion tracks the real glyphs. */
+  let settleTimer = 0;
+  document.fonts?.ready.then(() => {
+    settleTimer = window.setTimeout(() => recomputeSdf(true), 50);
+  });
+  const settleTimer2 = window.setTimeout(() => recomputeSdf(true), 1300);
 
   const stages = Array.from(document.querySelectorAll<HTMLElement>("[data-pipeline-stage]"));
 
@@ -441,6 +602,7 @@ function createFlowField(canvas: HTMLCanvasElement, gl: WebGLRenderingContext): 
     window.clearTimeout(resizeTimer);
     resizeTimer = window.setTimeout(() => {
       measure();
+      recomputeSdf(true);
       if (reduced) draw();
       wake();
     }, 150);
@@ -449,6 +611,7 @@ function createFlowField(canvas: HTMLCanvasElement, gl: WebGLRenderingContext): 
 
   const themeObserver = new MutationObserver(() => {
     readPalette();
+    recomputeSdf(true);
     if (reduced) draw();
     wake();
   });
@@ -460,6 +623,8 @@ function createFlowField(canvas: HTMLCanvasElement, gl: WebGLRenderingContext): 
     if (!buildResources()) return;
     readPalette();
     measure();
+    lastSdf = null; // the texture pair was reseeded blank: full re-measure
+    recomputeSdf(false);
     if (reduced) draw();
     wake();
   };
@@ -484,6 +649,7 @@ function createFlowField(canvas: HTMLCanvasElement, gl: WebGLRenderingContext): 
          motion engine, clamped here, settles back to 1 on its own. */
       const flow = 1 + Math.min(0.5, Math.abs(scroll.velocity) * 0.0016);
       time += Math.min(0.05, dt) * flow;
+      stepSdfFade();
       draw();
 
       const ms = performance.now() - t0;
@@ -546,12 +712,17 @@ function createFlowField(canvas: HTMLCanvasElement, gl: WebGLRenderingContext): 
       ro.disconnect();
       themeObserver.disconnect();
       window.clearTimeout(resizeTimer);
+      window.clearTimeout(settleTimer);
+      window.clearTimeout(settleTimer2);
       canvas.removeEventListener("webglcontextlost", onContextLost);
       canvas.removeEventListener("webglcontextrestored", onContextRestored);
       /* Free the program and geometry but DO NOT loseContext(): an HMR or
          strict-mode re-run reuses this canvas, and getContext on a
          deliberately-lost context returns a corpse. The browser reclaims
          the context with the element. */
+      gl.deleteTexture(seriesTex);
+      gl.deleteTexture(sdfTexA);
+      gl.deleteTexture(sdfTexB);
       gl.deleteBuffer(quad);
       gl.deleteProgram(prog);
       delete (window as unknown as Record<string, unknown>).__uaaHeroFieldDebug;
