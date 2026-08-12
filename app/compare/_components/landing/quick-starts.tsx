@@ -2,10 +2,10 @@
 
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { LANDING_CONTENT } from "../landing-content";
-import type { AssetClassId } from "@/lib/assets/types";
+import type { BaseAssetClassId } from "@/lib/assets/types";
 
 interface Props {
-  assetClass: AssetClassId;
+  assetClass: BaseAssetClassId;
   onQuickStart: (symbols: string[]) => void;
   disabled?: boolean;
 }

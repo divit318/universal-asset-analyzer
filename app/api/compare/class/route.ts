@@ -11,7 +11,7 @@
 
 import { NextResponse } from "next/server";
 import { getUniverseProvider } from "@/lib/screener/universes";
-import { isAssetClassId } from "@/lib/assets/registry";
+import { isAssetClassId, isMarketVariant } from "@/lib/assets/registry";
 import { normalizeSymbol } from "@/lib/market";
 import { getCurvePoints } from "@/lib/compare/commodity-curve";
 import { computeEntryBenchmarks, peerGroupOf } from "@/lib/compare/benchmarks";
@@ -136,8 +136,15 @@ async function loadClassEntries(
   return { entries, universeAsOf };
 }
 
+/**
+ * The classes this route serves: base asset classes with a class-compare
+ * framework. Equity has its own richer route (/api/compare), and market
+ * variants (indiaEquity) compare through that equity path too — they have no
+ * class-compare sections or composite scorers, so accepting them here would
+ * produce a hollow, sectionless result rather than an error.
+ */
 function parseAssetClass(assetClassParam: string | null): AssetClassId | null {
-  if (!isAssetClassId(assetClassParam) || assetClassParam === "equity") return null;
+  if (!isAssetClassId(assetClassParam) || assetClassParam === "equity" || isMarketVariant(assetClassParam)) return null;
   return assetClassParam;
 }
 
@@ -150,7 +157,7 @@ export async function GET(request: Request) {
 
   const assetClass = parseAssetClass(assetClassParam);
   if (!assetClass) {
-    return NextResponse.json({ error: "A non-equity assetClass is required" }, { status: 400 });
+    return NextResponse.json({ error: "A non-equity base assetClass is required — market variants like indiaEquity compare through the equity path" }, { status: 400 });
   }
   if (symbols.length < 1) {
     return NextResponse.json({ error: "At least one symbol is required" }, { status: 400 });
@@ -183,7 +190,7 @@ export async function POST(request: Request) {
 
   const assetClass = parseAssetClass(body.assetClass ?? null);
   if (!assetClass) {
-    return NextResponse.json({ error: "A non-equity assetClass is required" }, { status: 400 });
+    return NextResponse.json({ error: "A non-equity base assetClass is required — market variants like indiaEquity compare through the equity path" }, { status: 400 });
   }
 
   const symbols = [...new Set(

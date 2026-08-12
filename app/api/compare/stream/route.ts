@@ -1,4 +1,5 @@
 import { COMPARISON_CACHE_MAX_AGE_MS, streamComparisonFields } from "@/lib/ai-compare";
+import { subscribeGeneration, type BrokerFrame } from "@/lib/ai/report-broker";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -68,17 +69,29 @@ export async function POST(request: Request) {
       };
 
       try {
-        const generator = streamComparisonFields(unique, {
-          signal: request.signal,
-          maxAgeMs: body.noCache ? undefined : COMPARISON_CACHE_MAX_AGE_MS,
-        });
-        for (;;) {
-          const next = await generator.next();
-          if (next.done) {
-            send({ type: "done", result: next.value });
-            break;
+        // One generation per symbol set, no matter how many tabs asked (the
+        // same guarantee /api/ai/report gets from this broker): the first
+        // request starts the model call, concurrent ones replay the fields
+        // emitted so far and then follow live. `noCache` (the Re-analyze
+        // button) forks the key so an explicit regeneration never attaches to
+        // — or is polluted by — a cache-replaying run already in flight.
+        const generationKey = `compare:${body.noCache ? "fresh" : "cached"}:${unique.join(",")}`;
+        const producer = async (emit: (frame: BrokerFrame) => void, signal: AbortSignal) => {
+          const generator = streamComparisonFields(unique, {
+            signal,
+            maxAgeMs: body.noCache ? undefined : COMPARISON_CACHE_MAX_AGE_MS,
+          });
+          for (;;) {
+            const next = await generator.next();
+            if (next.done) {
+              emit({ type: "done", result: next.value });
+              break;
+            }
+            emit({ type: "field", key: next.value.key, data: next.value.value });
           }
-          send({ type: "field", key: next.value.key, data: next.value.value });
+        };
+        for await (const frame of subscribeGeneration(generationKey, producer, { signal: request.signal })) {
+          send(frame);
         }
       } catch (err) {
         if (!request.signal.aborted) {

@@ -11,21 +11,22 @@
 
 import { NextResponse } from "next/server";
 import { getUniverseProvider } from "@/lib/screener/universes";
-import { isAssetClassId } from "@/lib/assets/registry";
+import { isAssetClassId, isMarketVariant } from "@/lib/assets/registry";
 import type { AssetClassId } from "@/lib/assets/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/** Mirrors /api/compare/class: base classes only — equity and market variants (indiaEquity) go through the equity compare path. */
 function parseAssetClass(assetClassParam: string | null): AssetClassId | null {
-  if (!isAssetClassId(assetClassParam) || assetClassParam === "equity") return null;
+  if (!isAssetClassId(assetClassParam) || assetClassParam === "equity" || isMarketVariant(assetClassParam)) return null;
   return assetClassParam;
 }
 
 export async function GET(request: Request) {
   const assetClass = parseAssetClass(new URL(request.url).searchParams.get("assetClass"));
   if (!assetClass) {
-    return NextResponse.json({ error: "A non-equity assetClass is required" }, { status: 400 });
+    return NextResponse.json({ error: "A non-equity base assetClass is required — market variants like indiaEquity compare through the equity path" }, { status: 400 });
   }
 
   const status = getUniverseProvider(assetClass).peekStatus();

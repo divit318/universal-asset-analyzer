@@ -1,10 +1,16 @@
-import type { AssetClassId } from "@/lib/assets/types";
+import type { BaseAssetClassId } from "@/lib/assets/types";
 
 /**
  * Quick-start content for the Compare landing state — one curated set per
  * asset class, each entry a real, well-known instrument set (capped at 5,
  * the page's own MAX) rather than a placeholder. Pure data so the landing
  * component stays a renderer, not a copywriter.
+ *
+ * Keyed by *base* asset class only: geographies are discovery dimensions
+ * inside a class, not classes of their own, so Indian equities live in the
+ * equity entry's groups (Popular / Markets / India) rather than under a
+ * separate indiaEquity key. The Screener's dedicated India universe is
+ * unaffected — this file is Compare-landing content only.
  */
 
 export interface QuickStartItem {
@@ -23,7 +29,7 @@ export interface ClassLandingContent {
   groups: QuickStartGroup[];
 }
 
-export const LANDING_CONTENT: Record<AssetClassId, ClassLandingContent> = {
+export const LANDING_CONTENT: Record<BaseAssetClassId, ClassLandingContent> = {
   equity: {
     subtitle: "Popular company comparisons and investing themes.",
     groups: [
@@ -52,6 +58,19 @@ export const LANDING_CONTENT: Record<AssetClassId, ClassLandingContent> = {
           { label: "Nifty 50", symbols: ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS"] },
           { label: "FTSE 100", symbols: ["SHEL.L", "AZN.L", "HSBA.L", "ULVR.L", "BP.L"] },
           { label: "Nikkei 225", symbols: ["7203.T", "6758.T", "9984.T", "8306.T", "6501.T"] },
+        ],
+      },
+      // India is a market dimension of equities, not an asset class — the
+      // deeper NSE discovery that used to live under a separate (and
+      // broken) "India" tab now sits here, next to Markets, where it
+      // belongs. Same instruments, same global search, same compare engine.
+      {
+        title: "India",
+        items: [
+          { label: "IT Services", symbols: ["TCS.NS", "INFY.NS", "HCLTECH.NS", "WIPRO.NS", "TECHM.NS"] },
+          { label: "Conglomerates", symbols: ["RELIANCE.NS", "LT.NS", "ITC.NS", "ADANIENT.NS"] },
+          { label: "Pharma", symbols: ["SUNPHARMA.NS", "DRREDDY.NS", "CIPLA.NS", "DIVISLAB.NS"] },
+          { label: "Autos", symbols: ["MARUTI.NS", "M&M.NS", "TATAMOTORS.NS", "BAJAJ-AUTO.NS"] },
         ],
       },
     ],

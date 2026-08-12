@@ -1,11 +1,11 @@
 import { getAssetClass } from "@/lib/assets/registry";
-import type { AssetClassId } from "@/lib/assets/types";
+import type { BaseAssetClassId } from "@/lib/assets/types";
 import { QuickStarts } from "./quick-starts";
 import { FeatureCards } from "./feature-cards";
 import { LivePreview } from "./live-preview";
 
 interface Props {
-  assetClass: AssetClassId;
+  assetClass: BaseAssetClassId;
   onQuickStart: (symbols: string[]) => void;
   max: number;
   disabled?: boolean;

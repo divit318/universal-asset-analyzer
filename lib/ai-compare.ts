@@ -10,6 +10,7 @@
 
 import { runAnalysis } from "./ai/analysis";
 import { analysisInputHash } from "./ai/analysis-provider";
+import { resolveAiMode } from "./ai/mode";
 import { LooseObjectSchema } from "./ai/schemas/loose";
 import { EquityComparisonWireSchema, COMPARISON_SCHEMA_VERSION } from "./ai/schemas/comparison";
 import { runTaskStream } from "./ai/orchestrator";
@@ -617,7 +618,12 @@ export const COMPARISON_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const COMPARE_ANALYSIS_TYPE = "comparison";
 
 function compareSubjectKey(stocks: CompareStock[]): string {
-  return `compare:${stocks.map((s) => s.symbol).join(",")}`;
+  // The AI depth mode changes which model writes the comparison, so a
+  // non-default mode forks the reuse key — a Fast user must not replay a Deep
+  // user's narrative. `balanced` stays unmarked so existing rows remain valid.
+  const mode = resolveAiMode();
+  const suffix = mode === "balanced" ? "" : `:mode=${mode}`;
+  return `compare:${stocks.map((s) => s.symbol).join(",")}${suffix}`;
 }
 
 /**
