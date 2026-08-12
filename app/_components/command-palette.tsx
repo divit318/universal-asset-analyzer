@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { Search, CornerDownLeft, TrendingUp, Plus } from "lucide-react";
+import { Search, CornerDownLeft, TrendingUp, Plus, Sparkles } from "lucide-react";
 import type { SymbolSuggestion } from "@/lib/types";
 import { BrandMark } from "./brand";
 import { ALL_TOOLS, type NavIcon } from "./nav-config";
+import { OPEN_ASSISTANT_EVENT } from "./ai-assistant";
 import { useFocus } from "@/lib/focus-context";
 import { useToast } from "./toast";
 
@@ -15,7 +16,9 @@ export const OPEN_PALETTE_EVENT = "uaa:open-palette";
 
 type Item =
   | { kind: "ticker"; symbol: string; name: string; sub: string }
-  | { kind: "tool"; href: string; label: string; desc: string; icon: NavIcon; objective: string };
+  | { kind: "tool"; href: string; label: string; desc: string; icon: NavIcon; objective: string }
+  /** Hand the typed text (or a blank panel) to the AI Assistant. */
+  | { kind: "assistant"; question: string | null };
 
 /**
  * The symbol-first verbs (§4.4). Derived from `ALL_TOOLS`'s `symbolParam`
@@ -141,7 +144,14 @@ export function CommandPalette() {
       icon: t.icon,
       objective: t.objective,
     }));
-    return [...tk, ...tl];
+    // The assistant as a first-class palette destination: an empty palette
+    // lists it alongside the tools; three-plus typed words read as a QUESTION
+    // rather than a lookup, so the handoff row carries the text along. One
+    // row, always last — the palette stays a navigator, not a chat box.
+    const q = query.trim();
+    const assistant: Item[] =
+      q.split(/\s+/).length >= 3 ? [{ kind: "assistant", question: q }] : !q ? [{ kind: "assistant", question: null }] : [];
+    return [...tk, ...tl, ...assistant];
   }, [query, tickers, focusSymbols, toolMatches]);
 
   const goTicker = useCallback(
@@ -186,7 +196,12 @@ export function CommandPalette() {
   const go = useCallback(
     (item: Item) => {
       if (item.kind === "ticker") goTicker(item.symbol);
-      else {
+      else if (item.kind === "assistant") {
+        close();
+        window.dispatchEvent(
+          new CustomEvent(OPEN_ASSISTANT_EVENT, item.question ? { detail: { question: item.question } } : undefined),
+        );
+      } else {
         close();
         router.push(item.href);
       }
@@ -318,6 +333,35 @@ export function CommandPalette() {
                     </div>
                   )}
                 </div>
+              );
+            }
+            if (item.kind === "assistant") {
+              return (
+                <button
+                  key="assistant"
+                  data-idx={i}
+                  onMouseMove={() => setActive(i)}
+                  onClick={() => go(item)}
+                  className={`flex w-full items-center gap-3 rounded-control px-3 py-2.5 text-left transition-colors ${
+                    isActive ? "bg-surface-3" : ""
+                  }`}
+                >
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control bg-brand-muted text-brand">
+                    <Sparkles className="h-4 w-4" strokeWidth={2} />
+                  </span>
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="text-sm font-medium">
+                      {item.question ? `Ask the Assistant: “${item.question}”` : "Ask the AI Assistant"}
+                    </span>
+                    <span className="truncate text-xs text-muted">
+                      {item.question ? "Portfolio, watchlist actions, or anything about UAA" : "Your portfolio, the app, or where to find something"}
+                    </span>
+                  </span>
+                  <kbd className="hidden shrink-0 rounded border border-border bg-surface-2 px-1.5 py-0.5 text-micro font-medium text-muted sm:inline">
+                    ⌘J
+                  </kbd>
+                  {isActive && <CornerDownLeft className="h-3.5 w-3.5 shrink-0 text-muted" />}
+                </button>
               );
             }
             const Icon = item.icon;
