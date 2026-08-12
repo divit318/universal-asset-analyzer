@@ -10,6 +10,8 @@
 export type {
   AssetClassId,
   AssetClassDefinition,
+  BaseAssetClassId,
+  MarketVariantAssetClassId,
   Capability,
   FilterDef,
   FilterKind,
@@ -34,6 +36,9 @@ export {
   getRanking,
   getTemplate,
   isAssetClassId,
+  isMarketVariant,
   listAssetClasses,
+  listBaseAssetClasses,
   unavailableMetrics,
+  universeLabel,
 } from "./registry";

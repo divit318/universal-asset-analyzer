@@ -8,8 +8,11 @@ import {
   getMetric,
   getRanking,
   isAssetClassId,
+  isMarketVariant,
   listAssetClasses,
+  listBaseAssetClasses,
   unavailableMetrics,
+  universeLabel,
   type AssetClassId,
 } from "@/lib/assets";
 
@@ -21,9 +24,10 @@ import {
  */
 
 describe("asset registry", () => {
-  it("registers exactly the seven supported asset classes", () => {
+  it("registers exactly the eight supported asset classes", () => {
     expect(ASSET_CLASS_IDS).toEqual([
       "equity",
+      "indiaEquity",
       "etf",
       "reit",
       "crypto",
@@ -31,7 +35,7 @@ describe("asset registry", () => {
       "bond",
       "forex",
     ]);
-    expect(listAssetClasses()).toHaveLength(7);
+    expect(listAssetClasses()).toHaveLength(8);
   });
 
   it("gates unknown asset class ids", () => {
@@ -196,6 +200,7 @@ describe("asset registry", () => {
     const labels = listAssetClasses().map((d) => d.label);
     expect(labels).toEqual([
       "Equities",
+      "India",
       "ETFs",
       "REITs",
       "Crypto",
@@ -203,5 +208,65 @@ describe("asset registry", () => {
       "Bonds",
       "Forex",
     ]);
+  });
+
+  // ── Base classes vs. market variants ─────────────────────────────────────
+  // A geography is not an asset class: indiaEquity stays in the registry as
+  // the Screener's dedicated NSE universe, but every asset-class *taxonomy*
+  // (Compare's tabs, the generic class-compare APIs) must exclude it.
+
+  describe("market variants", () => {
+    it("keeps indiaEquity in the raw registry — the Screener genuinely needs it", () => {
+      expect(ASSET_CLASS_IDS).toContain("indiaEquity");
+      expect(getAssetClass("indiaEquity").capabilities).toContain("screen");
+    });
+
+    it("marks indiaEquity as a market variant of equity, and nothing else as one", () => {
+      expect(getAssetClass("indiaEquity").marketVariantOf).toBe("equity");
+      expect(isMarketVariant("indiaEquity")).toBe(true);
+      for (const id of ASSET_CLASS_IDS.filter((x) => x !== "indiaEquity")) {
+        expect(isMarketVariant(id), `${id} must be a base class`).toBe(false);
+      }
+    });
+
+    it("points every market variant at a real base class", () => {
+      for (const def of listAssetClasses()) {
+        if (!def.marketVariantOf) continue;
+        const base = getAssetClass(def.marketVariantOf);
+        expect(base.marketVariantOf, `${def.id}'s base ${base.id} must itself be a base class`).toBeUndefined();
+        expect(def.assetClass, `${def.id} must share its base's detection class`).toBe(base.assetClass);
+      }
+    });
+
+    it("names universes so a market variant can never read as a bare geography", () => {
+      // The Screener's navigation is a universe picker; its labels come from
+      // universeLabel() so "India" renders as "India Equities" — market +
+      // class — instead of sitting alongside "Bonds" looking like one.
+      expect(universeLabel("indiaEquity")).toBe("India Equities");
+      for (const def of listBaseAssetClasses()) {
+        expect(universeLabel(def.id), `${def.id}'s universe is just the class`).toBe(def.label);
+      }
+    });
+
+    it("lists exactly the seven genuine asset classes as base classes", () => {
+      expect(listBaseAssetClasses().map((d) => d.id)).toEqual([
+        "equity",
+        "etf",
+        "reit",
+        "crypto",
+        "commodity",
+        "bond",
+        "forex",
+      ]);
+      expect(listBaseAssetClasses().map((d) => d.label)).toEqual([
+        "Equities",
+        "ETFs",
+        "REITs",
+        "Crypto",
+        "Commodities",
+        "Bonds",
+        "Forex",
+      ]);
+    });
   });
 });

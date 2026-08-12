@@ -19,8 +19,8 @@ import { useBootReady } from "@/app/_components/boot-context";
 import { LoadingMark } from "@/app/_components/loading-mark";
 import { Reveal } from "@/app/_components/reveal";
 import { DataProvenance } from "@/app/_components/data-provenance";
-import { getAssetClass, listAssetClasses } from "@/lib/assets/registry";
-import type { AssetClassId } from "@/lib/assets/types";
+import { getAssetClass, listBaseAssetClasses } from "@/lib/assets/registry";
+import type { AssetClassId, BaseAssetClassId } from "@/lib/assets/types";
 import type { ClassCompareEntry } from "@/lib/compare/types";
 import type { UniverseStatus } from "@/lib/screener/types";
 import type { ComparisonResult, RankedAsset } from "@/lib/ai-compare";
@@ -52,7 +52,10 @@ import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
 import { PageShell, Skeleton } from "@/app/_components/ui";
 import type { PortfolioFitAnalysis } from "@/lib/ios/types";
 
-const NON_EQUITY_CLASSES = listAssetClasses().filter((c) => c.id !== "equity");
+// Base asset classes only (lib/assets/registry.ts): market variants like
+// indiaEquity are a geography, not an asset class — Indian equities compare
+// through the Equities tab (global symbol search + the India quick-starts).
+const NON_EQUITY_CLASSES = listBaseAssetClasses().filter((c) => c.id !== "equity");
 
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                   */
@@ -139,10 +142,9 @@ function convictionColor(conviction: string | null | undefined): string {
  * without new plumbing.
  */
 function aiLoadingLabel(elapsedMs: number): string {
-  if (elapsedMs < 8_000) return "Preparing AI — routing to the right effort tier…";
-  if (elapsedMs < 30_000) return "Analyzing — typically well under a minute…";
-  if (elapsedMs < 90_000) return "Still working — a deep comparison earns a longer reasoning budget…";
-  return "Still reasoning — a large comparison can take a few minutes. The metric table above is already complete either way.";
+  if (elapsedMs < 15_000) return "Writing the comparison — rankings, tradeoffs, and a thesis per name…";
+  if (elapsedMs < 45_000) return "Still writing — typically well under a minute…";
+  return "Still writing — a five-name comparison can run long. The metric table above is already complete either way.";
 }
 
 /** Streamed flat-field keys (see lib/ai-compare.ts's streamComparisonFields) that map directly onto an `AiComparison` field of the same name. */
@@ -260,7 +262,7 @@ export default function ComparePage() {
 
   // Non-equity asset classes (ETF, REIT, Crypto, Commodity, Bond, Forex) run
   // through a parallel, simpler state slice and API — see class-compare-view.tsx.
-  const [assetClass, setAssetClass] = useState<AssetClassId>("equity");
+  const [assetClass, setAssetClass] = useState<BaseAssetClassId>("equity");
   const [classSymbols, setClassSymbols] = useState<string[]>([]);
   const [classInput, setClassInput] = useState("");
   const [classEntries, setClassEntries] = useState<ClassCompareEntry[]>([]);
@@ -359,7 +361,7 @@ export default function ComparePage() {
         (a, b) => syms.indexOf(a.symbol) - syms.indexOf(b.symbol),
       ));
     } catch (err) {
-      setFetchError(err instanceof Error ? err.message : "Something went wrong");
+      setFetchError(err instanceof Error ? err.message : "The comparison data failed to load — retry, or change a symbol.");
     } finally {
       setLoading(false);
     }
@@ -403,7 +405,7 @@ export default function ComparePage() {
         (a, b) => syms.indexOf(a.symbol) - syms.indexOf(b.symbol),
       ));
     } catch (err) {
-      setClassFetchError(err instanceof Error ? err.message : "Something went wrong");
+      setClassFetchError(err instanceof Error ? err.message : "The class comparison failed to load — retry.");
     } finally {
       setClassLoading(false);
     }
@@ -680,7 +682,7 @@ export default function ComparePage() {
   }
 
   /** Switching classes starts a clean slate — a REIT comparison doesn't carry over when you pick Crypto. */
-  function selectAssetClass(id: AssetClassId) {
+  function selectAssetClass(id: BaseAssetClassId) {
     if (id === assetClass) return;
     setAssetClass(id);
     setClassSymbols([]);
@@ -798,7 +800,10 @@ export default function ComparePage() {
 
       {/* Asset class selector — same tab pattern as the Screener, so switching
           from Equities to REITs swaps the entire comparison experience: metrics,
-          composite scores, radar dimensions, and signature chart all change. */}
+          composite scores, radar dimensions, and signature chart all change.
+          Base classes only: geography is not an asset class, so market
+          variants (indiaEquity) never get a tab here — Indian equities live
+          inside Equities, via the global search and the India quick-starts. */}
       <nav className="flex flex-wrap gap-1.5" aria-label="Asset class">
         <button
           type="button"

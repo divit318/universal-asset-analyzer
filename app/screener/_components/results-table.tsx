@@ -2,16 +2,20 @@
 
 /**
  * The results table. Columns come from the Asset Registry, so there is exactly
- * one table in the app rather than seven — an ETF screen renders expense ratio
- * and AUM, a bond screen renders duration and credit rating, and this component
- * doesn't know the difference.
+ * one table in the app rather than one per screening universe — an ETF screen
+ * renders expense ratio and AUM, a bond screen renders duration and credit
+ * rating, and this component doesn't know the difference.
  */
 
 import { Fragment, useRef, useState } from "react";
 import Link from "next/link";
-import { getAssetClass, getMetric } from "@/lib/assets/registry";
+import { useRouter } from "next/navigation";
+import { Sparkles } from "lucide-react";
+import { askAi } from "@/app/_components/ask-ai";
+import { getAssetClass, getMetric, universeLabel } from "@/lib/assets/registry";
 import type { AssetClassId } from "@/lib/assets/types";
 import { formatMetricValue } from "@/lib/screener/format";
+import { OwnershipCell } from "./ownership-cell";
 import { MARGINAL_SLACK } from "@/lib/screener/filter-engine";
 import type { RankedCandidate } from "@/lib/screener/types";
 import { Badge } from "@/app/_components/ui";
@@ -69,6 +73,36 @@ function scoreTone(score: number): string {
   return "text-negative";
 }
 
+/** Fill tone for the Match bar — same bands as scoreTone, as backgrounds. */
+function scoreBarTone(score: number): string {
+  if (score >= 75) return "bg-positive";
+  if (score >= 55) return "bg-brand";
+  if (score >= 35) return "bg-warning";
+  return "bg-negative";
+}
+
+/**
+ * The Match score as a number + a small bar. The bar exists for scanability:
+ * fifty three-digit numbers in a column are read one at a time, but fifty bar
+ * lengths are read as a shape — where the ranking falls off a cliff is visible
+ * without reading anything. Zero confidence (no factor had data) renders as an
+ * em dash with no bar, like every other unknown.
+ */
+function MatchScore({ row }: { row: RankedCandidate }) {
+  if (row.confidence === 0) return <span className="text-muted">—</span>;
+  return (
+    <span className="inline-flex items-center justify-end gap-1.5">
+      <span aria-hidden className="h-1 w-9 overflow-hidden rounded-full bg-surface-3">
+        <span
+          className={`block h-full rounded-full ${scoreBarTone(row.rankScore)}`}
+          style={{ width: `${Math.max(0, Math.min(100, row.rankScore))}%` }}
+        />
+      </span>
+      <span className={`font-semibold ${scoreTone(row.rankScore)}`}>{row.rankScore}</span>
+    </span>
+  );
+}
+
 function cellValue(assetClass: AssetClassId, row: RankedCandidate, key: string): string {
   if (key === "rankScore") {
     // Zero confidence means not one ranking factor had data, so `rankScore`
@@ -95,6 +129,7 @@ function cellValue(assetClass: AssetClassId, row: RankedCandidate, key: string):
 }
 
 function MatchDetail({ row }: { row: RankedCandidate }) {
+  const router = useRouter();
   const { passed, strengths, warnings } = row.match;
 
   return (
@@ -166,6 +201,22 @@ function MatchDetail({ row }: { row: RankedCandidate }) {
           <HoldingsTable holdings={row.topHoldings} />
         </div>
       ) : null}
+
+      {/* The user expanded this row because the match made them curious —
+          the natural continuation is a grounded read from the copilot, with
+          the row's screen context attached. Lives here, in the expanded
+          detail, not on every row: it appears exactly when someone is
+          already digging into one result. */}
+      <div className="md:col-span-3">
+        <button
+          type="button"
+          onClick={() => askAi(router, { source: "screener", symbol: row.symbol, name: row.name })}
+          className="flex items-center gap-1.5 text-xs font-medium text-brand transition-opacity hover:opacity-80 focus-visible:underline"
+        >
+          <Sparkles className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+          Ask AI for a read on {row.symbol}
+        </button>
+      </div>
     </div>
   );
 }
@@ -203,6 +254,7 @@ function EmptyResults({
   def,
   state,
 }: {
+  /** `label` is the universe's display name (universeLabel), e.g. "India Equities" — not the bare class label. */
   def: { label: string; noun: string };
   state: ResultsEmptyState;
 }) {
@@ -234,7 +286,7 @@ function EmptyResults({
           detail:
             state.activeFilterCount > 0
               ? `${state.activeFilterCount === 1 ? "Your active filter was" : `All ${state.activeFilterCount} active filters were`} applied and no ${def.noun} passed. A filter also excludes assets whose value is unknown, so a metric this universe is thin on can empty the table — try loosening the tightest one.`
-              : `No ${def.noun} passed. Try a different template or asset class.`,
+              : `No ${def.noun} passed. Try a different template or universe.`,
         };
     }
   })();
@@ -328,9 +380,12 @@ export function ResultsTable({
   };
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-border">
+    <div className="overflow-x-auto rounded-card border border-border bg-surface">
       <table className="w-full min-w-[900px] text-sm">
-        <thead className="border-b border-border bg-surface-2 text-xs text-muted">
+        {/* Uppercase micro-headers — the same label tier the rest of UAA uses
+            for column/section headings, which also stops the header row reading
+            as just another data row at this density. */}
+        <thead className="border-b border-border bg-surface-2 text-[11px] uppercase tracking-wider text-muted">
           <tr>
             <th className="px-3 py-2 text-left font-medium">#</th>
             <th className="px-3 py-2 text-left font-medium">
@@ -338,6 +393,13 @@ export function ResultsTable({
                 Symbol{arrow("symbol")}
               </button>
             </th>
+            {/* Table-level extra (like the actions column, not a registry
+                metric): the 12-quarter SEBI ownership sparkline for India. */}
+            {assetClass === "indiaEquity" && (
+              <th className="px-3 py-2 text-left font-medium" title="Disclosed promoter/FII/DII over up to 12 quarters (SEBI shareholding pattern via screener.in)">
+                Ownership 12Q
+              </th>
+            )}
             {def.columns.map((col) => (
               <th
                 key={col.key}
@@ -442,16 +504,21 @@ export function ResultsTable({
                     </div>
                   </td>
 
+                  {assetClass === "indiaEquity" && (
+                    <td className="px-3 py-2">
+                      <OwnershipCell
+                        hist={row.attributes.ownHist ?? null}
+                        trend={row.attributes.ownTrend ?? null}
+                        asOf={row.attributes.ownershipAsOf ?? null}
+                      />
+                    </td>
+                  )}
                   {def.columns.map((col) => (
                     <td
                       key={col.key}
-                      className={`px-3 py-2 tabular-nums ${col.align === "left" ? "text-left" : "text-right"} ${
-                        col.key === "rankScore"
-                          ? `font-semibold ${row.confidence === 0 ? "text-muted" : scoreTone(row.rankScore)}`
-                          : ""
-                      }`}
+                      className={`px-3 py-2 tabular-nums ${col.align === "left" ? "text-left" : "text-right"}`}
                     >
-                      {cellValue(assetClass, row, col.key)}
+                      {col.key === "rankScore" ? <MatchScore row={row} /> : cellValue(assetClass, row, col.key)}
                     </td>
                   ))}
 
@@ -490,7 +557,7 @@ export function ResultsTable({
 
                 {isOpen ? (
                   <tr>
-                    <td colSpan={def.columns.length + 3} className="p-0">
+                    <td colSpan={def.columns.length + (assetClass === "indiaEquity" ? 4 : 3)} className="p-0">
                       <MatchDetail row={row} />
                     </td>
                   </tr>
@@ -501,7 +568,7 @@ export function ResultsTable({
         </tbody>
       </table>
 
-      {rows.length === 0 ? <EmptyResults def={def} state={emptyState} /> : null}
+      {rows.length === 0 ? <EmptyResults def={{ label: universeLabel(assetClass), noun: def.noun }} state={emptyState} /> : null}
     </div>
   );
 }

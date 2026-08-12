@@ -29,6 +29,7 @@ import type { TaskType } from "../ai/task-registry";
  */
 export type AssetClassId =
   | "equity"
+  | "indiaEquity"
   | "etf"
   | "reit"
   | "crypto"
@@ -38,6 +39,7 @@ export type AssetClassId =
 
 export const ASSET_CLASS_IDS: AssetClassId[] = [
   "equity",
+  "indiaEquity",
   "etf",
   "reit",
   "crypto",
@@ -45,6 +47,23 @@ export const ASSET_CLASS_IDS: AssetClassId[] = [
   "bond",
   "forex",
 ];
+
+/**
+ * Ids that are market-scoped *variants* of a base class rather than asset
+ * classes in their own right — same instrument kind, different geography
+ * (indiaEquity is NSE-listed equity, not an eighth kind of asset). The
+ * type-level mirror of AssetClassDefinition.marketVariantOf below; the two
+ * are kept in agreement by tests/asset-registry.test.ts.
+ *
+ * Screening surfaces key on the full AssetClassId (a market variant is a
+ * genuinely distinct screening universe — ₹Cr units, promoter holding, NSE
+ * coverage). Asset-class *taxonomies* (Compare's tab row, or anything else
+ * presenting "the asset classes") must use BaseAssetClassId /
+ * listBaseAssetClasses() so a geography never renders alongside instrument
+ * kinds.
+ */
+export type MarketVariantAssetClassId = "indiaEquity";
+export type BaseAssetClassId = Exclude<AssetClassId, MarketVariantAssetClassId>;
 
 /* -------------------------------------------------------------------------- */
 /* Data availability — the honesty layer                                       */
@@ -83,8 +102,8 @@ export interface MetricDef {
   description: string;
   /** Filter section this metric renders under, e.g. "Valuation". Must be one of the class's `filterGroups`. */
   group: string;
-  /** Drives formatting + the input suffix. */
-  unit: "%" | "x" | "$" | "$B" | "yrs" | "bps" | "score" | "";
+  /** Drives formatting + the input suffix. ₹Cr = INR crores; pp = percentage points (QoQ ownership deltas). */
+  unit: "%" | "x" | "$" | "$B" | "₹Cr" | "pp" | "yrs" | "bps" | "score" | "";
   availability: MetricAvailability;
   /** Which provider backs it. Null for `unavailable` metrics. */
   source: DataSourceId | null;
@@ -101,8 +120,8 @@ export interface MetricDef {
   better: "higher" | "lower" | null;
   /** Step hint for numeric inputs. */
   step?: number;
-  /** Values are entered/displayed in billions (market cap, AUM). */
-  scale?: 1e9;
+  /** Values are entered/displayed scaled: 1e9 = billions (US caps), 1e7 = ₹ crores. */
+  scale?: 1e9 | 1e7;
   /** Categorical metric: the allowed values. Presence of this makes it a select filter. */
   options?: readonly string[];
 }
@@ -125,7 +144,7 @@ export interface FilterDef {
   group: string;
   options?: readonly string[];
   step?: number;
-  scale?: 1e9;
+  scale?: 1e9 | 1e7;
 }
 
 /**
@@ -288,6 +307,19 @@ export interface AssetClassDefinition {
 
   /** Detection-level class this screening domain maps back to (lib/asset-class.ts). */
   assetClass: AssetClass;
+  /**
+   * Set when this definition is a market-scoped variant of a base class
+   * (indiaEquity → equity): the same kind of instrument, scoped to a
+   * geography. Deliberately explicit rather than inferred — `assetClass`
+   * alone can't distinguish a market variant from a genuine sub-class
+   * domain (reit also maps to "equity" but is a real product class, not a
+   * geography). Base classes leave this unset. Anything that presents "the
+   * asset classes" (Compare's tabs, the generic class-compare APIs) must
+   * exclude variants via listBaseAssetClasses(); market variants surface
+   * through their base class's experience instead (global symbol search,
+   * discovery quick-starts).
+   */
+  marketVariantOf?: AssetClassId;
   /** AI task this class's prompts route through (lib/ai/task-registry.ts). */
   taskType: TaskType;
 

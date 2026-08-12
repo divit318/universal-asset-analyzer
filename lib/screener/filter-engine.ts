@@ -1,5 +1,5 @@
 /**
- * The generic filter engine. One implementation, seven asset classes: it
+ * The generic filter engine. One implementation, every screening universe: it
  * knows nothing about P/E ratios or bond duration, only about ranges over
  * `metrics` and equality over `attributes`, with the meaning of every key
  * looked up in the Asset Registry.
@@ -12,6 +12,7 @@
 
 import { getAssetClass, getMetric } from "../assets/registry";
 import type { AssetClassId, FilterValue, FilterValues } from "../assets/types";
+import { formatMetricValue } from "./format";
 import type { ScreenerCandidate } from "./types";
 import { framedPercentile, type UniverseStats } from "./universe-stats";
 
@@ -339,11 +340,16 @@ export function bindingConstraint(
       const slack = Math.abs(value - limit) / denominator;
       if (tightest == null || slack < tightest.slack) {
         const metric = getMetric(assetClass, key);
+        // Human units, not storage units: a raw "1809576099840.00 vs floor
+        // 1000000000000" is unreadable where this renders (the row's "why it
+        // matched" panel). Percentile frames have no unit — say "62pct".
+        const fmt = (v: number) =>
+          frame !== "absolute" ? `${Math.round(v)}pct` : metric ? formatMetricValue(metric, v) : v.toFixed(2);
         tightest = {
           key,
           label: metric?.label ?? key,
           slack,
-          detail: `${value.toFixed(2)} vs ${bound === "min" ? "floor" : "cap"} ${limit}`,
+          detail: `${fmt(value)} vs ${bound === "min" ? "floor" : "cap"} ${fmt(limit)}`,
         };
       }
     }

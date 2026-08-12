@@ -391,6 +391,60 @@ export async function getHistory(
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* Corporate actions (dividends + splits/bonus) via Yahoo chart events         */
+/* -------------------------------------------------------------------------- */
+
+export interface CorporateActions {
+  /** Cash dividends, oldest → newest. `amount` is per share in the listing currency. */
+  dividends: { date: string; amount: number }[];
+  /** Splits AND bonus issues — Indian 1:1 bonuses arrive as a "2:1" split. */
+  splits: { date: string; ratio: string }[];
+}
+
+/**
+ * Dividend and split/bonus history from Yahoo's chart events. Works for all
+ * markets; on NSE names a bonus issue is reported as its equivalent split
+ * ratio (e.g. HDFC Bank's 1:1 bonus of Aug 2025 arrives as "2:1"), which is
+ * also exactly how the adjusted price series treats it.
+ */
+export async function getCorporateActions(symbol: string, rangeYears = 10): Promise<CorporateActions> {
+  try {
+    const { data } = await getDataset<CorporateActions>(
+      "corporateActions",
+      { symbol: symbol.toUpperCase(), years: rangeYears },
+      async () => {
+        const period1 = new Date();
+        period1.setFullYear(period1.getFullYear() - rangeYears);
+        const chart = (await yahooFinance.chart(symbol, {
+          period1,
+          interval: "1mo",
+          events: "div|split",
+        } as unknown as Parameters<typeof yahooFinance.chart>[1])) as {
+          events?: {
+            dividends?: { date: Date | number; amount: number }[];
+            splits?: { date: Date | number; splitRatio?: string; numerator?: number; denominator?: number }[];
+          };
+        };
+        const toIso = (d: Date | number) =>
+          (d instanceof Date ? d : new Date(typeof d === "number" && d < 1e12 ? d * 1000 : d))
+            .toISOString()
+            .slice(0, 10);
+        const dividends = (chart.events?.dividends ?? [])
+          .map((d) => ({ date: toIso(d.date), amount: d.amount }))
+          .sort((a, b) => a.date.localeCompare(b.date));
+        const splits = (chart.events?.splits ?? [])
+          .map((s) => ({ date: toIso(s.date), ratio: s.splitRatio ?? `${s.numerator}:${s.denominator}` }))
+          .sort((a, b) => a.date.localeCompare(b.date));
+        return { dividends, splits };
+      },
+    );
+    return data;
+  } catch {
+    return { dividends: [], splits: [] };
+  }
+}
+
 /** Intraday intervals this app actually offers (see the chart workspace's Candle Interval control). */
 export type IntradayInterval = "5m" | "15m" | "30m" | "60m";
 
@@ -666,9 +720,10 @@ export async function getFundProfile(symbol: string): Promise<FundProfileData> {
     "fundProfile",
     // v2: mapping changed shape + semantics (zero-as-missing expense ratio,
     // summaryDetail AUM, currency/rating/inception). v3: AMFI TER enrichment
-    // + expenseRatioSource. Persisted older rows carry the exact numbers these
-    // fixes remove, so they must miss, not be served.
-    { symbol: symbol.toUpperCase(), v: 3 },
+    // + expenseRatioSource. v4: a fully-zeroed Morningstar risk row now reads
+    // as absent. Persisted older rows carry the exact numbers these fixes
+    // remove, so they must miss, not be served.
+    { symbol: symbol.toUpperCase(), v: 4 },
     () => buildFundProfile(symbol),
   );
   return result.data;
@@ -764,9 +819,23 @@ export function mapFundProfile(raw: RawFundBundle): FundProfileData {
           ? (perf.trailingReturns.threeYear - cat.threeYear) * 100
           : null,
     },
-    risk: latestRisk
-      ? { beta: latestRisk.beta ?? null, alpha: latestRisk.alpha ?? null, stdDev: latestRisk.stdDev ?? null, sharpeRatio: latestRisk.sharpeRatio ?? null }
-      : null,
+    // Same zero-as-missing encoding as the expense ratio above, applied at
+    // BLOCK level rather than per field. Yahoo returns a fully-zeroed
+    // riskStatistics row for funds it has no Morningstar risk data on (QQQM,
+    // observed 2026-08: beta 0, alpha 0, stdDev 0, Sharpe 0) — and a beta of
+    // exactly 0 or a standard deviation of exactly 0 is impossible for anything
+    // that trades, so the pair identifies the placeholder unambiguously.
+    //
+    // Block level, because inside a REAL row an alpha or Sharpe of 0 is a
+    // perfectly ordinary value that must survive. Nulling fields independently
+    // would erase those; leaving the placeholder through made the fund scorer
+    // penalise a fund for risk statistics that were never reported, printed
+    // "Sharpe 0.00" on the performance card, and let the verdict-trigger engine
+    // pose conditions on a number that does not exist.
+    risk:
+      latestRisk && !(zeroAsMissing(latestRisk.beta) == null && zeroAsMissing(latestRisk.stdDev) == null)
+        ? { beta: latestRisk.beta ?? null, alpha: latestRisk.alpha ?? null, stdDev: latestRisk.stdDev ?? null, sharpeRatio: latestRisk.sharpeRatio ?? null }
+        : null,
   };
 }
 

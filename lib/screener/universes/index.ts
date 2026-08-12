@@ -7,6 +7,7 @@
 import type { AssetClassId } from "../../assets/types";
 import type { UniverseProvider } from "../universe-cache";
 import { equityUniverse } from "./equity";
+import { indiaEquityUniverse } from "./india-equity";
 import { etfUniverse } from "./etf";
 import { reitUniverse } from "./reit";
 import { cryptoUniverse } from "./crypto";
@@ -16,6 +17,7 @@ import { forexUniverse } from "./forex";
 
 const PROVIDERS: Record<AssetClassId, UniverseProvider> = {
   equity: equityUniverse,
+  indiaEquity: indiaEquityUniverse,
   etf: etfUniverse,
   reit: reitUniverse,
   crypto: cryptoUniverse,

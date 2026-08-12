@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { indianDeepAnalysis, indianChatWithData, indianSectionInsight } from "@/lib/ai-research";
+import { getIndianCompanyNews } from "@/lib/india-news";
 import type { IndianInsightSection } from "@/lib/ai-research";
 import type { Quote } from "@/lib/types";
 import type { ScreenerInCompany } from "@/lib/screener-in";
+import type { IndiaDerivedFundamentals } from "@/lib/india-snapshot";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,15 +14,10 @@ interface IndiaAiRequest {
   mode: "analysis" | "chat" | "insight";
   company: ScreenerInCompany;
   quote: Quote | null;
-  derived: {
+  derived: IndiaDerivedFundamentals & {
     promoterHolding: number | null;
     fiiHolding: number | null;
     diiHolding: number | null;
-    evToEbitda: number | null;
-    priceToSales: number | null;
-    priceToBook: number | null;
-    debtToEquity: number | null;
-    interestCoverage: number | null;
     peers: import("@/lib/screener-in").ScreenerInPeer[];
   };
   // chat mode
@@ -52,6 +49,14 @@ export async function POST(request: Request) {
   }
 
   try {
+    // Recent NSE filings + media for the grounding block (chat + analysis).
+    // Served from the news system's caches (30min/15min TTLs) — best-effort,
+    // never blocks the answer on an exchange-feed hiccup.
+    const developments =
+      body.mode === "chat" || body.mode === "analysis"
+        ? await getIndianCompanyNews(`${body.company.symbol}.NS`, 6).catch(() => [])
+        : [];
+
     if (body.mode === "chat") {
       if (!body.question?.trim()) {
         return NextResponse.json({ error: "question is required for chat mode" }, { status: 400 });
@@ -59,6 +64,7 @@ export async function POST(request: Request) {
       const result = await indianChatWithData({
         company: body.company,
         derived: body.derived,
+        developments,
         quote: body.quote ?? {
           symbol: body.company.symbol,
           name: body.company.name,
@@ -99,6 +105,7 @@ export async function POST(request: Request) {
       company: body.company,
       quote: body.quote,
       derived: body.derived,
+      developments,
     });
     return NextResponse.json(result);
   } catch (err) {

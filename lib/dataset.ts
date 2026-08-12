@@ -1,5 +1,5 @@
 import { enrichSymbol } from "./enrich";
-import { getReitUniverse, getUniverse, type UniverseEntry } from "./universe";
+import { getIndiaUniverse, getReitUniverse, getUniverse, type UniverseEntry } from "./universe";
 import { getRichQuotes, type RichQuote } from "./yahoo";
 import { computeScores } from "./composite";
 import { clearFundamentals, getFreshFundamentals, putFundamentals } from "./db";
@@ -329,6 +329,15 @@ function createEnrichedDataset(getSymbols: () => Promise<UniverseEntry[]>): Enri
 
 /** US equities: the large-cap core plus a liquid small/mid-cap tranche. */
 export const equityDataset: EnrichedDataset = createEnrichedDataset(() => getUniverse());
+
+/**
+ * Indian equities (~500 largest NSE names). Shares the same enrichment
+ * pipeline and SQLite fundamentals cache as the US dataset; symbols carry the
+ * .NS suffix so cache rows never collide. Yahoo enrichment is INR-native for
+ * NSE listings (financialCurrency INR), so every ratio is internally
+ * consistent — only market cap needs ₹-aware formatting downstream.
+ */
+export const indiaEquityDataset: EnrichedDataset = createEnrichedDataset(() => getIndiaUniverse());
 
 /** Listed real estate: its own universe, not the Real Estate slice of a large-cap list. */
 export const reitDataset: EnrichedDataset = createEnrichedDataset(() => getReitUniverse());

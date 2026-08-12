@@ -10,12 +10,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * The universal screener endpoint. One route, seven asset classes: everything
- * that differs between them is looked up in the Asset Registry, so this handler
- * has no per-class branching at all.
+ * The universal screener endpoint. One route, every screening universe —
+ * base asset classes and market variants (indiaEquity) alike, since each is a
+ * genuine screening domain. Everything that differs between them is looked up
+ * in the Asset Registry, so this handler has no per-class branching at all.
  */
 
-/** Default asset class when a caller doesn't name one — preserves the old equity-only contract. */
+/** Default universe when a caller doesn't name one — preserves the old equity-only contract. */
 const DEFAULT_CLASS: AssetClassId = "equity";
 
 function resolveClass(value: unknown): AssetClassId | null {

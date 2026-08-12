@@ -203,6 +203,31 @@ describe("mapFundProfile", () => {
     expect(fund.categoryRelativeReturns.oneYear).toBeCloseTo((0.15 - 0.2772) * 100);
   });
 
+  // Verified live against QQQM (2026-08): Yahoo returns a riskStatistics row of
+  // all zeros for funds it has no Morningstar risk data on. Left through, the
+  // fund scorer penalised the fund for a Sharpe and alpha that were never
+  // reported, and the verdict-trigger engine posed conditions on them.
+  it("reads a fully-zeroed Morningstar risk row as absent, not as measured zeros", () => {
+    const fund = mapFundProfile({
+      fundProfile: { categoryName: "Large Growth" },
+      fundPerformance: {
+        riskOverviewStatistics: { riskStatistics: [{ year: "5y", beta: 0, alpha: 0, stdDev: 0, sharpeRatio: 0 }] },
+      },
+    });
+    expect(fund.risk).toBeNull();
+  });
+
+  it("keeps a genuine zero alpha inside an otherwise real risk row", () => {
+    // Block-level, not field-level: a real fund can post an alpha or Sharpe of
+    // exactly 0, but never a beta AND standard deviation of exactly 0.
+    const fund = mapFundProfile({
+      fundPerformance: {
+        riskOverviewStatistics: { riskStatistics: [{ year: "5y", beta: 1.02, alpha: 0, stdDev: 15.3, sharpeRatio: 0 }] },
+      },
+    });
+    expect(fund.risk).toEqual({ beta: 1.02, alpha: 0, stdDev: 15.3, sharpeRatio: 0 });
+  });
+
   it("falls back to fundProfile's millions-denominated AUM only as a last resort", () => {
     const fund = mapFundProfile({
       fundProfile: { feesExpensesInvestment: { totalNetAssets: 486986.6 } },

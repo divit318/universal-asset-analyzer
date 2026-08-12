@@ -23,7 +23,7 @@ interface RegionParams {
 /** Damodaran 2025 inputs. India carries a higher 10Y GOI yield and ERP. */
 const REGION_PARAMS: Record<WaccRegion, RegionParams> = {
   US: { riskFree: 0.044, erp: 0.055, costOfDebt: 0.05, taxRate: 0.21 },
-  IN: { riskFree: 0.065, erp: 0.060, costOfDebt: 0.05, taxRate: 0.21 },
+  IN: { riskFree: 0.065, erp: 0.060, costOfDebt: 0.05, taxRate: 0.2517 },
 };
 
 export const WACC_FLOOR = 0.04;

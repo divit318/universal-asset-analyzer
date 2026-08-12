@@ -1,7 +1,7 @@
 "use client";
 
 import type { ScreenerInCompany } from "@/lib/screener-in";
-import { computeIndiaSnapshot } from "@/lib/india-snapshot";
+import { computeIndiaSnapshot, type IndiaDerivedFundamentals } from "@/lib/india-snapshot";
 import { CountUp } from "@/app/_components/count-up";
 import { Reveal } from "@/app/_components/reveal";
 import { ScoreRing } from "@/app/_components/score-ring";
@@ -24,7 +24,19 @@ function toGrade(score: number): { label: string; color: string; bg: string } {
 /* Sub-components                                                              */
 /* -------------------------------------------------------------------------- */
 
-function ScorePill({ label, score, index }: { label: string; score: number; index: number }) {
+function ScorePill({ label, score, index }: { label: string; score: number | null; index: number }) {
+  if (score == null) {
+    return (
+      <Reveal index={index} className="flex flex-col gap-2 rounded-lg border bg-surface-2 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">{label}</span>
+          <span className="rounded border px-2 py-0.5 text-[10px] font-semibold text-muted">No data</span>
+        </div>
+        <ValueBar value={0} height="h-1.5" trackClassName="bg-surface-3" barClassName="bg-surface-3" />
+        <span className="font-mono text-sm font-semibold tabular-nums text-muted">—</span>
+      </Reveal>
+    );
+  }
   const grade = toGrade(score);
   return (
     <Reveal index={index} className="flex flex-col gap-2 rounded-lg border bg-surface-2 p-3">
@@ -54,21 +66,13 @@ function ScorePill({ label, score, index }: { label: string; score: number; inde
 
 interface InvestmentSnapshotProps {
   company: ScreenerInCompany;
-  derived: {
-    promoterHolding: number | null;
-    fiiHolding: number | null;
-    diiHolding: number | null;
-    evToEbitda: number | null;
-    priceToSales: number | null;
-    priceToBook: number | null;
-    debtToEquity: number | null;
-    interestCoverage: number | null;
-  };
+  derived: IndiaDerivedFundamentals;
 }
 
 export function InvestmentSnapshot({ company, derived }: InvestmentSnapshotProps) {
-  const { quality, valuation, growth, capitalAllocation: capAlloc, composite, verdict, strengths, risks } =
+  const { quality, valuation, growth, capitalAllocation: capAlloc, composite, verdict, strengths, risks, dataQuality } =
     computeIndiaSnapshot(company, derived);
+  const basisLabel = derived.basis === "standalone" ? "Standalone" : derived.basis === "consolidated" ? "Consolidated" : null;
 
   return (
     <section className="card-lift flex flex-col gap-5 rounded-xl border border-border bg-surface p-5">
@@ -76,7 +80,9 @@ export function InvestmentSnapshot({ company, derived }: InvestmentSnapshotProps
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-base font-semibold">Investment Snapshot</h2>
-          <p className="text-xs text-muted">Derived from screener.in fundamentals — not a recommendation</p>
+          <p className="text-xs text-muted">
+            {basisLabel ? `${basisLabel} figures (₹ Cr) from screener.in` : "Derived from screener.in fundamentals"} — not a recommendation
+          </p>
         </div>
         <div className="flex items-center gap-3">
           {/* Composite ring */}
@@ -140,6 +146,18 @@ export function InvestmentSnapshot({ company, derived }: InvestmentSnapshotProps
             </div>
           )}
         </div>
+      )}
+
+      {/* Data completeness — say what the score is (and isn't) built on. */}
+      {(dataQuality.missing.length > 0 || dataQuality.notApplicable.length > 0) && (
+        <p className="border-t border-border pt-3 text-[11px] leading-relaxed text-muted">
+          {dataQuality.missing.length > 0 && (
+            <>Score excludes (no data): {dataQuality.missing.join(", ")}. </>
+          )}
+          {dataQuality.notApplicable.length > 0 && (
+            <>Not applicable to this company: {dataQuality.notApplicable.join(", ")}.</>
+          )}
+        </p>
       )}
     </section>
   );

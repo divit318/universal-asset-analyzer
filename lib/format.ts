@@ -251,3 +251,41 @@ export function displayAssetName(symbol: string | null | undefined, name: string
   const stripped = name.slice(0, -suffix.length).trim();
   return stripped === "" ? name : stripped;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Indian fiscal calendar                                                     */
+/* -------------------------------------------------------------------------- */
+
+const MONTH_INDEX: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+
+/**
+ * Indian fiscal label for a screener.in period string ("Jun 2026", "Mar 2026",
+ * "TTM"). The Indian fiscal year runs April–March, so the quarter ending
+ * June 2026 is Q1 of FY27 — NOT "Q2 2026" as a US calendar labeling would say.
+ *
+ *   "Jun 2026" → "Q1 FY27"     "Mar 2026" → "Q4 FY26"
+ *   "Mar 2026" (annual=true) → "FY26"      "TTM" → "TTM"
+ *
+ * Returns the input unchanged when it isn't a "Mon YYYY" period, so callers
+ * can map over mixed period lists ("TTM", growth labels) safely.
+ */
+export function indianFiscalLabel(period: string, annual = false): string {
+  const m = period.trim().match(/^([A-Za-z]{3})[a-z]*\s+(\d{4})$/);
+  if (!m) return period;
+  const month = MONTH_INDEX[m[1].toLowerCase()];
+  const year = Number(m[2]);
+  if (month == null || !Number.isFinite(year)) return period;
+
+  // FY is named for its END year: Apr 2026–Mar 2027 is FY27.
+  const fyEnd = month >= 3 ? year + 1 : year;
+  const fy = `FY${String(fyEnd % 100).padStart(2, "0")}`;
+  if (annual) {
+    // Annual columns are fiscal-year ends ("Mar 2026" = FY26).
+    return month === 2 ? `FY${String(year % 100).padStart(2, "0")}` : fy;
+  }
+  const quarter = month >= 3 ? Math.floor((month - 3) / 3) + 1 : 4;
+  return `Q${quarter} ${month >= 3 ? fy : `FY${String(year % 100).padStart(2, "0")}`}`;
+}

@@ -10,6 +10,7 @@ import {
   YAxis,
 } from "recharts";
 import type { ScreenerInShareholding } from "@/lib/screener-in";
+import { changeOverN, streakOfSeries } from "@/lib/india-ownership-trends";
 import { useChartTheme } from "@/app/_components/chart-theme";
 import { useTheme } from "@/app/_components/theme";
 
@@ -75,7 +76,10 @@ function buildTimelineData(
   return allPeriods.map((period, i) => {
     const point: { period: string; [key: string]: number | string | null } = { period };
     for (const row of rows) {
-      const v = num(row.values[i] ?? "");
+      // Right-align shorter rows to the period axis (a row can carry fewer
+      // cells than the header; its LAST cell is the latest period).
+      const j = i - (maxLen - row.values.length);
+      const v = j >= 0 ? num(row.values[j] ?? "") : null;
       point[row.holding] = v;
     }
     return point;
@@ -160,8 +164,25 @@ function CurrentDistribution({ rows }: { rows: ScreenerInShareholding[] }) {
 /* Trend interpretation                                                        */
 /* -------------------------------------------------------------------------- */
 
-function TrendInsight({ rows }: { rows: ScreenerInShareholding[] }) {
+/** The contiguous disclosed tail as numbers — feeds the SHARED trend math
+ *  (lib/india-ownership-trends.ts), so this card, the screener and the Radar
+ *  can never disagree on what a streak is. */
+function tailOf(values: string[]): number[] | null {
+  const vals: number[] = [];
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = num(values[i] ?? "");
+    if (v == null) break;
+    vals.unshift(v);
+  }
+  return vals.length >= 2 ? vals : null;
+}
+
+function TrendInsight({ rows, periods }: { rows: ScreenerInShareholding[]; periods: string[] }) {
   const insights: { label: string; color: string }[] = [];
+
+  // The window every 4-quarter statement refers to, from real disclosures.
+  const windowLabel =
+    periods.length >= 5 ? ` (${periods[periods.length - 5]} → ${periods.at(-1)})` : "";
 
   for (const row of rows) {
     if (row.values.length < 4) continue;
@@ -173,9 +194,35 @@ function TrendInsight({ rows }: { rows: ScreenerInShareholding[] }) {
     const delta = last - first;
     const label = HOLDER_LABELS[row.holding] ?? row.name;
 
+    // Multi-quarter streaks take precedence — they are the sharper statement.
+    const tail = tailOf(row.values);
+    const s = streakOfSeries(tail) ?? 0;
+    const c4 = changeOverN(tail, 4);
+    if (s >= 3) {
+      insights.push({ label: `${label} ownership increased for ${s} consecutive disclosed quarters${c4 != null ? ` (+${c4.toFixed(1)}pp over the last 4)` : ""}`, color: "text-positive" });
+      continue;
+    }
+    if (s <= -3) {
+      insights.push({ label: `${label} ownership decreased for ${Math.abs(s)} consecutive disclosed quarters${c4 != null ? ` (${c4.toFixed(1)}pp over the last 4)` : ""}`, color: "text-negative" });
+      continue;
+    }
+    if (row.holding === "promoter" && c4 != null && c4 <= -2) {
+      insights.push({ label: `Promoter ownership declined ${c4.toFixed(1)}pp over the last 4 disclosed quarters${windowLabel} — alignment risk`, color: "text-negative" });
+      continue;
+    }
+
     if (row.holding === "promoter") {
+      // Run-length of unchanged quarters (|Δ| < 0.05pp), most recent backwards.
+      let unchangedQuarters = 0;
+      for (let i = row.values.length - 1; i > 0; i--) {
+        const a = num(row.values[i] ?? "");
+        const b = num(row.values[i - 1] ?? "");
+        if (a == null || b == null || Math.abs(a - b) >= 0.05) break;
+        unchangedQuarters++;
+      }
       if (delta < -2) insights.push({ label: `${label} stake declining (${delta.toFixed(1)}pp over period) — watch for alignment risk`, color: "text-negative" });
       else if (delta > 1) insights.push({ label: `${label} increasing stake (+${delta.toFixed(1)}pp) — high conviction signal`, color: "text-positive" });
+      else if (unchangedQuarters >= 3) insights.push({ label: `${label} holding unchanged for ${unchangedQuarters + 1} consecutive quarters at ${last.toFixed(1)}%`, color: "text-muted" });
       else insights.push({ label: `${label} holding stable at ${last.toFixed(1)}%`, color: "text-muted" });
     } else if (row.holding === "fii") {
       if (delta > 2) insights.push({ label: `FII accumulation trend (+${delta.toFixed(1)}pp) — improving global interest`, color: "text-positive" });
@@ -202,7 +249,7 @@ function TrendInsight({ rows }: { rows: ScreenerInShareholding[] }) {
 /* Quarter-over-quarter changes                                                */
 /* -------------------------------------------------------------------------- */
 
-function QoQChanges({ rows }: { rows: ScreenerInShareholding[] }) {
+function QoQChanges({ rows, periods }: { rows: ScreenerInShareholding[]; periods: string[] }) {
   const { colors, fallback } = useHolderColors();
   const changes = rows
     .map((r) => {
@@ -218,9 +265,18 @@ function QoQChanges({ rows }: { rows: ScreenerInShareholding[] }) {
 
   if (!changes.length) return null;
 
+  // The two disclosure quarters the deltas actually compare — never "today".
+  const latest = periods.at(-1);
+  const prior = periods.length >= 2 ? periods.at(-2) : null;
+
   return (
     <div className="flex flex-col gap-2">
-      <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Latest Quarter Changes</span>
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Latest Quarter Changes</span>
+        {latest && prior && (
+          <span className="text-[10px] text-muted/70">{latest} vs {prior} · percentage points</span>
+        )}
+      </div>
       <div className="grid gap-2 sm:grid-cols-2">
         {changes.map((c) => (
           <div key={c.holding} className="flex items-center justify-between rounded-lg border border-border bg-surface px-3 py-2">
@@ -232,6 +288,7 @@ function QoQChanges({ rows }: { rows: ScreenerInShareholding[] }) {
               <span className="text-xs text-muted">{c.name}</span>
             </div>
             <div className="flex items-center gap-2">
+              <span className="font-mono text-[10px] text-muted/70">{c.prev.toFixed(1)}% →</span>
               <span className="font-mono text-xs">{c.curr.toFixed(1)}%</span>
               <span className={`font-mono text-[10px] ${c.delta > 0 ? "text-positive" : "text-negative"}`}>
                 {c.delta > 0 ? "+" : ""}{c.delta.toFixed(1)}pp
@@ -324,17 +381,25 @@ export function OwnershipTimeline({
         </div>
       )}
 
-      {/* Current distribution */}
+      {/* Latest disclosed distribution — "current" only up to the disclosure
+          quarter, so the period is part of the heading, not fine print. */}
       <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
-        <h3 className="text-sm font-semibold">Current Distribution</h3>
+        <div className="flex items-baseline justify-between gap-3">
+          <h3 className="text-sm font-semibold">Current Distribution</h3>
+          {periods.length > 0 && (
+            <span className="text-[10px] uppercase tracking-wide text-muted">
+              As of {periods.at(-1)} · SEBI shareholding pattern
+            </span>
+          )}
+        </div>
         <CurrentDistribution rows={rows} />
       </div>
 
       {/* QoQ changes */}
-      <QoQChanges rows={rows} />
+      <QoQChanges rows={rows} periods={periods} />
 
-      {/* AI-style trend interpretation */}
-      <TrendInsight rows={rows} />
+      {/* Deterministic trend interpretation over the disclosed series */}
+      <TrendInsight rows={rows} periods={periods} />
     </div>
   );
 }

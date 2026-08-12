@@ -3,21 +3,17 @@
 import { useEffect, useState } from "react";
 import type { Quote } from "@/lib/types";
 import type { ScreenerInCompany, ScreenerInPeer } from "@/lib/screener-in";
+import type { IndiaDerivedFundamentals } from "@/lib/india-snapshot";
 import type { IndianInsightSection } from "@/lib/ai-research";
 
 interface AiSectionInsightProps {
   section: IndianInsightSection;
   company: ScreenerInCompany;
   quote: Quote | null;
-  derived: {
+  derived: IndiaDerivedFundamentals & {
     promoterHolding: number | null;
     fiiHolding: number | null;
     diiHolding: number | null;
-    evToEbitda: number | null;
-    priceToSales: number | null;
-    priceToBook: number | null;
-    debtToEquity: number | null;
-    interestCoverage: number | null;
     peers: ScreenerInPeer[];
   };
 }

@@ -31,6 +31,14 @@ export function formatMetricValue(metric: MetricDef, value: number | null): stri
   switch (metric.unit) {
     case "$B":
       return formatMoney(value);
+    case "₹Cr": {
+      // Raw INR → Indian units: ₹1,79,880 Cr, or ₹17.99L Cr above a lakh crore.
+      const cr = value / 1e7;
+      const sign = cr < 0 ? "-" : "";
+      const abs = Math.abs(cr);
+      if (abs >= 1e5) return `${sign}₹${(abs / 1e5).toFixed(2)}L Cr`;
+      return `${sign}₹${abs.toLocaleString("en-IN", { maximumFractionDigits: 0 })} Cr`;
+    }
     case "$":
       return value >= 1000 ? formatMoney(value) : `$${value.toFixed(2)}`;
     case "%": {
@@ -51,6 +59,9 @@ export function formatMetricValue(metric: MetricDef, value: number | null): stri
       const abs = Math.abs(value);
       return `${value.toFixed(abs < 1 && abs > 0 ? 2 : abs < 100 ? 1 : 0)}%`;
     }
+    case "pp":
+      // Signed by design: a QoQ ownership delta's direction IS the information.
+      return `${value > 0 ? "+" : ""}${value.toFixed(1)}pp`;
     case "x":
       return `${value.toFixed(2)}x`;
     case "yrs":
