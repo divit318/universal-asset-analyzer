@@ -33,6 +33,12 @@ export type DatasetId =
   | "filings"
   | "cikMap"
   | "news"
+  | "indiaAnnouncements"
+  | "indiaNews"
+  | "indiaResults"
+  | "indiaEvents"
+  | "indiaOwnership"
+  | "corporateActions"
   // India (screener.in for equities, AMFI for mutual funds)
   | "screenerIn"
   | "amfiTer"
@@ -50,8 +56,14 @@ export type DatasetId =
   // datasets above; caching them HERE (the platform layer) rather than in
   // their modules is what the "never add a cache to a module" rule demands.
   | "portfolioReport"
+  | "portfolioThesis"
   | "missionContext"
-  | "homeDigest";
+  | "homeDigest"
+  // Contextual research intelligence (the intel rail): the deterministic card
+  // set for one research context, and the slower optional AI pass over the
+  // same context's settled facts.
+  | "intelCards"
+  | "intelAi";
 
 /** How a dataset is allowed to age, and what it depends on. */
 export interface CachePolicy {

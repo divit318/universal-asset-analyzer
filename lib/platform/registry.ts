@@ -77,6 +77,27 @@ export const DATASETS: Record<DatasetId, CachePolicy> = {
   filings: { ttlMs: 6 * HOUR, swrMs: DAY, persist: true, source: "sec_edgar", label: "SEC filings", dependents: ["statements", "companyContext", "aiVerdict"] },
   news: { ttlMs: 15 * MINUTE, swrMs: HOUR, persist: false, source: "yahoo", label: "Company news", dependents: ["companyContext"] },
 
+  // Indian listings get their own per-symbol pipeline (lib/india-news.ts):
+  // NSE corporate announcements are the India analogue of `filings` — official,
+  // slow-moving, worth persisting; Google News India media coverage matches the
+  // `news` cadence. Both feed the AI context, so both cascade into it.
+  indiaAnnouncements: { ttlMs: 30 * MINUTE, swrMs: 3 * HOUR, persist: true, source: "nse_india", label: "NSE corporate announcements", dependents: ["companyContext"] },
+  indiaNews: { ttlMs: 15 * MINUTE, swrMs: HOUR, persist: false, source: "google_news", label: "India company news", dependents: ["companyContext"] },
+  // Official results metadata (filing timestamps, period, audited flag) plus
+  // bank asset-quality figures extracted from the attached XBRL. Changes at
+  // most once a quarter per company; generous life, always persisted.
+  indiaResults: { ttlMs: 6 * HOUR, swrMs: DAY, persist: true, source: "nse_india", label: "NSE financial results" },
+  // Board-meeting calendar (upcoming results dates). Sparse and slow-moving.
+  indiaEvents: { ttlMs: 12 * HOUR, swrMs: 2 * DAY, persist: true, source: "nse_india", label: "NSE event calendar" },
+  // Compact per-symbol ownership + ROE/ROCE extracts for the India screener
+  // (lib/india-ownership.ts). Shareholding changes quarterly; long-lived by
+  // design, written by the bounded trickle + research visits, never fetched
+  // on read.
+  indiaOwnership: { ttlMs: 7 * DAY, swrMs: 30 * DAY, persist: true, source: "screener_in", label: "India ownership extract" },
+  // Dividend + split/bonus history from Yahoo chart events — effectively
+  // static history that gains at most a few rows a year.
+  corporateActions: { ttlMs: DAY, swrMs: 7 * DAY, persist: true, source: "yahoo", label: "Corporate actions" },
+
   // SEC's ticker→CIK index: one ~1MB file covering every registrant, and the
   // mandatory first hop of *every* EDGAR lookup. It is not asset-scoped, so it
   // is keyed once globally. The long TTL reflects how rarely the index changes
@@ -156,7 +177,28 @@ export const DATASETS: Record<DatasetId, CachePolicy> = {
   // as-of; portfolio mutations invalidate it explicitly (see
   // app/api/portfolio routes). The digest depends on it, so invalidation
   // cascades.
-  portfolioReport: { ttlMs: 2 * MINUTE, swrMs: 10 * MINUTE, persist: false, source: "platform", label: "Universal portfolio report", dependents: ["missionContext", "homeDigest"] },
+  //
+  // Persisted + long SWR (Phase 2, 2026-08-11): this report is also the GATE
+  // in front of the Research Hub's AI verdict — the IOS profile (fit tier,
+  // objective, sector gaps) is derived from it, and the verdict waits for the
+  // profile. Measured cold: 15.2s; warm: 0.03s. With persist:false the 15.2s
+  // was paid on every server restart and every ~12-minute idle gap, and the
+  // verdict stream sat frozen behind it. Serving the persisted report
+  // stale-while-revalidating keeps the gate at ~30ms: the fit TIER and sector
+  // gaps it feeds move with portfolio composition (which invalidates this
+  // explicitly on every mutation), not with a price tick, so a background
+  // refresh is the correct freshness model here.
+  portfolioReport: { ttlMs: 2 * MINUTE, swrMs: 24 * HOUR, persist: true, source: "platform", label: "Universal portfolio report", dependents: ["missionContext", "homeDigest", "portfolioThesis"] },
+
+  // The Portfolio page's AI thesis banner. Same policy family as `aiVerdict`
+  // and for the same reason: a ~20s generation whose conclusions change with
+  // the portfolio's COMPOSITION, not with a price tick. Keyed on the
+  // composition hash (lib/portfolio/thesis.ts:compositionKey); every mutation
+  // invalidates it through the portfolioReport dependency edge above, so the
+  // 6h TTL only governs market-drift staleness. Previously cached in
+  // scanner_cache, whose 15-minute read TTL silently re-ran the generation on
+  // nearly every visit.
+  portfolioThesis: { ttlMs: 6 * HOUR, swrMs: 24 * HOUR, persist: true, source: "platform", label: "Portfolio AI thesis" },
 
   // Mission-control context (legacy report + rotation + regime + alerts):
   // shared by the digest's ctx step and the brief route.
@@ -169,6 +211,24 @@ export const DATASETS: Record<DatasetId, CachePolicy> = {
   // the "show the last known state, honestly stamped" behaviour the north
   // star demands (the payload carries its own generatedAt).
   homeDigest: { ttlMs: 45 * SECOND, swrMs: 30 * MINUTE, persist: false, source: "platform", label: "Home digest" },
+
+  /* ---------------------------------------------------------------- */
+  /* Contextual research intelligence (the intel rail)                  */
+  /* ---------------------------------------------------------------- */
+
+  // The deterministic card set for one research context. Short-lived: its
+  // inputs (quote, news, portfolio report) each carry their own policies, so
+  // this exists only to make the rail's repeat polls and quick tab-hops free
+  // rather than to extend any input's life. Never persisted — a card set is a
+  // moment-in-time judgment, and suppression state (lib/db.ts intel_event) is
+  // applied at serve time, not baked into the cache.
+  intelCards: { ttlMs: 90 * SECOND, swrMs: 0, persist: false, source: "platform", label: "Contextual intel cards" },
+
+  // The optional AI pass over the SAME context's settled facts. Kicked off in
+  // the background after the deterministic set is served (never awaited by the
+  // request path) and merged into later polls. Longer-lived because the facts
+  // it reasons over move slowly and re-deriving it spends the user's AI plan.
+  intelAi: { ttlMs: 30 * MINUTE, swrMs: 2 * HOUR, persist: true, source: "platform", label: "Contextual intel AI pass" },
 };
 
 export function policyFor(dataset: DatasetId): CachePolicy {
