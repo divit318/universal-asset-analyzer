@@ -26,7 +26,7 @@
  */
 
 import { getQuoteSummary, zeroAsMissing } from "../../yahoo";
-import type { FundHolding } from "../../types";
+import type { FundHolding, FundSectorWeight } from "../../types";
 import { mapPool, withRetry } from "../metrics-util";
 
 /** Yahoo's raw topHoldings/fundProfile payload, narrowed to what we read. */
@@ -82,6 +82,15 @@ export interface FundDetail {
   /** Largest single sector weight, %. */
   topSectorWeight: number | null;
   topSector: string | null;
+  /**
+   * The FULL sector weighting list (largest first, %), not just the top one —
+   * `topSector`/`topSectorWeight` are its head, kept for existing callers. The
+   * Portfolio Intelligence look-through needs the whole distribution: a fund
+   * that is 34% technology and 20% financials contributes to two accidental
+   * bets, and the head alone can only see the first. Same caveat as topSector:
+   * only meaningful when the fund is majority equity.
+   */
+  sectorWeights: FundSectorWeight[] | null;
   /** Inverse-Herfindahl count of sectors: "11 sectors" vs "effectively 2.3". */
   effectiveSectors: number | null;
   equityWeight: number | null; // %
@@ -143,6 +152,10 @@ function parseDetail(raw: RawFundDetail): FundDetail {
     .filter(([, v]) => typeof v === "number" && v > 0)
     .sort((a, b) => (b[1] as number) - (a[1] as number));
   const top = sectors[0];
+  const sectorWeights: FundSectorWeight[] = sectors.map(([k, v]) => ({
+    sector: SECTOR_LABEL[k] ?? k,
+    weightPercent: (v as number) * 100,
+  }));
 
   /*
    * Effective number of sectors: the inverse Herfindahl of the sector weights.
@@ -182,6 +195,7 @@ function parseDetail(raw: RawFundDetail): FundDetail {
     topHoldings: namedHoldings.length > 0 ? namedHoldings : null,
     topSectorWeight: top ? pct(top[1] as number) : null,
     topSector: top ? (SECTOR_LABEL[top[0]] ?? top[0]) : null,
+    sectorWeights: sectorWeights.length > 0 ? sectorWeights : null,
     effectiveSectors,
     equityWeight: pct(holdings.stockPosition),
     bondWeight: pct(holdings.bondPosition),
