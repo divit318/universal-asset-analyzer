@@ -125,7 +125,7 @@ export async function buildCausalChains(
   const enrichedMap = new Map<string, MarketEvent>();
   // Fan out when the provider supports it (Devin sessions); the sequential
   // path — and its per-item progress narration — is unchanged under Ollama.
-  const chains = await mapWithFanout(macroEvents, scannerFanout(), async (event, i) => {
+  const chains = await mapWithFanout(macroEvents, run?.fanout ?? scannerFanout(), async (event, i) => {
     run?.item?.(`${event.headline.slice(0, 60)} (${i + 1} of ${macroEvents.length})`);
     const chain = await buildCausalChainForEvent(event, run);
     run?.tick?.();

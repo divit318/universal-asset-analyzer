@@ -45,6 +45,14 @@ export interface ScanRunContext {
   signal?: AbortSignal;
   /** Model pinned for the scan's opportunity-engine calls; null → auto-route. */
   model?: string | null;
+  /**
+   * Per-item concurrency cap for this scan's stage loops; unset → scannerFanout().
+   * A DETACHED scan (boot warmup, hourly scheduler tick) sets this low: nobody
+   * is watching it, and measured 2026-08-11 a boot-tick scan fanning out 8
+   * concurrent multi-minute reasoning calls ground an 8GB host — and every
+   * interactive surface on it — to a crawl for ~10 minutes.
+   */
+  fanout?: number;
   /** Refine the current stage's work-unit total once the item count is known. */
   setUnits?: (total: number) => void;
   /** Mark one unit of stage work done; optionally name the next in-flight item. */

@@ -78,7 +78,16 @@ export interface ScannerPipelineOptions {
   onPartial?: (event: ScannerPartialEvent) => void;
   /** Stage degradations and stall notices, streamed as they happen. */
   onStageEvent?: (event: ScannerStageEvent) => void;
+  /**
+   * True for detached scans nobody is watching (boot warmup, hourly scheduler
+   * tick): stage loops run at BACKGROUND_FANOUT instead of scannerFanout(),
+   * trading the batch's wall-clock time for the host's interactive latency.
+   */
+  background?: boolean;
 }
+
+/** See ScanRunContext.fanout — a background scan must never saturate the host. */
+const BACKGROUND_FANOUT = 2;
 
 function emit(
   onProgress: ((e: ScannerProgressEvent) => void) | undefined,
@@ -334,7 +343,7 @@ export function assessMarketRegime(
 export async function runScannerPipeline(
   opts: ScannerPipelineOptions = {},
 ): Promise<ScannerResult> {
-  const { query, india = true, global: glob = true, signal, onProgress, onPartial, onStageEvent } = opts;
+  const { query, india = true, global: glob = true, signal, onProgress, onPartial, onStageEvent, background = false } = opts;
 
   // TEMPORARY (DEBUG_PIPELINE): per-scan scope so concurrent scans are
   // distinguishable in the NDJSON log.
@@ -375,6 +384,7 @@ export async function runScannerPipeline(
   const runCtx = (api: Parameters<StageDef<Ctx>["run"]>[1]): ScanRunContext => ({
     signal: api.signal,
     model: pinnedModel,
+    ...(background ? { fanout: BACKGROUND_FANOUT } : {}),
     setUnits: api.setUnits,
     tick: api.tick,
     item: api.item,

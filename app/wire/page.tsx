@@ -400,7 +400,7 @@ export default function ScannerPage() {
       if ((err as Error).name === "AbortError") return;
       // Only set error if this scan hasn't been superseded by a newer one
       if (abortRef.current === abort) {
-        setError(err instanceof Error ? err.message : "Something went wrong");
+        setError(err instanceof Error ? err.message : "The scan failed before finishing — run it again.");
       }
     } finally {
       // Only reset loading/progress if this scan is still the active one
@@ -578,7 +578,7 @@ export default function ScannerPage() {
       />
 
       <Reveal index={0} as="p" className="text-sm text-muted">
-        A live tape across markets, sectors, and your portfolio — investment opportunities discovered from market events, not just headlines.
+        Headlines clustered into events, traced through cause and effect, checked against fundamentals — and scored against your portfolio and watchlist.
       </Reveal>
 
       {/* Floating scroll-spy nav — once a scan is underway or done, so it's

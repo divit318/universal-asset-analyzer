@@ -73,7 +73,7 @@ export const NAV: NavObjective[] = [
       // deliberate search you run when you go looking, the Engine is the
       // systematic desk you consult, and Thematic is project-scale top-down
       // work you sit down for.
-      { href: "/wire", label: "The Wire", desc: "Live news, event-driven signals & your portfolio's headlines", icon: WireIcon, keywords: ["news", "events", "signals", "catalysts", "scanner", "wire"] },
+      { href: "/wire", label: "The Wire", desc: "Headlines clustered into events, traced to sectors, companies & your holdings", icon: WireIcon, keywords: ["news", "events", "signals", "catalysts", "scanner", "wire"] },
       { href: "/screener", label: "Screener", desc: "Filter by fundamentals, scores & AI criteria", icon: ScreenerIcon, keywords: ["filter", "screen", "quant", "fundamental"] },
       // The Engine generates ideas system-wide — a Discover job, not a
       // single-company Research one (§4.3). Signal Backtest used to sit beside it
