@@ -42,7 +42,10 @@ type PeriodKey = "1W" | "1M" | "3M" | "6M" | "YTD" | "1Y" | "Max";
 type ChartMode = "price" | "candles" | "relative";
 
 interface Benchmarks {
-  spy: HistoryPoint[];
+  /** Market benchmark series — SPY for US listings, NIFTY 50 for NSE/BSE. */
+  market: HistoryPoint[];
+  /** Series/legend label for the market benchmark. */
+  marketLabel: string;
   sectorEtf: string | null;
   sector: HistoryPoint[];
 }
@@ -279,21 +282,21 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
     if (!sliced.length) return [];
     const baseStock = sliced[0].close;
 
-    const spySliced = benchmarks.spy.filter((p) => p.date >= since);
+    const marketSliced = benchmarks.market.filter((p) => p.date >= since);
     const sectorSliced = benchmarks.sector.filter((p) => p.date >= since);
-    const baseSpy = spySliced[0]?.close ?? 1;
+    const baseMarket = marketSliced[0]?.close ?? 1;
     const baseSector = sectorSliced[0]?.close ?? 1;
 
-    const spyMap = new Map(spySliced.map((p) => [p.date, p.close]));
+    const marketMap = new Map(marketSliced.map((p) => [p.date, p.close]));
     const sectorMap = new Map(sectorSliced.map((p) => [p.date, p.close]));
 
     return sliced.map((p) => {
-      const spyClose = spyMap.get(p.date);
+      const marketClose = marketMap.get(p.date);
       const sectorClose = sectorMap.get(p.date);
       return {
         date: p.date,
         [symbol]: +((p.close / baseStock) * 100).toFixed(2),
-        SPY: spyClose != null ? +((spyClose / baseSpy) * 100).toFixed(2) : null,
+        [benchmarks.marketLabel]: marketClose != null ? +((marketClose / baseMarket) * 100).toFixed(2) : null,
         ...(benchmarks.sectorEtf && sectorClose != null
           ? { [benchmarks.sectorEtf]: +((sectorClose / baseSector) * 100).toFixed(2) }
           : {}),
@@ -645,7 +648,7 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
             />
             <Line
               type="monotone"
-              dataKey="SPY"
+              dataKey={benchmarks.marketLabel}
               stroke={BLUE}
               strokeWidth={1.5}
               strokeDasharray="5 3"

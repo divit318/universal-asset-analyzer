@@ -16,6 +16,21 @@ const RISK_BADGE: Record<"high" | "medium" | "low", string> = {
   low:    "text-muted bg-surface-2 border-border",
 };
 
+/** Labels for the development categories Indian listings carry (lib/india-news.ts).
+ *  Plain media stories ("news") show no chip — the chip marks structure, not noise. */
+const CATEGORY_LABEL: Record<string, string> = {
+  "results": "Results",
+  "corporate-action": "Corporate Action",
+  "orders": "Order Win",
+  "m&a": "M&A",
+  "management": "Management",
+  "regulatory": "Regulatory",
+  "credit-rating": "Credit Rating",
+  "board-meeting": "Board Meeting",
+  "investor-meet": "Investor Meet",
+  "announcement": "Exchange Filing",
+};
+
 function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <div className="flex items-center gap-3">
@@ -121,7 +136,7 @@ export function WhySection({ verdict, verdictLoading, risks, news }: Props) {
       {/* ── What Changed ── */}
       {news && news.length > 0 && (
         <div className="flex flex-col gap-3">
-          <SectionHeader title="Latest Intelligence" subtitle="Recent news and developments" />
+          <SectionHeader title="Recent Developments" subtitle="Company news, most recent first" />
           <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">
             {news.slice(0, 5).map((item, i) => (
               <Reveal key={i} as="li" index={i} className="flex items-start justify-between gap-4 bg-surface px-4 py-3">
@@ -139,7 +154,14 @@ export function WhySection({ verdict, verdictLoading, risks, news }: Props) {
                     <p className="text-sm text-foreground/90">{item.headline}</p>
                   )}
                   {item.source && (
-                    <p className="mt-0.5 text-[11px] text-muted">{item.source}</p>
+                    <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted">
+                      <span>{item.source}</span>
+                      {item.category && CATEGORY_LABEL[item.category] && (
+                        <span className="rounded border border-border bg-surface-2 px-1 py-px text-[10px] uppercase tracking-wider text-muted">
+                          {CATEGORY_LABEL[item.category]}
+                        </span>
+                      )}
+                    </p>
                   )}
                 </div>
                 <span className="shrink-0 text-[11px] tabular-nums text-muted">

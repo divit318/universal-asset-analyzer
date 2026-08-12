@@ -11,7 +11,7 @@
  * Pure, zero-dependency, client-safe.
  */
 
-export type DataSourceId = "yahoo" | "screener_in" | "sec_edgar" | "quant_engine" | "platform" | "rentcast" | "amfi";
+export type DataSourceId = "yahoo" | "screener_in" | "sec_edgar" | "quant_engine" | "platform" | "rentcast" | "amfi" | "nse_india" | "google_news";
 
 export interface DataSourceMeta {
   id: DataSourceId;
@@ -29,6 +29,8 @@ export const DATA_SOURCES: Record<DataSourceId, DataSourceMeta> = {
   platform: { id: "platform", name: "Universal Asset Analyzer", short: "UAA" },
   rentcast: { id: "rentcast", name: "RentCast (estimate)", short: "RentCast" },
   amfi: { id: "amfi", name: "AMFI (Association of Mutual Funds in India)", short: "AMFI" },
+  nse_india: { id: "nse_india", name: "NSE India (corporate announcements)", short: "NSE" },
+  google_news: { id: "google_news", name: "Google News India", short: "Google News" },
 };
 
 export type FreshnessLevel = "fresh" | "aging" | "stale";
@@ -39,6 +41,19 @@ export interface Freshness {
   ageMs: number | null;
   /** Human-readable age, e.g. "2h ago", "just now", or "unknown". */
   label: string;
+}
+
+/**
+ * {@link relativeAge} measured from now, for an ISO string or epoch-ms value.
+ * Returns "unknown" for a missing/unparseable timestamp. Lives here (not in a
+ * component) so render code can print an age without calling `Date.now()`
+ * itself, which the react-hooks purity lint rightly rejects.
+ */
+export function agoLabel(asOf: string | number | null | undefined): string {
+  if (asOf == null) return "unknown";
+  const t = typeof asOf === "number" ? asOf : Date.parse(asOf);
+  if (Number.isNaN(t)) return "unknown";
+  return relativeAge(Date.now() - t);
 }
 
 /** Compact relative age, e.g. "just now", "5m ago", "3h ago", "2d ago". */

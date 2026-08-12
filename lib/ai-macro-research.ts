@@ -71,7 +71,9 @@ export interface MacroChatInput {
   question: string;
 }
 
-export async function macroChatWithData(input: MacroChatInput): Promise<{ answer: string; model: string }> {
+/** The chat prompt, exported so the streaming route can send the SAME prompt
+ * through the platform's streaming path (runTaskStream) instead of buffering. */
+export function macroChatPrompt(input: MacroChatInput): string {
   const { summary, news, history, question } = input;
 
   const system = `You are an expert macroeconomics analyst. Using ONLY the structured data and news below, answer the user's question about the yield curve or macro environment. Be precise, cite specific numbers or headlines. If asked about CPI, GDP, payrolls, or Fed decisions not present in the data, say clearly that data isn't available yet rather than guessing. Keep answers concise (3-6 sentences unless the question requires more).
@@ -82,10 +84,12 @@ ${macroDataBlock(summary)}
 ${newsBlock(news)}`;
 
   const conversationHistory = history.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n");
-  const fullPrompt = conversationHistory
+  return conversationHistory
     ? `${system}\n\nConversation so far:\n${conversationHistory}\n\nUser: ${question}`
     : `${system}\n\nUser: ${question}`;
+}
 
-  const { text: answer, model } = await runPromptWithMeta("macro-research", fullPrompt, { maxTokens: 800 });
+export async function macroChatWithData(input: MacroChatInput): Promise<{ answer: string; model: string }> {
+  const { text: answer, model } = await runPromptWithMeta("macro-research", macroChatPrompt(input), { maxTokens: 800 });
   return { answer: answer.trim(), model };
 }

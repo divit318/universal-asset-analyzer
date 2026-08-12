@@ -110,10 +110,10 @@ export function AIDock({ selection, buildContext, onNavigate, nudge, onDismissNu
       if (res.ok) {
         setResult((await res.json()) as ChartQAResult);
       } else {
-        setResult({ answer: "Something went wrong reaching the analysis model. Please try again.", model: "unavailable" });
+        setResult({ answer: "The chart question never reached the model — ask again.", model: "unavailable" });
       }
     } catch {
-      setResult({ answer: "Something went wrong reaching the analysis model. Please try again.", model: "unavailable" });
+      setResult({ answer: "The chart question never reached the model — ask again.", model: "unavailable" });
     } finally {
       clearTimeout(timeout);
       setLoading(false);

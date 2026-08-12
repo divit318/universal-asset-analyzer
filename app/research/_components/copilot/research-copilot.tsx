@@ -226,8 +226,16 @@ function Hero({
   isMacro: boolean;
   onPick: (q: string) => void;
 }) {
+  const isIndiaListing = /\.(NS|BO)$/i.test(symbol);
   const starters = isEquity
-    ? [
+    ? isIndiaListing
+      ? [
+          "Is this company undervalued?",
+          "How are promoter and FII holdings trending?",
+          "What happened in the latest quarterly results?",
+          "How does it compare with peers on ROCE and valuation?",
+        ]
+      : [
         "Is this company undervalued?",
         "What is the bull case?",
         "What are the key risks?",
@@ -296,7 +304,9 @@ function Hero({
         <p className="text-sm font-medium text-foreground">Researching {name}</p>
         <p className="mt-1 max-w-md text-xs text-muted">
           {isEquity
-            ? `I've assembled a dossier for ${symbol} from fundamentals, filings, analyst data, the platform score, and recent news. Ask anything, or run a research action above.`
+            ? isIndiaListing
+              ? `I've assembled a dossier for ${symbol} from screener.in fundamentals, NSE announcements, shareholding data, and recent news. Ask anything, or run a research action above.`
+              : `I've assembled a dossier for ${symbol} from fundamentals, filings, analyst data, the platform score, and recent news. Ask anything, or run a research action above.`
             : isFund
               ? `I've assembled fund data for ${symbol} — holdings, sector allocation, cost, and performance vs category. Ask anything about this fund.`
               : isCrypto

@@ -85,7 +85,9 @@ export interface CommodityChatInput {
   question: string;
 }
 
-export async function commodityChatWithData(input: CommodityChatInput): Promise<{ answer: string; model: string }> {
+/** The chat prompt, exported so the streaming route can send the SAME prompt
+ * through the platform's streaming path (runTaskStream) instead of buffering. */
+export function commodityChatPrompt(input: CommodityChatInput): string {
   const { facts, score, news, history, question } = input;
 
   const system = `You are an expert commodities markets analyst. Using ONLY the structured data and news below, answer the user's question about this commodity. Be precise, cite specific numbers or headlines. If asked about inventories, production, or futures-curve structure not present in the data, say clearly that data isn't available yet rather than guessing. Keep answers concise (3-6 sentences unless the question requires more).
@@ -96,10 +98,12 @@ ${commodityDataBlock(facts, score)}
 ${newsBlock(news)}`;
 
   const conversationHistory = history.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n");
-  const fullPrompt = conversationHistory
+  return conversationHistory
     ? `${system}\n\nConversation so far:\n${conversationHistory}\n\nUser: ${question}`
     : `${system}\n\nUser: ${question}`;
+}
 
-  const { text: answer, model } = await runPromptWithMeta("commodity-research", fullPrompt, { maxTokens: 800 });
+export async function commodityChatWithData(input: CommodityChatInput): Promise<{ answer: string; model: string }> {
+  const { text: answer, model } = await runPromptWithMeta("commodity-research", commodityChatPrompt(input), { maxTokens: 800 });
   return { answer: answer.trim(), model };
 }

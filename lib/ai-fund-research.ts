@@ -87,7 +87,9 @@ export interface FundChatInput {
   question: string;
 }
 
-export async function fundChatWithData(input: FundChatInput): Promise<{ answer: string; model: string }> {
+/** The chat prompt, exported so the streaming route can send the SAME prompt
+ * through the platform's streaming path (runTaskStream) instead of buffering. */
+export function fundChatPrompt(input: FundChatInput): string {
   const { symbol, name, fund, score, history, question } = input;
 
   const system = `You are an expert fund analyst. Using ONLY the structured data below, answer the user's question about this fund. Be precise, cite specific numbers. If data is missing, say so clearly. Keep answers concise (3-6 sentences unless the question requires more).
@@ -96,10 +98,12 @@ DATA:
 ${fundDataBlock(symbol, name, fund, score)}`;
 
   const conversationHistory = history.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n");
-  const fullPrompt = conversationHistory
+  return conversationHistory
     ? `${system}\n\nConversation so far:\n${conversationHistory}\n\nUser: ${question}`
     : `${system}\n\nUser: ${question}`;
+}
 
-  const { text: answer, model } = await runPromptWithMeta("fund-research", fullPrompt, { maxTokens: 800 });
+export async function fundChatWithData(input: FundChatInput): Promise<{ answer: string; model: string }> {
+  const { text: answer, model } = await runPromptWithMeta("fund-research", fundChatPrompt(input), { maxTokens: 800 });
   return { answer: answer.trim(), model };
 }

@@ -25,12 +25,39 @@ interface ContextResponse {
   builtAt: string;
   onWatchlist: boolean;
   warnings: string[];
+  /** The persisted conversation for the sessionId we presented, if any. */
+  history?: { role: "user" | "assistant"; content: string }[];
   coverage: CopilotCoverage;
   health: {
     reachable: boolean;
     defaultModel: string | null;
     models: ModelOption[];
   };
+}
+
+/** sessionStorage key for a symbol's copilot session — what makes a
+ * conversation survive refresh/navigation instead of silently resetting
+ * while its turns sat persisted (and unread) in SQLite. */
+const sessionKey = (symbol: string) => `uaa-copilot-session:${symbol.toUpperCase()}`;
+
+function rememberedSession(symbol: string): string | null {
+  try {
+    return sessionStorage.getItem(sessionKey(symbol));
+  } catch {
+    return null;
+  }
+}
+
+function rememberSession(symbol: string, id: string): void {
+  try {
+    sessionStorage.setItem(sessionKey(symbol), id);
+  } catch {
+    /* private mode — the conversation just won't survive refresh */
+  }
+}
+
+function newSessionId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `s-${Date.now()}-${Math.random()}`;
 }
 
 export type CopilotStatus = "init" | "ready" | "streaming" | "error";
@@ -55,13 +82,17 @@ export function useCopilot(symbol: string) {
   const sessionId = useRef<string>("");
   const abortRef = useRef<AbortController | null>(null);
 
-  // (Re)initialize whenever the symbol changes.
+  // (Re)initialize whenever the symbol changes. The symbol's existing session
+  // is resumed when one is remembered — the context response then carries its
+  // persisted turns, so a refresh or a navigate-away-and-back lands the user
+  // back in their conversation instead of a silently blank thread.
   useEffect(() => {
     if (!symbol) return;
     let active = true;
     abortRef.current?.abort();
-    sessionId.current =
-      (globalThis.crypto?.randomUUID?.() ?? `s-${Date.now()}-${Math.random()}`);
+    const remembered = rememberedSession(symbol);
+    sessionId.current = remembered ?? newSessionId();
+    if (!remembered) rememberSession(symbol, sessionId.current);
 
     /* eslint-disable react-hooks/set-state-in-effect */
     setStatus("init");
@@ -72,7 +103,8 @@ export function useCopilot(symbol: string) {
 
     (async () => {
       try {
-        const res = await fetch(`/api/research/context?symbol=${encodeURIComponent(symbol)}`);
+        const sessionParam = remembered ? `&sessionId=${encodeURIComponent(remembered)}` : "";
+        const res = await fetch(`/api/research/context?symbol=${encodeURIComponent(symbol)}${sessionParam}`);
         const json = await res.json();
         if (!active) return;
         if (!res.ok) throw new Error(json.error ?? "Failed to prepare copilot");
@@ -82,6 +114,9 @@ export function useCopilot(symbol: string) {
         setReachable(data.health.reachable);
         setCoverage(data.coverage);
         setWarnings(data.warnings);
+        if (data.history && data.history.length > 0) {
+          setMessages(data.history.map((m) => ({ role: m.role, content: m.content })));
+        }
         setStatus("ready");
       } catch (err) {
         if (active) {
@@ -186,7 +221,7 @@ export function useCopilot(symbol: string) {
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
-        setError(err instanceof Error ? err.message : "Something went wrong");
+        setError(err instanceof Error ? err.message : "The copilot request failed — send the question again.");
         setStatus("error");
       }
     },
@@ -198,15 +233,17 @@ export function useCopilot(symbol: string) {
     setStatus("ready");
   }, []);
 
+  // Reset = a deliberately NEW conversation: mint a fresh session and
+  // remember it, so the discarded thread doesn't come back on refresh.
   const reset = useCallback(() => {
     abortRef.current?.abort();
-    sessionId.current =
-      (globalThis.crypto?.randomUUID?.() ?? `s-${Date.now()}-${Math.random()}`);
+    sessionId.current = newSessionId();
+    rememberSession(symbol, sessionId.current);
     setMessages([]);
     setSuggestions([]);
     setError(null);
     setStatus("ready");
-  }, []);
+  }, [symbol]);
 
   return {
     status,
