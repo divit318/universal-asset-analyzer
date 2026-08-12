@@ -7,30 +7,13 @@
  * than an error the calling page has to handle.
  */
 import { NextResponse } from "next/server";
-import { getActivityAt, recordActivity } from "@/lib/db";
+import { recordActivity } from "@/lib/db";
 import { isActivityKind } from "@/lib/home/activity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_LABEL = 120;
-
-/**
- * GET /api/home/activity?kind=research&ref=NVDA — when the user last visited
- * one thing. Feeds the materiality lens's "changed since your last visit"
- * baseline. Called at page load, before this visit's debounced POST lands, so
- * it reports the PREVIOUS visit; `at: null` means first visit and the lens
- * skips the comparison entirely.
- */
-export async function GET(request: Request) {
-  const params = new URL(request.url).searchParams;
-  const kind = params.get("kind") ?? "";
-  const ref = params.get("ref")?.trim() ?? "";
-  if (!isActivityKind(kind) || !ref) {
-    return NextResponse.json({ error: "Expected ?kind=<activity kind>&ref=<ref>" }, { status: 400 });
-  }
-  return NextResponse.json({ at: getActivityAt(kind, ref) });
-}
 
 export async function POST(request: Request) {
   try {

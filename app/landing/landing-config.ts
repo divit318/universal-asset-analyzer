@@ -72,11 +72,11 @@ export interface LandingSection {
 }
 
 export const SECTIONS: LandingSection[] = [
-  { id: "hero", kicker: "Universal Asset Analyzer", title: "The AI terminal for investors", top: true },
+  { id: "hero", kicker: "Universal Asset Analyzer", title: "The research terminal that computes locally and shows its work", top: true },
   { id: "problem", kicker: "The problem", title: "Research is fragmented across a dozen tools", nav: "Problem" },
-  { id: "solution", kicker: "The solution", title: "One intelligent analysis workbench" },
+  { id: "solution", kicker: "The solution", title: "One workbench: market data, filings, screening, valuation, and portfolio analytics" },
   { id: "privacy", kicker: "Local-first", title: "Your data lives on your computer" },
-  { id: "features", kicker: "Capabilities", title: "Everything serious research needs", nav: "Features" },
+  { id: "features", kicker: "Capabilities", title: "The research stack", nav: "Features" },
   { id: "demo", kicker: "Try it", title: "See UAA in action", nav: "Demo" },
   { id: "comparison", kicker: "Compare", title: "How UAA stacks up", nav: "Compare" },
   { id: "pricing", kicker: "Pricing", title: "Free to run. Pro when you want us to run it.", nav: "Pricing" },

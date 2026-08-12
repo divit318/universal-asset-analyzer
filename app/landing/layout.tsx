@@ -13,7 +13,7 @@ import { InkField } from "./_components/ink/InkField";
  * marketing chrome — it does not re-declare those. When /landing is promoted to
  * the site root, this shell moves with it unchanged.
  */
-const TITLE = "Universal Asset Analyzer: The AI Terminal for Investors";
+const TITLE = "Universal Asset Analyzer: Every Figure Computed, Every Claim Traced";
 const DESCRIPTION =
   "Investment research, analysis, and portfolio tools with your data in a local database you own, and AI narration on your own Anthropic key.";
 

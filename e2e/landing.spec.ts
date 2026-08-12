@@ -136,7 +136,7 @@ test.describe("landing feature showcase (Milestone 4)", () => {
     await page.goto("/landing");
     const features = page.locator("section#features");
 
-    await expect(features.getByRole("heading", { name: "Comprehensive company profiles" })).toBeVisible();
+    await expect(features.getByRole("heading", { name: "Company research, per ticker" })).toBeVisible();
     await expect(features.getByRole("heading", { name: "Build any screener" })).toBeVisible();
     await expect(features.getByText("Research Hub").first()).toBeVisible();
 
@@ -162,7 +162,7 @@ test.describe("landing motion (Milestone 5)", () => {
 
     // Below-the-fold content is revealed and reachable.
     await expect(
-      page.locator("section#features").getByRole("heading", { name: "Everything serious research needs" }),
+      page.locator("section#features").getByRole("heading", { name: "The research stack" }),
     ).toBeVisible();
     expect(filterAllowedErrors(errors)).toEqual([]);
   });
@@ -184,7 +184,7 @@ test.describe("landing motion (Milestone 5)", () => {
       // Nothing is trapped at opacity:0 — the reveal primitive is no-JS-safe.
       await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
       await expect(
-        page.locator("section#features").getByRole("heading", { name: "Comprehensive company profiles" }),
+        page.locator("section#features").getByRole("heading", { name: "Company research, per ticker" }),
       ).toBeVisible();
       await expect(page.locator("section#demo").getByPlaceholder("Search any ticker…")).toBeVisible();
     });
@@ -194,7 +194,7 @@ test.describe("landing motion (Milestone 5)", () => {
 test.describe("landing performance & SEO (Milestone 6)", () => {
   test("exposes landing-specific title and social meta", async ({ page }) => {
     await page.goto("/landing");
-    await expect(page).toHaveTitle("Universal Asset Analyzer: The AI Terminal for Investors");
+    await expect(page).toHaveTitle("Universal Asset Analyzer: Every Figure Computed, Every Claim Traced");
     await expect(page.locator('head meta[name="description"]')).toHaveAttribute("content", /local database you own/);
     await expect(page.locator('head meta[property="og:title"]')).toHaveAttribute("content", /Universal Asset Analyzer/);
   });
@@ -231,7 +231,9 @@ test.describe("landing content finalization (Milestone 7)", () => {
 
     const pricing = page.locator("section#pricing");
     await expect(pricing.getByRole("heading", { name: /Free to run\. Pro when you want us to run it\./ })).toBeVisible();
-    await expect(pricing.getByText("$0")).toBeVisible();
+    // exact: the animated Pro price node's text content also contains "$0"
+    // mid-count-up, which trips strict mode with a substring match.
+    await expect(pricing.getByText("$0", { exact: true })).toBeVisible();
 
     // Comparison table has real table semantics and a highlighted UAA column.
     const comparison = page.locator("section#comparison");

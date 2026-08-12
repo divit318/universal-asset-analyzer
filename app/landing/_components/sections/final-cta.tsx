@@ -57,7 +57,7 @@ export function FinalCta({ section, index }: SectionProps) {
                 ]}
               />
               <p className="mt-mk-headline max-w-[62ch] text-pretty text-mk-lead text-muted">
-                Research faster, think deeper, keep your data private.
+                Every figure computed on your machine. Every claim traced to its source. Your key, your database.
               </p>
 
               {/* The Seal's ink zone: heading above, buttons below. */}

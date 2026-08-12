@@ -38,6 +38,10 @@ interface Sample {
   citation: string;
 }
 
+// STALENESS WATCH (copy audit, 2026-08-11): these sample verdicts and figures
+// are hardcoded (labeled "Sample output, not live data" in the UI) and drift
+// as real fundamentals move. Refresh them quarterly, or when a cited figure
+// (P/E, growth, margins) is far enough from reality to mislead.
 const SAMPLES: Record<string, Sample> = {
   NVDA: {
     name: "NVIDIA Corp.",

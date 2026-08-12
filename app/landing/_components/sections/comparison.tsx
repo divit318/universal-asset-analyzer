@@ -246,8 +246,8 @@ export function Comparison({ section, index }: SectionProps) {
               <p className="flex items-center gap-2.5 rounded-full border border-border bg-surface px-5 py-3 text-center text-mk-small text-foreground">
                 <Sparkles className="h-4 w-4 shrink-0 text-brand" strokeWidth={2} aria-hidden="true" />
                 <span>
-                  UAA combines the power of AI with the <span className="text-brand">privacy</span> and{" "}
-                  <span className="text-brand">depth</span> serious investors demand.
+                  <span className="text-brand">Local database</span>, deterministic engines,{" "}
+                  <span className="text-brand">your own AI key</span> — compared line by line above.
                 </span>
               </p>
               <p className="text-caption text-muted">

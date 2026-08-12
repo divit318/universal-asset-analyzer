@@ -40,8 +40,8 @@ interface Capability {
 const CAPABILITIES: Capability[] = [
   {
     module: "Research Hub",
-    title: "Comprehensive company profiles",
-    description: "All fundamental data and news in one place.",
+    title: "Company research, per ticker",
+    description: "Fundamentals, filings, estimates, ownership, and news.",
     cta: "Explore profiles",
     icon: Search,
     mockup: ResearchHubMockup,
@@ -60,13 +60,13 @@ const CAPABILITIES: Capability[] = [
   },
   {
     module: "Portfolio Intelligence",
-    title: "Intelligent portfolio tracker",
-    description: "See gains, risk, and suggestions for your holdings.",
+    title: "Portfolio analytics",
+    description: "Allocation, P&L, risk, health, and rebalancing suggestions for your holdings.",
     cta: "Track your portfolio",
     icon: PieChart,
     mockup: PortfolioMockup,
     mockupLabel:
-      "Illustrative Portfolio Intelligence screen: performance chart, allocation donut, AI insights, and top movers.",
+      "Illustrative Portfolio Intelligence screen: performance chart, allocation donut, AI commentary, and top movers.",
   },
   {
     module: "Valuation Engine",
@@ -142,11 +142,11 @@ export function Features({ section, index }: SectionProps) {
         <SectionHeader
           eyebrow="Capabilities"
           headingId={headingId}
-          segments={[{ text: "Everything serious" }, { text: "research needs", tone: "accent" }]}
+          segments={[{ text: "The research", tone: "accent" }, { text: "stack" }]}
           lead={
             <>
-              Powerful tools, unified by one platform.
-              <br className="hidden sm:block" /> Built for how you research, think, and decide.
+              Screening, valuation, portfolio analytics, filings, and AI narration —
+              <br className="hidden sm:block" /> one database, on your machine.
             </>
           }
           className="items-center"

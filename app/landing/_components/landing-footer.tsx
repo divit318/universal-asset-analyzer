@@ -106,7 +106,7 @@ export function LandingFooter() {
         <div className="mx-auto flex w-full max-w-measure-content flex-col items-center gap-2 px-mk-pad py-6 text-center">
           <p className="flex items-center gap-2 text-mk-small text-muted">
             <Lock className="h-3.5 w-3.5 text-brand" strokeWidth={2} aria-hidden="true" />
-            Built for privacy. Designed for serious investors.
+            Your database, on your disk. Your key, your provider.
           </p>
           <p className="font-mono text-caption tabular-nums text-muted">
             © {year} Universal Asset Analyzer. Local-first data. No subscriptions.
