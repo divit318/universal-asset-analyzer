@@ -453,6 +453,15 @@ npx vitest run tests/composite.test.ts  # single file
 
 **Server-only packages**: ExcelJS, PDFKit only in `app/api/` routes, never import in client components
 
+## Branch Integration
+
+All merge/integration work between `main`, `prisha-work`, and Divit's branches
+follows **`MERGE_POLICY.md`** — it is the persistent task spec for "integrate
+everything" requests. Survey with `npm run integrate` (read-only), validate
+with `npm run integrate:check` (add `-- --full` for the production build).
+Never resolve conflicts by blanket ours/theirs; combine the best of both
+implementations per the policy.
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.

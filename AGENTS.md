@@ -13,6 +13,20 @@ Read this before reading CLAUDE.md, ARCHITECTURE.md, or PROJECT_ROADMAP.md.
 
 ---
 
+## Integration & Merges → MERGE_POLICY.md
+
+For ANY branch integration, merge, conflict resolution, or "integrate my/our
+work" request: **`MERGE_POLICY.md` is the task specification.** It defines the
+branch model (`main` is canonical; Prisha = `prisha-work`, Divit =
+`f22/day-change`), the autonomous procedure, conflict-resolution doctrine
+(combine the best of both sides — never blanket ours/theirs), repo-specific
+merge hazards, the validation gate, and the (rare) conditions for stopping to
+ask a human. Survey first with `npm run integrate` (read-only); gate with
+`npm run integrate:check`. Precedence: ADRs (`docs/decisions/`) > this file /
+CLAUDE.md / ARCHITECTURE.md > MERGE_POLICY.md > the developer's prompt.
+
+---
+
 ## Mandatory Rules
 
 ### 1. Use Serena for File Location
