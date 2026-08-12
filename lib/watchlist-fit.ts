@@ -15,8 +15,8 @@ import { getFreshFundamentals, putFundamentals } from "./db";
 import { enrichSymbol } from "./enrich";
 import { detectMarket } from "./market";
 import { getQuotes, getRichQuotes } from "./yahoo";
-import { getScreenerInCompany, getRatio, type ScreenerInCompany } from "./screener-in";
-import { computeIndiaSnapshot } from "./india-snapshot";
+import { getScreenerInCompany, type ScreenerInCompany } from "./screener-in";
+import { computeIndiaSnapshot, deriveIndiaFundamentals } from "./india-snapshot";
 import type { CompositeScores, StockFundamentals } from "./types";
 
 /** Everything the client needs to pass into `getPortfolioFit`. */
@@ -141,12 +141,7 @@ export async function enrichForFit(
 
     const indiaCompany = geography === "IN" ? indiaCompanyBy.get(sym) : undefined;
     if (indiaCompany) {
-      const snapshot = computeIndiaSnapshot(indiaCompany, {
-        debtToEquity: getRatio(indiaCompany, "Debt to Equity"),
-        interestCoverage: getRatio(indiaCompany, "Interest Coverage"),
-        evToEbitda: getRatio(indiaCompany, "EV / EBITDA"),
-        priceToBook: getRatio(indiaCompany, "Price to Book"),
-      });
+      const snapshot = computeIndiaSnapshot(indiaCompany, deriveIndiaFundamentals(indiaCompany));
       // momentumScore only reads oneYearReturn/distanceFrom52WkHigh — both
       // come from the rich quote (live price data), not the Yahoo
       // fundamentals snapshot this branch deliberately avoids for India.

@@ -8,7 +8,11 @@ import {
   putPriceAlertStates,
 } from "@/lib/db";
 import { getQuotes } from "@/lib/yahoo";
-import { evaluateAlerts, type QuoteLite } from "@/lib/alerts";
+import { categorizeIndianDevelopment, getIndianFilings } from "@/lib/india-news";
+import { getResultsDaySnapshot } from "@/lib/india-results";
+import { ownershipTrends, readIndiaOwnership } from "@/lib/india-ownership";
+import { isOwnershipCurrent, ownershipContextLine } from "@/lib/india-ownership-trends";
+import { evaluateAlerts, type AlertEvent, type QuoteLite } from "@/lib/alerts";
 import { dayChange, isCurrentSession } from "@/lib/day-change";
 import { resolveTargetDirection } from "@/lib/watchlist-metrics";
 
@@ -108,7 +112,15 @@ export async function runMonitor(): Promise<MonitorRunResult> {
     ),
   });
 
-  const created = createNotifications(events);
+  // Indian watchlist names additionally get a results-released alert: NSE
+  // results filings are the "earnings hit the tape" moment for these stocks.
+  // The announcements feed is cached (30min TTL) and the notification table's
+  // 24h dedup makes re-observing the same filing a no-op, so this stays cheap.
+  const indiaEvents = await indianResultsEvents(
+    watchlist.filter((w) => /\.(NS|BO)$/i.test(w.symbol)).map((w) => ({ symbol: w.symbol, name: w.name })),
+  );
+
+  const created = createNotifications([...events, ...indiaEvents]);
 
   // Persist last, and unconditionally: skipping the write on a tick that fired
   // nothing would leave the baseline stale and re-report the same crossing.
@@ -119,6 +131,61 @@ export async function runMonitor(): Promise<MonitorRunResult> {
   }
 
   return { created, unread: unreadNotificationCount(), checked: symbols.length };
+}
+
+/** Results filings published in the last 24h for Indian watchlist symbols. */
+async function indianResultsEvents(
+  items: { symbol: string; name: string }[],
+): Promise<AlertEvent[]> {
+  if (items.length === 0) return [];
+  const out: AlertEvent[] = [];
+  const cutoff = Date.now() - 24 * 3_600_000;
+  // Bounded and sequential: each call is served from the 30-min announcements
+  // cache after the first tick, and a watchlist rarely has >20 Indian names.
+  for (const item of items.slice(0, 25)) {
+    try {
+      const filings = await getIndianFilings(item.symbol, 15);
+      // The precise category test (not a bare /result/i, which also matches
+      // "results of postal ballot" style announcements).
+      const results = filings.find(
+        (f) =>
+          categorizeIndianDevelopment(`${f.form} ${f.description}`) === "results" &&
+          Date.parse(f.filedAt) > cutoff,
+      );
+      if (!results) continue;
+      const day = results.filedAt.slice(0, 10);
+      // Results-day context (deterministic; every field optional) — the
+      // notification composes only from what actually resolved.
+      const snapshot = await getResultsDaySnapshot(item.symbol, results.filedAt).catch(() => null);
+      // Ownership context: cache-only, period-gated, descriptive (never causal).
+      const own = readIndiaOwnership(item.symbol);
+      const ownershipNote =
+        own && isOwnershipCurrent(own.period) ? ownershipContextLine(ownershipTrends(own)) : null;
+      out.push({
+        dedupKey: `results_released:${item.symbol.toUpperCase()}:${day}`,
+        symbol: item.symbol.toUpperCase(),
+        name: item.name,
+        kind: "results_released",
+        severity: "info",
+        facts: {
+          kind: "results_released",
+          symbol: item.symbol.toUpperCase(),
+          name: item.name,
+          reportedAt: results.filedAt,
+          quarterLabel: snapshot?.quarterLabel ?? undefined,
+          netProfitYoY: snapshot?.netProfitYoY ?? undefined,
+          revenueYoY: snapshot?.revenueYoY ?? undefined,
+          dayMovePct: snapshot?.dayMovePct ?? undefined,
+          ownershipNote: ownershipNote ?? undefined,
+          observedAt: new Date().toISOString(),
+          sessionDate: day,
+        },
+      });
+    } catch {
+      /* announcements feed hiccup — next tick retries */
+    }
+  }
+  return out;
 }
 
 const TICK_KEY = Symbol.for("uaa.monitor.interval");

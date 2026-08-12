@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import type { ChartDrawingRecord, PortfolioPosition, PortfolioLot, ResearchNote, StockFundamentals, WatchlistItem, WatchlistGroup, TargetRevision, IdeaStage, TargetDirection, SectorRotationEntry, TimelineEvent, Notification, Decision, DecisionAction, DecisionHorizon, ManualAsset, ManualAssetCategory } from "./types";
+import type { ChartDrawingRecord, PortfolioPosition, PortfolioLot, ResearchNote, StockFundamentals, WatchlistItem, WatchlistGroup, TargetRevision, IdeaStage, TargetDirection, Conviction, ThesisHorizon, SectorRotationEntry, TimelineEvent, Notification, Decision, DecisionAction, DecisionHorizon, ManualAsset, ManualAssetCategory } from "./types";
 import { aggregateOpenPositions } from "./portfolio-lots";
 import { isIdeaStage, autoStageForTrade, effectiveStage, isPipelineSymbol } from "./idea-stage";
 import { isIdeaSource, type IdeaSource } from "./idea-source";
@@ -93,6 +93,25 @@ function getDb(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS idx_watchlist_target_history_symbol
       ON watchlist_target_history (symbol, changed_at DESC);
+    /* Watchlist visit tracking — the "since your last visit" baseline.
+     *
+     * A single-row clock plus per-symbol price snapshots. 'current' rows are
+     * refreshed on every pulse read; when a read arrives after a real absence
+     * (see touchWatchlistVisit) the current set is promoted to 'baseline', so
+     * the diff is always "now vs the state at the END of your previous
+     * session", not "now vs whenever you last pressed refresh". */
+    CREATE TABLE IF NOT EXISTS watchlist_visit (
+      id           INTEGER PRIMARY KEY CHECK (id = 1),
+      baseline_at  INTEGER NOT NULL,
+      last_seen_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS watchlist_price_snapshot (
+      kind        TEXT NOT NULL,
+      symbol      TEXT NOT NULL,
+      price       REAL NOT NULL,
+      observed_at INTEGER NOT NULL,
+      PRIMARY KEY (kind, symbol)
+    );
     /* The last price the alert evaluator actually observed, per symbol.
      *
      * This is what turns a *state* test into a *crossing* test: without a
@@ -206,6 +225,14 @@ function getDb(): DatabaseSync {
       graph        TEXT NOT NULL,
       generated_at TEXT NOT NULL
     );
+    /* Portfolio Intelligence: the previous run's findings + holdings weights,
+     * kept so a fresh run can report what changed since the last one. Singleton
+     * row, no global prune -- scanner_cache would evict it within the hour. */
+    CREATE TABLE IF NOT EXISTS portfolio_intelligence_snapshot (
+      id           INTEGER PRIMARY KEY CHECK (id = 1),
+      data         TEXT NOT NULL,
+      generated_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS timeline_event (
       id         TEXT PRIMARY KEY,
       symbol     TEXT NOT NULL,
@@ -215,6 +242,16 @@ function getDb(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS idx_timeline_event_symbol
       ON timeline_event (symbol, timestamp DESC);
+    /* Contextual intelligence suppression ledger: one row per insight
+     * fingerprint the user has seen, dismissed, or opened. Read at serve time
+     * so the intel rail never replays a card the user already acted on.
+     * Statuses age out at different rates (see listSuppressedIntelIds). */
+    CREATE TABLE IF NOT EXISTS intel_event (
+      fingerprint TEXT PRIMARY KEY,
+      symbol      TEXT,
+      status      TEXT NOT NULL,
+      created_at  INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS notification (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
       dedup_key  TEXT NOT NULL,
@@ -369,18 +406,6 @@ function getDb(): DatabaseSync {
       slot     TEXT PRIMARY KEY CHECK (slot IN ('current', 'baseline')),
       data     TEXT NOT NULL,
       taken_at INTEGER NOT NULL
-    );
-
-    -- Per-page change baselines for the materiality lens (lib/materiality.ts).
-    -- Same two-slot design as home_fingerprint, keyed by page so each surface
-    -- keeps its own "what did this look like on my previous visit" blob
-    -- (e.g. page = 'portfolio-scores' stores symbol → holding score).
-    CREATE TABLE IF NOT EXISTS page_fingerprint (
-      page     TEXT NOT NULL,
-      slot     TEXT NOT NULL CHECK (slot IN ('current', 'baseline')),
-      data     TEXT NOT NULL,
-      taken_at INTEGER NOT NULL,
-      PRIMARY KEY (page, slot)
     );
 
     -- Valuation as a persisted object rather than a page.
@@ -602,6 +627,20 @@ function getDb(): DatabaseSync {
   for (const col of ["source TEXT", "source_detail TEXT"]) {
     try { db.exec(`ALTER TABLE watchlist ADD COLUMN ${col}`); } catch { /* already exists */ }
   }
+  // Structured thesis (2026-08 watchlist upgrade): the free-form `notes` stays
+  // the thesis text; these columns make the decision scaffolding around it
+  // queryable — what would change your mind, how sure you are, and when you
+  // last actually re-read the idea. All nullable: an empty field renders as
+  // "not recorded", never as a fabricated default.
+  for (const col of [
+    "buy_trigger TEXT",
+    "sell_trigger TEXT",
+    "conviction TEXT",
+    "horizon TEXT",
+    "last_reviewed_at INTEGER",
+  ]) {
+    try { db.exec(`ALTER TABLE watchlist ADD COLUMN ${col}`); } catch { /* already exists */ }
+  }
   /* Named watchlists — seed the default list and adopt every existing symbol
    * into it, so a pre-existing user opens the page to exactly what they had.
    * Both steps are guarded by their own emptiness check rather than a version
@@ -697,7 +736,15 @@ interface WatchlistRow {
   stage_changed_at: number | null;
   source: string | null;
   source_detail: string | null;
+  buy_trigger: string | null;
+  sell_trigger: string | null;
+  conviction: string | null;
+  horizon: string | null;
+  last_reviewed_at: number | null;
 }
+
+const isConviction = (v: unknown): v is Conviction => v === "low" || v === "medium" || v === "high";
+const isHorizon = (v: unknown): v is ThesisHorizon => v === "short" || v === "medium" || v === "long";
 
 function rowToWatchlistItem(r: WatchlistRow): WatchlistItem {
   return {
@@ -718,11 +765,17 @@ function rowToWatchlistItem(r: WatchlistRow): WatchlistItem {
     // know is honestly unknown to us, and so is a legacy NULL.
     source: isIdeaSource(r.source) ? r.source : null,
     sourceDetail: r.source_detail ?? null,
+    buyTrigger: r.buy_trigger ?? null,
+    sellTrigger: r.sell_trigger ?? null,
+    conviction: isConviction(r.conviction) ? r.conviction : null,
+    horizon: isHorizon(r.horizon) ? r.horizon : null,
+    lastReviewedAt: r.last_reviewed_at ?? null,
   };
 }
 
 const WATCHLIST_COLUMNS =
-  "symbol, name, added_at, target_price, target_direction, alert_pct_drop, notes, stage, stage_changed_at, source, source_detail";
+  "symbol, name, added_at, target_price, target_direction, alert_pct_drop, notes, stage, stage_changed_at, source, source_detail, " +
+  "buy_trigger, sell_trigger, conviction, horizon, last_reviewed_at";
 
 /**
  * Every tracked symbol, across every named list.
@@ -1076,6 +1129,87 @@ export function resetPriceAlertState(symbol: string): void {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Watchlist visits — the "since your last visit" baseline                     */
+/* -------------------------------------------------------------------------- */
+
+/** How long an absence has to be before a return counts as a NEW visit. */
+export const VISIT_SESSION_GAP_MS = 45 * 60 * 1000;
+
+/**
+ * Advance the watchlist visit clock and, when the user has genuinely been away,
+ * rotate the baseline.
+ *
+ * Refreshing the page five times in a row must not destroy the diff — that is
+ * why the baseline does not simply move on every read. Instead the reads within
+ * {@link VISIT_SESSION_GAP_MS} of each other are one *session*; the first read
+ * after a longer absence promotes the previous session's closing state
+ * (`current` snapshots, `last_seen_at`) to the new baseline. So "since your
+ * last visit" always means "since you last stopped looking".
+ */
+export function touchWatchlistVisit(
+  now: number = Date.now(),
+  sessionGapMs: number = VISIT_SESSION_GAP_MS,
+): { baselineAt: number; firstVisit: boolean; rotated: boolean } {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT baseline_at, last_seen_at FROM watchlist_visit WHERE id = 1")
+    .get() as { baseline_at: number; last_seen_at: number } | undefined;
+
+  if (!row) {
+    db.prepare("INSERT INTO watchlist_visit (id, baseline_at, last_seen_at) VALUES (1, ?, ?)").run(now, now);
+    return { baselineAt: now, firstVisit: true, rotated: false };
+  }
+
+  if (now - row.last_seen_at > sessionGapMs) {
+    // The previous session's closing prices become the thing we diff against.
+    db.exec("DELETE FROM watchlist_price_snapshot WHERE kind = 'baseline'");
+    db.exec(
+      `INSERT INTO watchlist_price_snapshot (kind, symbol, price, observed_at)
+       SELECT 'baseline', symbol, price, observed_at FROM watchlist_price_snapshot WHERE kind = 'current'`,
+    );
+    db.prepare("UPDATE watchlist_visit SET baseline_at = ?, last_seen_at = ? WHERE id = 1").run(row.last_seen_at, now);
+    return { baselineAt: row.last_seen_at, firstVisit: false, rotated: true };
+  }
+
+  db.prepare("UPDATE watchlist_visit SET last_seen_at = ? WHERE id = 1").run(now);
+  return { baselineAt: row.baseline_at, firstVisit: false, rotated: false };
+}
+
+/** Refresh the `current` snapshot set with the prices this read observed. */
+export function putWatchlistCurrentPrices(
+  entries: Array<{ symbol: string; price: number }>,
+  now: number = Date.now(),
+): void {
+  const stmt = getDb().prepare(
+    `INSERT INTO watchlist_price_snapshot (kind, symbol, price, observed_at) VALUES ('current', ?, ?, ?)
+     ON CONFLICT(kind, symbol) DO UPDATE SET price = excluded.price, observed_at = excluded.observed_at`,
+  );
+  for (const e of entries) {
+    if (!Number.isFinite(e.price) || e.price <= 0) continue;
+    stmt.run(e.symbol.toUpperCase(), e.price, now);
+  }
+}
+
+/** Baseline prices (the previous session's close of watching) for a symbol set. */
+export function getWatchlistBaselinePrices(symbols: string[]): Map<string, { price: number; at: number }> {
+  const map = new Map<string, { price: number; at: number }>();
+  if (symbols.length === 0) return map;
+  const placeholders = symbols.map(() => "?").join(",");
+  const rows = getDb()
+    .prepare(
+      `SELECT symbol, price, observed_at FROM watchlist_price_snapshot
+       WHERE kind = 'baseline' AND symbol IN (${placeholders})`,
+    )
+    .all(...symbols.map((s) => s.toUpperCase())) as unknown as Array<{
+    symbol: string;
+    price: number;
+    observed_at: number;
+  }>;
+  for (const r of rows) map.set(r.symbol, { price: r.price, at: r.observed_at });
+  return map;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Idea lifecycle — stage reads/writes (§4.5)                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -1258,6 +1392,10 @@ export function updateWatchlistItem(
     targetDirection?: TargetDirection | null;
     alertPctDrop?: number | null;
     notes?: string | null;
+    buyTrigger?: string | null;
+    sellTrigger?: string | null;
+    conviction?: Conviction | null;
+    horizon?: ThesisHorizon | null;
     /** Optional rationale, stored against the target revision this write creates. */
     targetNote?: string | null;
   },
@@ -1334,6 +1472,39 @@ export function updateWatchlistItem(
     db.prepare("UPDATE watchlist SET notes = ? WHERE symbol = ?")
       .run(patch.notes ?? null, symbol.toUpperCase());
   }
+  if ("buyTrigger" in patch) {
+    db.prepare("UPDATE watchlist SET buy_trigger = ? WHERE symbol = ?")
+      .run(patch.buyTrigger ?? null, symbol.toUpperCase());
+  }
+  if ("sellTrigger" in patch) {
+    db.prepare("UPDATE watchlist SET sell_trigger = ? WHERE symbol = ?")
+      .run(patch.sellTrigger ?? null, symbol.toUpperCase());
+  }
+  if ("conviction" in patch) {
+    db.prepare("UPDATE watchlist SET conviction = ? WHERE symbol = ?")
+      .run(isConviction(patch.conviction) ? patch.conviction : null, symbol.toUpperCase());
+  }
+  if ("horizon" in patch) {
+    db.prepare("UPDATE watchlist SET horizon = ? WHERE symbol = ?")
+      .run(isHorizon(patch.horizon) ? patch.horizon : null, symbol.toUpperCase());
+  }
+  // Editing any thesis field IS a review — the user just re-read the idea. A
+  // target-only or alert-only tweak deliberately is not: adjusting a level says
+  // nothing about whether the reasoning behind it was revisited.
+  if ("notes" in patch || "buyTrigger" in patch || "sellTrigger" in patch || "conviction" in patch || "horizon" in patch) {
+    markWatchlistReviewed(symbol);
+  }
+}
+
+/**
+ * Record that the user has re-read this name's thesis, without changing it.
+ * Drives the health check's "not reviewed in 90 days" count and the window
+ * thesis drift is measured over.
+ */
+export function markWatchlistReviewed(symbol: string, now: number = Date.now()): void {
+  getDb()
+    .prepare("UPDATE watchlist SET last_reviewed_at = ? WHERE symbol = ?")
+    .run(now, symbol.toUpperCase());
 }
 
 /**
@@ -1354,6 +1525,7 @@ export function removeFromWatchlist(symbol: string): void {
   for (const sql of [
     "DELETE FROM watchlist_target_history WHERE symbol = ?",
     "DELETE FROM price_alert_state WHERE symbol = ?",
+    "DELETE FROM watchlist_price_snapshot WHERE symbol = ?",
   ]) {
     // Guarded individually: on a database that predates either table, the
     // primary deletion above must still succeed.
@@ -1907,6 +2079,110 @@ export function executeTradeBatch(lots: LotWrite[], manualAssetIdsToDelete: stri
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* Screenshot Import — atomic reconciliation writes                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One write in a confirmed screenshot import (lib/portfolio/import/):
+ *
+ *   - "lot":        append ONE balancing/opening transaction — additive, the
+ *                   symbol's recorded history (the user's real DCA lots) is
+ *                   never touched. `meta` carries the import's provenance
+ *                   (source, importedAt, confidence, synthetic flag).
+ *   - "rebaseline": replace the symbol's ledger with one opening lot — the
+ *                   destructive path, only reachable after the user confirmed
+ *                   a row explicitly labelled as such.
+ *   - "remove":     delete the position — only reachable when the user
+ *                   asserted the screenshots show the complete portfolio AND
+ *                   checked the specific row.
+ */
+export type PortfolioImportWrite =
+  | {
+      type: "lot";
+      symbol: string;
+      name: string;
+      shares: number;
+      price: number;
+      kind: "buy" | "sell";
+      assetClass: string;
+      currency?: string;
+      unit?: string;
+      meta?: Record<string, unknown> | null;
+    }
+  | {
+      type: "rebaseline";
+      symbol: string;
+      name: string;
+      quantity: number;
+      avgCost: number;
+      assetClass: string;
+      currency?: string;
+      unit?: string;
+      meta?: Record<string, unknown> | null;
+    }
+  | { type: "remove"; symbol: string };
+
+/**
+ * Apply a confirmed screenshot import as ONE all-or-nothing transaction —
+ * same BEGIN/COMMIT/ROLLBACK shape as {@link executeTradeBatch}. A reconcile
+ * that half-applies (some positions updated, others not) would leave the
+ * portfolio describing a book that never existed, which for this feature is
+ * worse than failing outright.
+ */
+export function applyPortfolioImport(writes: PortfolioImportWrite[], portfolioId = 1): void {
+  if (writes.length === 0) return;
+  const database = getDb();
+  const now = new Date().toISOString();
+  const today = localTradeDate();
+  const insertStmt = database.prepare(
+    `INSERT INTO portfolio_lot (symbol, name, shares, price, kind, fees, trade_date, created_at, asset_class, currency, unit, meta, portfolio_id)
+     VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const deleteStmt = database.prepare(
+    "DELETE FROM portfolio_lot WHERE symbol = ? AND portfolio_id = ?",
+  );
+
+  database.exec("BEGIN");
+  try {
+    for (const w of writes) {
+      if (w.type === "remove") {
+        deleteStmt.run(w.symbol.toUpperCase(), portfolioId);
+        continue;
+      }
+      if (w.type === "rebaseline") deleteStmt.run(w.symbol.toUpperCase(), portfolioId);
+      const isLot = w.type === "lot";
+      insertStmt.run(
+        w.symbol.toUpperCase(),
+        w.name,
+        isLot ? w.shares : w.quantity,
+        isLot ? w.price : w.avgCost,
+        isLot ? w.kind : "buy",
+        today,
+        now,
+        w.assetClass,
+        (w.currency ?? "USD").toUpperCase(),
+        w.unit ?? "shares",
+        w.meta ? JSON.stringify(w.meta) : null,
+        portfolioId,
+      );
+    }
+    database.exec("COMMIT");
+  } catch (err) {
+    database.exec("ROLLBACK");
+    throw err;
+  }
+
+  // Reconcile pipeline stages AFTER the batch commits — buys mark symbols
+  // owned, and the wholesale pass covers removals/rebaselines (same policy as
+  // executeTradeBatch / upsertUniversalPosition).
+  for (const w of writes) {
+    if (w.type === "lot") reconcileStageForLedgerWrite(w.symbol, w.name, w.kind, w.assetClass);
+    else if (w.type === "rebaseline") reconcileStageForLedgerWrite(w.symbol, w.name, "buy", w.assetClass);
+  }
+  reconcileOwnedStages(portfolioId);
+}
+
 export interface PortfolioSnapshotSummary {
   totalValue: number;
   totalCost: number;
@@ -2266,6 +2542,23 @@ export function listNotifications(limit = 50): Notification[] {
   return rows.map(rowToNotification);
 }
 
+/**
+ * Alerts delivered for a set of symbols since a moment in time — what the
+ * watchlist pulse means by "fired since your last visit". Newest first.
+ */
+export function listNotificationsSince(sinceIso: string, symbols: string[]): Notification[] {
+  if (symbols.length === 0) return [];
+  const placeholders = symbols.map(() => "?").join(",");
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM notification
+       WHERE created_at >= ? AND symbol IN (${placeholders})
+       ORDER BY created_at DESC, id DESC`,
+    )
+    .all(sinceIso, ...symbols.map((s) => s.toUpperCase())) as unknown as NotificationRow[];
+  return rows.map(rowToNotification);
+}
+
 export function getNotificationById(id: number): Notification | null {
   const row = getDb().prepare("SELECT * FROM notification WHERE id = ?").get(id) as NotificationRow | undefined;
   return row ? rowToNotification(row) : null;
@@ -2594,6 +2887,18 @@ export function getScannerCache(cacheKey: string, ttlMs = SCANNER_CACHE_TTL): st
   return row?.result ?? null;
 }
 
+/**
+ * When a cache entry was last written, regardless of TTL. Lets a surface state
+ * data freshness honestly ("developments checked 2h ago") without re-running
+ * the work the entry represents.
+ */
+export function getScannerCacheAt(cacheKey: string): number | null {
+  const row = getDb()
+    .prepare("SELECT created_at FROM scanner_cache WHERE cache_key = ?")
+    .get(cacheKey) as { created_at: number } | undefined;
+  return row?.created_at ?? null;
+}
+
 export function putScannerCache(cacheKey: string, result: string, ttlMs = SCANNER_CACHE_TTL): void {
   getDb()
     .prepare(
@@ -2668,6 +2973,34 @@ export function putKgSnapshot(scopeKey: string, graph: string, generatedAt: stri
        ON CONFLICT(scope_key) DO UPDATE SET graph = excluded.graph, generated_at = excluded.generated_at`,
     )
     .run(scopeKey, graph, generatedAt);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Portfolio Intelligence snapshot — the previous run, kept indefinitely so a */
+/* fresh run can say what changed since it. Singleton row (Main portfolio     */
+/* only), no global prune — see scanner_snapshot for why scanner_cache is the */
+/* wrong home for anything long-lived.                                        */
+/* -------------------------------------------------------------------------- */
+
+interface PortfolioIntelligenceSnapshotRow {
+  data: string;
+  generated_at: string;
+}
+
+export function getPortfolioIntelligenceSnapshot(): { data: string; generatedAt: string } | null {
+  const row = getDb()
+    .prepare("SELECT data, generated_at FROM portfolio_intelligence_snapshot WHERE id = 1")
+    .get() as unknown as PortfolioIntelligenceSnapshotRow | undefined;
+  return row ? { data: row.data, generatedAt: row.generated_at } : null;
+}
+
+export function putPortfolioIntelligenceSnapshot(data: string, generatedAt: string): void {
+  getDb()
+    .prepare(
+      `INSERT INTO portfolio_intelligence_snapshot (id, data, generated_at) VALUES (1, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET data = excluded.data, generated_at = excluded.generated_at`,
+    )
+    .run(data, generatedAt);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -3064,19 +3397,6 @@ export function listActivity(limit = 6): ActivityRow[] {
     .all(limit) as unknown as ActivityRow[];
 }
 
-/**
- * When the user last visited one specific thing — the materiality lens's
- * "changed since your last visit" baseline. Read at page load, BEFORE the
- * current visit's debounced recordActivity() lands, so it still reports the
- * previous visit. Null = never visited (first visit skips the check).
- */
-export function getActivityAt(kind: string, ref: string): string | null {
-  const row = getDb()
-    .prepare("SELECT at FROM activity WHERE kind = ? AND ref = ?")
-    .get(kind, ref) as { at: string } | undefined;
-  return row?.at ?? null;
-}
-
 /* -------------------------------------------------------------------------- */
 /* Attention Queue dismissals (§13)                                            */
 /* -------------------------------------------------------------------------- */
@@ -3138,27 +3458,6 @@ export function putHomeFingerprint(slot: HomeFingerprintSlot, data: string, take
        ON CONFLICT(slot) DO UPDATE SET data = excluded.data, taken_at = excluded.taken_at`,
     )
     .run(slot, data, takenAt);
-}
-
-/* -------------------------------------------------------------------------- */
-/* Per-page materiality baselines (lib/materiality.ts)                         */
-/* -------------------------------------------------------------------------- */
-
-/** Same slot semantics as home_fingerprint; the blob is opaque JSON owned by the page's route. */
-export function getPageFingerprint(page: string, slot: HomeFingerprintSlot): { data: string; takenAt: number } | null {
-  const row = getDb()
-    .prepare("SELECT data, taken_at FROM page_fingerprint WHERE page = ? AND slot = ?")
-    .get(page, slot) as { data: string; taken_at: number } | undefined;
-  return row ? { data: row.data, takenAt: row.taken_at } : null;
-}
-
-export function putPageFingerprint(page: string, slot: HomeFingerprintSlot, data: string, takenAt: number): void {
-  getDb()
-    .prepare(
-      `INSERT INTO page_fingerprint (page, slot, data, taken_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT(page, slot) DO UPDATE SET data = excluded.data, taken_at = excluded.taken_at`,
-    )
-    .run(page, slot, data, takenAt);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -3838,4 +4137,57 @@ export function deleteAuthSession(tokenHash: string): void {
 export function deleteOtherAuthSessions(userId: number, keepTokenHash: string): void {
   getDb().prepare("DELETE FROM auth_session WHERE user_id = ? AND token_hash != ?")
     .run(userId, keepTokenHash);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Contextual intelligence events — suppression ledger for the intel rail     */
+/* -------------------------------------------------------------------------- */
+//
+// A card fingerprint is stable across runs (lib/intel/candidates.ts), so one
+// row here silences one specific observation. Different statuses age out at
+// different speeds: a dismissal is a clear "stop showing me this" (14 days),
+// an open means the lead was consumed (3 days), and a plain "shown" only
+// suppresses the immediate replay when the user bounces between tabs (30 min).
+
+export type IntelEventStatus = "shown" | "dismissed" | "opened";
+
+const INTEL_STATUS_RANK: Record<IntelEventStatus, number> = { shown: 0, opened: 1, dismissed: 2 };
+const INTEL_STATUS_TTL_MS: Record<IntelEventStatus, number> = {
+  shown: 30 * 60 * 1000,
+  opened: 3 * 24 * 60 * 60 * 1000,
+  dismissed: 14 * 24 * 60 * 60 * 1000,
+};
+
+interface IntelEventRow {
+  fingerprint: string;
+  status: string;
+  created_at: number;
+}
+
+export function recordIntelEvent(fingerprint: string, status: IntelEventStatus, symbol?: string | null): void {
+  const db = getDb();
+  const existing = db
+    .prepare("SELECT status FROM intel_event WHERE fingerprint = ?")
+    .get(fingerprint) as unknown as { status: IntelEventStatus } | undefined;
+  // Never downgrade: re-showing a card must not shorten an earlier dismissal.
+  if (existing && INTEL_STATUS_RANK[existing.status] > INTEL_STATUS_RANK[status]) return;
+  db.prepare(
+    `INSERT INTO intel_event (fingerprint, symbol, status, created_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(fingerprint) DO UPDATE SET status = excluded.status, created_at = excluded.created_at, symbol = excluded.symbol`,
+  ).run(fingerprint, symbol ?? null, status, Date.now());
+  // Sweep on write: rows past the longest TTL are dead weight.
+  db.prepare("DELETE FROM intel_event WHERE created_at < ?").run(Date.now() - INTEL_STATUS_TTL_MS.dismissed);
+}
+
+/** Fingerprints that must not be served right now, per each status's own TTL. */
+export function listSuppressedIntelIds(now = Date.now()): Set<string> {
+  const rows = getDb()
+    .prepare("SELECT fingerprint, status, created_at FROM intel_event")
+    .all() as unknown as IntelEventRow[];
+  const suppressed = new Set<string>();
+  for (const row of rows) {
+    const ttl = INTEL_STATUS_TTL_MS[row.status as IntelEventStatus];
+    if (ttl != null && now - row.created_at < ttl) suppressed.add(row.fingerprint);
+  }
+  return suppressed;
 }

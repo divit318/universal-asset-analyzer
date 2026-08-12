@@ -75,7 +75,7 @@ export function WatchlistDigestPanel({ digest, loading, error, onGenerate }: Pro
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface px-5 py-3.5">
         <div className="min-w-0">
           <p className="text-label font-semibold uppercase tracking-widest text-muted/60">
-            AI Watchlist Intelligence
+            Watchlist Brief
           </p>
           <p className="mt-0.5 text-xs text-muted">{error}</p>
         </div>
@@ -95,11 +95,12 @@ export function WatchlistDigestPanel({ digest, loading, error, onGenerate }: Pro
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface px-5 py-3.5">
         <div className="min-w-0">
           <p className="text-label font-semibold uppercase tracking-widest text-muted/60">
-            AI Watchlist Intelligence
+            Watchlist Brief
           </p>
           <p className="mt-0.5 text-xs text-muted">
-            Reads every name on this list and returns picks, concerns and action items. Sends
-            the list&apos;s computed metrics to the AI, so it starts only when you ask for it.
+            Reads every name with your targets, theses and recent developments, and returns
+            what changed, picks, concerns and what to research next. Sends the list&apos;s
+            computed metrics to the AI, so it starts only when you ask for it.
           </p>
         </div>
         <button
@@ -117,7 +118,7 @@ export function WatchlistDigestPanel({ digest, loading, error, onGenerate }: Pro
     <div className="rounded-xl border border-brand/20 bg-brand/5 p-5">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <p className="text-label font-semibold uppercase tracking-widest text-brand/70">
-          AI Watchlist Intelligence
+          Watchlist Brief
         </p>
         <div className="flex items-center gap-2">
           <button
@@ -133,16 +134,31 @@ export function WatchlistDigestPanel({ digest, loading, error, onGenerate }: Pro
         </div>
       </div>
       <p className="mb-4 text-sm leading-6 text-foreground/90">{digest.summary}</p>
+      {/* "What changed" leads: it is the question the panel exists to answer. */}
+      {digest.topChanges.length > 0 && (
+        <div className="mb-4">
+          <Bullets label="What changed" tone="brand" items={digest.topChanges} />
+        </div>
+      )}
       {(digest.topPicks.length > 0 || digest.topConcerns.length > 0) && (
         <div className="mb-4 grid gap-3 sm:grid-cols-2">
           <Bullets label="Top picks" tone="positive" items={digest.topPicks} />
           <Bullets label="Concerns" tone="negative" items={digest.topConcerns} />
         </div>
       )}
-      {digest.actionItems.length > 0 && (
-        <div className="border-t border-border pt-3">
+      {(digest.actionItems.length > 0 || digest.researchNext.length > 0) && (
+        <div className="grid gap-3 border-t border-border pt-3 sm:grid-cols-2">
           <Bullets label="Action items" tone="brand" items={digest.actionItems} />
+          <Bullets label="Research next" tone="brand" items={digest.researchNext} />
         </div>
+      )}
+      {digest.portfolioImplication && (
+        <p className="mt-3 border-t border-border pt-3 text-xs leading-5 text-foreground/80">
+          <span className="mr-1.5 text-label font-semibold uppercase tracking-widest text-muted">
+            Portfolio
+          </span>
+          {digest.portfolioImplication}
+        </p>
       )}
     </div>
   );

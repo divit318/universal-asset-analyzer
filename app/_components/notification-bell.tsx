@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bell } from "lucide-react";
+import { Bell, Sparkles } from "lucide-react";
 import type { Notification } from "@/lib/types";
 import { relativeAge } from "@/lib/provenance";
+import { askAi } from "@/app/_components/ask-ai";
 import { useToast } from "@/app/_components/toast";
 
 const POLL_MS = 90_000; // evaluate alerts every 90s while the app is open
@@ -204,6 +205,24 @@ export function NotificationBell() {
                       <span className="pl-3.5 text-xs leading-5 text-muted">{n.body}</span>
                       <span className="pl-3.5 text-micro text-faint">{ago(n.createdAt)}</span>
                     </button>
+                    {/* The natural next question for a fired alert is "so
+                        what?" — hand it to the Research Copilot with the
+                        alert's own words, so the user never restates it.
+                        Symbol-bearing alerts only: a portfolio-wide alert has
+                        no single instrument to ground the answer in. */}
+                    {n.symbol && (
+                      <button
+                        onClick={() => {
+                          if (!n.read) void markOne(n.id);
+                          setOpen(false);
+                          askAi(router, { source: "notification", symbol: n.symbol!, title: n.title, body: n.body });
+                        }}
+                        className="flex items-center gap-1.5 px-3 pb-2 pl-6 text-micro font-medium text-brand outline-none transition-opacity hover:opacity-80 focus-visible:underline"
+                      >
+                        <Sparkles className="h-3 w-3" strokeWidth={2} aria-hidden />
+                        Ask AI what this means
+                      </button>
+                    )}
                     {resolveError?.id === n.id && (
                       <div className="flex items-center justify-between gap-2 bg-negative/8 px-3 py-1.5 text-micro text-negative">
                         <span>{resolveError.message}</span>

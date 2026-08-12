@@ -33,30 +33,53 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { downloadBlob } from "@/lib/download";
-import type { IdeaStage, Quote, TargetDirection, WatchlistGroup, WatchlistItem } from "@/lib/types";
+import type { Conviction, IdeaStage, Quote, TargetDirection, WatchlistGroup, WatchlistItem } from "@/lib/types";
 import type { WatchlistDigest } from "@/lib/ai-watchlist";
 import { AI_RECOVERY_HINT } from "@/lib/ai/availability";
 import type { PortfolioFitAnalysis } from "@/lib/ios/types";
 import type { FitEnrichment } from "@/lib/watchlist-fit";
 import { formatCurrency, formatDate, formatPercent, toneClass } from "@/lib/format";
 import {
-  formatAge,
+  distanceToTargetPercent,
   isTargetReached,
   isUsablePrice,
   percentFrom52WeekHigh,
   resolveTargetDirection,
   upsidePercent,
 } from "@/lib/watchlist-metrics";
+import {
+  computeAttention,
+  computeWatchlistHealth,
+  daysUntil,
+  isStaleReview,
+  summarizeSinceVisit,
+  TARGET_NEAR_PCT,
+  STALE_REVIEW_DAYS,
+  type AttentionResult,
+  type SymbolPulse,
+  type WatchlistPulse,
+} from "@/lib/watchlist-pulse";
+import {
+  DEFAULT_WATCHLIST_SETTINGS,
+  FILTER_EMPTY,
+  FILTER_LABEL,
+  sanitizeWatchlistSettings,
+  type WatchlistFilter,
+  type WatchlistViewSettings,
+} from "@/lib/watchlist-settings";
 import { formatAsOf } from "@/lib/live-quotes";
 import { detectMarket, type MarketRegion } from "@/lib/market";
-import { IDEA_STAGES, STAGE_LABEL } from "@/lib/idea-stage";
+import { IDEA_STAGES, STAGE_LABEL, effectiveStage } from "@/lib/idea-stage";
 import { ConfirmDialog } from "@/app/_components/dialog";
 import { useToast } from "@/app/_components/toast";
 import { useIOSSafe } from "@/lib/ios-context";
 import { WatchlistAlerts } from "./_components/watchlist-alerts";
+import { ResultsRadar } from "./_components/results-radar";
 import { WatchlistDigestPanel } from "./_components/digest-panel";
-import { TargetModal, type TargetPatch } from "./_components/target-modal";
-import { NotesModal } from "./_components/notes-modal";
+import { TargetModal, type TargetPatch } from "@/app/_components/target-modal";
+import { ThesisModal, type ThesisPatch } from "./_components/thesis-modal";
+import { PulseBrief, type PulseBriefRow } from "./_components/pulse-brief";
+import { WatchlistSettings } from "./_components/watchlist-settings";
 import { WatchlistRowDetail, type FiringAlert } from "./_components/row-detail";
 import { StageBadge } from "./_components/stage-badge";
 import { ListSwitcher } from "./_components/list-switcher";
@@ -110,6 +133,14 @@ interface Row {
   vsBenchmark: number | null;
   /** Price direction on the most recent live refresh, for the tick flash. */
   tick: "up" | "down" | undefined;
+  /** Server-side pulse context (developments, fired alerts, earnings, drift). */
+  pulse: SymbolPulse | null;
+  /** The attention verdict — live price signals fused with the pulse. */
+  attention: AttentionResult;
+  /** Days to the next earnings date, when the calendar knows one. */
+  earningsIn: number | null;
+  /** Non-negative % still to travel to the target; 0 once reached; null without one. */
+  targetDistance: number | null;
 }
 
 /** A watchlist item as the API returns it — with the revision count joined on. */
@@ -147,18 +178,18 @@ function buildAlerts(
 /* View state                                                                  */
 /* -------------------------------------------------------------------------- */
 
-const QUICK_FILTERS = ["all", "alerts", "owned", "no-target", "thesis"] as const;
-type QuickFilter = (typeof QUICK_FILTERS)[number];
+/* Filter vocabulary (labels, descriptions, empty phrases, defaults) lives in
+   lib/watchlist-settings.ts, shared with the Customize popover. */
 
-const QUICK_FILTER_LABEL: Record<QuickFilter, string> = {
-  all: "All",
-  alerts: "Alerts firing",
-  owned: "Owned",
-  "no-target": "No target set",
-  thesis: "Has thesis",
+const CONVICTION_WORD: Record<Conviction, string> = { low: "Low", medium: "Medium", high: "High" };
+const CONVICTION_DOT: Record<Conviction, string> = {
+  low: "bg-muted/50",
+  medium: "bg-warning/70",
+  high: "bg-positive/80",
 };
 
 const SORT_KEYS = [
+  "attention",
   "symbol",
   "price",
   "change",
@@ -166,20 +197,20 @@ const SORT_KEYS = [
   "target",
   "upside",
   "consensus",
-  "consensusUpside",
   "fromHigh",
   "fit",
   "stage",
   "sector",
-  "added",
+  "nextEvent",
   "notes",
 ] as const;
 
 const isSortKey = (v: unknown): v is string => typeof v === "string" && (SORT_KEYS as readonly string[]).includes(v);
 const isSortDir = (v: unknown): v is SortDir => v === "asc" || v === "desc";
 const isDensity = (v: unknown): v is Density => v === "compact" || v === "comfortable";
-const isQuickFilter = (v: unknown): v is QuickFilter =>
-  typeof v === "string" && (QUICK_FILTERS as readonly string[]).includes(v);
+/* Deliberately loose: sanitizeWatchlistSettings normalizes shape and values, so
+   the storage guard only has to reject non-objects. */
+const isSettingsLike = (v: unknown): v is WatchlistViewSettings => typeof v === "object" && v !== null;
 
 /** Rows beyond this get the grid its own scrollport, which is what makes the
  *  header genuinely sticky. Below it, the page scroll is the nicer behaviour. */
@@ -262,7 +293,7 @@ function WatchlistPageInner() {
   const [error, setError] = useState<string | null>(null);
   const [exportErr, setExportErr] = useState<string | null>(null);
   const [editingTarget, setEditingTarget] = useState<WatchlistItem | null>(null);
-  const [editingNotes, setEditingNotes] = useState<WatchlistItem | null>(null);
+  const [editingThesis, setEditingThesis] = useState<WatchlistItem | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<WatchlistItem | null>(null);
   const [buyingItem, setBuyingItem] = useState<WatchlistItem | null>(null);
   const [ownedSymbols, setOwnedSymbols] = useState<Set<string>>(new Set());
@@ -271,6 +302,12 @@ function WatchlistPageInner() {
   const [digestLoading, setDigestLoading] = useState(false);
   const [digestError, setDigestError] = useState<string | null>(null);
   const digestInFlight = useRef(false);
+  /* The pulse: server-side change context ("since your last visit"). */
+  const [pulse, setPulse] = useState<WatchlistPulse | null>(null);
+  const [pulseLoading, setPulseLoading] = useState(true);
+  const [pulseError, setPulseError] = useState<string | null>(null);
+  /* Table expansion, controlled — the attention queue opens rows from outside. */
+  const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   // Full research inputs (composite scores, sector, beta, geography) per symbol,
   // fetched on demand so every watchlist stock — including newly-added ones —
@@ -283,11 +320,23 @@ function WatchlistPageInner() {
   const [sortKey, setSortKey] = usePersistedState<string>("uaa.watchlist.sortKey", "", isSortKey);
   const [sortDir, setSortDir] = usePersistedState<SortDir>("uaa.watchlist.sortDir", "desc", isSortDir);
   const [density, setDensity] = usePersistedState<Density>("uaa.watchlist.density", "compact", isDensity);
-  const [quickFilter, setQuickFilter] = usePersistedState<QuickFilter>(
-    "uaa.watchlist.quickFilter",
-    "all",
-    isQuickFilter,
+
+  /* View preferences — chips, default filter, columns, default sort, attention
+     thresholds. Persisted as-is; sanitized on every read so a stale or
+     hand-edited entry can never put the page into a state it has no UI for. */
+  const [storedSettings, setStoredSettings] = usePersistedState<WatchlistViewSettings>(
+    "uaa.watchlist.settings",
+    DEFAULT_WATCHLIST_SETTINGS,
+    isSettingsLike,
   );
+  const settings = useMemo(() => sanitizeWatchlistSettings(storedSettings), [storedSettings]);
+
+  /* The active quick filter is SESSION state: the page opens on the configured
+     default ("Open on" in Customize) rather than wherever the last visit
+     happened to end, which makes every arrival predictable. */
+  const [chosenFilter, setChosenFilter] = useState<WatchlistFilter | null>(null);
+  const quickFilter = chosenFilter ?? settings.defaultFilter;
+  const setQuickFilter = setChosenFilter;
 
   useEffect(() => {
     document.title = "Watchlist · UAA";
@@ -346,7 +395,7 @@ function WatchlistPageInner() {
       setItems(json.items as WatchlistRow[]);
       void loadOwned();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      setError(err instanceof Error ? err.message : "The watchlist failed to load — reload to retry.");
     } finally {
       setLoading(false);
     }
@@ -355,6 +404,44 @@ function WatchlistPageInner() {
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [load]);
+
+  /**
+   * The pulse: one request for everything the triage layer knows that a live
+   * quote does not. Scoped to the active list; refires on a list switch (the
+   * visit clock tolerates that — reads inside one session share a baseline).
+   * When the server reports background news checks in flight, ONE follow-up
+   * read picks up their results; the guard stops that from becoming a loop.
+   */
+  const pulseRefetched = useRef(false);
+  const loadPulse = useCallback(async () => {
+    try {
+      const scope = activeGroupId != null ? `?group=${activeGroupId}` : "";
+      const res = await fetch(`/api/watchlist/pulse${scope}`);
+      const json = (await res.json().catch(() => ({}))) as WatchlistPulse & { error?: string };
+      if (!res.ok || json.error) throw new Error(json.error ?? `The server returned ${res.status}.`);
+      setPulse(json);
+      setPulseError(null);
+    } catch (err) {
+      setPulseError(err instanceof Error ? err.message : "unreachable");
+    } finally {
+      setPulseLoading(false);
+    }
+  }, [activeGroupId]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- same convention as the `load` effect above: fetch-then-set, never synchronous
+    if (!loading && activeGroupId != null) void loadPulse();
+  }, [loadPulse, loading, activeGroupId]);
+
+  /* One follow-up read picks up the results of the server's background news
+     checks; the ref stops that from becoming a polling loop, and the cleanup
+     cancels it when the page unmounts mid-wait. */
+  useEffect(() => {
+    if (!pulse || pulse.checking.length === 0 || pulseRefetched.current) return;
+    pulseRefetched.current = true;
+    const t = setTimeout(() => { void loadPulse(); }, 30_000);
+    return () => clearTimeout(t);
+  }, [pulse, loadPulse]);
 
   /* Focus the filter with "/" and clear it with Escape — the two keystrokes a
      terminal user reaches for without thinking on a list this long. */
@@ -524,7 +611,19 @@ function WatchlistPageInner() {
   const patchItem = useCallback(
     async (
       symbol: string,
-      patch: Partial<Pick<WatchlistItem, "targetPrice" | "targetDirection" | "alertPctDrop" | "notes">> & {
+      patch: Partial<
+        Pick<
+          WatchlistItem,
+          | "targetPrice"
+          | "targetDirection"
+          | "alertPctDrop"
+          | "notes"
+          | "buyTrigger"
+          | "sellTrigger"
+          | "conviction"
+          | "horizon"
+        >
+      > & {
         targetNote?: string | null;
       },
     ) => {
@@ -544,12 +643,18 @@ function WatchlistPageInner() {
       const itemPatch = { ...patch };
       delete itemPatch.targetNote;
       const touchedTarget = "targetPrice" in patch || "targetDirection" in patch;
+      // The server stamps a review whenever a thesis field is written; mirror
+      // that locally so the "Reviewed just now" line is honest without a reload.
+      const touchedThesis =
+        "notes" in patch || "buyTrigger" in patch || "sellTrigger" in patch ||
+        "conviction" in patch || "horizon" in patch;
       setItems((prev) =>
         prev.map((i) =>
           i.symbol === symbol
             ? {
                 ...i,
                 ...itemPatch,
+                lastReviewedAt: touchedThesis ? Date.now() : i.lastReviewedAt,
                 // A target change appends a revision; keep the count in step so
                 // the history affordance appears without a full reload.
                 targetRevisionCount: touchedTarget
@@ -561,6 +666,25 @@ function WatchlistPageInner() {
       );
     },
     [],
+  );
+
+  /** "I re-read this and it stands" — records a review without editing anything. */
+  const markReviewed = useCallback(
+    async (symbol: string) => {
+      try {
+        const res = await fetch("/api/watchlist", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ symbol, reviewed: true }),
+        });
+        if (!res.ok) throw new Error();
+        setItems((prev) => prev.map((i) => (i.symbol === symbol ? { ...i, lastReviewedAt: Date.now() } : i)));
+        toast(`${symbol} marked reviewed`);
+      } catch {
+        toast(`Could not mark ${symbol} reviewed`, "error");
+      }
+    },
+    [toast],
   );
 
   /* ---------------------------------------------------------------------- */
@@ -797,6 +921,7 @@ function WatchlistPageInner() {
           low: enr?.analystTargetLow ?? null,
           opinions: enr?.analystOpinions ?? null,
         };
+        const symbolPulse = pulse?.symbols[item.symbol.toUpperCase()] ?? null;
         return {
           item,
           quote,
@@ -819,9 +944,26 @@ function WatchlistPageInner() {
               ? changePercent - benchmarkChange
               : null,
           tick: moved[item.symbol],
+          pulse: symbolPulse,
+          /* Live price signals fused with the server pulse, per render — the
+             same pure function the tests pin, so a crossed target registers on
+             the next quote tick without waiting for a server round-trip. */
+          attention: computeAttention({
+            price,
+            changePercent,
+            targetPrice: item.targetPrice,
+            direction,
+            pulse: symbolPulse,
+            thresholds: {
+              bigMovePct: settings.bigMovePct,
+              earningsSoonDays: settings.earningsHorizonDays,
+            },
+          }),
+          earningsIn: daysUntil(symbolPulse?.earningsDate ?? null),
+          targetDistance: distanceToTargetPercent(price, item.targetPrice, direction),
         };
       }),
-    [items, quotes, fitScores, fitData, ownedSymbols, benchmarkChange, benchmarkSymbol, moved],
+    [items, quotes, fitScores, fitData, ownedSymbols, benchmarkChange, benchmarkSymbol, moved, pulse, settings],
   );
 
   /* Search: case-insensitive, whitespace/comma tokenised, so "nvda amd" and a
@@ -834,24 +976,96 @@ function WatchlistPageInner() {
       .filter(Boolean);
     return rows.filter((r) => {
       switch (quickFilter) {
+        case "attention": if (r.attention.level === "quiet") return false; break;
         case "alerts": if (r.alerts.length === 0) return false; break;
         case "owned": if (!r.owned) return false; break;
+        case "not-owned": if (r.owned) return false; break;
+        case "near-target":
+          if (r.targetDistance == null || r.targetDistance > TARGET_NEAR_PCT) return false;
+          break;
+        case "earnings":
+          if (r.earningsIn == null || r.earningsIn < 0 || r.earningsIn > settings.earningsHorizonDays) return false;
+          break;
+        case "high-conviction": if (r.item.conviction !== "high") return false; break;
+        case "no-thesis": if (r.item.notes || r.item.buyTrigger || r.item.sellTrigger) return false; break;
         case "no-target": if (r.item.targetPrice != null) return false; break;
-        case "thesis": if (!r.item.notes) return false; break;
+        case "stale":
+          // The same judgment computeWatchlistHealth counts, per row.
+          if (
+            !isStaleReview({
+              notes: r.item.notes || r.item.buyTrigger || r.item.sellTrigger || null,
+              targetPrice: r.item.targetPrice,
+              lastReviewedAt: r.item.lastReviewedAt,
+              addedAt: r.item.addedAt,
+            })
+          )
+            return false;
+          break;
         default: break;
       }
       if (tokens.length === 0) return true;
       const haystack = `${r.item.symbol} ${r.item.name}`.toLowerCase();
       return tokens.some((t) => haystack.includes(t));
     });
-  }, [rows, filter, quickFilter]);
+  }, [rows, filter, quickFilter, settings.earningsHorizonDays]);
 
   const alertCount = useMemo(() => rows.reduce((n, r) => n + r.alerts.length, 0), [rows]);
+
+  /* ---------------------------------------------------------------------- */
+  /* Triage: attention queue, since-visit summary, list health               */
+  /* ---------------------------------------------------------------------- */
+
+  const attentionRows = useMemo<PulseBriefRow[]>(
+    () =>
+      rows
+        .filter((r) => r.attention.level !== "quiet")
+        .sort((a, b) => b.attention.score - a.attention.score)
+        .slice(0, 7)
+        .map((r) => ({ symbol: r.item.symbol, name: r.item.name, attention: r.attention })),
+    [rows],
+  );
+
+  const sinceVisit = useMemo(() => summarizeSinceVisit(rows.map((r) => r.attention)), [rows]);
+
+  const health = useMemo(
+    () =>
+      computeWatchlistHealth(
+        items.map((i) => ({
+          // Triggers count as a thesis for health purposes — mirrored in the filters.
+          notes: i.notes || i.buyTrigger || i.sellTrigger || null,
+          targetPrice: i.targetPrice,
+          lastReviewedAt: i.lastReviewedAt,
+          addedAt: i.addedAt,
+        })),
+      ),
+    [items],
+  );
+
+  /** Open one name's decision file from the attention queue. */
+  const openRow = useCallback(
+    (symbol: string) => {
+      // The row must actually be on screen to expand: a maintenance filter or a
+      // text search that hides it would leave the click doing nothing.
+      setFilter("");
+      if (quickFilter !== "all" && quickFilter !== "attention") setQuickFilter("all");
+      setExpandedRow(symbol);
+      // The row may not be mounted yet (filter reset re-renders; long lists
+      // window their rows), so retry across a few frames rather than assuming
+      // one commit is enough. Give up silently — the row is expanded either way.
+      let attempts = 12;
+      const tryScroll = () => {
+        const el = document.querySelector(`tr[data-row-id="${CSS.escape(symbol)}"]`);
+        if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
+        else if (--attempts > 0) requestAnimationFrame(tryScroll);
+      };
+      requestAnimationFrame(tryScroll);
+    },
+    [quickFilter, setQuickFilter],
+  );
   const stats = useMemo(() => {
     let gainers = 0;
     let losers = 0;
     let priced = 0;
-    let targeted = 0;
     /* Averaged across EXIT targets only.
        A mean that mixes an exit target's +20% with a buy limit's −40% is a
        number with no interpretation: it looked authoritative in the summary
@@ -867,7 +1081,6 @@ function WatchlistPageInner() {
         if (r.changePercent > 0) gainers += 1;
         else if (r.changePercent < 0) losers += 1;
       }
-      if (r.item.targetPrice != null) targeted += 1;
       if (r.upside != null && r.direction === "above") {
         exitUpsideSum += r.upside;
         exitUpsideCount += 1;
@@ -877,7 +1090,6 @@ function WatchlistPageInner() {
       gainers,
       losers,
       priced,
-      targeted,
       exitUpside: exitUpsideCount > 0 ? exitUpsideSum / exitUpsideCount : null,
       exitUpsideCount,
     };
@@ -886,16 +1098,31 @@ function WatchlistPageInner() {
   const hasPortfolio = Boolean(ios?.profileReady && ios.profile.hasPortfolio);
 
   /**
-   * The active sort, fully controlled.
+   * The active sort, fully controlled. Resolution order:
    *
-   * `defaultSortKey` alone could not express this: the table reads it once, in a
-   * `useState` initializer, and the IOS profile is not ready on the first render —
-   * so "default to Portfolio fit when the user has a portfolio" silently never
-   * happened and the grid always opened on Added. Deriving it instead means the
-   * default settles correctly the moment readiness resolves, while an explicit
-   * user choice (persisted, so `sortKey` is non-empty) always wins.
+   * 1. An explicit header click (persisted, so `sortKey` is non-empty).
+   * 2. The configured default from Customize.
+   * 3. Attention — the page's whole thesis is "what deserves a look reads
+   *    first", and the triage panel above explains WHY each top row ranks
+   *    where it does. Quiet rows tie at null and keep list order.
+   *
+   * A default that points at a hidden column would silently sort nothing, so
+   * those fall through to the next rung.
    */
-  const effectiveSortKey = sortKey || (hasPortfolio ? "fit" : "added");
+  const hidden = settings.hiddenColumns;
+  const effectiveSortKey =
+    sortKey ||
+    (settings.defaultSortKey && !hidden.includes(settings.defaultSortKey) ? settings.defaultSortKey : "") ||
+    (!hidden.includes("attention") ? "attention" : hasPortfolio && !hidden.includes("fit") ? "fit" : "symbol");
+  /* The persisted direction belongs to the user's own header click. A default
+     sort uses its column's natural first direction instead — "Next event"
+     defaulting to farthest-first because the last click happened to be
+     descending would be nonsense. */
+  const effectiveSortDir: SortDir = sortKey
+    ? sortDir
+    : effectiveSortKey === "symbol" || effectiveSortKey === "nextEvent"
+      ? "asc"
+      : "desc";
 
   /**
    * The columns.
@@ -906,47 +1133,44 @@ function WatchlistPageInner() {
    */
   const columns = useMemo<DataTableColumn<Row>[]>(
     () => [
+      /* The attention verdict as its own narrow, sortable column: the dot's
+         tooltip carries the reasons, sorting it ranks the whole table by "who
+         needs me", and this is also the smart default sort. Kept out of the
+         symbol cell so the ticker column says exactly one thing. */
+      {
+        key: "attention",
+        label: "",
+        help: "Attention — why this name needs a look right now. Hover a dot for the reasons; sort to rank the whole list by urgency. Quiet rows show nothing, which is the good outcome.",
+        sortValue: (r) => (r.attention.score > 0 ? r.attention.score : null),
+        render: (r) =>
+          r.attention.level === "quiet" ? null : (
+            <span
+              title={r.attention.signals.map((s) => s.label).join(" · ")}
+              aria-label={`Needs attention: ${r.attention.signals.map((s) => s.label).join(", ")}`}
+              className={`inline-block h-1.5 w-1.5 rounded-full ${
+                r.attention.level === "act" ? "bg-alert" : "bg-warning"
+              }`}
+            />
+          ),
+      },
       {
         key: "symbol",
         label: "Symbol",
         firstSortDir: "asc",
         sortValue: (r) => r.item.symbol,
+        /* Just the ticker and the name. Ownership lives in the Stage column
+           (an owned name's stage IS "Owned"), alert state in the attention
+           column, row tone and target cell, thesis in its own column — the
+           badge cluster that used to live here said everything twice. */
         render: (r) => (
           <span className="flex flex-col gap-0.5">
-            <span className="flex items-center gap-1.5">
-              <Link
-                href={`/research?symbol=${r.item.symbol}`}
-                onClick={(e) => e.stopPropagation()}
-                className="rounded-control font-mono text-sm font-semibold text-brand hover:underline"
-              >
-                {r.item.symbol}
-              </Link>
-              {r.owned && (
-                <span
-                  title="Currently held in your portfolio"
-                  className="rounded-full border border-positive/30 bg-positive/10 px-1 py-0 text-[9px] font-bold uppercase tracking-wide text-positive"
-                >
-                  Owned
-                </span>
-              )}
-              {r.alerts.length > 0 && (
-                <span
-                  title={r.alerts.map((a) => a.message).join(" ")}
-                  className="rounded-full bg-negative/15 px-1 py-0 text-[9px] font-bold uppercase tracking-wide text-negative"
-                >
-                  Alert
-                </span>
-              )}
-              {r.item.notes && (
-                <span
-                  title={r.item.notes}
-                  aria-label="Has a thesis note"
-                  className="text-[10px] leading-none text-muted/50"
-                >
-                  ✎
-                </span>
-              )}
-            </span>
+            <Link
+              href={`/research?symbol=${r.item.symbol}`}
+              onClick={(e) => e.stopPropagation()}
+              className="self-start rounded-control font-mono text-sm font-semibold text-brand hover:underline"
+            >
+              {r.item.symbol}
+            </Link>
             <span className="block max-w-56 truncate text-[11px] text-muted" title={r.item.name}>
               {r.item.name}
             </span>
@@ -1018,32 +1242,61 @@ function WatchlistPageInner() {
         key: "target",
         label: "My target",
         numeric: true,
-        help: "Your own price target for this name, and the level its alert fires at. This is not the analyst consensus — Research shows that separately as \"Mean target\".",
+        help: "Your own price target for this name, and the level its alert fires at — never the analyst consensus. Click a value to edit it. \"Reached\" and \"near\" show where the price stands against it.",
         sortValue: (r) => r.item.targetPrice,
-        render: (r) =>
-          r.item.targetPrice != null ? (
-            <span
-              title={`Alert fires when the price ${r.direction === "above" ? "rises to or above" : "falls to or below"} this level`}
-              className="inline-flex items-baseline gap-1"
-            >
-              {formatCurrency(r.item.targetPrice, r.currency)}
-              <span aria-hidden="true" className="text-[9px] text-muted/50">
-                {r.direction === "above" ? "▲" : "▼"}
-              </span>
-            </span>
-          ) : (
+        /* The whole cell is the edit affordance — a target is the row's most
+           edited field, and reaching it through the overflow menu was three
+           clicks for a one-number change. The cell also SAYS where the price
+           stands: reached / near / the level with its trigger direction. */
+        render: (r) => {
+          if (r.item.targetPrice == null) {
             // An unset user-editable field deserves an affordance, not a dash.
+            return (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEditingTarget(r.item);
+                }}
+                className="rounded-control font-sans text-[11px] text-muted/50 transition-colors hover:text-brand hover:underline"
+              >
+                Set
+              </button>
+            );
+          }
+          const reached = r.targetDistance === 0;
+          const near = !reached && r.targetDistance != null && r.targetDistance <= TARGET_NEAR_PCT;
+          return (
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 setEditingTarget(r.item);
               }}
-              className="rounded-control font-sans text-[11px] text-muted/50 transition-colors hover:text-brand hover:underline"
+              title={`Alert fires when the price ${r.direction === "above" ? "rises to or above" : "falls to or below"} this level.${
+                near ? ` ${r.targetDistance!.toFixed(1)}% away.` : ""
+              } Click to edit.`}
+              className="group inline-flex items-baseline gap-1 rounded-control font-mono tabular-nums transition-colors hover:text-brand"
             >
-              Set
+              {formatCurrency(r.item.targetPrice, r.currency)}
+              {reached ? (
+                <span
+                  className={`font-sans text-[9px] font-bold uppercase tracking-wide ${
+                    r.direction === "below" ? "text-positive" : "text-warning"
+                  }`}
+                >
+                  reached
+                </span>
+              ) : near ? (
+                <span className="font-sans text-[9px] font-bold uppercase tracking-wide text-warning">near</span>
+              ) : (
+                <span aria-hidden="true" className="font-sans text-[9px] text-muted/50">
+                  {r.direction === "above" ? "▲" : "▼"}
+                </span>
+              )}
             </button>
-          ),
+          );
+        },
         hideBelow: "sm",
       },
       {
@@ -1062,13 +1315,15 @@ function WatchlistPageInner() {
       /* Analyst consensus, immediately after the user's own target and upside so
          the two views sit side by side and can be compared at a glance — while
          being separately labelled and separately sourced so they can never be
-         mistaken for one another. */
+         mistaken for one another. ONE column, not two: the level and its upside
+         are one fact about the street's view, and it sorts by the upside because
+         that is the only leg comparable across names. */
       {
         key: "consensus",
         label: "Consensus",
         numeric: true,
-        help: "Mean analyst price target from the quote provider — the street's view, not yours. Blank when no analyst covers the name.",
-        sortValue: (r) => r.consensus.mean,
+        help: "Mean analyst target and the return it implies from today's price — the street's view, never yours. Sorts by the implied return. Hover for the analyst count and range. Blank when no analyst covers the name.",
+        sortValue: (r) => r.consensusUpside ?? r.consensus.mean,
         render: (r) =>
           r.consensus.mean == null ? (
             <span className="text-muted/40">—</span>
@@ -1083,24 +1338,15 @@ function WatchlistPageInner() {
                     }`
                   : undefined
               }
-              className="text-muted"
+              className="inline-flex items-baseline gap-1.5 text-muted"
             >
               {formatCurrency(r.consensus.mean, r.currency)}
+              {r.consensusUpside != null && (
+                <span className={`text-[11px] ${toneClass(r.consensusUpside)}`}>
+                  {formatPercent(r.consensusUpside)}
+                </span>
+              )}
             </span>
-          ),
-        hideBelow: "xl",
-      },
-      {
-        key: "consensusUpside",
-        label: "Cons. upside",
-        numeric: true,
-        help: "Return from today's price to the analyst consensus target. Directly comparable with the Upside column, which uses your own target.",
-        sortValue: (r) => r.consensusUpside,
-        render: (r) =>
-          r.consensusUpside == null ? (
-            <span className="text-muted/40">—</span>
-          ) : (
-            <span className={toneClass(r.consensusUpside)}>{formatPercent(r.consensusUpside)}</span>
           ),
         hideBelow: "xl",
       },
@@ -1149,12 +1395,14 @@ function WatchlistPageInner() {
       {
         key: "stage",
         label: "Stage",
-        help: "Where this idea is in your process: Surfaced → Researching → Thesis → Owned, or Passed / Exited. The same field the Portfolio pipeline board edits.",
+        help: "Where this idea is in your process: Surfaced → Researching → Thesis → Owned, or Passed / Exited. Owned means held in your portfolio right now — this column is the ownership indicator. The same field the Portfolio pipeline board edits.",
         // Sorted by funnel position rather than alphabetically, so the order on
-        // screen is the order of the process.
-        sortValue: (r) => IDEA_STAGES.indexOf(r.item.stage),
+        // screen is the order of the process. Rendered through effectiveStage so
+        // a name the ledger currently holds ALWAYS reads Owned, even if the
+        // stored stage lags a trade — this column is where ownership lives.
+        sortValue: (r) => IDEA_STAGES.indexOf(effectiveStage(r.item.stage, r.owned)),
         firstSortDir: "asc",
-        render: (r) => <StageBadge stage={r.item.stage} />,
+        render: (r) => <StageBadge stage={effectiveStage(r.item.stage, r.owned)} />,
         hideBelow: "lg",
       },
       {
@@ -1173,38 +1421,84 @@ function WatchlistPageInner() {
           ),
         hideBelow: "xl",
       },
+      /* Replaced "Added": how long a name has sat on the list is drawer
+         material, but WHEN the next scheduled information arrives — earnings —
+         is a monitoring decision input, so it earns the column. */
       {
-        key: "added",
-        label: "Added",
+        key: "nextEvent",
+        label: "Next event",
         numeric: true,
-        help: "How long this name has been on the list. Sorted newest first.",
-        sortValue: (r) => Date.parse(r.item.addedAt) || null,
-        render: (r) => <span title={formatDate(r.item.addedAt)}>{formatAge(r.item.addedAt)}</span>,
+        help: "The next scheduled earnings date from the calendar, when one is known. Sorted soonest first; click through for the full event calendar.",
+        firstSortDir: "asc",
+        sortValue: (r) => (r.earningsIn != null && r.earningsIn >= 0 ? r.earningsIn : null),
+        render: (r) =>
+          r.pulse?.earningsDate && r.earningsIn != null && r.earningsIn >= 0 ? (
+            <Link
+              href="/calendar"
+              onClick={(e) => e.stopPropagation()}
+              title={`Earnings ${formatDate(r.pulse.earningsDate)} — open the event calendar`}
+              className={`rounded-control underline-offset-2 hover:underline ${
+                r.earningsIn <= settings.earningsHorizonDays ? "font-medium text-warning" : "text-muted"
+              }`}
+            >
+              {r.earningsIn === 0 ? "Earnings today" : r.earningsIn === 1 ? "Earnings tmrw" : `Earnings ${r.earningsIn}d`}
+            </Link>
+          ) : (
+            <span className="text-muted/40">—</span>
+          ),
         hideBelow: "lg",
       },
       {
         key: "notes",
         label: "Thesis",
-        // Sorted by whether a thesis exists, not alphabetically by its text —
-        // "which names have I never written up" is the useful question, and
-        // ranking notes A→Z answers nothing.
-        help: "Your written reason for watching this. Sorts written-up names first.",
-        sortValue: (r) => (r.item.notes ? 1 : 0),
+        // Sorted by conviction, then by whether a thesis exists at all —
+        // "which names have I never written up" and "where am I most sure"
+        // are the useful questions; ranking notes A→Z answers nothing.
+        help: "Your written reason for watching this, with your recorded conviction. Sorts highest-conviction first, never-written-up last.",
+        sortValue: (r) => {
+          const conviction = r.item.conviction === "high" ? 3 : r.item.conviction === "medium" ? 2 : r.item.conviction === "low" ? 1 : 0;
+          const hasThesis = r.item.notes || r.item.buyTrigger || r.item.sellTrigger ? 1 : 0;
+          return conviction * 10 + hasThesis;
+        },
         // No `block` on the clamped span: it would override line-clamp's
         // `display: -webkit-box` and let a long thesis wrap the row hundreds
         // of pixels tall (2026-08-10 visual audit).
-        render: (r) =>
-          r.item.notes ? (
-            <span className="line-clamp-1 max-w-44 text-[11px] italic text-muted/80" title={r.item.notes}>
-              {r.item.notes}
+        render: (r) => {
+          const text = r.item.notes ?? r.item.buyTrigger;
+          if (!text && !r.item.conviction) return <span className="text-muted/40">—</span>;
+          return (
+            <span className="flex items-center gap-1.5">
+              {r.item.conviction && (
+                <span
+                  title={`${CONVICTION_WORD[r.item.conviction]} conviction`}
+                  aria-label={`${CONVICTION_WORD[r.item.conviction]} conviction`}
+                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${CONVICTION_DOT[r.item.conviction]}`}
+                />
+              )}
+              {text ? (
+                <span className="line-clamp-1 max-w-44 text-[11px] italic text-muted/80" title={text}>
+                  {text}
+                </span>
+              ) : (
+                <span className="text-muted/40">—</span>
+              )}
             </span>
-          ) : (
-            <span className="text-muted/40">—</span>
-          ),
+          );
+        },
         hideBelow: "xl",
       },
     ],
-    [hasPortfolio, benchmarkSymbol],
+    [hasPortfolio, benchmarkSymbol, settings.earningsHorizonDays],
+  );
+
+  /* Column visibility is a view preference; the definitions above stay complete
+     so hiding and re-showing never loses configuration. */
+  const visibleColumns = useMemo(
+    () =>
+      settings.hiddenColumns.length === 0
+        ? columns
+        : columns.filter((c) => !settings.hiddenColumns.includes(c.key)),
+    [columns, settings.hiddenColumns],
   );
 
   const stickyHeight = filteredRows.length > STICKY_AFTER_ROWS ? "min(72vh, 900px)" : undefined;
@@ -1264,7 +1558,7 @@ function WatchlistPageInner() {
             Graph
           </Link>
           <button
-            onClick={() => { void load(); refreshNow(); }}
+            onClick={() => { void load(); void loadPulse(); refreshNow(); }}
             className="rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-surface-2"
           >
             ↻ Refresh
@@ -1304,9 +1598,31 @@ function WatchlistPageInner() {
         />
       )}
 
+      {/* Results season for Indian watchlist names (renders nothing otherwise) */}
+      {!loading && items.length > 0 && <ResultsRadar />}
+
+      {/* The triage layer: what changed since the last visit, and which names
+          need attention now. Reads before the table because it IS the reading
+          order — the table is for everything else. */}
+      {!loading && items.length > 0 && (
+        <Reveal index={1}>
+          <PulseBrief
+            rows={attentionRows}
+            summary={sinceVisit}
+            baselineAt={pulse?.baselineAt ?? null}
+            firstVisit={pulse?.firstVisit ?? false}
+            loading={pulseLoading}
+            error={pulseError}
+            checkingCount={pulse?.checking.length ?? 0}
+            onOpenRow={openRow}
+            onShowAll={() => setQuickFilter("attention")}
+          />
+        </Reveal>
+      )}
+
       {/* Summary strip */}
       {!loading && items.length > 0 && hasQuotes && (
-        <Reveal index={1} className="flex flex-wrap items-center gap-4 rounded-xl border border-border bg-surface px-5 py-3">
+        <Reveal index={2} className="flex flex-wrap items-center gap-4 rounded-xl border border-border bg-surface px-5 py-3">
           <div className="flex flex-col gap-0.5">
             <span className="text-label font-semibold uppercase tracking-widest text-muted/60">
               {filteredRows.length === rows.length ? "Watching" : "Showing"}
@@ -1333,18 +1649,11 @@ function WatchlistPageInner() {
               </div>
             </>
           )}
-          <>
-            <span aria-hidden="true" className="h-8 w-px bg-border" />
-            <div className="flex flex-col gap-0.5">
-              <span className="text-label font-semibold uppercase tracking-widest text-muted/60">
-                Targets set
-              </span>
-              <span className="font-mono text-xs tabular-nums">
-                {stats.targeted}
-                <span className="text-muted/60"> / {filteredRows.length}</span>
-              </span>
-            </div>
-          </>
+          {/* "Targets set" and "Alerts firing" used to sit here too. Both said
+              something another element already says better: the health line
+              counts missing targets (and filters to them), and the header chip
+              counts firing alerts (and filters to them). A strip stat that
+              cannot be acted on is decoration. */}
           {stats.exitUpside != null && (
             <>
               <span aria-hidden="true" className="h-8 w-px bg-border" />
@@ -1366,17 +1675,6 @@ function WatchlistPageInner() {
               </div>
             </>
           )}
-          {alertCount > 0 && (
-            <>
-              <span aria-hidden="true" className="h-8 w-px bg-border" />
-              <div className="flex flex-col gap-0.5">
-                <span className="text-label font-semibold uppercase tracking-widest text-muted/60">Alerts</span>
-                <span className="font-mono text-xs font-semibold tabular-nums text-negative">
-                  {alertCount} firing
-                </span>
-              </div>
-            </>
-          )}
         </Reveal>
       )}
 
@@ -1386,7 +1684,7 @@ function WatchlistPageInner() {
           a request to spend it. The same control regenerates afterwards, which is
           also the only way the digest can reflect symbols added since it ran. */}
       {!loading && items.length > 0 && (
-        <Reveal index={2}>
+        <Reveal index={3}>
           <WatchlistDigestPanel
             digest={digest}
             loading={digestLoading}
@@ -1398,7 +1696,7 @@ function WatchlistPageInner() {
 
       {/* Structured, deterministic per-asset alerts */}
       {!loading && digest && digest.alerts.length > 0 && (
-        <Reveal index={3}>
+        <Reveal index={4}>
           <WatchlistAlerts alerts={digest.alerts} />
         </Reveal>
       )}
@@ -1464,22 +1762,30 @@ function WatchlistPageInner() {
             )}
           </div>
           <div role="group" aria-label="Quick filters" className="flex flex-wrap gap-1">
-            {QUICK_FILTERS.map((qf) => (
-              <button
-                key={qf}
-                type="button"
-                onClick={() => setQuickFilter(qf)}
-                aria-pressed={quickFilter === qf}
-                className={`rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
-                  quickFilter === qf
-                    ? "border-brand/40 bg-brand/10 text-brand"
-                    : "border-border text-muted hover:bg-surface-2 hover:text-foreground"
-                }`}
-              >
-                {QUICK_FILTER_LABEL[qf]}
-              </button>
-            ))}
+            {/* The configured chips (Customize decides which and in what
+                order); any other filter — reached from the health line or a
+                stale config — appears as a chip only while active, with an
+                explicit way back. */}
+            {[...settings.quickFilters, ...(settings.quickFilters.includes(quickFilter) ? [] : [quickFilter])].map(
+              (qf) => (
+                <button
+                  key={qf}
+                  type="button"
+                  onClick={() => setQuickFilter(quickFilter === qf && qf !== "all" ? "all" : qf)}
+                  aria-pressed={quickFilter === qf}
+                  className={`rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
+                    quickFilter === qf
+                      ? "border-brand/40 bg-brand/10 text-brand"
+                      : "border-border text-muted hover:bg-surface-2 hover:text-foreground"
+                  }`}
+                >
+                  {FILTER_LABEL[qf]}
+                  {quickFilter === qf && qf !== "all" && <span className="ml-1 opacity-70">×</span>}
+                </button>
+              ),
+            )}
           </div>
+          <WatchlistSettings settings={settings} onChange={setStoredSettings} />
         </div>
       )}
 
@@ -1528,14 +1834,22 @@ function WatchlistPageInner() {
           rows={filteredRows}
           rowKey={(r) => r.item.symbol}
           label="Watchlist"
-          columns={columns}
+          columns={visibleColumns}
           sortKey={effectiveSortKey}
-          sortDir={sortDir}
+          sortDir={effectiveSortDir}
           onSortChange={(key, dir) => { setSortKey(key); setSortDir(dir); }}
           density={density}
           onDensityChange={setDensity}
           maxBodyHeight={stickyHeight}
-          rowTone={(r) => (r.alerts.length > 0 ? "alert" : "default")}
+          expandedKey={expandedRow}
+          onExpandedChange={setExpandedRow}
+          rowTone={(r) =>
+            r.alerts.length > 0 || r.attention.level === "act"
+              ? "alert"
+              : r.attention.level === "watch"
+                ? "watch"
+                : "default"
+          }
           toolbar={
             <span>
               {filteredRows.length === rows.length
@@ -1551,10 +1865,10 @@ function WatchlistPageInner() {
               <p className="text-sm font-medium">No names match</p>
               <p className="max-w-xs text-xs leading-5 text-muted">
                 {filter && quickFilter !== "all"
-                  ? <>Nothing matches “{filter}” within <span className="text-foreground">{QUICK_FILTER_LABEL[quickFilter]}</span>.</>
+                  ? <>Nothing matches “{filter}” within <span className="text-foreground">{FILTER_LABEL[quickFilter]}</span>.</>
                   : filter
                     ? <>Nothing matches “{filter}”.</>
-                    : <>No name is currently <span className="text-foreground">{QUICK_FILTER_LABEL[quickFilter].toLowerCase()}</span>.</>}
+                    : <>No name currently <span className="text-foreground">{FILTER_EMPTY[quickFilter]}</span>.</>}
               </p>
               <div className="flex gap-2">
                 {filter && (
@@ -1584,8 +1898,8 @@ function WatchlistPageInner() {
               <DataTableAction onClick={() => setEditingTarget(r.item)}>
                 {r.item.targetPrice != null ? "Edit target…" : "Set target…"}
               </DataTableAction>
-              <DataTableAction onClick={() => setEditingNotes(r.item)}>
-                {r.item.notes ? "Edit thesis…" : "Write thesis…"}
+              <DataTableAction onClick={() => setEditingThesis(r.item)}>
+                {r.item.notes || r.item.buyTrigger || r.item.sellTrigger ? "Edit thesis…" : "Write thesis…"}
               </DataTableAction>
               {/* The stage was already stored on every row and edited by the
                   Pipeline board; the Watchlist is where the decision is made. */}
@@ -1634,12 +1948,46 @@ function WatchlistPageInner() {
               alerts={r.alerts}
               direction={r.direction}
               consensus={r.consensus}
+              pulse={r.pulse}
+              checking={pulse?.checking.includes(r.item.symbol.toUpperCase()) ?? false}
               revisionCount={r.item.targetRevisionCount ?? 0}
               onEditTarget={() => setEditingTarget(r.item)}
-              onEditNotes={() => setEditingNotes(r.item)}
+              onEditThesis={() => setEditingThesis(r.item)}
+              onMarkReviewed={() => void markReviewed(r.item.symbol)}
             />
           )}
         />
+      )}
+
+      {/* List health: the maintenance debt this list is carrying, said once and
+          made actionable. Each count is a filter, so noticing IS fixing. */}
+      {!loading && items.length > 3 && (health.noThesis > 0 || health.noTarget > 0 || health.staleReview > 0) && (
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+          <span className="text-label font-semibold uppercase tracking-widest text-muted/60">List health</span>
+          {(
+            [
+              { key: "no-thesis" as const, count: health.noThesis, label: "without a thesis" },
+              { key: "no-target" as const, count: health.noTarget, label: "without a target" },
+              { key: "stale" as const, count: health.staleReview, label: `not reviewed in ${STALE_REVIEW_DAYS}d` },
+            ] as const
+          )
+            .filter((h) => h.count > 0)
+            .map((h, i) => (
+              <span key={h.key} className="flex items-center gap-2">
+                {i > 0 && <span aria-hidden="true" className="text-muted/40">·</span>}
+                <button
+                  type="button"
+                  onClick={() => setQuickFilter(quickFilter === h.key ? "all" : h.key)}
+                  aria-pressed={quickFilter === h.key}
+                  className={`rounded-control underline-offset-2 transition-colors hover:text-brand hover:underline ${
+                    quickFilter === h.key ? "text-brand" : ""
+                  }`}
+                >
+                  {h.count} {h.label}
+                </button>
+              </span>
+            ))}
+        </p>
       )}
 
       {/* Fit is one of this page's headline columns; say so when it cannot score. */}
@@ -1667,15 +2015,15 @@ function WatchlistPageInner() {
         />
       )}
 
-      {editingNotes && (
-        <NotesModal
-          item={editingNotes}
-          onSave={async (notes) => {
-            await patchItem(editingNotes.symbol, { notes });
-            setEditingNotes(null);
-            toast(notes ? "Thesis saved" : "Thesis cleared");
+      {editingThesis && (
+        <ThesisModal
+          item={editingThesis}
+          onSave={async (patch: ThesisPatch) => {
+            await patchItem(editingThesis.symbol, patch);
+            setEditingThesis(null);
+            toast(patch.notes || patch.buyTrigger || patch.sellTrigger ? "Thesis saved" : "Thesis cleared");
           }}
-          onCancel={() => setEditingNotes(null)}
+          onCancel={() => setEditingThesis(null)}
         />
       )}
 

@@ -212,7 +212,9 @@ export function buildPipelineRows(input: {
       daysInStage: daysInStage(t.stageChangedAt, t.addedAt, now),
       tracked: true,
       held: position != null,
-      assetClass: position?.assetClass ?? assetClassForSymbol(symbol),
+      // indiaEquity is a screening domain; as a *position class* it is equity.
+      assetClass: position?.assetClass ??
+        ((c) => (c === "indiaEquity" ? "equity" : c))(assetClassForSymbol(symbol)),
       origin,
       originLabel: describeOrigin(origin, now),
       targetPrice: t.targetPrice ?? null,

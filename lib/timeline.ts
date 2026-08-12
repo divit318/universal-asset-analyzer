@@ -19,6 +19,7 @@
 import { createHash } from "node:crypto";
 import { getCompanyNews } from "./news";
 import { getRecentFilings } from "./edgar";
+import { getIndianFilings, isIndianEquitySymbol } from "./india-news";
 import { getFundamentals } from "./fundamentals";
 import { getHistory, getQuote } from "./yahoo";
 import { runPrompt } from "./ai";
@@ -241,7 +242,14 @@ function eventFromFiling(symbol: string, filing: Filing): TimelineEvent | null {
   const confidenceScore = scoreConfidence("filing", true);
   const importanceScore = scoreImportance(category, confidenceScore);
   const timestamp = new Date(filing.filedAt).toISOString();
-  const source: TimelineEventSource = { kind: "filing", url: filing.documentUrl, description: `SEC ${filing.form}` };
+  // Indian listings file with the NSE, and their "form" is already a human
+  // phrase ("Financial Results") — no "(Form …)" parenthetical needed.
+  const isIndian = isIndianEquitySymbol(symbol);
+  const source: TimelineEventSource = {
+    kind: "filing",
+    url: filing.documentUrl,
+    description: isIndian ? `NSE ${filing.form}` : `SEC ${filing.form}`,
+  };
   return {
     id: buildEventId(symbol, "filing", filing.accessionNumber),
     symbol,
@@ -249,7 +257,9 @@ function eventFromFiling(symbol: string, filing: Filing): TimelineEvent | null {
     // Human description leads; the form code is the parenthetical. The old
     // "form: description" template produced titles like "4: FORM 4" whenever
     // EDGAR echoed the form back as its description.
-    title: `${filing.description} (Form ${filing.form})`,
+    title: isIndian
+      ? (filing.description === filing.form ? filing.form : `${filing.form}: ${filing.description}`)
+      : `${filing.description} (Form ${filing.form})`,
     category,
     importanceScore,
     confidenceScore,
@@ -297,7 +307,7 @@ function eventsFromSectorRotation(symbol: string, sector: string | null): Timeli
 /** Reuses lib/ai-watchlist.ts's alert pipeline (deterministic) as one-per-symbol-per-day "portfolio_impact" events. */
 async function eventsFromAlerts(symbol: string, name: string): Promise<TimelineEvent[]> {
   const alerts = await gatherWatchlistAlerts(undefined, {
-    items: [{ symbol, name, addedAt: new Date().toISOString(), targetPrice: null, targetDirection: null, alertPctDrop: null, notes: null, stage: "surfaced", stageChangedAt: null, source: null, sourceDetail: null }],
+    items: [{ symbol, name, addedAt: new Date().toISOString(), targetPrice: null, targetDirection: null, alertPctDrop: null, notes: null, buyTrigger: null, sellTrigger: null, conviction: null, horizon: null, lastReviewedAt: null, stage: "surfaced", stageChangedAt: null, source: null, sourceDetail: null }],
   });
   const today = new Date().toISOString().slice(0, 10);
   return alerts
@@ -382,7 +392,8 @@ export async function syncTimelineEvents(symbol: string): Promise<void> {
 
   const [news, filings, fundamentals, quote] = await Promise.all([
     getCompanyNews(symbol, 25).catch(() => [] as NewsItem[]),
-    getRecentFilings(symbol, 15).catch(() => [] as Filing[]),
+    (isIndianEquitySymbol(symbol) ? getIndianFilings(symbol, 15) : getRecentFilings(symbol, 15))
+      .catch(() => [] as Filing[]),
     getFundamentals(symbol).catch(() => null),
     getQuote(symbol).catch(() => null),
   ]);

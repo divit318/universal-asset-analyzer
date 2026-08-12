@@ -79,6 +79,9 @@ const ROUTES: Record<string, (n: Notification) => ResolvedDestination> = {
   price_target: routeResearchPrice,
   drop_alert: routeResearchPrice,
   big_move: routePortfolioHolding,
+  // Indian watchlist results filings (lib/monitor.ts) — land on Research,
+  // where the Quarterly Results section and the NSE filing link live.
+  results_released: routeDefault,
 };
 
 export function resolveDestination(n: Notification): ResolvedDestination {

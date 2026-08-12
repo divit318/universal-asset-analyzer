@@ -21,7 +21,7 @@ import {
 } from "./price-crossing";
 import type { TargetDirection } from "./types";
 
-export type AlertKind = "price_target" | "drop_alert" | "big_move";
+export type AlertKind = "price_target" | "drop_alert" | "big_move" | "results_released";
 export type AlertSeverity = "info" | "warning";
 
 /**
@@ -48,6 +48,16 @@ export interface AlertFacts {
   direction?: TargetDirection;
   /** The user's drop threshold, absolute % (drop_alert). */
   thresholdPct?: number;
+  /** When the exchange published the results filing (results_released). */
+  reportedAt?: string;
+  /** Results-day context (results_released) — only set from verified data. */
+  quarterLabel?: string;      // "Q1 FY27"
+  netProfitYoY?: number;      // %, reported quarter vs year-ago quarter
+  revenueYoY?: number;        // %
+  dayMovePct?: number;        // close-to-close % on the first session on/after filing
+  /** Deterministic SEBI-shareholding trend clause ("FII selling for 3
+   *  consecutive quarters") — descriptive context, never causal. */
+  ownershipNote?: string;
   /** ISO time of the quote observation this alert describes. */
   observedAt: string;
   /** Calendar day (exchange TZ) of the session it describes; null = unknown. */
@@ -185,6 +195,28 @@ export function renderAlertText(f: AlertFacts, now: number = Date.now()): { titl
       return {
         title: `${f.symbol} ${up ? "up" : "down"} ${mag}`,
         body: `Your ${f.name} position moved ${signed(pct)} ${when} to ${money(f.price ?? 0, f.currency)}.`,
+      };
+    }
+    case "results_released": {
+      const dateLabel = f.reportedAt
+        ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(f.reportedAt))
+        : null;
+      const quarter = f.quarterLabel ? ` ${f.quarterLabel}` : "";
+      // Compose only from verified facts — absent pieces are simply omitted.
+      const detail: string[] = [];
+      if (f.netProfitYoY != null) detail.push(`net profit ${signed(f.netProfitYoY)} YoY`);
+      else if (f.revenueYoY != null) detail.push(`revenue ${signed(f.revenueYoY)} YoY`);
+      if (f.dayMovePct != null) detail.push(`shares ${signed(f.dayMovePct)} on the day`);
+      // Ownership context rides as its own sentence, clearly separated from
+      // the result facts so it never reads as an explanation of them.
+      const ownership = f.ownershipNote
+        ? ` ${f.ownershipNote.charAt(0).toUpperCase()}${f.ownershipNote.slice(1)} (SEBI shareholding pattern).`
+        : "";
+      return {
+        title: `${f.symbol} reported${quarter} results`,
+        body: detail.length
+          ? `${f.name} filed its${quarter} results with the NSE${dateLabel ? ` on ${dateLabel}` : ""} — ${detail.join("; ")}.${ownership} Open Research for the full quarter.`
+          : `${f.name} filed its quarterly results with the NSE${dateLabel ? ` on ${dateLabel}` : ""}.${ownership} Open Research for the updated quarterly numbers and the official filing.`,
       };
     }
   }
