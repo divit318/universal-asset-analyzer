@@ -56,15 +56,29 @@ function textOf(body: WireResponse): string {
   return (body.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
 }
 
+type WirePart = { text: string } | { inline_data: { mime_type: string; data: string } };
+
 function buildBody(request: ProviderCompleteRequest): Record<string, unknown> {
   const system = request.messages
     .filter((m: ProviderChatTurn) => m.role === "system")
     .map((m) => m.content)
     .join("\n\n");
-  const contents = request.messages
+  const contents: { role: string; parts: WirePart[] }[] = request.messages
     .filter((m) => m.role !== "system")
     .map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
   if (contents.length === 0) contents.push({ role: "user", parts: [{ text: system || "Hello." }] });
+
+  // Vision input: inline_data parts ahead of the FINAL user turn's text.
+  if (request.images && request.images.length > 0) {
+    const imageParts: WirePart[] = request.images.map((img) => ({
+      inline_data: { mime_type: img.mediaType, data: img.base64 },
+    }));
+    for (let i = contents.length - 1; i >= 0; i--) {
+      if (contents[i].role !== "user") continue;
+      contents[i] = { role: "user", parts: [...imageParts, ...contents[i].parts] };
+      break;
+    }
+  }
 
   const wantsJson = Boolean(request.json || request.jsonSchema);
   return {
@@ -91,6 +105,8 @@ function throwHttpError(status: number, detail: string): never {
 
 export class GeminiProvider implements AIProvider {
   readonly id = "gemini" as const;
+  /** Gemini is multimodal; images travel as base64 `inline_data` parts. */
+  readonly supportsImages = true;
 
   private catalogue: { ids: Set<string>; fetchedAt: number } | null = null;
   private static readonly CATALOGUE_TTL_MS = 10 * 60_000;

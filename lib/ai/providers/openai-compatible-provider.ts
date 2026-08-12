@@ -68,6 +68,8 @@ function throwHttpError(provider: KeyedProviderId, status: number, detail: strin
 
 abstract class OpenAiCompatibleProvider implements AIProvider {
   abstract readonly id: KeyedProviderId & ProviderId;
+  /** The chat-completions format carries images as data-URL `image_url` parts. */
+  readonly supportsImages = true;
   /** Base URL up to and including the version segment, no trailing slash. */
   protected abstract baseUrl(): string;
   /** Extra headers (OpenRouter attribution). */
@@ -142,9 +144,28 @@ abstract class OpenAiCompatibleProvider implements AIProvider {
       : request.json
         ? { response_format: { type: "json_object" } }
         : {};
+    // Vision input: images become data-URL `image_url` parts ahead of the
+    // FINAL user turn's text — the turn that asks about them.
+    const lastUserIdx = request.images?.length
+      ? request.messages.reduce((acc, m, i) => (m.role === "user" ? i : acc), -1)
+      : -1;
+    const messages = request.messages.map((m, i) =>
+      i === lastUserIdx
+        ? {
+            role: m.role,
+            content: [
+              ...(request.images ?? []).map((img) => ({
+                type: "image_url" as const,
+                image_url: { url: `data:${img.mediaType};base64,${img.base64}` },
+              })),
+              { type: "text" as const, text: m.content },
+            ],
+          }
+        : { role: m.role, content: m.content },
+    );
     return {
       model: request.model,
-      messages: request.messages.map((m) => ({ role: m.role, content: m.content })),
+      messages,
       stream,
       ...(stream ? { stream_options: { include_usage: true } } : {}),
       ...(request.maxTokens ? { max_completion_tokens: request.maxTokens } : {}),

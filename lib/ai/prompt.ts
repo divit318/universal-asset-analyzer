@@ -55,7 +55,13 @@ export function buildSystemPrompt(opts: {
     "",
     opts.structured
       ? `STRUCTURE your answer using these sections:\n${REPORT_STRUCTURE}`
-      : "STRUCTURE: Lead with the direct answer, then supporting evidence and the key risk or caveat. End with a one-line confidence level (low/medium/high) when making a judgment call.",
+      : [
+          "STRUCTURE: Lead with the direct answer, then supporting evidence and the key risk or caveat. End with a one-line confidence level (low/medium/high) when making a judgment call.",
+          // Depth-matching: casual questions were coming back as ~4,000-char
+          // institutional reports with tables (40+s of generation). Depth is
+          // the user's choice, not a default.
+          "MATCH DEPTH TO THE QUESTION: a simple or factual question gets a few sentences; an analytical question gets focused paragraphs or bullets; only an explicit deep-dive request (a thesis, a full analysis, 'go deep') gets a long, sectioned answer with tables. When in doubt, answer concisely and offer to go deeper.",
+        ].join("\n"),
   );
 
   return lines.join("\n");
@@ -69,13 +75,28 @@ export function renderDossier(blocks: ContextBlock[], asOf: string): string {
   return `COMPANY DOSSIER (as of ${asOf.slice(0, 10)}):\n\n${body}`;
 }
 
+/** History answers older than the latest one are context, not content the
+ * model should re-render — clipping them keeps a 6-turn session from carrying
+ * ~20k chars of its own old tables into every new prompt (measured: per-turn
+ * latency climbed 33s → 51s → 67s across one session largely on this). */
+const OLDER_ANSWER_CLIP = 700;
+
 /**
  * Compress conversation history to fit a turn budget: keep the most recent
- * `keep` turns verbatim; collapse anything older into a short note so long
- * sessions stay within the context window. Pure / testable.
+ * `keep` turns, clip all but the latest assistant answer, and collapse
+ * anything older into a short note so long sessions stay within the context
+ * window. Pure / testable.
+ *
+ * The current user turn is dropped only when it is actually present —
+ * session-loaded history ends with the PREVIOUS ASSISTANT ANSWER, and
+ * unconditionally slicing it off left the model staring at an unanswered
+ * prior question, which it then dutifully re-answered ahead of the real one
+ * (the audit's duplicated-answer bug, which also nearly doubled generation
+ * time on those turns).
  */
 export function compressHistory(messages: ChatMessage[], keep = 6): ChatTurn[] {
-  const prior = messages.slice(0, -1); // exclude the current user turn
+  const endsWithCurrentQuestion = messages[messages.length - 1]?.role === "user";
+  const prior = endsWithCurrentQuestion ? messages.slice(0, -1) : messages;
   const recent = prior.slice(-keep);
   const older = prior.slice(0, -keep);
 
@@ -90,9 +111,14 @@ export function compressHistory(messages: ChatMessage[], keep = 6): ChatTurn[] {
       content: `(Earlier in this session we discussed: ${topics.join("; ")}.)`,
     });
   }
-  for (const m of recent) {
-    turns.push({ role: m.role, content: m.content });
-  }
+  const lastAssistantIdx = recent.map((m) => m.role).lastIndexOf("assistant");
+  recent.forEach((m, i) => {
+    const clip = m.role === "assistant" && i !== lastAssistantIdx && m.content.length > OLDER_ANSWER_CLIP;
+    turns.push({
+      role: m.role,
+      content: clip ? `${m.content.slice(0, OLDER_ANSWER_CLIP)}… (rest of this earlier answer omitted)` : m.content,
+    });
+  });
   return turns;
 }
 

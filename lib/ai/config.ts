@@ -17,6 +17,7 @@
 import { totalmem } from "node:os";
 import type { ProviderId } from "./models";
 import type { TaskType } from "./task-registry";
+import { resolveAiMode, type AiMode } from "./mode";
 
 /**
  * Fraction of system RAM a model's weights may occupy and still be considered
@@ -117,20 +118,44 @@ export function disabledModels(): Set<string> {
  * entirely and is tried in the order given (still subject to the availability
  * check — a pin cannot conjure a model the provider doesn't offer).
  *
- * One model, three depths: every id below is claude-opus-5 at a different
- * effort tier (see lib/ai/models.ts). The tier IS the task policy — deep
- * research earns the largest reasoning budget, interactive parsing the
- * smallest. Order within each pin = primary, then the fallback the Router
- * walks on failure: a transiently failing high-effort call degrades to a
- * shallower tier of the same model rather than to nothing.
+ * One model family, several depths and two serving lanes (see
+ * lib/ai/models.ts). The tier IS the task policy — deep research earns the
+ * largest reasoning budget, interactive parsing the smallest. Order within
+ * each pin = primary, then the fallback the Router walks on failure: a
+ * transiently failing priority-lane call degrades to the plain lane of the
+ * same tier (also reachable via a BYO Anthropic key) rather than to nothing.
+ *
+ * ## Phase 4 (2026-08-11) — measured, eval-gated pins
+ *
+ * Every change below passed its golden case in tests/ai-eval (run live via
+ * scripts/ai-eval.ts) BEFORE landing here; the benchmark numbers are in
+ * lib/ai/models.ts next to the -fast entries.
+ *
+ *   - STANDARD moved to the priority lane (`medium-fast`): passed the
+ *     watchlist/nl-screener/insight/verdict/portfolio gates; the portfolio
+ *     thesis went 39.5s → 9.9s on the same prompt.
+ *   - LIGHT is UNCHANGED: `low-fast` failed the financial-insight gate on a
+ *     live run (derived bps/growth figures), so it stays on `low` until it
+ *     earns the repin.
+ *   - DEEP (IC agents, filings, thematic) is UNCHANGED — background work
+ *     where depth is the product and nobody watches a spinner.
  */
 const LIGHT_PIN = ["claude-opus-5-low"];
-const STANDARD_PIN = ["claude-opus-5-medium", "claude-opus-5-low"];
+const STANDARD_PIN = ["claude-opus-5-medium-fast", "claude-opus-5-medium", "claude-opus-5-low"];
 const DEEP_PIN = ["claude-opus-5-high", "claude-opus-5-medium"];
+/** The hero verdict: deepest effort on the priority lane, cross-provider-safe
+ *  fallback to the plain tier. Benchmarked 4.9–7.6s vs 15.4s; gate PASS. */
+const VERDICT_PIN = ["claude-opus-5-high-fast", "claude-opus-5-medium-fast", "claude-opus-5-high"];
+/** The scanner thesis: sonnet-5-low passed the wire-thesis gate with concise,
+ *  grounded output (~18s vs the 157–218s the ledger recorded on the deep pin);
+ *  the old baseline itself FAILED the gate (extrapolated years, 3–6k tokens). */
+const WIRE_THESIS_PIN = ["claude-sonnet-5-low", "claude-opus-5-medium-fast", "claude-opus-5-medium"];
 
 export const TASK_MODEL_PINS: Partial<Record<TaskType, string[]>> = {
   /* ---- deep: institutional reasoning; quality then adherence ------------- */
+  "investment-verdict": VERDICT_PIN,
   "investment-thesis": DEEP_PIN,
+  "wire-thesis": WIRE_THESIS_PIN,
   "sec-filing-analysis": DEEP_PIN,
   "risk-review": DEEP_PIN,
   "accounting-red-flags": DEEP_PIN,
@@ -149,6 +174,10 @@ export const TASK_MODEL_PINS: Partial<Record<TaskType, string[]>> = {
   "manual-asset-research": STANDARD_PIN,
   comparison: STANDARD_PIN,
   "portfolio-intelligence": STANDARD_PIN,
+  // Vision task: the pin names the Claude tiers, and only vision-capable
+  // (provider, model) pairs are attempted — the Devin CLI carries the images
+  // as scoped-read workspace files (devin-cli.ts), the hosted APIs natively.
+  "portfolio-import": STANDARD_PIN,
   "portfolio-audit": STANDARD_PIN,
   "watchlist-intelligence": STANDARD_PIN,
   "opportunity-engine": STANDARD_PIN,
@@ -158,7 +187,11 @@ export const TASK_MODEL_PINS: Partial<Record<TaskType, string[]>> = {
   // Interactive but standard-complexity: real judgment, so medium effort
   // rather than the light tier.
   "chart-qa": STANDARD_PIN,
-  "app-assistant": STANDARD_PIN,
+  // Interactive routing/JSON with short answers: repinned to the light tier
+  // 2026-08-10 after a 12-case behavioral A/B (intent, action selection,
+  // mutation labels, ambiguity gating, refusals, injection, page context)
+  // matched the medium tier exactly — medium stays as the failure fallback.
+  "app-assistant": ["claude-opus-5-low", "claude-opus-5-medium"],
   coding: STANDARD_PIN,
 
   /* ---- light: parsing and one-liners; latency is the product -------------- */
@@ -168,6 +201,39 @@ export const TASK_MODEL_PINS: Partial<Record<TaskType, string[]>> = {
   "calendar-brief": LIGHT_PIN,
   "nl-screener": LIGHT_PIN,
   "quick-summary": LIGHT_PIN,
+};
+
+/**
+ * The Fast / Balanced / Deep overlay (lib/ai/mode.ts).
+ *
+ * Modes override pins ONLY for the four audited surfaces whose candidates
+ * passed (or were benchmarked against) their golden cases — everything else
+ * keeps its default pin in every mode, so a mode switch can never route an
+ * un-evaluated task to an un-evaluated model. `balanced` is the default and
+ * deliberately empty: the TASK_MODEL_PINS table above IS balanced.
+ *
+ *   fast — lowest latency that passed the surface's gate: the verdict drops
+ *     one effort tier (medium-fast: gate PASS, 5.3–6.1s benchmarked);
+ *     portfolio/compare move to sonnet-5-low (portfolio gate PASS, 13.7s).
+ *   deep — never trades effort down, even on fallback: the verdict and the
+ *     standard surfaces stay at the highest effort on the priority lane and
+ *     fall back within the same depth. (The catalogue's xhigh tiers are NOT
+ *     used — unbenchmarked, and evidence-based routing is the rule.)
+ */
+const MODE_OVERRIDES: Record<AiMode, Partial<Record<TaskType, string[]>>> = {
+  balanced: {},
+  fast: {
+    "investment-verdict": ["claude-opus-5-medium-fast", "claude-sonnet-5-medium", "claude-opus-5-medium"],
+    "portfolio-intelligence": ["claude-sonnet-5-low", "claude-opus-5-medium-fast", "claude-opus-5-medium"],
+    comparison: ["claude-sonnet-5-low", "claude-opus-5-medium-fast", "claude-opus-5-medium"],
+    "wire-thesis": ["swe-1-6-fast", "claude-sonnet-5-low", "claude-opus-5-medium"],
+  },
+  deep: {
+    "investment-verdict": ["claude-opus-5-high-fast", "claude-opus-5-high"],
+    "portfolio-intelligence": ["claude-opus-5-high-fast", "claude-opus-5-high"],
+    comparison: ["claude-opus-5-high-fast", "claude-opus-5-high"],
+    "wire-thesis": ["claude-opus-5-medium-fast", "claude-opus-5-medium"],
+  },
 };
 
 /** Env-var pin for a task, e.g. AI_TASK_NL_SCREENER="claude-opus-5-medium". */
@@ -182,7 +248,10 @@ function envPin(taskType: TaskType): string[] | null {
   return ids.length > 0 ? ids : null;
 }
 
-/** The pinned model list for a task, if any. Env wins over the static table. */
+/**
+ * The pinned model list for a task, if any.
+ * Precedence: env pin (operator) → mode overlay (user) → static table.
+ */
 export function pinnedModels(taskType: TaskType): string[] | null {
-  return envPin(taskType) ?? TASK_MODEL_PINS[taskType] ?? null;
+  return envPin(taskType) ?? MODE_OVERRIDES[resolveAiMode()][taskType] ?? TASK_MODEL_PINS[taskType] ?? null;
 }

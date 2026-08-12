@@ -138,11 +138,13 @@ export const RESEARCH_ACTIONS: ResearchAction[] = [
   {
     id: "filings",
     label: "Filing Summary",
+    // Market-neutral wording: US names carry SEC filings, Indian names carry
+    // NSE corporate announcements — both arrive through the same context block.
     instruction:
-      "Summarize what the recent SEC filings tell an investor. Identify the most decision-relevant disclosures and what to read next.",
+      "Summarize what the company's recent regulatory filings and exchange announcements tell an investor. Identify the most decision-relevant disclosures and what to read next.",
     intents: ["filings"],
     structured: false,
-    followUps: ["Anything concerning in the latest 10-K?", "Summarize the latest 8-K.", "What are the disclosed risk factors?"],
+    followUps: ["Anything concerning in the latest filings?", "Summarize the most recent announcement.", "What are the disclosed risk factors?"],
   },
   {
     id: "news",

@@ -154,6 +154,38 @@ const EPHEMERAL = { type: "ephemeral" as const };
 type WireTextBlock = { type: "text"; text: string; cache_control?: typeof EPHEMERAL };
 type WireTurn = { role: "user" | "assistant"; content: string | WireTextBlock[] };
 
+/** The media types the Anthropic Messages API accepts for base64 image blocks. */
+type AnthropicImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+const ANTHROPIC_IMAGE_TYPES: readonly AnthropicImageMediaType[] = [
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+];
+
+type WireImageBlock = {
+  type: "image";
+  source: { type: "base64"; media_type: AnthropicImageMediaType; data: string };
+};
+/** Message shape once images are attached — the final user turn becomes a mixed block array. */
+type WireMultimodalTurn = {
+  role: "user" | "assistant";
+  content: string | (WireTextBlock | WireImageBlock)[];
+};
+
+/**
+ * Coerce an arbitrary media type onto the API's closed set. JPEG is the
+ * fallback rather than a throw: the upload routes already restrict types, so
+ * an unknown value here is a stale caller, and refusing the whole request
+ * over a label would be worse than letting the API judge the actual bytes.
+ */
+function anthropicMediaType(mediaType: string): AnthropicImageMediaType {
+  const mt = mediaType.toLowerCase();
+  return (ANTHROPIC_IMAGE_TYPES as readonly string[]).includes(mt)
+    ? (mt as AnthropicImageMediaType)
+    : "image/jpeg";
+}
+
 /**
  * Prompt-cache placement — the wire shape for system + turns, with up to two
  * of the four allowed cache breakpoints:
@@ -216,6 +248,8 @@ export function buildCachedPrompt(messages: ProviderCompleteRequest["messages"])
 
 export class AnthropicProvider implements AIProvider {
   readonly id = "anthropic" as const;
+  /** Claude is multimodal and the Messages API carries base64 image blocks. */
+  readonly supportsImages = true;
 
   private clientFor(key: string): Anthropic {
     // Explicit baseURL: prompts go to api.anthropic.com and nowhere else.
@@ -248,7 +282,26 @@ export class AnthropicProvider implements AIProvider {
   private buildParams(request: ProviderCompleteRequest) {
     const { model, effort } = parseModelId(request.model);
     // Prompt-cache breakpoints ride on the wire shape; see buildCachedPrompt.
-    const { system, turns } = buildCachedPrompt(request.messages);
+    const { system, turns: cachedTurns } = buildCachedPrompt(request.messages);
+
+    // Vision input: image blocks precede the text of the FINAL user turn (the
+    // question about the images). The last turn is never cache-marked (it
+    // changes every call), so this cannot disturb the breakpoint placement.
+    const turns: WireMultimodalTurn[] = [...cachedTurns];
+    if (request.images && request.images.length > 0) {
+      const imageBlocks: WireImageBlock[] = request.images.map((img) => ({
+        type: "image",
+        source: { type: "base64", media_type: anthropicMediaType(img.mediaType), data: img.base64 },
+      }));
+      for (let i = turns.length - 1; i >= 0; i--) {
+        const turn = turns[i];
+        if (turn.role !== "user") continue;
+        const text: (WireTextBlock | WireImageBlock)[] =
+          typeof turn.content === "string" ? [{ type: "text", text: turn.content }] : turn.content;
+        turns[i] = { role: "user", content: [...imageBlocks, ...text] };
+        break;
+      }
+    }
 
     // Native structured outputs when the caller supplied a schema: the API
     // constrains decoding so the response IS valid against it — the JSON

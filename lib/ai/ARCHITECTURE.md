@@ -186,6 +186,27 @@ for await (const delta of runTaskChat("company-research", messages, {
 An explicit `opts.model` (a user-picked model in the UI) is honored strictly —
 the Router will not silently substitute another one if it fails.
 
+### Vision input (2026-08-10)
+
+Requests may carry images (`opts.images`: base64 + media type on
+`RunTaskOptions` / `runPromptWithMeta`, attached by providers to the final
+user turn). The Router gates image-carrying requests HARD on two independent
+facts — the provider declares `supportsImages` and the model carries the
+`vision` capability in the registry. The gate is never relaxed: a text-only
+fallback for an image request would hallucinate about a screenshot it never
+received.
+
+Every hosted provider carries images. Anthropic/OpenAI/Gemini/OpenRouter use
+their native wire formats (image blocks / data-URL `image_url` /
+`inline_data`). The keyless Devin CLI has no image argument in print mode,
+but the CLI forwards an image file the agent READS as real multimodal input —
+so `devin-cli.ts` writes each image to a per-call file in the workspace's
+images directory, tells the model to read it, and swaps in a vision config
+whose only allow is `Read(<imagesDir>/**)` (everything else stays denied;
+verified end-to-end 2026-08-10 with claude-opus-5-low reading a brokerage
+screenshot pixel-perfectly). First consumer: the Portfolio's screenshot
+import (`portfolio-import` task, `lib/portfolio/import/`).
+
 ## The Research Copilot is a special case, not an exception
 
 `context.ts`, `retrieval.ts`, `prompt.ts`, `memory.ts`, `actions.ts` and

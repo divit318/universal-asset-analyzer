@@ -1,3 +1,5 @@
+import { resolveAiMode } from "./mode";
+
 /**
  * The personalization inputs that make one verdict different from another.
  *
@@ -44,6 +46,58 @@ export function personalizationParams(url: URL): Record<string, string> {
   for (const key of PERSONALIZATION_KEYS) {
     const value = url.searchParams.get(key);
     if (value != null && value !== "") out[key] = value;
+  }
+  return out;
+}
+
+/**
+ * The STABLE subset of the personalization that participates in the cache key.
+ *
+ * Phase 2 finding (2026-08-11): keying the verdict on the raw personalization
+ * made the 6h cache useless for exactly the users it matters most for. The key
+ * embedded `fitScore` (moves a point with any market tick), `reasons` and
+ * `actionReason` (free text that quotes BOTH live scores verbatim), and an
+ * unrounded `suggestedPct` — so the store held three AAPL verdicts at
+ * fitScore 59/60/61, each a separate full generation of the same thesis.
+ *
+ * The identity below keeps every dimension that MATERIALLY changes the
+ * conclusion — the fit *tier*, the computed *action*, whether it's already
+ * held, the user's objective, and their sector gaps — and drops the volatile
+ * details, which still reach the prompt (a cache MISS still generates with
+ * the exact live numbers). A cached verdict can therefore cite a fit score a
+ * point or two off today's — bounded by the tier band and the 6h TTL, and the
+ * hero's direction/score are computed live in code, never read from the
+ * cached prose.
+ */
+export function stableVerdictIdentity(params: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  // The AI depth mode changes which model writes the verdict, so it is part
+  // of the cache identity — a Fast user must never be served a Deep user's
+  // verdict or vice versa. `balanced` (the default) is deliberately UNMARKED
+  // so every verdict cached before modes existed remains a balanced hit.
+  {
+    const mode = resolveAiMode();
+    if (mode !== "balanced") out.aiMode = mode;
+  }
+  if (params.fitTier) out.fitTier = params.fitTier;
+  if (params.action) out.action = params.action;
+  if (params.isInPortfolio) out.isInPortfolio = params.isInPortfolio;
+  if (params.objective) out.objective = params.objective;
+  // Sector gaps change only when the portfolio's composition changes; sort so
+  // an ordering difference can't fork the cache.
+  if (params.missingSectors) {
+    out.missingSectors = params.missingSectors
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .sort()
+      .join(",");
+  }
+  // Position size to the nearest whole percent: 4.5% vs 4.6% is the same
+  // advice; 0% vs 5% is not (and usually differs in `action` anyway).
+  if (params.suggestedPct) {
+    const pct = Number(params.suggestedPct);
+    if (Number.isFinite(pct)) out.suggestedPct = String(Math.round(pct));
   }
   return out;
 }

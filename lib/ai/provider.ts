@@ -13,6 +13,21 @@ export interface ProviderChatTurn {
 }
 
 /**
+ * An image travelling with a request (multimodal input). Kept as raw base64 +
+ * media type — the lowest common denominator every vision-capable wire format
+ * (Anthropic image blocks, OpenAI data-URL image_url, Gemini inline_data)
+ * builds from. Providers attach images to the FINAL user turn; the platform
+ * deliberately has no per-turn image placement, because no feature needs it
+ * and the flattened single-prompt providers couldn't honor it anyway.
+ */
+export interface ProviderImageAttachment {
+  /** e.g. "image/png", "image/jpeg", "image/webp". */
+  mediaType: string;
+  /** Raw base64 payload (no `data:` prefix). */
+  base64: string;
+}
+
+/**
  * Token accounting for one completion, as reported by the provider.
  *
  * The cache fields follow Anthropic's billing split: `promptTokens` is the
@@ -31,6 +46,13 @@ export interface ProviderTokenUsage {
 export interface ProviderCompleteRequest {
   model: string;
   messages: ProviderChatTurn[];
+  /**
+   * Images attached to the final user turn (vision input). Only routed to a
+   * provider that declares {@link AIProvider.supportsImages} AND a model
+   * carrying the "vision" capability — the Router gates on both, so a
+   * text-only provider never receives this field populated.
+   */
+  images?: ProviderImageAttachment[];
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
@@ -58,6 +80,18 @@ export interface ProviderCompleteRequest {
    * hosted providers ignore it. Omit for the provider's default.
    */
   keepAlive?: string;
+  /**
+   * True when this request belongs to a BACKGROUND task (task registry
+   * `latency: "background"` — the scanner, IC agents, cache warmers). A hint
+   * for providers whose transport consumes real local resources per call: the
+   * Devin CLI's print mode spawns a full CLI subprocess per completion, and a
+   * background fan-out of 6-8 of them starved interactive requests on this
+   * host (Phase 1: scanner storms, 300s budgets stretching to 620-980s of
+   * wall clock in the queue). Background requests are capped to a smaller
+   * slice of the subprocess pool and queue BEHIND interactive ones. Hosted
+   * HTTP providers ignore it.
+   */
+  background?: boolean;
   signal?: AbortSignal;
   /**
    * Streaming only: called once, at end of stream, with the completion's token
@@ -93,6 +127,14 @@ export interface ProviderHealth {
 export interface AIProvider {
   /** Stable id used in registry/router logs and the normalized response ("provider" field). */
   readonly id: string;
+  /**
+   * Whether this backend can carry image attachments to the model. Absent =
+   * false. The Router skips a provider for image-carrying requests when this
+   * is not true, regardless of the model's own capabilities — "model can see"
+   * and "this path to the model can see" are separate gates (e.g. a local
+   * daemon serving a text-only build of an otherwise multimodal family).
+   */
+  readonly supportsImages?: boolean;
   /** Models currently available to run, best-effort (empty array, not a throw, when unreachable). */
   listModels(): Promise<ProviderModelInfo[]>;
   /** Cheap reachability probe used by the Router to skip a dead provider before trying models. */

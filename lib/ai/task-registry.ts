@@ -29,7 +29,9 @@ export type TaskType =
   | "derivatives-research" // options chain: implied vol, term structure, open-interest positioning, Greeks
   | "macro-research" // yield curve shape/trend + news-grounded inflation/GDP/employment
   | "manual-asset-research" // real estate / private markets / alternatives: computed metrics over user-entered facts
-  | "investment-thesis" // bull/bear thesis generation, IC thesis synthesis, verdicts
+  | "investment-verdict" // the Research Hub hero verdict — a human is watching this spinner
+  | "investment-thesis" // bull/bear thesis generation, IC thesis synthesis (deep, background)
+  | "wire-thesis" // the scanner's per-opportunity thesis — high-volume batch, short structured output
   | "sec-filing-analysis" // filings-grounded deep analysis
   | "risk-review" // 10-K / risk-domain IC agent
   | "accounting-red-flags" // accounting-domain IC agent
@@ -37,6 +39,7 @@ export type TaskType =
   | "stress-testing" // portfolio/position stress scenarios
   | "explain-movement" // "why did this move" narratives
   | "portfolio-intelligence" // portfolio brief + new-position suggestions (JSON)
+  | "portfolio-import" // brokerage screenshot → structured holdings (vision, JSON)
   | "portfolio-audit" // CIO audit memo (prose; see note in the registry below)
   | "watchlist-intelligence" // watchlist digest/alerts summarization
   | "opportunity-engine" // scanner: classification, causal chains, sector/company impact, dedup
@@ -51,6 +54,7 @@ export type TaskType =
   | "nl-screener" // natural-language screener query parsing
   | "portfolio-construction" // Simulator intake: decide the next follow-up question for a hypothetical-portfolio mandate (JSON)
   | "quick-summary" // short, low-stakes single-field summaries
+  | "contextual-intel" // intel rail: combine a context's settled facts into at most one extra observation (JSON)
   | "chart-qa" // one-off interactive Q&A about the fullscreen chart workspace's current context
   | "app-assistant" // global "how do I…" helper: explains the app AND can navigate/preload pages, aware only of the current page — not a research surface
   | "coding"; // code generation/review (reserved; no feature ships this yet)
@@ -121,6 +125,24 @@ export interface TaskConfig {
  */
 export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
   /* ---- Deep analysis: institutional research quality is the product ------- */
+  // The Research Hub hero verdict, split from "investment-thesis" (Phase 3,
+  // 2026-08-11). The two shared one task type, so the flagship interactive
+  // surface inherited BATCH policy: `latency: "background"` classed it as
+  // background work in every priority decision (the print-mode subprocess
+  // pool queued it behind scanner storms), and its 300s budget was sized for
+  // an unattended pipeline, not a watched spinner. Same complexity, same
+  // model pin (DEEP_PIN — no model change), same prompt: only the priority
+  // class and the timeout describe what this actually is. The 180s budget
+  // still covers every observed generation (p100 ≈ 16s warm; provider stalls
+  // fall through to the pin's medium-tier fallback instead of pinning the
+  // user for five minutes).
+  "investment-verdict": {
+    complexity: "deep",
+    latency: "interactive",
+    jsonMode: true,
+    maxTokens: 2048,
+    timeoutMs: 180_000,
+  },
   "investment-thesis": {
     complexity: "deep",
     latency: "background",
@@ -128,6 +150,22 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     maxTokens: 2048,
     timeoutMs: 300_000,
     devinTimeoutMs: 300_000, // tranche 6 (IC pipeline) — tail-based
+  },
+  // The Wire scanner's per-opportunity thesis, split from "investment-thesis"
+  // (Phase 4). It shared the IC pipeline's task, so ~2-5 calls per scan ran at
+  // the deepest effort tier — the ledger showed 157-218s per call and 3-6k
+  // output tokens for a schema of ten short fields. The wire-thesis eval case
+  // (tests/ai-eval/golden.ts) gates its pin: the current baseline FAILED it
+  // (extrapolated a year not in evidence) while sonnet-5-low and
+  // opus-5-medium-fast passed with concise, grounded output. Standard
+  // complexity: bullet-level synthesis over a pre-computed dossier, dozens of
+  // times per day — not the flagship hero verdict.
+  "wire-thesis": {
+    complexity: "standard",
+    latency: "background",
+    jsonMode: true,
+    maxTokens: 2048,
+    timeoutMs: 180_000,
   },
   "sec-filing-analysis": {
     complexity: "deep",
@@ -217,6 +255,22 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     // thesis dossier is the largest prompt in this task class.
     devinTimeoutMs: 240_000,
   },
+  // Brokerage screenshot → structured holdings. Interactive (the user is
+  // watching an upload spinner) but standard complexity: reading a holdings
+  // table accurately — decimals, negative signs, "Qty" vs "% of account" —
+  // is careful transcription plus layout judgment, not deep reasoning. The
+  // request carries images, so the Router additionally restricts candidates
+  // to vision-capable (provider, model) pairs regardless of what this entry
+  // says (router.ts:canSeeImages). Output can run long (a 20-holding page is
+  // ~150 tokens per position), so no maxTokens cap — truncated JSON is worse
+  // than a slow answer here.
+  "portfolio-import": {
+    complexity: "standard",
+    latency: "interactive",
+    jsonMode: true,
+    temperature: 0.1,
+    timeoutMs: 240_000,
+  },
   // Split out from portfolio-intelligence: the CIO panel streams a *prose* memo
   // while the brief and new-position callers want JSON. One task cannot declare
   // two output shapes — when the audit route bypassed the platform this went
@@ -277,6 +331,21 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     temperature: 0.1,
   },
   "quick-summary": { complexity: "light", latency: "interactive", maxTokens: 400 },
+  // The intel rail's optional second pass. Nobody is watching a spinner — the
+  // deterministic cards are already on screen and this merges into a later
+  // poll — but the result IS wanted within the rail's 2-minute usefulness
+  // window, so it runs on the chain (a sessions run can take longer than the
+  // insight stays relevant) with a hard 60s budget. It only combines settled
+  // facts handed to it; it never derives verdicts, so light complexity.
+  "contextual-intel": {
+    complexity: "light",
+    latency: "standard",
+    jsonMode: true,
+    temperature: 0.3,
+    maxTokens: 500,
+    timeoutMs: 60_000,
+    provider: "chain",
+  },
   // Simulator intake + generation — a human is in a live back-and-forth (or
   // watching a staged progress bar) with this exact task, so latency is
   // interactive; but choosing WHICH gap in an investor profile matters next,

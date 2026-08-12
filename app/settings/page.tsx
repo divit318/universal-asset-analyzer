@@ -205,6 +205,95 @@ function ProviderRow({ provider, onChanged }: { provider: ProviderStatus; onChan
 }
 
 /**
+ * The AI depth preference — Fast / Balanced / Deep.
+ *
+ * Deliberately three plain words, no model names: the user chooses a
+ * speed/quality tradeoff and the routing layer (lib/ai/config.ts) translates
+ * it into eval-gated model pins per task. Only the surfaces whose faster
+ * candidates passed their golden cases differ by mode; everything else is
+ * identical in all three.
+ */
+function AiModeSection() {
+  const [mode, setMode] = useState<string | null>(null);
+  const [envOverride, setEnvOverride] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/settings/ai-mode")
+      .then((r) => r.json())
+      .then((d: { mode?: string; envOverride?: boolean }) => {
+        setMode(d.mode ?? "balanced");
+        setEnvOverride(Boolean(d.envOverride));
+      })
+      .catch(() => setMode("balanced"));
+  }, []);
+
+  const choose = async (next: string) => {
+    if (saving || envOverride || next === mode) return;
+    setSaving(true);
+    const prev = mode;
+    setMode(next);
+    try {
+      const res = await fetch("/api/settings/ai-mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: next }),
+      });
+      if (!res.ok) setMode(prev);
+    } catch {
+      setMode(prev);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const OPTIONS: { id: string; label: string; detail: string }[] = [
+    { id: "fast", label: "Fast", detail: "Quickest written analysis. Verdicts arrive in roughly half the time; the reasoning is one step shallower." },
+    { id: "balanced", label: "Balanced", detail: "The default. The strongest speed/quality routing measured for each surface." },
+    { id: "deep", label: "Deep", detail: "Never trades reasoning depth for speed, even when a faster route is available." },
+  ];
+
+  return (
+    <div className="flex flex-col gap-4">
+      <SectionHeader
+        label="AI depth"
+        description="How much reasoning the written analysis gets. Applies to the research verdict, portfolio thesis, comparisons, and Wire theses; every computed figure is identical in all three modes."
+      />
+      <Card padding="md">
+        <div className="flex flex-col gap-2 sm:flex-row">
+          {OPTIONS.map((opt) => (
+            <button
+              key={opt.id}
+              onClick={() => void choose(opt.id)}
+              disabled={envOverride || saving}
+              aria-pressed={mode === opt.id}
+              className={`flex-1 rounded-control border px-3 py-2.5 text-left transition-colors ${
+                mode === opt.id
+                  ? "border-brand/60 bg-brand/10"
+                  : "border-border hover:bg-surface-2"
+              } ${envOverride ? "cursor-not-allowed opacity-60" : ""}`}
+            >
+              <span className="block text-sm font-semibold text-foreground">{opt.label}</span>
+              <span className="mt-0.5 block text-xs leading-5 text-muted">{opt.detail}</span>
+            </button>
+          ))}
+        </div>
+        {envOverride && (
+          <p className="mt-3 text-xs text-muted">
+            Set by the <span className="font-mono">UAA_AI_MODE</span> environment variable, which
+            overrides this control. Unset it where the app is launched to choose here.
+          </p>
+        )}
+        <p className="mt-3 text-xs text-muted">
+          A changed mode generates fresh analysis rather than replaying another mode&apos;s cached
+          text. Saved on this machine (~/.uaa), like everything else on this page.
+        </p>
+      </Card>
+    </div>
+  );
+}
+
+/**
  * Settings — the AI provider chain.
  *
  * UAA is provider-agnostic: the Router walks this chain, best first, and uses
@@ -236,6 +325,8 @@ export default function SettingsPage() {
       />
 
       <SettingsNav />
+
+      <AiModeSection />
 
       <div className="flex flex-col gap-4">
         <SectionHeader

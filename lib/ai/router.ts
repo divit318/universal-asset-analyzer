@@ -45,7 +45,13 @@ import { DevinProvider } from "./providers/devin-provider";
 import { GeminiProvider } from "./providers/gemini-provider";
 import { OllamaProvider } from "./providers/ollama-provider";
 import { OpenAIProvider, OpenRouterProvider } from "./providers/openai-compatible-provider";
-import type { AIProvider, ProviderChatTurn, ProviderModelInfo, ProviderTokenUsage } from "./provider";
+import type {
+  AIProvider,
+  ProviderChatTurn,
+  ProviderImageAttachment,
+  ProviderModelInfo,
+  ProviderTokenUsage,
+} from "./provider";
 import { normalizeResponse, type AIResponse } from "./response";
 import {
   TASK_REGISTRY,
@@ -89,6 +95,8 @@ export function resetProvidersForTests(): void {
 
 export interface RouteRequest {
   messages: ProviderChatTurn[];
+  /** Images attached to the final user turn. Presence gates routing to vision-capable (provider, model) pairs. */
+  images?: ProviderImageAttachment[];
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
@@ -280,6 +288,20 @@ function resolveThinking(
 }
 
 /**
+ * Can this (provider, model) pair actually SEE the request's images?
+ *
+ * A hard gate, never relaxed: a text-only fallback for an image request does
+ * not produce a degraded answer, it produces a confident hallucination about
+ * a screenshot it never received. Both halves are required — the provider
+ * must be able to carry images to the model (hosted APIs natively; the Devin
+ * CLI via a scoped-read workspace file, see devin-cli.ts) and the model
+ * itself must be multimodal ("vision" in the registry).
+ */
+function canSeeImages(provider: AIProvider, model: string): boolean {
+  return provider.supportsImages === true && specForInstalled(model).capabilities.includes("vision");
+}
+
+/**
  * Generation settings for a (task, model) pair — the single place task config,
  * model defaults, and per-call overrides are reconciled.
  */
@@ -298,6 +320,9 @@ function settingsFor(task: TaskConfig, model: string, request: RouteRequest) {
     numCtx: task.contextTokens ? Math.min(task.contextTokens, spec.contextWindow) : undefined,
     thinking: resolveThinking(task, spec, json),
     keepAlive: keepAliveFor(task),
+    // Lets a subprocess-per-call transport (Devin print mode) cap and deprioritize
+    // background fan-outs so they cannot starve a request a human is watching.
+    background: task.latency === "background",
   };
 }
 
@@ -497,9 +522,18 @@ export async function route(
   let coldTimeoutFallbacksUsed = 0;
   const MAX_COLD_TIMEOUT_FALLBACKS = 1;
   let considered = 0;
+  const hasImages = (request.images?.length ?? 0) > 0;
+  let visionSkips = 0;
 
   for await (const { provider, model } of attemptOrder(taskType, task, providers, opts.model)) {
     if (keyFailedProviders.has(provider.id)) continue;
+    // Image requests are gated hard — see canSeeImages. Skipped silently
+    // rather than recorded as failures: an ineligible pair never attempted
+    // anything. If EVERY pair is skipped, the error below names the real fix.
+    if (hasImages && !canSeeImages(provider, model)) {
+      visionSkips += 1;
+      continue;
+    }
     considered += 1;
     // An abort is the caller's decision, not a model failure. Retrying the
     // next candidate would keep spending on work nobody is waiting for.
@@ -530,6 +564,7 @@ export async function route(
         const result = await provider.complete({
           model,
           messages: request.messages,
+          ...(hasImages ? { images: request.images } : {}),
           signal: request.signal,
           ...settings,
           timeoutMs,
@@ -640,7 +675,11 @@ export async function route(
   }
 
   if (attemptErrors.length === 0) {
-    throw new AllModelsFailedError(taskType, ["no compatible model is available"]);
+    throw new AllModelsFailedError(taskType, [
+      visionSkips > 0
+        ? "no vision-capable model is available for image input — sign in to the Devin CLI (devin login) or add a provider API key in Settings"
+        : "no compatible model is available",
+    ]);
   }
   throw new AllModelsFailedError(taskType, attemptErrors, attemptCauses);
 }
@@ -668,9 +707,16 @@ export async function* routeStream(
   let coldTimeoutFallbacksUsed = 0;
   const MAX_COLD_TIMEOUT_FALLBACKS = 1;
   let considered = 0;
+  const hasImages = (request.images?.length ?? 0) > 0;
+  let visionSkips = 0;
 
   for await (const { provider, model } of attemptOrder(taskType, task, providers, opts.model)) {
     if (keyFailedProviders.has(provider.id)) continue;
+    // Same hard vision gate as route() — see canSeeImages.
+    if (hasImages && !canSeeImages(provider, model)) {
+      visionSkips += 1;
+      continue;
+    }
     considered += 1;
     if (request.signal?.aborted) break;
     let started = false;
@@ -700,6 +746,7 @@ export async function* routeStream(
           {
             model,
             messages: request.messages,
+            ...(hasImages ? { images: request.images } : {}),
             signal: request.signal,
             ...settings,
             timeoutMs,
@@ -801,7 +848,11 @@ export async function* routeStream(
   }
 
   if (attemptErrors.length === 0) {
-    throw new AllModelsFailedError(taskType, ["no compatible model is available"]);
+    throw new AllModelsFailedError(taskType, [
+      visionSkips > 0
+        ? "no vision-capable model is available for image input — sign in to the Devin CLI (devin login) or add a provider API key in Settings"
+        : "no compatible model is available",
+    ]);
   }
   throw new AllModelsFailedError(taskType, attemptErrors, attemptCauses);
 }
