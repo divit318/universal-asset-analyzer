@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useDataset } from "@/lib/platform/client/use-dataset";
 import { Card, Badge } from "@/app/_components/ui";
 import { LoadingMark } from "@/app/_components/loading-mark";
@@ -8,12 +8,18 @@ import type { PortfolioThesis as Thesis } from "@/lib/portfolio/thesis";
 
 /**
  * The Portfolio Thesis + Identity banner — one AI-generated paragraph plus a
- * handful of persistent identity tags, shown once at the top of the page.
+ * handful of persistent identity tags, shown once near the top of the page.
  *
  * Fetched from its OWN endpoint (see app/api/portfolio/thesis/route.ts),
  * independently of the deterministic report — an AI call has no business
  * blocking the dashboard's numbers. Cached server-side by portfolio content
  * hash, so it only regenerates when the holdings actually change.
+ *
+ * COMPACT BY DEFAULT (2026-08-11 pass): the always-visible part is the identity
+ * tags and the two-sentence thesis; Working / Watch / the bear case / what has
+ * to be true live behind one "Details" expand. The AI's reading is an
+ * interpretation layer over the measured dashboard, and an interpretation that
+ * occupies half the first screen outranks the measurements it interprets.
  */
 export function PortfolioThesisBanner({
   enabled,
@@ -78,33 +84,32 @@ export function PortfolioThesisBanner({
     );
   }
 
-  // A LABELLED wait, not three grey bars.
-  //
-  // This is the topmost element on the page and the slowest, because it is the only
-  // one that waits on a local language model. Unlabelled skeleton bars sitting there
-  // for twenty seconds are indistinguishable from a broken panel — and every
-  // deterministic number below has already rendered, so the natural conclusion is
-  // that something is stuck. Saying what is being waited for, and that the rest of
-  // the page is unaffected, converts a suspected fault into an understood wait.
+  // A LABELLED wait, not grey bars — and a SLIM one. Every deterministic figure
+  // is already on screen (this fetch is independent), so the honest footprint of
+  // "the AI hasn't finished reading yet" is one quiet line, not a card-height
+  // block holding prime space.
   if (isInitialLoading || !data) {
     return (
-      <Card className="flex items-center gap-2.5 p-4">
-        <LoadingMark size={16} label="Generating portfolio thesis" />
-        <div className="flex flex-col">
-          <span className="text-xs font-medium text-foreground">Reading your portfolio…</span>
-          <span className="text-[11px] text-muted/70">
-            The AI is writing a thesis and a bear case. Every figure below is already
-            final — this runs independently and never blocks them.
-          </span>
-        </div>
+      <Card className="flex items-center gap-2.5 px-4 py-2.5">
+        <LoadingMark size={14} label="Generating portfolio thesis" />
+        <span className="text-[11px] text-muted/70">
+          AI thesis loading — every figure on this page is already final and does not
+          wait for it.
+        </span>
       </Card>
     );
   }
 
-  const hasDetail = data.strengths.length > 0 || data.risks.length > 0 || data.bearCase || data.mustBeTrue;
+  return <ThesisCard data={data} />;
+}
+
+function ThesisCard({ data }: { data: Thesis }) {
+  const [open, setOpen] = useState(false);
+  const hasDetail =
+    data.strengths.length > 0 || data.risks.length > 0 || !!data.bearCase || !!data.mustBeTrue;
 
   return (
-    <Card className="flex flex-col gap-3.5 p-5">
+    <Card className="flex flex-col gap-2.5 p-4">
       <div className="flex flex-wrap items-center gap-1.5">
         {data.identity.map((tag) => (
           <Badge key={tag} variant="brand">{tag}</Badge>
@@ -112,83 +117,89 @@ export function PortfolioThesisBanner({
         {data.source === "fallback" && (
           <Badge variant="neutral">Measured facts only — AI offline</Badge>
         )}
+        {hasDetail && (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className="ml-auto shrink-0 rounded-md text-[11px] text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+          >
+            {open ? "Hide detail ▲" : "Working · Watch · Bear case ▼"}
+          </button>
+        )}
       </div>
 
-      <p className="text-sm leading-relaxed text-foreground">{data.thesis}</p>
+      <p className="text-xs leading-relaxed text-foreground">{data.thesis}</p>
 
-      {/* ── Scannable, not prose ─────────────────────────────────────────────
-          This was one ninety-word paragraph. It contained a genuinely important
-          judgement — "reliance on a single asset class and no alternative exposure
-          is a key weakness" — in its fourth clause, where nobody scanning a
-          dashboard would find it. Analysts scan; they do not read paragraphs on a
-          screen they open every morning. Splitting the judgement into labelled
-          columns costs nothing and is the difference between the insight being
-          delivered and merely being present. */}
-      {hasDetail && (
-        <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-          {data.strengths.length > 0 && (
-            <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-positive">
-                Working
+      {/* ── The judgement layer, on demand ───────────────────────────────────
+          Working / Watch / the bear case / what has to be true are the AI's most
+          valuable output, but they are a REVIEW, not a status readout — worth
+          opening deliberately, not worth half the first screen on every visit.
+          One expand keeps all four together so the bear case is never separated
+          from the strengths it argues against. */}
+      {open && hasDetail && (
+        <div className="flex flex-col gap-3 border-t border-border/60 pt-3">
+          <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+            {data.strengths.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-positive">
+                  Working
+                </span>
+                <ul className="flex flex-col gap-1">
+                  {data.strengths.map((s, i) => (
+                    <li key={i} className="text-[11px] leading-relaxed text-muted">— {s}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {data.risks.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-warning">
+                  Watch
+                </span>
+                <ul className="flex flex-col gap-1">
+                  {data.risks.map((r, i) => (
+                    <li key={i} className="text-[11px] leading-relaxed text-muted">— {r}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          {/* The bear case keeps its own emphasis because it is the one thing on
+              this page arguing AGAINST the portfolio, and a tool that only ever
+              agrees with its user is not an analyst. Rendered only when the model
+              had something substantive — the prompt permits an empty answer, and a
+              manufactured bear case would be worse than none. */}
+          {data.bearCase && (
+            <div className="flex flex-col gap-1 rounded-lg border border-negative/25 bg-negative/[0.04] p-3">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-negative">
+                The case against this portfolio
               </span>
-              <ul className="flex flex-col gap-1">
-                {data.strengths.map((s, i) => (
-                  <li key={i} className="text-[11px] leading-relaxed text-muted">— {s}</li>
-                ))}
-              </ul>
+              <p className="text-[11px] leading-relaxed text-muted">{data.bearCase}</p>
             </div>
           )}
-          {data.risks.length > 0 && (
-            <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-warning">
-                Watch
+
+          {data.mustBeTrue && (
+            <div className="flex flex-col gap-1 rounded-lg border border-border/60 bg-surface/40 p-3">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted/70">
+                What has to be true for this to work
               </span>
-              <ul className="flex flex-col gap-1">
-                {data.risks.map((r, i) => (
-                  <li key={i} className="text-[11px] leading-relaxed text-muted">— {r}</li>
-                ))}
-              </ul>
+              <p className="text-[11px] leading-relaxed text-muted">{data.mustBeTrue}</p>
             </div>
           )}
-        </div>
-      )}
 
-      {/* The bear case is given its own emphasis because it is the one thing on
-          this page arguing AGAINST the portfolio, and a tool that only ever
-          agrees with its user is not an analyst. Rendered only when the model had
-          something substantive — the prompt permits an empty answer, and a
-          manufactured bear case would be worse than none. */}
-      {data.bearCase && (
-        <div className="flex flex-col gap-1 rounded-lg border border-negative/25 bg-negative/[0.04] p-3.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-negative">
-            The case against this portfolio
-          </span>
-          <p className="text-[11px] leading-relaxed text-muted">{data.bearCase}</p>
+          {/* Provenance, stated once.
+              Everything else on this page is arithmetic; this card is a language
+              model's reading of that arithmetic, and the two do not carry the same
+              authority. */}
+          {data.source === "ai" && (
+            <p className="text-[10px] leading-relaxed text-muted/50">
+              Written by the AI from the measured figures on this page. Interpretation,
+              not measurement — where it and a panel below disagree, the panel is right.
+            </p>
+          )}
         </div>
-      )}
-
-      {data.mustBeTrue && (
-        <div className="flex flex-col gap-1 rounded-lg border border-border/60 bg-surface/40 p-3.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted/70">
-            What has to be true for this to work
-          </span>
-          <p className="text-[11px] leading-relaxed text-muted">{data.mustBeTrue}</p>
-        </div>
-      )}
-
-      {/* Provenance, stated once.
-          Everything else on this page is arithmetic; this card is a local language
-          model's reading of that arithmetic, and the two do not carry the same
-          authority. The prompt now hands the model every directional verdict as a
-          settled fact precisely because it was observed inverting them — but a 7B
-          model can still err, and the honest thing is to say which panel is
-          measured and which is interpreted rather than letting the visual
-          consistency imply they are the same kind of claim. */}
-      {data.source === "ai" && (
-        <p className="text-[10px] leading-relaxed text-muted/50">
-          Written by the AI from the measured figures on this page. Interpretation,
-          not measurement — where it and a panel below disagree, the panel is right.
-        </p>
       )}
     </Card>
   );

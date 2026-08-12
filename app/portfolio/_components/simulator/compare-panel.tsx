@@ -251,7 +251,7 @@ function CompareBody({ a, b }: { a: CompareSide; b: CompareSide }) {
       {/* ── Risk ── */}
       <CompareSection title="Risk">
         <CompareRow label="Annualized volatility" a={a.risk.annualizedVolatility} b={b.risk.annualizedVolatility} format={(v) => `${v.toFixed(1)}%`} higherBetter={false} />
-        <CompareRow label="Beta vs SPY" a={a.risk.beta} b={b.risk.beta} format={(v) => v.toFixed(2)} higherBetter={null} />
+        <CompareRow label={`Beta vs ${a.risk.benchmarkLabel ?? "benchmark"}`} a={a.risk.beta} b={b.risk.beta} format={(v) => v.toFixed(2)} higherBetter={null} />
         <CompareRow label="Sharpe ratio" a={a.risk.sharpeRatio} b={b.risk.sharpeRatio} format={(v) => v.toFixed(2)} higherBetter />
         <CompareRow label="Max drawdown" a={a.risk.maxDrawdown} b={b.risk.maxDrawdown} format={(v) => `${v.toFixed(1)}%`} higherBetter={false} />
         <CompareRow label="1-day VaR (95%)" a={a.risk.var95Pct} b={b.risk.var95Pct} format={(v) => `${v.toFixed(2)}%`} higherBetter={false} />

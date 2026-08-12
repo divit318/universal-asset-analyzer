@@ -129,6 +129,7 @@ export const structuredProductAdapter: PortfolioClassAdapter = {
       sector: "Structured Products",
       productType: d?.productType ?? null,
       geography: null,
+      geographyBasis: "Geography follows the note's underlying, which is not recorded",
       currency: raw.currency,
       // This class keeps its own factors() deliberately: the equity beta is
       // CONDITIONAL on the live distance to the barrier, which no catalogue entry

@@ -53,6 +53,7 @@ export const alternativeAdapter: PortfolioClassAdapter = {
       sector: "Alternatives",
       subcategory: d?.subcategory ?? null,
       geography: null,
+      geographyBasis: "No geography recorded in this asset's details",
       currency: raw.currency,
       riskModel: riskModelFor(raw, ctx, { signals: { subcategory: d?.subcategory ?? null } }).label,
     };

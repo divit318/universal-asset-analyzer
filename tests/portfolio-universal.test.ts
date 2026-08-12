@@ -470,6 +470,96 @@ describe("allocation", () => {
   });
 });
 
+/**
+ * Fund geography + allocation drill-down (2026-08-10 dashboard audit).
+ *
+ * On the real book, 46.2% of geography was "unclassified" — QQQM 29.9%, cash
+ * 6.0%, VOO 5.2%, DRAM 5.0% — because every fund's geography read Yahoo's
+ * `assetProfile.country`, which the provider only populates for single names.
+ * The Morningstar category the risk classifier already trusted ("Large Growth"
+ * → US broad-equity fund) was never consulted for geography.
+ */
+describe("allocation — fund geography, sector mandates, and drill-down ids", () => {
+  const fund = (over: Partial<import("@/lib/portfolio/model/types").ContextFundamentals>) => ({
+    sector: null, industry: null, country: null, currency: "USD",
+    dividendYield: 0.006, duration: null, maturity: null, creditQuality: null,
+    expenseRatio: 0.15, marketCap: null, peRatio: null, priceToBook: null,
+    returnOnEquity: null, revenueGrowth: null, operatingMargins: null,
+    debtToEquity: null, operatingCashflow: null, beta: null,
+    ...over,
+  });
+
+  const fundCtx = () =>
+    ctx({
+      quotes: new Map([
+        ["AAPL", { symbol: "AAPL", price: 200, changePercent: 1.2, currency: "USD", name: "Apple", marketCap: 3e12, assetType: "EQUITY" }],
+        ["QQQM", { symbol: "QQQM", price: 200, changePercent: 0.5, currency: "USD", name: "Invesco NASDAQ 100 ETF", marketCap: null, assetType: "ETF" }],
+        ["DRAM", { symbol: "DRAM", price: 30, changePercent: 1.1, currency: "USD", name: "Roundhill Memory ETF", marketCap: null, assetType: "ETF" }],
+        ["VXUS", { symbol: "VXUS", price: 60, changePercent: -0.2, currency: "USD", name: "Vanguard Total Intl", marketCap: null, assetType: "ETF" }],
+      ]),
+      fundamentals: new Map([
+        ["AAPL", fund({ sector: "Technology", industry: "Consumer Electronics", country: "United States" })],
+        ["QQQM", fund({ fundCategory: "Large Growth", equityWeight: 99.8, topSector: "Technology", topSectorWeight: 52 })],
+        ["DRAM", fund({ fundCategory: "Technology", equityWeight: 90, topSector: "Technology", topSectorWeight: 92 })],
+        ["VXUS", fund({ fundCategory: "Foreign Large Blend", equityWeight: 99.5 })],
+      ]),
+    });
+
+  it("classifies a US broad-equity fund's geography from its Morningstar category, with provenance", () => {
+    const { holdings } = normalizeHoldings(
+      [raw({ id: "q", assetClass: "etf", symbol: "QQQM" })], fundCtx(),
+    );
+    expect(holdings[0].attributes.geography).toBe("United States");
+    // The drill-down's "why": the basis names the category it came from.
+    expect(holdings[0].attributes.geographyBasis).toContain("Large Growth");
+  });
+
+  it("classifies an international fund as International Developed", () => {
+    const { holdings } = normalizeHoldings(
+      [raw({ id: "v", assetClass: "etf", symbol: "VXUS" })], fundCtx(),
+    );
+    expect(holdings[0].attributes.geography).toBe("International Developed");
+  });
+
+  it("does NOT guess a region for a sector fund — but does give it its sector", () => {
+    const { holdings } = normalizeHoldings(
+      [raw({ id: "d", assetClass: "etf", symbol: "DRAM" })], fundCtx(),
+    );
+    // A "Technology" mandate says nothing about WHERE its holdings are (this
+    // fund holds SK Hynix beside Micron); fabricating "United States" would be
+    // worse than saying unknown — and the basis explains the abstention.
+    expect(holdings[0].attributes.geography).toBeNull();
+    expect(holdings[0].attributes.geographyBasis).toMatch(/sector mandate/i);
+    // But its SECTOR is exactly what the category declares, in the same label
+    // taxonomy direct equities use, so it lands in the Technology slice.
+    expect(holdings[0].attributes.sector).toBe("Technology");
+  });
+
+  it("every slice carries its member holding ids (largest first), and unclassified value is itemized", () => {
+    const c = fundCtx();
+    const { holdings, totalValue } = normalizeHoldings([
+      raw({ id: "q", assetClass: "etf", symbol: "QQQM", quantity: 10 }),   // US via category
+      raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 5 }), // US via profile
+      raw({ id: "d", assetClass: "etf", symbol: "DRAM", quantity: 1 }),    // no region
+      raw({ id: "cash", assetClass: "cash", quantity: 500, unit: "currency" }), // no geography by design
+    ], c);
+
+    const geo = computeAllocation(holdings, totalValue).byGeography;
+    const us = geo.slices.find((s) => s.key === "United States")!;
+    // Largest first: QQQM ($2,000) before AAPL ($1,000).
+    expect(us.holdingIds).toEqual(["q", "a"]);
+    // The unclassified share is itemized, not a mystery number: DRAM ($30)
+    // and cash ($500), by value descending.
+    expect(geo.unclassifiedIds).toEqual(["cash", "d"]);
+    expect(geo.unclassifiedPct).toBeGreaterThan(0);
+    // And the ids reconcile with the pct: the two views describe the same value.
+    const unclassifiedValue = holdings
+      .filter((h) => geo.unclassifiedIds!.includes(h.id))
+      .reduce((s, h) => s + h.valuation.valueBase, 0);
+    expect((unclassifiedValue / totalValue) * 100).toBeCloseTo(geo.unclassifiedPct, 8);
+  });
+});
+
 describe("risk", () => {
   it("reports coverage and does NOT treat illiquid holdings as riskless", () => {
     const c = ctx();

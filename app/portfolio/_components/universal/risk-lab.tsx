@@ -148,7 +148,7 @@ export function RiskLab({ risk, scenarios }: { risk: UniversalRisk; scenarios: S
           <li>
             <strong className="text-foreground">Volatility, Sharpe, drawdown, VaR, CVaR</strong> — computed
             from real daily price history for the {risk.coverage.observedPct}% of the portfolio that has
-            one. Beta is a regression of portfolio returns against SPY over the same window.
+            one. Beta is a regression of portfolio returns against {risk.benchmarkLabel ?? "the market benchmark"} over the same window.
           </li>
           <li>
             <strong className="text-foreground">Equity/fund beta feeding the factor exposures below</strong> —
@@ -196,8 +196,8 @@ export function RiskLab({ risk, scenarios }: { risk: UniversalRisk; scenarios: S
           <Metric
             label="Beta"
             value={n(risk.beta, "", 2)}
-            hint="vs SPY"
-            title="How much the portfolio moves for each 1% move in the S&P 500. 1.0 = moves with the market; below 1.0 = moves less."
+            hint={`vs ${risk.benchmarkLabel ?? "market"}`}
+            title={`How much the portfolio moves for each 1% move in ${risk.benchmarkLabel ?? "its market benchmark"}. 1.0 = moves with the market; below 1.0 = moves less.`}
           />
           <Metric
             label="Max drawdown"

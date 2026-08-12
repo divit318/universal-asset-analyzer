@@ -35,8 +35,12 @@ import type {
   RawHolding,
 } from "./model/types";
 import { portfolioSymbols } from "./store";
+import { dominantBenchmark, regionForBenchmark, riskFreeRate } from "../benchmarks";
 
-const BENCHMARK = "SPY";
+// Market-aware: an all-India book is benchmarked against NIFTY 50, an all-US
+// book against SPY, a mixed book against the market it mostly holds
+// (lib/benchmarks.ts). The Sharpe/Sortino risk-free rate follows the same
+// market — a 6.5% GOI yield for INR books, not the US T-bill.
 /**
  * The US 10-year Treasury yield index. ^TNX quotes the YIELD as its price (4.23 =
  * 4.23%), so first-differencing its closes gives daily yield changes in percentage
@@ -164,6 +168,8 @@ export async function buildMarketContext(
     };
   }
 
+  const benchmark = dominantBenchmark(symbols);
+
   /* ---- One declared plan. runPlan() owns concurrency + failure isolation. ---- */
 
   const plan = [
@@ -177,7 +183,7 @@ export async function buildMarketContext(
     },
     {
       id: "benchmark",
-      run: () => getHistory(BENCHMARK, HISTORY_DAYS),
+      run: () => getHistory(benchmark.symbol, HISTORY_DAYS),
     },
     {
       id: "rateIndex",
@@ -346,6 +352,8 @@ export async function buildMarketContext(
     fundamentals,
     benchmarkReturns: bench.returns,
     benchmarkDates: bench.dates,
+    benchmarkLabel: benchmark.label,
+    riskFreeAnnual: riskFreeRate(regionForBenchmark(benchmark)),
     rateChanges,
     rateChangeDates,
     asOf: new Date().toISOString(),

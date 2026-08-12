@@ -121,10 +121,10 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
     });
   } catch {
     parsed = {
-      headline: "Portfolio summary — connect an AI provider for intelligence",
+      headline: "Portfolio summary — connect an AI provider to generate the written brief",
       narrative: `${AI_RECOVERY_HINT} Your holdings and P&L are shown below regardless.`,
-      topOpportunity: "AI analysis unavailable — no provider reachable",
-      biggestRisk: "AI analysis unavailable — no provider reachable",
+      topOpportunity: "The written brief is unavailable — no AI provider reachable",
+      biggestRisk: "The written brief is unavailable — no AI provider reachable",
       actionItems: [],
     };
   }

@@ -78,6 +78,9 @@ export const cashAdapter: PortfolioClassAdapter = {
     return {
       sector: "Cash",
       geography: null,
+      // Not a data gap: cash holds no assets with a home market. Its real
+      // exposure is the issuing currency, which the By-currency view carries.
+      geographyBasis: "Cash has no geography — its exposure is the currency, shown under By currency",
       currency: raw.currency,
       vehicle: typeof raw.meta.vehicle === "string" ? raw.meta.vehicle : null,
       riskModel: riskModelFor(raw, ctx).label,

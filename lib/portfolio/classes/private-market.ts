@@ -69,6 +69,7 @@ export const privateMarketAdapter: PortfolioClassAdapter = {
       sector: "Private Markets",
       round: d?.round ?? null,
       geography: null,
+      geographyBasis: "No geography recorded in this asset's details",
       currency: raw.currency,
       riskModel: riskModelFor(raw, ctx).label,
     };

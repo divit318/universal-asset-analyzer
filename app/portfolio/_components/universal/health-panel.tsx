@@ -1,8 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Card, Badge } from "@/app/_components/ui";
+import { askAi } from "@/app/_components/ask-ai";
 import type { HealthDimension, HealthScore, ScoreTrend } from "@/lib/portfolio/engines/health";
+import type { UniversalRisk } from "@/lib/portfolio/engines/risk";
+import { isIlliquid, type Holding } from "@/lib/portfolio/model/types";
+import type { Tab } from "./dashboard-nav";
 
 /**
  * The Universal Portfolio Health Score.
@@ -78,13 +83,130 @@ function bandOf(score: number): Band {
   return "adequate";
 }
 
-function DimensionRow({ d, emphasis }: { d: HealthDimension; emphasis: boolean }) {
+/* ── Drivers: WHAT is producing this score, named ──────────────────────────
+   Purely presentational restatements of the same holdings data the engine
+   scored — no second scoring pass, no new thresholds. Each returns the facts a
+   user would otherwise have to reconstruct by cross-referencing the Holdings
+   tab against the dimension's formula, or null where the engine's own
+   `explanation` already names the drivers. */
+function driversFor(name: string, holdings: Holding[], risk: UniversalRisk): string | null {
+  const top = (list: Holding[], n = 3) =>
+    list
+      .slice(0, n)
+      .map((h) => `${h.symbol ?? h.name} (${h.weight.toFixed(1)}%)`)
+      .join(", ");
+
+  switch (name) {
+    case "Income": {
+      const silent = holdings.filter((h) => !h.income).sort((a, b) => b.weight - a.weight);
+      if (silent.length === 0) return null;
+      const w = silent.reduce((s, h) => s + h.weight, 0);
+      return `${w.toFixed(0)}% of the portfolio produces no income — led by ${top(silent)}.`;
+    }
+    case "Inflation Protection": {
+      const hurt = holdings
+        .filter((h) => (h.factors.inflation ?? 0) * h.weight < 0)
+        .sort((a, b) => (a.factors.inflation ?? 0) * a.weight - (b.factors.inflation ?? 0) * b.weight);
+      if (hurt.length === 0) return null;
+      return `Most exposed to an inflation surprise: ${top(hurt)}. Real assets (TIPS, commodities, gold, real estate) are what move this.`;
+    }
+    case "Concentration": {
+      const largest = [...holdings].sort((a, b) => b.weight - a.weight);
+      return `Largest positions: ${top(largest)} — the top holding is ${risk.topHoldingWeight.toFixed(1)}% against the 8% band where the penalty starts.`;
+    }
+    case "Correlation": {
+      const pairs = risk.correlation?.highPairs?.slice(0, 3);
+      if (!pairs || pairs.length === 0) return null;
+      return `Most correlated pairs: ${pairs.map((p) => `${p.a}/${p.b} r=${p.r.toFixed(2)}`).join(", ")} — these move as one trade.`;
+    }
+    case "Liquidity": {
+      const ill = holdings.filter((h) => isIlliquid(h.liquidity)).sort((a, b) => b.weight - a.weight);
+      if (ill.length === 0) return null;
+      return `Cannot be sold within days: ${top(ill)}.`;
+    }
+    case "Holding Quality": {
+      const scored = holdings
+        .filter((h) => h.score?.score != null)
+        .sort((a, b) => a.score!.score - b.score!.score);
+      if (scored.length === 0) return null;
+      return `Weakest holdings by their own score: ${scored
+        .slice(0, 3)
+        .map((h) => `${h.symbol ?? h.name} (${h.score!.score}/100)`)
+        .join(", ")}.`;
+    }
+    default:
+      // Asset Allocation, Diversification, Geographic, Currency, Drawdown and
+      // Cash already name their drivers in the engine's own explanation.
+      return null;
+  }
+}
+
+/* ── Improvement paths: where in UAA this score can actually be worked on ── */
+const IMPROVE_ACTIONS: Record<string, { label: string; tab: Tab }[]> = {
+  "Asset Allocation": [
+    { label: "Rebalance in Optimize", tab: "optimize" },
+    { label: "Test a change in Simulator", tab: "simulator" },
+  ],
+  Diversification: [
+    { label: "Rebalance in Optimize", tab: "optimize" },
+    { label: "Test a change in Simulator", tab: "simulator" },
+  ],
+  Concentration: [
+    { label: "Rebalance in Optimize", tab: "optimize" },
+    { label: "Simulate trimming a position", tab: "simulator" },
+  ],
+  Liquidity: [{ label: "Review illiquid holdings", tab: "holdings" }],
+  Income: [
+    { label: "Simulate income alternatives", tab: "simulator" },
+    { label: "Open Optimize", tab: "optimize" },
+  ],
+  "Inflation Protection": [{ label: "Simulate adding real assets", tab: "simulator" }],
+  "Currency Diversification": [{ label: "Simulate foreign exposure", tab: "simulator" }],
+  "Geographic Diversification": [{ label: "Simulate international exposure", tab: "simulator" }],
+  Correlation: [{ label: "See correlated clusters in Intelligence", tab: "intelligence" }],
+  "Expected Drawdown": [{ label: "Stress-test in Risk Lab", tab: "risk" }],
+  "Cash Management": [{ label: "Allocate cash in Decisions", tab: "decisions" }],
+  "Holding Quality": [{ label: "Review holding scores", tab: "holdings" }],
+};
+
+function DimensionRow({
+  d,
+  emphasis,
+  holdings,
+  risk,
+  onNavigate,
+}: {
+  d: HealthDimension;
+  emphasis: boolean;
+  holdings?: Holding[];
+  risk?: UniversalRisk;
+  onNavigate?: (tab: Tab, anchor?: string) => void;
+}) {
+  const router = useRouter();
+  // Every dimension opens into its own ruler: WHAT was measured (`explanation`),
+  // HOW it is scored and what would move it (`methodology`), and how much of the
+  // total it carried. A bare "Concentration 56" invites the user to guess at all
+  // three, which is what makes a composite score read as arbitrary.
+  const [open, setOpen] = useState(false);
   const score = d.score!;
   return (
     <li className="flex flex-col gap-1">
-      <div className="flex items-baseline justify-between gap-2">
-        <span className={`truncate ${emphasis ? "text-xs font-medium text-foreground" : "text-xs text-foreground"}`}>
-          {d.name}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="-mx-1 flex w-[calc(100%+8px)] items-baseline justify-between gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-surface-2/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+      >
+        <span className="flex min-w-0 items-baseline gap-1.5">
+          <span
+            aria-hidden
+            className={`shrink-0 text-[8px] text-muted/50 transition-transform ${open ? "rotate-90" : ""}`}
+          >
+            ▶
+          </span>
+          <span className={`truncate ${emphasis ? "text-xs font-medium text-foreground" : "text-xs text-foreground"}`}>
+            {d.name}
+          </span>
         </span>
         <span className="flex shrink-0 items-baseline gap-1.5">
           {/* Effective weight, after redistribution — so the user can see how much
@@ -99,18 +221,87 @@ function DimensionRow({ d, emphasis }: { d: HealthDimension; emphasis: boolean }
           </span>
           <span className="font-mono text-xs font-semibold tabular-nums text-foreground">{score}</span>
         </span>
-      </div>
+      </button>
       <div className="h-1 w-full overflow-hidden rounded-full bg-surface-2">
         <div className={`h-full rounded-full ${TREND_TONE[d.trend!]}`} style={{ width: `${score}%` }} />
       </div>
       {/* The explanation is the actionable part, so it is always shown for a
           weakness and only on demand for a strength. */}
       {emphasis && <p className="text-[11px] leading-snug text-muted/70">{d.explanation}</p>}
+      {open && (
+        <div className="flex flex-col gap-1.5 rounded-lg border border-border/60 bg-surface/40 p-2.5 text-[11px] leading-relaxed text-muted/70">
+          {!emphasis && <p>{d.explanation}</p>}
+          {/* WHAT is producing the score, with the holdings named — the evidence
+              layer between "Income 6" and knowing what to do about it. */}
+          {holdings && risk && (() => {
+            const drivers = driversFor(d.name, holdings, risk);
+            return drivers ? (
+              <p>
+                <span className="font-medium text-muted">What&apos;s driving it:</span> {drivers}
+              </p>
+            ) : null;
+          })()}
+          {d.methodology && (
+            <p>
+              <span className="font-medium text-muted">How it&apos;s scored &amp; what improves it:</span>{" "}
+              {d.methodology}
+            </p>
+          )}
+          <p className="text-[10px] text-muted/60">
+            Carried {(d.effectiveWeight * 100).toFixed(0)}% of the total score
+            {d.coverage < 1
+              ? ` — discounted because it rests on ${(d.coverage * 100).toFixed(0)}% of portfolio value.`
+              : "."}
+          </p>
+          {/* The improvement path — only where a genuine UAA workflow exists, and
+              only when there is room to improve. A 92-scoring dimension does not
+              need a call to action. */}
+          {onNavigate && score < STRONG_AT_OR_ABOVE && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 border-t border-border/40 pt-1.5">
+              {(IMPROVE_ACTIONS[d.name] ?? []).map((a) => (
+                <button
+                  key={a.label}
+                  type="button"
+                  onClick={() => onNavigate(a.tab)}
+                  className="rounded-sm text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                >
+                  {a.label} →
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() =>
+                  askAi(router, {
+                    source: "app",
+                    question: `My portfolio's "${d.name}" health dimension scores ${score}/100. The dashboard says: "${d.explanation}" What specifically could I do to improve it, and is it worth prioritising?`,
+                  })
+                }
+                className="rounded-sm text-muted hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+              >
+                Ask AI how to improve this
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </li>
   );
 }
 
-export function HealthPanel({ health }: { health: HealthScore }) {
+export function HealthPanel({
+  health,
+  holdings,
+  risk,
+  onNavigate,
+}: {
+  health: HealthScore;
+  /** The report's holdings — lets each dimension name its drivers. Optional so
+   *  other surfaces can keep rendering the score alone. */
+  holdings?: Holding[];
+  risk?: UniversalRisk;
+  /** Tab navigation for the improvement actions. Omitted on view-only portfolios. */
+  onNavigate?: (tab: Tab, anchor?: string) => void;
+}) {
   const [showStrong, setShowStrong] = useState(false);
 
   const scored = health.dimensions.filter((d) => d.score != null);
@@ -149,7 +340,9 @@ export function HealthPanel({ health }: { health: HealthScore }) {
             Needs attention ({attention.length})
           </span>
           <ul className="flex flex-col gap-2.5">
-            {attention.map((d) => <DimensionRow key={d.name} d={d} emphasis />)}
+            {attention.map((d) => (
+              <DimensionRow key={d.name} d={d} emphasis holdings={holdings} risk={risk} onNavigate={onNavigate} />
+            ))}
           </ul>
         </div>
       )}
@@ -161,7 +354,9 @@ export function HealthPanel({ health }: { health: HealthScore }) {
             Adequate ({adequate.length})
           </span>
           <ul className="flex flex-col gap-2.5">
-            {adequate.map((d) => <DimensionRow key={d.name} d={d} emphasis />)}
+            {adequate.map((d) => (
+              <DimensionRow key={d.name} d={d} emphasis holdings={holdings} risk={risk} onNavigate={onNavigate} />
+            ))}
           </ul>
         </div>
       )}
@@ -194,7 +389,9 @@ export function HealthPanel({ health }: { health: HealthScore }) {
           </button>
           {showStrong && (
             <ul className="flex flex-col gap-2.5">
-              {strong.map((d) => <DimensionRow key={d.name} d={d} emphasis={false} />)}
+              {strong.map((d) => (
+                <DimensionRow key={d.name} d={d} emphasis={false} holdings={holdings} risk={risk} onNavigate={onNavigate} />
+              ))}
             </ul>
           )}
         </div>

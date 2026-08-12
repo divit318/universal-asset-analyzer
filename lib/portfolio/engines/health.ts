@@ -109,7 +109,48 @@ export interface HealthDimension {
   effectiveWeight: number;
   trend: ScoreTrend | null;
   explanation: string;
+  /**
+   * HOW this dimension is scored and what would move it, in one sentence. The
+   * `explanation` says what the portfolio measured; this says what the ruler
+   * is — without it a "Concentration 56" invites the user to guess at the
+   * methodology, and a score whose ruler is hidden reads as arbitrary. Static
+   * per dimension, stated here in the engine so every surface quotes the same
+   * definition.
+   */
+  methodology: string;
 }
+
+/**
+ * The scoring rulers, verbatim from each dimension's own formula below. Kept in
+ * one table (rather than one literal per `dim()` call) so a reader can audit
+ * that every dimension has one and compare them side by side.
+ */
+const METHODOLOGY: Record<string, string> = {
+  "Asset Allocation":
+    "Half breadth (more asset classes, plateauing at 5+), half balance (penalty grows once the largest class exceeds 40%). Improves by adding a genuinely different asset class or trimming the dominant one.",
+  "Diversification":
+    "Diversity of holding weights (effective holdings — dust positions don't count), blended with sector spread over the sector-classified share. Improves by evening out position sizes, not by adding tiny positions.",
+  "Concentration":
+    "Half position-level (penalty as the top holding exceeds 8%), half class-level (penalty as the top asset class exceeds 40%). Improves by trimming the largest positions.",
+  "Liquidity":
+    "Starts at 100 and loses 1.4 points per 1% of value that cannot be sold within days. Improves by reducing the illiquid share.",
+  "Income":
+    "Concave curve on portfolio yield: ~2% scores ≈60, ~5% ≈90, little credit beyond. Measures income quantity only — sustainability is not assessed. Improves with dividend, coupon, rent, interest or staking income.",
+  "Inflation Protection":
+    "The portfolio's modelled response to a +1pp inflation surprise, mapped from −7% of value (0) to +6% (100). Improves with real assets: TIPS, commodities, gold, real estate.",
+  "Currency Diversification":
+    "55 plus 1.8 points per 1% held in non-base currencies. A home-currency book is treated as adequate, not failing. Improves with unhedged foreign-currency exposure.",
+  "Geographic Diversification":
+    "Diversity index across the classified regions only, and the dimension's weight is discounted by the unclassified share. Improves by spreading across regions — or by classifying the unknown part.",
+  "Correlation":
+    "100 minus the average pairwise return correlation ×100, over holdings with price history. Improves with assets that move independently of each other.",
+  "Expected Drawdown":
+    "100 minus 2.2 points per 1% of worst observed drawdown in the portfolio's own return history. Improves by damping realized swings (diversifiers, lower-vol sleeves).",
+  "Cash Management":
+    "A curve peaking in the 5–12% cash band: no buffer forces selling, excess cash is an inflation drag. Improves by moving toward that band.",
+  "Holding Quality":
+    "Confidence-weighted average of each holding's own class-specific score (a bond scored as a bond, an ETF on cost). Improves by upgrading weak holdings.",
+};
 
 export interface HealthScore {
   total: number;
@@ -216,12 +257,23 @@ function dim(
     effectiveWeight: 0,
     trend: trendOf(s),
     explanation,
+    methodology: METHODOLOGY[name] ?? "",
   };
 }
 
 /** A dimension that does not apply to this portfolio. Its weight goes to the others. */
 function abstain(name: string, weight: number, explanation: string): HealthDimension {
-  return { name, score: null, scoreExact: null, weight, coverage: 0, effectiveWeight: 0, trend: null, explanation };
+  return {
+    name,
+    score: null,
+    scoreExact: null,
+    weight,
+    coverage: 0,
+    effectiveWeight: 0,
+    trend: null,
+    explanation,
+    methodology: METHODOLOGY[name] ?? "",
+  };
 }
 
 /* -------------------------------------------------------------------------- */

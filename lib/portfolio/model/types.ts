@@ -26,7 +26,10 @@ import type { ManualAssetCategory } from "../../types";
 /* Class identity                                                              */
 /* -------------------------------------------------------------------------- */
 
-export type PortfolioAssetClass = AssetClassId | ManualAssetCategory | "cash";
+// `indiaEquity` is a SCREENING domain, not a classification: at the portfolio
+// level an NSE stock is an equity like any other (resolveAssetClass never
+// yields it), so it is excluded rather than given a dead label everywhere.
+export type PortfolioAssetClass = Exclude<AssetClassId, "indiaEquity"> | ManualAssetCategory | "cash";
 
 export const PORTFOLIO_ASSET_CLASSES: PortfolioAssetClass[] = [
   "equity",
@@ -485,10 +488,14 @@ export interface MarketContext {
   historyDates?: Map<string, string[]>;
   /** symbol → equity/fund fundamentals, where the provider has them. */
   fundamentals: Map<string, ContextFundamentals>;
-  /** Benchmark daily returns (SPY), for beta. */
+  /** Benchmark daily returns (market-aware: SPY / NIFTY 50 / …), for beta. */
   benchmarkReturns: number[];
   /** The date each `benchmarkReturns` entry was realized on. Same length/order. */
   benchmarkDates?: string[];
+  /** Display label for the benchmark series ("S&P 500", "NIFTY 50"). */
+  benchmarkLabel?: string;
+  /** Annual risk-free rate matching the benchmark's market (Sharpe/Sortino). */
+  riskFreeAnnual?: number;
   /**
    * Daily CHANGES in the US 10-year Treasury yield, in percentage points (^TNX
    * quotes the yield as its price, so this is a first difference of closes).

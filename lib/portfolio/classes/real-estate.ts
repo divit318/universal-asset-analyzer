@@ -117,6 +117,9 @@ export const realEstateAdapter: PortfolioClassAdapter = {
       sector: "Real Estate",
       propertyType: d?.propertyType ?? null,
       geography: d?.address ? "Direct property" : null,
+      geographyBasis: d?.address
+        ? `Physical property at the recorded address (${d.address})`
+        : "No address recorded for this property",
       currency: raw.currency,
       riskModel: riskModelFor(raw, ctx, { measurements: { leverage: leverageOf(raw) } }).label,
     };

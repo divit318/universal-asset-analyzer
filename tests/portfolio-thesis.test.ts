@@ -27,20 +27,36 @@ const runAnalysisMock = vi.fn(async (req: { taskType: string; prompt: string }) 
     meta: { durationMs: 1 },
   };
 });
-// Typed with its key so the cache-version test can assert that the key read is
-// the key written — an untyped `vi.fn()` records calls as an empty tuple.
-const cacheGet = vi.fn((_key: string) => null as string | null);
-const cachePut = vi.fn();
+// The platform data layer, mocked as a transparent pass-through that records
+// (dataset, params) and whether the fetcher's result was accepted or refused
+// (a thrown ThesisUnavailableError = "never cache a fallback").
+const datasetCalls: Array<{ dataset: string; params: Record<string, unknown> }> = [];
+const datasetWrites: unknown[] = [];
+const getDatasetMock = vi.fn(
+  async (
+    dataset: string,
+    params: Record<string, unknown>,
+    fetcher: (signal: AbortSignal) => Promise<unknown>,
+  ) => {
+    datasetCalls.push({ dataset, params });
+    const data = await fetcher(new AbortController().signal);
+    datasetWrites.push(data);
+    return { data, meta: {}, cached: false, revalidating: false };
+  },
+);
 
 vi.mock("@/lib/ai/analysis", () => ({
   runAnalysis: (req: { taskType: string; prompt: string }) => runAnalysisMock(req),
 }));
-vi.mock("@/lib/db", () => ({
-  getScannerCache: (key: string) => cacheGet(key),
-  putScannerCache: (...a: unknown[]) => cachePut(...(a as [])),
+vi.mock("@/lib/platform/data-layer", () => ({
+  getDataset: (
+    dataset: string,
+    params: Record<string, unknown>,
+    fetcher: (signal: AbortSignal) => Promise<unknown>,
+  ) => getDatasetMock(dataset, params, fetcher),
 }));
 
-const { buildPortfolioThesis } = await import("@/lib/portfolio/thesis");
+const { buildPortfolioThesis, getPortfolioThesis, compositionKey } = await import("@/lib/portfolio/thesis");
 import type { PortfolioEvaluation } from "@/lib/portfolio/engines/simulate";
 import type { HealthDimension } from "@/lib/portfolio/engines/health";
 
@@ -54,6 +70,7 @@ function dim(name: string, score: number, explanation: string): HealthDimension 
     effectiveWeight: 0.1,
     trend: score >= 62 ? "good" : "weak",
     explanation,
+    methodology: "",
   };
 }
 
@@ -97,6 +114,7 @@ function evaluation(): PortfolioEvaluation {
     risk: {
       annualizedVolatility: 18,
       beta: 1.2,
+      benchmarkLabel: null,
       sharpeRatio: 0.9,
       sortinoRatio: 1.3,
       maxDrawdown: -12,
@@ -135,8 +153,9 @@ function evaluation(): PortfolioEvaluation {
 
 beforeEach(() => {
   runPromptMock.mockReset();
-  cacheGet.mockReset().mockReturnValue(null);
-  cachePut.mockReset();
+  getDatasetMock.mockClear();
+  datasetCalls.length = 0;
+  datasetWrites.length = 0;
 });
 
 describe("buildPortfolioThesis — AI path", () => {
@@ -210,27 +229,6 @@ describe("buildPortfolioThesis — fallback path", () => {
     expect(t.risks[0]).toContain("20");
   });
 
-  it("never caches a fallback, so the AI coming back is not pinned out for the TTL", async () => {
-    runPromptMock.mockRejectedValue(new Error("AI offline"));
-    await buildPortfolioThesis(evaluation());
-    expect(cachePut).not.toHaveBeenCalled();
-  });
-
-  // The prefix is bumped whenever what a cached entry MEANS changes, not just its
-  // shape: v2 was the five-field rewrite, v3 the one-figure-one-direction rule.
-  // Since the rest of the key is a content hash of the holdings, an unchanged
-  // portfolio would otherwise keep serving a card generated under the old rules.
-  it("caches a real AI result under a v3 key, so pre-rule entries cannot be replayed", async () => {
-    runPromptMock.mockResolvedValue(
-      JSON.stringify({ thesis: "ok", identity: ["X"], strengths: ["a"], risks: ["b"], bearCase: "c", mustBeTrue: "d" }),
-    );
-    await buildPortfolioThesis(evaluation());
-    expect(cachePut).toHaveBeenCalledTimes(1);
-    expect(String(cachePut.mock.calls[0][0])).toMatch(/^v3:/);
-    // Read and write must agree, or every load is a cache miss.
-    expect(String(cacheGet.mock.calls[0][0])).toBe(String(cachePut.mock.calls[0][0]));
-  });
-
   it("handles an empty portfolio without calling the model", async () => {
     const e = evaluation();
     e.holdings = [];
@@ -238,6 +236,56 @@ describe("buildPortfolioThesis — fallback path", () => {
     expect(runPromptMock).not.toHaveBeenCalled();
     expect(t.source).toBe("fallback");
     expect(t.strengths).toEqual([]);
+  });
+});
+
+describe("getPortfolioThesis — platform cache layer", () => {
+  it("reads/writes the portfolioThesis dataset keyed on composition + semantic version", async () => {
+    runPromptMock.mockResolvedValue(
+      JSON.stringify({ thesis: "ok", identity: ["X"], strengths: ["a"], risks: ["b"], bearCase: "c", mustBeTrue: "d" }),
+    );
+    const e = evaluation();
+    const t = await getPortfolioThesis(e);
+    expect(t.source).toBe("ai");
+    expect(datasetCalls).toHaveLength(1);
+    expect(datasetCalls[0].dataset).toBe("portfolioThesis");
+    expect(datasetCalls[0].params.composition).toBe(compositionKey(e));
+    // The version invalidates on any change to what a cached entry MEANS —
+    // v3 is the one-figure-one-direction rule.
+    expect(String(datasetCalls[0].params.v)).toMatch(/^3\./);
+    // The AI result was handed to the cache to persist.
+    expect(datasetWrites).toHaveLength(1);
+  });
+
+  it("never caches a fallback, so the AI coming back is not pinned out for the TTL", async () => {
+    runPromptMock.mockRejectedValue(new Error("AI offline"));
+    const t = await getPortfolioThesis(evaluation());
+    // The user still gets the useful deterministic fallback…
+    expect(t.source).toBe("fallback");
+    expect(t.risks[0]).toContain("Asset Allocation");
+    // …but the fetcher REFUSED to hand it to the cache.
+    expect(datasetWrites).toHaveLength(0);
+  });
+
+  it("keys on composition, not weights — intraday drift cannot fork the cache", () => {
+    const a = evaluation();
+    const b = evaluation();
+    b.holdings[0].weight = 87; // big drift, same holdings
+    expect(compositionKey(a)).toBe(compositionKey(b));
+
+    const c = evaluation();
+    c.holdings = [
+      ...c.holdings,
+      { ...c.holdings[0], id: "BND", symbol: "BND", name: "Bond ETF", assetClass: "bond" },
+    ];
+    expect(compositionKey(a)).not.toBe(compositionKey(c)); // a real composition change does
+  });
+
+  it("skips the cache entirely for an empty portfolio", async () => {
+    const e = evaluation();
+    e.holdings = [];
+    await getPortfolioThesis(e);
+    expect(getDatasetMock).not.toHaveBeenCalled();
   });
 });
 
@@ -259,8 +307,9 @@ describe("buildPortfolioThesis — prompt grounding", () => {
       attribution: {
         totalReturnPct: 20,
         totalPnl: 200,
+        totalCostBase: 1000,
         contributors: [],
-        carrying: [{ id: "AAPL", symbol: "AAPL", name: "Apple", assetClass: "equity", weight: 100, pnl: 200, ownReturnPct: 20, contributionPct: 20, shareOfMovementPct: 100 }],
+        carrying: [{ id: "AAPL", symbol: "AAPL", name: "Apple", assetClass: "equity", weight: 100, pnl: 200, costBase: 1000, valueBase: 1200, ownReturnPct: 20, contributionPct: 20, shareOfMovementPct: 100 }],
         dragging: [],
         byAssetClass: [],
         bySector: [],
@@ -324,6 +373,7 @@ describe("buildPortfolioThesis — prompt grounding", () => {
       attribution: {
         totalReturnPct: 5,
         totalPnl: 100,
+        totalCostBase: 2000,
         contributors: [],
         carrying: [],
         dragging: [],
@@ -349,7 +399,7 @@ describe("buildPortfolioThesis — prompt grounding", () => {
     runPromptMock.mockResolvedValue(JSON.stringify({ thesis: "ok" }));
     await buildPortfolioThesis(evaluation(), {
       attribution: {
-        totalReturnPct: 5, totalPnl: 100, contributors: [], carrying: [], dragging: [],
+        totalReturnPct: 5, totalPnl: 100, totalCostBase: 2000, contributors: [], carrying: [], dragging: [],
         byAssetClass: [], bySector: [], top3SharePct: 88, effectiveDrivers: 1.4,
         winners: 3, losers: 1, grossMovement: 5_000, excluded: [],
       },
@@ -417,7 +467,7 @@ describe("buildPortfolioThesis — prompt grounding", () => {
     /** 49% top-3 share: the middle band, and the exact figure that was spun both ways. */
     const moderateBreadth = {
       attribution: {
-        totalReturnPct: 5, totalPnl: 100, contributors: [], carrying: [], dragging: [],
+        totalReturnPct: 5, totalPnl: 100, totalCostBase: 2000, contributors: [], carrying: [], dragging: [],
         byAssetClass: [], bySector: [], top3SharePct: 49, effectiveDrivers: 6.2,
         winners: 10, losers: 8, grossMovement: 5_000, excluded: [],
       },
