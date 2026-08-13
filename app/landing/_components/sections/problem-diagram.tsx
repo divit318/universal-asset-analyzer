@@ -29,10 +29,13 @@ interface FragNode {
   title: string;
   description: string;
   fragment: string;
-  /** Desktop island geometry (percent of the diagram canvas) + tilt. */
+  /** Desktop island geometry (percent of the diagram canvas) + tilt. The
+   *  lg band (1024-1279) is ~430px wide, so it gets wider islands. */
   x: string;
   y: string;
   w: string;
+  lgX: string;
+  lgW: string;
   tilt: string;
   /** Mobile flow: alternating alignment so the misalignment survives. */
   mobile: string;
@@ -48,7 +51,7 @@ const NODES: FragNode[] = [
     title: "Yahoo Finance",
     description: "Price data, charts, and market insights.",
     fragment: "NVDA 891.42  -2.14%",
-    x: "0%", y: "0%", w: "44%", tilt: "-0.7deg",
+    x: "0%", y: "0%", w: "44%", lgX: "0%", lgW: "48%", tilt: "-0.7deg",
     mobile: "self-start w-[88%]",
     delay: 0, driftT: "17s", driftD: "0s",
   },
@@ -57,7 +60,7 @@ const NODES: FragNode[] = [
     title: "EDGAR filings",
     description: "Raw filings buried in PDFs and text.",
     fragment: "10-K.pdf  p.147/312",
-    x: "55%", y: "11%", w: "42%", tilt: "0.9deg",
+    x: "55%", y: "11%", w: "42%", lgX: "52%", lgW: "48%", tilt: "0.9deg",
     mobile: "self-end w-[85%]",
     delay: 90, driftT: "21s", driftD: "-4s",
   },
@@ -66,7 +69,7 @@ const NODES: FragNode[] = [
     title: "Spreadsheets",
     description: "Manual models and scattered calculations.",
     fragment: "=IFERROR(B7*C12,#REF!)",
-    x: "6%", y: "35%", w: "46%", tilt: "0.5deg",
+    x: "6%", y: "35%", w: "46%", lgX: "4%", lgW: "46%", tilt: "0.5deg",
     mobile: "self-start w-[92%]",
     delay: 180, driftT: "19s", driftD: "-9s",
   },
@@ -75,7 +78,7 @@ const NODES: FragNode[] = [
     title: "ChatGPT",
     description: "Answers, but no direct access to your data.",
     fragment: "[file not provided]",
-    x: "54%", y: "52%", w: "44%", tilt: "-0.8deg",
+    x: "54%", y: "52%", w: "44%", lgX: "52%", lgW: "47%", tilt: "-0.8deg",
     mobile: "self-end w-[87%]",
     delay: 270, driftT: "23s", driftD: "-13s",
   },
@@ -84,7 +87,7 @@ const NODES: FragNode[] = [
     title: "News sites",
     description: "Noise, opinions, and information overload.",
     fragment: "takes 14, numbers 0",
-    x: "12%", y: "73%", w: "41%", tilt: "0.6deg",
+    x: "12%", y: "73%", w: "41%", lgX: "6%", lgW: "44%", tilt: "0.6deg",
     mobile: "self-start w-[84%]",
     delay: 360, driftT: "18s", driftD: "-6s",
   },
@@ -103,25 +106,25 @@ interface FragEdge {
 }
 
 const EDGES: FragEdge[] = [
-  // Yahoo reaches for EDGAR and stops just short of its left edge.
-  { d: "M 44 9 C 47 10, 50 12, 53 14", from: [44, 9], to: [53.5, 14.5], delay: 620 },
+  // Yahoo reaches for EDGAR and stops just short of its corner.
+  { d: "M 44 8.5 C 46.5 9.5, 48.5 10.8, 50.5 12.3", from: [44, 8.5], to: [51, 12.6], delay: 620 },
   // Yahoo toward Spreadsheets: dashes that peter out before arriving.
-  { d: "M 15 21 C 14.5 24.5, 14 28, 13.5 32", from: [15, 21], to: [13.4, 32.5], delay: 760, dashed: true },
+  { d: "M 15 24 C 14.5 27, 14.2 30, 13.8 33.2", from: [15, 24], to: [13.7, 33.6], delay: 760, dashed: true },
   // Spreadsheets heads right, wanders into open space, and gives up.
-  { d: "M 52 41 C 58 39.5, 63 38.5, 69 37.5", from: [52, 41], to: [69.5, 37.3], delay: 900 },
+  { d: "M 52 41 C 56.5 41.5, 60.5 43, 64 45", from: [52, 41], to: [64.5, 45.3], delay: 900 },
   // EDGAR descends toward ChatGPT and is cut dead mid-air (tick below).
-  { d: "M 71 32 C 70.5 36.5, 70 41, 69.2 45", from: [71, 32], to: [69.1, 45.5], delay: 1040 },
+  { d: "M 71 38 C 70.3 41.5, 69.6 44.5, 68.7 47.5", from: [71, 38], to: [68.6, 48], delay: 1040 },
   // ChatGPT and News each extend a stub; the two never meet.
   { d: "M 66 76 C 63 79, 60.5 81.5, 58 84", from: [66, 76], to: [57.6, 84.4], delay: 1180 },
   { d: "M 53.5 84.5 L 56.4 85.1", from: [53.5, 84.5], to: [56.7, 85.2], delay: 1330 },
   // Orphan stubs: EDGAR bleeds off the right edge, Spreadsheets drops one.
   { d: "M 96 15 C 97.5 15.4, 99 15.8, 100.5 16.2", from: [96, 15], to: [100.5, 16.3], delay: 1430 },
-  { d: "M 25 57 C 25.5 59.5, 26 61.5, 26.5 64", from: [25, 57], to: [26.6, 64.5], delay: 1520 },
+  { d: "M 24 62 C 24.6 64.2, 25.1 66.2, 25.6 68.5", from: [24, 62], to: [25.7, 69], delay: 1520 },
 ];
 
 /** The cut end of the EDGAR edge: a tiny perpendicular tick, like a severed
  *  wire. Fades in after its edge finishes drawing. */
-const CUT_TICK = { d: "M 67.9 44.5 L 70.5 45.5", delay: 1950 };
+const CUT_TICK = { d: "M 67.4 47.1 L 70 48.1", delay: 1950 };
 
 /** Loose debris in the open zones between islands: scraps of the workflow
  *  that fell between the tools. Decorative, low opacity, desktop only. */
@@ -142,7 +145,13 @@ export function FragmentationDiagram() {
 
     setPhase("hidden");
 
-    if (el.getBoundingClientRect().top < window.innerHeight * 0.85) {
+    // Stricter than Reveal's 0.85 fold heuristic: the diagram is the
+    // section's centerpiece, and at tall viewports its first pixels clear the
+    // fold at page load — which would play the whole severed-connector
+    // choreography behind the boot splash, unseen. Only play at load when a
+    // third of the composition is already on screen; otherwise wait for the
+    // scroll to actually bring it in.
+    if (el.getBoundingClientRect().top < window.innerHeight * 0.65) {
       onNextFrame(() => onNextFrame(() => setPhase("live")));
       return;
     }
@@ -154,7 +163,7 @@ export function FragmentationDiagram() {
           io.disconnect(); // once per page load
         }
       },
-      { threshold: 0.2 },
+      { threshold: 0.35 },
     );
     io.observe(el);
     return () => io.disconnect();
@@ -190,11 +199,13 @@ export function FragmentationDiagram() {
             </linearGradient>
           ))}
         </defs>
+        {/* Dash geometry is computed in SCREEN space under
+            non-scaling-stroke, so the draw-in uses a screen-px dash budget
+            (mk-frag-edge in globals.css) rather than pathLength. */}
         {EDGES.map((e, i) => (
           <path
             key={i}
             d={e.d}
-            pathLength={1}
             fill="none"
             stroke={`url(#mk-frag-fade-${i})`}
             strokeWidth={1.5}
@@ -203,14 +214,13 @@ export function FragmentationDiagram() {
             style={
               {
                 "--frag-d": `${e.delay}ms`,
-                ...(e.dashed ? { strokeDasharray: "0.055 0.05" } : undefined),
+                ...(e.dashed ? { strokeDasharray: "5 7" } : undefined),
               } as React.CSSProperties
             }
           />
         ))}
         <path
           d={CUT_TICK.d}
-          pathLength={1}
           fill="none"
           stroke="var(--brand)"
           strokeOpacity={0.55}
@@ -225,7 +235,7 @@ export function FragmentationDiagram() {
         <span
           key={scrap.text}
           aria-hidden="true"
-          className="mk-frag-edge-soft pointer-events-none absolute hidden select-none font-mono text-mk-small text-brand opacity-35 lg:block"
+          className="mk-frag-edge-soft pointer-events-none absolute hidden select-none font-mono text-mk-small text-brand opacity-45 lg:block"
           style={
             {
               left: scrap.x,
@@ -254,27 +264,34 @@ export function FragmentationDiagram() {
           )}
           <div
             data-frag-island
-            className={`mk-frag-island rounded-xl border border-hairline bg-surface/70 ${node.mobile} lg:absolute lg:left-(--fx) lg:top-(--fy) lg:w-(--fw)`}
+            className={`mk-frag-island rounded-xl border border-hairline bg-surface/70 ${node.mobile} lg:absolute lg:left-(--fx-lg) lg:top-(--fy) lg:w-(--fw-lg) xl:left-(--fx) xl:w-(--fw)`}
             style={
               {
                 "--fx": node.x,
                 "--fy": node.y,
                 "--fw": node.w,
+                "--fx-lg": node.lgX,
+                "--fw-lg": node.lgW,
                 "--fr": node.tilt,
                 "--frag-d": `${node.delay}ms`,
               } as React.CSSProperties
             }
           >
             <div
-              className="mk-frag-drift p-5"
+              className="mk-frag-drift p-5 lg:max-xl:p-4"
               style={{ "--drift-t": node.driftT, "--drift-d": node.driftD } as React.CSSProperties}
             >
-              <div className="flex items-center gap-3.5">
+              <div className="flex items-center gap-3.5 lg:max-xl:gap-3">
                 <IconTile icon={node.icon} shape="circle" />
-                <h3 className="whitespace-nowrap font-serif text-lg font-semibold text-foreground">{node.title}</h3>
+                <h3 className="whitespace-nowrap font-serif text-lg font-semibold text-foreground lg:max-xl:text-base">
+                  {node.title}
+                </h3>
               </div>
               <p className="mt-2.5 text-mk-body text-muted">{node.description}</p>
-              <p aria-hidden="true" className="mt-3 truncate font-mono text-mk-small text-brand opacity-55">
+              <p
+                aria-hidden="true"
+                className="mt-3 truncate font-mono text-mk-small text-brand opacity-70 lg:max-xl:text-[0.6875rem]"
+              >
                 {node.fragment}
               </p>
             </div>

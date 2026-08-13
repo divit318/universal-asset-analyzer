@@ -1,12 +1,10 @@
 "use client";
 
-import { Target } from "lucide-react";
 import type { SectionProps } from "../section-registry";
 import { Reveal } from "../motion/reveal";
 import { SectionShell } from "../primitives/section-shell";
-import { OrnamentalEyebrow, EyebrowRule } from "../primitives/ornamental-eyebrow";
+import { OrnamentalEyebrow } from "../primitives/ornamental-eyebrow";
 import { TwoToneHeadline } from "../primitives/two-tone-headline";
-import { IconTile } from "../primitives/icon-tile";
 import { FragmentationDiagram } from "./problem-diagram";
 
 /**
@@ -29,35 +27,38 @@ export function Problem({ section, index }: SectionProps) {
             <OrnamentalEyebrow variant="left">The problem</OrnamentalEyebrow>
           </Reveal>
           <Reveal delay={90}>
+            {/* Two lines, split at the phrase boundary, so the brass carries
+                one complete idea ("feel so fragmented?") and "so" can never
+                orphan. The explicit segment break holds the rag at every
+                viewport; the column is sized so neither line rewraps. */}
             <TwoToneHeadline
               id={headingId}
               align="left"
               className="mt-mk-eyebrow"
               segments={[
-                { text: "Why does research feel", block: true },
-                { text: "so fragmented?", tone: "accent", block: true },
+                { text: "Why does research", block: true },
+                { text: "feel so fragmented?", tone: "accent", block: true },
               ]}
             />
           </Reveal>
-          <Reveal delay={140}>
-            <EyebrowRule className="mt-mk-headline w-full max-w-64" />
-          </Reveal>
           <Reveal delay={180}>
-            <p data-lead className="mt-mk-headline text-pretty text-mk-lead text-muted">
-              Every day you hop between Yahoo Finance, EDGAR PDFs, spreadsheets, and ChatGPT. All
-              that data, and still hours go by without a single insight.
+            <p data-lead className="mt-mk-headline max-w-[44ch] text-pretty text-mk-lead text-muted">
+              The data is all there. It just lives in five places that have never heard of each
+              other.
             </p>
           </Reveal>
 
-          <Reveal delay={280} className="mt-10">
-            <div className="flex items-center gap-4 rounded-full border border-brand/20 bg-surface/80 py-3 pl-3 pr-7">
-              <IconTile icon={Target} shape="circle" />
-              <div>
-                <p className="text-mk-body font-medium text-foreground">
-                  Fragmented tools. Scattered data. Lost insights.
-                </p>
-                <p className="text-mk-body text-brand">There has to be a better way.</p>
-              </div>
+          {/* The cost, stated as the workflow it is: no invented statistic,
+              just the hops every figure actually makes. */}
+          <Reveal delay={280}>
+            <div className="mt-mk-lead border-l-2 border-brand/40 pl-5">
+              <p className="max-w-[30ch] font-serif text-xl font-semibold text-foreground">
+                By the third copy-paste, the source is gone.
+              </p>
+              <p className="mt-2 max-w-[44ch] text-mk-body text-muted">
+                Chart to sheet, sheet to chat, chat to memo. Every hop strips the number of where
+                it came from.
+              </p>
             </div>
           </Reveal>
         </div>

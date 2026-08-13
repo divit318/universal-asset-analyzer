@@ -1,11 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Menu, X } from "lucide-react";
 import { BrandLockup } from "@/app/_components/brand";
 import { ThemeToggle } from "@/app/_components/theme";
 import { Drawer } from "@/app/_components/dialog";
-import { LANDING_HOME, NAV_SECTIONS, PRIMARY_ACTION } from "../landing-config";
+import { APP_ENTRY, LANDING_HOME, NAV_SECTIONS, PRIMARY_ACTION } from "../landing-config";
 import { AuthModalHost, openAuthModal } from "./auth-modal";
 import { useScrollVelocity } from "./motion/hooks";
 
@@ -14,8 +15,9 @@ import { useScrollVelocity } from "./motion/hooks";
  * column (the same measure-content + mk-pad grid every section uses), so the
  * lockup sits on the same vertical axis as the left-aligned hero's eyebrow,
  * headline and CTAs: logo left, the six anchor links, theme toggle, ghost
- * "Sign in", and a brass-BORDERED "Get started" (the hero's filled button is
- * the page's one primary action; the nav instance is its quiet echo).
+ * "Sign in" (the optional local account's modal), and a brass-BORDERED
+ * "Open the terminal" — a LINK into the open app (the hero's filled button
+ * is the page's one primary action; the nav instance is its quiet echo).
  *
  * Scroll state: past 100px the pill's background opacity rises and a 1px
  * border fades in over 200ms. Active-section highlighting runs on a single
@@ -123,16 +125,18 @@ export function LandingHeader() {
           >
             Sign in
           </button>
-          <button
-            type="button"
-            onClick={() => openAuthModal("signup")}
+          {/* prefetch={false}: see hero.tsx — no speculative app-shell load,
+              and no cached gate redirect poisoning post-sign-in navigation. */}
+          <Link
+            href={APP_ENTRY}
+            prefetch={false}
             className="group hidden items-center gap-1.5 rounded-full border border-brand/45 px-3.5 py-1.5 text-sm font-semibold text-brand outline-none transition-colors hover:border-brand hover:bg-brand/10 focus-visible:ring-2 focus-visible:ring-brand/40 sm:inline-flex"
           >
             {PRIMARY_ACTION}
             <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-[3px]">
               →
             </span>
-          </button>
+          </Link>
 
           {/* Mobile/tablet menu toggle */}
           <button
@@ -183,13 +187,14 @@ export function LandingHeader() {
           >
             Sign in
           </button>
-          <button
-            type="button"
-            onClick={() => { setMobileOpen(false); openAuthModal("signup"); }}
+          <Link
+            href={APP_ENTRY}
+            prefetch={false}
+            onClick={() => setMobileOpen(false)}
             className="inline-flex h-11 items-center justify-center rounded-control bg-brand text-sm font-semibold text-background outline-none transition-colors hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
           >
             {PRIMARY_ACTION}
-          </button>
+          </Link>
         </div>
       </Drawer>
 

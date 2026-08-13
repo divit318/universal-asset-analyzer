@@ -567,12 +567,15 @@ body::before {
   transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
   transition-delay: var(--frag-d, 0ms);
 }
+/* Under vector-effect: non-scaling-stroke, dash geometry is screen-space, so
+   the draw-in budget is a screen-px dash long enough to cover any connector
+   at any viewport (they are all well under 480px on screen). */
 .mk-frag-edge {
-  stroke-dasharray: 1;
+  stroke-dasharray: 480;
 }
-[data-frag="hidden"] .mk-frag-edge { stroke-dashoffset: 1; }
+[data-frag="hidden"] .mk-frag-edge { stroke-dashoffset: 480; }
 [data-frag="live"] .mk-frag-edge {
-  transition: stroke-dashoffset 900ms cubic-bezier(0.33, 1, 0.68, 1) var(--frag-d, 600ms);
+  transition: stroke-dashoffset 1100ms cubic-bezier(0.33, 1, 0.68, 1) var(--frag-d, 600ms);
 }
 [data-frag="hidden"] .mk-frag-edge-soft { opacity: 0; }
 [data-frag="live"] .mk-frag-edge-soft {

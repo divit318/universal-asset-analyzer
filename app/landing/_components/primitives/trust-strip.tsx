@@ -2,10 +2,11 @@ import { Database, Scale, KeyRound, BadgeCheck, type LucideIcon } from "lucide-r
 import { TRUST_CLAIMS } from "../../landing-config";
 
 /**
- * TrustStrip — the recurring row of trust claims. ALL five instances on the
- * page carry the SAME four claims in the same order (Local-first,
- * Deterministic, Your own key, No subscription) so the page argues one thing
- * consistently; the copy lives in landing-config.ts and the icons here.
+ * TrustStrip: the row of trust claims (Local-first, Deterministic, Your own
+ * key, No subscription). It renders exactly ONCE on the page, closing the
+ * Solution section; the hero and final-CTA rebuilds removed their copies so
+ * the page states these claims a single time, where they substantiate the
+ * section's argument. The copy lives in landing-config.ts and the icons here.
  *
  * Layout contract (audit-landing.mjs asserts it):
  *   - equal-width columns (grid-cols-4, 2x2 below md),
@@ -13,8 +14,8 @@ import { TRUST_CLAIMS } from "../../landing-config";
  *   - a min-height on each item plus top-aligned text so one-line and
  *     two-line sub-labels never stagger the label baselines (spread = 0).
  *
- * Variants: "contained" (bordered pill, hero), "bare" (solution, local-first,
- * demo), "stacked" (icon above label, final CTA).
+ * Variants: "bare" is the one in use (Solution). "contained" (bordered pill)
+ * and "stacked" (icon above label) are kept for reuse but have no caller.
  */
 const ICONS: LucideIcon[] = [Database, Scale, KeyRound, BadgeCheck];
 

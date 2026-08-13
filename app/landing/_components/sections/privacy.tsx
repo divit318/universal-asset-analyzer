@@ -1,3 +1,4 @@
+import { HardDrive, Radio, KeyRound } from "lucide-react";
 import type { SectionProps } from "../section-registry";
 import { Reveal } from "../motion/reveal";
 import { SectionShell } from "../primitives/section-shell";
@@ -47,7 +48,10 @@ Total value: $412,380.00
 Health: 74/100 (B)
 Annualized volatility: 13.8%
 Beta vs S&P 500: 1.04
-Largest asset class: 58% · largest single holding: 11.2%
+Largest asset class: 67% · largest single holding: 11.2%
+
+ASSET CLASSES
+Equities: 66.6%, ETFs: 24.1%, Commodities: 9.3%
 
 TOP HOLDINGS (weight, own return)
 NVDA (Equities, Technology): 11.2%, +58.3% on cost
@@ -59,6 +63,30 @@ GLD (ETFs, no sector): 7.4%, +21.6% on cost
 MOST CORRELATED HOLDING PAIRS
 NVDA/MSFT r=0.81, VTI/VOO r=0.98`;
 
+/**
+ * Layer 1 — the promise in plain terms, before any SQLite path or payload
+ * shape. Ordinary visitors read these three lines and are done; the proof
+ * panels below exist for the skeptical. Each statement is the human-readable
+ * form of a verified claim from the TRUTH CONSTRAINT block above.
+ */
+const PLAIN_TERMS = [
+  {
+    icon: HardDrive,
+    title: "Your research stays here",
+    body: "Portfolios, notes, and sessions live in one database file on your disk. Copying it is a full backup.",
+  },
+  {
+    icon: Radio,
+    title: "Requests carry symbols, not holdings",
+    body: "Market-data calls send ticker symbols and public queries. Your positions and notes never ride along.",
+  },
+  {
+    icon: KeyRound,
+    title: "AI sees only what you send",
+    body: "An AI action sends that feature's figures to the one provider you chose, on your own account.",
+  },
+] as const;
+
 const NETWORK_ROWS: {
   term: string;
   when: string;
@@ -69,14 +97,14 @@ const NETWORK_ROWS: {
     term: "Market data",
     when: "as you browse · alerts every 5 min",
     hosts: "Yahoo Finance · SEC EDGAR · NSE · Screener.in · AMFI · news RSS",
-    carries: "Ticker symbols and public queries only. Holdings, notes, and figures never go.",
+    carries: "Ticker symbols and public queries only, never holdings or notes.",
   },
   {
     term: "AI provider",
     when: "on your action · scan hourly",
-    hosts: "Devin login by default, or api.anthropic.com with your key",
+    hosts: "Devin login by default · or your own key: Anthropic, OpenAI, Gemini, OpenRouter",
     carries:
-      "Your prompt, shown at right. The hourly market scan carries public headlines only; UAA_SCANNER_INTERVAL_MS=0 turns it off.",
+      "Your prompt, shown at right, goes to the one provider you configured. The hourly market scan carries public headlines only; UAA_SCANNER_INTERVAL_MS=0 turns it off.",
   },
   {
     term: "Telemetry · analytics · update checks",
@@ -101,7 +129,7 @@ function ProofPanel({
   className?: string;
 }) {
   return (
-    <div className={`flex flex-col rounded-card border border-hairline bg-surface-2/60 p-5 ${className}`}>
+    <div className={`flex min-w-0 flex-col rounded-card border border-hairline bg-surface-2/60 p-5 ${className}`}>
       <p className="text-micro uppercase tracking-widest text-muted">{label}</p>
       {children}
     </div>
@@ -123,23 +151,44 @@ export function Privacy({ section, index }: SectionProps) {
         ]}
         lead={
           <>
-            Your portfolios, notes, and research live in one SQLite file on your disk. Below is
-            that file, every request the app makes over the network, and the exact payload an AI
-            action sends.
+            UAA has no backend to sync to: the app you run is the whole product, and what leaves
+            your machine is only what fetching public data and asking your AI provider requires.
           </>
         }
       />
 
-      <Reveal delay={280} className="mt-mk-lead grid w-full items-stretch gap-5 lg:grid-cols-2">
-        <div className="flex flex-col gap-5">
+      {/* Layer 1: the promise in plain terms. */}
+      <Reveal delay={230} stagger={80} className="mt-mk-lead grid w-full gap-5 sm:grid-cols-3">
+        {PLAIN_TERMS.map((t) => (
+          <div key={t.title} className="flex flex-col items-start">
+            <span className="flex h-9 w-9 items-center justify-center rounded-full border border-brand/18 bg-brand/10 text-brand" aria-hidden="true">
+              <t.icon className="h-4 w-4" strokeWidth={1.75} />
+            </span>
+            <p className="mt-3 text-mk-body font-semibold text-foreground">{t.title}</p>
+            <p className="mt-1 text-pretty text-mk-small text-muted">{t.body}</p>
+          </div>
+        ))}
+      </Reveal>
+
+      {/* Layer 2: the proof, for readers who want to inspect it. */}
+      <Reveal delay={280} className="mt-mk-lead w-full border-t border-hairline pt-mk-group">
+        <p className="font-mono text-caption uppercase tracking-[0.14em] text-muted">
+          The proof, if you want to inspect it: <span className="text-foreground">the file · the network · the payload</span>
+        </p>
+      </Reveal>
+
+      <Reveal delay={330} className="mt-5 grid w-full items-stretch gap-5 lg:grid-cols-2">
+        <div className="flex min-w-0 flex-col gap-5">
           <ProofPanel label="Proof 01 · The file">
             <p className="mt-2 max-w-prose text-left text-mk-small text-muted">
               Everything the app stores about you is one SQLite database. Copying the file is a
               full backup; any SQLite client can open it and read every table.
             </p>
             <div className="mt-4 rounded-control border border-hairline bg-surface px-3.5 py-3">
-              <p className="break-all font-mono text-mk-small font-medium text-foreground">
-                ~/universal-asset-analyzer/data/app.db
+              {/* <wbr> after each slash: on narrow screens the path breaks at
+                  segment boundaries, never inside a file name. */}
+              <p className="font-mono text-mk-small font-medium text-foreground">
+                ~/universal-asset-analyzer/<wbr />data/<wbr />app.db
               </p>
               <p className="mt-1.5 font-mono text-caption text-muted">
                 SQLite 3 · same data/app.db path on macOS, Windows, and Linux · relocatable with
@@ -174,17 +223,20 @@ export function Privacy({ section, index }: SectionProps) {
             <span className="font-mono text-foreground">lib/portfolio/thesis.ts</span> in the
             source.
           </p>
-          <div className="mt-4 grow overflow-x-auto rounded-control border border-hairline bg-surface px-3.5 py-3">
+          {/* Not stretched: leftover column height falls after the caption,
+              never inside the bordered artefact (an empty code box reads as
+              missing content). */}
+          <div className="mt-4 overflow-x-auto rounded-control border border-hairline bg-surface px-3.5 py-3">
             <pre className="font-mono text-caption leading-relaxed text-foreground">
               <code>{PAYLOAD_EXCERPT}</code>
             </pre>
           </div>
           <p className="mt-3 max-w-prose text-left text-mk-small text-muted">
             Symbols, weights, and derived figures are in the request. Share counts, cost basis,
-            and your notes are not. It goes to <span className="text-brand">Claude</span>, through
-            your Devin login by default or straight to api.anthropic.com with your own Anthropic
-            key, stored in <span className="font-mono text-foreground">~/.uaa</span>, sent to that
-            one host, never logged.
+            and your notes are not. It goes to <span className="text-brand">one provider</span>:
+            your Devin login by default, or your own key (Anthropic, OpenAI, Gemini, OpenRouter)
+            stored in <span className="font-mono text-foreground">~/.uaa</span>, sent to that
+            provider&apos;s host only, never logged.
           </p>
         </ProofPanel>
       </Reveal>

@@ -1,13 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import type { LandingSection } from "../../landing-config";
-import { PRIMARY_ACTION, SECONDARY_ACTION } from "../../landing-config";
+import { APP_ENTRY, PRIMARY_ACTION, SECONDARY_ACTION } from "../../landing-config";
 import { OrnamentalEyebrow } from "../primitives/ornamental-eyebrow";
 import { TwoToneHeadline } from "../primitives/two-tone-headline";
 import { PipelineRow } from "../pipeline-row";
 import { HeroField } from "../hero-field";
 import { Reveal } from "../motion/reveal";
-import { openAuthModal } from "../auth-modal";
 
 /**
  * Hero — the filament field is FULL-BLEED: its canvas spans the entire hero
@@ -27,7 +27,10 @@ export function Hero({ section }: { section: LandingSection }) {
   const headingId = `${section.id}-heading`;
 
   return (
-    <section id={section.id} aria-labelledby={headingId} className="scroll-mt-22 overflow-hidden border-b border-hairline pt-14 sm:pt-16">
+    /* Below lg there is no spacer column centring the text, so the section
+       itself must clear the fixed nav pill: pt-24 gives the eyebrow ~36px
+       of air under it; at lg+ the grid centring provides the room. */
+    <section id={section.id} aria-labelledby={headingId} className="scroll-mt-22 overflow-hidden border-b border-hairline pt-24 lg:pt-16">
       {/* The hero body: full-bleed field behind, text column in front. */}
       <div className="relative pb-64 lg:pb-0">
         <HeroField />
@@ -39,15 +42,17 @@ export function Hero({ section }: { section: LandingSection }) {
             <Reveal delay={0}>
               {/* Diamond terminus, no trailing rule: over the full-bleed
                   field the fading hairline had no right-hand anchor and
-                  read as an unfinished stroke. */}
+                  read as an unfinished stroke. The eyebrow carries the
+                  page's thesis line; the H1 below says what UAA IS. */}
               <OrnamentalEyebrow variant="left" terminus="diamond">
-                <span className="text-muted">Evidence in ink.</span> <span>Verdicts in brass.</span>
+                <span className="text-muted">Every figure computed.</span> <span>Every claim traced.</span>
               </OrnamentalEyebrow>
             </Reveal>
 
             <Reveal delay={90}>
-              {/* Sized so the two lines set cleanly in the text column at
-                  every breakpoint: two clean lines, never four fragments. */}
+              {/* The five-second test: a first-time visitor must know what
+                  UAA is from the H1 alone. Two clean lines at every
+                  breakpoint, never four fragments. */}
               <TwoToneHeadline
                 as="h1"
                 id={headingId}
@@ -55,8 +60,8 @@ export function Hero({ section }: { section: LandingSection }) {
                 align="left"
                 className="mt-mk-eyebrow"
                 segments={[
-                  { text: "Every figure computed.", block: true },
-                  { text: "Every claim traced.", tone: "accent", block: true },
+                  { text: "Investment research,", block: true },
+                  { text: "running on your machine.", tone: "accent", block: true },
                 ]}
               />
             </Reveal>
@@ -68,24 +73,30 @@ export function Hero({ section }: { section: LandingSection }) {
                   characters and strand "you own." alone; the narrower 26rem
                   cap there produces a clean five-line rag instead. */}
               <p data-lead className="mt-mk-headline max-w-[34rem] text-pretty text-mk-lead text-muted lg:max-w-[26rem] xl:max-w-[34rem]">
-                Stop juggling a dozen investing tools. UAA is one research terminal where deterministic
-                engines compute every metric and the AI only explains what they found. Every figure
-                traces back to its source, in a database <span className="text-brand">you own</span>.
+                UAA is one research terminal for market data, filings, screening, valuation, and
+                portfolio intelligence. Deterministic engines compute every metric, the AI only
+                explains what they found, and each figure traces back to its source, in a database{" "}
+                <span className="text-brand">you own</span>.
               </p>
             </Reveal>
 
             <Reveal delay={280}>
               <div className="mt-mk-lead flex flex-col items-start gap-3 sm:flex-row">
-                <button
-                  type="button"
-                  onClick={() => openAuthModal("signup")}
+                {/* prefetch={false} on every APP_ENTRY link on this page: the
+                    marketing surface must not speculatively load the app
+                    shell, and under UAA_AUTH_GATE=on a signed-out prefetch
+                    caches the gate's redirect, which the post-sign-in
+                    router.push would then replay. */}
+                <Link
+                  href={APP_ENTRY}
+                  prefetch={false}
                   className="group inline-flex h-12 items-center justify-center gap-2 rounded-control bg-brand px-7 text-sm font-semibold text-background outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
                 >
                   {PRIMARY_ACTION}
                   <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-[3px]">
                     →
                   </span>
-                </button>
+                </Link>
                 <a
                   href="#demo"
                   className="inline-flex h-12 items-center justify-center gap-1.5 rounded-control border border-border bg-surface px-7 text-sm font-semibold text-foreground outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:border-border-strong hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand/40"

@@ -26,25 +26,37 @@ export const LANDING_HOME = "/landing";
 export const APP_ENTRY = "/";
 
 /**
- * One name per action, everywhere: nav, hero, pricing, final CTA, footer all
- * use PRIMARY_ACTION. The hero's secondary CTA scrolls to the in-page demo
- * (no demo video asset exists in the repo), so it is named for what it does.
- * The FINAL CTA's secondary action must point forward, not back up the page:
- * it enters the live app, so the page escalates instead of looping.
+ * A module route inside the live app (e.g. appRoute("/screener")). Kept
+ * relative to APP_ENTRY so the post-migration flip to "/app" carries every
+ * deep link with it. The app is local-first with no auth wall, so these are
+ * real destinations for a first-time visitor, not dead affordances.
  */
-export const PRIMARY_ACTION = "Get started";
-export const SECONDARY_ACTION = "See it in action";
-export const FINAL_SECONDARY_ACTION = "Open the live app";
+export const appRoute = (path: string): string =>
+  APP_ENTRY === "/" ? path : `${APP_ENTRY}${path}`;
 
 /**
- * The four canonical trust claims. Trust strips appear four times on the page
- * and all argue these same four things, so the page makes one consistent case.
+ * One name per action, everywhere. The app is open, free, and local-first —
+ * there is no auth wall — so the primary action ENTERS IT DIRECTLY (a link to
+ * APP_ENTRY) in the nav, hero, pricing, footer, and final CTA alike; no modal
+ * stands in front of an open door. The optional local account keeps its own
+ * quiet affordances ("Sign in" in the nav, a text link under the final CTA).
+ * The hero's secondary CTA scrolls to the live demo directly beneath it, so
+ * it is named for the outcome, not the scroll.
+ */
+export const PRIMARY_ACTION = "Open the terminal";
+export const SECONDARY_ACTION = "Analyze an asset";
+export const FINAL_PRIMARY_ACTION = "Open the terminal";
+
+/**
+ * The four canonical trust claims. The trust strip appears exactly ONCE on
+ * the page (the Solution section, per the hero and final-CTA rebuilds), so
+ * the claims read as substantiation there instead of a repeated refrain.
  * Icons attach at the call site (lucide imports stay out of this config).
  */
 export const TRUST_CLAIMS = [
   { label: "Local-first", sub: "Your database, on your disk" },
   { label: "Deterministic", sub: "Engines compute, AI explains" },
-  { label: "Your own key", sub: "Your provider bills you directly" },
+  { label: "Your own AI", sub: "Devin login or your own key" },
   { label: "No subscription", sub: "Free and complete today" },
 ] as const;
 
@@ -72,16 +84,16 @@ export interface LandingSection {
 }
 
 export const SECTIONS: LandingSection[] = [
-  { id: "hero", kicker: "Universal Asset Analyzer", title: "The AI terminal for investors", top: true },
+  { id: "hero", kicker: "Universal Asset Analyzer", title: "Investment research, running on your machine", top: true },
+  { id: "demo", kicker: "Try it", title: "Analyzed live, right here", nav: "Demo" },
   { id: "problem", kicker: "The problem", title: "Research is fragmented across a dozen tools", nav: "Problem" },
-  { id: "solution", kicker: "The solution", title: "One intelligent analysis workbench" },
+  { id: "solution", kicker: "The solution", title: "One auditable analysis workbench" },
   { id: "privacy", kicker: "Local-first", title: "Your data lives on your computer" },
-  { id: "features", kicker: "Capabilities", title: "Everything serious research needs", nav: "Features" },
-  { id: "demo", kicker: "Try it", title: "See UAA in action", nav: "Demo" },
-  { id: "comparison", kicker: "Compare", title: "How UAA stacks up", nav: "Compare" },
+  { id: "features", kicker: "Capabilities", title: "One workflow, five instruments", nav: "Features" },
+  { id: "comparison", kicker: "Compare", title: "Three tools, three different jobs", nav: "Compare" },
   { id: "pricing", kicker: "Pricing", title: "Free to run. Pro when you want us to run it.", nav: "Pricing" },
   { id: "faq", kicker: "Questions", title: "Frequently asked questions", nav: "FAQ" },
-  { id: "cta", kicker: "Ready?", title: "Experience Universal Asset Analyzer" },
+  { id: "cta", kicker: "Nothing in the way", title: "Already on your machine" },
 ];
 
 /** The header anchor-nav items, derived from the IA so they can never drift. */
