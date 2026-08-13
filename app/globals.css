@@ -150,6 +150,9 @@
   --animate-mk-value-pulse: mk-value-pulse 700ms var(--ease-out) 1 both;
   /* Try it: the Analyze click's one-shot scale-and-glow on the input. */
   --animate-mk-analyze-flash: mk-analyze-flash 500ms var(--ease-precise) 1 both;
+  /* Try it: a freshly computed result's staged arrival (per-group delay set
+     inline). The pre-loaded fixture never animates; it is present on load. */
+  --animate-mk-demo-enter: mk-demo-enter 400ms var(--ease-out) 1 both;
   /* Pricing: the two aurora arcs' 12s breath (gradient drift, no jitter). */
   --animate-mk-aurora: mk-aurora 12s ease-in-out infinite;
   --animate-mk-aurora-alt: mk-aurora 12s ease-in-out -6s infinite;
@@ -530,6 +533,12 @@ body::before {
   0%   { transform: scale(1); }
   30%  { transform: scale(0.985); box-shadow: 0 0 0 8px color-mix(in srgb, var(--brand) 25%, transparent), 0 0 36px 6px color-mix(in srgb, var(--brand) 32%, transparent); }
   100% { transform: scale(1); }
+}
+/* Try it: a live result's staged arrival, opacity and a short rise only,
+   applied per group with inline delays; reduced motion renders at rest. */
+@keyframes mk-demo-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 /* Pricing: long-exposure aurora drift, a full breath every 12 seconds.
    Amplitude modulation only — the gradients travel and swell, never jitter. */
