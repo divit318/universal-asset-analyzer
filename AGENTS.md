@@ -267,6 +267,19 @@ export function MyComponent({ data, onSubmit }: Props) {
 | **Edit** | Modify file | Use after reading first |
 | **Bash** | Run tests, git commands | `npm test`, `git log` |
 | **Agent** | Delegate research/search | Rarely needed (Serena better) |
+| **Playwright MCP** | Drive/inspect the UI in a real browser | browser tools (DOM, click, screenshot) |
+| **chrome-devtools MCP** | Perf traces, network waterfall, console, CPU/network throttling | plugin also ships `/chrome-devtools-mcp:a11y-debugging`, `:debug-optimize-lcp`, `:memory-leak-debugging` |
+| **next-devtools MCP** | Runtime errors/routes/logs from the running Next 16 dev server | `nextjs_index` → `nextjs_call`; version-accurate docs via `nextjs_docs` |
+| **context7 MCP** | Third-party library docs | resolve library → fetch docs |
+| **duckdb CLI** | Query `data/engine.duckdb`, Parquet snapshots, even app.db | `duckdb -readonly data/engine.duckdb "SHOW TABLES;"` |
+| **gitleaks** | Secret scan before committing | `gitleaks git --no-banner --redact` (config: `.gitleaks.toml`) |
+
+**Repo skills** (in `.devin/skills/`, invoke as slash commands or let the agent auto-trigger):
+`/uaa-verify` (verification gauntlet) · `/uaa-data` (data stores & pipelines) · `/uaa-fincalc`
+(financial-calculation validation) · `/uaa-ui-qa` (browser QA/perf/a11y) · `/uaa-ai-platform`
+(AI-layer gates & evals) · `/uaa-motion` (motion design system) · `/uaa-visual-assets`
+(SVG/illustration/asset pipeline). Full tooling inventory: `docs/DEVIN_CAPABILITY_REGISTRY.md`;
+visual stack: `docs/UAA_VISUAL_CAPABILITY_STACK.md`.
 
 ---
 
