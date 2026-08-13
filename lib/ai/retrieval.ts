@@ -259,11 +259,14 @@ export function buildBlocks(ctx: CompanyContext): ContextBlock[] {
     ]), 25));
   }
 
-  // Knowledge Graph — top related entities.
-  if (ctx.graphNeighbors.length) {
-    out.push(block("knowledgeGraph", "platform:knowledge-graph", "Knowledge Graph — related entities", ctx.graphNeighbors
-      .map((n) => `- ${n.label} (${n.relationship})`)
-      .join("\n"), 25));
+  // What the reader already owns of this name, every route counted.
+  if (ctx.yourExposure) {
+    const e = ctx.yourExposure;
+    out.push(block("yourExposure", "platform:exposure", "Your existing exposure to this company", lines([
+      ["Effective exposure", `${e.effectivePct.toFixed(2)}% of portfolio (floor — fund look-through sees top-10 constituents only)`],
+      ["Held directly", e.directPct > 0 ? `${e.directPct.toFixed(2)}%` : "none"],
+      ["Routes", e.routes.map((r) => `${r.via} ${r.pct.toFixed(2)}%`).join(", ") || "—"],
+    ]), 60));
   }
 
   // Movement Explainer — only if already cached (MovementExplainerCard's

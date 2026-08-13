@@ -49,7 +49,7 @@ export type TaskType =
   | "market-summary" // regime/macro narrative
   | "daily-briefing" // Mission Control's daily digest narration
   | "timeline-analysis" // timeline event detail / what-changed
-  | "knowledge-graph-explain" // KG node explanation
+  | "exposure-cluster-label" // Exposure: name a deterministic co-movement cluster (JSON, 3 words)
   | "calendar-brief" // earnings calendar AI brief
   | "nl-screener" // natural-language screener query parsing
   | "portfolio-construction" // Simulator intake: decide the next follow-up question for a hypothetical-portfolio mandate (JSON)
@@ -102,6 +102,23 @@ export interface TaskConfig {
   maxTokens?: number;
   timeoutMs?: number;
   /**
+   * Total wall-clock budget for the WHOLE routing chain — every attempt,
+   * every fallback, summed. `timeoutMs` bounds one attempt; this bounds the
+   * user's wait.
+   *
+   * Without it the two are unrelated, and that gap is not theoretical: the
+   * ai_call ledger records 42 rows whose duration is 592–747s under the
+   * message "Devin CLI timed out after 300000ms". A hosted timeout falls
+   * through to the next candidate by design (see the comment at the bottom of
+   * route()), each candidate gets a *fresh* full timeout, and nothing was
+   * counting the total — so a 300s per-attempt cap produced ten-minute waits.
+   *
+   * Set it on any task a human waits on. The Router clamps each attempt to
+   * whatever remains and stops the chain when the budget is gone, so the
+   * caller's worst case is this number rather than this number × candidates.
+   */
+  budgetMs?: number;
+  /**
    * Which analysis RUNTIME runs this task at the seam ("chain" = one
    * completion through the Router's provider chain; "sessions" = a Devin
    * sessions-API run with platform-validated structured output). Resolution
@@ -141,7 +158,16 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
     latency: "interactive",
     jsonMode: true,
     maxTokens: 2048,
-    timeoutMs: 180_000,
+    // Per-attempt cap. Sized to leave room for one fallback inside the budget
+    // below rather than to be reached: measured cold p100 is ~10s.
+    timeoutMs: 20_000,
+    // THE hard product rule: the research page never makes a user wait longer
+    // than this for the hero verdict. Measured cold end-to-end (2026-08-12,
+    // 12 symbols, no cache): 5.1–10.1s total, of which 0.3–0.7s is context.
+    // 40s is ~4x the worst observation — generous headroom, but a ceiling that
+    // now actually exists. When it is hit the deterministic verdict is already
+    // on screen and the AI half degrades to "unavailable".
+    budgetMs: 40_000,
   },
   "investment-thesis": {
     complexity: "deep",
@@ -319,7 +345,11 @@ export const TASK_REGISTRY: Record<TaskType, TaskConfig> = {
   // Tranche 4 migrated (home brief). Standard latency, so it moves under a
   // global AI_PROVIDER=devin; the homepage streams it and tolerates the tail.
   "daily-briefing": { complexity: "light", latency: "standard", maxTokens: 800, devinTimeoutMs: 240_000 },
-  "knowledge-graph-explain": { complexity: "light", latency: "interactive", maxTokens: 600 },
+  // Naming a cluster the engine already found. The model receives symbols and
+  // industries and returns a short label — it never decides membership, never
+  // sees a weight, and its output is discarded if it does not parse. Tiny
+  // budget because a correct answer here is three words.
+  "exposure-cluster-label": { complexity: "light", latency: "interactive", jsonMode: true, maxTokens: 300, temperature: 0.1 },
   "calendar-brief": { complexity: "light", latency: "interactive", maxTokens: 600 },
   "nl-screener": {
     // Parsing a search box into filters. The user is staring at a spinner and

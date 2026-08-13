@@ -50,9 +50,14 @@ import { AI_RECOVERY_HINT } from "./availability";
 export interface InvestmentVerdict {
   verdict: "bullish" | "bearish" | "neutral";
   headline: string;
+  /** The single most important conflict in the evidence — the equity verdict's
+   *  highest-value line. Empty for asset classes whose prompt omits it. */
+  tension: string;
   thesis: string;
   catalysts: string[];
   risks: string[];
+  /** Measurable events that would change the verdict. Empty when not requested. */
+  triggers: string[];
   confidence: "high" | "medium" | "low";
   timeHorizon: "short-term" | "medium-term" | "long-term";
   keyMetrics: Array<{ label: string; value: string; signal: "positive" | "negative" | "neutral" }>;
@@ -121,9 +126,11 @@ function defaultFields(plan: VerdictPlan): VerdictFields {
   return {
     verdict: plan.fallback.verdict,
     headline: `${plan.fallback.name}: AI verdict`,
+    tension: "",
     thesis: "",
     catalysts: [],
     risks: [],
+    triggers: [],
     confidence: "low",
     timeHorizon: "medium-term",
     keyMetrics: [],
@@ -135,6 +142,7 @@ export function offlineVerdict(plan: VerdictPlan): InvestmentVerdict {
   return {
     verdict: plan.fallback.verdict,
     headline: `${plan.fallback.name}: connect an AI provider to generate the investment verdict`,
+    tension: "",
     thesis: `${AI_RECOVERY_HINT} Then refresh to generate the AI analysis for this ${plan.fallback.subject}.`,
     catalysts: [
       "No AI provider reachable",
@@ -142,6 +150,7 @@ export function offlineVerdict(plan: VerdictPlan): InvestmentVerdict {
       "The verdict generates automatically once one is available",
     ],
     risks: ["AI analysis unavailable", plan.fallback.reviewHint, "Check the AI status badge in the header"],
+    triggers: [],
     confidence: "low",
     timeHorizon: "medium-term",
     keyMetrics: [],
@@ -165,9 +174,11 @@ export function assembleVerdict(
   const fields = coerceFields(plan, raw);
   const claims = collectClaimText([
     fields.headline,
+    fields.tension,
     fields.thesis,
     fields.catalysts,
     fields.risks,
+    fields.triggers,
     fields.keyMetrics.map((m) => `${m.label} ${m.value}`),
   ]);
 
@@ -209,9 +220,11 @@ function coerceFields(plan: VerdictPlan, raw: Record<string, unknown>): VerdictF
   return {
     verdict: computedVerdict,
     headline: typeof raw.headline === "string" && raw.headline.trim() ? raw.headline : base.headline,
+    tension: typeof raw.tension === "string" ? raw.tension : base.tension,
     thesis: typeof raw.thesis === "string" ? raw.thesis : base.thesis,
     catalysts: strings(raw.catalysts),
     risks: strings(raw.risks),
+    triggers: strings(raw.triggers),
     confidence:
       confidence === "high" || confidence === "medium" || confidence === "low" ? confidence : base.confidence,
     timeHorizon:
@@ -704,6 +717,30 @@ function planEquityVerdict(ctx: CompanyContext, portfolio: PortfolioFacts | null
 }
 
 /**
+ * The verdict kind a quote resolves to — the same mapping {@link planVerdict}
+ * dispatches on, exported so the streamed route can compute the CACHE IDENTITY
+ * from the quote alone (a ~15s-TTL, deduplicated lookup) without paying for
+ * the full context assembly and plan on a cache hit. One function, used by
+ * both, so the cheap identity and the plan's kind cannot drift.
+ */
+export function verdictKindForQuote(quote: CompanyContext["quote"]): VerdictKind {
+  switch (detectAssetClass(quote)) {
+    case "fund":
+      return "fund";
+    case "crypto":
+      return "crypto";
+    case "commodity":
+      return "commodity";
+    case "forex":
+      return "forex";
+    case "macro":
+      return "macro";
+    default:
+      return "equity";
+  }
+}
+
+/**
  * Build the verdict plan for whatever this symbol turns out to be.
  *
  * Funds/crypto/commodities/forex/macro must NOT reuse `ctx.score`: that score is
@@ -715,7 +752,7 @@ export async function planVerdict(
   ctx: CompanyContext,
   portfolio: PortfolioFacts | null,
 ): Promise<VerdictPlan> {
-  switch (detectAssetClass(ctx.quote)) {
+  switch (verdictKindForQuote(ctx.quote)) {
     case "fund":
       return planFundVerdict(ctx);
     case "crypto":

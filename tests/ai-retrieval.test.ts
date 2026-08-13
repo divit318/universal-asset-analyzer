@@ -64,7 +64,7 @@ function ctxFixture(over: Partial<CompanyContext> = {}): CompanyContext {
     sectorRotation: null,
     recentTimelineEvents: [],
     relatedOpportunities: null,
-    graphNeighbors: [],
+    yourExposure: null,
     ...over,
   };
 }

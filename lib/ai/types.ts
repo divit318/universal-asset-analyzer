@@ -77,8 +77,23 @@ export interface CompanyContext {
   recentTimelineEvents: TimelineEvent[];
   /** Theme + sibling symbols from the Opportunity Map, when this symbol was in the last Scanner run. */
   relatedOpportunities: { theme: string; siblings: string[] } | null;
-  /** Top Knowledge Graph neighbors (label + relationship), when available. */
-  graphNeighbors: { label: string; relationship: string; type: string }[];
+  /**
+   * What the USER's own book already owns of this company, all routes counted.
+   *
+   * Replaces the old `graphNeighbors` block, which fed the model lines like
+   * "AAPL — Technology (operates in)". That is a fact about the world the model
+   * already knows and cannot act on. This is a fact about the reader: telling
+   * the copilot "they already hold 2.3% of this, 1.4% of it inside VOO" changes
+   * what a good answer to "should I buy more?" looks like.
+   *
+   * Null when the ledger has no exposure to the symbol, or could not be read.
+   */
+  yourExposure: {
+    effectivePct: number;
+    directPct: number;
+    /** "direct", "VOO", "VGT"… with each one's contribution to the book. */
+    routes: { via: string; pct: number }[];
+  } | null;
   /** Analyst notes saved from prior research sessions — cross-stock memory. */
   savedNotes?: { symbol: string; content: string; createdAt: string }[];
   /** Non-fatal problems gathering data, surfaced so the copilot can be candid. */

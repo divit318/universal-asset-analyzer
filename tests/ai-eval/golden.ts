@@ -394,7 +394,7 @@ export const GOLDEN_CASES: GoldenCase[] = [
         { headline: "Caterpillar backlog grows on data-center power demand", url: "", publishedAt: "2026-08-01T12:00:00.000Z", source: "eval-fixture" },
       ] as CompanyContext["news"],
       onWatchlist: false, ownership: null, sectorRotation: null,
-      recentTimelineEvents: [], relatedOpportunities: null, graphNeighbors: [],
+      recentTimelineEvents: [], relatedOpportunities: null, yourExposure: null,
       warnings: [],
     } as CompanyContext;
 

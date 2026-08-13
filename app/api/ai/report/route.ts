@@ -11,6 +11,7 @@ import {
   peekVerdictWithMeta,
   planVerdict,
   verdictCacheParams,
+  verdictKindForQuote,
   type InvestmentVerdict,
   type VerdictPlan,
 } from "@/lib/ai/verdict";
@@ -23,6 +24,7 @@ import {
 } from "@/lib/ai/report-broker";
 import { warmDevinAcp } from "@/lib/ai/devin-acp";
 import { normalizeSymbol } from "@/lib/market";
+import { getQuote } from "@/lib/yahoo";
 import { cacheKey } from "@/lib/platform/registry";
 import { REPORT_SECTIONS } from "@/lib/ai/report-sections";
 import { timeStage } from "@/lib/debug-pipeline";
@@ -55,6 +57,11 @@ export const maxDuration = 300;
  *
  * ## Phase 2 (2026-08-11) — the pipeline around the model
  *
+ *   - **Cache first (2026-08-12).** The cache identity needs only the quote
+ *     (asset class) and the URL's stable personalization, so the hit path
+ *     replays after one deduplicated quote lookup — it no longer pays for the
+ *     full context assembly (80–350ms warm, seconds cold) to discover the
+ *     verdict was already on disk. Context + plan are built only on a miss.
  *   - **Critical-path context only.** {@link buildVerdictContext} fetches the
  *     five sources the verdict actually consumes instead of the copilot's
  *     nine-plus fan-out; every fetch still goes through the platform's cache +
@@ -95,42 +102,51 @@ export async function GET(request: Request) {
   // instead of being paid serially after them. No-op when already running.
   warmDevinAcp();
 
-  // The AI never begins reasoning on incomplete data: the verdict context is
-  // assembled first, and only then does generation start. A context failure is
-  // a real 404, not a stream of section errors.
+  // CACHE FIRST. The cache identity needs only the quote (asset class) and the
+  // URL's stable personalization — so a cached verdict replays after ONE
+  // ~15s-TTL, deduplicated quote lookup, instead of paying for the full
+  // context assembly (measured 80–350ms warm, seconds on a cold server) to
+  // discover the answer was already on disk. The quote is also the one hard
+  // requirement of the miss path, so a bad ticker is a real 404 either way.
   const requestStartedAt = Date.now();
-  let ctx;
+  let quote;
   try {
-    ctx = await timeStage("ai:report", "context", () => buildVerdictContext(symbol));
+    quote = await timeStage("ai:report", "quote", () => getQuote(symbol));
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Could not load data for this symbol" },
       { status: 404 },
     );
   }
-  const contextMs = Date.now() - requestStartedAt;
-
-  // Planning is the only remaining I/O (asset-class score + fact block). Doing
-  // it before the stream opens keeps a data failure a real HTTP error instead
-  // of an error event the client has to special-case.
-  let plan: VerdictPlan;
-  try {
-    plan = await timeStage("ai:report", "plan", () => planVerdict(ctx, readPortfolioFacts(url)));
-  } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Could not load data for this symbol" },
-      { status: 404 },
-    );
-  }
-  const planMs = Date.now() - requestStartedAt - contextMs;
+  const quoteMs = Date.now() - requestStartedAt;
 
   const cacheParams = verdictCacheParams(
-    ctx.symbol,
-    plan.kind,
+    symbol,
+    verdictKindForQuote(quote),
     stableVerdictIdentity(personalizationParams(url)),
   );
   const generationKey = cacheKey("aiVerdict", cacheParams);
   const cached = url.searchParams.get("refresh") === "1" ? null : peekVerdictWithMeta(cacheParams);
+
+  // The miss path assembles the verdict context and plan BEFORE the stream
+  // opens: the AI never begins reasoning on incomplete data, and a data
+  // failure stays a real HTTP error instead of an error event the client has
+  // to special-case. The hit path skips both entirely — replay needs neither.
+  let ctx = null as Awaited<ReturnType<typeof buildVerdictContext>> | null;
+  let plan: VerdictPlan | null = null;
+  if (!cached) {
+    try {
+      const builtCtx = await timeStage("ai:report", "context", () => buildVerdictContext(symbol));
+      ctx = builtCtx;
+      plan = await timeStage("ai:report", "plan", () => planVerdict(builtCtx, readPortfolioFacts(url)));
+    } catch (err) {
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : "Could not load data for this symbol" },
+        { status: 404 },
+      );
+    }
+  }
+  const contextMs = Date.now() - requestStartedAt - quoteMs;
 
   const encoder = new TextEncoder();
 
@@ -163,12 +179,12 @@ export async function GET(request: Request) {
       const manifest = (cache: "hit-fresh" | "hit-stale" | "miss") =>
         send({
           type: "manifest",
-          symbol: ctx.symbol,
-          name: ctx.name,
-          assetClass: plan.kind,
-          warnings: ctx.warnings,
+          symbol,
+          name: quote.name || symbol,
+          assetClass: cacheParams.kind,
+          warnings: ctx?.warnings ?? [],
           cache,
-          timings: { contextMs, planMs },
+          timings: { quoteMs, contextMs },
           sections: sectionsInOrder().map((s) => ({ id: s.id, title: s.title, order: s.order })),
         });
 
@@ -180,11 +196,11 @@ export async function GET(request: Request) {
           "[verdict-request]",
           JSON.stringify({
             at: new Date().toISOString(),
-            symbol: ctx.symbol,
-            kind: plan.kind,
+            symbol,
+            kind: cacheParams.kind,
             outcome,
+            quoteMs,
             contextMs,
-            planMs,
             totalMs: Date.now() - requestStartedAt,
             ...extra,
           }),
@@ -200,16 +216,23 @@ export async function GET(request: Request) {
         // Inside the SWR window: the user already has their verdict, so the
         // refresh happens behind them — one shared background generation that
         // writes the cache for the NEXT view. Never blocks this response.
+        // The hit path skipped context assembly, so the refresh builds its own
+        // context + plan inside the producer — off this response's clock.
         const revalidated = cached.freshness !== "fresh" && !isGenerationActive(generationKey);
         if (revalidated) {
-          refreshGeneration(generationKey, (emit, signal) =>
-            produceVerdict(plan, cacheParams, ctx.symbol, emit, signal),
-          );
+          refreshGeneration(generationKey, async (emit, signal) => {
+            const freshCtx = await buildVerdictContext(symbol);
+            const freshPlan = await planVerdict(freshCtx, readPortfolioFacts(url));
+            await produceVerdict(freshPlan, cacheParams, symbol, emit, signal);
+          });
         }
         logRequest(cached.freshness === "fresh" ? "hit-fresh" : "hit-stale", { revalidated });
         close();
         return;
       }
+
+      // Miss: context + plan were assembled before the stream opened.
+      const readyPlan = plan!;
 
       manifest("miss");
 
@@ -221,7 +244,7 @@ export async function GET(request: Request) {
       try {
         const frames = subscribeGeneration(
           generationKey,
-          (emit, signal) => produceVerdict(plan, cacheParams, ctx.symbol, emit, signal),
+          (emit, signal) => produceVerdict(readyPlan, cacheParams, symbol, emit, signal),
           { signal: request.signal },
         );
         for await (const frame of frames) {
@@ -235,7 +258,7 @@ export async function GET(request: Request) {
             type: "error",
             error: err instanceof Error ? err.message : "Generation failed",
             completed: [],
-            fallback: offlineVerdict(plan),
+            fallback: offlineVerdict(readyPlan),
           });
           logRequest("error", { attach: attachMode, message: err instanceof Error ? err.message : String(err) });
         } else {

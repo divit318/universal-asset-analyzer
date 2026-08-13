@@ -25,7 +25,7 @@ import { detectMarket } from "../market";
 import { getLatestSectorRotation, findSectorRotationEntry } from "../sector-rotation";
 import { getTimelineFeed } from "../timeline";
 import { getOpportunityMapData } from "../opportunity-map";
-import { getKnowledgeGraph } from "../knowledge-graph";
+import { getExposureModel } from "../exposure";
 import { getDataset, invalidateAsset } from "../platform/data-layer";
 import type { CompanyContext } from "./types";
 import type { SectorRotationEntry } from "../types";
@@ -83,7 +83,7 @@ export async function buildCompanyContext(
  * (lib/ai/facts.ts buildEquityFacts) and score inputs need the quote,
  * fundamentals (snapshot/analyst/insider), statements, 1825d history, and the
  * top news headlines — nothing else. Phase 2 measured the verdict stream
- * blocking 1.2–2.9s on the full fan-out, waiting on peers/knowledge-graph/
+ * blocking 1.2–2.9s on the full fan-out, waiting on peers/exposure/
  * timeline/opportunity-map data that never reaches the prompt.
  *
  * This is NOT a second context architecture: every fetch below is the same
@@ -157,7 +157,7 @@ export async function buildVerdictContext(rawSymbol: string): Promise<CompanyCon
     sectorRotation: sectorRotationEntry,
     recentTimelineEvents: [],
     relatedOpportunities: null,
-    graphNeighbors: [],
+    yourExposure: null,
   };
 }
 
@@ -167,7 +167,7 @@ async function assembleCompanyContext(symbol: string): Promise<CompanyContext> {
   // The quote is required, but it does NOT need to block the other eight
   // sources — none of them depend on it. Fetch everything at once and enforce
   // the requirement afterwards, rather than paying a serial round-trip for it.
-  const [quoteResult, profile, fundamentals, statements, filings, news, peers, history, graph] =
+  const [quoteResult, profile, fundamentals, statements, filings, news, peers, history, exposure] =
     await Promise.all([
       getQuote(symbol).then(
         (q) => ({ ok: true as const, quote: q }),
@@ -195,7 +195,7 @@ async function assembleCompanyContext(symbol: string): Promise<CompanyContext> {
       // (420d here produced a slightly different momentum blend, so the
       // narration could quote "50/100" beside a hero showing 51/100.)
       tryOr("price history", warnings, () => getHistory(symbol, 1825), []),
-      tryOr("knowledge graph", warnings, () => getKnowledgeGraph("symbol", symbol), null),
+      tryOr("exposure", warnings, () => getExposureModel(), null),
     ]);
 
   if (!quoteResult.ok) throw quoteResult.err;
@@ -254,19 +254,26 @@ async function assembleCompanyContext(symbol: string): Promise<CompanyContext> {
     /* opportunity map is non-critical context */
   }
 
-  // Knowledge Graph — top neighbors by importance, already fetched above.
-  const graphNeighbors: CompanyContext["graphNeighbors"] = [];
-  if (graph) {
-    const companyId = `company:${symbol}`;
-    const byImportance = [...graph.nodes]
-      .filter((n) => n.id !== companyId)
-      .sort((a, b) => b.importance - a.importance)
-      .slice(0, 6);
-    for (const n of byImportance) {
-      const edge = graph.edges.find(
-        (e) => (e.source === companyId && e.target === n.id) || (e.target === companyId && e.source === n.id),
-      );
-      graphNeighbors.push({ label: n.label, relationship: edge?.label ?? n.type, type: n.type });
+  /* What the reader's own book already owns of this name, every route counted.
+     Read off the exposure model fetched above — the copilot should know that a
+     "should I buy?" question is being asked by someone who already holds 2.3%
+     of it, 1.4% of that inside a fund they bought for something else. */
+  let yourExposure: CompanyContext["yourExposure"] = null;
+  if (exposure) {
+    const issuer = exposure.issuers.find((i) => i.symbol === symbol.toUpperCase());
+    if (issuer) {
+      const routes = exposure.edges
+        .filter((e) => e.to === issuer.id && (e.kind === "IS" || e.kind === "CONTAINS"))
+        .map((e) => ({
+          via: e.kind === "IS" ? "direct" : e.from.slice("position:".length),
+          pct: e.bookPct ?? 0,
+        }))
+        .sort((a, b) => b.pct - a.pct);
+      yourExposure = {
+        effectivePct: issuer.effectivePct,
+        directPct: issuer.directPct,
+        routes,
+      };
     }
   }
 
@@ -322,7 +329,7 @@ async function assembleCompanyContext(symbol: string): Promise<CompanyContext> {
     sectorRotation: sectorRotationEntry,
     recentTimelineEvents,
     relatedOpportunities,
-    graphNeighbors,
+    yourExposure,
   };
 
   return ctx;
