@@ -1,4 +1,5 @@
-import { streamComparisonFields } from "@/lib/ai-compare";
+import { COMPARISON_CACHE_MAX_AGE_MS, streamComparisonFields } from "@/lib/ai-compare";
+import { subscribeGeneration, type BrokerFrame } from "@/lib/ai/report-broker";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -7,7 +8,7 @@ export const maxDuration = 300;
 
 /**
  * POST /api/compare/stream
- * Body: { symbols: string[] } (2-5 symbols)
+ * Body: { symbols: string[] } (2-5 symbols), { noCache?: boolean }
  *
  * The AI ranked verdict, streamed as **complete fields** rather than one
  * multi-minute wait — mirrors `/api/ai/report`'s protocol exactly (see that
@@ -28,9 +29,13 @@ export const maxDuration = 300;
  * A cold-loading model (the case this whole thing exists for) now shows the
  * user real, growing content instead of one spinner for however long the
  * load takes.
+ *
+ * Repeat comparisons of the same symbols within the freshness window replay
+ * the stored narrative instead of regenerating (see streamComparisonFields);
+ * `noCache: true` — the Re-analyze button — forces a fresh generation.
  */
 export async function POST(request: Request) {
-  let body: { symbols?: string[] };
+  let body: { symbols?: string[]; noCache?: boolean };
   try {
     body = await request.json();
   } catch {
@@ -64,14 +69,29 @@ export async function POST(request: Request) {
       };
 
       try {
-        const generator = streamComparisonFields(unique, { signal: request.signal });
-        for (;;) {
-          const next = await generator.next();
-          if (next.done) {
-            send({ type: "done", result: next.value });
-            break;
+        // One generation per symbol set, no matter how many tabs asked (the
+        // same guarantee /api/ai/report gets from this broker): the first
+        // request starts the model call, concurrent ones replay the fields
+        // emitted so far and then follow live. `noCache` (the Re-analyze
+        // button) forks the key so an explicit regeneration never attaches to
+        // — or is polluted by — a cache-replaying run already in flight.
+        const generationKey = `compare:${body.noCache ? "fresh" : "cached"}:${unique.join(",")}`;
+        const producer = async (emit: (frame: BrokerFrame) => void, signal: AbortSignal) => {
+          const generator = streamComparisonFields(unique, {
+            signal,
+            maxAgeMs: body.noCache ? undefined : COMPARISON_CACHE_MAX_AGE_MS,
+          });
+          for (;;) {
+            const next = await generator.next();
+            if (next.done) {
+              emit({ type: "done", result: next.value });
+              break;
+            }
+            emit({ type: "field", key: next.value.key, data: next.value.value });
           }
-          send({ type: "field", key: next.value.key, data: next.value.value });
+        };
+        for await (const frame of subscribeGeneration(generationKey, producer, { signal: request.signal })) {
+          send(frame);
         }
       } catch (err) {
         if (!request.signal.aborted) {

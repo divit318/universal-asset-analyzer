@@ -33,6 +33,11 @@ export async function GET(request: Request) {
     targetDirection: null,
     alertPctDrop: null,
     notes: null,
+    buyTrigger: null,
+    sellTrigger: null,
+    conviction: null,
+    horizon: null,
+    lastReviewedAt: null,
     stage: "surfaced",
     stageChangedAt: null,
     // A synthetic item for a symbol that may not be tracked at all: it has no

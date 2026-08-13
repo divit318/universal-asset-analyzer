@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { EvidenceArticle, EvidenceRequest } from "@/lib/wire/evidence";
 import { relativeAge } from "@/lib/provenance";
 
@@ -26,8 +26,12 @@ export function EvidenceDrawer({
 }) {
   // Captured at open — relative ages inside are static for the drawer's life.
   const [openedAt] = useState(() => Date.now());
+  const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
+    // Move keyboard focus into the dialog on open so Escape/Tab work without
+    // a pointer; the close button is the only always-present control.
+    closeRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
@@ -43,6 +47,7 @@ export function EvidenceDrawer({
       {/* Panel */}
       <aside
         role="dialog"
+        aria-modal="true"
         aria-label={`Evidence for ${request.title}`}
         className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-border bg-surface shadow-popover animate-menu-drop"
       >
@@ -59,6 +64,7 @@ export function EvidenceDrawer({
             )}
           </div>
           <button
+            ref={closeRef}
             type="button"
             onClick={onClose}
             aria-label="Close evidence drawer"

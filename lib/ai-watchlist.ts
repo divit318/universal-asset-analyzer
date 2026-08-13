@@ -16,9 +16,10 @@ import { getQuote } from "./yahoo";
 import { getFundamentals } from "./fundamentals";
 import { computeScore, computeMomentum, assessRisks } from "./scoring";
 import { getHistory } from "./yahoo";
-import { listWatchlist } from "./db";
+import { listWatchlist, listTimelineEventsForSymbols } from "./db";
+import { upsidePercent } from "./watchlist-metrics";
 import type { Quote, WatchlistItem, WatchlistAlert } from "./types";
-import { formatCurrency, formatPercent, formatMarketCap } from "./format";
+import { formatCompactCurrency, formatCurrency, formatPercent } from "./format";
 import { getLatestSectorRotation, findSectorRotationEntry } from "./sector-rotation";
 import { aiUnavailableMessage } from "./ai/availability";
 
@@ -45,14 +46,38 @@ export interface WatchlistStockSummary {
 export interface WatchlistDigest {
   model: string;
   summary: string;
+  /** The 2-3 most decision-relevant changes on the list right now (v2). */
+  topChanges: string[];
   actionItems: string[];
   concentrationRisks: string[];
   topPicks: string[];
   topConcerns: string[];
+  /** What to investigate next — thin/stale theses and the question to ask (v2). */
+  researchNext: string[];
+  /** One sentence on what the list implies for the existing portfolio (v2). */
+  portfolioImplication: string;
   stockSummaries: WatchlistStockSummary[];
   /** Structured, deterministic per-asset alerts — see computeWatchlistAlerts(). */
   alerts: WatchlistAlert[];
   generatedAt: string;
+}
+
+/**
+ * The user's own context for one symbol — target, thesis, and recent
+ * developments. This is what makes the brief PERSONAL rather than a generic
+ * market summary: the model is reasoning about the user's levels and stated
+ * reasons, not just prices and scores.
+ */
+export interface WatchlistUserContext {
+  targetPrice: number | null;
+  /** Signed % from price to the user's target (lib/watchlist-metrics). */
+  targetUpside: number | null;
+  targetDirection: "above" | "below" | null;
+  conviction: string | null;
+  /** First ~120 chars of the user's thesis, or null. */
+  thesisExcerpt: string | null;
+  /** Recent material development headlines (newest first, max 2). */
+  developments: string[];
 }
 
 /** Fetch lightweight data for one symbol — quote + fast fundamental score. */
@@ -104,16 +129,34 @@ export async function summariseOne(item: WatchlistItem): Promise<WatchlistStockS
 }
 
 /** Exported for the parity harness (scripts/ai-parity.ts) — pure, no I/O. */
-export function buildDigestPrompt(summaries: WatchlistStockSummary[], portfolio?: WatchlistPortfolioContext): string {
+export function buildDigestPrompt(
+  summaries: WatchlistStockSummary[],
+  portfolio?: WatchlistPortfolioContext,
+  userContext?: Map<string, WatchlistUserContext>,
+): string {
   const lines = summaries.map((s) => {
     const price = s.quote ? formatCurrency(s.quote.price, s.quote.currency) : "n/a";
     const chg = s.quote ? formatPercent(s.quote.changePercent) : "";
-    const mcap = s.quote ? formatMarketCap(s.quote.marketCap) : "n/a";
+    const mcap = s.quote ? formatCompactCurrency(s.quote.marketCap, s.quote.currency) : "n/a";
     const upside = s.analystUpside != null
       ? `${s.analystUpside >= 0 ? "+" : ""}${s.analystUpside.toFixed(0)}% analyst upside`
       : "no analyst target";
     const inPortfolio = portfolio?.holdingSymbols.includes(s.symbol) ? " [IN PORTFOLIO]" : "";
-    return `- ${s.symbol}${inPortfolio} (${s.name}): price ${price} ${chg}, mkt cap ${mcap}, composite score ${s.fundamentalScore ?? "n/a"}/100, recommendation ${s.recommendation ?? "n/a"}, ${upside}, top risk: ${s.topRisk ?? "none flagged"}`;
+    const base = `- ${s.symbol}${inPortfolio} (${s.name}): price ${price} ${chg}, mkt cap ${mcap}, composite score ${s.fundamentalScore ?? "n/a"}/100, recommendation ${s.recommendation ?? "n/a"}, ${upside}, top risk: ${s.topRisk ?? "none flagged"}`;
+
+    // The user's own context, when known — targets, thesis, developments.
+    const ctx = userContext?.get(s.symbol);
+    if (!ctx) return base;
+    const parts: string[] = [];
+    if (ctx.targetPrice != null && ctx.targetUpside != null) {
+      const kind = ctx.targetDirection === "below" ? "buy level" : "exit target";
+      parts.push(`user ${kind} ${formatCurrency(ctx.targetPrice, s.quote?.currency ?? "USD")} (${formatPercent(ctx.targetUpside)} away)`);
+    }
+    if (ctx.conviction) parts.push(`${ctx.conviction} conviction`);
+    if (ctx.thesisExcerpt) parts.push(`thesis: "${ctx.thesisExcerpt}"`);
+    else parts.push("NO THESIS RECORDED");
+    if (ctx.developments.length > 0) parts.push(`recent developments: ${ctx.developments.join("; ")}`);
+    return `${base}\n  USER CONTEXT: ${parts.join(", ")}`;
   });
 
   const portfolioSection = portfolio
@@ -138,13 +181,58 @@ ${lines.join("\n")}
 Produce a JSON response:
 {
   "summary": "2-3 sentence overall portfolio health summary — be specific about the mix of buy/hold/sell signals and overall risk profile",
+  "topChanges": ["The 2-3 most decision-relevant CHANGES right now — a target crossed or near, a big move, a material development — each naming its symbol"],
   "actionItems": ["Specific actionable item for 1-2 highest-priority stocks", "..."],
   "concentrationRisks": ["Any obvious sector/theme concentration risks visible from this list AND the portfolio"],
   "topPicks": ["Top 2-3 symbols to research further with one-line reason each, e.g. 'AAPL: strong buy signal, +18% analyst upside'"],
-  "topConcerns": ["Top 2-3 stocks with concerning signals and why, e.g. 'XYZ: SELL signal, high valuation risk'"]
+  "topConcerns": ["Top 2-3 stocks with concerning signals and why, e.g. 'XYZ: SELL signal, high valuation risk'"],
+  "researchNext": ["1-2 symbols with a NO THESIS RECORDED flag or thin data, and the specific question to investigate"],
+  "portfolioImplication": "One sentence on what this list implies for the existing portfolio; empty string if no portfolio context was given"
 }
 
-Rules: cite symbol names and specific numbers. If fewer than 2 stocks, simplify. Keep each item under 15 words.${portfolioRules}`;
+Rules: cite symbol names and specific numbers. If fewer than 2 stocks, simplify. Keep each item under 15 words.
+- USER CONTEXT lines are the user's OWN targets and reasons — treat a price near a user buy level as more actionable than an analyst target, and never confuse the two.
+- topChanges must be changes, not standing facts: a score that has always been 80 is not a change.${portfolioRules}`;
+}
+
+/**
+ * The user's own context per symbol, from the watchlist rows plus persisted
+ * timeline events. Local reads only (SQLite) — never network. Best-effort:
+ * a failure returns an empty map and the digest degrades to market data.
+ */
+function buildUserContext(
+  items: WatchlistItem[],
+  summaries: WatchlistStockSummary[],
+): Map<string, WatchlistUserContext> {
+  const map = new Map<string, WatchlistUserContext>();
+  let eventsBySymbol = new Map<string, string[]>();
+  try {
+    const cutoff = Date.now() - 14 * 86_400_000;
+    for (const e of listTimelineEventsForSymbols(items.map((i) => i.symbol))) {
+      if (Date.parse(e.timestamp) < cutoff || e.importanceScore < 55) continue;
+      const list = eventsBySymbol.get(e.symbol.toUpperCase()) ?? [];
+      if (list.length < 2) {
+        list.push(e.title);
+        eventsBySymbol.set(e.symbol.toUpperCase(), list);
+      }
+    }
+  } catch {
+    eventsBySymbol = new Map();
+  }
+
+  const quoteBySymbol = new Map(summaries.map((s) => [s.symbol, s.quote]));
+  for (const item of items) {
+    const quote = quoteBySymbol.get(item.symbol);
+    map.set(item.symbol, {
+      targetPrice: item.targetPrice,
+      targetUpside: upsidePercent(quote?.price ?? null, item.targetPrice),
+      targetDirection: item.targetDirection,
+      conviction: item.conviction,
+      thesisExcerpt: item.notes ? item.notes.slice(0, 120) : null,
+      developments: eventsBySymbol.get(item.symbol.toUpperCase()) ?? [],
+    });
+  }
+  return map;
 }
 
 /** Run the AI watchlist digest across all items. Fetches data in parallel. */
@@ -156,10 +244,13 @@ export async function generateWatchlistDigest(
     return {
       model: "n/a",
       summary: "Watchlist is empty.",
+      topChanges: [],
       actionItems: [],
       concentrationRisks: [],
       topPicks: [],
       topConcerns: [],
+      researchNext: [],
+      portfolioImplication: "",
       stockSummaries: [],
       alerts: [],
       generatedAt: new Date().toISOString(),
@@ -170,14 +261,17 @@ export async function generateWatchlistDigest(
   const capped = items.slice(0, 10);
   const summaries = await Promise.all(capped.map(summariseOne));
 
-  const prompt = buildDigestPrompt(summaries, portfolio);
+  const prompt = buildDigestPrompt(summaries, portfolio, buildUserContext(capped, summaries));
 
   const defaults = {
     summary: aiUnavailableMessage("the watchlist digest"),
+    topChanges: [] as string[],
     actionItems: [] as string[],
     concentrationRisks: [] as string[],
     topPicks: [] as string[],
     topConcerns: [] as string[],
+    researchNext: [] as string[],
+    portfolioImplication: "",
   };
 
   let model = "unavailable";
@@ -200,10 +294,13 @@ export async function generateWatchlistDigest(
     model = result.meta.model ?? result.provider;
     parsed = {
       summary: result.data.summary || defaults.summary,
+      topChanges: result.data.topChanges,
       actionItems: result.data.actionItems,
       concentrationRisks: result.data.concentrationRisks,
       topPicks: result.data.topPicks,
       topConcerns: result.data.topConcerns,
+      researchNext: result.data.researchNext,
+      portfolioImplication: result.data.portfolioImplication,
     };
   } catch {
     // parsed stays at defaults

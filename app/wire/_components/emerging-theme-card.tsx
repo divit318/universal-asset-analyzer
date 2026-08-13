@@ -40,17 +40,16 @@ export function EmergingThemeCard({
       }`}
       style={style}
     >
-      <div className="flex items-start justify-between gap-2">
-        <h3 className="text-sm font-semibold leading-tight">{theme.name}</h3>
-        <span className="shrink-0 rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
-          Theme
-        </span>
-      </div>
+      <h3 className="text-sm font-semibold leading-tight">{theme.name}</h3>
 
-      <p className="text-xs leading-5 text-muted line-clamp-2">{theme.description}</p>
+      {/* The description IS the insight — never truncate it. */}
+      <p className="text-xs leading-5 text-muted">{theme.description}</p>
 
       <div className="flex flex-col gap-1">
-        <span className="text-[9px] font-medium uppercase tracking-widest text-muted/60">
+        <span
+          className="text-[10px] font-medium uppercase tracking-widest text-muted/60"
+          title="Model-estimated 0–100: how strongly this scan's events support the theme. Open Evidence for the underlying articles."
+        >
           Momentum
         </span>
         <MomentumBar value={theme.momentum} />

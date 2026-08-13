@@ -55,6 +55,10 @@ export interface Contributor {
   weight: number;
   /** Unrealized P&L in base currency. */
   pnl: number;
+  /** Cost basis in base currency — the denominator of `ownReturnPct` and the numerator's source. */
+  costBase: number;
+  /** Current value in base currency. */
+  valueBase: number;
   /** This position's own return on its own cost. */
   ownReturnPct: number | null;
   /**
@@ -78,6 +82,13 @@ export interface ReturnAttribution {
   /** The portfolio return being decomposed, in percent. */
   totalReturnPct: number;
   totalPnl: number;
+  /**
+   * The shared denominator every contribution is divided by (the attributable
+   * set's cost basis, in base currency). Exposed so the UI can show the actual
+   * arithmetic behind a "+2.08pp" — contribution = pnl ÷ totalCostBase — instead
+   * of asking the reader to take the decomposition on trust.
+   */
+  totalCostBase: number;
   /** Holdings whose cost basis is known, ranked by contribution descending. */
   contributors: Contributor[];
   /** Positive contributors, largest first. */
@@ -195,6 +206,8 @@ export function computeAttribution(holdings: Holding[]): ReturnAttribution | nul
         assetClass: h.assetClass,
         weight: h.weight,
         pnl,
+        costBase: h.costBasisBase,
+        valueBase: h.valuation.valueBase,
         ownReturnPct: h.unrealizedPct,
         contributionPct: totalCost > 0 ? (pnl / totalCost) * 100 : 0,
         shareOfMovementPct: grossMovement > 0 ? (Math.abs(pnl) / grossMovement) * 100 : 0,
@@ -215,6 +228,7 @@ export function computeAttribution(holdings: Holding[]): ReturnAttribution | nul
   return {
     totalReturnPct,
     totalPnl,
+    totalCostBase: totalCost,
     contributors,
     carrying: contributors.filter((c) => c.pnl > 0),
     dragging: contributors.filter((c) => c.pnl < 0).reverse(),

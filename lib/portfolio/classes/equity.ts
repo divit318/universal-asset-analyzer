@@ -52,6 +52,13 @@ export const equityAdapter: PortfolioClassAdapter = {
       sector: f?.sector ?? null,
       industry: f?.industry ?? null,
       geography: f?.country ?? null,
+      // The geography CONCEPT for a single name is the issuer's country per the
+      // provider's profile (HQ/domicile — Yahoo has no revenue-split feed), and
+      // the drill-down states that rather than letting "MELI → Uruguay" or
+      // "CRDO → Cayman Islands" look like data errors.
+      geographyBasis: f?.country
+        ? "Issuer country from the provider's company profile (headquarters/domicile, not revenue split)"
+        : "Provider profile has no country for this listing",
       currency: f?.currency ?? raw.currency,
       riskModel: riskModelFor(raw, ctx).label,
     };

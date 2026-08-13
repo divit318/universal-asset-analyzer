@@ -15,7 +15,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "Universal Asset Analyzer",
     short_name: "UAA",
     description:
-      "Institutional-grade equity research: AI-assisted deep research, DCF modelling, quant screening and portfolio management — your data and every computed figure stay on your own machine.",
+      "Equity research: deep research, DCF modelling, quant screening and portfolio management — your data and every computed figure stay on your own machine.",
     start_url: "/",
     display: "standalone",
     background_color: BRAND_COLORS.dark.background,

@@ -6,7 +6,7 @@
  * (holding, portfolio) content hash, so re-opening the same holding is instant.
  */
 import { NextResponse } from "next/server";
-import { buildPortfolioReport } from "@/lib/portfolio/report";
+import { getPortfolioReport } from "@/lib/portfolio/report";
 import { explainHolding } from "@/lib/portfolio/holding-explain";
 
 export const runtime = "nodejs";
@@ -20,7 +20,10 @@ export async function GET(request: Request) {
   }
 
   try {
-    const report = await buildPortfolioReport({ baseCurrency: url.searchParams.get("currency") ?? "USD" });
+    // Cached dataset, not a direct rebuild — clicking "why do I own this?"
+    // must not re-run the whole multi-symbol report fetch (see the
+    // intelligence route's identical fix).
+    const report = await getPortfolioReport({ baseCurrency: url.searchParams.get("currency") ?? "USD" });
     const holding = report.holdings.find((h) => h.id === holdingId);
     if (!holding) {
       return NextResponse.json({ error: "Holding not found" }, { status: 404 });

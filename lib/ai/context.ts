@@ -14,6 +14,7 @@ import { getHistory, getQuote } from "../yahoo";
 import { getFundamentals } from "../fundamentals";
 import { getStatementsWithFallback } from "../statements";
 import { getRecentFilings } from "../edgar";
+import { getIndianFilings, isIndianEquitySymbol } from "../india-news";
 import { getCompanyProfile } from "../profile";
 import { getCompanyNews } from "../news";
 import { getPeerComparison } from "../peers";
@@ -73,6 +74,93 @@ export async function buildCompanyContext(
   return result.data;
 }
 
+/**
+ * The verdict's critical-path context: ONLY the sources the verdict prompt and
+ * its deterministic inputs actually consume.
+ *
+ * The full {@link buildCompanyContext} fans out to nine-plus providers because
+ * the copilot reasons over all of them. The verdict does not: its facts
+ * (lib/ai/facts.ts buildEquityFacts) and score inputs need the quote,
+ * fundamentals (snapshot/analyst/insider), statements, 1825d history, and the
+ * top news headlines — nothing else. Phase 2 measured the verdict stream
+ * blocking 1.2–2.9s on the full fan-out, waiting on peers/knowledge-graph/
+ * timeline/opportunity-map data that never reaches the prompt.
+ *
+ * This is NOT a second context architecture: every fetch below is the same
+ * lib call the full assembly makes, deduplicated and cached per dataset by the
+ * platform, so a verdict build and a copilot build share every byte of
+ * underlying work. The enrichment fields are left empty — no consumer on the
+ * verdict path reads them (verified: the equity facts, every non-equity plan,
+ * and the report route touch only what is fetched here).
+ *
+ * The score computation is bit-identical to the full context's: same inputs,
+ * same window (1825d), same sector-rotation source — so the verdict can never
+ * quote a score the Conviction tab doesn't show.
+ */
+export async function buildVerdictContext(rawSymbol: string): Promise<CompanyContext> {
+  const symbol = rawSymbol.trim().toUpperCase();
+  if (!symbol) throw new Error("A symbol is required");
+  const warnings: string[] = [];
+
+  const [quoteResult, fundamentals, statements, news, history] = await Promise.all([
+    getQuote(symbol).then(
+      (q) => ({ ok: true as const, quote: q }),
+      (err: unknown) => ({ ok: false as const, err }),
+    ),
+    tryOr("fundamentals", warnings, () => getFundamentals(symbol), null),
+    tryOr("statements", warnings, async () => {
+      const { statements, error } = await getStatementsWithFallback(symbol);
+      if (!statements && error) throw new Error(error);
+      return statements;
+    }, null),
+    tryOr("news", warnings, () => getCompanyNews(symbol, 8), []),
+    tryOr("price history", warnings, () => getHistory(symbol, 1825), []),
+  ]);
+
+  if (!quoteResult.ok) throw quoteResult.err;
+  const quote = quoteResult.quote;
+
+  const momentum = computeMomentum(history);
+
+  let score: CompanyContext["score"] = null;
+  let risks: CompanyContext["risks"] = [];
+  let sectorRotationEntry: SectorRotationEntry | null = null;
+  if (fundamentals) {
+    const market = detectMarket(quote);
+    const rotation = getLatestSectorRotation();
+    sectorRotationEntry = findSectorRotationEntry(rotation, fundamentals.snapshot.sector);
+    score = computeScore(fundamentals.snapshot, statements, fundamentals.analyst, momentum, sectorRotationEntry, market);
+    risks = assessRisks(fundamentals.snapshot, statements, fundamentals.analyst, fundamentals.insider);
+  }
+
+  return {
+    symbol,
+    name: quote.name || symbol,
+    builtAt: new Date().toISOString(),
+    quote,
+    profile: null,
+    snapshot: fundamentals?.snapshot ?? null,
+    statements,
+    analyst: fundamentals?.analyst ?? null,
+    insider: fundamentals?.insider ?? null,
+    score,
+    risks,
+    momentum,
+    personality: null,
+    peers: null,
+    filings: [],
+    news,
+    onWatchlist: false,
+    savedNotes: [],
+    warnings,
+    ownership: fundamentals?.ownership ?? null,
+    sectorRotation: sectorRotationEntry,
+    recentTimelineEvents: [],
+    relatedOpportunities: null,
+    graphNeighbors: [],
+  };
+}
+
 async function assembleCompanyContext(symbol: string): Promise<CompanyContext> {
   const warnings: string[] = [];
 
@@ -96,7 +184,10 @@ async function assembleCompanyContext(symbol: string): Promise<CompanyContext> {
         if (!statements && error) throw new Error(error);
         return statements;
       }, null),
-      tryOr("filings", warnings, () => getRecentFilings(symbol, 10), []),
+      // Indian listings: NSE corporate announcements stand in for EDGAR
+      // filings — same Filing shape, so the prompt renders them identically.
+      tryOr("filings", warnings, () =>
+        isIndianEquitySymbol(symbol) ? getIndianFilings(symbol, 10) : getRecentFilings(symbol, 10), []),
       tryOr("news", warnings, () => getCompanyNews(symbol, 8), []),
       tryOr("peers", warnings, () => getPeerComparison(symbol), null),
       // 1825d — the SAME window buildFundamentalsData feeds computeMomentum,

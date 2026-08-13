@@ -106,7 +106,7 @@ export function SymbolSearch({ value, onChange, onSelect, loading, placeholder, 
         }}
         onFocus={() => value.trim() && setOpen(true)}
         onKeyDown={onKeyDown}
-        placeholder={placeholder ?? "Search ticker or name — e.g. AAPL, Apple, Nvidia"}
+        placeholder={placeholder ?? "Search ticker or name — e.g. AAPL, Reliance, HDFCBANK.NS"}
         className="w-full rounded-lg border border-border bg-surface px-4 py-2.5 text-sm outline-none placeholder:text-muted focus:border-accent"
         aria-label="Search ticker or company name"
         role="combobox"

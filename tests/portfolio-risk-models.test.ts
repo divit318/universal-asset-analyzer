@@ -20,6 +20,8 @@ import { describe, expect, it } from "vitest";
 import {
   RISK_MODELS,
   currencyPairLegs,
+  fundRegion,
+  fundSector,
   isBondCategory,
   resolveAssetClass,
   resolveFactors,
@@ -612,5 +614,49 @@ describe("scenario behaviour is economically reasonable", () => {
       const responds = (Object.keys(gfc) as (keyof typeof gfc)[]).some((k) => (f[k] ?? 0) !== 0);
       expect(responds, `${c.sym} has no exposure to any 2008 factor`).toBe(true);
     }
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Fund region + fund sector — the allocation attributes derived from the      */
+/* SAME resolution (2026-08-10 geography audit)                                */
+/* -------------------------------------------------------------------------- */
+
+describe("fundRegion / fundSector", () => {
+  it("maps every regional mandate to its region", () => {
+    expect(fundRegion("fund_equity_us_broad", "Large Growth")).toBe("United States");
+    expect(fundRegion("fund_equity_developed_ex_us", "Foreign Large Blend")).toBe("International Developed");
+    expect(fundRegion("fund_equity_em", "Diversified Emerging Mkts")).toBe("Emerging Markets");
+    expect(fundRegion("fund_equity_global", "Global Large-Stock Blend")).toBe("Global");
+    expect(fundRegion("bond_aggregate", "Intermediate Core Bond")).toBe("United States");
+    expect(fundRegion("bond_em", "Emerging Markets Bond")).toBe("Emerging Markets");
+    expect(fundRegion("bond_global_unhedged", "Global Bond")).toBe("Global");
+  });
+
+  it("refines EM to the specific country the category names", () => {
+    expect(fundRegion("fund_equity_em", "China Region")).toBe("China");
+    expect(fundRegion("fund_equity_em", "India Equity")).toBe("India");
+    expect(fundRegion("fund_equity_developed_ex_us", "Japan Stock")).toBe("Japan");
+    expect(fundRegion("fund_equity_developed_ex_us", "Europe Stock")).toBe("Europe");
+  });
+
+  it("refuses to invent a region for a sector mandate", () => {
+    // A "Technology" fund can hold SK Hynix beside Micron; guessing US would
+    // fabricate geographic exposure the data does not support.
+    expect(fundRegion("fund_equity_sector", "Technology")).toBeNull();
+  });
+
+  it("gives a sector-mandate fund its sector, in the profile taxonomy", () => {
+    expect(fundSector("fund_equity_sector", "Technology", null)).toBe("Technology");
+    expect(fundSector("fund_equity_sector", "Health", null)).toBe("Healthcare");
+    expect(fundSector("fund_equity_sector", "Consumer Cyclical", null)).toBe("Consumer Cyclical");
+    expect(fundSector("reit", "Real Estate", null)).toBe("Real Estate");
+    expect(fundSector("fund_equity_precious_metals", "Equity Precious Metals", null)).toBe("Basic Materials");
+  });
+
+  it("does NOT give a broad fund a sector just because one dominates its holdings today", () => {
+    // QQQ is ~60% technology by holdings, but "Large Growth" is not a sector
+    // mandate — labelling it Technology would misstate what the user owns.
+    expect(fundSector("fund_equity_us_broad", "Large Growth", "Technology")).toBeNull();
   });
 });

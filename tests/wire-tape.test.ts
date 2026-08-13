@@ -24,7 +24,10 @@ function item(
   source: string,
   publishedAt: string,
   tickers: string[] = [],
-  url = `https://example.com/${headline.slice(0, 24).replace(/\W+/g, "-")}`,
+  // Unique per headline+source — a 24-char slug collided for real fixture
+  // pairs and tripped buildTape's exact-URL dedupe, which real articles
+  // (distinct URLs) never would.
+  url = `https://example.com/${headline.replace(/\W+/g, "-")}-${source.replace(/\W+/g, "-")}`,
 ): NewsItem {
   return { headline, source, url, publishedAt, tickers, summary: null };
 }
@@ -229,6 +232,57 @@ describe("buildTape — recency", () => {
     const order = ["hour", "today", "yesterday", "earlier"];
     const indices = buckets.map((b) => order.indexOf(b));
     expect([...indices].sort((a, b) => a - b)).toEqual(indices);
+  });
+});
+
+describe("buildTape — exact-duplicate articles collapse before clustering", () => {
+  it("merges same-URL items into one article, unioning tickers", () => {
+    // Live capture 2026-08-06: the same GuruFocus article arrived twice via
+    // two holdings' feeds and rendered as two identical rows.
+    const url = "https://example.com/micron-memory-cycle";
+    const dupes = [
+      item("Micron Drops Stunning Clue About Next Memory Cycle", "GuruFocus.com", "2026-07-31T13:00:00Z", ["MU"], url),
+      item("Micron Drops Stunning Clue About Next Memory Cycle", "GuruFocus.com", "2026-07-31T13:00:00Z", ["WDC"], url),
+    ];
+    const view = buildTape(dupes, { now: NOW });
+    expect(view.totalArticles).toBe(1);
+    expect(view.stories).toHaveLength(1);
+    expect(view.stories[0].sourceCount).toBe(1);
+    expect(view.stories[0].tickers.sort()).toEqual(["MU", "WDC"]);
+  });
+
+  it("does not merge distinct url-less items that share a headline prefix", () => {
+    const a = { ...item("Fed holds rates steady, signals patience", "Reuters", "2026-07-31T14:10:00Z"), url: "" };
+    const b = { ...item("Tesla misses Q2 delivery estimates", "Reuters", "2026-07-31T14:20:00Z"), url: "" };
+    const view = buildTape([a, b], { now: NOW });
+    expect(view.totalArticles).toBe(2);
+  });
+});
+
+describe("noise rules — content-mill genres captured from the live holdings feed", () => {
+  // Every fixture below is a real headline observed on the Wire 2026-08-06
+  // that leaked past the old rules into Holdings News.
+  const shouldFilter: [string, string][] = [
+    ["The IRS Now Lets 60-Year-Olds Stash $35,750 in a 401(k) a Year. These 3 ETFs Make Maxing It Worth It", "24/7 Wall St."],
+    ["The Cheapest ETFs for Building a Core Portfolio", "Zacks"],
+    ["4 Things All Dividend Investors Need to Know About Building Passive Income Right Now", "Motley Fool"],
+    ["2 Unstoppable Growth ETFs Worth Buying and Holding Through Every Market Cycle", "Motley Fool"],
+    ["Trump Accounts Are Open: 500,000 Signed Up in Days. Here's What the 0.10% Fee Cap Actually Lets You Buy", "24/7 Wall St."],
+    ["VOO's 0.03% Fee Hides the Real Cost: 28.7% of Your Money in Seven Stocks", "24/7 Wall St."],
+  ];
+  it.each(shouldFilter)("filters %j", (headline, source) => {
+    expect(classifyNoise(item(headline, source, "2026-08-05T12:00:00Z")).filtered).toBe(true);
+  });
+
+  const shouldPass: [string, string][] = [
+    ["Microsoft (MSFT) Deepens AI Partnerships As $500 Billion Chip Funding Wave Builds", "Simply Wall St."],
+    ["SNDK Stock Dips After-Hours As Sandisk's Q1 FY27 Outlook Misses Expectations", "Stocktwits"],
+    ["Tigress Financial Raises Microsoft Price Target to $690 From $680, Buy Rating Kept", "MT Newswires"],
+    ["Best Buy shares fall after earnings miss", "Reuters"],
+    ["Fed holds rates steady, signals patience on further cuts", "Reuters"],
+  ];
+  it.each(shouldPass)("keeps %j visible", (headline, source) => {
+    expect(classifyNoise(item(headline, source, "2026-08-05T12:00:00Z")).filtered).toBe(false);
   });
 });
 

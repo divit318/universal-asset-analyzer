@@ -6,7 +6,7 @@
  * hand-chosen bounds — needs those bounds calibrated per asset class. That's
  * exactly the tax lib/crypto-scoring.ts pays in its header comment: equity's
  * ±25% three-month band pins a crypto score at 0 or 100 permanently, so crypto
- * needed its own ±40%. Multiply that by seven asset classes and forty-odd
+ * needed its own ±40%. Multiply that by every screening universe and forty-odd
  * metrics and the calibration becomes the product.
  *
  * A percentile needs no calibration. "This fund's expense ratio is in the

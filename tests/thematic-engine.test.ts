@@ -2,7 +2,21 @@ import { describe, it, expect, vi } from "vitest";
 import type { StockFundamentals } from "@/lib/types";
 
 const runPromptMock = vi.fn();
-vi.mock("@/lib/ai", () => ({ runPrompt: (...args: unknown[]) => runPromptMock(...args) }));
+// Migrated to the analysis seam (tranche 7). Same reseat convention as the
+// thesis/IC tests: runPromptMock keeps its (taskType, prompt) recording
+// surface and its JSON-string return values; the wrapper parses them into the
+// seam's envelope. Array-returning mocks work unchanged because the seam's
+// parse view (LooseJsonSchema) admits arrays.
+vi.mock("@/lib/ai/analysis", () => ({
+  runAnalysis: async (req: { taskType: string; prompt: string }) => {
+    const raw = await runPromptMock(req.taskType, req.prompt);
+    return {
+      data: JSON.parse(String(raw)) as unknown,
+      provider: "ollama" as const,
+      meta: { durationMs: 1 },
+    };
+  },
+}));
 vi.mock("@/lib/ai/router", () => ({ pickModel: vi.fn().mockResolvedValue("test-model") }));
 // A realistic row: the universe shortlist matches on the Yahoo industry string,
 // so the fixture has to look like one for the company-mapping stage to run.

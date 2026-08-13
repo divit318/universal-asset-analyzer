@@ -8,6 +8,7 @@
 import { useState } from "react";
 import type { SavedScreen } from "@/lib/db";
 import { Button, Card } from "@/app/_components/ui";
+import { agoLabel } from "@/lib/provenance";
 import { countActive, type Draft } from "./filter-state";
 
 interface Props {
@@ -61,16 +62,26 @@ export function SavedScreens({ screens, draft, saving, onSave, onLoad, onDelete 
       </p>
 
       {screens.length > 0 ? (
-        <ul className="flex flex-col gap-1 border-t border-border pt-2">
+        <ul className="flex flex-col border-t border-border pt-1">
           {screens.map((screen) => (
-            <li key={screen.id} className="flex items-center justify-between gap-2">
+            <li key={screen.id} className="group flex items-center justify-between gap-2">
               <button
                 type="button"
                 onClick={() => onLoad(screen)}
-                className="min-w-0 flex-1 truncate text-left text-xs text-muted transition-colors hover:text-brand"
+                className="min-w-0 flex-1 rounded-control px-1.5 py-1 text-left transition-colors hover:bg-surface-2"
                 title={`Load "${screen.name}"`}
               >
-                {screen.name}
+                <span className="block truncate text-xs text-foreground transition-colors group-hover:text-brand">
+                  {screen.name}
+                </span>
+                {/* What it found last time — makes the list a set of standing
+                    watchpoints rather than bare names. Empty until first run. */}
+                {screen.lastRunAt ? (
+                  <span className="block text-[10px] text-muted">
+                    {screen.lastSymbols.length} result{screen.lastSymbols.length === 1 ? "" : "s"} ·{" "}
+                    {agoLabel(screen.lastRunAt)}
+                  </span>
+                ) : null}
               </button>
               <button
                 type="button"

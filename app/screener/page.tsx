@@ -3,31 +3,41 @@
 /**
  * The Universal Screener.
  *
- * One screener, seven asset classes. Everything that differs between them —
- * filters, templates, columns, ranking, warnings, AI framing — is read from the
- * Asset Registry (lib/assets/), so this page contains no per-asset-class
- * branching whatsoever. Switching from Equities to Bonds swaps the entire
- * filter set, the entire results table and the ranking model, and the code path
- * is identical.
+ * One screener across every screening universe in the Asset Registry: the
+ * base asset classes plus market-scoped variants like India Equities
+ * (indiaEquity, marketVariantOf: "equity"). Everything that differs between
+ * universes — filters, templates, columns, ranking, warnings, AI framing — is
+ * read from the registry (lib/assets/), so this page contains almost no
+ * per-universe branching (the one exception: India's results-season strip).
+ * Switching from Equities to Bonds swaps the entire filter set, the entire
+ * results table and the ranking model, and the code path is identical.
+ *
+ * Taxonomy note: this page's navigation selects a *screening universe*, not
+ * an asset class — the distinction the Compare page's tabs draw via
+ * listBaseAssetClasses(). All labels, counts, and copy here are derived from
+ * the registry (universeLabel(), listAssetClasses(), listBaseAssetClasses())
+ * so the UI cannot drift from the data model.
  *
  * The previous version of this file was ~860 lines of equity-specific state and
- * hardcoded columns. That the replacement is shorter *while supporting seven
- * asset classes instead of one* is the whole argument for the registry.
+ * hardcoded columns. That the replacement is shorter *while supporting every
+ * universe instead of one* is the whole argument for the registry.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PageShell, PageHeader, Button, Card, Badge, TaskProgress, useElapsedMs } from "@/app/_components/ui";
 import { Reveal } from "@/app/_components/reveal";
 import { downloadBlob } from "@/lib/download";
-import { getAssetClass, getMetric, isAssetClassId, listAssetClasses } from "@/lib/assets/registry";
-import type { AssetClassId } from "@/lib/assets/types";
+import { getAssetClass, getMetric, isAssetClassId, listAssetClasses, listBaseAssetClasses, universeLabel } from "@/lib/assets/registry";
+import type { AssetClassId, FilterValues } from "@/lib/assets/types";
 import { PENDING_SCREEN_KEY, type PendingScreenHandoff } from "@/app/_components/screener-handoff";
 import type { RankedCandidate, ScreenerResponse, UniverseStatus } from "@/lib/screener/types";
 import type { FilterDiagnostic } from "@/lib/screener/filter-engine";
 import type { MetricDistribution } from "@/lib/screener/universe-stats";
 import type { SavedScreen } from "@/lib/db";
 import { FilterPanel } from "./_components/filter-panel";
+import { ScreenDeck } from "./_components/screen-deck";
 import { ResultsTable, type ResultsEmptyState } from "./_components/results-table";
+import { IndiaResultsStrip } from "./_components/india-results-strip";
 import { SavedScreens } from "./_components/saved-screens";
 import { WhyEmpty } from "./_components/why-empty";
 import { FilterChips } from "./_components/filter-chips";
@@ -45,83 +55,58 @@ import {
 const PAGE_SIZE = 50;
 
 /**
- * Universe state.
+ * Cold-build progress.
  *
  * A cold build fetches fundamentals for every asset in the class and takes
  * minutes, so while it runs this shows the same real progress the Scanner does —
  * named stage, percent, elapsed, and an estimated finish — instead of a bare
  * count. A first-time user watching "0/0 (0%)" next to an empty table has no way
  * to tell a warming cache from a broken product.
+ *
+ * Building only: the ready-state one-liner lives in the command deck beside the
+ * universe choice, and a build *failure* is explained in the results empty state
+ * (kind: "universe-error"), where the user is actually looking for rows.
  */
-function UniverseBar({
-  status,
-  loading,
-  startedAt,
-  onRefresh,
-}: {
-  status: UniverseStatus | null;
-  loading: boolean;
-  startedAt: number | null;
-  onRefresh: () => void;
-}) {
+function UniverseBar({ status, startedAt }: { status: UniverseStatus | null; startedAt: number | null }) {
   // Hook before any early return — this ticks once a second while a build runs.
   const elapsed = useElapsedMs(startedAt);
 
-  if (!status) return null;
+  if (status?.stage !== "building") return null;
 
-  const building = status.stage === "building";
   const pct = status.total > 0 ? (status.ready / status.total) * 100 : null;
 
   // Extrapolate from observed throughput. Only offered once enough of the build
   // has completed for the rate to mean anything. Elapsed comes from the shared
   // ticking hook rather than a render-time Date.now(), which would be impure.
   const remainingMs =
-    building && pct != null && pct >= 5 && elapsed > 3000
+    pct != null && pct >= 5 && elapsed > 3000
       ? Math.round((elapsed / pct) * (100 - pct))
       : null;
 
-  if (building) {
-    return (
-      <div className="rounded-card border border-border bg-surface p-4">
-        <TaskProgress
-          label="Building the screening universe"
-          detail={
-            status.total > 0
-              ? `${status.ready.toLocaleString()} of ${status.total.toLocaleString()} assets priced`
-              : "Fetching the asset list"
-          }
-          pct={pct}
-          elapsedMs={elapsed}
-          remainingMs={remainingMs}
-        />
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
-      {status.stage === "error" ? (
-        <span className="text-negative">Universe failed to build: {status.error}</span>
-      ) : (
-        <span>
-          {status.ready.toLocaleString()} assets ready
-          {status.builtAt ? ` · updated ${new Date(status.builtAt).toLocaleTimeString()}` : ""}
-        </span>
-      )}
-      <button
-        type="button"
-        onClick={onRefresh}
-        disabled={loading}
-        className="underline underline-offset-2 transition-colors hover:text-brand disabled:opacity-40"
-      >
-        Refresh data
-      </button>
+    <div className="rounded-card border border-border bg-surface p-4">
+      <TaskProgress
+        label="Building the screening universe"
+        detail={
+          status.total > 0
+            ? `${status.ready.toLocaleString()} of ${status.total.toLocaleString()} assets priced`
+            : "Fetching the asset list"
+        }
+        pct={pct}
+        elapsedMs={elapsed}
+        remainingMs={remainingMs}
+      />
     </div>
   );
 }
 
 export default function ScreenerPage() {
+  // The command deck (screen-deck.tsx) renders the universe navigation; these
+  // derive the subtitle's numbers from the same registry source, so copy and
+  // navigation can never disagree.
   const classes = listAssetClasses();
+  const baseCount = listBaseAssetClasses().length;
+  const variantNames = classes.filter((c) => c.marketVariantOf).map((c) => universeLabel(c.id));
 
   const [assetClass, setAssetClass] = useState<AssetClassId>("equity");
   const [templateId, setTemplateId] = useState<string | null>(null);
@@ -189,6 +174,11 @@ export default function ScreenerPage() {
 
   const [summary, setSummary] = useState<{ text: string; model: string } | null>(null);
   const [summarizing, setSummarizing] = useState(false);
+
+  /** An assistant-handed NL screen still being parsed in the background (the
+   * query text, shown in the banner), and the one that failed to parse. */
+  const [nlPending, setNlPending] = useState<string | null>(null);
+  const [nlFailed, setNlFailed] = useState<string | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const def = getAssetClass(assetClass);
@@ -272,7 +262,7 @@ export default function ScreenerPage() {
       );
     } catch (err) {
       if (!isCurrent()) return;
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      setError(err instanceof Error ? err.message : "The screen failed to run — run it again.");
       setRows([]);
     } finally {
       if (isCurrent()) setLoading(false);
@@ -392,6 +382,12 @@ export default function ScreenerPage() {
       sortDir: getAssetClass("equity").defaultSort.dir,
       offset: 0,
     };
+    // An unparsed natural-language screen riding on the handoff — parsed in
+    // the BACKGROUND after the default screen is already loading, so the
+    // user looks at real data while the model call runs instead of at the
+    // assistant's spinner (parsing in the assistant's own turn made every
+    // screener request two sequential model calls).
+    let nlQuery: string | null = null;
     try {
       const pending = sessionStorage.getItem(PENDING_SCREEN_KEY);
       if (pending) {
@@ -401,13 +397,14 @@ export default function ScreenerPage() {
           const handoffClass = getAssetClass(handoff.assetClass);
           initial = {
             assetClass: handoff.assetClass,
-            templateId: handoff.templateId,
-            draft: fromFilterValues(handoff.assetClass, handoff.filters),
+            templateId: handoff.templateId ?? null,
+            draft: handoff.filters ? fromFilterValues(handoff.assetClass, handoff.filters) : emptyDraft(),
             preferences: {},
             sortKey: handoffClass.defaultSort.key,
             sortDir: handoffClass.defaultSort.dir,
             offset: 0,
           };
+          if (handoff.nlQuery?.trim()) nlQuery = handoff.nlQuery.trim();
         }
       }
     } catch {
@@ -421,6 +418,32 @@ export default function ScreenerPage() {
     setSortDir(initial.sortDir);
 
     void run(initial);
+
+    if (nlQuery) {
+      const q = nlQuery;
+      setNlPending(q);
+      void (async () => {
+        try {
+          const res = await fetch("/api/screener/nl", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: q, assetClass: initial.assetClass }),
+          });
+          const json = (await res.json()) as { filters?: FilterValues; templateId?: string | null; error?: string };
+          if (!res.ok || !json.filters) throw new Error(json.error ?? "parse failed");
+          const parsedDraft = fromFilterValues(initial.assetClass, json.filters);
+          setDraft(parsedDraft);
+          setTemplateId(json.templateId ?? null);
+          void run({ ...initial, draft: parsedDraft, templateId: json.templateId ?? null });
+          setNlPending(null);
+        } catch {
+          // The unfiltered screen is already on screen and correct — say the
+          // criteria didn't apply rather than pretending they did.
+          setNlPending(null);
+          setNlFailed(q);
+        }
+      })();
+    }
     void loadSaved(initial.assetClass);
     void loadDistributions(initial.assetClass);
 
@@ -702,7 +725,7 @@ export default function ScreenerPage() {
           symbol: row.symbol,
           name: row.name,
           source: "screener",
-          sourceDetail: `${def.label} screen · rank #${row.rank}`,
+          sourceDetail: `${universeLabel(assetClass)} screen · rank #${row.rank}`,
         }),
       });
     } catch {
@@ -793,6 +816,39 @@ export default function ScreenerPage() {
     }
   };
 
+  /**
+   * The deck's AI filter builder: plain English → validated filters, via the
+   * same /api/screener/nl parser the App Assistant's handoff uses in the mount
+   * effect above (kept separate there because the mount path must run against
+   * its own `initial` snapshot before this state exists). Anything the model
+   * invents is discarded by parseFilters server-side; failure keeps the
+   * current screen on screen and says the criteria did NOT apply.
+   */
+  const submitNl = (q: string) => {
+    setNlFailed(null);
+    setNlPending(q);
+    void (async () => {
+      try {
+        const res = await fetch("/api/screener/nl", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: q, assetClass }),
+        });
+        const json = (await res.json()) as { filters?: FilterValues; templateId?: string | null; error?: string };
+        if (!res.ok || !json.filters) throw new Error(json.error ?? "parse failed");
+        const parsedDraft = fromFilterValues(assetClass, json.filters);
+        setDraft(parsedDraft);
+        setTemplateId(json.templateId ?? null);
+        setSummary(null);
+        rerun({ draft: parsedDraft, templateId: json.templateId ?? null });
+        setNlPending(null);
+      } catch {
+        setNlPending(null);
+        setNlFailed(q);
+      }
+    })();
+  };
+
   /* ---------------------------------------------------------------------- */
 
   const draftCount = countActive(draft);
@@ -831,80 +887,42 @@ export default function ScreenerPage() {
    * simply there.
    */
   return (
-    <PageShell py="py-10" width="wide">
+    <PageShell py="py-8" gap="gap-5" width="wide">
       <Reveal index={0} className="flex flex-col gap-3">
         <PageHeader
           title="Universal Screener"
-          description="One screener across seven asset classes. Pick a class, start from a template or build your own filters, and every result comes back ranked with an explanation of why it matched."
+          description={`${classes.length} screening universes across ${baseCount} asset classes${variantNames.length > 0 ? ` (plus ${variantNames.join(" and ")})` : ""} — every result ranked, with an explanation of why it matched.`}
         />
 
-        {/* 1. Asset class selection — the first decision the user makes. */}
-        <nav className="flex flex-wrap gap-1.5" aria-label="Asset class">
-          {classes.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              onClick={() => selectAssetClass(c.id)}
-              aria-current={assetClass === c.id}
-              className={`rounded-lg border px-3 py-1.5 text-sm transition-colors ${
-                assetClass === c.id
-                  ? "border-brand bg-brand/10 font-medium text-brand"
-                  : "border-border bg-surface text-muted hover:border-brand/50 hover:text-fg"
-              }`}
-            >
-              {c.label}
-            </button>
-          ))}
-        </nav>
+        {/* The command deck: asset class → market → strategy → describe-it.
+            Asset class and market are separate steps because they are separate
+            concepts — the Market row lists this class's screening universes
+            (base + marketVariantOf definitions), so India appears as a market
+            of Equities, never as a peer asset class. All registry-derived. */}
+        <ScreenDeck
+          universe={assetClass}
+          onSelectUniverse={selectAssetClass}
+          templateId={templateId}
+          onApplyTemplate={applyTemplate}
+          onClearAll={clearAll}
+          hasActiveScreen={Boolean(templateId) || draftCount > 0}
+          status={status}
+          loading={loading}
+          onRefresh={() => void refresh()}
+          onNlSubmit={submitNl}
+          nlBusy={nlPending != null}
+        />
 
-        <p className="text-sm text-muted">{def.description}</p>
-        <UniverseBar status={status} loading={loading} startedAt={buildStartedAt} onRefresh={refresh} />
+        <p className="text-xs text-muted">{def.description}</p>
+        <UniverseBar status={status} startedAt={buildStartedAt} />
       </Reveal>
 
-      {/* 2. Templates. */}
-      <Reveal index={1} as="section" className="flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium">Templates</h2>
-          {templateId || draftCount > 0 ? (
-            <button
-              type="button"
-              onClick={clearAll}
-              className="text-xs text-muted underline underline-offset-2 hover:text-brand"
-            >
-              Clear all
-            </button>
-          ) : null}
-        </div>
-
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {def.templates.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => applyTemplate(t.id)}
-              aria-pressed={templateId === t.id}
-              className={`rounded-xl border p-3 text-left transition-colors ${
-                templateId === t.id
-                  ? "border-brand bg-brand/5"
-                  : "border-border bg-surface hover:border-brand/50"
-              }`}
-            >
-              <p className="text-sm font-medium">{t.name}</p>
-              <p className="mt-0.5 text-xs text-muted">{t.tagline}</p>
-            </button>
-          ))}
-        </div>
-      </Reveal>
-
-      <div className="grid gap-6 lg:grid-cols-[350px_1fr]">
-        {/* 3. Filters — entirely registry-driven. */}
-        <Reveal index={2} as="aside" className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-medium">Filters</h2>
-            <Button onClick={() => rerun({})} disabled={loading} className="px-3 py-1.5 text-xs">
-              {loading ? "Running…" : pendingFilterChanges ? "Run screen •" : "Run screen"}
-            </Button>
-          </div>
+      <div className="grid gap-5 lg:grid-cols-[350px_minmax(0,1fr)]">
+        {/* Filters — entirely registry-driven. */}
+        <Reveal index={1} as="aside" className="flex flex-col gap-3">
+          <Button variant="primary" onClick={() => rerun({})} disabled={loading} className="w-full">
+            {loading ? "Running…" : pendingFilterChanges ? "Run screen — changes pending" : "Run screen"}
+          </Button>
 
           {pendingFilterChanges && !loading ? (
             <p className="text-xs text-warning" role="status">
@@ -931,8 +949,8 @@ export default function ScreenerPage() {
           />
         </Reveal>
 
-        {/* 4-5. Ranked results + explanations. */}
-        <Reveal index={3} as="section" className="flex min-w-0 flex-col gap-3">
+        {/* Ranked results + explanations. */}
+        <Reveal index={2} as="section" className="flex min-w-0 flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium">
@@ -965,13 +983,32 @@ export default function ScreenerPage() {
                 disabled={summarizing || !rows?.length}
                 className="px-3 py-1.5 text-xs"
               >
-                {summarizing ? "Thinking…" : "Explain this ranking"}
+                {summarizing ? "Writing the explanation…" : "Explain this ranking"}
               </Button>
             </div>
           </div>
 
           {error ? (
             <Card className="border-rose-500/40 light:border-rose-700/40 p-4 text-sm text-rose-500 light:text-rose-700">{error}</Card>
+          ) : null}
+
+          {/* Assistant-handed NL screen being parsed in the background — the
+              user is already looking at real (unfiltered) results, so this is
+              a status line, not a blocker; failure says the criteria did NOT
+              apply rather than letting the unfiltered list impersonate them. */}
+          {nlPending ? (
+            <Card className="flex items-center gap-2 border-brand/40 p-3 text-sm text-muted">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-brand" aria-hidden />
+              Applying your criteria — “{nlPending}”…
+            </Card>
+          ) : null}
+          {nlFailed ? (
+            <Card className="flex items-center justify-between gap-2 border-amber-500/40 p-3 text-sm text-muted">
+              <span>Couldn’t turn “{nlFailed}” into filters — showing the unfiltered screen instead.</span>
+              <button onClick={() => setNlFailed(null)} className="shrink-0 text-xs text-muted hover:text-foreground" aria-label="Dismiss">
+                ✕
+              </button>
+            </Card>
           ) : null}
 
           {summary ? (
@@ -1044,7 +1081,16 @@ export default function ScreenerPage() {
             onRemovePreference={removePreference}
           />
 
-          {rows != null && rows.length === 0 && diagnostics && diagnostics.length > 0 ? (
+          {/* Earnings season for the India class — NSE-scheduled dates and
+              fresh results filings across the universe (renders nothing when
+              both lists are empty; never shown for other classes). */}
+          {assetClass === "indiaEquity" && <IndiaResultsStrip />}
+
+          {/* Never while the universe is still building: diagnostics computed
+              against a half-built universe blame the user's filters ("Market
+              Cap alone admits 0") for what is actually missing data. The
+              table's own "building" empty state covers that case. */}
+          {rows != null && rows.length === 0 && diagnostics && diagnostics.length > 0 && status?.stage !== "building" ? (
             <WhyEmpty
               diagnostics={diagnostics}
               metricFor={(key) => getMetric(assetClass, key)}

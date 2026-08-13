@@ -149,6 +149,60 @@ export function listRawHoldings(portfolioId = 1): RawHolding[] {
   return [...listLedgerHoldings(portfolioId), ...listManualHoldings(portfolioId)];
 }
 
+/**
+ * A ledger position as the Screenshot Import's reconciliation needs it:
+ * the aggregate plus how many real transactions back it (`lotCount` decides
+ * whether a rebaseline is destructive to recorded history).
+ */
+export interface LedgerPositionSummary {
+  symbol: string;
+  name: string;
+  quantity: number;
+  avgCost: number;
+  lotCount: number;
+  assetClass: PortfolioAssetClass;
+  currency: string;
+  unit: HoldingUnit;
+}
+
+/** Ticker-priced + cash positions with their transaction counts, for reconciliation. */
+export function listLedgerPositionSummaries(portfolioId = 1): LedgerPositionSummary[] {
+  const rows = listUniversalLots(portfolioId);
+  const attrs = new Map<string, { assetClass: PortfolioAssetClass; currency: string; unit: HoldingUnit }>();
+  for (const r of rows) {
+    if (attrs.has(r.symbol)) continue;
+    attrs.set(r.symbol, {
+      assetClass: coerceClass(r.asset_class),
+      currency: (r.currency ?? "USD").toUpperCase(),
+      unit: (r.unit ?? "shares") as HoldingUnit,
+    });
+  }
+  const lots: PortfolioLot[] = rows.map((r) => ({
+    id: r.id,
+    symbol: r.symbol,
+    name: r.name,
+    shares: r.shares,
+    price: r.price,
+    kind: r.kind as PortfolioLot["kind"],
+    fees: r.fees,
+    tradeDate: r.trade_date,
+    createdAt: r.created_at,
+  }));
+  return aggregateOpenPositions(lots).map((p) => {
+    const a = attrs.get(p.symbol) ?? { assetClass: "equity" as PortfolioAssetClass, currency: "USD", unit: "shares" as HoldingUnit };
+    return {
+      symbol: p.symbol,
+      name: p.name,
+      quantity: p.shares,
+      avgCost: p.avgCost,
+      lotCount: p.lotCount,
+      assetClass: a.assetClass,
+      currency: a.currency,
+      unit: a.unit,
+    };
+  });
+}
+
 /** Every symbol the portfolio needs market data for. */
 export function portfolioSymbols(raws: RawHolding[]): string[] {
   const out = new Set<string>();

@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * The filter renderer. One component, seven asset classes — it reads the filter
- * groups out of the Asset Registry and renders whatever it finds, so switching
- * asset class swaps the entire filter set with no code path of its own.
+ * The filter renderer. One component, every screening universe — it reads the
+ * filter groups out of the Asset Registry and renders whatever it finds, so
+ * switching universe swaps the entire filter set with no code path of its own.
  *
  * The "Not screenable yet" section at the bottom is the deliberate, visible
  * half of the honesty model: rather than quietly omitting TVL from a crypto
@@ -37,6 +37,8 @@ const UNIT_SUFFIX: Record<string, string> = {
   x: "×",
   $: "$",
   $B: "$B",
+  "₹Cr": "₹Cr",
+  pp: "pp",
   yrs: "yrs",
   bps: "bps",
   score: "/100",
@@ -66,9 +68,12 @@ const FRAME_LABEL: Record<FilterFrame, string> = {
   peer: "≈",
 };
 
+// "class" is the frame's internal id (lib/assets/types.ts FilterFrame); the
+// percentiles behind it are computed per screening UNIVERSE (universe-stats),
+// so the copy says universe — accurate for India Equities as much as Bonds.
 const FRAME_HELP: Record<FilterFrame, string> = {
-  absolute: "Absolute values. Click to compare against the whole asset class instead.",
-  class: "Percentile against every asset in this class — 100 is best. Click for peer group.",
+  absolute: "Absolute values. Click to compare against the whole universe instead.",
+  class: "Percentile against every asset in this universe — 100 is best. Click for peer group.",
   peer: "Percentile against this asset's own peer group (sector, issuer type…). Click for absolute.",
 };
 
@@ -350,7 +355,7 @@ export function FilterPanel({
         <Card className="p-4">
           <p className="text-sm font-medium">Not screenable yet</p>
           <p className="mt-1 text-xs text-muted">
-            These matter for {assetClass === "crypto" ? "tokens" : "this asset class"}, but no data provider
+            These matter for {getAssetClass(assetClass).noun}, but no data provider
             is wired up for them. They are listed rather than hidden — a filter with no data behind it would
             match nothing and look like an empty result.
           </p>

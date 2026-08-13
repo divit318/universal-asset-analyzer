@@ -1,5 +1,6 @@
 import { registerClass } from "../model/adapter";
 import { marketValuation, yieldIncome, measuredBeta, fundamentalScore, riskModelFor } from "./market-base";
+import { fundGeographyAttributes } from "./reference/risk-models";
 import type { PortfolioClassAdapter } from "../model/adapter";
 
 /**
@@ -55,11 +56,16 @@ export const reitAdapter: PortfolioClassAdapter = {
 
   attributes(raw, ctx) {
     const f = raw.symbol ? ctx.fundamentals.get(raw.symbol.toUpperCase()) : undefined;
+    const rm = riskModelFor(raw, ctx);
+    // A single REIT has a profile country; a REIT FUND (SCHH, VNQ) does not, and
+    // falls back to its category's region — the same path as the ETF adapter.
+    const geo = fundGeographyAttributes(rm.modelId, f?.fundCategory ?? null, f?.country ?? null);
     return {
       sector: "Real Estate",
       industry: f?.industry ?? null,
-      riskModel: riskModelFor(raw, ctx).label,
-      geography: f?.country ?? null,
+      riskModel: rm.label,
+      geography: geo.geography,
+      geographyBasis: geo.geographyBasis,
       currency: f?.currency ?? raw.currency,
     };
   },

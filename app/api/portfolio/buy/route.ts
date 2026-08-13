@@ -14,7 +14,7 @@
 import { NextResponse } from "next/server";
 import { isValidSymbol } from "@/lib/market";
 import { getQuotes } from "@/lib/yahoo";
-import { addUniversalLot, executeTrades, isIndivisibleHolding, type TradeToExecute } from "@/lib/portfolio/engines/transaction";
+import { addUniversalLot, captureSnapshot, executeTrades, isIndivisibleHolding, type TradeToExecute } from "@/lib/portfolio/engines/transaction";
 import { buildEvaluation } from "@/lib/portfolio/report";
 import { listRawHoldings } from "@/lib/portfolio/store";
 import { TICKER_PRICED_ASSET_CLASSES, type PortfolioAssetClass } from "@/lib/portfolio/model/types";
@@ -127,12 +127,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: `No live price available for ${symbol}` }, { status: 502 });
   }
 
+  // A buy is "a change you execute", and the Trajectory panel promises a
+  // snapshot either side of every one of those. This route used to write
+  // neither (plain buy) or only the `pre` (funded buy, via executeTrades),
+  // and lib/portfolio/history.ts DROPS an unpaired pre — so no purchase ever
+  // produced a graded ChangeOutcome. Bookend the change like the other two
+  // execute routes (optimize/execute, allocate-cash/execute) do.
+  const preEvaluation = (await buildEvaluation()).evaluation;
+
   // Funding: raise cash by selling existing holdings BEFORE recording the buy —
   // the same atomic, self-cash-balancing batch executor the Optimize tab already
   // uses for rebalance trades, applied here to a Watchlist purchase's funding step.
   let fundingSnapshotId: string | null = null;
   if (body.sellFirst && body.sellFirst.length > 0) {
-    const { evaluation } = await buildEvaluation();
+    const evaluation = preEvaluation;
     const trades: TradeToExecute[] = [];
     for (const s of body.sellFirst) {
       const holding = evaluation.holdings.find((h) => h.id === s.holdingId);
@@ -166,6 +174,10 @@ export async function POST(request: Request) {
 
   const fees = body.fees != null && Number.isFinite(body.fees) && body.fees >= 0 ? body.fees : undefined;
 
+  // The funded path's executeTrades() already wrote its own pre-execution
+  // snapshot; writing a second here would create an unpairable extra row.
+  if (!fundingSnapshotId) captureSnapshot(preEvaluation, "pre-execution", body.objective ?? null);
+
   try {
     addUniversalLot({
       symbol,
@@ -182,6 +194,17 @@ export async function POST(request: Request) {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to record purchase";
     return NextResponse.json({ error: message }, { status: 500 });
+  }
+
+  // The post side of the bookend — this is what turns the purchase into a
+  // graded ChangeOutcome ("did this change help?") on the Trajectory panel.
+  // Best-effort: a failed post-evaluation must not report a recorded buy as
+  // failed (the lot is already written), it only costs the outcome row.
+  try {
+    const after = (await buildEvaluation()).evaluation;
+    captureSnapshot(after, "post-execution", body.objective ?? null);
+  } catch {
+    /* the buy itself succeeded; only the trajectory bookend is lost */
   }
 
   const holding = listRawHoldings().find((h) => h.symbol === symbol) ?? null;

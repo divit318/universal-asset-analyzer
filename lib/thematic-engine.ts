@@ -13,13 +13,25 @@
  *   - NSE FII flow (macro_loader) — capital cycle signal
  */
 
-import { runPrompt } from "./ai";
+import { runAnalysis } from "./ai/analysis";
+import { LooseJsonSchema } from "./ai/schemas/loose";
+import {
+  THEMATIC_SCHEMA_VERSION,
+  FutureStateWireSchema,
+  DependencyChainWireSchema,
+  BottleneckWireSchema,
+  SupplyDemandWireSchema,
+  CommodityFrameworkWireSchema,
+  PolicyWireSchema,
+  StructuralAdvantageWireSchema,
+  TierMappingWireSchema,
+} from "./ai/schemas/thematic";
 import { pickModel } from "./ai/router";
 import { computeScores } from "./composite";
 import { getFreshFundamentals } from "./db";
 import { fetchMarketNews } from "./news";
 import { getHistory, getQuotes } from "./yahoo";
-import { extractJson, extractJsonObject, extractJsonArray, extractJsonObjectsLoose } from "./json-extract";
+import { coerceParsedObject } from "./json-extract";
 import { normalizeTheme } from "./thematic-theme";
 import type { StockFundamentals, NewsItem } from "./types";
 
@@ -870,13 +882,44 @@ const DEFAULT_POLICY: PolicyScore = { score: 5, relevantPolicies: [], capitalFlo
 const DEFAULT_STRUCTURAL_ADVANTAGE: GlobalStructuralAdvantageScore = { score: 5, currentLeader: "Unknown", fastestImproving: "Unknown", regions: [], longTermImplications: "AI analysis unavailable — neutral default used." };
 
 /**
- * Throws if `raw` has no parseable JSON at all — lets `withFallback`'s catch
- * (above) distinguish "AI is down / responded with garbage" (a tracked stage
- * failure) from "valid JSON missing some fields", which extractJsonObject /
- * extractJsonArray already coerce against each stage's defaults below.
+ * One thematic stage through the analysis seam (tranche 7). The old
+ * `assertParseable` contract is preserved by construction: a garbage response
+ * now throws inside the provider (extractJson in the token-stack adapter;
+ * schema validation on sessions), so `withFallback`'s catch still separates
+ * "AI failed" (tracked stage failure) from "valid JSON missing fields"
+ * (coerced against each stage's defaults below).
  */
-function assertParseable(raw: string): void {
-  extractJson(raw);
+async function runStage(
+  stageKey: string,
+  theme: string,
+  prompt: string,
+  wireSchema: Parameters<typeof runAnalysis>[0]["wireSchema"],
+  signal?: AbortSignal,
+): Promise<unknown> {
+  const res = await runAnalysis({
+    taskType: "thematic-analysis",
+    subjectKey: `thematic:${stageKey}:${theme.slice(0, 48)}`,
+    prompt,
+    schema: LooseJsonSchema,
+    wireSchema,
+    schemaVersion: THEMATIC_SCHEMA_VERSION,
+    signal,
+  });
+  return res.data;
+}
+
+/**
+ * Unify the two shapes an array-answering stage can legally receive: the
+ * token stack answers the prompt's bare array; sessions answer the wire
+ * schema's single-key object wrapper (structured_output must be an object).
+ */
+function listFrom(data: unknown, wrapperKey: string): unknown[] {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === "object") {
+    const inner = (data as Record<string, unknown>)[wrapperKey];
+    if (Array.isArray(inner)) return inner;
+  }
+  return [];
 }
 
 function coerceNumber(v: unknown, fallback: number): number {
@@ -953,9 +996,8 @@ Return JSON only:
   "rationale": "<2-3 sentences on why this score>"
 }`;
 
-  const raw = await runPrompt("thematic-analysis", prompt, { json: true, signal });
-  assertParseable(raw);
-  const parsed = extractJsonObject(raw, {
+  const data = await runStage("future-state", theme, prompt, FutureStateWireSchema, signal);
+  const parsed = coerceParsedObject(data, {
     inevitabilityScore: DEFAULT_FUTURE_STATE.inevitabilityScore,
     timeHorizon: DEFAULT_FUTURE_STATE.timeHorizon,
     drivingForces: [] as string[],
@@ -997,9 +1039,8 @@ Return JSON only — an array of exactly 6 objects:
   ...
 ]`;
 
-  const raw = await runPrompt("thematic-analysis", prompt, { json: true, signal });
-  assertParseable(raw);
-  return extractJsonArray(raw, sanitizeDependencyNode).slice(0, 6);
+  const data = await runStage("dependency-chain", theme, prompt, DependencyChainWireSchema, signal);
+  return listFrom(data, "nodes").map(sanitizeDependencyNode).filter((n): n is DependencyNode => n !== null).slice(0, 6);
 }
 
 /**
@@ -1021,9 +1062,8 @@ Tiers: 1 end products, 2 enabling infrastructure, 3 equipment & tools, 4 raw mat
 Return ONLY a JSON array of exactly 6 objects, no prose:
 [{"tier":1,"tierLabel":"<short label>","description":"<one sentence>","exampleCompanies":["<company>","<company>"],"isBottleneck":false}]`;
 
-  const raw = await runPrompt("thematic-analysis", prompt, { json: true, signal });
-  assertParseable(raw);
-  return extractJsonArray(raw, sanitizeDependencyNode).slice(0, 6);
+  const data = await runStage("dependency-chain-terse", theme, prompt, DependencyChainWireSchema, signal);
+  return listFrom(data, "nodes").map(sanitizeDependencyNode).filter((n): n is DependencyNode => n !== null).slice(0, 6);
 }
 
 function sanitizeDependencyNode(item: unknown): DependencyNode | null {
@@ -1071,9 +1111,8 @@ Return JSON only:
   "expansionDifficulty": "<how long and how capital-intensive adding capacity at this tier is, and what blocks it — specific to THIS theme; never reuse example wording>"
 }`;
 
-  const raw = await runPrompt("thematic-analysis", prompt, { json: true, signal });
-  assertParseable(raw);
-  const parsed = extractJsonObject(raw, {
+  const data = await runStage("bottleneck", theme, prompt, BottleneckWireSchema, signal);
+  const parsed = coerceParsedObject(data, {
     score: DEFAULT_BOTTLENECK.score,
     bottleneckTier: DEFAULT_BOTTLENECK.bottleneckTier,
     bottleneckDescription: "",
@@ -1128,11 +1167,10 @@ Return JSON only:
   "investmentSignal": "strong" | "moderate" | "weak" | "avoid"
 }`;
 
-  const raw = await runPrompt("thematic-analysis", prompt, { json: true, signal });
-  assertParseable(raw);
+  const data = await runStage("supply-demand", theme, prompt, SupplyDemandWireSchema, signal);
   // Omit<SupplyDemandScore, "commodityProxies"> — commodityProxies is attached
   // by the caller from live market data, never parsed from the model.
-  const parsed = extractJsonObject(raw, {
+  const parsed = coerceParsedObject(data, {
     score: DEFAULT_SUPPLY_DEMAND.score,
     demandTrajectory: DEFAULT_SUPPLY_DEMAND.demandTrajectory,
     supplyTrajectory: DEFAULT_SUPPLY_DEMAND.supplyTrajectory,
@@ -1177,9 +1215,8 @@ Return JSON only:
   "reserveConcentration": "<1-2 sentences on where reserves are concentrated and geopolitical implications>"
 }`;
 
-  const raw = await runPrompt("thematic-analysis", prompt, { json: true, signal });
-  assertParseable(raw);
-  const parsed = extractJsonObject(raw, {
+  const data = await runStage("commodity", theme, prompt, CommodityFrameworkWireSchema, signal);
+  const parsed = coerceParsedObject(data, {
     score: DEFAULT_COMMODITY.score,
     primaryCommodities: [] as string[],
     demandCatalysts: [] as string[],
@@ -1227,9 +1264,8 @@ Return JSON only:
   "indiaSpecificPolicies": ["<policy1>", "<policy2>"]
 }`;
 
-  const raw = await runPrompt("thematic-analysis", prompt, { json: true, signal });
-  assertParseable(raw);
-  const parsed = extractJsonObject(raw, {
+  const data = await runStage("policy", theme, prompt, PolicyWireSchema, signal);
+  const parsed = coerceParsedObject(data, {
     score: DEFAULT_POLICY.score,
     relevantPolicies: [] as unknown[],
     capitalFlowDirection: "",
@@ -1296,9 +1332,8 @@ Return JSON only:
 
 Include 3-6 regions, ranked by relevance to this theme.`;
 
-  const raw = await runPrompt("thematic-analysis", prompt, { json: true, signal });
-  assertParseable(raw);
-  const parsed = extractJsonObject(raw, {
+  const data = await runStage("structural-advantage", theme, prompt, StructuralAdvantageWireSchema, signal);
+  const parsed = coerceParsedObject(data, {
     score: DEFAULT_STRUCTURAL_ADVANTAGE.score,
     currentLeader: DEFAULT_STRUCTURAL_ADVANTAGE.currentLeader,
     fastestImproving: DEFAULT_STRUCTURAL_ADVANTAGE.fastestImproving,
@@ -1399,14 +1434,16 @@ Return JSON only — an array of between 12 and 18 objects (fewer only if fewer 
   }
 ]`;
 
-  const raw = await runPrompt("thematic-analysis", prompt, { json: true, signal });
-  // This is the one stage whose response is long enough that a small local
-  // model regularly truncates it mid-object. Rather than throwing away a dozen
-  // valid mappings over the unterminated last one, fall back to salvaging every
-  // complete object out of the fragment.
-  let mappings = extractJsonArray(raw, sanitizeTierMapping);
-  if (mappings.length === 0) mappings = extractJsonObjectsLoose(raw, sanitizeTierMapping);
-  if (mappings.length === 0) assertParseable(raw);
+  // Truncation note, updated for the seam: on sessions the wire schema makes
+  // a truncated array impossible (validation rejects it server-side). On the
+  // token stack a truncated response now throws in the adapter's extractJson
+  // instead of being salvaged object-by-object — the string-level salvage
+  // (extractJsonObjectsLoose) needed the raw text, which the seam deliberately
+  // does not expose. Accepted trade: the salvage only ever mattered for the
+  // small-local-model tail, which is now the fallback path, and a tracked
+  // stage failure beats a silently thinner mapping.
+  const data = await runStage("tier-mapping", theme, prompt, TierMappingWireSchema, signal);
+  const mappings = listFrom(data, "mappings").map(sanitizeTierMapping).filter((m): m is TierMapping => m !== null);
 
   // Case- and whitespace-insensitive: a model that answers "nvda" or " CCJ "
   // was previously dropped silently by an exact Map lookup, so a correct

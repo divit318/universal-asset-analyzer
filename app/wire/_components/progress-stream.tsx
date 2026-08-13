@@ -49,7 +49,7 @@ export function InlineScanProgress({
   const detail = event?.currentItem ?? (event?.message !== label ? event?.message : null);
 
   return (
-    <div className="flex items-center gap-3 min-w-0">
+    <div className="flex items-center gap-3 min-w-0" role="status" aria-live="polite">
       <span className="relative flex h-1.5 w-1.5 shrink-0">
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
         <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />

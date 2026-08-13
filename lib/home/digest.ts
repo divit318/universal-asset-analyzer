@@ -58,10 +58,13 @@ import {
 } from "./changes";
 import { buildSymbolContext } from "./symbol-context";
 import { buildDashboardFacts } from "./facts";
+import { dominantBenchmark } from "../benchmarks";
 import { marketToday, marketDayPlus } from "./clock";
 import { MIN_DAYS_TO_ANNUALIZE, type ChangeFeed, type EquityCurve, type HomeDigest, type PortfolioPerformanceSummary } from "./contracts";
 import type { PortfolioLot, WatchlistItem } from "../types";
 
+// Fallback for degraded/empty states only; live performance benchmarks
+// against the market the book mostly holds (lib/benchmarks.ts).
 const BENCHMARK = "SPY";
 
 /* ------------------------------------------------------------------ */
@@ -97,10 +100,11 @@ async function buildPerformance(): Promise<PortfolioPerformanceSummary> {
   // resolves it — which is correct, and now the exclusion costs nothing else.
   const quotableSymbols = [...bySymbol.keys()].filter((s) => !s.toUpperCase().startsWith("CASH-"));
 
+  const benchmark = dominantBenchmark(quotableSymbols);
   const [quotes, benchHistory, benchQuote] = await Promise.all([
     getQuotes(quotableSymbols),
-    getHistory(BENCHMARK, Math.max(30, daysSinceFirst)).catch(() => []),
-    getQuote(BENCHMARK).catch(() => null),
+    getHistory(benchmark.symbol, Math.max(30, daysSinceFirst)).catch(() => []),
+    getQuote(benchmark.symbol).catch(() => null),
   ]);
 
   const priceBySymbol = new Map(quotes.map((q) => [q.symbol.toUpperCase(), q.price]));
@@ -112,7 +116,7 @@ async function buildPerformance(): Promise<PortfolioPerformanceSummary> {
     new Date().toISOString(),
     benchHistory.length > 0 && benchPriceNow > 0
       ? {
-          symbol: BENCHMARK,
+          symbol: benchmark.symbol,
           history: benchHistory.map((h) => ({ date: h.date.slice(0, 10), close: h.close })),
           priceNow: benchPriceNow,
         }

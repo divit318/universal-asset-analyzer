@@ -332,9 +332,10 @@ def build_mc_valuation_from_fundamentals(
     debt_weight = min(debt_eq / (1.0 + abs(debt_eq)), 0.60)
 
     beta = compute_rolling_beta(price_df, index_df) if price_df is not None and index_df is not None else 1.0
-    # India: higher risk-free rate (~6.5% 10Y GOI) and ERP (~6%)
+    # India: higher risk-free rate (~6.5% 10Y GOI), ERP (~6%), and the
+    # 25.17% corporate rate (22% base + surcharge + cess), not the US 21%.
     if is_india:
-        wacc = compute_wacc(beta=beta, risk_free=0.065, erp=0.06, debt_weight=debt_weight)
+        wacc = compute_wacc(beta=beta, risk_free=0.065, erp=0.06, debt_weight=debt_weight, tax_rate=0.2517)
     else:
         wacc = compute_wacc(beta=beta, debt_weight=debt_weight)
 

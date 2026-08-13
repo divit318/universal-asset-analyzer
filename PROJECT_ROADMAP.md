@@ -108,6 +108,48 @@ Strategic overview of completed systems, active development, planned features, a
 
 ---
 
+## Watchlist as Attention Management (2026-08 — ✅ Complete)
+
+The Watchlist upgraded from "a sophisticated table" into an intelligent monitoring
+surface: every visit opens with **what changed since the last one** and **which
+names need attention, and why**. New attention model (`lib/watchlist-pulse.ts`,
+pure, thresholds pinned in tests): fuses live-price signals (target crossed/
+approaching, material day moves) with server change context (`/api/watchlist/pulse`:
+fired alerts since the visit baseline, material timeline developments, earnings
+proximity, deterministic thesis drift, price drift since last visit) into an
+`act`/`watch`/`quiet` verdict per row — reasons displayed, score never. UI: the
+`PulseBrief` triage ledger (click opens the row's decision file), attention dot +
+row tones, "Next event" earnings column (replaced "Added"), Needs-attention/
+Earnings-soon filters, and a click-to-filter list-health line (no thesis / no
+target / stale review). Thesis became a real object (`buy_trigger`, `sell_trigger`,
+`conviction`, `horizon`, `last_reviewed_at`; `ThesisModal`; "Mark reviewed"), and
+the drawer became a per-name decision file (structured thesis + `WhatsNew`:
+fired alerts, thesis-drift read with driving headlines, developments with sources
+and honest check freshness). "Since your last visit" is session-aware
+(`watchlist_visit` + `watchlist_price_snapshot`: 45-min gap rotates the baseline
+to the previous session's close, so refreshes never destroy the diff). The AI
+digest became the **Watchlist Brief** (schema v2: `topChanges`, `researchNext`,
+`portfolioImplication`), grounded in the user's own targets/theses/developments.
+All change detection reuses existing infrastructure — notification table,
+timeline events, calendar, crossing-based monitor — no second alert system.
+Verified: typecheck clean, lint clean, 3278/3281 tests passing (35 new), build
+clean, live end-to-end (real target-crossing alert → notification → pulse →
+attention queue).
+
+**Polish pass (same release)**: one-fact-one-place audit (ownership lives only
+in Stage via `effectiveStage`; the symbol cell's Owned/Alert/✎ badge cluster
+removed; Consensus + Cons. upside merged into one cell sorted by implied
+return; "Targets set"/"Alerts" strip stats removed in favour of the actionable
+health line and header chip). Attention became its own sortable dot column and
+the smart default sort. Target cells are click-to-edit with Set/near/reached
+states; Next event links to /calendar; the drawer shows idea provenance ("via
+Screener"). New Customize popover (`lib/watchlist-settings.ts`, instant-persist,
+sanitize-on-read): chip visibility/order (catalog incl. Not owned / Near target /
+High conviction), open-on filter, column visibility, default sort, earnings
+horizon (7/14/30d) and big-move bar (3/5/8%) threaded into `computeAttention`.
+
+---
+
 ## Investment Timeline (2026-07 — ✅ Complete)
 
 Net-new feature: `/timeline`, the historical memory of every symbol/ETF, portfolio, watchlist, and sector — deterministic event classification (28 categories) + AI narrative/thesis-evolution on top of existing engines (Sector Rotation, Movement Explainer, Scanner cache, Watchlist Intelligence, Portfolio holdings). New `lib/timeline.ts` + `timeline_event` table + `/api/timeline*` routes. See `ARCHITECTURE.md` → "Investment Timeline" for the full design. Verified: typecheck clean, lint 0 errors, 263/263 tests passing (26 new), manually validated live (all 4 scopes, AI detail panel, What Changed Since Then, filters, cross-page integration links).

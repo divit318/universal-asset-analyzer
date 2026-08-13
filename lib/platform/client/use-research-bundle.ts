@@ -23,7 +23,7 @@ import { resetSymbol, setData, setError, setLoading, key as makeKey } from "./st
 export const BUNDLE_STEPS = [
   "quote",
   "history",
-  "spyHistory",
+  "benchmarkHistory",
   "profile",
   "sectorHistory",
   "filings",

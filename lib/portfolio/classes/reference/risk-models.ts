@@ -722,6 +722,175 @@ const TOP_SECTOR_ALIAS: Record<string, keyof typeof SECTOR_FACTORS> = {
   "Real Estate": "Real Estate",
 };
 
+/* -------------------------------------------------------------------------- */
+/* Fund geography and sector — the attributes a wrapper hides                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Category-keyword region refinements, checked BEFORE the model mapping so a
+ * China fund reads "China" rather than the model's coarser "Emerging Markets".
+ * Ordered: /world|global/ must run before /real estate/ so "Global Real Estate"
+ * is Global while Morningstar's US-scoped "Real Estate" category is not.
+ */
+const CATEGORY_REGION: { test: RegExp; region: string }[] = [
+  { test: /china/, region: "China" },
+  { test: /india/, region: "India" },
+  { test: /japan/, region: "Japan" },
+  { test: /latin america/, region: "Latin America" },
+  { test: /europe/, region: "Europe" },
+  { test: /pacific/, region: "Asia-Pacific" },
+  { test: /world|global/, region: "Global" },
+  { test: /real estate/, region: "United States" },
+];
+
+/**
+ * Risk model → the region its mandate invests in. Only models whose CATEGORY_RULES
+ * triggers imply a region are listed: a sector-equity fund ("Technology") says
+ * nothing about WHERE its holdings are, so it is deliberately absent — guessing
+ * "United States" for a fund that holds SK Hynix and TSMC would fabricate exposure.
+ * The US bond entries are safe because Morningstar's plain bond categories
+ * ("Intermediate Core Bond", "Muni National Interm", "High Yield Bond") are
+ * US-universe categories; the global/EM ones have their own models above.
+ */
+const MODEL_REGION: Partial<Record<RiskModelId, string>> = {
+  fund_equity_us_broad: "United States",
+  fund_equity_developed_ex_us: "International Developed",
+  fund_equity_em: "Emerging Markets",
+  fund_equity_global: "Global",
+  bond_treasury_short: "United States",
+  bond_treasury_intermediate: "United States",
+  bond_treasury_long: "United States",
+  bond_aggregate: "United States",
+  bond_corporate_short: "United States",
+  bond_corporate_ig: "United States",
+  bond_corporate_long: "United States",
+  bond_high_yield: "United States",
+  bond_bank_loan: "United States",
+  bond_floating_rate: "United States",
+  bond_muni_short: "United States",
+  bond_muni: "United States",
+  bond_muni_long: "United States",
+  bond_muni_high_yield: "United States",
+  bond_tips_short: "United States",
+  bond_tips: "United States",
+  bond_em: "Emerging Markets",
+  bond_global_hedged: "Global",
+  bond_global_unhedged: "Global",
+  commodity_gold: "Global",
+  commodity_silver: "Global",
+  commodity_oil: "Global",
+  commodity_natural_gas: "Global",
+  commodity_copper: "Global",
+  commodity_agriculture: "Global",
+  commodity_broad: "Global",
+  crypto_major: "Global",
+  crypto_alt: "Global",
+};
+
+/**
+ * The investment REGION of a fund, derived from the SAME resolution that produced
+ * its risk model — one authority, per the file header.
+ *
+ * This is the fix for the dashboard's "46.2% of geography unclassified": every
+ * fund's geography read Yahoo's `assetProfile.country`, which the provider only
+ * populates for single names, so QQQM/VOO — whose category the classifier already
+ * used to model them as US broad-equity funds — showed no geography at all. The
+ * region here is the fund's MANDATE (where the underlying assets are), not its
+ * listing exchange or its sponsor's domicile, which is the concept the allocation
+ * panel documents.
+ *
+ * Returns null when the category honestly says nothing about region (sector
+ * funds), so the caller reports "unknown" rather than a guess.
+ */
+export function fundRegion(modelId: RiskModelId, category: string | null): string | null {
+  const cat = category?.trim().toLowerCase();
+  if (cat) {
+    const kw = CATEGORY_REGION.find((r) => r.test.test(cat));
+    if (kw) return kw.region;
+  }
+  return MODEL_REGION[modelId] ?? null;
+}
+
+/**
+ * A fund's geography attribute AND its provenance, in one place so the ETF and
+ * bond adapters cannot drift apart on either. The basis string is what the
+ * dashboard's geography drill-down shows when the user asks "why is this
+ * classified as X?" — a classification without its basis is an assertion.
+ */
+export function fundGeographyAttributes(
+  modelId: RiskModelId,
+  category: string | null,
+  profileCountry: string | null,
+): { geography: string | null; geographyBasis: string } {
+  if (profileCountry) {
+    return {
+      geography: profileCountry,
+      geographyBasis: "Issuer country from the provider's company profile",
+    };
+  }
+  const region = fundRegion(modelId, category);
+  if (region) {
+    return {
+      geography: region,
+      geographyBasis: category
+        ? `Fund investment region, from its Morningstar category "${category}"`
+        : "Fund investment region, from its risk-model classification",
+    };
+  }
+  return {
+    geography: null,
+    geographyBasis: category
+      ? `Category "${category}" is a sector mandate with no regional constraint — region unknown without holdings-level data`
+      : "No geography data available from the provider for this fund",
+  };
+}
+
+/**
+ * Morningstar sector categories → the label the PROFILE taxonomy uses for direct
+ * equities ("Financial Services", "Consumer Cyclical", …) so a sector fund and a
+ * single name land in the SAME allocation slice instead of splitting one sector
+ * across two spellings.
+ */
+const CATEGORY_SECTOR_LABEL: { test: RegExp; sector: string }[] = [
+  { test: /equity energy|natural resources/, sector: "Energy" },
+  { test: /technology/, sector: "Technology" },
+  { test: /health/, sector: "Healthcare" },
+  { test: /financial/, sector: "Financial Services" },
+  { test: /utilities/, sector: "Utilities" },
+  { test: /industrial|infrastructure/, sector: "Industrials" },
+  { test: /communication/, sector: "Communication Services" },
+  { test: /consumer cyclical/, sector: "Consumer Cyclical" },
+  { test: /consumer defensive/, sector: "Consumer Defensive" },
+];
+
+/**
+ * The sector a FUND belongs to in an allocation breakdown, or null for a
+ * diversified fund (whose honest sector is the wrapper-level "Diversified" the
+ * ETF adapter already applies — its true sector spread is the Intelligence tab's
+ * look-through, not one label).
+ *
+ * Only sector-MANDATE funds get a sector: a broad fund that happens to be 60%
+ * technology today is not a technology fund, so `topSector` is consulted only
+ * once the category has already said "sector fund". Fixes DRAM (category
+ * "Technology") reading as "Diversified" while every direct chip name sat in
+ * Technology.
+ */
+export function fundSector(
+  modelId: RiskModelId,
+  category: string | null,
+  topSector: string | null,
+): string | null {
+  if (modelId === "fund_equity_precious_metals") return "Basic Materials";
+  if (modelId === "reit") return "Real Estate";
+  if (modelId !== "fund_equity_sector") return null;
+  const cat = category?.trim().toLowerCase();
+  if (cat) {
+    const rule = CATEGORY_SECTOR_LABEL.find((r) => r.test.test(cat));
+    if (rule) return rule.sector;
+  }
+  return topSector ?? null;
+}
+
 const BOND_CATEGORY_SET = new Set<string>(BOND_CATEGORIES.map((c) => c.toLowerCase()));
 
 /** Is this Morningstar category one the screener already treats as fixed income? */

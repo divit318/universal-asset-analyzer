@@ -171,3 +171,26 @@ describe("verifyGrounding — citations", () => {
     expect(r.flags.some((f) => f.includes("cites no sources"))).toBe(true);
   });
 });
+
+describe("unit-scale forgiveness (tranche 9 — ported from the parity harness)", () => {
+  it("grounds a $-billions restatement of a millions-denominated table figure", () => {
+    const report = verifyGrounding(
+      "Revenue of $391B against a $4.54T market cap.",
+      "Revenue: 391,035 (USD millions). Market cap: 4,540,000 (USD millions).",
+    );
+    expect(report.unsupportedNumbers).toEqual([]);
+  });
+
+  it("still flags a genuinely fabricated figure", () => {
+    const report = verifyGrounding(
+      "Revenue of $512B last year.",
+      "Revenue: 391,035 (USD millions).",
+    );
+    expect(report.unsupportedNumbers.join()).toContain("512B");
+  });
+
+  it("never scales percents — 12% is not grounded by 12,000", () => {
+    const report = verifyGrounding("Margins expanded to 12.7%.", "Volume: 12,700 contracts.");
+    expect(report.unsupportedNumbers).toContain("12.7%");
+  });
+});

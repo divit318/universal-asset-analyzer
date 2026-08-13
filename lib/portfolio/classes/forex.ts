@@ -42,6 +42,7 @@ export const forexAdapter: PortfolioClassAdapter = {
     return {
       sector: "Currency",
       geography: "Global",
+      geographyBasis: "A currency pair is an exposure between two economies — no single geography",
       currency: raw.currency,
       riskModel: riskModelFor(raw, ctx).label,
     };

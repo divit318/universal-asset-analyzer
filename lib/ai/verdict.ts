@@ -340,6 +340,22 @@ export function peekVerdict(params: Record<string, string>): InvestmentVerdict |
   return peekDataset<InvestmentVerdict>("aiVerdict", params)?.data ?? null;
 }
 
+/**
+ * Like {@link peekVerdict} but with the cache metadata attached, so the caller
+ * can distinguish a FRESH hit (serve, done) from a STALE-within-SWR hit
+ * (serve instantly AND schedule a background regeneration). The streamed route
+ * used to drop that distinction — stale replays were served and then never
+ * refreshed, so a verdict could ride the whole 24h SWR window without a single
+ * regeneration while the blocking route's getDataset path revalidated properly.
+ */
+export function peekVerdictWithMeta(
+  params: Record<string, string>,
+): { verdict: InvestmentVerdict; freshness: "fresh" | "revalidating" | "stale" } | null {
+  const hit = peekDataset<InvestmentVerdict>("aiVerdict", params);
+  if (!hit) return null;
+  return { verdict: hit.data, freshness: hit.meta.freshness };
+}
+
 /** Persist a freshly-generated verdict under the platform's `aiVerdict` policy. */
 export function cacheVerdict(
   params: Record<string, string>,
@@ -671,7 +687,10 @@ function planEquityVerdict(ctx: CompanyContext, portfolio: PortfolioFacts | null
   const { prompt, evidence } = buildVerdictPrompt(ctx, portfolio);
   return {
     kind: "equity",
-    task: "investment-thesis",
+    // "investment-verdict", not "investment-thesis": a human is watching this
+    // spinner, and the shared task type made the hero verdict inherit the
+    // scanner/IC batch policy (background priority, 300s budget). Same models.
+    task: "investment-verdict",
     prompt,
     evidence,
     composite: ctx.score?.composite ?? null,

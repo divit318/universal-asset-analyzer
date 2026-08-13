@@ -55,6 +55,7 @@ export const cryptoAdapter: PortfolioClassAdapter = {
     return {
       sector: "Digital Assets",
       geography: "Global",
+      geographyBasis: "Crypto assets have no home market — traded globally",
       currency: raw.currency,
       riskModel: riskModelFor(raw, ctx).label,
     };

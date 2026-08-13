@@ -1,5 +1,5 @@
 import type { FundProfileData } from "@/lib/types";
-import { formatCompactCurrency, formatDate } from "@/lib/format";
+import { formatDate } from "@/lib/format";
 import { Reveal } from "@/app/_components/reveal";
 import { SegmentedBar } from "@/app/_components/value-bar";
 
@@ -11,29 +11,21 @@ const ALLOCATION_SLICES = [
 ] as const;
 
 /**
- * `perShareClass`: Morningstar reports a mutual fund's net assets per share
- * class (the plan/option being viewed), not per scheme — the label must say
- * so or the figure reads ~10x low against scheme-level AUM on AMFI/Groww.
+ * The fund's identity: which shelf it sits on and what it is made of.
+ *
+ * Cost, size, turnover, rating and track record deliberately do NOT appear
+ * here any more — they moved to VehicleCard on the Anatomy tab, where they are
+ * shown with the reading that makes them decisions ("cheap", "thinly traded",
+ * "shorter than a market cycle") rather than as a second flat table of the same
+ * numbers. What's left is identity plus the asset mix, which nothing else
+ * renders.
  */
-export function FundProfileCard({ fund, perShareClass = false }: { fund: FundProfileData; perShareClass?: boolean }) {
+export function FundProfileCard({ fund }: { fund: FundProfileData }) {
   const rows: [string, string][] = [
     ["Category", fund.category ?? "—"],
     ["Family", fund.family ?? "—"],
-    // Net assets travel in the fund's own reporting currency (₹ for Indian
-    // funds) — a hardcoded "$" would mislabel them by the FX rate.
-    [perShareClass ? "Net assets (this plan)" : "Total net assets", formatCompactCurrency(fund.totalNetAssets, fund.currency)],
-    // TER recovered from AMFI's official monthly table is badged, because it
-    // has a different provenance from the rest of this (Yahoo-sourced) card.
-    [
-      "Expense ratio",
-      fund.expenseRatio != null
-        ? `${(fund.expenseRatio * 100).toFixed(2)}%${fund.expenseRatioSource === "amfi" ? " · AMFI" : ""}`
-        : "—",
-    ],
-    ["Portfolio turnover", fund.turnoverPercent != null ? `${(fund.turnoverPercent * 100).toFixed(0)}%` : "—"],
-    ["Morningstar rating", fund.morningstarRating != null ? "★".repeat(fund.morningstarRating) : "—"],
-    ["Inception", fund.inceptionDate != null ? formatDate(fund.inceptionDate) : "—"],
     ["Legal type", fund.legalType ?? "—"],
+    ["Inception", fund.inceptionDate != null ? formatDate(fund.inceptionDate) : "—"],
   ];
 
   const allocation = fund.assetAllocation;
@@ -42,7 +34,7 @@ export function FundProfileCard({ fund, perShareClass = false }: { fund: FundPro
   return (
     <section className="card-lift flex flex-col gap-4 rounded-xl border border-border bg-surface p-5">
       <h3 className="text-sm font-semibold">Fund Profile</h3>
-      <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-3">
+      <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-4">
         {rows.map(([label, value], i) => (
           <Reveal key={label} index={i} className="flex flex-col gap-1 bg-surface p-3">
             <dt className="text-caption uppercase tracking-wide text-muted">{label}</dt>

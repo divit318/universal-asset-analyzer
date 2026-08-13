@@ -2,13 +2,14 @@ import { isValidSymbol } from "@/lib/market";
 import { NextResponse } from "next/server";
 import { isIdeaSource } from "@/lib/idea-source";
 import { resolveDisplayName } from "@/lib/yahoo";
-import type { TargetDirection } from "@/lib/types";
+import type { Conviction, TargetDirection, ThesisHorizon } from "@/lib/types";
 import {
   addToWatchlist,
   getFreshFundamentals,
   listWatchlist,
   listWatchlistByGroup,
   listWatchlistGroups,
+  markWatchlistReviewed,
   removeFromWatchlist,
   removeSymbolFromGroup,
   targetRevisionCounts,
@@ -123,8 +124,23 @@ export async function PATCH(request: Request) {
     targetDirection?: TargetDirection | null;
     alertPctDrop?: number | null;
     notes?: string | null;
+    buyTrigger?: string | null;
+    sellTrigger?: string | null;
+    conviction?: Conviction | null;
+    horizon?: ThesisHorizon | null;
     targetNote?: string | null;
   } = {};
+
+  // "I re-read this and it stands" — a review with no edits. Valid alone.
+  if (body.reviewed === true) {
+    try {
+      markWatchlistReviewed(symbol);
+    } catch (err) {
+      return NextResponse.json({ error: err instanceof Error ? err.message : "Failed" }, { status: 500 });
+    }
+    const rest = Object.keys(body).filter((k) => k !== "symbol" && k !== "reviewed");
+    if (rest.length === 0) return NextResponse.json({ ok: true, reviewedAt: Date.now() });
+  }
 
   // Rationale for a target change. Attached to the revision row, never to the
   // watchlist row itself — it describes one edit, not the current state.
@@ -160,6 +176,27 @@ export async function PATCH(request: Request) {
     if (v === null) patch.notes = null;
     else if (typeof v === "string") patch.notes = v.trim() || null;
     else return NextResponse.json({ error: "`notes` must be a string or null" }, { status: 400 });
+  }
+
+  for (const field of ["buyTrigger", "sellTrigger"] as const) {
+    if (field in body) {
+      const v = body[field];
+      if (v === null) patch[field] = null;
+      else if (typeof v === "string") patch[field] = v.trim().slice(0, 280) || null;
+      else return NextResponse.json({ error: `\`${field}\` must be a string or null` }, { status: 400 });
+    }
+  }
+
+  if ("conviction" in body) {
+    const v = body.conviction;
+    if (v === null || v === "low" || v === "medium" || v === "high") patch.conviction = v;
+    else return NextResponse.json({ error: "`conviction` must be \"low\", \"medium\", \"high\", or null" }, { status: 400 });
+  }
+
+  if ("horizon" in body) {
+    const v = body.horizon;
+    if (v === null || v === "short" || v === "medium" || v === "long") patch.horizon = v;
+    else return NextResponse.json({ error: "`horizon` must be \"short\", \"medium\", \"long\", or null" }, { status: 400 });
   }
 
   // `targetNote` annotates another change rather than being one, so it does not

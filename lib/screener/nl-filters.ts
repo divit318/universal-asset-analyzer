@@ -6,7 +6,7 @@
  * schema-generation + parsing path, not two independently-drifting ones.
  *
  * The schema handed to the model is generated from the Asset Registry rather
- * than hardcoded, so this works across all seven asset classes without a
+ * than hardcoded, so this works across every screening universe without a
  * single branch: ask for a crypto screen and the model is shown crypto's
  * metrics, their units and their real ranges; ask for bonds and it's shown
  * duration and credit quality. A metric can never be offered to the model
@@ -50,15 +50,23 @@ function buildSchema(assetClass: AssetClassId): string {
     const unit =
       m.unit === "$B"
         ? "in dollars (1000000000 = $1B)"
-        : m.unit === "%"
-          ? "percent units (15 = 15%)"
-          : m.unit === "x"
-            ? "a multiple (15 = 15x)"
-            : m.unit === "yrs"
-              ? "in years"
-              : m.unit === "score"
-                ? "0-100"
-                : "a raw number";
+        : // Without this branch the model was told ₹Cr metrics were "a raw
+          // number" and answered in crores — so "Nifty-50 sized" became
+          // marketCap ≥ 100000 (₹1 lakh in rupees), a filter that matched
+          // every stock in the universe. The engine stores raw INR.
+          m.unit === "₹Cr"
+          ? "in Indian rupees (10000000 = ₹1 crore, 1000000000000 = ₹1,00,000 Cr)"
+          : m.unit === "pp"
+            ? "percentage points of change (1.5 = +1.5pp)"
+            : m.unit === "%"
+              ? "percent units (15 = 15%)"
+              : m.unit === "x"
+                ? "a multiple (15 = 15x)"
+                : m.unit === "yrs"
+                  ? "in years"
+                  : m.unit === "score"
+                    ? "0-100"
+                    : "a raw number";
     return `  ${m.key}?: { min?: number, max?: number },  // ${m.label} — ${unit}. ${m.description}`;
   });
 

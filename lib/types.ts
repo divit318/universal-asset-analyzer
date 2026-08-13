@@ -103,7 +103,11 @@ export interface ResearchData {
   /** Non-fatal EDGAR failure, surfaced so the page can still render the quote. */
   edgarError: string | null;
   benchmarks?: {
-    spy: HistoryPoint[];
+    /** Market benchmark history — SPY for US listings, NIFTY 50 for NSE/BSE. */
+    market: HistoryPoint[];
+    /** Display label for the market benchmark series ("S&P 500", "NIFTY 50"). */
+    marketLabel: string;
+    /** Sector benchmark label (US: ETF ticker; India: NIFTY sector index). */
     sectorEtf: string | null;
     sector: HistoryPoint[];
   };
@@ -177,6 +181,11 @@ export interface TargetRevision {
   changedAt: number;
 }
 
+/** How sure the user is about a watched idea. Absent = never recorded. */
+export type Conviction = "low" | "medium" | "high";
+/** Rough holding-period intent for a watched idea. */
+export type ThesisHorizon = "short" | "medium" | "long";
+
 export interface WatchlistItem {
   symbol: string;
   name: string;
@@ -186,6 +195,14 @@ export interface WatchlistItem {
   targetDirection: TargetDirection | null;
   alertPctDrop: number | null;
   notes: string | null;
+  /** What would make this a buy — the user's own trigger, in their words. */
+  buyTrigger: string | null;
+  /** What would invalidate the idea or force an exit. */
+  sellTrigger: string | null;
+  conviction: Conviction | null;
+  horizon: ThesisHorizon | null;
+  /** Epoch-ms of the last explicit thesis review; null = never reviewed. */
+  lastReviewedAt: number | null;
   /** Idea lifecycle stage. Defaults to "surfaced" for every row (§4.5). */
   stage: IdeaStage;
   /** Epoch-ms when the stage last changed; null for rows predating the migration. */
@@ -883,6 +900,13 @@ export interface NewsItem {
    * deterministically from url/headline/source instead of failing.
    */
   storyId?: string;
+  /**
+   * Development category (lib/india-news.ts) — set for Indian listings where
+   * exchange filings and media stories blend in one feed: "results",
+   * "corporate-action", "orders", "m&a", "management", "regulatory",
+   * "credit-rating", "board-meeting", "investor-meet", "announcement", "news".
+   */
+  category?: string;
 }
 
 export type SignalDirection = "bullish" | "bearish" | "neutral";

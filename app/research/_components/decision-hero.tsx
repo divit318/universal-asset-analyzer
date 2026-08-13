@@ -60,20 +60,28 @@ const SIGNAL_CLASS = {
  * mosaic of grey bars implying content that is already there.
  *
  * Shown only before the first field arrives (~4s), not for the whole generation.
- * The `stage` line is a real progress statement from the stream, not a guess: it
- * reports elapsed time and what is being waited on.
+ * The `stage` line is a real progress statement, and the elapsed clock ticks
+ * from `startedAt` — it must never freeze during the silent phases (readiness
+ * gate, data assembly, time-to-first-token), which are exactly the waits it
+ * exists to describe.
+ *
+ * Copy note: the verdict reasons over the fundamentals, the computed score,
+ * analyst consensus, momentum, risk flags, and recent headlines. It does NOT
+ * read filing documents — filings metadata is fetched for the page, but no
+ * filing text enters the verdict prompt — so the copy must not claim it does.
  */
-function Skeleton({ stage, elapsedMs }: { stage: string; elapsedMs: number }) {
+function Skeleton({ stage, startedAt }: { stage: string; startedAt: number | null }) {
   return (
     <div className="flex min-h-[184px] flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-8">
       <LoadingMark size={30} label="Building the investment verdict" />
       <div className="flex flex-col items-center gap-1 text-center">
         <p className="text-sm font-medium text-foreground">Building the investment verdict</p>
         <p className="text-caption text-muted">
-          Reasoning over fundamentals, filings, and news — typically 15–40 s depending on the model.
+          Reasoning over the fundamentals, score, analyst views, momentum, and recent news — typically
+          5–10 s depending on the model.
         </p>
       </div>
-      <StreamStatus stage={stage} elapsedMs={elapsedMs} />
+      <StreamStatus stage={stage} startedAt={startedAt} />
     </div>
   );
 }
@@ -96,9 +104,14 @@ function PendingLines({ widths }: { widths: number[] }) {
  * sections at model-dependent speed, so there is no honest completion fraction —
  * only the elapsed time and which sections have landed. `<TaskProgress>` renders
  * an indeterminate sweep for exactly this case rather than inventing a target.
+ *
+ * `startedAt` (not a pre-computed `elapsedMs`) so TaskProgress ticks its own
+ * clock every second: an event-driven elapsed figure only updates when stream
+ * frames arrive, which froze the counter at 0:00 through the whole silent
+ * phase before the first frame.
  */
-function StreamStatus({ stage, elapsedMs }: { stage: string; elapsedMs: number }) {
-  return <TaskProgress className="mt-4" label={stage} elapsedMs={elapsedMs} />;
+function StreamStatus({ stage, startedAt }: { stage: string; startedAt: number | null }) {
+  return <TaskProgress className="mt-4" label={stage} startedAt={startedAt} />;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -123,8 +136,9 @@ interface Props {
   received?: ReadonlySet<string>;
   /** True while more fields are still arriving. */
   streaming?: boolean;
-  /** Wall-clock ms of the current generation, for the progress line. */
-  elapsedMs?: number;
+  /** Epoch ms the current wait began (gate included). Drives a self-ticking
+   *  elapsed clock; null when nothing is pending. */
+  startedAt?: number | null;
   /** Generation failed. Shown inline so a partial report keeps its content. */
   error?: string | null;
   onRetry?: () => void;
@@ -137,7 +151,7 @@ export function DecisionHero({
   dataConfidence,
   received,
   streaming = false,
-  elapsedMs = 0,
+  startedAt = null,
   error = null,
   onRetry,
 }: Props) {
@@ -162,8 +176,8 @@ export function DecisionHero({
   if (loading || (!verdict && streaming)) {
     return (
       <Skeleton
-        stage="Reading the filings and building the investment verdict…"
-        elapsedMs={elapsedMs}
+        stage="Analyzing the data and writing the investment verdict…"
+        startedAt={startedAt}
       />
     );
   }
@@ -322,7 +336,7 @@ export function DecisionHero({
       {/* Progress stays visible while later sections are still generating, so
           the user knows the report is incomplete rather than assuming it ended. */}
       {streaming && (
-        <StreamStatus stage="Still writing the rest of the report…" elapsedMs={elapsedMs} />
+        <StreamStatus stage="Still writing the rest of the report…" startedAt={startedAt} />
       )}
       {error && !streaming && (
         <p className="mt-4 flex flex-wrap items-center gap-2 text-caption text-warning">

@@ -1,5 +1,5 @@
 import type { InsiderActivity, InsiderTxType } from "@/lib/types";
-import { formatCompact, formatDate } from "@/lib/format";
+import { formatCompact, formatCompactCurrency, formatDate } from "@/lib/format";
 
 const TYPE_STYLE: Record<InsiderTxType, string> = {
   buy: "text-positive",
@@ -7,7 +7,7 @@ const TYPE_STYLE: Record<InsiderTxType, string> = {
   other: "text-muted",
 };
 
-export function InsiderTable({ insider }: { insider: InsiderActivity }) {
+export function InsiderTable({ insider, currency }: { insider: InsiderActivity; currency?: string | null }) {
   const net = insider.netValue;
   return (
     // Card container matches OwnershipCard's, so the two sections' left edges
@@ -23,7 +23,7 @@ export function InsiderTable({ insider }: { insider: InsiderActivity }) {
         <span className="text-xs text-muted">
           {insider.buyCount} buys · {insider.sellCount} sells · net{" "}
           <span className={net >= 0 ? "text-positive" : "text-negative"}>
-            {net >= 0 ? "+" : "−"}${formatCompact(Math.abs(net))}
+            {net >= 0 ? "+" : "−"}{formatCompactCurrency(Math.abs(net), currency)}
           </span>
         </span>
       </div>
@@ -51,7 +51,7 @@ export function InsiderTable({ insider }: { insider: InsiderActivity }) {
                     {t.shares != null ? formatCompact(t.shares) : "—"}
                   </td>
                   <td className="px-4 py-2.5 text-right font-mono">
-                    {t.value ? `$${formatCompact(t.value)}` : "—"}
+                    {t.value ? formatCompactCurrency(t.value, currency) : "—"}
                   </td>
                   <td className="px-4 py-2.5 text-right text-muted">{formatDate(t.date)}</td>
                 </tr>

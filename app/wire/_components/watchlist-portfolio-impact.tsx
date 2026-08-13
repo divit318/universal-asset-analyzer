@@ -9,6 +9,10 @@ const DIR_STYLE = {
   neutral: { badge: "text-muted bg-muted/10 border-muted/20", arrow: "→" },
 };
 
+function symbolKey(s: string): string {
+  return s.replace(/\.(NS|BO)$/, "").toUpperCase();
+}
+
 function ImpactRow({ opportunity }: { opportunity: ScannerOpportunity }) {
   const dir = DIR_STYLE[opportunity.direction];
   return (
@@ -21,15 +25,65 @@ function ImpactRow({ opportunity }: { opportunity: ScannerOpportunity }) {
           {opportunity.ticker}
         </Link>
         <span
-          className={`rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase shrink-0 ${dir.badge}`}
+          className={`rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase shrink-0 ${dir.badge}`}
+          aria-label={opportunity.direction}
         >
           {dir.arrow}
         </span>
-        <span className="text-[11px] text-muted truncate">{opportunity.rationale}</span>
+        <span className="text-caption text-muted truncate">{opportunity.rationale}</span>
       </div>
-      <span className="shrink-0 font-mono text-[10px] font-bold text-foreground">
+      <span
+        className="shrink-0 font-mono text-[10px] font-bold text-foreground"
+        title="Composite opportunity score (0–100)"
+      >
         {opportunity.opportunityScore.composite}
       </span>
+    </div>
+  );
+}
+
+/**
+ * One panel, two callers (Watchlist / Portfolio). "No overlap" renders as a
+ * statement rather than unmounting: "this scan doesn't touch what you own"
+ * answers the reader's question; a silently missing panel doesn't.
+ */
+function ImpactPanel({
+  title,
+  linkHref,
+  linkLabel,
+  emptyText,
+  opportunities,
+  symbols,
+}: {
+  title: string;
+  linkHref: string;
+  linkLabel: string;
+  emptyText: string;
+  opportunities: ScannerOpportunity[];
+  symbols: string[];
+}) {
+  if (symbols.length === 0) return null;
+
+  const tracked = new Set(symbols.map(symbolKey));
+  const affected = opportunities.filter((o) => tracked.has(symbolKey(o.ticker)));
+
+  return (
+    <div className="rounded-xl border border-border bg-surface p-4 flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <Link href={linkHref} className="text-xs text-accent hover:underline">
+          {linkLabel} →
+        </Link>
+      </div>
+      {affected.length > 0 ? (
+        <div className="flex flex-col gap-0.5">
+          {affected.slice(0, 5).map((o) => (
+            <ImpactRow key={o.id} opportunity={o} />
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted/60">{emptyText}</p>
+      )}
     </div>
   );
 }
@@ -41,33 +95,15 @@ export function WatchlistImpact({
   opportunities: ScannerOpportunity[];
   watchlistSymbols: string[];
 }) {
-  if (watchlistSymbols.length === 0) return null;
-
-  const watchlistSet = new Set(watchlistSymbols.map((s) => s.replace(/\.(NS|BO)$/, "").toUpperCase()));
-  const affected = opportunities.filter((o) => {
-    const stripped = o.ticker.replace(/\.(NS|BO)$/, "").toUpperCase();
-    return watchlistSet.has(stripped);
-  });
-
-  if (affected.length === 0) return null;
-
   return (
-    <div className="rounded-xl border border-border bg-surface p-4 flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold">Watchlist Impact</h2>
-        <Link href="/watchlist" className="text-xs text-accent hover:underline">
-          View Watchlist →
-        </Link>
-      </div>
-      <div className="flex flex-col gap-0.5">
-        {affected.slice(0, 5).map((o) => (
-          <ImpactRow key={o.id} opportunity={o} />
-        ))}
-      </div>
-      {affected.length === 0 && (
-        <p className="text-xs text-muted/60">No signals affecting your watchlist today.</p>
-      )}
-    </div>
+    <ImpactPanel
+      title="Watchlist Impact"
+      linkHref="/watchlist"
+      linkLabel="View Watchlist"
+      emptyText="No signal from this scan touches a name you follow."
+      opportunities={opportunities}
+      symbols={watchlistSymbols}
+    />
   );
 }
 
@@ -78,32 +114,14 @@ export function PortfolioImpact({
   opportunities: ScannerOpportunity[];
   portfolioSymbols: string[];
 }) {
-  if (portfolioSymbols.length === 0) return null;
-
-  const portfolioSet = new Set(portfolioSymbols.map((s) => s.replace(/\.(NS|BO)$/, "").toUpperCase()));
-  const affected = opportunities.filter((o) => {
-    const stripped = o.ticker.replace(/\.(NS|BO)$/, "").toUpperCase();
-    return portfolioSet.has(stripped);
-  });
-
-  if (affected.length === 0) return null;
-
   return (
-    <div className="rounded-xl border border-border bg-surface p-4 flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold">Portfolio Impact</h2>
-        <Link href="/portfolio" className="text-xs text-accent hover:underline">
-          View Portfolio →
-        </Link>
-      </div>
-      <div className="flex flex-col gap-0.5">
-        {affected.slice(0, 5).map((o) => (
-          <ImpactRow key={o.id} opportunity={o} />
-        ))}
-      </div>
-      {affected.length === 0 && (
-        <p className="text-xs text-muted/60">No signals affecting your portfolio today.</p>
-      )}
-    </div>
+    <ImpactPanel
+      title="Portfolio Impact"
+      linkHref="/portfolio"
+      linkLabel="View Portfolio"
+      emptyText="No signal from this scan touches a position you hold."
+      opportunities={opportunities}
+      symbols={portfolioSymbols}
+    />
   );
 }

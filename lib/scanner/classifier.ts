@@ -12,6 +12,7 @@
 
 import { describeError, scannerPrompt, type ScanRunContext } from "./llm";
 import { extractJsonObject } from "../json-extract";
+import { ClassificationsWireSchema } from "../ai/schemas/scanner";
 import type { MarketEvent, SignalCategory } from "../types";
 
 import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
@@ -117,6 +118,8 @@ export async function classifyEvents(
   try {
     const raw = await scannerPrompt(run, "opportunity-engine", buildClassificationPrompt(events), {
       maxTokens: 3000,
+      wire: ClassificationsWireSchema,
+      stage: "classify",
     });
     parsed = extractJsonObject(raw, { classifications: [] as unknown[] });
   } catch (err) {

@@ -139,7 +139,13 @@ function symbolKey(symbol: string): string {
   return symbol.replace(/\.(NS|BO)$/, "").toUpperCase();
 }
 
-const CACHE_TTL = 15 * 60 * 1000; // 15 minutes — matches server cache
+// Sanity cutoff, NOT a freshness policy: a revisit re-renders the session's
+// last scan at any age below this instead of silently kicking off a fresh
+// 60s+ pipeline run — the scan is expensive, the command bar already shows
+// "Scanned Xm ago" with an explicit Refresh, and navigating Home and back is
+// not a request for new work. Only a scan old enough that its "as of" label
+// stops being meaningful (a tab left open overnight) auto-rescans.
+const CACHE_TTL = 24 * 60 * 60 * 1000;
 
 function saveCache(result: ScannerResult) {
   try {
@@ -394,7 +400,7 @@ export default function ScannerPage() {
       if ((err as Error).name === "AbortError") return;
       // Only set error if this scan hasn't been superseded by a newer one
       if (abortRef.current === abort) {
-        setError(err instanceof Error ? err.message : "Something went wrong");
+        setError(err instanceof Error ? err.message : "The scan failed before finishing — run it again.");
       }
     } finally {
       // Only reset loading/progress if this scan is still the active one
@@ -572,7 +578,7 @@ export default function ScannerPage() {
       />
 
       <Reveal index={0} as="p" className="text-sm text-muted">
-        A live tape across markets, sectors, and your portfolio — discovers investment opportunities from market events, not just headlines.
+        Headlines clustered into events, traced through cause and effect, checked against fundamentals — and scored against your portfolio and watchlist.
       </Reveal>
 
       {/* Floating scroll-spy nav — once a scan is underway or done, so it's
@@ -690,7 +696,6 @@ export default function ScannerPage() {
                         : "border-border text-muted hover:border-brand/30 hover:text-brand"
                     }`}
                   >
-                    <span>✦</span>
                     {fitRanking ? "Sorted by Portfolio Fit" : "Sort by Portfolio Fit"}
                   </button>
                 )}
@@ -701,11 +706,20 @@ export default function ScannerPage() {
               loading ? (
                 <SectionSkeleton />
               ) : (
-                <p className="rounded-xl border border-border bg-surface px-4 py-6 text-center text-sm text-muted">
-                  {dismissedCount > 0
-                    ? `All ${dismissedCount} opportunities from this scan are dismissed.`
-                    : "No company-level opportunities from this scan."}
-                </p>
+                <div className="flex flex-col items-center gap-1.5 rounded-xl border border-border bg-surface px-4 py-6 text-center text-sm text-muted">
+                  {dismissedCount > 0 ? (
+                    <p>All {dismissedCount} opportunities from this scan are dismissed.</p>
+                  ) : (
+                    <>
+                      <p>No company-level ideas cleared the bar in this scan.</p>
+                      <p className="max-w-lg text-xs text-muted/70">
+                        Ideas appear here only when an event ties to specific tickers AND the
+                        company passes the fundamentals gate — a broad tape often produces none.
+                        Focus the scan on a theme, sector, or event to go deeper on one area.
+                      </p>
+                    </>
+                  )}
+                </div>
               )
             ) : (
               <div className="flex flex-col gap-5">
@@ -969,7 +983,9 @@ export default function ScannerPage() {
           title="The Tape"
           badge={
             tapeView
-              ? `${tapeView.totalArticles} articles · ${tapeView.stories.length + tapeView.filtered.length} stories`
+              ? tapeView.clusteredArticles > 0
+                ? `${tapeView.stories.length + tapeView.filtered.length} stories from ${tapeView.totalArticles} articles`
+                : `${tapeView.stories.length + tapeView.filtered.length} stories`
               : undefined
           }
           collapsible

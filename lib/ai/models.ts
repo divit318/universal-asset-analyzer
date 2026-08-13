@@ -24,7 +24,10 @@ export type ModelCapability =
   | "long-context" // reliable well beyond ~16k tokens
   | "coding" // code generation / review
   | "fast" // low latency; prefer for short/simple tasks
-  | "structured-json"; // reliably follows "respond with JSON only"
+  | "structured-json" // reliably follows "respond with JSON only"
+  | "vision"; // accepts image input (multimodal). Note the PROVIDER must also
+              // declare supportsImages — the same model reached via the Devin
+              // CLI has no image channel (see provider.ts).
 
 /** How a model handles chain-of-thought. */
 export type ThinkingMode =
@@ -226,7 +229,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     thinking: "none",
     temperature: 0.4,
     timeoutMs: 300_000,
-    capabilities: ["reasoning", "long-context", "structured-json", "coding"],
+    capabilities: ["reasoning", "long-context", "structured-json", "coding", "vision"],
     quality: 10,
     tokensPerSecond: 12,
     sizeGb: 0,
@@ -245,7 +248,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     thinking: "none",
     temperature: 0.4,
     timeoutMs: 180_000,
-    capabilities: ["reasoning", "long-context", "structured-json", "coding"],
+    capabilities: ["reasoning", "long-context", "structured-json", "coding", "vision"],
     quality: 9,
     tokensPerSecond: 22,
     sizeGb: 0,
@@ -264,7 +267,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     thinking: "none",
     temperature: 0.3,
     timeoutMs: 90_000,
-    capabilities: ["fast", "reasoning", "long-context", "structured-json", "coding"],
+    capabilities: ["fast", "reasoning", "long-context", "structured-json", "coding", "vision"],
     quality: 8,
     tokensPerSecond: 35,
     sizeGb: 0,
@@ -272,6 +275,90 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     enabled: true,
     blurb: "Fastest tier. Parsing, one-line summaries, interactive Q&A.",
     pricing: OPUS_5_PRICING,
+  },
+
+  /* ---- Claude effort tiers on PRIORITY serving (Devin catalogue) ----------
+   * Same claude-opus-5 weights and effort levels as the entries above, on
+   * Devin's priority serving lane. Benchmarked 2026-08-11 on the production
+   * verdict prompt (identical prompt/schema/graders, 2 runs each):
+   *
+   *   opus-5-high       TTFT 5.8s   total 15.4s
+   *   opus-5-high-fast  TTFT 1.7-4.9s total 4.9-7.6s   ← same model, 2-3x faster
+   *   opus-5-medium     TTFT 3.0-5.5s total 11.6-14.6s
+   *   opus-5-medium-fast TTFT 2.0s  total 5.3-6.1s
+   *
+   * Quality metrics (structural completeness, grounding 0.95-1.0) and prose
+   * depth were indistinguishable from the non-fast tiers. Devin-only: the
+   * direct Anthropic API has no "-fast" ids, so these entries do NOT carry
+   * alsoServedBy — the pins list the plain tier behind them as the
+   * cross-provider fallback. */
+  {
+    id: "claude-opus-5-high-fast",
+    label: "Claude Opus 5 (high effort, priority serving)",
+    family: "claude",
+    provider: "devin",
+    contextWindow: 1_000_000,
+    thinking: "none",
+    temperature: 0.4,
+    timeoutMs: 180_000,
+    capabilities: ["reasoning", "long-context", "structured-json", "coding", "vision"],
+    quality: 10,
+    tokensPerSecond: 35,
+    sizeGb: 0,
+    priority: 0,
+    enabled: true,
+    blurb: "Deepest reasoning on the priority lane — the interactive verdict tier.",
+  },
+  {
+    id: "claude-opus-5-medium-fast",
+    label: "Claude Opus 5 (medium effort, priority serving)",
+    family: "claude",
+    provider: "devin",
+    contextWindow: 1_000_000,
+    thinking: "none",
+    temperature: 0.4,
+    timeoutMs: 120_000,
+    capabilities: ["reasoning", "long-context", "structured-json", "coding", "vision"],
+    quality: 9,
+    tokensPerSecond: 45,
+    sizeGb: 0,
+    priority: 1,
+    enabled: true,
+    blurb: "The standard-tier workhorse on the priority lane.",
+  },
+  {
+    id: "claude-opus-5-low-fast",
+    label: "Claude Opus 5 (low effort, priority serving)",
+    family: "claude",
+    provider: "devin",
+    contextWindow: 1_000_000,
+    thinking: "none",
+    temperature: 0.3,
+    timeoutMs: 90_000,
+    capabilities: ["fast", "reasoning", "long-context", "structured-json", "coding", "vision"],
+    quality: 8,
+    tokensPerSecond: 60,
+    sizeGb: 0,
+    priority: 2,
+    enabled: true,
+    blurb: "Fastest Opus tier: parsing, one-line summaries, interactive Q&A.",
+  },
+  {
+    id: "claude-sonnet-5-medium",
+    label: "Claude Sonnet 5 (medium effort, via Devin)",
+    family: "claude",
+    provider: "devin",
+    contextWindow: 200_000,
+    thinking: "none",
+    temperature: 0.4,
+    timeoutMs: 120_000,
+    capabilities: ["reasoning", "long-context", "structured-json", "vision"],
+    quality: 8,
+    tokensPerSecond: 30,
+    sizeGb: 0,
+    priority: 3,
+    enabled: true,
+    blurb: "Benchmarked 8.5-14.2s on the verdict prompt with grounding 0.98-1.0.",
   },
 
   /* ---- Devin CLI (Cognition-hosted, user's Devin login, no API key) -------
@@ -292,7 +379,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     thinking: "none",
     temperature: 0.4,
     timeoutMs: 180_000,
-    capabilities: ["reasoning", "long-context", "structured-json", "coding", "fast"],
+    capabilities: ["reasoning", "long-context", "structured-json", "coding", "fast", "vision"],
     quality: 9,
     tokensPerSecond: 20,
     sizeGb: 0,
@@ -309,7 +396,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     thinking: "none",
     temperature: 0.4,
     timeoutMs: 120_000,
-    capabilities: ["reasoning", "long-context", "structured-json"],
+    capabilities: ["reasoning", "long-context", "structured-json", "vision"],
     quality: 8,
     tokensPerSecond: 28,
     sizeGb: 0,
@@ -350,7 +437,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     thinking: "none",
     temperature: 0.4,
     timeoutMs: 180_000,
-    capabilities: ["reasoning", "long-context", "structured-json", "coding"],
+    capabilities: ["reasoning", "long-context", "structured-json", "coding", "vision"],
     quality: 9,
     tokensPerSecond: 25,
     sizeGb: 0,
@@ -367,7 +454,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     thinking: "none",
     temperature: 0.3,
     timeoutMs: 90_000,
-    capabilities: ["fast", "structured-json", "coding"],
+    capabilities: ["fast", "structured-json", "coding", "vision"],
     quality: 7,
     tokensPerSecond: 45,
     sizeGb: 0,
@@ -384,7 +471,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     thinking: "none",
     temperature: 0.4,
     timeoutMs: 180_000,
-    capabilities: ["reasoning", "long-context", "structured-json", "coding"],
+    capabilities: ["reasoning", "long-context", "structured-json", "coding", "vision"],
     quality: 9,
     tokensPerSecond: 25,
     sizeGb: 0,
@@ -401,7 +488,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     thinking: "none",
     temperature: 0.3,
     timeoutMs: 90_000,
-    capabilities: ["fast", "long-context", "structured-json"],
+    capabilities: ["fast", "long-context", "structured-json", "vision"],
     quality: 7,
     tokensPerSecond: 50,
     sizeGb: 0,
@@ -418,7 +505,7 @@ export const MODEL_REGISTRY: ModelSpec[] = [
     thinking: "none",
     temperature: 0.4,
     timeoutMs: 120_000,
-    capabilities: ["reasoning", "long-context", "structured-json"],
+    capabilities: ["reasoning", "long-context", "structured-json", "vision"],
     quality: 8,
     tokensPerSecond: 30,
     sizeGb: 0,

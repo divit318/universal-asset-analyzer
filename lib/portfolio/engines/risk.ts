@@ -92,6 +92,8 @@ export interface UniversalRisk {
   /* Return-based (market-priced holdings + proxies) */
   annualizedVolatility: number | null;
   beta: number | null;
+  /** What `beta` was regressed against ("S&P 500", "NIFTY 50") — market-aware. */
+  benchmarkLabel: string | null;
   sharpeRatio: number | null;
   sortinoRatio: number | null;
   maxDrawdown: number | null;
@@ -390,7 +392,7 @@ export function computeRisk(
     }
     annualizedVolatility = Math.round(Math.sqrt(totalVar) * 100 * 10) / 10;
 
-    const ratios = computeRiskAdjustedRatios(portReturns);
+    const ratios = computeRiskAdjustedRatios(portReturns, ctx.riskFreeAnnual ?? 0.0425);
     sharpeRatio = ratios.sharpe != null ? Math.round(ratios.sharpe * 100) / 100 : null;
     sortinoRatio = ratios.sortino != null ? Math.round(ratios.sortino * 100) / 100 : null;
     dd = Math.round(maxDrawdown(portReturns) * 10) / 10;
@@ -464,6 +466,7 @@ export function computeRisk(
   return {
     annualizedVolatility,
     beta,
+    benchmarkLabel: ctx.benchmarkLabel ?? null,
     sharpeRatio,
     sortinoRatio,
     maxDrawdown: dd,

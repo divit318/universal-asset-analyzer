@@ -232,7 +232,7 @@ function JournalPageInner() {
       <Reveal index={0}>
         <PageHeader
           title="Decision Journal"
-          description="Log every call with your conviction and thesis, then measure whether you were right. The loop that makes you a better investor."
+          description="Log every call with your conviction and thesis, then measure whether you were right — hit rate, average return per call, and calibration by conviction."
         />
       </Reveal>
 

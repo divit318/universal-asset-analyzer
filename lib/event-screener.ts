@@ -7,7 +7,9 @@
  * bubble up to the top.
  */
 
-import { runPrompt } from "./ai";
+import { runAnalysis } from "./ai/analysis";
+import { LooseObjectSchema } from "./ai/schemas/loose";
+import { EventScanWireSchema, SCANNER_SCHEMA_VERSION } from "./ai/schemas/scanner";
 import { getQuote } from "./yahoo";
 import { extractJsonObject } from "./json-extract";
 import type { NewsItem, EventSignal, ScanResult, Quote } from "./types";
@@ -173,7 +175,17 @@ export async function runEventScan(
   const prompt = buildScanPrompt(newsItems, userQuery);
   let parsed: RawScanResponse;
   try {
-    const raw = await runPrompt("opportunity-engine", prompt, { maxTokens: 2000, json: true });
+    // Through the analysis seam (tranche 8); parseAiResponse keeps its string
+    // contract, so the seam's object is re-serialized like scannerPrompt does.
+    const analysis = await runAnalysis({
+      taskType: "opportunity-engine",
+      subjectKey: "scanner:v1-scan",
+      prompt,
+      schema: LooseObjectSchema,
+      wireSchema: EventScanWireSchema,
+      schemaVersion: SCANNER_SCHEMA_VERSION,
+    });
+    const raw = JSON.stringify(analysis.data);
     parsed = parseAiResponse(raw);
   } catch {
     // Return empty scan with error note rather than throwing.

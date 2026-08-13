@@ -11,8 +11,10 @@
  */
 
 import { runPromptWithMeta } from "./ai";
-import type { Quote } from "./types";
+import type { NewsItem, Quote } from "./types";
 import type { ScreenerInCompany } from "./screener-in";
+import { extractOwnership, ownershipTrends } from "./india-ownership";
+import type { IndiaDerivedFundamentals } from "./india-snapshot";
 import { formatPercent } from "./format";
 import { extractJson, extractJsonObject } from "./json-extract";
 
@@ -83,25 +85,127 @@ export interface ChatMessage {
 export interface IndianDeepAnalysisInput {
   company: ScreenerInCompany;
   quote: Quote | null;
-  derived: {
+  derived: IndiaDerivedFundamentals & {
     promoterHolding: number | null;
     fiiHolding: number | null;
     diiHolding: number | null;
-    evToEbitda: number | null;
-    priceToSales: number | null;
-    priceToBook: number | null;
-    debtToEquity: number | null;
-    interestCoverage: number | null;
     peers: import("@/lib/screener-in").ScreenerInPeer[];
   };
+  /** Recent NSE filings + media (cached upstream) — lets the model answer
+   *  "what happened recently" from evidence instead of declining or guessing. */
+  developments?: NewsItem[];
+}
+
+const fmtCr = (v: number | null | undefined) =>
+  v == null ? "n/a" : `₹${Math.round(v).toLocaleString("en-IN")} Cr`;
+
+const fmtPct1 = (v: number | null | undefined) => (v == null ? "n/a" : `${v.toFixed(1)}%`);
+
+/**
+ * The one grounding block for Indian AI prompts — identity, basis, statements,
+ * latest quarter (Indian fiscal label), cash flow, shareholding. Deep analysis
+ * and chat share it so the model never sees two different pictures of the
+ * same company.
+ */
+function indiaFactBlock(input: IndianDeepAnalysisInput): string {
+  const { company: c, quote, derived: d } = input;
+  const financial = d.statementKind === "financial";
+  const priceStr = quote
+    ? `₹${quote.price.toFixed(2)} (${formatPercent(quote.changePercent)} today)`
+    : `₹${c.currentPrice ?? "n/a"}`;
+
+  const fys = c.annualPL.filter((r) => /^[A-Za-z]{3}\s+\d{4}$/.test(r.period)).slice(-4);
+  const ttm = c.annualPL.find((r) => r.period.toUpperCase() === "TTM");
+  const annualLines = [...fys, ...(ttm ? [ttm] : [])]
+    .map((r) => `  ${r.period}: revenue ${fmtCr(r.sales)}, net profit ${fmtCr(r.netProfit)}${r.eps != null ? `, EPS ₹${r.eps}` : ""}`)
+    .join("\n");
+
+  const q = d.latestQuarter;
+  const latestQLine = q
+    ? `${q.fiscalLabel} (${q.period}): revenue ${fmtCr(q.sales)}${q.salesYoYPercent != null ? ` (${q.salesYoYPercent >= 0 ? "+" : ""}${q.salesYoYPercent.toFixed(1)}% YoY)` : ""}, net profit ${fmtCr(q.netProfit)}${q.netProfitYoYPercent != null ? ` (${q.netProfitYoYPercent >= 0 ? "+" : ""}${q.netProfitYoYPercent.toFixed(1)}% YoY)` : ""}${q.eps != null ? `, EPS ₹${q.eps}` : ""}`
+    : "not available";
+
+  const bankBlock = financial
+    ? `\nASSET QUALITY (latest quarter):
+  Gross NPA: ${fmtPct1(d.grossNpaPercent)} | Net NPA: ${fmtPct1(d.netNpaPercent)}
+  Deposits: ${fmtCr(d.deposits)}
+  Note: this is a bank/NBFC — debt/equity and interest coverage are not meaningful for lenders.`
+    : `\nLEVERAGE:
+  Debt/Equity: ${d.debtToEquity ?? "n/a"} | Interest coverage: ${d.interestCoverage != null ? `${d.interestCoverage}x` : "n/a"}`;
+
+  return `COMPANY: ${c.name} (${c.symbol}) — ${d.basis === "standalone" ? "STANDALONE" : "CONSOLIDATED"} figures, ₹ Cr
+Price: ${priceStr} | Market cap: ${fmtCr(c.marketCap)} | 52W range: ₹${c.low52w ?? "n/a"} – ₹${c.high52w ?? "n/a"}
+
+VALUATION:
+  P/E: ${c.pe ?? "n/a"} | P/B: ${d.priceToBook ?? "n/a"} | P/S: ${d.priceToSales ?? "n/a"} | Dividend yield: ${fmtPct1(c.dividendYield)}
+
+PROFITABILITY:
+  ROCE: ${fmtPct1(c.roce)} | ROE: ${fmtPct1(c.roe)} | Book value/share: ₹${c.bookValue ?? "n/a"}
+
+BALANCE SHEET (latest FY):
+  Total equity: ${fmtCr(d.totalEquity)} | Borrowings: ${fmtCr(d.totalDebt)}${bankBlock}
+
+CASH FLOW (${d.latestAnnualPeriod ?? "latest FY"}):
+  Operating cash flow: ${fmtCr(d.operatingCashFlow)} | Free cash flow: ${fmtCr(d.freeCashFlow)}
+
+GROWTH:
+  Sales YoY: ${fmtPct1(d.salesGrowthYoYPercent)} | Sales 3Y CAGR: ${fmtPct1(d.salesCagr3yPercent)} | Profit YoY: ${fmtPct1(d.profitGrowthYoYPercent)}
+
+ANNUAL TREND:
+${annualLines || "  not available"}
+
+LATEST QUARTER: ${latestQLine}
+
+${shareholdingBlock(input)}${developmentsBlock(input.developments)}`;
+}
+
+/**
+ * Shareholding with its disclosure quarter, QoQ deltas (percentage POINTS)
+ * and multi-quarter trends — computed by the same lib/india-ownership-trends
+ * math every UI surface uses, so the model can answer "how are promoter and
+ * FII holdings trending?" from real disclosures instead of one snapshot.
+ */
+function shareholdingBlock(input: IndianDeepAnalysisInput): string {
+  const d = input.derived;
+  const own = extractOwnership(input.company);
+  const t = ownershipTrends(own);
+
+  const delta = (curr: number | null, prev: number | null) =>
+    curr != null && prev != null ? ` (${curr - prev >= 0 ? "+" : ""}${(curr - prev).toFixed(2)}pp QoQ)` : "";
+
+  const streakLine = (label: string, streak: number | null, change4Q: number | null) => {
+    if (streak == null && change4Q == null) return null;
+    const parts: string[] = [];
+    if (streak != null && streak !== 0) parts.push(`${streak > 0 ? "rose" : "fell"} ${Math.abs(streak)} consecutive disclosed quarter${Math.abs(streak) > 1 ? "s" : ""}`);
+    if (streak === 0) parts.push("flat last quarter");
+    if (change4Q != null) parts.push(`${change4Q >= 0 ? "+" : ""}${change4Q.toFixed(1)}pp over the last 4 disclosed quarters`);
+    return `  ${label} trend: ${parts.join("; ")}`;
+  };
+
+  const trendLines = [
+    streakLine("Promoter", t.promoterStreak, t.promoterChange4Q),
+    streakLine("FII", t.fiiStreak, t.fiiChange4Q),
+    streakLine("DII", t.diiStreak, t.diiChange4Q),
+  ].filter(Boolean).join("\n");
+
+  return `SHAREHOLDING (SEBI pattern, as of ${own.period ?? "latest disclosed quarter"}${own.prevPeriod ? `; QoQ vs ${own.prevPeriod}` : ""}):
+  Promoter: ${fmtPct1(d.promoterHolding)}${delta(own.promoterHolding, own.promoterPrev)} | FII: ${fmtPct1(d.fiiHolding)}${delta(own.fiiHolding, own.fiiPrev)} | DII: ${fmtPct1(d.diiHolding)}${delta(own.diiHolding, own.diiPrev)}${trendLines ? `\n${trendLines}` : ""}`;
+}
+
+/** Recent NSE filings + media, dated and categorized — evidence, not vibes. */
+function developmentsBlock(developments: NewsItem[] | undefined): string {
+  if (!developments || developments.length === 0) return "";
+  const lines = developments
+    .slice(0, 6)
+    .map((n) => `  ${n.publishedAt.slice(0, 10)} [${n.source}] ${n.headline.slice(0, 140)}`)
+    .join("\n");
+  return `\n\nRECENT DEVELOPMENTS (exchange filings + media, newest first):\n${lines}`;
 }
 
 export async function indianDeepAnalysis(
   input: IndianDeepAnalysisInput,
 ): Promise<DeepAnalysisResult> {
-  const { company, quote, derived } = input;
-
-  const priceStr = quote ? `₹${quote.price.toFixed(2)} (${formatPercent(quote.changePercent)} today)` : `₹${company.currentPrice ?? "n/a"}`;
+  const { derived } = input;
 
   const peerLines = derived.peers
     .slice(0, 5)
@@ -111,34 +215,9 @@ export async function indianDeepAnalysis(
     )
     .join("\n");
 
-  const prompt = `You are a senior equity research analyst specialising in Indian listed companies (NSE/BSE). Using ONLY the structured data below, write a comprehensive research note.
+  const prompt = `You are a senior equity research analyst specialising in Indian listed companies (NSE/BSE). Using ONLY the structured data below, write a comprehensive research note. Quarters follow the Indian fiscal year (April–March); "Q1 FY27" is the quarter ended June 2026.
 
-COMPANY: ${company.name} (${company.symbol})
-Price: ${priceStr}
-Market cap: ₹${company.marketCap ?? "n/a"} Cr
-52W range: ₹${company.low52w ?? "n/a"} – ₹${company.high52w ?? "n/a"}
-
-VALUATION:
-  P/E: ${company.pe ?? "n/a"}
-  P/B: ${derived.priceToBook ?? "n/a"}
-  EV/EBITDA: ${derived.evToEbitda ?? "n/a"}
-  P/S: ${derived.priceToSales ?? "n/a"}
-  Dividend yield: ${company.dividendYield ?? "n/a"}%
-
-PROFITABILITY:
-  ROCE: ${company.roce ?? "n/a"}%
-  ROE: ${company.roe ?? "n/a"}%
-  Book value/share: ₹${company.bookValue ?? "n/a"}
-
-BALANCE SHEET:
-  Debt: ₹${company.debt ?? "n/a"} Cr
-  Debt/Equity: ${derived.debtToEquity ?? "n/a"}
-  Interest coverage: ${derived.interestCoverage ?? "n/a"}
-
-SHAREHOLDING (latest quarter):
-  Promoter: ${derived.promoterHolding ?? "n/a"}%
-  FII: ${derived.fiiHolding ?? "n/a"}%
-  DII: ${derived.diiHolding ?? "n/a"}%
+${indiaFactBlock(input)}
 
 PEERS (from screener.in):
 ${peerLines || "  not available"}
@@ -246,23 +325,19 @@ export interface IndianChatInput {
   derived: IndianDeepAnalysisInput["derived"];
   history: ChatMessage[];
   question: string;
+  /** Recent NSE filings + media (cached upstream). */
+  developments?: NewsItem[];
 }
 
 export async function indianChatWithData(
   input: IndianChatInput,
 ): Promise<{ answer: string; model: string }> {
-  const { company, derived, quote, history, question } = input;
+  const { company, derived, quote, history, question, developments } = input;
 
-  const system = `You are an expert analyst specialising in Indian listed stocks (NSE/BSE). Using ONLY the structured data below, answer the user's question. Be precise, cite specific numbers. If data is missing, say so.
+  const system = `You are an expert analyst specialising in Indian listed stocks (NSE/BSE). Using ONLY the structured data below, answer the user's question. Be precise, cite specific numbers. If data is missing, say so. Quarters follow the Indian fiscal year (April–March). Ownership trends are descriptive disclosures — never present them as the cause of results or price moves.
 
 DATA:
-Company: ${company.name} (${company.symbol})
-P/E: ${company.pe ?? "n/a"}, ROCE: ${company.roce ?? "n/a"}%, ROE: ${company.roe ?? "n/a"}%
-EV/EBITDA: ${derived.evToEbitda ?? "n/a"}, Debt/Equity: ${derived.debtToEquity ?? "n/a"}
-Promoter holding: ${derived.promoterHolding ?? "n/a"}%, FII: ${derived.fiiHolding ?? "n/a"}%, DII: ${derived.diiHolding ?? "n/a"}%
-Price: ${quote ? `₹${quote.price.toFixed(2)}` : `₹${company.currentPrice ?? "n/a"}`}
-Market cap: ₹${company.marketCap ?? "n/a"} Cr
-52W range: ₹${company.low52w ?? "n/a"} – ₹${company.high52w ?? "n/a"}`;
+${indiaFactBlock({ company, quote, derived, developments })}`;
 
   const conversationHistory = history.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n");
   const fullPrompt = conversationHistory

@@ -49,6 +49,7 @@ export const commodityAdapter: PortfolioClassAdapter = {
       sector: "Commodities",
       complex: bucket,
       geography: "Global",
+      geographyBasis: "Commodities price on a global market — no home geography",
       currency: raw.currency,
       riskModel: riskModelFor(raw, ctx).label,
     };

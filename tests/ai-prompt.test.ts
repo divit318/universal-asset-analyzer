@@ -48,6 +48,33 @@ describe("compressHistory", () => {
     // Current user turn is not included by compressHistory.
     expect(turns.some((t) => t.content === "current")).toBe(false);
   });
+
+  it("keeps the final assistant answer when history ends with one (session-loaded history)", () => {
+    // Session-persisted history ends with the PREVIOUS ANSWER; dropping it
+    // unconditionally left its question unanswered, and the model re-answered
+    // it ahead of the real one (the duplicated-answer audit bug).
+    const msgs: ChatMessage[] = [
+      { role: "user", content: "q1" },
+      { role: "assistant", content: "a1" },
+    ];
+    const turns = compressHistory(msgs, 6);
+    expect(turns.map((t) => t.content)).toEqual(["q1", "a1"]);
+  });
+
+  it("clips older assistant answers but keeps the latest verbatim", () => {
+    const long = "x".repeat(3000);
+    const msgs: ChatMessage[] = [
+      { role: "user", content: "q1" },
+      { role: "assistant", content: long },
+      { role: "user", content: "q2" },
+      { role: "assistant", content: long },
+      { role: "user", content: "current" },
+    ];
+    const turns = compressHistory(msgs, 6);
+    expect(turns[1].content.length).toBeLessThan(800);
+    expect(turns[1].content).toMatch(/omitted/);
+    expect(turns[3].content).toBe(long); // latest answer stays whole
+  });
 });
 
 describe("buildMessages", () => {

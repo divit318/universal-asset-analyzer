@@ -12,7 +12,7 @@
  *     5. /api/sector-rotation waits on /api/fundamentals for the sector
  *
  *   AFTER (1 stage; only genuine dependencies are ordered):
- *     quote, history, spyHistory, profile, filings, news, fundamentals
+ *     quote, history, benchmarkHistory, profile, filings, news, fundamentals
  *       → all start at t=0, concurrently
  *     sectorHistory  → waits on profile (it needs profile.sector to pick the ETF)
  *     peers          → waits on fundamentals (needs the sector)
@@ -24,7 +24,9 @@
  */
 
 import { getHistory, getQuote, getQuoteSummary, getSectorEtf } from "./yahoo";
+import { benchmarkForSymbol, indiaSectorIndex } from "./benchmarks";
 import { getRecentFilings } from "./edgar";
+import { getIndianFilings, isIndianEquitySymbol } from "./india-news";
 import { getCompanyNews } from "./news";
 import { getPeerComparison } from "./peers";
 import { buildFundamentalsData } from "./fundamentals-data";
@@ -46,7 +48,11 @@ export interface ResearchBundle {
   quote: Quote;
   history: HistoryPoint[];
   benchmarks: {
-    spy: HistoryPoint[];
+    /** Market benchmark history — SPY for US listings, NIFTY 50 for NSE/BSE. */
+    market: HistoryPoint[];
+    /** Display label for the market benchmark series ("S&P 500", "NIFTY 50"). */
+    marketLabel: string;
+    /** Sector benchmark series label (US: ETF ticker; India: NIFTY sector index). */
     sectorEtf: string | null;
     sector: HistoryPoint[];
   };
@@ -79,15 +85,31 @@ export function researchPlan(symbol: string, opts: { isEquity: boolean }): PlanS
     // starts at the same instant.
     { id: "quote", required: true, retries: 1, run: () => getQuote(symbol) },
 
-    { id: "history", run: () => getHistory(symbol, HISTORY_DAYS) },
-    { id: "spyHistory", run: () => getHistory("SPY", HISTORY_DAYS) },
+    {
+      id: "history",
+      run: async () => {
+        const h = await getHistory(symbol, HISTORY_DAYS);
+        // Yahoo's chart API returns near-empty history for many .BO (BSE)
+        // listings — observed live: RELIANCE.BO = 2 bars vs 1,238 for .NS.
+        // Virtually every researched BSE name is dual-listed; the NSE series
+        // is the same security, so fall back rather than render a dead chart.
+        if (/\.BO$/i.test(symbol) && h.length < 30) {
+          const ns = await getHistory(symbol.replace(/\.BO$/i, ".NS"), HISTORY_DAYS).catch(() => [] as HistoryPoint[]);
+          if (ns.length > h.length) return ns;
+        }
+        return h;
+      },
+    },
+    // Market benchmark is market-aware: NIFTY 50 for NSE/BSE listings, SPY for
+    // US — an Indian stock must never be silently compared to the S&P 500.
+    { id: "benchmarkHistory", run: () => getHistory(benchmarkForSymbol(symbol).symbol, HISTORY_DAYS) },
     {
       id: "profile",
       run: () => getQuoteSummary(symbol, ["assetProfile"]),
     },
 
-    // A REAL dependency: we cannot know which sector ETF to benchmark against
-    // until the profile tells us the sector. This is the kind of ordering that
+    // A REAL dependency: we cannot know which sector benchmark to use until
+    // the profile tells us the sector. This is the kind of ordering that
     // must be preserved — parallelising it wouldn't be faster, it'd be wrong.
     {
       id: "sectorHistory",
@@ -95,13 +117,24 @@ export function researchPlan(symbol: string, opts: { isEquity: boolean }): PlanS
       timeoutMs: 8000,
       run: async (deps) => {
         const sector = readSector(deps.profile);
+        if (isIndianEquitySymbol(symbol)) {
+          const idx = indiaSectorIndex(sector);
+          if (!idx) return { etf: null, history: [] as HistoryPoint[] };
+          return { etf: idx.label, history: await getHistory(idx.symbol, HISTORY_DAYS) };
+        }
         const etf = getSectorEtf(sector);
         if (!etf) return { etf: null, history: [] as HistoryPoint[] };
         return { etf, history: await getHistory(etf, HISTORY_DAYS) };
       },
     },
 
-    { id: "filings", retries: 1, run: () => getRecentFilings(symbol) },
+    // Indian listings file with the NSE, not the SEC — same Filing shape,
+    // different exchange (lib/india-news.ts).
+    {
+      id: "filings",
+      retries: 1,
+      run: () => (isIndianEquitySymbol(symbol) ? getIndianFilings(symbol) : getRecentFilings(symbol)),
+    },
     { id: "news", run: () => getCompanyNews(symbol, 8) },
   ];
 
@@ -110,11 +143,14 @@ export function researchPlan(symbol: string, opts: { isEquity: boolean }): PlanS
       { id: "fundamentals", timeoutMs: 25_000, run: () => buildFundamentalsData(symbol) },
 
       // Both of these genuinely need the sector, which only fundamentals knows.
+      // Indian listings skip the US peer engine: getPeerComparison benchmarks
+      // against S&P 500 sector medians, which is a meaningless comparison for
+      // an NSE name — its peer set comes from screener.in (RankedPeers).
       {
         id: "peers",
         dependsOn: ["fundamentals"],
         timeoutMs: 25_000,
-        run: () => getPeerComparison(symbol),
+        run: () => (isIndianEquitySymbol(symbol) ? Promise.resolve(null) : getPeerComparison(symbol)),
       },
       {
         id: "sectorRotation",
@@ -174,7 +210,8 @@ export async function buildResearchBundle(
     quote: stepValue<Quote>(plan, "quote") as Quote,
     history: stepValue<HistoryPoint[]>(plan, "history") ?? [],
     benchmarks: {
-      spy: stepValue<HistoryPoint[]>(plan, "spyHistory") ?? [],
+      market: stepValue<HistoryPoint[]>(plan, "benchmarkHistory") ?? [],
+      marketLabel: benchmarkForSymbol(symbol).label,
       sectorEtf: sectorStep?.etf ?? null,
       sector: sectorStep?.history ?? [],
     },

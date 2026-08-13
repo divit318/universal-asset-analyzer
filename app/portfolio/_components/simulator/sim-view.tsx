@@ -273,7 +273,7 @@ export function SimView({
 
       {section === "overview" && (
         <div className="flex flex-col gap-4">
-          <AllocationPanel allocation={evaluation.allocation} />
+          <AllocationPanel allocation={evaluation.allocation} holdings={evaluation.holdings} />
           {/* Factor exposure moved out of AllocationPanel so the real dashboard can
               place attribution between the two; rendered here to keep this overview
               showing exactly what it did before that split. */}

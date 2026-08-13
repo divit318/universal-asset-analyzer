@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyInvestmentPersonality, computeScore } from "@/lib/scoring";
+import { classifyInvestmentPersonality, computeScore, deriveInvestmentCharacteristics } from "@/lib/scoring";
 import type { AnalystConsensus, FundamentalsSnapshot, MomentumSignal } from "@/lib/types";
 
 const snap = (o: Partial<FundamentalsSnapshot> = {}): FundamentalsSnapshot => ({
@@ -112,5 +112,72 @@ describe("classifyInvestmentPersonality", () => {
     const p = classifyInvestmentPersonality(score, s, null);
     expect(typeof p.tag).toBe("string");
     expect(p.explanation.length).toBeGreaterThan(0);
+  });
+});
+
+describe("deriveInvestmentCharacteristics", () => {
+  it("its first characteristic always matches the single-tag classification", () => {
+    const cases: FundamentalsSnapshot[] = [
+      snap({ revenueGrowth: 0.35, earningsGrowth: 0.4 }),
+      snap({ revenueGrowth: 0.02, pegRatio: 0.6, forwardPE: 8, trailingPE: 9 }),
+      snap({ dividendYield: 0.05, revenueGrowth: 0.01, earningsGrowth: 0.0, sector: "Utilities" }),
+      snap({ sector: "Energy", revenueGrowth: 0.05, pegRatio: 2 }),
+    ];
+    for (const s of cases) {
+      const score = computeScore(s, null, analyst());
+      const traits = deriveInvestmentCharacteristics(score, s, null);
+      if (traits.length > 0) {
+        expect(classifyInvestmentPersonality(score, s, null).tag).toBe(traits[0].tag);
+      }
+    }
+  });
+
+  it("assigns multiple genuine characteristics to a fast-growing quality company", () => {
+    const s = snap({ revenueGrowth: 0.35, earningsGrowth: 0.4 });
+    const score = computeScore(s, null, analyst());
+    const traits = deriveInvestmentCharacteristics(score, s, null);
+    expect(traits[0].tag).toBe("High Growth");
+    expect(traits.length).toBeGreaterThan(1);
+    expect(traits.length).toBeLessThanOrEqual(3);
+    const tags = traits.map((t) => t.tag);
+    expect(new Set(tags).size).toBe(tags.length); // no duplicates
+  });
+
+  it("tags a mature dividend payer in a defensive sector Income + Defensive", () => {
+    const s = snap({ dividendYield: 0.04, revenueGrowth: 0.02, earningsGrowth: 0.01, sector: "Consumer Defensive" });
+    const score = computeScore(s, null, analyst());
+    const tags = deriveInvestmentCharacteristics(score, s, null).map((t) => t.tag);
+    expect(tags).toContain("Income");
+    expect(tags).toContain("Defensive");
+  });
+
+  it("does not force labels onto an undifferentiated company", () => {
+    // Weak everything in a sector that is neither cyclical nor defensive:
+    // nothing clears a threshold, so nothing is claimed.
+    const s = snap({
+      revenueGrowth: 0.01,
+      earningsGrowth: -0.05,
+      dividendYield: 0.005,
+      sector: "Communication Services",
+      returnOnEquity: 0.04,
+      returnOnAssets: 0.02,
+      grossMargins: 0.2,
+      operatingMargins: 0.05,
+      profitMargins: 0.02,
+      ebitdaMargins: 0.08,
+      pegRatio: 3,
+      trailingPE: 40,
+      forwardPE: 38,
+      priceToBook: 12,
+    });
+    const score = computeScore(s, null, analyst({ upsidePercent: -5, recommendationKey: "hold" }));
+    expect(deriveInvestmentCharacteristics(score, s, null)).toEqual([]);
+  });
+
+  it("never claims Compounder and standalone High Quality together", () => {
+    const s = snap({ revenueGrowth: 0.15, earningsGrowth: 0.18 });
+    const score = computeScore(s, null, analyst());
+    const tags = deriveInvestmentCharacteristics(score, s, null).map((t) => t.tag);
+    if (tags.includes("Compounder")) expect(tags).not.toContain("High Quality");
   });
 });

@@ -3,13 +3,28 @@
  * identity tags shown at the top of the Portfolio page.
  *
  * Regenerates automatically whenever the portfolio actually CHANGES — not on
- * every page load and not on every intraday price tick. The cache key is a
- * content hash of (asset class, symbol, weight rounded to the nearest whole
- * percent) for every holding, so adding, removing or meaningfully resizing a
- * position invalidates it, while today's quote wiggling the weight by 0.2pp
- * does not burn a redundant AI call. Uses the same `scanner_cache` table
- * every other cached AI output in this app uses (lib/timeline.ts,
- * lib/movement-explainer.ts, lib/ai-financial-insight.ts) — no new cache.
+ * every page load and not on every intraday price tick.
+ *
+ * ## Caching (moved to the platform, Phase 3 2026-08-11)
+ *
+ * This used to cache in the shared `scanner_cache` table under a content hash
+ * of (asset class, symbol, weight-rounded). Two problems the comment above it
+ * never mentioned: that table's read TTL is **15 minutes** and its writes
+ * prune rows older than an hour — so the "only re-fires when the portfolio
+ * changes" story was fiction, and the 20s+ blocking generation actually
+ * re-ran on nearly every visit. And a weight drifting across a whole-percent
+ * boundary changed the KEY, so there was no stale entry to serve while
+ * regenerating — the user watched the banner spin.
+ *
+ * Now it is a platform dataset (`portfolioThesis`: 6h fresh / 24h SWR,
+ * persisted), keyed on the portfolio's COMPOSITION (asset class + symbol set,
+ * no weights). Weight-only drift serves the cached thesis (staleness bounded
+ * by the 6h TTL, refresh in background via SWR); every real mutation already
+ * calls `invalidateDataset("portfolioReport")` (lib/portfolio/store.ts,
+ * engines/transaction.ts), and `portfolioThesis` is one of its dependents, so
+ * a trade drops the thesis instantly and the next view regenerates. Same
+ * failure rule as the AI verdict: a fallback (AI-unavailable) result is never
+ * cached.
  *
  * Reuses the "portfolio-intelligence" task type verbatim: it is already
  * declared as "portfolio brief + new-position suggestions (JSON)", and a
@@ -23,7 +38,8 @@ import {
   PortfolioThesisWireSchema,
   PORTFOLIO_THESIS_SCHEMA_VERSION,
 } from "@/lib/ai/schemas/portfolio-thesis";
-import { getScannerCache, putScannerCache } from "@/lib/db";
+import { getDataset } from "@/lib/platform/data-layer";
+import { resolveAiMode } from "@/lib/ai/mode";
 import { formatCurrency } from "@/lib/format";
 import { PORTFOLIO_CLASS_LABEL } from "./model/types";
 import type { PortfolioEvaluation } from "./engines/simulate";
@@ -97,6 +113,22 @@ export function contentHash(evaluation: PortfolioEvaluation): string {
     .map((h) => `${h.assetClass}:${h.symbol ?? h.name}:${Math.round(h.weight)}`)
     .sort();
   return `portfolio-thesis:${hashOf(parts.join("|"))}`;
+}
+
+/**
+ * The cache identity of the portfolio's COMPOSITION — asset classes and
+ * symbols, deliberately no weights.
+ *
+ * Weights do not belong in the cache key: they drift with every price tick,
+ * and any weight change large enough to matter comes from a TRADE, which
+ * already invalidates this dataset through the `portfolioReport` dependency
+ * edge. Keying on composition means intraday drift serves the cached thesis
+ * (bounded by the dataset's 6h TTL + SWR refresh) instead of forcing the user
+ * to watch a 20s regeneration of prose whose conclusions did not change.
+ */
+export function compositionKey(evaluation: PortfolioEvaluation): string {
+  const parts = evaluation.holdings.map((h) => `${h.assetClass}:${h.symbol ?? h.name}`).sort();
+  return hashOf(parts.join("|"));
 }
 
 /** Grounded, honest summary used when the AI is unavailable or returns nothing usable. */
@@ -437,7 +469,7 @@ PORTFOLIO
 Total value: ${formatCurrency(totalValue)}
 Health: ${health.total}/100 (${health.grade})
 Annualized volatility: ${risk.annualizedVolatility != null ? risk.annualizedVolatility.toFixed(1) + "%" : "not measurable"}
-Beta vs S&P 500: ${risk.beta != null ? risk.beta.toFixed(2) : "not measurable"}
+Beta vs ${risk.benchmarkLabel ?? "market"}: ${risk.beta != null ? risk.beta.toFixed(2) : "not measurable"}
 Largest asset class: ${risk.topAssetClassWeight.toFixed(0)}% · largest single holding: ${risk.topHoldingWeight.toFixed(1)}%
 Illiquid share: ${risk.illiquidPct.toFixed(1)}% · foreign currency: ${risk.foreignCurrencyPct.toFixed(0)}%
 
@@ -516,6 +548,10 @@ export interface ThesisContext {
   lastChange?: ChangeOutcome | null;
 }
 
+/**
+ * Generate a thesis, unconditionally — no cache. Exported for tests; product
+ * code goes through {@link getPortfolioThesis}, which adds the platform cache.
+ */
 export async function buildPortfolioThesis(
   evaluation: PortfolioEvaluation,
   extra: ThesisContext = {},
@@ -531,24 +567,6 @@ export async function buildPortfolioThesis(
 
   if (evaluation.holdings.length === 0) {
     return { ...empty, thesis: "No holdings yet — add a position to generate a thesis.", source: "fallback" };
-  }
-
-  // The version prefix invalidates on any change to what a cached entry MEANS,
-  // not just to its shape. v2 was the move from a single paragraph to five fields
-  // — without it, old entries replayed as a thesis with no strengths, no risks
-  // and no bear case, indistinguishable from a model that had nothing to say. v3
-  // is the one-figure-one-direction rule: an entry generated before it can hold
-  // exactly the self-contradicting Working/Watch pair the rule exists to stop, and
-  // the cache key is content-hashed on holdings, so an unchanged portfolio would
-  // otherwise keep serving the contradiction indefinitely.
-  const cacheKey = `v3:${contentHash(evaluation)}`;
-  const cached = getScannerCache(cacheKey);
-  if (cached) {
-    try {
-      return JSON.parse(cached) as PortfolioThesis;
-    } catch {
-      // fall through and regenerate — a corrupted cache entry is not fatal
-    }
   }
 
   const fb = fallbackStrengthsAndRisks(evaluation);
@@ -619,8 +637,67 @@ export async function buildPortfolioThesis(
     result = fallback;
   }
 
-  // Only cache a real AI result — caching the fallback would keep serving
-  // "AI unavailable" for the TTL window even after the AI comes back up.
-  if (result.source === "ai") putScannerCache(cacheKey, JSON.stringify(result));
   return result;
+}
+
+/**
+ * A thesis was generated while the AI was unavailable. Thrown inside the
+ * dataset fetcher so the platform treats it as a failure and does NOT persist
+ * it — caching the "AI unavailable" card would pin the apology on screen for
+ * six hours after the user fixed the cause.
+ */
+class ThesisUnavailableError extends Error {
+  constructor(readonly fallback: PortfolioThesis) {
+    super("Portfolio thesis generation unavailable");
+    this.name = "ThesisUnavailableError";
+  }
+}
+
+/**
+ * The thesis, through the platform cache — what the route serves.
+ *
+ * Key = composition hash (see {@link compositionKey}) + the semantic version.
+ * The version invalidates on any change to what a cached entry MEANS, not just
+ * its shape: v2 was the five-field rewrite, v3 the one-figure-one-direction
+ * rule — an entry generated before that rule can hold exactly the
+ * self-contradicting Working/Watch pair the rule exists to stop.
+ *
+ * Freshness: 6h TTL, 24h SWR, persisted (registry `portfolioThesis`). A
+ * stale-but-servable thesis returns instantly while one shared background
+ * regeneration refreshes it; concurrent misses coalesce into one generation;
+ * portfolio mutations invalidate via the `portfolioReport` dependency edge.
+ */
+export async function getPortfolioThesis(
+  evaluation: PortfolioEvaluation,
+  extra: ThesisContext = {},
+): Promise<PortfolioThesis> {
+  if (evaluation.holdings.length === 0) return buildPortfolioThesis(evaluation, extra);
+
+  // The AI depth mode changes which model writes the thesis, so a non-default
+  // mode forks the cache identity; `balanced` stays unmarked so pre-mode
+  // entries remain valid (same rule as the research verdict's identity).
+  const mode = resolveAiMode();
+  try {
+    const { data } = await getDataset<PortfolioThesis>(
+      "portfolioThesis",
+      {
+        composition: compositionKey(evaluation),
+        v: `3.${PORTFOLIO_THESIS_SCHEMA_VERSION}`,
+        ...(mode !== "balanced" ? { aiMode: mode } : {}),
+      },
+      async () => {
+        const result = await buildPortfolioThesis(evaluation, extra);
+        if (result.source !== "ai") throw new ThesisUnavailableError(result);
+        return result;
+      },
+      // The generation itself can run for tens of seconds on a busy provider;
+      // the data layer's default 60s deadline is for market-data fetches.
+      { timeoutMs: 180_000 },
+    );
+    return data;
+  } catch (err) {
+    if (err instanceof ThesisUnavailableError) return err.fallback;
+    // Never surface a cache-layer failure as a missing banner.
+    return buildPortfolioThesis(evaluation, extra);
+  }
 }

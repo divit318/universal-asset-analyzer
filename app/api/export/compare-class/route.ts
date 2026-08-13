@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs";
 import { classSections, compositeScoreSection, getRawValue, type ClassSectionDef } from "@/app/compare/_components/class-sections";
-import { isAssetClassId, getAssetClass } from "@/lib/assets/registry";
+import { isAssetClassId, isMarketVariant, getAssetClass } from "@/lib/assets/registry";
 import type { AssetClassId } from "@/lib/assets/types";
 import type { ClassCompareEntry } from "@/lib/compare/types";
 
@@ -41,8 +41,10 @@ export async function POST(req: Request): Promise<Response> {
     return new Response("Invalid JSON", { status: 400 });
   }
 
-  if (!isAssetClassId(payload.assetClass) || payload.assetClass === "equity") {
-    return new Response("A non-equity assetClass is required", { status: 400 });
+  // Base classes only, mirroring /api/compare/class — equity has its own
+  // export route, and market variants (indiaEquity) export through it too.
+  if (!isAssetClassId(payload.assetClass) || payload.assetClass === "equity" || isMarketVariant(payload.assetClass)) {
+    return new Response("A non-equity base assetClass is required — market variants like indiaEquity compare through the equity path", { status: 400 });
   }
   const assetClass: AssetClassId = payload.assetClass;
   const entries = payload.entries.slice(0, 5);

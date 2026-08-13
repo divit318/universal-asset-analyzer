@@ -25,32 +25,17 @@ function formatDate(iso: string): string {
 export function TimelinePreviewCard({
   symbol,
   onLoaded,
-  initialEvents = null,
 }: {
   symbol: string;
   /** Lets WhyNowCard reuse the most recent milestone's headline without a second fetch. */
   onLoaded?: (mostRecent: TimelineEvent | null) => void;
-  /**
-   * Events already fetched by the page (the materiality lens pulls the
-   * timeline at page load for its "changed since your last visit" count).
-   * Non-null skips this card's own fetch entirely — same feed, zero
-   * duplicate /api/timeline calls. Null means "fetch as before".
-   */
-  initialEvents?: TimelineEvent[] | null;
 }) {
-  const [events, setEvents] = useState<TimelineEvent[]>(initialEvents ?? []);
-  const [loading, setLoading] = useState(initialEvents == null);
+  const [events, setEvents] = useState<TimelineEvent[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     /* eslint-disable react-hooks/set-state-in-effect */
-    if (initialEvents != null) {
-      setEvents(initialEvents);
-      setLoading(false);
-      const mostRecent = [...initialEvents].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0] ?? null;
-      onLoaded?.(mostRecent);
-      return;
-    }
     setLoading(true);
     /* eslint-enable react-hooks/set-state-in-effect */
     void fetch(`/api/timeline?scope=symbol&id=${encodeURIComponent(symbol)}`)
@@ -66,7 +51,7 @@ export function TimelinePreviewCard({
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, initialEvents]);
+  }, [symbol]);
 
   if (loading) return <LoadingPanel height="h-24" markSize={18} />;
   if (events.length === 0) return null;

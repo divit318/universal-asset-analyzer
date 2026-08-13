@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { personalizationParams } from "@/lib/ai/verdict-params";
+import { personalizationParams, stableVerdictIdentity } from "@/lib/ai/verdict-params";
 import { verdictCacheParams } from "@/lib/ai/verdict";
 import { cacheKey } from "@/lib/platform/registry";
 
@@ -68,14 +68,20 @@ describe("verdictCacheParams", () => {
     const generic = cacheKey("aiVerdict", verdictCacheParams("AAPL", "equity"));
     const personal = cacheKey(
       "aiVerdict",
-      verdictCacheParams("AAPL", "equity", { fitScore: "78", fitTier: "good" }),
+      verdictCacheParams("AAPL", "equity", stableVerdictIdentity({ fitScore: "78", fitTier: "good" })),
     );
     expect(generic).not.toBe(personal);
   });
 
-  it("gives two DIFFERENT portfolio contexts different keys", () => {
-    const a = cacheKey("aiVerdict", verdictCacheParams("AAPL", "equity", { fitScore: "78" }));
-    const b = cacheKey("aiVerdict", verdictCacheParams("AAPL", "equity", { fitScore: "42" }));
+  it("gives two MATERIALLY different portfolio contexts different keys", () => {
+    const a = cacheKey(
+      "aiVerdict",
+      verdictCacheParams("AAPL", "equity", stableVerdictIdentity({ fitTier: "good", action: "add" })),
+    );
+    const b = cacheKey(
+      "aiVerdict",
+      verdictCacheParams("AAPL", "equity", stableVerdictIdentity({ fitTier: "poor", action: "avoid" })),
+    );
     expect(a).not.toBe(b);
   });
 
@@ -90,11 +96,11 @@ describe("verdictCacheParams", () => {
   it("shares one key across repeat views of the same company and context", () => {
     const first = cacheKey(
       "aiVerdict",
-      verdictCacheParams("MSFT", "equity", personalizationParams(url("symbol=MSFT&fitScore=74&fitTier=good"))),
+      verdictCacheParams("MSFT", "equity", stableVerdictIdentity(personalizationParams(url("symbol=MSFT&fitScore=74&fitTier=good")))),
     );
     const second = cacheKey(
       "aiVerdict",
-      verdictCacheParams("msft", "equity", personalizationParams(url("symbol=msft&fitTier=good&fitScore=74"))),
+      verdictCacheParams("msft", "equity", stableVerdictIdentity(personalizationParams(url("symbol=msft&fitTier=good&fitScore=74")))),
     );
     expect(first).toBe(second);
   });
@@ -105,6 +111,63 @@ describe("verdictCacheParams", () => {
     const normal = cacheKey("aiVerdict", verdictCacheParams("AAPL", "equity", personalizationParams(url("symbol=AAPL"))));
     const refreshed = cacheKey("aiVerdict", verdictCacheParams("AAPL", "equity", personalizationParams(url("symbol=AAPL&refresh=1"))));
     expect(normal).toBe(refreshed);
+  });
+});
+
+describe("stableVerdictIdentity", () => {
+  it("keeps every dimension that materially changes the conclusion", () => {
+    expect(
+      stableVerdictIdentity({
+        fitTier: "good",
+        action: "add",
+        isInPortfolio: "true",
+        objective: "maximize_growth",
+        missingSectors: "Healthcare, Energy",
+        suggestedPct: "4.5",
+      }),
+    ).toEqual({
+      fitTier: "good",
+      action: "add",
+      isInPortfolio: "true",
+      objective: "maximize_growth",
+      missingSectors: "Energy,Healthcare",
+      suggestedPct: "5",
+    });
+  });
+
+  it("drops the volatile details that forked the cache on every market tick", () => {
+    // Phase 1 evidence: three AAPL entries at fitScore 59/60/61 — three full
+    // Opus generations of the same thesis. These fields stay in the PROMPT
+    // (a miss still generates with live numbers) but not in the KEY.
+    const identity = stableVerdictIdentity({
+      fitScore: "78",
+      reasons: "Fills your Healthcare gap; strong fundamentals",
+      actionReason: "Research 72/100 (Buy) with good portfolio fit (65/100).",
+      fitTier: "good",
+    });
+    expect(identity).toEqual({ fitTier: "good" });
+  });
+
+  it("gives the same key to fit scores in the same tier", () => {
+    const at59 = stableVerdictIdentity({ fitScore: "59", fitTier: "neutral", action: "starter" });
+    const at61 = stableVerdictIdentity({ fitScore: "61", fitTier: "neutral", action: "starter" });
+    expect(at59).toEqual(at61);
+  });
+
+  it("normalizes sector-gap ordering so it cannot fork the cache", () => {
+    const a = stableVerdictIdentity({ missingSectors: "Energy, Healthcare" });
+    const b = stableVerdictIdentity({ missingSectors: "Healthcare,Energy" });
+    expect(a).toEqual(b);
+  });
+
+  it("buckets the suggested allocation to a whole percent, preserving 0 vs non-zero", () => {
+    expect(stableVerdictIdentity({ suggestedPct: "4.5" }).suggestedPct).toBe("5");
+    expect(stableVerdictIdentity({ suggestedPct: "4.6" }).suggestedPct).toBe("5");
+    expect(stableVerdictIdentity({ suggestedPct: "0.0" }).suggestedPct).toBe("0");
+  });
+
+  it("returns {} for a generic request, sharing the unpersonalized key", () => {
+    expect(stableVerdictIdentity({})).toEqual({});
   });
 });
 

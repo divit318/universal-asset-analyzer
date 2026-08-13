@@ -28,6 +28,18 @@ export interface AllocationSlice {
   count: number;
   /** Confidence-weighted mean score of the slice's holdings; null if none are scored. */
   avgScore: number | null;
+  /**
+   * The holdings this slice aggregates, by Holding.id, ordered by value
+   * descending. This is what makes every allocation row a drill-down rather
+   * than a dead number — "Technology 39.9%" must be able to answer "which
+   * holdings?" without leaving the dashboard. IDs rather than embedded
+   * objects: the report already ships `holdings`, so the UI joins against the
+   * one copy instead of the payload carrying every holding five more times.
+   *
+   * Optional so hand-built test fixtures need not fabricate it; every view
+   * produced by `computeAllocation` populates it.
+   */
+  holdingIds?: string[];
 }
 
 export interface AllocationView {
@@ -45,6 +57,15 @@ export interface AllocationView {
    * is 60% unclassified is not a sector breakdown, and the UI must be able to say so.
    */
   unclassifiedPct: number;
+  /**
+   * WHICH holdings the unclassified share is made of, ordered by value
+   * descending. An unexplained "46.2% unclassified" row is the single most
+   * distrust-inducing thing an allocation view can show; with the IDs the UI
+   * can open it and show each holding with its per-holding reason
+   * (`attributes.geographyBasis` etc). Optional for fixtures, always populated
+   * by `computeAllocation`.
+   */
+  unclassifiedIds?: string[];
 }
 
 export interface PortfolioAllocation {
@@ -93,17 +114,21 @@ function groupBy(
 ): AllocationView {
   const groups = new Map<string, Holding[]>();
   let unclassified = 0;
+  const unclassifiedHoldings: Holding[] = [];
 
   for (const h of holdings) {
     const key = keyOf(h);
     if (key == null || key === "") {
       unclassified += h.valuation.valueBase;
+      unclassifiedHoldings.push(h);
       continue;
     }
     const list = groups.get(key) ?? [];
     list.push(h);
     groups.set(key, list);
   }
+
+  const byValueDesc = (a: Holding, b: Holding) => b.valuation.valueBase - a.valuation.valueBase;
 
   const slices: AllocationSlice[] = [...groups.entries()]
     .map(([key, hs]) => {
@@ -115,6 +140,7 @@ function groupBy(
         weight: totalValue > 0 ? (value / totalValue) * 100 : 0,
         count: hs.length,
         avgScore: confidenceWeightedScore(hs),
+        holdingIds: hs.slice().sort(byValueDesc).map((h) => h.id),
       };
     })
     .sort((a, b) => b.weight - a.weight);
@@ -124,6 +150,7 @@ function groupBy(
     slices,
     hhi: Math.round(computeHHI(slices.map((s) => s.weight))),
     unclassifiedPct: totalValue > 0 ? (unclassified / totalValue) * 100 : 0,
+    unclassifiedIds: unclassifiedHoldings.sort(byValueDesc).map((h) => h.id),
   };
 }
 
@@ -192,6 +219,29 @@ export function computeFactorExposure(
       exposure: Math.round(exposure * 100) / 100,
     };
   }).filter((f) => Math.abs(f.exposure) > 0.001);
+}
+
+/**
+ * The per-holding decomposition of ONE factor's net exposure — the same
+ * `sensitivity × weight` terms `computeFactorExposure` sums, returned
+ * individually so a UI can answer "which holdings make this −0.80?". Kept here,
+ * beside the aggregate, so the two can never use different arithmetic.
+ */
+export function factorContributors(
+  holdings: Holding[],
+  factor: Factor,
+  limit = 3,
+): { name: string; symbol: string | null; contribution: number }[] {
+  return holdings
+    .map((h) => ({
+      name: h.name,
+      symbol: h.symbol ?? null,
+      contribution: (h.factors[factor] ?? 0) * (h.weight / 100),
+    }))
+    .filter((c) => Math.abs(c.contribution) >= 0.005)
+    .sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution))
+    .slice(0, limit)
+    .map((c) => ({ ...c, contribution: Math.round(c.contribution * 100) / 100 }));
 }
 
 /* -------------------------------------------------------------------------- */

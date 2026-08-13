@@ -56,7 +56,7 @@ function ScoreBar({
 }) {
   return (
     <div className="flex items-center gap-2">
-      <span className="w-16 shrink-0 text-[9px] uppercase tracking-widest text-muted/60">
+      <span className="w-16 shrink-0 text-[10px] uppercase tracking-widest text-muted/60">
         {label}
       </span>
       <div className="flex-1 h-1 rounded-full bg-surface-3 overflow-hidden">
@@ -65,7 +65,7 @@ function ScoreBar({
           style={{ width: `${Math.max(4, value)}%`, "--bar-value": `${Math.max(4, value)}%` } as CSSProperties}
         />
       </div>
-      <span className="w-6 text-right font-mono text-[9px] text-muted shrink-0">{value}</span>
+      <span className="w-6 text-right font-mono text-[10px] text-muted shrink-0">{value}</span>
     </div>
   );
 }
@@ -175,7 +175,12 @@ export function OpportunityCard({
             <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${CONVICTION_STYLE[profile.conviction]}`}>
               {profile.conviction} Conviction
             </span>
-            <span className="text-[10px] text-muted">{profile.confidence}% confidence</span>
+            <span
+              className="text-[10px] text-muted"
+              title="Model-estimated confidence in the thesis — corroborate via the source articles below"
+            >
+              {profile.confidence}% confidence
+            </span>
             <span className="text-[10px] text-muted">· {profile.suggestedHoldingPeriod}</span>
             <span className={`text-[10px] font-medium ${VOLATILITY_STYLE[profile.expectedVolatility]}`}>
               · {profile.expectedVolatility} volatility
@@ -201,7 +206,7 @@ export function OpportunityCard({
             }`}
             title={onShowEvidence ? "Open source articles" : triggerEvent.headline}
           >
-            <span className="shrink-0 text-accent">⚡</span>
+            <span className="shrink-0 text-accent" aria-hidden>⚡</span>
             <span className="line-clamp-1">{triggerEvent.headline}</span>
             <span className="shrink-0 text-muted/50">
               · {triggerEvent.sourceCount} source{triggerEvent.sourceCount === 1 ? "" : "s"}

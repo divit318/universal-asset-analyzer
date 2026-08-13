@@ -1,11 +1,12 @@
 /**
- * The pure parts of the Devin CLI transport: output sanitation and prompt
- * flattening. Both are silent-corruption surfaces — a fenced JSON body and a
- * banner-prefixed answer are perfectly valid *strings*, so neither throws;
- * they just make every downstream parse fail and render an empty state.
+ * The pure parts of the Devin CLI transport: output sanitation, prompt
+ * flattening, and the subprocess pool's admission policy. The first two are
+ * silent-corruption surfaces — a fenced JSON body and a banner-prefixed answer
+ * are perfectly valid *strings*, so neither throws; they just make every
+ * downstream parse fail and render an empty state.
  */
-import { describe, expect, it } from "vitest";
-import { cleanDevinOutput, flattenMessages } from "@/lib/ai/devin-cli";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { cleanDevinOutput, devinSlotsForTests, flattenMessages } from "@/lib/ai/devin-cli";
 
 describe("cleanDevinOutput", () => {
   it("passes a plain answer straight through", () => {
@@ -86,5 +87,100 @@ describe("flattenMessages", () => {
   it("survives a message list with no user turn", () => {
     expect(flattenMessages([{ role: "system", content: "SYS" }])).toBe("SYS");
     expect(flattenMessages([])).toBe("");
+  });
+
+  it("leads with the read-these-images directive when image paths are attached", () => {
+    // Vision path: the directive must come FIRST so the agent reads the
+    // screenshots before it starts answering, and each path must be listed.
+    const out = flattenMessages(
+      [
+        { role: "system", content: "SYS" },
+        { role: "user", content: "Transcribe the holdings." },
+      ],
+      { imagePaths: ["/ws/images/img-a-0.png", "/ws/images/img-a-1.jpg"] },
+    );
+    expect(out.startsWith("## Attached images")).toBe(true);
+    expect(out).toContain("1. /ws/images/img-a-0.png");
+    expect(out).toContain("2. /ws/images/img-a-1.jpg");
+    expect(out.indexOf("## Attached images")).toBeLessThan(out.indexOf("SYS"));
+    expect(out.endsWith("Transcribe the holdings.")).toBe(true);
+  });
+
+  it("adds no image block when there are no image paths", () => {
+    const msgs = [{ role: "user" as const, content: "Q" }];
+    expect(flattenMessages(msgs, { imagePaths: [] })).toBe("Q");
+  });
+});
+
+describe("subprocess pool admission (background isolation)", () => {
+  const { acquire, snapshot, reset } = devinSlotsForTests;
+
+  beforeEach(() => {
+    reset();
+    process.env.DEVIN_CLI_CONCURRENCY = "4";
+    process.env.DEVIN_CLI_BACKGROUND_CONCURRENCY = "2";
+  });
+  afterEach(() => {
+    reset();
+    delete process.env.DEVIN_CLI_CONCURRENCY;
+    delete process.env.DEVIN_CLI_BACKGROUND_CONCURRENCY;
+  });
+
+  it("caps background work below the full pool so interactive slots always exist", async () => {
+    const bg1 = await acquire(true);
+    const bg2 = await acquire(true);
+    // Third background call must queue even though the pool (4) has room.
+    let bg3Admitted = false;
+    const bg3 = acquire(true).then((release) => {
+      bg3Admitted = true;
+      return release;
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(bg3Admitted).toBe(false);
+    expect(snapshot()).toEqual({ active: 2, activeBackground: 2, waiting: 1 });
+
+    // Interactive work sails straight through the reserved headroom.
+    const fg = await acquire(false);
+    expect(snapshot().active).toBe(3);
+
+    bg1();
+    await bg3.then((release) => release());
+    bg2();
+    fg();
+    expect(snapshot()).toEqual({ active: 0, activeBackground: 0, waiting: 0 });
+  });
+
+  it("admits a waiting interactive call ahead of an earlier-queued background call", async () => {
+    // Fill the whole pool: 2 background + 2 interactive.
+    const releases = [await acquire(true), await acquire(true), await acquire(false), await acquire(false)];
+
+    const order: string[] = [];
+    const bgWaiter = acquire(true).then((r) => {
+      order.push("background");
+      return r;
+    });
+    const fgWaiter = acquire(false).then((r) => {
+      order.push("interactive");
+      return r;
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(order).toEqual([]); // both queued — pool is full
+
+    // One interactive slot frees: the INTERACTIVE waiter must win despite the
+    // background one having queued first.
+    releases[2]();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(order).toEqual(["interactive"]);
+
+    // A background slot frees: now the background waiter is admitted.
+    releases[0]();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(order).toEqual(["interactive", "background"]);
+
+    releases[1]();
+    releases[3]();
+    await bgWaiter.then((r) => r());
+    await fgWaiter.then((r) => r());
+    expect(snapshot()).toEqual({ active: 0, activeBackground: 0, waiting: 0 });
   });
 });

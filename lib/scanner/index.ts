@@ -39,6 +39,7 @@ import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
 import { logPipeline, timeStage } from "../debug-pipeline";
 import { runStagedPipeline, type StageDef } from "../platform/runner";
 import { describeError, scannerPrompt, type ScanRunContext } from "./llm";
+import { EmergingThemesWireSchema, RiskAlertsWireSchema } from "../ai/schemas/scanner";
 import type {
   ScannerResult,
   ScannerProgressEvent,
@@ -77,7 +78,16 @@ export interface ScannerPipelineOptions {
   onPartial?: (event: ScannerPartialEvent) => void;
   /** Stage degradations and stall notices, streamed as they happen. */
   onStageEvent?: (event: ScannerStageEvent) => void;
+  /**
+   * True for detached scans nobody is watching (boot warmup, hourly scheduler
+   * tick): stage loops run at BACKGROUND_FANOUT instead of scannerFanout(),
+   * trading the batch's wall-clock time for the host's interactive latency.
+   */
+  background?: boolean;
 }
+
+/** See ScanRunContext.fanout — a background scan must never saturate the host. */
+const BACKGROUND_FANOUT = 2;
 
 function emit(
   onProgress: ((e: ScannerProgressEvent) => void) | undefined,
@@ -171,7 +181,11 @@ ${JSON_SCHEMA_LEAD_IN}
 }`;
 
   try {
-    const raw = await scannerPrompt(run, "opportunity-engine", prompt, { maxTokens: 1200 });
+    const raw = await scannerPrompt(run, "opportunity-engine", prompt, {
+      maxTokens: 1200,
+      wire: EmergingThemesWireSchema,
+      stage: "themes",
+    });
     const parsed = extractJsonObject(raw, { themes: [] as unknown[] });
     const themes = parsed.themes.map(sanitizeTheme).filter((t): t is RawEmergingTheme => t !== null);
     return themes.map((t) => ({
@@ -250,7 +264,11 @@ ${JSON_SCHEMA_LEAD_IN}
 }`;
 
   try {
-    const raw = await scannerPrompt(run, "opportunity-engine", prompt, { maxTokens: 800 });
+    const raw = await scannerPrompt(run, "opportunity-engine", prompt, {
+      maxTokens: 800,
+      wire: RiskAlertsWireSchema,
+      stage: "risk-alerts",
+    });
     const parsed = extractJsonObject(raw, { alerts: [] as unknown[] });
     const alerts = parsed.alerts.map(sanitizeRiskAlert).filter((a): a is Omit<RiskAlert, "id"> => a !== null);
     return alerts.slice(0, 3).map((a) => ({
@@ -325,7 +343,7 @@ export function assessMarketRegime(
 export async function runScannerPipeline(
   opts: ScannerPipelineOptions = {},
 ): Promise<ScannerResult> {
-  const { query, india = true, global: glob = true, signal, onProgress, onPartial, onStageEvent } = opts;
+  const { query, india = true, global: glob = true, signal, onProgress, onPartial, onStageEvent, background = false } = opts;
 
   // TEMPORARY (DEBUG_PIPELINE): per-scan scope so concurrent scans are
   // distinguishable in the NDJSON log.
@@ -366,6 +384,7 @@ export async function runScannerPipeline(
   const runCtx = (api: Parameters<StageDef<Ctx>["run"]>[1]): ScanRunContext => ({
     signal: api.signal,
     model: pinnedModel,
+    ...(background ? { fanout: BACKGROUND_FANOUT } : {}),
     setUnits: api.setUnits,
     tick: api.tick,
     item: api.item,

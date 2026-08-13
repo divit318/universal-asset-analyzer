@@ -7,7 +7,7 @@
  * else — which model, retry/fallback, response shape — is the Router's job.
  */
 
-import type { AIProvider, ProviderChatTurn } from "./provider";
+import type { AIProvider, ProviderChatTurn, ProviderImageAttachment } from "./provider";
 import { route, routeStream, type RouteOptions } from "./router";
 import type { AIResponse } from "./response";
 import type { TaskType } from "./task-registry";
@@ -22,6 +22,13 @@ import {
 
 export interface RunTaskOptions {
   system?: string;
+  /**
+   * Images attached to the request (vision input). The Router only considers
+   * (provider, model) pairs that can actually see them — see router.ts's
+   * canSeeImages — and fails with a clear "no vision-capable model" message
+   * rather than ever answering about an image no model received.
+   */
+  images?: ProviderImageAttachment[];
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
@@ -61,6 +68,12 @@ function fingerprint(taskType: TaskType, messages: ProviderChatTurn[], opts: Run
     opts.jsonSchema ?? null,
     opts.temperature ?? "",
     messages.map((m) => [m.role, m.content]),
+    // Different images are different work. The full base64 participates —
+    // multi-MB strings hash in single-digit milliseconds under FNV, and a
+    // cheap digest (length + head/tail) could collide two same-sized
+    // screenshots of the same brokerage page, silently answering one user's
+    // portfolio with another upload's extraction.
+    (opts.images ?? []).map((i) => [i.mediaType, i.base64]),
   ]);
 
   let h = 0x811c9dc5;
@@ -101,6 +114,7 @@ export async function runTask(
       taskType,
       {
         messages,
+        images: opts.images,
         temperature: opts.temperature,
         maxTokens: opts.maxTokens,
         timeoutMs: opts.timeoutMs,

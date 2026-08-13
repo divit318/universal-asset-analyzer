@@ -5,6 +5,7 @@ import { SiteFooter } from "./_components/site-footer";
 import { SiteHeader } from "./_components/site-header";
 import { CommandPalette } from "./_components/command-palette";
 import { AppAssistant } from "./_components/ai-assistant";
+import { IntelRail } from "./_components/intel-rail";
 import { ToastProvider } from "./_components/toast";
 import { THEME_INIT_SCRIPT } from "./_components/theme";
 import { AppShell } from "./_components/app-shell";
@@ -37,7 +38,7 @@ export const metadata: Metadata = {
     template: "%s · UAA",
   },
   description:
-    "Institutional-grade equity research platform: AI-assisted deep research, DCF modelling, quant screening, thematic analysis, and portfolio management — every figure computed locally, in a database you own.",
+    "Equity research platform: deep research, DCF modelling, quant screening, thematic analysis, and portfolio management — every figure computed locally, in a database you own.",
   applicationName: "Universal Asset Analyzer",
   /*
    * No `icons` key on purpose. Next's file conventions already emit the tab and
@@ -89,6 +90,12 @@ export default function RootLayout({
                     wrap themselves for useArrivalTarget(). */}
                 <Suspense fallback={null}>
                   <AppAssistant />
+                </Suspense>
+                {/* Contextual research intelligence — renders nothing unless a
+                    genuinely material insight clears the relevance threshold
+                    (lib/intel/). Same Suspense reason: useSearchParams(). */}
+                <Suspense fallback={null}>
+                  <IntelRail />
                 </Suspense>
                 <main id="main-content" className="flex flex-1 flex-col">
                   {children}

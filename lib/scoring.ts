@@ -514,15 +514,21 @@ function bucketRatio(buckets: ScoreBucket[], name: string): number | null {
 }
 
 /**
- * Deterministic classification into a permanent investment identity — no AI
- * involved (matches "AI explains, engines decide"). Pure function of the
+ * Deterministic, descriptive investment characteristics — no AI involved
+ * (matches "AI explains, engines decide"). Pure function of the
  * already-computed ScoreResult + snapshot + momentum; no new I/O.
+ *
+ * Every branch is an independent threshold check, evaluated in the same
+ * specificity order the single-tag classifier always used, so the FIRST
+ * element is exactly the tag `classifyInvestmentPersonality` returns.
+ * Returns [] when nothing meaningfully applies — callers omit the row
+ * rather than forcing a label onto an undifferentiated company.
  */
-export function classifyInvestmentPersonality(
+export function deriveInvestmentCharacteristics(
   score: ScoreResult,
   snapshot: FundamentalsSnapshot,
   momentum: MomentumSignal | null,
-): { tag: InvestmentPersonalityTag; explanation: string } {
+): { tag: InvestmentPersonalityTag; explanation: string }[] {
   const qualityR = bucketRatio(score.buckets, "Quality");
   const valuationR = bucketRatio(score.buckets, "Valuation");
   const growthR = bucketRatio(score.buckets, "Growth");
@@ -531,55 +537,87 @@ export function classifyInvestmentPersonality(
   const sector = snapshot.sector ?? null;
   const trend = momentum?.trend ?? "flat";
 
+  const traits: { tag: InvestmentPersonalityTag; explanation: string }[] = [];
+
   if (growthR != null && growthR >= 0.75 && snapshot.revenueGrowth != null && snapshot.revenueGrowth > 0.20) {
-    return {
+    traits.push({
       tag: "High Growth",
       explanation: `Growth bucket ${Math.round(growthR * 100)}/100 with ${pct(snapshot.revenueGrowth)} revenue growth — expanding well above the market.`,
-    };
+    });
   }
 
   if (valuationR != null && valuationR >= 0.75 && qualityR != null && qualityR >= 0.45) {
-    return {
+    traits.push({
       tag: "Deep Value",
       explanation: `Valuation bucket ${Math.round(valuationR * 100)}/100${snapshot.pegRatio != null ? ` (PEG ${ratio(snapshot.pegRatio)})` : ""} — trading cheap relative to underlying quality.`,
-    };
+    });
   }
 
   if (qualityR != null && qualityR >= 0.70 && growthR != null && growthR >= 0.55 && healthR != null && healthR >= 0.55) {
-    return {
+    traits.push({
       tag: "Compounder",
       explanation: `Quality ${Math.round(qualityR * 100)}/100, Growth ${Math.round(growthR * 100)}/100, and Financial Health ${Math.round(healthR * 100)}/100 all solid — durable compounding characteristics.`,
-    };
+    });
   }
 
   if (growthR != null && growthR < 0.40 && trend === "up" && capAllocR != null && capAllocR >= 0.55) {
-    return {
+    traits.push({
       tag: "Turnaround",
       explanation: `Growth still weak (${Math.round(growthR * 100)}/100) but capital allocation is improving (${Math.round(capAllocR * 100)}/100) with positive recent price momentum — early signs of a turn.`,
-    };
+    });
   }
 
   if (snapshot.dividendYield != null && snapshot.dividendYield >= 0.025 && (growthR == null || growthR < 0.55)) {
-    return {
+    traits.push({
       tag: "Income",
       explanation: `${pct(snapshot.dividendYield)} dividend yield with modest growth expectations — a shareholder-return-oriented holding.`,
-    };
+    });
   }
 
   if (sector != null && CYCLICAL_SECTORS.has(sector)) {
-    return {
+    traits.push({
       tag: "Cyclical",
       explanation: `${sector} is a cyclical sector — earnings and the stock typically track the broader economic cycle.`,
-    };
+    });
   }
 
   if (sector != null && DEFENSIVE_SECTORS.has(sector) && trend !== "down") {
-    return {
+    traits.push({
       tag: "Defensive",
       explanation: `${sector} tends to hold up in downturns; current momentum is ${trend === "up" ? "positive" : "stable"}, consistent with a defensive profile.`,
-    };
+    });
   }
 
+  // Standalone quality: strong Quality bucket without the growth/health combo
+  // that already earned Compounder (which subsumes it).
+  if (
+    qualityR != null && qualityR >= 0.70 &&
+    !traits.some((t) => t.tag === "Compounder")
+  ) {
+    traits.push({
+      tag: "High Quality",
+      explanation: `Quality bucket ${Math.round(qualityR * 100)}/100 — consistently strong margins and returns on capital.`,
+    });
+  }
+
+  // Descriptive, not exhaustive: three characteristics orient; five decorate.
+  return traits.slice(0, 3);
+}
+
+/**
+ * Deterministic classification into a permanent investment identity — the
+ * single most specific characteristic from `deriveInvestmentCharacteristics`,
+ * with the historical quality-first fallback when nothing clears a threshold.
+ */
+export function classifyInvestmentPersonality(
+  score: ScoreResult,
+  snapshot: FundamentalsSnapshot,
+  momentum: MomentumSignal | null,
+): { tag: InvestmentPersonalityTag; explanation: string } {
+  const traits = deriveInvestmentCharacteristics(score, snapshot, momentum);
+  if (traits.length > 0) return traits[0];
+
+  const qualityR = bucketRatio(score.buckets, "Quality");
   return {
     tag: "High Quality",
     explanation: qualityR != null

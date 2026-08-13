@@ -86,7 +86,9 @@ export interface ForexChatInput {
   question: string;
 }
 
-export async function forexChatWithData(input: ForexChatInput): Promise<{ answer: string; model: string }> {
+/** The chat prompt, exported so the streaming route can send the SAME prompt
+ * through the platform's streaming path (runTaskStream) instead of buffering. */
+export function forexChatPrompt(input: ForexChatInput): string {
   const { facts, score, news, history, question } = input;
 
   const system = `You are an expert currency markets analyst. Using ONLY the structured data and news below, answer the user's question about this currency pair. Be precise, cite specific numbers or headlines. If asked about central bank policy, interest rates, inflation, or GDP data not present in the data, say clearly that data isn't available yet rather than guessing. Keep answers concise (3-6 sentences unless the question requires more).
@@ -97,10 +99,12 @@ ${forexDataBlock(facts, score)}
 ${newsBlock(news)}`;
 
   const conversationHistory = history.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n");
-  const fullPrompt = conversationHistory
+  return conversationHistory
     ? `${system}\n\nConversation so far:\n${conversationHistory}\n\nUser: ${question}`
     : `${system}\n\nUser: ${question}`;
+}
 
-  const { text: answer, model } = await runPromptWithMeta("forex-research", fullPrompt, { maxTokens: 800 });
+export async function forexChatWithData(input: ForexChatInput): Promise<{ answer: string; model: string }> {
+  const { text: answer, model } = await runPromptWithMeta("forex-research", forexChatPrompt(input), { maxTokens: 800 });
   return { answer: answer.trim(), model };
 }

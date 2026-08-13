@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { buildCompanyContext } from "@/lib/ai/context";
+import { buildVerdictContext } from "@/lib/ai/context";
 import { readPortfolioFacts } from "@/lib/ai/facts";
 import { normalizeSymbol } from "@/lib/market";
 import { getVerdict, planVerdict, verdictCacheParams, type InvestmentVerdict } from "@/lib/ai/verdict";
-import { personalizationParams } from "@/lib/ai/verdict-params";
+import { personalizationParams, stableVerdictIdentity } from "@/lib/ai/verdict-params";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,7 +39,10 @@ export async function GET(request: Request) {
 
   let ctx;
   try {
-    ctx = await buildCompanyContext(symbol);
+    // The verdict-critical context only (same facts, same score inputs) — the
+    // full nine-way copilot fan-out never reaches this prompt. See
+    // lib/ai/context.ts:buildVerdictContext.
+    ctx = await buildVerdictContext(symbol);
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Could not load data" },
@@ -48,7 +51,9 @@ export async function GET(request: Request) {
   }
 
   const plan = await planVerdict(ctx, readPortfolioFacts(url));
-  const params = verdictCacheParams(ctx.symbol, plan.kind, personalizationParams(url));
+  // Stable identity (tier/action/objective/gaps), NOT the raw volatile params —
+  // shared with /api/ai/report so both routes read and write the same entry.
+  const params = verdictCacheParams(ctx.symbol, plan.kind, stableVerdictIdentity(personalizationParams(url)));
 
   // Read-through the platform cache. A repeat view of the same company with the
   // same portfolio context costs nothing instead of another full local inference.

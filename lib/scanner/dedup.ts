@@ -12,6 +12,7 @@
  */
 
 import { extractJsonObject } from "../json-extract";
+import { ClustersWireSchema } from "../ai/schemas/scanner";
 import { describeError, scannerPrompt, type ScanRunContext } from "./llm";
 import { storyIdFor } from "../story-id";
 import type { NewsItem, MarketEvent, SignalCategory } from "../types";
@@ -122,7 +123,11 @@ export async function deduplicateIntoEvents(
   // which meant this stage fell back on nearly every run.
   let clusters: ClusterAssignment[];
   try {
-    const raw = await scannerPrompt(run, "opportunity-engine", buildDedupePrompt(capped), { maxTokens: 1500 });
+    const raw = await scannerPrompt(run, "opportunity-engine", buildDedupePrompt(capped), {
+      maxTokens: 1500,
+      wire: ClustersWireSchema,
+      stage: "dedupe",
+    });
     const parsed = extractJsonObject(raw, { clusters: [] as unknown[] });
     clusters = parsed.clusters.map(sanitizeAssignment).filter((c): c is ClusterAssignment => c !== null);
   } catch (err) {

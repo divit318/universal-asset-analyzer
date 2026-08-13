@@ -329,11 +329,20 @@ export function buildBlocks(ctx: CompanyContext): ContextBlock[] {
     ]), 45));
   }
 
-  // Recent filings.
+  // Recent filings. Indian listings carry NSE corporate announcements in the
+  // same slot (lib/india-news.ts) — label them honestly so the model cites
+  // [nse:filings], not a SEC filing that doesn't exist.
   if (ctx.filings.length) {
-    out.push(block("filings", "edgar:filings", "Recent SEC filings", ctx.filings
-      .slice(0, 8)
-      .map((f) => `- ${f.form} (${f.filedAt}): ${f.description}`).join("\n"), 35));
+    const isIndian = /\.(NS|BO)$/i.test(ctx.quote.symbol);
+    out.push(block(
+      "filings",
+      isIndian ? "nse:filings" : "edgar:filings",
+      isIndian ? "Recent NSE corporate announcements" : "Recent SEC filings",
+      ctx.filings
+        .slice(0, 8)
+        .map((f) => `- ${f.form} (${f.filedAt.slice(0, 10)}): ${f.description.slice(0, 220)}`).join("\n"),
+      35,
+    ));
   }
 
   // News.

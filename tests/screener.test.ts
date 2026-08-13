@@ -72,3 +72,24 @@ describe("SCREENER_SECTORS", () => {
     expect(SCREENER_SECTORS).toContain("Financial Services"); // GICS calls this "Financials"
   });
 });
+
+import { formatMetricValue } from "@/lib/screener/format";
+import { getMetric } from "@/lib/assets/registry";
+
+describe("india screener formatting", () => {
+  it("formats Indian market caps in ₹ crores with Indian grouping", () => {
+    const m = getMetric("indiaEquity", "marketCap")!;
+    expect(formatMetricValue(m, 17_961_651_798_016)).toBe("₹17.96L Cr");   // Reliance-scale
+    expect(formatMetricValue(m, 83_546_923_008)).toBe("₹8,355 Cr");        // small cap
+    expect(formatMetricValue(m, null)).toBe("—");
+  });
+
+  it("declares Indian-specific metrics live now that screener.in extracts feed them", () => {
+    // Was "unavailable" until lib/india-ownership.ts started populating these
+    // from screener.in (see lib/assets/india-equity.ts); the honest label
+    // followed the data.
+    expect(getMetric("indiaEquity", "roce")?.availability).toBe("live");
+    expect(getMetric("indiaEquity", "roce")?.source).toBe("screener_in");
+    expect(getMetric("indiaEquity", "promoterHolding")?.availability).toBe("live");
+  });
+});

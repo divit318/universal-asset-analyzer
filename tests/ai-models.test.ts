@@ -34,7 +34,11 @@ describe("specForInstalled", () => {
 
 describe("MODEL_REGISTRY", () => {
   it("registers the three claude-opus-5 effort tiers, anthropic-canonical, Devin-servable, enabled", () => {
-    const tiers = MODEL_REGISTRY.filter((m) => m.id.startsWith("claude-opus-5-"));
+    // The API-canonical effort tiers. The "-fast" priority-serving variants
+    // (Phase 4) are a separate, Devin-only family — asserted below.
+    const tiers = MODEL_REGISTRY.filter(
+      (m) => m.id.startsWith("claude-opus-5-") && !m.id.endsWith("-fast"),
+    );
     expect(tiers.map((m) => m.id).sort()).toEqual([
       "claude-opus-5-high",
       "claude-opus-5-low",
@@ -45,6 +49,22 @@ describe("MODEL_REGISTRY", () => {
       // The Devin CLI catalogue carries the same uids, so the task pins
       // resolve through Devin (no key) before the direct API (BYO key).
       expect(spec.alsoServedBy).toContain("devin");
+      expect(spec.enabled).toBe(true);
+    }
+  });
+
+  it("registers the priority-serving tiers as Devin-only (the API has no -fast ids)", () => {
+    const fast = MODEL_REGISTRY.filter((m) => m.id.startsWith("claude-opus-5-") && m.id.endsWith("-fast"));
+    expect(fast.map((m) => m.id).sort()).toEqual([
+      "claude-opus-5-high-fast",
+      "claude-opus-5-low-fast",
+      "claude-opus-5-medium-fast",
+    ]);
+    for (const spec of fast) {
+      expect(spec.provider).toBe("devin");
+      // No alsoServedBy: an -fast id sent to api.anthropic.com would 404, so
+      // the pins put the plain tier behind these as the cross-provider fallback.
+      expect(spec.alsoServedBy ?? []).toEqual([]);
       expect(spec.enabled).toBe(true);
     }
   });

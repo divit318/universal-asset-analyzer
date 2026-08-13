@@ -14,115 +14,20 @@
 import YahooFinance from "yahoo-finance2";
 import { getNews, type RawNews } from "./yahoo";
 import { storyIdFor } from "./story-id";
+import { cleanFeedText, fetchRss, isoNow, safeIso } from "./feed";
+import {
+  announcementToNewsItem,
+  fetchNseCorporateAnnouncements,
+  getIndianCompanyNews,
+  isIndianEquitySymbol,
+} from "./india-news";
 import type { NewsItem } from "./types";
 
+// Re-exported for existing importers (tests, knowledge graph) — the
+// implementation moved to lib/feed.ts so lib/india-news.ts can share it.
+export { cleanFeedText } from "./feed";
+
 const yahooFinance = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
-
-/* -------------------------------------------------------------------------- */
-/* Helpers                                                                    */
-/* -------------------------------------------------------------------------- */
-
-function isoNow(): string {
-  return new Date().toISOString();
-}
-
-/** Parse a date string from an RSS feed without throwing on malformed values. */
-function safeIso(dateStr: string): string {
-  try {
-    const d = new Date(dateStr);
-    return Number.isNaN(d.getTime()) ? isoNow() : d.toISOString();
-  } catch {
-    return isoNow();
-  }
-}
-
-const HTML_ENTITIES: Record<string, string> = {
-  amp: "&",
-  lt: "<",
-  gt: ">",
-  quot: '"',
-  apos: "'",
-  nbsp: " ",
-  ndash: "–",
-  mdash: "—",
-  rsquo: "\u2019",
-  lsquo: "\u2018",
-  rdquo: "\u201d",
-  ldquo: "\u201c",
-  hellip: "…",
-};
-
-/**
- * Normalize one text node from a feed into something safe to display.
- *
- * Every feed field goes through this, because the CDATA-aware regexes below
- * only match *well-formed* `<title><![CDATA[…]]></title>`. Real feeds are not
- * reliably well-formed, and when the strict pattern missed, the permissive
- * fallback captured the wrapper itself — putting the literal string
- * `<![CDATA[US Stoc…` on screen as a Knowledge Graph node label.
- *
- * Order matters: unwrap CDATA, then strip tags, then decode entities, then
- * collapse whitespace. Decoding before stripping would let an encoded `&lt;b&gt;`
- * become a real tag after the stripper had already run.
- */
-export function cleanFeedText(raw: string): string {
-  return raw
-    // Unwrap complete CDATA sections, then any stray opener/closer left by a
-    // truncated or malformed one.
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
-    .replace(/<!\[CDATA\[/g, "")
-    .replace(/\]\]>/g, "")
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
-    .replace(/&([a-z]+);/gi, (match, name: string) => HTML_ENTITIES[name.toLowerCase()] ?? match)
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/** Very minimal RSS/Atom parser — extracts <item> blocks without a dependency. */
-function parseRssItems(xml: string): { title: string; link: string; pubDate: string; description: string }[] {
-  const items: { title: string; link: string; pubDate: string; description: string }[] = [];
-  const itemBlocks = xml.match(/<item[\s>][\s\S]*?<\/item>/gi) ?? [];
-  for (const block of itemBlocks) {
-    const title = block.match(/<title[^>]*><!\[CDATA\[([\s\S]*?)\]\]><\/title>/i)?.[1]
-      ?? block.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]
-      ?? "";
-    const link = block.match(/<link[^>]*>([\s\S]*?)<\/link>/i)?.[1]
-      ?? block.match(/<link\s+href="([^"]+)"/i)?.[1]
-      ?? "";
-    const pubDate = block.match(/<pubDate[^>]*>([\s\S]*?)<\/pubDate>/i)?.[1]
-      ?? block.match(/<published[^>]*>([\s\S]*?)<\/published>/i)?.[1]
-      ?? isoNow();
-    const description = block.match(/<description[^>]*><!\[CDATA\[([\s\S]*?)\]\]><\/description>/i)?.[1]
-      ?? block.match(/<description[^>]*>([\s\S]*?)<\/description>/i)?.[1]
-      ?? "";
-
-    const cleanTitle = cleanFeedText(title);
-    if (cleanTitle) {
-      items.push({
-        title: cleanTitle,
-        link: cleanFeedText(link),
-        pubDate: pubDate.trim(),
-        description: cleanFeedText(description),
-      });
-    }
-  }
-  return items;
-}
-
-async function fetchRss(url: string): Promise<{ title: string; link: string; pubDate: string; description: string }[]> {
-  try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": "universal-asset-analyzer/1.0" },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return [];
-    return parseRssItems(await res.text());
-  } catch {
-    return [];
-  }
-}
 
 /* -------------------------------------------------------------------------- */
 /* Per-symbol news — for the research copilot context                         */
@@ -200,6 +105,15 @@ export function isRelevantToSymbol(item: NewsItem, symbol: string, companyName?:
 
 /** Recent, de-duplicated news for a specific symbol, newest first. Best-effort. */
 export async function getCompanyNews(symbol: string, count = 8): Promise<NewsItem[]> {
+  // Indian listings: Yahoo's .NS feed is mostly market wrap-ups tagged with
+  // every ticker, so NSE/BSE symbols route to the dedicated India pipeline
+  // (NSE announcements + Google News India). Yahoo remains the fallback if
+  // both Indian sources come back empty (provider outage).
+  if (isIndianEquitySymbol(symbol)) {
+    const indian = await getIndianCompanyNews(symbol, count);
+    if (indian.length > 0) return indian;
+  }
+
   // Over-fetch so relevance filtering still leaves ~count items when Yahoo's
   // feed is diluted with market-wide stories.
   const raw = await getNews(symbol, Math.max(count * 2, 12));
@@ -310,50 +224,14 @@ async function fetchEconomicTimesNews(limit = 15): Promise<NewsItem[]> {
 /* Source: NSE India corporate announcements                                  */
 /* -------------------------------------------------------------------------- */
 
-interface RawNseAnnouncement {
-  subject?: string;
-  symbol?: string;
-  company?: string;
-  bm_desc?: string;
-  exchdisstime?: string;
-}
-
+/** Market-wide feed via the shared (cached, categorized) fetcher in lib/india-news.ts. */
 async function fetchNseAnnouncements(limit = 20): Promise<NewsItem[]> {
-  try {
-    const session = await fetch("https://www.nseindia.com", {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        Accept: "text/html",
-      },
-      signal: AbortSignal.timeout(6000),
-    });
-    const cookies = session.headers.get("set-cookie") ?? "";
-
-    const res = await fetch(
-      "https://www.nseindia.com/api/corporate-announcements?index=equities",
-      {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-          Accept: "application/json",
-          Cookie: cookies,
-          Referer: "https://www.nseindia.com",
-        },
-        signal: AbortSignal.timeout(8000),
-      },
-    );
-    if (!res.ok) return [];
-    const raw = (await res.json()) as RawNseAnnouncement[];
-    return raw.slice(0, limit).map((a) => ({
-      headline: cleanFeedText(`[${a.symbol ?? "NSE"}] ${a.subject ?? a.bm_desc ?? "Corporate announcement"}`),
-      source: "NSE India",
-      url: "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
-      publishedAt: a.exchdisstime ? new Date(a.exchdisstime).toISOString() : isoNow(),
-      tickers: a.symbol ? [`${a.symbol}.NS`] : [],
-      summary: a.bm_desc ?? null,
-    }));
-  } catch {
-    return [];
-  }
+  const announcements = await fetchNseCorporateAnnouncements(undefined, limit);
+  return announcements.map((a) => ({
+    ...announcementToNewsItem(a),
+    headline: cleanFeedText(`[${a.symbol}] ${a.text || a.type}`),
+    source: "NSE India",
+  }));
 }
 
 /* -------------------------------------------------------------------------- */

@@ -1,5 +1,6 @@
 import { registerClass, coverage, lerpScore, shrinkToConfidence } from "../model/adapter";
 import { marketValuation, yieldIncome, measuredBeta, riskModelFor } from "./market-base";
+import { fundGeographyAttributes, fundSector } from "./reference/risk-models";
 import type { PortfolioClassAdapter } from "../model/adapter";
 
 /**
@@ -52,12 +53,21 @@ export const etfAdapter: PortfolioClassAdapter = {
 
   attributes(raw, ctx) {
     const f = raw.symbol ? ctx.fundamentals.get(raw.symbol.toUpperCase()) : undefined;
+    const rm = riskModelFor(raw, ctx);
+    // Geography from the SAME resolution that produced the risk model: the
+    // provider's `assetProfile.country` exists only for single names, so every
+    // fund used to land in "unclassified" — 46% of a real book — while its
+    // Morningstar category was already telling the classifier it was a US
+    // broad-equity fund. Sector likewise: a sector-MANDATE fund gets its sector
+    // instead of the wrapper-level "Diversified".
+    const geo = fundGeographyAttributes(rm.modelId, f?.fundCategory ?? null, f?.country ?? null);
     return {
-      sector: f?.sector ?? "Diversified",
-      geography: f?.country ?? null,
+      sector: f?.sector ?? fundSector(rm.modelId, f?.fundCategory ?? null, f?.topSector ?? null) ?? "Diversified",
+      geography: geo.geography,
+      geographyBasis: geo.geographyBasis,
       currency: f?.currency ?? raw.currency,
       // Traceability: which risk model this holding was stress-tested under.
-      riskModel: riskModelFor(raw, ctx).label,
+      riskModel: rm.label,
     };
   },
 

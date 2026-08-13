@@ -63,6 +63,23 @@ describe("computeAttribution — additivity", () => {
     expect(attributionResidual(a)).toBeCloseTo(0, 10);
   });
 
+  it("carries the audit trail the UI drill-down shows: cost, value, and the shared denominator", () => {
+    const a = computeAttribution([
+      h({ id: "A", value: 12_000, cost: 10_000, weight: 40 }),
+      h({ id: "B", value: 9_000, cost: 10_000, weight: 30 }),
+    ])!;
+
+    // The denominator every contribution is divided by — the attributable set's cost.
+    expect(a.totalCostBase).toBeCloseTo(20_000, 10);
+
+    const A = a.contributors.find((c) => c.id === "A")!;
+    expect(A.costBase).toBeCloseTo(10_000, 10);
+    expect(A.valueBase).toBeCloseTo(12_000, 10);
+    // The arithmetic the expanded row spells out must actually hold:
+    // contribution = pnl ÷ totalCostBase.
+    expect(A.contributionPct).toBeCloseTo((A.pnl / a.totalCostBase) * 100, 10);
+  });
+
   it("uses the portfolio's own cost as the denominator, not each position's", () => {
     const a = computeAttribution([
       h({ id: "BIG", value: 101_000, cost: 100_000, weight: 90 }),

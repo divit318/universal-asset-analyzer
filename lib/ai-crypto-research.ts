@@ -70,7 +70,9 @@ export interface CryptoChatInput {
   question: string;
 }
 
-export async function cryptoChatWithData(input: CryptoChatInput): Promise<{ answer: string; model: string }> {
+/** The chat prompt, exported so the streaming route can send the SAME prompt
+ * through the platform's streaming path (runTaskStream) instead of buffering. */
+export function cryptoChatPrompt(input: CryptoChatInput): string {
   const { facts, score, history, question } = input;
 
   const system = `You are an expert crypto markets analyst. Using ONLY the structured data below, answer the user's question about this crypto asset. Be precise, cite specific numbers. If asked about tokenomics, on-chain activity, or anything not in the data, say clearly that data isn't available yet rather than guessing. Keep answers concise (3-6 sentences unless the question requires more).
@@ -79,10 +81,12 @@ DATA:
 ${cryptoDataBlock(facts, score)}`;
 
   const conversationHistory = history.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n");
-  const fullPrompt = conversationHistory
+  return conversationHistory
     ? `${system}\n\nConversation so far:\n${conversationHistory}\n\nUser: ${question}`
     : `${system}\n\nUser: ${question}`;
+}
 
-  const { text: answer, model } = await runPromptWithMeta("crypto-research", fullPrompt, { maxTokens: 800 });
+export async function cryptoChatWithData(input: CryptoChatInput): Promise<{ answer: string; model: string }> {
+  const { text: answer, model } = await runPromptWithMeta("crypto-research", cryptoChatPrompt(input), { maxTokens: 800 });
   return { answer: answer.trim(), model };
 }

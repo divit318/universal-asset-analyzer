@@ -29,9 +29,20 @@
  * Reasoning is likewise not exposed: hosted chain-of-thought never reaches
  * stdout, so `reasoning` is always "". Token usage is not reported (Devin
  * bills ACUs, not tokens) — telemetry records the call with null cost.
+ *
+ * ## Images ride on a scoped read (2026-08-10)
+ * Print mode has no image argument, but the CLI forwards an image file the
+ * agent READS as real multimodal input. So a request's images are written to
+ * per-call files inside the workspace's images directory, the prompt tells
+ * the agent to read them, and a vision variant of the inference config allows
+ * `Read()` on exactly that directory and nothing else (see
+ * ../devin-cli.ts:visionInferenceConfig — verified end-to-end against a
+ * brokerage screenshot). This keeps the keyless default able to serve the
+ * screenshot-import path.
  */
 
-import { checkDevinHealth, generateViaDevin, listAllowedModelIds } from "../devin-cli";
+import { acpEnabled, DevinAcpError, streamViaDevinAcp, warmDevinAcp } from "../devin-acp";
+import { checkDevinHealth, cleanDevinOutput, generateViaDevin, listAllowedModelIds } from "../devin-cli";
 import { registryModelsFor } from "../models";
 import type {
   AIProvider,
@@ -43,6 +54,8 @@ import type {
 
 export class DevinProvider implements AIProvider {
   readonly id = "devin" as const;
+  /** Via workspace files + a scoped Read() allow — see the header note. */
+  readonly supportsImages = true;
 
   /**
    * Models this provider will route to: the curated registry entries (its own
@@ -69,26 +82,114 @@ export class DevinProvider implements AIProvider {
 
   async healthCheck(): Promise<ProviderHealth> {
     const { reachable, models } = await checkDevinHealth();
+    // A health check means an interactive surface is about to talk to us —
+    // pre-warm the ACP connection so the first streamed turn skips the ~1s
+    // process spawn+initialize. Fire-and-forget, quiet on failure.
+    if (reachable) warmDevinAcp();
     const registered = new Set(registryModelsFor("devin").map((m) => m.id));
     return { reachable, models: models.filter((id) => registered.has(id)) };
   }
 
+  /**
+   * Blocking completion — over the persistent ACP connection, buffered.
+   *
+   * Print mode (`devin -p`) used to be this method's only transport, and it
+   * taxed every single blocking AI call in the app: a fresh CLI subprocess
+   * (~2s spawn), no session or prompt-cache reuse, and no usage reporting.
+   * Ledger evidence (2026-08-11, same task + model + prompt class):
+   * fund-research 22.6s via print vs 14.1s via ACP; explain-movement,
+   * portfolio-intelligence, the daily brief and the assistant all carried the
+   * same tax on every click. ACP is the same authenticated backend with none
+   * of it — so the buffered path now rides it too, and print mode remains
+   * exactly what it is for the streaming path: the fallback for transport
+   * failures and the only channel that can carry images.
+   *
+   * Background requests keep their concurrency cap on either transport (the
+   * shared Devin work pool — see devin-cli.ts:acquireDevinSlot).
+   */
   async complete(request: ProviderCompleteRequest): Promise<ProviderCompleteResult> {
+    // DEVIN_ACP_DISABLED=1 means "use print mode", not "fail the provider" —
+    // checked here rather than surfaced as a thrown DevinUnavailableError.
+    const canAcp = acpEnabled() && (request.images?.length ?? 0) === 0;
+    if (canAcp) {
+      try {
+        let content = "";
+        let tokenUsage: ProviderCompleteResult["tokenUsage"];
+        for await (const delta of streamViaDevinAcp(request.messages, {
+          model: request.model,
+          json: request.json,
+          timeoutMs: request.timeoutMs,
+          background: request.background,
+          signal: request.signal,
+          onUsage: (u) => {
+            tokenUsage = u;
+          },
+        })) {
+          content += delta;
+        }
+        // Same sanitation the print path applies (fence unwrap in json mode,
+        // whitespace) — buffered consumers parse the STRING, so they must see
+        // the same shape regardless of which transport produced it.
+        return { content: cleanDevinOutput(content, { json: request.json }), reasoning: "", tokenUsage };
+      } catch (err) {
+        // Only transport-level ACP failures degrade to print mode. A caller
+        // abort, timeout, or provider-side refusal is a real outcome the
+        // Router must see — retrying it on a slower transport would just
+        // double the wait on a request that already failed honestly.
+        if (!(err instanceof DevinAcpError)) throw err;
+      }
+    }
     const content = await generateViaDevin(request.messages, {
       model: request.model,
       json: request.json,
+      images: request.images,
       timeoutMs: request.timeoutMs,
+      background: request.background,
       signal: request.signal,
     });
     return { content, reasoning: "" };
   }
 
   /**
-   * Single-chunk "stream". See the gap note at the top of this file — print
-   * mode has no incremental output, so the choice is one chunk at the end or
-   * no Devin support for streaming callers at all.
+   * REAL token streaming via the persistent `devin acp` connection (see
+   * ../devin-acp.ts) — answer chunks as they generate, reasoning on its own
+   * channel, token usage (incl. cache hits) at end of stream. Before
+   * 2026-08-10 this buffered the whole print-mode answer into one chunk,
+   * which made every streaming surface's TTFT equal its total latency.
+   *
+   * Image requests and ACP transport failures fall back to the buffered
+   * print-mode path — worse latency, same correctness — so a broken ACP
+   * server degrades to exactly the old behavior rather than to an error.
    */
-  async *stream(request: ProviderCompleteRequest): AsyncGenerator<string, void, unknown> {
+  async *stream(
+    request: ProviderCompleteRequest,
+    onReasoning?: (delta: string) => void,
+  ): AsyncGenerator<string, void, unknown> {
+    const canAcp = acpEnabled() && (request.images?.length ?? 0) === 0;
+    if (canAcp) {
+      let yielded = false;
+      try {
+        for await (const delta of streamViaDevinAcp(request.messages, {
+          model: request.model,
+          json: request.json,
+          timeoutMs: request.timeoutMs,
+          background: request.background,
+          signal: request.signal,
+          onReasoning,
+          onUsage: request.onUsage,
+        })) {
+          yielded = true;
+          yield delta;
+        }
+        return;
+      } catch (err) {
+        // Only transport-level ACP failures degrade to print mode, and only
+        // when nothing streamed yet — replaying a partial answer buffered
+        // would duplicate content. A caller abort, timeout, or provider-side
+        // refusal is a real outcome the Router must see.
+        if (!(err instanceof DevinAcpError) || yielded) throw err;
+      }
+    }
     const { content } = await this.complete(request);
     if (content) yield content;
   }

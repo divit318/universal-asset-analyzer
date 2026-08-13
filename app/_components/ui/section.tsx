@@ -113,7 +113,7 @@ export function Section<T>({
     }
 
     if (state.status === "error" && state.data == null) {
-      return <SectionError message={state.error ?? "Something went wrong"} onRetry={onRetry} />;
+      return <SectionError message={state.error ?? "This section failed to load"} onRetry={onRetry} />;
     }
 
     if (state.data == null) return <SectionEmpty message={emptyMessage} />;

@@ -15,8 +15,9 @@
  * meaningful and gives steady progress instead of a burst of failures.
  */
 
-import { describeError, scannerPrompt, type ScanRunContext } from "./llm";
+import { describeError, mapWithFanout, scannerFanout, scannerPrompt, type ScanRunContext } from "./llm";
 import { extractJsonObject } from "../json-extract";
+import { CausalEffectsWireSchema } from "../ai/schemas/scanner";
 import type { MarketEvent, CausalEffect, SignalDirection } from "../types";
 
 import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
@@ -95,6 +96,8 @@ async function buildCausalChainForEvent(
   try {
     const raw = await scannerPrompt(run, "opportunity-engine", buildCausalPrompt(event), {
       maxTokens: 1200,
+      wire: CausalEffectsWireSchema,
+      stage: "causal",
     });
     const parsed = extractJsonObject(raw, { effects: [] as unknown[] });
     return parsed.effects.map(sanitizeEffect).filter((e): e is CausalEffect => e !== null);
@@ -120,13 +123,15 @@ export async function buildCausalChains(
 
   run?.setUnits?.(macroEvents.length);
   const enrichedMap = new Map<string, MarketEvent>();
-  for (let i = 0; i < macroEvents.length; i++) {
-    const event = macroEvents[i];
+  // Fan out when the provider supports it (Devin sessions); the sequential
+  // path — and its per-item progress narration — is unchanged under Ollama.
+  const chains = await mapWithFanout(macroEvents, run?.fanout ?? scannerFanout(), async (event, i) => {
     run?.item?.(`${event.headline.slice(0, 60)} (${i + 1} of ${macroEvents.length})`);
     const chain = await buildCausalChainForEvent(event, run);
-    enrichedMap.set(event.id, { ...event, causalChain: chain });
     run?.tick?.();
-  }
+    return chain;
+  });
+  macroEvents.forEach((event, i) => enrichedMap.set(event.id, { ...event, causalChain: chains[i] }));
 
   // Rebuild in original order
   return events.map((e) => enrichedMap.get(e.id) ?? e);

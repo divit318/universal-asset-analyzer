@@ -9,9 +9,12 @@
  */
 
 import { runAnalysis } from "./ai/analysis";
+import { analysisInputHash } from "./ai/analysis-provider";
+import { resolveAiMode } from "./ai/mode";
 import { LooseObjectSchema } from "./ai/schemas/loose";
 import { EquityComparisonWireSchema, COMPARISON_SCHEMA_VERSION } from "./ai/schemas/comparison";
 import { runTaskStream } from "./ai/orchestrator";
+import { getLatestAiResult, putAiResult } from "./db";
 import { classifyAiError, type AiErrorCategory, type ClassifiedAiError } from "./ai/errors";
 import { logAiEvent } from "./ai/log";
 import { JsonFieldStreamer } from "./ai/streaming-json";
@@ -603,12 +606,93 @@ export function flatFromStreamedFields(fields: Record<string, unknown>): FlatAI 
   return flat;
 }
 
+/**
+ * Freshness window for reusing a stored comparison narrative (6h — the same
+ * window lib/platform/registry.ts gives aiVerdict, the closest policy: an AI
+ * judgment over fundamentals that move on a 4-12h cadence). The metric table
+ * and benchmarks are always recomputed live in finalizeComparison; only the
+ * narrative/rankings are replayed.
+ */
+export const COMPARISON_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+
+const COMPARE_ANALYSIS_TYPE = "comparison";
+
+function compareSubjectKey(stocks: CompareStock[]): string {
+  // The AI depth mode changes which model writes the comparison, so a
+  // non-default mode forks the reuse key — a Fast user must not replay a Deep
+  // user's narrative. `balanced` stays unmarked so existing rows remain valid.
+  const mode = resolveAiMode();
+  const suffix = mode === "balanced" ? "" : `:mode=${mode}`;
+  return `compare:${stocks.map((s) => s.symbol).join(",")}${suffix}`;
+}
+
+/**
+ * Hash-agnostic cache read (getLatestAiResult): the compare prompt embeds
+ * live prices, so the exact input-hash read `runAnalysis` does can never hit
+ * twice across a price tick — for comparisons, "same symbols + same schema,
+ * recent enough" IS the reuse condition. Returns the raw streamed-fields
+ * record a previous generation produced, or null.
+ */
+function readRecentComparison(
+  subjectKey: string,
+  maxAgeMs: number,
+): { fields: Record<string, unknown>; model: string } | null {
+  const row = getLatestAiResult(
+    { analysisType: COMPARE_ANALYSIS_TYPE, subjectKey, schemaVersion: COMPARISON_SCHEMA_VERSION },
+    maxAgeMs,
+  );
+  if (!row) return null;
+  try {
+    const parsed: unknown = JSON.parse(row.resultJson);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const meta = row.metaJson ? (JSON.parse(row.metaJson) as { model?: string }) : {};
+    return {
+      fields: parsed as Record<string, unknown>,
+      model: row.provider === "devin" ? "devin" : (meta.model ?? "ollama"),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Persist a successful generation's raw fields so a repeat of the same
+ * comparison inside the freshness window replays instead of regenerating.
+ * Failures are never cached (mirrors cacheVerdict in lib/ai/verdict.ts). */
+function cacheComparison(subjectKey: string, prompt: string, fields: Record<string, unknown>, model: string): void {
+  if (Object.keys(fields).length === 0) return;
+  try {
+    putAiResult(
+      {
+        analysisType: COMPARE_ANALYSIS_TYPE,
+        subjectKey,
+        inputHash: analysisInputHash(prompt),
+        schemaVersion: COMPARISON_SCHEMA_VERSION,
+      },
+      {
+        provider: model === "devin" ? "devin" : "ollama",
+        metaJson: JSON.stringify({ model, durationMs: 0 }),
+        resultJson: JSON.stringify(fields),
+      },
+    );
+  } catch {
+    // Cache write failure is non-fatal — the caller already has the result.
+  }
+}
+
 /** Compare 2-5 stocks together. Every input symbol must load successfully. */
 export async function compareStocks(
   symbols: string[],
-  opts: { signal?: AbortSignal } = {},
+  opts: { signal?: AbortSignal; maxAgeMs?: number } = {},
 ): Promise<ComparisonResult> {
   const setup = await prepareComparison(symbols, opts);
+
+  if (opts.maxAgeMs != null) {
+    const cached = readRecentComparison(compareSubjectKey(setup.stocks), opts.maxAgeMs);
+    if (cached) {
+      return finalizeComparison(setup, cached.model, flatFromStreamedFields(cached.fields), undefined);
+    }
+  }
+
   let model = "unavailable";
 
   let flat: FlatAI = {};
@@ -667,9 +751,23 @@ export async function compareStocks(
  */
 export async function* streamComparisonFields(
   symbols: string[],
-  opts: { signal?: AbortSignal } = {},
+  opts: { signal?: AbortSignal; maxAgeMs?: number } = {},
 ): AsyncGenerator<{ key: string; value: unknown }, ComparisonResult, unknown> {
   const setup = await prepareComparison(symbols, opts);
+  const subjectKey = compareSubjectKey(setup.stocks);
+
+  // Replay path: a comparison of the same symbols inside the freshness
+  // window streams its stored fields back instantly instead of re-running a
+  // 30s+ generation. Same wire shape, same finalizeComparison — a consumer
+  // cannot tell replay from generation except by speed.
+  if (opts.maxAgeMs != null) {
+    const cached = readRecentComparison(subjectKey, opts.maxAgeMs);
+    if (cached) {
+      for (const [key, value] of Object.entries(cached.fields)) yield { key, value };
+      return finalizeComparison(setup, cached.model, flatFromStreamedFields(cached.fields), undefined);
+    }
+  }
+
   const parser = new JsonFieldStreamer();
   let model = "unavailable";
   let aiFailure: ClassifiedAiError | undefined;
@@ -698,6 +796,13 @@ export async function* streamComparisonFields(
     if (aiFailure.category === "cancelled") throw err;
   }
 
-  const flat = flatFromStreamedFields(parser.result());
+  const fields = parser.result();
+  if (!aiFailure && model !== "unavailable") {
+    // The blocking path's runAnalysis caches its result; the streaming path
+    // used to be the one AI surface that wrote nothing — every repeat view
+    // regenerated. Same table, same (type, subject, schema) identity.
+    cacheComparison(subjectKey, setup.prompt, fields, model);
+  }
+  const flat = flatFromStreamedFields(fields);
   return finalizeComparison(setup, model, flat, aiFailure);
 }

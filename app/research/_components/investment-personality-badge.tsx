@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { InvestmentPersonality, InvestmentPersonalityTag } from "@/lib/types";
 import { LoadingMark } from "@/app/_components/loading-mark";
 
-const TAG_STYLE: Record<InvestmentPersonalityTag, string> = {
+export const TAG_STYLE: Record<InvestmentPersonalityTag, string> = {
   /* light: variants deepen each identity hue to AA on white — the -400 set is
      dark-canvas only (2026-08-08 light-mode audit). */
   Compounder:    "text-emerald-400 light:text-emerald-700 border-emerald-400/30 light:border-emerald-700/40 bg-emerald-400/8",

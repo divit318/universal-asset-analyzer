@@ -51,7 +51,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { JSON_ONLY_INSTRUCTION } from "./prompts";
-import type { ProviderChatTurn } from "./provider";
+import type { ProviderChatTurn, ProviderImageAttachment } from "./provider";
 
 export const DEVIN_BIN = process.env.DEVIN_CLI_BIN ?? "devin";
 
@@ -133,6 +133,28 @@ const INFERENCE_CONFIG = {
   read_config_from: { cursor: false, windsurf: false, claude: false },
 } as const;
 
+/**
+ * The vision variant: identical lockdown, EXCEPT the `read` tool comes off the
+ * deny list and a single scoped `Read(<imagesDir>/**)` allow is added. That is
+ * how images reach the model through `devin -p` — the CLI forwards an image
+ * file the agent reads as real multimodal input (verified 2026-08-10:
+ * claude-opus-5-low transcribed a brokerage screenshot pixel-perfectly this
+ * way). The scope is what keeps the isolation honest: deny rules are checked
+ * before allows, and a read of any path OUTSIDE the images directory matches
+ * no allow rule, so in print mode (no human to approve) it is auto-denied.
+ * The agent can see exactly the screenshots this call wrote for it, and
+ * nothing else on the machine.
+ */
+function visionInferenceConfig(imagesDir: string) {
+  return {
+    ...INFERENCE_CONFIG,
+    permissions: {
+      allow: [`Read(${imagesDir}/**)`],
+      deny: INFERENCE_CONFIG.permissions.deny.filter((tool) => tool !== "read"),
+    },
+  };
+}
+
 function workspaceDir(): string {
   return process.env.DEVIN_CLI_WORKSPACE ?? join(tmpdir(), "uaa-ai-devin");
 }
@@ -140,21 +162,30 @@ function workspaceDir(): string {
 let workspaceReady = false;
 
 /**
- * Create the scratch workspace and write the inference config into it.
+ * Create the scratch workspace and write the inference configs into it.
  *
- * Idempotent and cheap after the first call. The config is rewritten on every
- * process boot rather than only when absent, so editing INFERENCE_CONFIG takes
- * effect on restart instead of being masked by a stale file on disk.
+ * Idempotent and cheap after the first call. The configs are rewritten on
+ * every process boot rather than only when absent, so editing
+ * INFERENCE_CONFIG takes effect on restart instead of being masked by a stale
+ * file on disk.
  */
-function ensureWorkspace(): { cwd: string; configPath: string } {
+export function ensureWorkspace(): {
+  cwd: string;
+  configPath: string;
+  visionConfigPath: string;
+  imagesDir: string;
+} {
   const cwd = workspaceDir();
   const configPath = join(cwd, "inference-config.json");
+  const visionConfigPath = join(cwd, "inference-vision-config.json");
+  const imagesDir = join(cwd, "images");
   if (!workspaceReady) {
-    mkdirSync(cwd, { recursive: true });
+    mkdirSync(imagesDir, { recursive: true });
     writeFileSync(configPath, JSON.stringify(INFERENCE_CONFIG, null, 2), "utf8");
+    writeFileSync(visionConfigPath, JSON.stringify(visionInferenceConfig(imagesDir), null, 2), "utf8");
     workspaceReady = true;
   }
-  return { cwd, configPath };
+  return { cwd, configPath, visionConfigPath, imagesDir };
 }
 
 /** Test hook: force the next call to rebuild the workspace. */
@@ -218,15 +249,33 @@ export function cleanDevinOutput(raw: string, opts: { json?: boolean } = {}): st
  * message is left last and unlabelled so the model answers *it* rather than
  * continuing the transcript.
  *
+ * `imagePaths` (vision requests) become a leading directive to read each
+ * screenshot file before answering — the CLI forwards a read image to the
+ * model as real multimodal input, which is the only image channel print mode
+ * has. The paths point inside the workspace's images directory, the only
+ * location the vision config's scoped Read() allow can reach.
+ *
  * Pure / testable.
  */
-export function flattenMessages(messages: ProviderChatTurn[], opts: { json?: boolean } = {}): string {
+export function flattenMessages(
+  messages: ProviderChatTurn[],
+  opts: { json?: boolean; imagePaths?: string[] } = {},
+): string {
   const system = messages.filter((m) => m.role === "system").map((m) => m.content);
   const turns = messages.filter((m) => m.role !== "system");
   const last = turns[turns.length - 1];
   const history = turns.slice(0, -1);
 
   const parts: string[] = [];
+  if (opts.imagePaths && opts.imagePaths.length > 0) {
+    parts.push(
+      [
+        "## Attached images",
+        "Before answering, use your read tool on each of these image files, in order. They are the image(s) the request below refers to:",
+        ...opts.imagePaths.map((p, i) => `${i + 1}. ${p}`),
+      ].join("\n"),
+    );
+  }
   if (system.length > 0) parts.push(system.join("\n\n"));
   if (history.length > 0) {
     parts.push(
@@ -249,22 +298,91 @@ function concurrencyLimit(): number {
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 8;
 }
 
-let active = 0;
-const waiting: (() => void)[] = [];
+/**
+ * How many of the pool's slots BACKGROUND work may hold at once.
+ *
+ * Every print-mode completion is a full CLI subprocess, and background
+ * fan-outs (the scanner's thesis stage runs up to 8 at a time) were observed
+ * saturating the pool on a memory-tight host: interactive calls queued behind
+ * them, and queued background calls recorded 620–980s of wall clock against
+ * 300s budgets. Capping background work to a strict subset of the pool
+ * guarantees interactive requests always have free slots, without slowing an
+ * idle-machine scan by much — the excess items queue here, where waiting is
+ * free, instead of as live subprocesses fighting for memory.
+ */
+function backgroundConcurrencyLimit(): number {
+  const raw = Number(process.env.DEVIN_CLI_BACKGROUND_CONCURRENCY);
+  const cap = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 3;
+  return Math.max(1, Math.min(cap, concurrencyLimit() - 1));
+}
 
-async function acquire(): Promise<() => void> {
-  if (active >= concurrencyLimit()) {
-    await new Promise<void>((resolve) => waiting.push(resolve));
+let active = 0;
+let activeBackground = 0;
+const waiting: { resolve: () => void; background: boolean }[] = [];
+
+function admissible(background: boolean): boolean {
+  if (active >= concurrencyLimit()) return false;
+  if (background && activeBackground >= backgroundConcurrencyLimit()) return false;
+  return true;
+}
+
+/** Wake every waiter that can now be admitted — interactive waiters first. */
+function admitWaiters(): void {
+  for (;;) {
+    const idx = waiting.findIndex((w) => admissible(w.background));
+    // Prefer an interactive waiter even if a background one is ahead of it.
+    const interactiveIdx = waiting.findIndex((w) => !w.background && admissible(false));
+    const pick = interactiveIdx !== -1 ? interactiveIdx : idx;
+    if (pick === -1) return;
+    const [w] = waiting.splice(pick, 1);
+    active += 1;
+    if (w.background) activeBackground += 1;
+    w.resolve();
   }
-  active += 1;
+}
+
+async function acquire(background = false): Promise<() => void> {
+  if (admissible(background)) {
+    active += 1;
+    if (background) activeBackground += 1;
+  } else {
+    await new Promise<void>((resolve) => waiting.push({ resolve, background }));
+  }
   let released = false;
   return () => {
     if (released) return;
     released = true;
     active -= 1;
-    waiting.shift()?.();
+    if (background) activeBackground -= 1;
+    admitWaiters();
   };
 }
+
+/**
+ * Acquire a slot in the shared Devin work pool.
+ *
+ * Exported for the ACP transport (../devin-acp.ts): BACKGROUND prompts take a
+ * slot from the same pool as print-mode subprocesses, so moving a batch
+ * pipeline from print mode to ACP cannot silently remove its concurrency cap
+ * — the cap bounds background AI work as a class, not one transport.
+ * Interactive ACP prompts deliberately do NOT take a slot: they multiplex
+ * over one persistent child (no per-call subprocess) and run hosted-parallel,
+ * so throttling them would only add queueing where none is needed.
+ */
+export function acquireDevinSlot(background: boolean): Promise<() => void> {
+  return acquire(background);
+}
+
+/** Test-only view of the subprocess pool (the semaphore is module state). */
+export const devinSlotsForTests = {
+  acquire,
+  snapshot: () => ({ active, activeBackground, waiting: waiting.length }),
+  reset: () => {
+    active = 0;
+    activeBackground = 0;
+    waiting.length = 0;
+  },
+};
 
 /* -------------------------------------------------------------------------- */
 /* Process execution                                                          */
@@ -304,6 +422,19 @@ function runDevin(
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGKILL");
+      // A SIGKILLed process normally closes within milliseconds, but under
+      // extreme memory pressure this host has been observed taking minutes to
+      // deliver the close event (Phase 1: 300s budgets recorded as 620–980s of
+      // wall clock). The caller's deadline must not depend on the kernel's
+      // mood: if close hasn't fired shortly after the kill, settle anyway —
+      // the process is dead or dying and its output is forfeit either way.
+      const forceSettle = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve({ stdout, stderr, code: null, timedOut: true });
+      }, 5_000);
+      forceSettle.unref?.();
     }, opts.timeoutMs);
 
     const onAbort = () => child.kill("SIGKILL");
@@ -403,8 +534,23 @@ export interface DevinGenerateOptions {
   /** Required: the Router always resolves a model. There is no ambient default. */
   model: string;
   json?: boolean;
+  /** Vision input — written to per-call files in the workspace's images dir and read by the agent. */
+  images?: ProviderImageAttachment[];
   timeoutMs?: number;
+  /** Background-task hint: capped to a subset of the subprocess pool and
+   *  queued behind interactive work (see backgroundConcurrencyLimit). */
+  background?: boolean;
   signal?: AbortSignal;
+}
+
+/** File extension for an image media type — the CLI sniffs content, but a truthful extension helps. */
+function extensionFor(mediaType: string): string {
+  switch (mediaType.toLowerCase()) {
+    case "image/jpeg": return "jpg";
+    case "image/webp": return "webp";
+    case "image/gif": return "gif";
+    default: return "png";
+  }
 }
 
 /**
@@ -427,11 +573,27 @@ export async function generateViaDevin(
     throw new DevinUnavailableError("disabled via DEVIN_CLI_DISABLED=1");
   }
 
-  const { cwd, configPath } = ensureWorkspace();
-  const promptPath = join(cwd, `prompt-${randomUUID()}.txt`);
-  writeFileSync(promptPath, flattenMessages(messages, { json: opts.json }), "utf8");
+  const { cwd, configPath, visionConfigPath, imagesDir } = ensureWorkspace();
+  const callId = randomUUID();
 
-  const release = await acquire();
+  // Vision input: each image becomes a per-call file inside the ONLY
+  // directory the vision config's Read() scope can reach, referenced from the
+  // prompt so the agent reads them (the CLI forwards a read image to the
+  // model as real multimodal input). Removed in the finally below — these
+  // are the user's financial screenshots and must not accumulate in tmp.
+  const imagePaths = (opts.images ?? []).map((img, i) =>
+    join(imagesDir, `img-${callId}-${i}.${extensionFor(img.mediaType)}`),
+  );
+  for (const [i, img] of (opts.images ?? []).entries()) {
+    writeFileSync(imagePaths[i], Buffer.from(img.base64, "base64"));
+  }
+
+  const promptPath = join(cwd, `prompt-${callId}.txt`);
+  writeFileSync(promptPath, flattenMessages(messages, { json: opts.json, imagePaths }), "utf8");
+
+  const queuedAt = Date.now();
+  const release = await acquire(opts.background === true);
+  const queuedMs = Date.now() - queuedAt;
   try {
     const res = await runDevin(
       [
@@ -439,7 +601,9 @@ export async function generateViaDevin(
         "--prompt-file",
         promptPath,
         "--config",
-        configPath,
+        // The scoped-read vision config ONLY when this call actually carries
+        // images; every text call keeps the fully tool-less lockdown.
+        imagePaths.length > 0 ? visionConfigPath : configPath,
         "--model",
         opts.model,
         // Print mode cannot render the workspace-trust prompt and hard-fails
@@ -452,7 +616,12 @@ export async function generateViaDevin(
     );
 
     if (res.timedOut) {
-      throw new Error(`Devin CLI timed out after ${opts.timeoutMs ?? 120_000}ms (model: ${opts.model})`);
+      // Queue wait is reported separately so a ledger row reading "300s
+      // timeout, 620s duration" is diagnosable as pool contention, not a
+      // mystery: the generation budget starts when the subprocess spawns.
+      throw new Error(
+        `Devin CLI timed out after ${opts.timeoutMs ?? 120_000}ms (model: ${opts.model}${queuedMs > 1_000 ? `, queued ${Math.round(queuedMs / 1000)}s` : ""})`,
+      );
     }
     if (opts.signal?.aborted) {
       throw new DOMException("Aborted", "AbortError");
@@ -483,5 +652,8 @@ export async function generateViaDevin(
   } finally {
     release();
     if (existsSync(promptPath)) rmSync(promptPath, { force: true });
+    for (const p of imagePaths) {
+      if (existsSync(p)) rmSync(p, { force: true });
+    }
   }
 }

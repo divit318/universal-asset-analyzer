@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TrendingUp, TrendingDown, Clock3, FileText, Network, Link2, Bookmark, Wallet } from "lucide-react";
 import type {
@@ -23,7 +23,10 @@ import type {
 import type { InvestmentProfile, PortfolioFitAnalysis } from "@/lib/ios/types";
 import type { ChartQARelatedTarget } from "@/lib/ai-chart-qa";
 import type { ScreenerInCompany, ScreenerInPeer } from "@/lib/screener-in";
+import type { CorporateActions } from "@/lib/yahoo";
+import type { NseResultsMeta } from "@/lib/india-news";
 import { detectMarket, MARKET_BADGE, MARKET_LABEL, type MarketRegion } from "@/lib/market";
+import { benchmarkForSymbol } from "@/lib/benchmarks";
 import { detectAssetClass, ASSET_CLASS_LABEL } from "@/lib/asset-class";
 import { useResearchBundle } from "@/lib/platform/client/use-research-bundle";
 import { useVerdictStream } from "@/lib/ai/client/use-verdict-stream";
@@ -58,7 +61,8 @@ import { ValuationStrip } from "./_components/valuation-strip";
 import { MovementExplainerCard } from "@/app/_components/movement-explainer-card";
 import { ConvictionBreakdown } from "./_components/conviction-breakdown";
 import { WhySection } from "./_components/why-section";
-import { InvestmentPersonalityBadge } from "./_components/investment-personality-badge";
+import { CompanyOrientation, readAssetProfile } from "./_components/company-orientation";
+import { PriceAlertAction } from "./_components/price-alert-action";
 import { ResearchConfidenceMeter } from "./_components/research-confidence-meter";
 import { MacroContextLadder } from "./_components/macro-context-ladder";
 import { WhyNowCard } from "./_components/why-now-card";
@@ -68,8 +72,6 @@ import { WatchlistIntelligenceCard } from "./_components/watchlist-intelligence-
 import { FinancialInsightCard } from "./_components/financial-insight-card";
 import { PeerCompetitivePosition } from "./_components/peer-competitive-position";
 import { ArrivalHighlight, useArrivalTarget } from "@/app/_components/arrival-highlight";
-import { LensControl, MaterialFade, useMaterialityLens } from "@/app/_components/materiality-lens";
-import { isMaterial, materialCount, pickVerdict, type MaterialityContext, type MaterialityVerdict } from "@/lib/materiality";
 import { TimelinePreviewCard } from "./_components/timeline-preview-card";
 import { GraphPreviewCard } from "./_components/graph-preview-card";
 import { RelatedOpportunitiesCard } from "./_components/related-opportunities-card";
@@ -81,7 +83,7 @@ import { InsiderTable } from "./_components/insider-table";
 import { OwnershipCard } from "./_components/ownership-card";
 
 // India-specific components (conditionally rendered)
-import { computeIndiaSnapshot } from "@/lib/india-snapshot";
+import { computeIndiaSnapshot, type IndiaDerivedFundamentals } from "@/lib/india-snapshot";
 import { InvestmentSnapshot } from "./india/_components/investment-snapshot";
 import { RatioSparklines } from "./india/_components/ratio-sparklines";
 import { RankedPeers } from "./india/_components/ranked-peers";
@@ -92,6 +94,19 @@ import { FundScoreCard } from "./fund/_components/fund-score-card";
 import { HoldingsTable } from "@/app/_components/holdings-table";
 import { FundProfileCard } from "./fund/_components/fund-profile-card";
 import { AiFundInsight } from "./fund/_components/ai-fund-insight";
+// Fund intelligence layer — every one of these is computed in render from data
+// already on the page (fund profile, price history, the IOS portfolio report).
+// None of them fetches and none of them calls a model; see
+// lib/research-engines/fund/ for the engines behind them.
+import { FundOrientation } from "./fund/_components/fund-orientation";
+import { ExposurePanel } from "./fund/_components/exposure-panel";
+import { PortfolioImpactCard } from "./fund/_components/portfolio-impact-card";
+import { VerdictTriggersCard } from "./fund/_components/verdict-triggers-card";
+import { BehaviorCard } from "./fund/_components/behavior-card";
+import { ThesisCaseCard } from "./fund/_components/thesis-case-card";
+import { VehicleCard } from "./fund/_components/vehicle-card";
+import { AlternativesCard } from "./fund/_components/alternatives-card";
+import { deriveFundExposure } from "@/lib/research-engines/fund/exposure";
 
 // Crypto-specific components (conditionally rendered) — Research Hub Phase 2
 import { CryptoScoreCard } from "./crypto/_components/crypto-score-card";
@@ -189,6 +204,22 @@ const QuarterlySummaryStats = dynamic(
   () => import("./india/_components/financial-charts").then((m) => m.QuarterlySummaryStats),
   { ssr: false, loading: () => <ChartSkeleton h="h-[100px]" /> },
 );
+const EpsTrendChart = dynamic(
+  () => import("./india/_components/financial-charts").then((m) => m.EpsTrendChart),
+  { ssr: false, loading: () => <ChartSkeleton h="h-[240px]" /> },
+);
+const QuarterlyResultsCard = dynamic(
+  () => import("./india/_components/india-statements").then((m) => m.QuarterlyResultsCard),
+  { ssr: false, loading: () => <ChartSkeleton h="h-[380px]" /> },
+);
+const StatementTable = dynamic(
+  () => import("./india/_components/india-statements").then((m) => m.StatementTable),
+  { ssr: false, loading: () => <ChartSkeleton h="h-[320px]" /> },
+);
+const DocumentsActionsCard = dynamic(
+  () => import("./india/_components/documents-actions").then((m) => m.DocumentsActionsCard),
+  { ssr: false, loading: () => <ChartSkeleton h="h-[280px]" /> },
+);
 const SectorAllocationChart = dynamic(
   () => import("./fund/_components/sector-allocation-chart").then((m) => m.SectorAllocationChart),
   { ssr: false, loading: () => <ChartSkeleton h="h-[240px]" /> },
@@ -240,15 +271,10 @@ function buildVerdictParams(
   return params;
 }
 
-interface IndiaDerivedData {
+interface IndiaDerivedData extends IndiaDerivedFundamentals {
   promoterHolding: number | null;
   fiiHolding: number | null;
   diiHolding: number | null;
-  evToEbitda: number | null;
-  priceToSales: number | null;
-  priceToBook: number | null;
-  debtToEquity: number | null;
-  interestCoverage: number | null;
   peers: ScreenerInPeer[];
 }
 
@@ -256,6 +282,9 @@ interface IndiaData {
   company: ScreenerInCompany;
   quote: Quote | null;
   derived: IndiaDerivedData;
+  corporateActions: CorporateActions | null;
+  resultsMeta: NseResultsMeta | null;
+  upcomingResults: { date: string; purpose: string } | null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -337,14 +366,30 @@ function LoadingSkeleton() {
 
 function ResearchWorkspace({
   data,
+  bundleStreaming,
   onSave,
   saved,
   onCopyLink,
+  onTracked,
+  initialAsk,
+  onInitialAskHandled,
 }: {
   data: ResearchData;
+  /** True while the research bundle stream is still open. Once it closes, every
+   * section entry has settled (success or error) — the deterministic fallback
+   * for the verdict gate below. */
+  bundleStreaming: boolean;
   onSave: () => void;
   saved: boolean;
   onCopyLink: () => void;
+  /** A price alert saved from the header tracked the symbol on the watchlist. */
+  onTracked: () => void;
+  /** A question handed off by another surface (?ask= deep link — see
+   * app/_components/ask-ai.ts). Auto-sent to the copilot once, on arrival. */
+  initialAsk?: string | null;
+  /** Called after `initialAsk` is consumed, so the owner can clear it and a
+   * LATER handoff (even of the same text) is delivered rather than deduped. */
+  onInitialAskHandled?: () => void;
 }) {
   const { quote, history, filings, edgarError, benchmarks, news, quoteUpdatedAt, filingsUpdatedAt } = data;
   const toast = useToast();
@@ -387,11 +432,24 @@ function ResearchWorkspace({
   const peersEntry = useDatasetValue<PeerComparison>("peers", quote.symbol);
   const sectorRotationStoreEntry = useDatasetValue<SectorRotationEntry | null>("sectorRotation", quote.symbol);
 
+  // The bundle's `profile` step (Yahoo assetProfile) — streamed to the store
+  // since the bundle shipped but previously only consumed server-side for the
+  // sector benchmark. It carries the sector/industry for the identity line and
+  // the business description the orientation layer falls back to.
+  const profileStoreEntry = useDatasetValue<unknown>("profile", quote.symbol);
+
   const fundamentals = fundamentalsEntry.data;
   const peers = peersEntry.data;
   const sectorRotationEntry = sectorRotationStoreEntry.data ?? null;
   const fundsLoading = fundamentalsEntry.status === "loading";
   const fundsError = fundamentalsEntry.error;
+
+  // Sector/industry for the identity line + description fallback. The profile
+  // step usually lands well before fundamentals; the snapshot covers the rare
+  // symbol where assetProfile is empty but financialData knows the sector.
+  const assetProfile = useMemo(() => readAssetProfile(profileStoreEntry.data), [profileStoreEntry.data]);
+  const identitySector = assetProfile.sector ?? fundamentals?.snapshot?.sector ?? null;
+  const identityIndustry = assetProfile.industry ?? fundamentals?.snapshot?.industry ?? null;
 
   // Movement Explainer result, lifted up so WhyNowCard can reuse the top
   // driver without a second fetch.
@@ -417,6 +475,26 @@ function ResearchWorkspace({
     handleChartAskAI({ question: action.instruction, action: action.id, label: action.label });
   }, [handleChartAskAI]);
 
+  // A question handed off by another surface (a notification's "Ask AI", a
+  // screener row, the ?ask= deep link) — sent to the copilot via the same
+  // mechanism the chart's own quick actions use, so the user arrives
+  // mid-conversation instead of having to restate what they were looking at.
+  // Consumed-and-cleared (not fired-once): the owner nulls it afterwards, so
+  // a second handoff later in the same mounted workspace still delivers.
+  useEffect(() => {
+    if (!initialAsk?.trim()) return;
+    // Deferred a tick: both calls set state, and this effect legitimately
+    // consumes an external handoff rather than syncing derived state — the
+    // timeout keeps the consume out of the render commit entirely.
+    const t = setTimeout(() => {
+      // `label` is what the chat renders as the user's message — for a handoff
+      // the question IS the message, unabridged.
+      handleChartAskAI({ question: initialAsk.trim(), label: initialAsk.trim() });
+      onInitialAskHandled?.();
+    }, 0);
+    return () => clearTimeout(t);
+  }, [initialAsk, handleChartAskAI, onInitialAskHandled]);
+
   // The fullscreen AI dock's "Related Context" navigation — "earnings"/"analysis"
   // just switch tabs (both already render at the top of their content, so no
   // scroll target is needed there); "copilot" reuses handleChartAskAI exactly,
@@ -435,80 +513,6 @@ function ResearchWorkspace({
   // Most recent Timeline milestone, populated once TimelinePreviewCard (Details
   // tab) has loaded — lets WhyNowCard cite it without a second fetch.
   const [nearestTimelineEvent, setNearestTimelineEvent] = useState<TimelineEvent | null>(null);
-
-  /* ── Materiality lens ─────────────────────────────────────────────────
-     The flag set is computed once per symbol alongside the existing data
-     fetches and memoised; toggling the lens (button or `d`) is pure
-     presentation. Two server inputs arrive async: peer-dispersion
-     percentiles + the prior-visit timestamp (/api/materiality/research),
-     and the symbol's timeline (fetched here at page load — not in the
-     Details tab — because the header count must be able to say "changed
-     since your last visit" before the user opens any tab; the preview card
-     reuses these events instead of fetching again). */
-  const lens = useMaterialityLens();
-  const [lensServer, setLensServer] = useState<{
-    dimensions:
-      | { key: string; label: string; percentile: number | null; peerGroup: string | null; peerGroupSize: number | null }[]
-      | null;
-    priorVisitAt: string | null;
-  } | null>(null);
-  const [lensTimeline, setLensTimeline] = useState<TimelineEvent[] | null>(null);
-  // Freshness checks need a "now", and react-hooks/purity (rightly) refuses
-  // Date.now() inside the memo — so the clock is read here, once per symbol,
-  // where impurity is allowed. Staleness is a >1h-scale judgment; a timestamp
-  // anchored at load is exactly as honest as one anchored at render.
-  const [lensNow, setLensNow] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setLensServer(null);
-    setLensTimeline(null);
-    setLensNow(Date.now());
-    /* eslint-enable react-hooks/set-state-in-effect */
-    void fetch(`/api/materiality/research?symbol=${encodeURIComponent(quote.symbol)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (!cancelled && d) setLensServer(d); })
-      .catch(() => {});
-    void fetch(`/api/timeline?scope=symbol&id=${encodeURIComponent(quote.symbol)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (!cancelled) setLensTimeline((d?.events as TimelineEvent[] | undefined) ?? []); })
-      .catch(() => { if (!cancelled) setLensTimeline([]); });
-    return () => { cancelled = true; };
-  }, [quote.symbol]);
-
-  const lensFlags = useMemo(() => {
-    const ctx: MaterialityContext = { now: lensNow, priorVisitAt: lensServer?.priorVisitAt ?? null };
-
-    const dimVerdicts = (lensServer?.dimensions ?? []).map((d) =>
-      isMaterial({ kind: "dimension", label: d.label, percentile: d.percentile, peerGroup: d.peerGroup, peerGroupSize: d.peerGroupSize }, ctx),
-    );
-    const riskVerdicts = (fundamentals?.risks ?? []).map((r) =>
-      isMaterial({ kind: "risk", category: r.category, level: r.level, detail: r.reason }, ctx),
-    );
-    const freshFundamentals = fundamentals
-      ? isMaterial({ kind: "freshness", label: "Fundamentals", asOf: fundamentalsEntry.updatedAt ?? null, ttlHours: 24 }, ctx)
-      : null;
-    const freshFilings =
-      isEquity && filings.length > 0
-        ? isMaterial({ kind: "freshness", label: "SEC filings", asOf: filingsUpdatedAt, ttlHours: 24 }, ctx)
-        : null;
-    const changeVerdicts = (lensTimeline ?? []).map((ev) =>
-      isMaterial({ kind: "change", label: ev.title, at: ev.timestamp }, ctx),
-    );
-
-    const all = [...dimVerdicts, ...riskVerdicts, ...changeVerdicts, freshFundamentals, freshFilings]
-      .filter((v): v is MaterialityVerdict => v != null);
-
-    return {
-      count: materialCount(all),
-      dims: pickVerdict(dimVerdicts),
-      risks: pickVerdict(riskVerdicts),
-      freshFundamentals: freshFundamentals ?? undefined,
-      freshFilings: freshFilings ?? undefined,
-      changes: pickVerdict(changeVerdicts),
-    };
-  }, [lensServer, lensTimeline, lensNow, fundamentals, fundamentalsEntry.updatedAt, filingsUpdatedAt, isEquity, filings.length]);
 
   // India / fund / crypto / commodity / forex / derivatives / macro data is
   // fetched below via `useDataset` — see the block after the verdict effect.
@@ -556,6 +560,15 @@ function ResearchWorkspace({
   const fund = fundEntry.data?.fund ?? null;
   const fundScore = fundEntry.data?.score ?? null;
   const fundLoading = fundEntry.status === "loading";
+
+  // The fund's exposure read — what the holdings and category actually add up
+  // to. Derived once here rather than inside each consumer, because the
+  // masthead orientation line and the Conviction tab's expandable are two views
+  // of ONE analysis and must never drift apart.
+  const fundExposure = useMemo(
+    () => (fund ? deriveFundExposure(fund, market === "US") : null),
+    [fund, market],
+  );
 
   const cryptoEntry = useDataset<{ score: ScoreResult; btcHistory: HistoryPoint[] }>(
     "crypto",
@@ -698,23 +711,45 @@ function ResearchWorkspace({
 
   /* ── AI verdict, streamed ────────────────────────────────────────────────────
      The personalization params are built once, memoized on their own values, and
-     the request is gated on the IOS profile having settled. That gate is the
-     whole fix: the previous version deliberately generated a *generic* verdict
-     and then re-generated a *personalized* one the moment portfolio fit arrived.
-     On a backend that serializes generations, that "progressive enhancement"
-     bought nothing and cost a second full inference — and because it never
-     aborted the first, a third request from the same transition ran too.
+     the request is gated on EVERY input that shapes them having settled. That
+     gate is the whole fix: a verdict fired before the inputs settle is keyed on
+     params that are about to change, which aborts the in-flight generation and
+     starts another — pure spend, and a skeleton reset the user has to watch.
+
+     Two inputs feed the params, so both must settle before the first fire:
+       1. the IOS profile (ios.profileReady — the portfolio report has loaded
+          or definitively failed);
+       2. the canonical Research Score's own dataset (fundamentals for global
+          equities, the class-specific dataset otherwise), because portfolioFit
+          is only computed once one of them exists — firing earlier sends {} and
+          then re-keys when the score lands.
+     Both settle on success OR error — a symbol whose fundamentals fail still
+     gets its (generic) verdict, deterministically.
 
      No memo is needed here: the hook keys the request on the *serialized* query
      string, so a fresh object with equal values is not a new request. */
+  const entrySettled = (status: string) => status === "success" || status === "error";
+  const scoreInputsSettled = isMacro
+    ? true
+    : isIndiaEquity
+      ? entrySettled(indiaEntry.status)
+      : isFund
+        ? entrySettled(fundEntry.status)
+        : isCrypto
+          ? entrySettled(cryptoEntry.status)
+          : isCommodity
+            ? entrySettled(commodityEntry.status)
+            : isForex
+              ? entrySettled(forexEntry.status)
+              // Fundamentals arrive via the bundle stream; a closed stream means
+              // every section has settled even if this entry never got a value.
+              : entrySettled(fundamentalsEntry.status) || !bundleStreaming;
+
   const verdictParams = buildVerdictParams(portfolioFit, ios?.profile ?? null);
 
   const verdictStream = useVerdictStream(quote.symbol, verdictParams, {
-    // Waiting for the profile costs a second or two of "waiting"; not waiting
-    // costs an entire extra local inference and shows a verdict about to be
-    // replaced. `ios == null` means there is no IOS provider at all, so there is
-    // nothing to wait for.
-    enabled: ios == null || ios.profileReady,
+    // `ios == null` means there is no IOS provider at all — nothing to wait for.
+    enabled: (ios == null || ios.profileReady) && scoreInputsSettled,
   });
   const verdict = verdictStream.verdict;
 
@@ -835,6 +870,13 @@ function ResearchWorkspace({
               {quote.assetType && (
                 <span className="text-micro font-medium uppercase tracking-widest text-faint">{quote.assetType.toLowerCase()}</span>
               )}
+              {/* Sector is orientation, not signal — same faint treatment as the asset type. */}
+              {isEquity && identitySector && (
+                <span className="text-micro font-medium uppercase tracking-widest text-faint">
+                  · {identitySector}
+                  {identityIndustry ? ` · ${identityIndustry}` : ""}
+                </span>
+              )}
             </div>
             <div className="flex items-baseline gap-3">
               {/* Keyed on the symbol, not the price: the headline number counts
@@ -858,8 +900,6 @@ function ResearchWorkspace({
 
           {/* Action row */}
           <div className="flex flex-wrap items-center gap-1.5">
-            <LensControl count={lensFlags.count} active={lens.active} onToggle={lens.toggle} />
-            <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
             <Link
               href={`/journal?symbol=${encodeURIComponent(quote.symbol)}`}
               className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-2 text-sm text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
@@ -878,6 +918,26 @@ function ResearchWorkspace({
             >
               <Link2 className="h-4 w-4" strokeWidth={1.75} /> Copy link
             </button>
+            {/* Entry point into the EXISTING watchlist alert system (monitor →
+                crossing detection → notification bell) — a user-defined
+                monitoring action, so it lives here with the other utility
+                actions, never inside the AI verdict. */}
+            <PriceAlertAction
+              symbol={quote.symbol}
+              name={quote.name}
+              currency={quote.currency}
+              consensus={
+                fundamentals?.analyst
+                  ? {
+                      mean: fundamentals.analyst.targetMean,
+                      high: fundamentals.analyst.targetHigh,
+                      low: fundamentals.analyst.targetLow,
+                      opinions: fundamentals.analyst.numberOfOpinions,
+                    }
+                  : undefined
+              }
+              onTracked={onTracked}
+            />
             <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
             {/* IC Report is an equity workflow (signal library, 9-agent
                 network, DCF engine — see app/ic-report). Funds, crypto,
@@ -921,6 +981,28 @@ function ResearchWorkspace({
           </div>
         </div>
 
+        {/* Company orientation — what it does, what kind of investment it is,
+            and the expandable About — deliberately BEFORE the stats strip, so
+            the reader knows what the company is before being shown its numbers. */}
+        {isEquity && (
+          <CompanyOrientation
+            symbol={quote.symbol}
+            companyName={quote.name}
+            fundamentals={fundamentals ?? null}
+            fundamentalsLoading={fundsLoading}
+            profileSector={assetProfile.sector}
+            profileIndustry={assetProfile.industry}
+            profileDescription={assetProfile.description}
+          />
+        )}
+
+        {/* The fund's counterpart to CompanyOrientation, in the same slot and for
+            the same reason: know what the instrument IS before reading numbers
+            about it. Funds previously went straight from a ticker to a score. */}
+        {isFund && (
+          <FundOrientation fund={fund} loading={fundLoading} usListed={market === "US"} />
+        )}
+
         {/* Key stats strip — hairline-divided, tabular */}
         <dl className={`grid grid-cols-2 gap-px border-t border-border bg-border sm:grid-cols-3 ${statsRow.length % 6 === 0 ? "lg:grid-cols-6" : "lg:grid-cols-3"}`}>
           {statsRow.map(([label, value]) => (
@@ -932,22 +1014,21 @@ function ResearchWorkspace({
         </dl>
       </Reveal>
 
-      {/* ── 2b. Identity strip: personality badge + research confidence ── */}
+      {/* ── 2b. Research confidence — data coverage of the research inputs.
+             Deliberately alone on this row: the investment-personality badge
+             that used to sit beside it now lives in the masthead's orientation
+             layer (investment characteristics), so coverage can never be
+             misread as a quality/growth signal. ── */}
       {isEquity && (
-        <Reveal index={1} className="flex flex-wrap items-stretch gap-3">
-          <div className="flex items-center">
-            <InvestmentPersonalityBadge personality={fundamentals?.personality ?? null} loading={fundsLoading} />
-          </div>
-          <div className="min-w-[220px] flex-1">
-            <ResearchConfidenceMeter
-              fundamentals={fundamentals ?? null}
-              fundamentalsLoading={fundsLoading}
-              peers={peers ?? null}
-              peersLoading={peersEntry.status === "loading"}
-              filingsCount={filings.length}
-              newsCount={news?.length ?? 0}
-            />
-          </div>
+        <Reveal index={1}>
+          <ResearchConfidenceMeter
+            fundamentals={fundamentals ?? null}
+            fundamentalsLoading={fundsLoading}
+            peers={peers ?? null}
+            peersLoading={peersEntry.status === "loading"}
+            filingsCount={filings.length}
+            newsCount={news?.length ?? 0}
+          />
         </Reveal>
       )}
 
@@ -973,7 +1054,7 @@ function ResearchWorkspace({
               loading={verdict == null && verdictStream.status !== "error"}
               received={verdictStream.received}
               streaming={verdictStream.streaming}
-              elapsedMs={verdictStream.elapsedMs}
+              startedAt={verdictStream.startedAt}
               error={verdictStream.error}
               onRetry={verdictStream.retry}
               headlineScore={headlineScore}
@@ -1085,7 +1166,9 @@ function ResearchWorkspace({
         <InteractiveChart
           symbol={quote.symbol}
           history={history}
-          benchmarks={benchmarks ?? { spy: [], sectorEtf: null, sector: [] }}
+          // Fallback label is market-aware: an Indian stock whose benchmark
+          // fetch failed must not be captioned against the S&P 500.
+          benchmarks={benchmarks ?? { market: [], marketLabel: benchmarkForSymbol(quote.symbol).label, sectorEtf: null, sector: [] }}
           news={news}
           onAskAI={handleChartAskAI}
           onOpenTechnical={handleOpenTechnical}
@@ -1124,8 +1207,22 @@ function ResearchWorkspace({
           ) : isFund ? (
             fundLoading ? (
               <LoadingSkeleton />
-            ) : fundScore ? (
-              <FundScoreCard score={fundScore} />
+            ) : fundScore && fund ? (
+              /* The fund conviction view, in the order a decision is made:
+                 the call, then what you'd actually be buying, then what it
+                 does to the book you already have, then what would change
+                 the call. Everything after the score card is either compact
+                 or collapsed, so the default state stays scannable. */
+              <>
+                <FundScoreCard score={fundScore} />
+                {fundExposure && <ExposurePanel exposure={fundExposure} />}
+                <PortfolioImpactCard
+                  symbol={quote.symbol}
+                  fund={fund}
+                  suggestedAllocationPct={portfolioFit?.suggestedAllocationPct ?? null}
+                />
+                <VerdictTriggersCard fund={fund} history={history} score={fundScore} />
+              </>
             ) : (
               <div className="rounded-xl border border-border bg-surface p-6 text-center text-sm text-muted">
                 Fund data unavailable for this symbol.
@@ -1172,14 +1269,12 @@ function ResearchWorkspace({
               </div>
             )
           ) : (
-            <MaterialFade active={lens.active} verdict={lensFlags.dims ?? lensFlags.risks}>
-              <ConvictionBreakdown
-                score={fundamentals?.score ?? null}
-                loading={fundsLoading}
-                risks={fundamentals?.risks}
-                onViewRisks={() => setTab("analysis")}
-              />
-            </MaterialFade>
+            <ConvictionBreakdown
+              score={fundamentals?.score ?? null}
+              loading={fundsLoading}
+              risks={fundamentals?.risks}
+              onViewRisks={() => setTab("analysis")}
+            />
           )}
           {isIndiaEquity && indiaLoading && (
             <LoadingLine
@@ -1208,8 +1303,32 @@ function ResearchWorkspace({
               derived={indiaDerived!}
             />
           )}
+          {/* The fund's analysis pair: why the call is what it is (evidence
+              traced to the scoring factors that produced it), then when the
+              fund has actually worked (measured off the price history the
+              chart above already loaded).
+
+              These replace the AI "Allocation Analysis" panel that used to sit
+              here. It restated the sector weights rendered two tabs over and
+              cost an inference to do it; both questions are answered better,
+              and instantly, from data already in hand. */}
           {isFund && fund && fundScore && (
-            <AiFundInsight section="allocation" symbol={quote.symbol} name={quote.name} fund={fund} score={fundScore} />
+            <>
+              <ThesisCaseCard
+                name={quote.name || quote.symbol}
+                fund={fund}
+                score={fundScore}
+                history={history}
+                benchmarkHistory={benchmarks?.market ?? []}
+                benchmarkLabel={benchmarks?.marketLabel ?? "the market"}
+                usListed={market === "US"}
+              />
+              <BehaviorCard
+                history={history}
+                benchmarkHistory={benchmarks?.market ?? []}
+                benchmarkLabel={benchmarks?.marketLabel ?? "the market"}
+              />
+            </>
           )}
           {isCrypto && cryptoScore && (
             <AiCryptoInsight
@@ -1268,6 +1387,16 @@ function ResearchWorkspace({
                   <SectorAllocationChart sectorWeights={fund.sectorWeights} />
                 </div>
                 <FundPerformanceCard fund={fund} />
+                {/* Vehicle quality and alternatives answer the implementation
+                    question — "is this a good way to buy this exposure?" —
+                    which belongs next to the anatomy, not next to the verdict. */}
+                <VehicleCard fund={fund} history={history} perShareClass={isMutualFund} />
+                <AlternativesCard symbol={quote.symbol} category={fund.category} />
+                {/* The one surviving AI panel on the fund path. Kept because
+                    it makes the single claim our data genuinely cannot: whether
+                    this cost is cheap or dear FOR ITS CATEGORY — we have the
+                    fund's expense ratio but no category cost benchmark to put
+                    it against. It mounts only when this tab is opened. */}
                 <AiFundInsight section="cost" symbol={quote.symbol} name={quote.name} fund={fund} score={fundScore} />
               </>
             ) : (
@@ -1386,16 +1515,10 @@ function ResearchWorkspace({
                 ) : null;
               })()}
 
-              <MaterialFade active={lens.active} verdict={lensFlags.freshFundamentals}>
-                <DataProvenance source="yahoo" asOf={fundamentalsEntry.updatedAt} ttlHours={24} />
-              </MaterialFade>
+              <DataProvenance source="yahoo" asOf={fundamentalsEntry.updatedAt} ttlHours={24} />
               {/* The conviction block (score ring, pillars, subscores) lives on
                   the Conviction tab ONLY — it was previously duplicated here. */}
-              {hasEarnings && (
-                <MaterialFade active={lens.active} verdict={lensFlags.changes}>
-                  <EarningsCard earnings={fundamentals.earnings} />
-                </MaterialFade>
-              )}
+              {hasEarnings && <EarningsCard earnings={fundamentals.earnings} />}
 
               {/* Financial charts grid. A resolved-but-empty peer set renders
                   NOTHING — a permanent "Peer data unavailable" box is worse
@@ -1429,17 +1552,24 @@ function ResearchWorkspace({
                 />
               )}
 
-              {/* India financial overlays */}
+              {/* India financials — quarterly results first (what an Indian
+                  investor checks before anything else), then trends, then the
+                  full balance sheet / cash flow parsed from screener.in. */}
               {isIndiaEquity && hasIndia && indiaCompany && hasIndiaFinancials && (
                 <div className="flex flex-col gap-5">
-                  <SectionDivider title="India Financial Trends (screener.in)" />
+                  <SectionDivider title="Financial Statements (screener.in)" />
                   <DataProvenance source="screener_in" asOf={indiaEntry.updatedAt} ttlHours={24} />
+
                   {(indiaCompany.quarterlyPL?.length ?? 0) >= 2 && (
                     <section className="flex flex-col gap-4">
-                      <div>
-                        <h3 className="text-sm font-semibold">Quarterly Performance</h3>
-                        <p className="text-xs text-muted">Last 8 quarters — YoY: green ≥15%, amber moderate, red declining</p>
-                      </div>
+                      <QuarterlyResultsCard
+                        data={indiaCompany.quarterlyPL!}
+                        statementKind={indiaCompany.statementKind}
+                        basis={indiaCompany.basis}
+                        filings={filings}
+                        resultsMeta={india?.resultsMeta ?? null}
+                        upcoming={india?.upcomingResults ?? null}
+                      />
                       <QuarterlySummaryStats data={indiaCompany.quarterlyPL!} />
                       <div className="grid gap-4 lg:grid-cols-2">
                         <QuarterlyRevenueChart data={indiaCompany.quarterlyPL!} />
@@ -1447,15 +1577,35 @@ function ResearchWorkspace({
                       </div>
                     </section>
                   )}
+
                   {(indiaCompany.annualPL?.length ?? 0) >= 2 && (
                     <section className="flex flex-col gap-4">
                       <h3 className="text-sm font-semibold">Annual Financial History</h3>
                       <div className="grid gap-4 lg:grid-cols-2">
                         <AnnualRevenueChart data={indiaCompany.annualPL!} />
                         <AnnualMarginChart data={indiaCompany.annualPL!} />
+                        <EpsTrendChart data={indiaCompany.annualPL!} />
                       </div>
                     </section>
                   )}
+
+                  {indiaCompany.balanceSheet && (
+                    <StatementTable
+                      title="Balance Sheet"
+                      stmt={indiaCompany.balanceSheet}
+                      basis={indiaCompany.basis}
+                      strongRows={["Total Liabilities", "Total Assets"]}
+                    />
+                  )}
+                  {indiaCompany.cashFlow && (
+                    <StatementTable
+                      title="Cash Flow"
+                      stmt={indiaCompany.cashFlow}
+                      basis={indiaCompany.basis}
+                      strongRows={["Net Cash Flow", "Free Cash Flow"]}
+                    />
+                  )}
+
                   <section className="flex flex-col gap-3">
                     <div>
                       <h3 className="text-sm font-semibold">10-Year Ratio Trends</h3>
@@ -1463,6 +1613,15 @@ function ResearchWorkspace({
                     </div>
                     <RatioSparklines ratios={indiaCompany.ratios} />
                   </section>
+                  {indiaCompany.kpis.length > 0 && (
+                    <section className="flex flex-col gap-3">
+                      <div>
+                        <h3 className="text-sm font-semibold">Company Operating KPIs</h3>
+                        <p className="text-xs text-muted">Company-specific metrics screener.in publishes for this name</p>
+                      </div>
+                      <RatioSparklines ratios={indiaCompany.kpis} />
+                    </section>
+                  )}
                   <AiSectionInsight
                     section="financials"
                     company={indiaCompany}
@@ -1508,15 +1667,20 @@ function ResearchWorkspace({
                     quote={indiaQuote}
                     derived={indiaDerived!}
                   />
-                  <SectionDivider title="Global Institutional Ownership" />
+                  {hasOwnership && <SectionDivider title="Global Institutional Ownership" />}
                 </div>
               )}
 
               {isIndiaEquity && indiaLoading && <LoadingLine message="Loading shareholding data…" />}
 
-              {/* Global institutional ownership + insider */}
+              {/* Global institutional ownership + insider. For Indian listings
+                  the SEBI-regulated shareholding pattern above IS the ownership
+                  story — Yahoo's US-style insider table is almost always empty
+                  for NSE names, so it renders only when it has something. */}
               {hasOwnership && <OwnershipCard ownership={fundamentals!.ownership} />}
-              <InsiderTable insider={fundamentals?.insider ?? { transactions: [], netValue: 0, buyCount: 0, sellCount: 0 }} />
+              {(!isIndia || (fundamentals?.insider?.transactions.length ?? 0) > 0) && (
+                <InsiderTable insider={fundamentals?.insider ?? { transactions: [], netValue: 0, buyCount: 0, sellCount: 0 }} currency={quote.currency} />
+              )}
 
               {/* Peers */}
               {!isIndia && peers && peers.peerCount > 0 && (
@@ -1556,18 +1720,15 @@ function ResearchWorkspace({
       {tab === "details" && (
         <Reveal index={0} className="flex flex-col gap-6">
           {/* Investment Timeline, Knowledge Graph, Opportunity Map — compact previews */}
-          <MaterialFade active={lens.active} verdict={lensFlags.changes}>
-            <TimelinePreviewCard
-              symbol={quote.symbol}
-              initialEvents={lensTimeline}
-              onLoaded={(mostRecent) => setNearestTimelineEvent(mostRecent)}
-            />
-          </MaterialFade>
+          <TimelinePreviewCard
+            symbol={quote.symbol}
+            onLoaded={(mostRecent) => setNearestTimelineEvent(mostRecent)}
+          />
           <GraphPreviewCard symbol={quote.symbol} />
           <RelatedOpportunitiesCard symbol={quote.symbol} />
 
           {/* Fund profile (family, category, expense ratio, asset allocation) */}
-          {isFund && fund && <FundProfileCard fund={fund} perShareClass={isMutualFund} />}
+          {isFund && fund && <FundProfileCard fund={fund} />}
 
           {/* Options chain (equity/fund underlyings with listed options).
               Rendered ONLY when every field is present and plausible — Yahoo's
@@ -1586,24 +1747,25 @@ function ResearchWorkspace({
           ) : null}
 
           {/* Analyst consensus */}
-          {fundamentals?.analyst && (
-            <MaterialFade active={lens.active} verdict={undefined}>
-              <AnalystCard analyst={fundamentals.analyst} />
-            </MaterialFade>
-          )}
+          {fundamentals?.analyst && <AnalystCard analyst={fundamentals.analyst} />}
 
           {/* Risks render on the Analysis tab only (WhySection's "Biggest
               Risks") — the risk heatmap here duplicated the same list. */}
 
-          {/* SEC Filings (US/global equity) */}
+          {/* SEC Filings (US/global equity). India: NSE corporate announcements
+              on the same Filing shape (lib/india-news.ts). */}
           {isEquity && (
-            <MaterialFade active={lens.active} verdict={lensFlags.freshFilings}>
             <section className="flex flex-col gap-3">
-              <SectionDivider title="SEC Filings" />
+              <SectionDivider title={isIndia ? "Exchange Filings (NSE)" : "SEC Filings"} />
               {!edgarError && filings.length > 0 && (
-                <DataProvenance source="sec_edgar" asOf={filingsUpdatedAt} ttlHours={24} />
+                <DataProvenance source={isIndia ? "nse_india" : "sec_edgar"} asOf={filingsUpdatedAt} ttlHours={isIndia ? 3 : 24} />
               )}
-              {edgarError ? (
+              {isIndia && filings.length === 0 ? (
+                <p className="text-sm text-muted">
+                  No recent NSE corporate announcements found — the exchange feed may be
+                  temporarily unavailable.
+                </p>
+              ) : edgarError ? (
                 <p className="text-sm text-muted">EDGAR unavailable: {edgarError}</p>
               ) : filings.length === 0 ? (
                 <p className="text-sm text-muted">No recent filings found.</p>
@@ -1671,7 +1833,16 @@ function ResearchWorkspace({
                 </ul>
               )}
             </section>
-            </MaterialFade>
+          )}
+
+          {/* Documents & corporate actions — annual reports, concalls, credit
+              ratings (screener.in-indexed official documents) plus dividend
+              and split/bonus history (Yahoo events). India only. */}
+          {isIndiaEquity && hasIndia && indiaCompany && (
+            <DocumentsActionsCard
+              documents={indiaCompany.documents}
+              actions={india?.corporateActions ?? null}
+            />
           )}
 
           {/* AI Copilot */}
@@ -1842,6 +2013,8 @@ function ResearchPageInner() {
   const [saved, setSaved] = useState(false);
   const [searchMode, setSearchMode] = useState<SearchMode>("ticker");
   const [manualQuery, setManualQuery] = useState("");
+  /** A copilot question handed off via ?ask= (see app/_components/ask-ai.ts). */
+  const [handedOffAsk, setHandedOffAsk] = useState<string | null>(null);
   const toast = useToast();
   const highlightTarget = useArrivalTarget();
 
@@ -1855,7 +2028,7 @@ function ResearchPageInner() {
 
   const quoteEntry = useDatasetValue<Quote>("quote", activeSymbol);
   const historyEntry = useDatasetValue<HistoryPoint[]>("history", activeSymbol);
-  const spyEntry = useDatasetValue<HistoryPoint[]>("spyHistory", activeSymbol);
+  const benchmarkEntry = useDatasetValue<HistoryPoint[]>("benchmarkHistory", activeSymbol);
   const sectorEntry = useDatasetValue<{ etf: string | null; history: HistoryPoint[] }>("sectorHistory", activeSymbol);
   const filingsEntry = useDatasetValue<Filing[]>("filings", activeSymbol);
   const newsEntry = useDatasetValue<NewsItem[]>("news", activeSymbol);
@@ -1883,7 +2056,8 @@ function ResearchPageInner() {
       filings: filingsEntry.data ?? [],
       edgarError: filingsEntry.error,
       benchmarks: {
-        spy: spyEntry.data ?? [],
+        market: benchmarkEntry.data ?? [],
+        marketLabel: benchmarkForSymbol(activeSymbol ?? "").label,
         sectorEtf: sectorEntry.data?.etf ?? null,
         sector: sectorEntry.data?.history ?? [],
       },
@@ -1891,7 +2065,7 @@ function ResearchPageInner() {
       quoteUpdatedAt: quoteEntry.updatedAt,
       filingsUpdatedAt: filingsEntry.updatedAt,
     };
-  }, [quoteEntry.data, quoteEntry.updatedAt, historyEntry.data, filingsEntry.data, filingsEntry.error, filingsEntry.updatedAt, spyEntry.data, sectorEntry.data, newsEntry.data]);
+  }, [quoteEntry.data, quoteEntry.updatedAt, historyEntry.data, filingsEntry.data, filingsEntry.error, filingsEntry.updatedAt, benchmarkEntry.data, sectorEntry.data, newsEntry.data, activeSymbol]);
 
   // The page shell renders as soon as the quote and the price series exist
   // (~500ms) rather than waiting for the slowest section (~2.3s). Everything
@@ -1930,16 +2104,37 @@ function ResearchPageInner() {
   // client store. Re-requesting instead is both simpler and more correct: the
   // platform's cache serves a revisited symbol in ~36ms, and the user can never
   // be shown a price that has been sitting in sessionStorage since yesterday.
+  //
+  // Keyed on `searchParams`, NOT run once on mount: a client-side navigation
+  // to this same route (⌘K ticker jump while already on Research, a
+  // notification's "Ask AI", any /research?symbol=… push) re-renders the page
+  // without remounting it, so a mount-only effect silently ignored the new
+  // symbol — the URL said TSM while the page still showed MSFT (verified in
+  // a real browser, 2026-08-11). `window.location` stays the read source so
+  // the ask-strip below can't go stale against the router's snapshot.
+  const deepLinkSearch = useSearchParams();
   useEffect(() => {
-    const param = new URLSearchParams(window.location.search).get("symbol");
+    const params = new URLSearchParams(window.location.search);
+    const param = params.get("symbol");
+    // A handed-off copilot question (see app/_components/ask-ai.ts). Consumed
+    // once and stripped from the URL immediately, so a refresh or a copied
+    // link doesn't re-ask it — the question belongs to the moment it was
+    // asked in, not to the page's address.
+    const ask = params.get("ask");
+    /* eslint-disable react-hooks/set-state-in-effect */
+    if (ask) {
+      params.delete("ask");
+      const rest = params.toString();
+      window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}`);
+      setHandedOffAsk(ask);
+    }
     const restored = param ?? sessionStorage.getItem("uaa_research_symbol");
     if (!restored) return;
-    /* eslint-disable react-hooks/set-state-in-effect */
     setSymbol(restored.toUpperCase());
     submit(restored);
     /* eslint-enable react-hooks/set-state-in-effect */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [deepLinkSearch]);
 
   // Prefill the search box from the focus spine when the Hub opens without a
   // symbol of its own (§4.4). Seeds the box only — no fetch, no submit — so the
@@ -2109,9 +2304,13 @@ function ResearchPageInner() {
       {data && !loading && (
         <ResearchWorkspace
           data={data}
+          bundleStreaming={bundle.streaming}
           onSave={addToWatchlist}
           saved={saved}
           onCopyLink={copyLink}
+          onTracked={() => setSaved(true)}
+          initialAsk={handedOffAsk}
+          onInitialAskHandled={() => setHandedOffAsk(null)}
         />
       )}
 

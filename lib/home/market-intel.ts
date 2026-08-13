@@ -39,6 +39,8 @@ const TAPE: { id: MarketGroupId; label: string; tickers: { symbol: string; label
       { symbol: "^IXIC", label: "Nasdaq" },
       { symbol: "^DJI", label: "Dow" },
       { symbol: "^RUT", label: "Russell 2000" },
+      { symbol: "^NSEI", label: "NIFTY 50" },
+      { symbol: "^BSESN", label: "Sensex" },
       { symbol: "^FTSE", label: "FTSE 100" },
       { symbol: "^N225", label: "Nikkei 225" },
     ],

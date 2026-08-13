@@ -70,6 +70,30 @@ function toEntries(rows: RawQuoteRow[], seen: Set<string>): UniverseEntry[] {
   return out;
 }
 
+/**
+ * Indian equities: NSE listings above ~₹1,000 Cr market cap, largest first.
+ * Yahoo's screener returns BOTH exchanges' lines for dual-listed companies
+ * (RELIANCE.NS + RELIANCE.BO), so the query pins exchange NSI and the mapper
+ * additionally de-dupes on the base ticker — one company, one row.
+ */
+const INDIA_LIMIT = Number(process.env.SCREENER_INDIA_LIMIT) || 500;
+const INDIA_MIN_MCAP_INR = 1e10; // ₹1,000 Cr — keeps out the illiquid micro-cap tail
+
+function toIndiaEntries(rows: RawQuoteRow[], seen: Set<string>): UniverseEntry[] {
+  const out: UniverseEntry[] = [];
+  for (const r of rows) {
+    const symbol = r.symbol as string;
+    if (!symbol || !/\.NS$/.test(symbol)) continue;
+    const base = symbol.replace(/\.NS$/, "");
+    if (seen.has(base)) continue;
+    seen.add(base);
+    const name =
+      (r.longName as string) ?? (r.displayName as string) ?? (r.shortName as string) ?? symbol;
+    out.push({ symbol, name });
+  }
+  return out;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Equity universe                                                            */
 /* -------------------------------------------------------------------------- */
@@ -162,4 +186,39 @@ export async function getReitUniverse(limit = REIT_LIMIT): Promise<UniverseEntry
   const entries = toEntries(rows, new Set<string>());
   reitCache = { entries, at: Date.now() };
   return entries.slice(0, limit);
+}
+
+let indiaCache: { entries: UniverseEntry[]; at: number } | null = null;
+
+/**
+ * The Indian equity universe — the ~500 largest NSE listings by market cap
+ * (floor ≈ ₹1,000 Cr). Auto-refreshing (24h TTL) from Yahoo's own screener,
+ * so index changes, new listings and renames flow through without anyone
+ * maintaining a list: a company enters when its market cap ranks it in,
+ * leaves when it doesn't.
+ */
+export async function getIndiaUniverse(limit = INDIA_LIMIT): Promise<UniverseEntry[]> {
+  if (indiaCache && Date.now() - indiaCache.at < UNIVERSE_TTL_MS) {
+    return indiaCache.entries.slice(0, limit);
+  }
+
+  const rows = await pageRawScreener(
+    {
+      quoteType: "EQUITY",
+      query: q.and(
+        q.eq("region", "in"),
+        q.eq("exchange", "NSI"),
+        q.gte("intradaymarketcap", INDIA_MIN_MCAP_INR),
+      ),
+      sortField: "intradaymarketcap",
+      sortDir: "desc",
+    },
+    // Over-fetch: BSE lines that slip past the exchange pin and dual-listing
+    // duplicates are dropped by toIndiaEntries, shrinking the page.
+    Math.round(limit * 1.2),
+  );
+
+  const entries = toIndiaEntries(rows, new Set<string>()).slice(0, limit);
+  indiaCache = { entries, at: Date.now() };
+  return entries;
 }

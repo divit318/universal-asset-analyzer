@@ -19,8 +19,8 @@ import { useBootReady } from "@/app/_components/boot-context";
 import { LoadingMark } from "@/app/_components/loading-mark";
 import { Reveal } from "@/app/_components/reveal";
 import { DataProvenance } from "@/app/_components/data-provenance";
-import { getAssetClass, listAssetClasses } from "@/lib/assets/registry";
-import type { AssetClassId } from "@/lib/assets/types";
+import { getAssetClass, listBaseAssetClasses } from "@/lib/assets/registry";
+import type { AssetClassId, BaseAssetClassId } from "@/lib/assets/types";
 import type { ClassCompareEntry } from "@/lib/compare/types";
 import type { UniverseStatus } from "@/lib/screener/types";
 import type { ComparisonResult, RankedAsset } from "@/lib/ai-compare";
@@ -52,7 +52,10 @@ import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
 import { PageShell, Skeleton } from "@/app/_components/ui";
 import type { PortfolioFitAnalysis } from "@/lib/ios/types";
 
-const NON_EQUITY_CLASSES = listAssetClasses().filter((c) => c.id !== "equity");
+// Base asset classes only (lib/assets/registry.ts): market variants like
+// indiaEquity are a geography, not an asset class — Indian equities compare
+// through the Equities tab (global symbol search + the India quick-starts).
+const NON_EQUITY_CLASSES = listBaseAssetClasses().filter((c) => c.id !== "equity");
 
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                   */
@@ -139,10 +142,9 @@ function convictionColor(conviction: string | null | undefined): string {
  * without new plumbing.
  */
 function aiLoadingLabel(elapsedMs: number): string {
-  if (elapsedMs < 8_000) return "Preparing AI — routing to the right effort tier…";
-  if (elapsedMs < 30_000) return "Analyzing — typically well under a minute…";
-  if (elapsedMs < 90_000) return "Still working — a deep comparison earns a longer reasoning budget…";
-  return "Still reasoning — a large comparison can take a few minutes. The metric table above is already complete either way.";
+  if (elapsedMs < 15_000) return "Writing the comparison — rankings, tradeoffs, and a thesis per name…";
+  if (elapsedMs < 45_000) return "Still writing — typically well under a minute…";
+  return "Still writing — a five-name comparison can run long. The metric table above is already complete either way.";
 }
 
 /** Streamed flat-field keys (see lib/ai-compare.ts's streamComparisonFields) that map directly onto an `AiComparison` field of the same name. */
@@ -241,6 +243,11 @@ export default function ComparePage() {
   // to the in-flight AI call (see app/api/compare/route.ts).
   const aiGen = useRef(0);
   const aiAbortRef = useRef<AbortController | null>(null);
+  // Sorted key of a comparison restored from sessionStorage this mount, if
+  // any. Consumed (once) by the [symbols] effects so a session restore
+  // re-renders the saved comparison instead of refetching entries and
+  // wiping/re-running the AI verdict — the whole point of saving it.
+  const restoredKeyRef = useRef<string | null>(null);
   const [aiLoadingStartedAt, setAiLoadingStartedAt] = useState<number | null>(null);
   const [aiLoadingElapsedMs, setAiLoadingElapsedMs] = useState(0);
 
@@ -255,7 +262,7 @@ export default function ComparePage() {
 
   // Non-equity asset classes (ETF, REIT, Crypto, Commodity, Bond, Forex) run
   // through a parallel, simpler state slice and API — see class-compare-view.tsx.
-  const [assetClass, setAssetClass] = useState<AssetClassId>("equity");
+  const [assetClass, setAssetClass] = useState<BaseAssetClassId>("equity");
   const [classSymbols, setClassSymbols] = useState<string[]>([]);
   const [classInput, setClassInput] = useState("");
   const [classEntries, setClassEntries] = useState<ClassCompareEntry[]>([]);
@@ -306,6 +313,14 @@ export default function ComparePage() {
           if (st.symbols?.length) setSymbols(st.symbols);
           if (st.entries?.length) setEntries(st.entries);
           if (st.aiResult) setAiResult(st.aiResult);
+          // The [symbols] effects below fire for this restore exactly as they
+          // would for a user edit — which used to null the restored aiResult
+          // and re-trigger both fetches on every revisit. Record what was
+          // restored so those effects can tell "navigated back" from "changed
+          // the comparison" (see restoredKeyRef consumers below).
+          if (st.symbols?.length && (st.entries?.length || st.aiResult)) {
+            restoredKeyRef.current = [...st.symbols].sort().join("-");
+          }
         }
       } catch { /* ignore corrupt storage */ }
     }
@@ -346,7 +361,7 @@ export default function ComparePage() {
         (a, b) => syms.indexOf(a.symbol) - syms.indexOf(b.symbol),
       ));
     } catch (err) {
-      setFetchError(err instanceof Error ? err.message : "Something went wrong");
+      setFetchError(err instanceof Error ? err.message : "The comparison data failed to load — retry, or change a symbol.");
     } finally {
       setLoading(false);
     }
@@ -358,6 +373,20 @@ export default function ComparePage() {
     if (symbols.length > 0) url.searchParams.set("symbols", symbols.join(","));
     else url.searchParams.delete("symbols");
     window.history.replaceState({}, "", url.toString());
+    // A session restore already carries the entries for exactly these
+    // symbols — keep rendering them rather than replacing the whole
+    // comparison with a "Comparing…" spinner to refetch what we have.
+    // (restoredKeyRef is cleared by the reset effect below, which runs after
+    // this one; a later genuine symbol edit therefore always fetches.)
+    const restored = _s.current.entries;
+    if (
+      restoredKeyRef.current != null &&
+      restoredKeyRef.current === [...symbols].sort().join("-") &&
+      restored.length > 0 &&
+      restored.map((e) => e.symbol).sort().join("-") === [...symbols].sort().join("-")
+    ) {
+      return;
+    }
     // fetchCompare only sets state after an await, so this is safe to call here.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchCompare(symbols);
@@ -376,7 +405,7 @@ export default function ComparePage() {
         (a, b) => syms.indexOf(a.symbol) - syms.indexOf(b.symbol),
       ));
     } catch (err) {
-      setClassFetchError(err instanceof Error ? err.message : "Something went wrong");
+      setClassFetchError(err instanceof Error ? err.message : "The class comparison failed to load — retry.");
     } finally {
       setClassLoading(false);
     }
@@ -412,10 +441,36 @@ export default function ComparePage() {
   // verdict still in flight for the OLD symbol set — otherwise it kept
   // running server-side against symbols no longer on screen, occupying
   // the generation pipeline for an answer nobody could see.
+  //
+  // Two exemptions, both "nothing actually changed":
+  //   - the mount run (symbols is still its initial []) — there is nothing in
+  //     flight to cancel, and resetting here raced the session-restore effect
+  //     and nulled the aiResult it had just restored;
+  //   - the restore run (symbols just became the restored comparison) — the
+  //     saved verdict is FOR these symbols; wiping it and re-triggering a
+  //     generation on every navigation back to this page was the bug.
+  const prevSymbolsRef = useRef<string[] | null>(null);
   const benchmarkRetries = useRef(0);
   const [benchmarkTick, setBenchmarkTick] = useState(0);
 
   useEffect(() => {
+    const prev = prevSymbolsRef.current;
+    prevSymbolsRef.current = symbols;
+    if (prev === null) return; // mount — nothing in flight, nothing to reset
+
+    const restoredKey = restoredKeyRef.current;
+    restoredKeyRef.current = null; // one-shot: any later change is a real edit
+    if (restoredKey != null && restoredKey === [...symbols].sort().join("-")) {
+      // Mark the restored set as already analyzed so the auto-trigger effect
+      // doesn't immediately regenerate what we just put back on screen.
+      aiAutoTriggered.current = _s.current.entries
+        .filter((e) => !e.error)
+        .map((e) => e.symbol)
+        .sort()
+        .join("-");
+      return;
+    }
+
     aiAutoTriggered.current = "";
     aiAbortRef.current?.abort();
     aiGen.current += 1; // invalidate any response still in flight
@@ -471,7 +526,7 @@ export default function ComparePage() {
     void fetchAiVerdict(valid.map((e) => e.symbol));
   }, [entries, aiLoading, loading]);
 
-  async function fetchAiVerdict(syms: string[]) {
+  async function fetchAiVerdict(syms: string[], opts: { noCache?: boolean } = {}) {
     // Supersede, don't stack: a second call to this function (re-analyze
     // click, or the auto-trigger firing again for a new symbol set) cancels
     // whatever this component was previously waiting on rather than leaving
@@ -500,7 +555,10 @@ export default function ComparePage() {
       const res = await fetch("/api/compare/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbols: syms }),
+        // Re-analyze passes noCache so an explicit click always regenerates;
+        // the auto-trigger accepts a recent stored comparison (server-side
+        // replay — see app/api/compare/stream/route.ts).
+        body: JSON.stringify({ symbols: syms, noCache: opts.noCache || undefined }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) {
@@ -624,7 +682,7 @@ export default function ComparePage() {
   }
 
   /** Switching classes starts a clean slate — a REIT comparison doesn't carry over when you pick Crypto. */
-  function selectAssetClass(id: AssetClassId) {
+  function selectAssetClass(id: BaseAssetClassId) {
     if (id === assetClass) return;
     setAssetClass(id);
     setClassSymbols([]);
@@ -742,7 +800,10 @@ export default function ComparePage() {
 
       {/* Asset class selector — same tab pattern as the Screener, so switching
           from Equities to REITs swaps the entire comparison experience: metrics,
-          composite scores, radar dimensions, and signature chart all change. */}
+          composite scores, radar dimensions, and signature chart all change.
+          Base classes only: geography is not an asset class, so market
+          variants (indiaEquity) never get a tab here — Indian equities live
+          inside Equities, via the global search and the India quick-starts. */}
       <nav className="flex flex-wrap gap-1.5" aria-label="Asset class">
         <button
           type="button"
@@ -885,7 +946,7 @@ export default function ComparePage() {
                   </p>
                 </div>
                 <button
-                  onClick={() => void fetchAiVerdict(validEntries.map((e) => e.symbol))}
+                  onClick={() => void fetchAiVerdict(validEntries.map((e) => e.symbol), { noCache: Boolean(aiResult) })}
                   disabled={aiLoading}
                   className="rounded-lg bg-brand-strong px-4 py-2 text-xs font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
                 >

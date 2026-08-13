@@ -479,16 +479,76 @@ write routes are portfolio-aware end to end.
 
 **AI Portfolio Manager** (`CIOPanel` + `/api/portfolio/audit` + `/api/ai/portfolio-brief`): the orchestration layer. Streams an institutional CIO memo (audit) and generates a daily headline brief. Both independently gather Sector Rotation (`lib/sector-rotation.ts`) and Watchlist Intelligence (`lib/ai-watchlist.ts computeWatchlistAlerts`) evidence server-side and weave it into the prompt — orchestration by richer prompt inputs, not by recomputing anything those engines already compute. Same `ReadableStream`/`runPrompt` patterns as every other AI feature; no new plumbing.
 
+**Portfolio Intelligence** (`lib/portfolio/intelligence/`, Intelligence tab, `/api/portfolio/intelligence`): the portfolio critic — treats the portfolio as a SYSTEM rather than a list. A registry of pure detectors (`detectors.ts`) runs over the report the page already computed plus fund constituents from the screener's `getFundDetails` extractor (`lookthrough.ts`): look-through single-company concentration ("you own more NVDA than you think", exact arithmetic, presented as a lower bound because Yahoo reports only top-10 constituents), fund overlap/redundancy, single names re-creating a held fund, correlation clusters (false diversification), hidden sector bets vs the stated breakdown, hidden risk drivers from attribution, and hedged behavioural patterns (winner concentration, anchoring, home bias, passenger positions, internal hedges/factor tensions). Every evidence line is labelled observed/derived; detectors emit nothing rather than guess, so `allClear` is a reachable, honest state, and opaque funds are disclosed as unknown — never zero. The only AI call is the executive-summary synthesis (`synthesis.ts`, thesis-pattern: settled findings in, `portfolio-intelligence` task, findings-content-hash cache in `scanner_cache`, deterministic fallback, failures never cached). "What changed" diffs each run against the previous persisted baseline (`portfolio_intelligence_snapshot`, singleton row, no global prune — `engine.ts diffSnapshots`); an unchanged portfolio keeps its baseline so "since" always points at the last real change. Adding a detector = one function + one `DETECTORS` entry. Tests: `tests/portfolio-intelligence.test.ts`.
+
 ---
 
 ### Watchlist (`app/watchlist/page.tsx`)
-**Purpose**: A ranked, sortable list of tracked names — the level you are waiting
-for on each, whether it belongs in your book, and the thesis behind it.
+**Purpose**: An attention-management surface, not just a table: every visit opens
+with what changed since the last one and which names need attention *and why*,
+above the ranked, sortable list of tracked names — the level you are waiting for
+on each, whether it belongs in your book, and the thesis behind it.
 
-**Columns** (all sortable, nulls sink in both directions): Symbol · Last · Today ·
-My target · Upside · From high · Portfolio fit · Stage · Sector · Added · Thesis.
-Progressive disclosure via `hideBelow` keeps Symbol/Last/Today/My target/Upside/
-Portfolio fit at every breakpoint.
+**The Pulse / attention model** (`lib/watchlist-pulse.ts`, pure + client-safe,
+tested in `tests/watchlist-pulse.test.ts`): the single place "where does my
+attention belong?" is answered. `computeAttention()` fuses live-price signals
+(target crossed/approaching, ≥5% day move) with server context (`/api/watchlist/
+pulse`: alerts delivered since the visit baseline, material timeline events,
+earnings proximity, thesis drift, price drift since last visit) into one verdict
+per row — a level (`act`/`watch`/`quiet`) plus the reasons. **The reasons are the
+product; the numeric score only ranks and is never displayed.** Rendered as the
+`PulseBrief` triage ledger (top of page; clicking a line opens that row's
+decision file via the DataTable's controlled `expandedKey`), an attention dot in
+the symbol cell, and `watch`/`alert` row tones.
+
+**"Since your last visit"** (`watchlist_visit` + `watchlist_price_snapshot`,
+`touchWatchlistVisit` in `lib/db.ts`, tested in `tests/watchlist-visit-db.test.ts`):
+reads within 45 minutes of each other are one *session*; the first read after a
+longer absence promotes the previous session's closing prices to the new baseline.
+So refreshing never destroys the diff, and Monday opens against Friday's read.
+Alerts "since last visit" come from the existing notification table
+(`listNotificationsSince`) — same rows the bell delivered, no second system.
+
+**Thesis as an object** (`watchlist.buy_trigger/sell_trigger/conviction/horizon/
+last_reviewed_at`): the free-form note stays the thesis text; the structured
+fields capture what would change the user's mind and how sure they are.
+`ThesisModal` edits all five; any thesis write stamps a review (`markWatchlistReviewed`,
+also exposed as `PATCH {reviewed:true}` for "re-read, still stands"). **Thesis
+drift** (`computeThesisSignal`) is a deterministic importance-weighted tally of
+classified timeline events since the last review — strengthening/weakening/mixed/
+quiet with the driving headlines, explicitly evidence-not-verdict, never
+"invalidated". Rendered in the drawer's `WhatsNew` column alongside developments
+(persisted timeline events with impact dots + source links + honest "checked Xh
+ago" freshness) and fired alerts.
+
+**List health**: `computeWatchlistHealth` counts no-thesis / no-target / not-
+reviewed-in-90d; the line under the table renders each count as a click-to-filter,
+so noticing is fixing.
+
+**Columns** (all sortable, nulls sink in both directions): Attention (unlabeled
+dot column — sortable, and the smart DEFAULT sort: what deserves a look reads
+first, with the triage panel explaining why) · Symbol (ticker + name only) ·
+Last · Today · My target (whole cell click-to-edit; states: Set / level+direction /
+near / reached) · Upside · Consensus (level AND implied return in one cell,
+sorted by the return — the only leg comparable across names) · From high ·
+Portfolio fit · Stage · Sector · Next event (earnings proximity, links to
+/calendar; replaced "Added", which is drawer material) · Thesis (conviction dot +
+text). **One fact, one place**: ownership lives ONLY in Stage (rendered through
+`effectiveStage`, so a held name always reads Owned), alert/attention state ONLY
+in the attention column + row tone + target cell — the old symbol-cell badge
+cluster (Owned/Alert/✎) said everything twice and is gone.
+
+**Customize** (`watchlist-settings.tsx` + `lib/watchlist-settings.ts`, persisted
+to `uaa.watchlist.settings`, sanitized on every read): which quick-filter chips
+render and in what order (from a catalog incl. Not owned / Near target / High
+conviction), the filter the page opens on (the active filter is session state,
+so arrival is predictable), column visibility (Symbol/Last/Today fixed), the
+default sort, and the two attention thresholds that are genuinely taste —
+earnings horizon (7/14/30d) and big-move bar (3/5/8%), threaded into
+`computeAttention` as overrides. Changes apply and persist instantly; a
+brand dot on the trigger marks a personalised view; defaults need zero
+configuration. Health-line filters (No thesis / No target / Stale review) stay
+reachable regardless and appear as a chip only while active.
 
 **Vocabulary** (deliberate, and load-bearing):
 - **"My target"** — the *user's own* target (`watchlist.target_price`), never the
@@ -516,10 +576,19 @@ caller holding both live prices and the database.
 threshold, thesis note, idea stage, live price/change/52-week range, portfolio fit.
 
 **Workflow**: add from Research/Screener → set a target (live upside preview and
-quick-fills in the editor) → write a thesis → advance the idea stage → Buy.
-Quick filters (Alerts firing / Owned / No target set / Has thesis) express the
-selections a sort cannot; sort key, direction, density and quick filter persist
-to localStorage. `/` focuses the filter, Escape clears it.
+quick-fills in the editor) → write a thesis with triggers → advance the idea
+stage → Buy. Sort key, direction, density and quick filter persist to
+localStorage. `/` focuses the filter, Escape clears it.
+
+**Pulse route economics** (`/api/watchlist/pulse`): one request per page load for
+the whole list. Reads are local (timeline events, notifications, snapshots — all
+SQLite); network work is the batch quote (15s platform cache) plus a 30-minute-
+cached earnings sweep. News/filings syncs for up to 6 stale symbols are kicked
+off fire-and-forget and reported via `checking`; the client does exactly ONE
+delayed follow-up read to collect them. `WatchlistDigest` v2 (the opt-in
+"Watchlist Brief") feeds the same user context — targets with distance, thesis
+excerpts, conviction, recent developments — into `buildDigestPrompt`, and returns
+`topChanges` / `researchNext` / `portfolioImplication` alongside the v1 fields.
 
 **Explaining Portfolio fit**: the fit column is a `<ScoreChip kind="fit">`
 (confidence shown inline only below 70, where it should change the reading) and
@@ -577,16 +646,20 @@ arrow/Home/End/PageUp/PageDown move by index and focus is applied from an effect
 once React has mounted the target. The expanded row stays mounted when scrolled
 away so the content height — and therefore the scrollbar — never jumps.
 
-**State**: `watchlist` (research), `watchlist_group` / `watchlist_member` (lists),
-`watchlist_target_history` (revisions), `price_alert_state` (crossing baselines).
-View preferences in localStorage (`uaa.watchlist.*`).
+**State**: `watchlist` (research: target, thesis + triggers/conviction/horizon/
+last-reviewed, stage), `watchlist_group` / `watchlist_member` (lists),
+`watchlist_target_history` (revisions), `price_alert_state` (crossing baselines),
+`watchlist_visit` + `watchlist_price_snapshot` (visit baseline). View preferences
+in localStorage (`uaa.watchlist.*`).
 
 **API Dependency**: `/api/watchlist` (GET list, POST add, **PATCH** target/
-direction/alert/notes — validating, not coercing; a target of `0` or `-5` is
-rejected rather than stored, DELETE remove), `/api/watchlist/fit` (fit inputs),
+direction/alert/notes/triggers/conviction/horizon/`reviewed` — validating, not
+coercing; a target of `0` or `-5` is rejected rather than stored, DELETE remove),
+`/api/watchlist/pulse` (change context), `/api/watchlist/fit` (fit inputs),
 `/api/quote` (live prices, non-fatal), `/api/pipeline` (stage), `/api/ai/watchlist`.
 
 **Related**: `lib/db.ts` (CRUD), `lib/watchlist-metrics.ts` (all arithmetic),
+`lib/watchlist-pulse.ts` (attention model), `lib/timeline.ts` (developments),
 `lib/idea-stage.ts` (stage labels/order), `lib/ai-watchlist.ts` (digest +
 Watchlist Intelligence structured alerts), `app/_components/ui/data-table.tsx`.
 
@@ -632,6 +705,7 @@ Watchlist Intelligence structured alerts), `app/_components/ui/data-table.tsx`.
 - `research_notes` (symbol, content, created_at)
 - `fundamentals_cache` (symbol, data JSON, updated_at) — 24h TTL
 - `scanner_cache` (cache_key, result JSON, created_at) — event screener results
+- `intel_event` (fingerprint, symbol, status, created_at) — intel rail suppression ledger; statuses age out at different rates (shown 30m, opened 3d, dismissed 14d)
 
 **Pattern**: All read/write operations via `lib/db.ts` CRUD functions. Never direct SQLite calls from pages/routes.
 
@@ -640,6 +714,19 @@ Watchlist Intelligence structured alerts), `app/_components/ui/data-table.tsx`.
 ---
 
 ## Specialized Analysis
+
+### Contextual Research Intelligence (`lib/intel/` + `app/_components/intel-rail.tsx`)
+**Purpose**: the intel rail — at most three quiet, dismissible cards on the right edge of research surfaces (Research, Compare, Portfolio, Watchlist, Wire) surfacing the next question worth asking. Its resting state is nothing: candidates must clear an absolute relevance threshold (`lib/intel/score.ts`) or no UI renders at all.
+
+**Pipeline** (`GET /api/intel?surface=&symbols=`):
+1. `lib/intel/engine.ts` builds a snapshot through the platform data layer (`intelCards` dataset, 90s TTL) — every input (quote, news, calendar, peers, portfolio report) is an existing platform dataset, soft-deadlined at 8s each so one slow provider costs a candidate, never the set.
+2. `lib/intel/candidates.ts` — pure, unit-tested builders: material news events (tier-gated, hard materiality gate on headlines), earnings proximity, day-move/valuation-vs-peers/52-week anomalies, portfolio weight & sector-impact arithmetic, concentration-driven compare suggestions (max one per set, stricter threshold), list movers. All directional conclusions computed in code.
+3. `lib/intel/score.ts` — seven-dimension scoring (relevance/materiality dominate), thresholding, category-diverse selection of ≤3.
+4. Optional AI pass (`contextual-intel` task, `intelAi` dataset 30m): fired in the background after the deterministic set is served — never awaited — and handed only SETTLED FACTS; it may return at most one extra observation (or `[]`), labeled "AI interpretation" in the UI. `aiPending` tells the rail to poll twice more (20s/65s), then stop.
+
+**Suppression**: `intel_event` table via `POST /api/intel/event` — `shown` fires only after 8s on screen (30m replay guard), `opened` 3d, `dismissed` 14d; fingerprints are stable across runs so dismissals stick.
+
+**Actions**: `navigate` (internal routes or article URLs) or `assistant` — dispatches `OPEN_ASSISTANT_EVENT` with `detail.question`, which the AppAssistant now auto-asks, so the user never re-explains context.
 
 ### Market Dashboard (`app/page.tsx` + `/api/dashboard`)
 **Purpose**: daily command-center view synthesizing every intelligence engine — no new business logic, pure composition.

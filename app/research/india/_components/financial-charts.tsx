@@ -13,6 +13,7 @@ import {
   YAxis,
 } from "recharts";
 import type { ScreenerInAnnualPL, ScreenerInQuarterlyPL } from "@/lib/screener-in";
+import { indianFiscalLabel } from "@/lib/format";
 import { useChartTheme, type ChartTheme } from "@/app/_components/chart-theme";
 
 /* All series colors come from useChartTheme() (ct.positive / ct.amber / ct.blue
@@ -164,6 +165,42 @@ export function AnnualMarginChart({ data }: { data: ScreenerInAnnualPL[] }) {
   );
 }
 
+export function EpsTrendChart({ data }: { data: ScreenerInAnnualPL[] }) {
+  const ct = useChartTheme();
+  const AXIS = ct.axis, GRID = ct.grid;
+  const withEps = data.filter((d) => d.eps != null);
+  if (withEps.length < 2) return null;
+
+  const chartData = withEps.map((d) => ({ period: d.period, "EPS (₹)": d.eps }));
+
+  return (
+    <ChartFrame title="EPS Trend" subtitle="₹ per share — fiscal years">
+      <ResponsiveContainer width="100%" height={160}>
+        <BarChart data={chartData} margin={{ top: 4, right: 4, left: -8, bottom: 0 }}>
+          <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="3 3" />
+          <XAxis dataKey="period" tick={{ fill: AXIS, fontSize: 10 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
+          <YAxis tick={{ fill: AXIS, fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(v) => `₹${v}`} />
+          <Tooltip
+            content={({ active, payload, label }) =>
+              active && payload?.length ? (
+                <div style={ct.tooltip}>
+                  <p className="mb-1 text-xs text-muted">{label}</p>
+                  <p className="text-xs">EPS: ₹{(payload[0].value as number).toLocaleString("en-IN")}</p>
+                </div>
+              ) : null
+            }
+          />
+          <Bar dataKey="EPS (₹)" radius={[2, 2, 0, 0]} maxBarSize={28}>
+            {chartData.map((d, i) => (
+              <Cell key={i} fill={(d["EPS (₹)"] ?? 0) >= 0 ? ct.blue : ct.negative} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </ChartFrame>
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 /* Quarterly Revenue & Profit                                                  */
 /* -------------------------------------------------------------------------- */
@@ -288,8 +325,8 @@ export function QuarterlySummaryStats({ data }: { data: ScreenerInQuarterlyPL[] 
   const stats: { label: string; value: string; sub?: string; color?: string }[] = [
     {
       label: "Latest Quarter",
-      value: last.period,
-      sub: last.sales != null ? `₹${last.sales.toLocaleString("en-IN")} Cr revenue` : "—",
+      value: indianFiscalLabel(last.period),
+      sub: last.sales != null ? `₹${last.sales.toLocaleString("en-IN")} Cr revenue (${last.period})` : last.period,
     },
     {
       label: "QoQ Revenue",

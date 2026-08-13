@@ -201,14 +201,30 @@ export function IOSProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const onMarketing = pathname === "/landing" || pathname?.startsWith("/landing/");
 
-  const { data: report, isInitialLoading, refresh: refreshReport } = useDataset<UniversalPortfolioReport>(
+  const fetchWanted = deferred && !onMarketing;
+  const { data: report, status: reportStatus, isInitialLoading, refresh: refreshReport } = useDataset<UniversalPortfolioReport>(
     "portfolioReport",
     "maximize_sharpe",
     fetchDefaultReport,
-    { enabled: deferred && !onMarketing },
+    { enabled: fetchWanted },
   );
-  const profileLoading = deferred && isInitialLoading;
-  const profileReady = !isInitialLoading;
+  const profileLoading = fetchWanted && isInitialLoading;
+  // "Ready" means the profile has actually SETTLED: the report loaded, or the
+  // load failed (an empty profile is then the correct, final answer), or a
+  // previously-loaded report is still on hand while a refresh runs.
+  //
+  // It must NOT mean "not currently loading". The old `!isInitialLoading`
+  // definition inverted while the fetch was merely *not started yet*
+  // (isInitialLoading is gated on `enabled`, and `deferred` starts false), so
+  // on first paint every consumer saw profileReady=true with an EMPTY profile.
+  // The research page's verdict stream fired on that empty profile, then
+  // aborted and regenerated when the real one arrived — Phase 1 measured ~30%
+  // of verdict generations cancelled this way, one of them 8.9s in.
+  // Before the deferred fetch starts (and on the marketing surface, which has
+  // no consumer) the profile is UNKNOWN — never "ready".
+  const profileReady = fetchWanted
+    ? report != null || reportStatus === "success" || reportStatus === "error"
+    : false;
 
   // ── Hydrate from localStorage on mount ─────────────────────────────────
   useEffect(() => {

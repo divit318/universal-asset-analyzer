@@ -67,6 +67,11 @@ export function startScanJob(params: ScanParams, opts: { detached?: boolean } = 
         india,
         global: glob,
         signal,
+        // Detached = nobody is watching: run gently so the batch never
+        // competes with interactive surfaces for the host (see
+        // ScannerPipelineOptions.background). A user attaching later still
+        // gets the shared job's replay, just from a slower-walking scan.
+        background: opts.detached === true,
         onProgress: (event) => emit({ type: "progress", ...event }),
         onPartial: (event) => emit({ type: "partial", ...event }),
         onStageEvent: (event) => emit(event), // already carries its own type tag

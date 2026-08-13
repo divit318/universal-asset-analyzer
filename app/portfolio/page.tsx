@@ -12,11 +12,10 @@
  * See PLAN-portfolio-universal.md for the architecture and the audit that motivated it.
  */
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useDataset } from "@/lib/platform/client/use-dataset";
-import { LensControl, MaterialFade, useMaterialityLens } from "@/app/_components/materiality-lens";
-import { isMaterial, materialCount, pickVerdict, type MaterialityContext, type MaterialityVerdict } from "@/lib/materiality";
+import { askAi } from "@/app/_components/ask-ai";
 import {
   PageShell,
   PageHeader,
@@ -25,7 +24,6 @@ import {
   Tabs,
   Badge,
   Card,
-  type TabItem,
 } from "@/app/_components/ui";
 import { formatCurrency } from "@/lib/format";
 import type { UniversalPortfolioReport } from "@/lib/portfolio/report";
@@ -43,7 +41,11 @@ import { HealthPanel } from "./_components/universal/health-panel";
 import { OptimizePanel } from "./_components/universal/optimize-panel";
 import { CashPanel } from "./_components/universal/cash-panel";
 import { AddHoldingDialog } from "./_components/universal/add-holding-dialog";
+import { ImportScreenshotDialog } from "./_components/universal/import-screenshot-dialog";
 import { PortfolioThesisBanner } from "./_components/universal/portfolio-thesis";
+import { KeyFactsStrip } from "./_components/universal/key-facts-strip";
+import { TABS, TAB_IDS, type Tab } from "./_components/universal/dashboard-nav";
+import { IntelligencePanel } from "./_components/universal/intelligence-panel";
 import { PipelineBoard } from "./_components/pipeline-board";
 import { SimulatorPanel } from "./_components/simulator/simulator-panel";
 import { ReadOnlyHoldings } from "./_components/universal/read-only-holdings";
@@ -55,34 +57,8 @@ import { CountUp } from "@/app/_components/count-up";
 import { LoadingMark } from "@/app/_components/loading-mark";
 import { BrandEmptyState } from "@/app/_components/brand";
 
-type Tab = "dashboard" | "holdings" | "performance" | "risk" | "decisions" | "pipeline" | "optimize" | "simulator";
-
-/**
- * Ordered by where the tab sits in the user's loop: establish the current state,
- * then analyse it, then act on it, then explore hypotheticals. Reading the bar
- * left to right is the same journey as working the portfolio top to bottom, so a
- * user who has just seen what they own arrives next at what is wrong with it,
- * and only then at the tabs that ask them to trade.
- *
- * This array is the only place the order is defined — the tab bar renders it
- * directly, `?tab=` deep links resolve by id, and nothing keys off position.
- */
-const TABS: TabItem<Tab>[] = [
-  { id: "dashboard",   label: "Dashboard"   },
-  { id: "holdings",    label: "Holdings"    },
-  // Money-weighted return and the benchmark comparison. The engine behind this
-  // (lib/portfolio-performance.ts, /api/portfolio/performance) was fully built
-  // and tested but had no caller on this page, so the Portfolio could not answer
-  // "am I beating the market?" or "what is my annualized return?" at all.
-  { id: "performance", label: "Performance" },
-  { id: "risk",        label: "Risk Lab"    },
-  { id: "decisions",   label: "Decisions"   },
-  { id: "pipeline",    label: "Pipeline"    },
-  { id: "optimize",    label: "Optimize"    },
-  { id: "simulator",   label: "Simulator"   },
-];
-
-const TAB_IDS: string[] = TABS.map((t) => t.id);
+// Tab vocabulary lives in ./_components/universal/dashboard-nav — shared with
+// the components that navigate INTO a tab (key-facts strip, finding actions).
 
 const pct = (v: number, digits: number) => `${v >= 0 ? "+" : ""}${v.toFixed(digits)}%`;
 
@@ -126,9 +102,25 @@ function PortfolioPageInner() {
   // is portfolio-aware (see ReadOnlyHoldings for the reasoning).
   const [portfolioId, setPortfolioId] = useState(1);
   const [showAdd, setShowAdd] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [showAllConcentration, setShowAllConcentration] = useState(false);
   const highlightTarget = useArrivalTarget();
   const searchParams = useSearchParams();
+  const router = useRouter();
+
+  // Tab-and-anchor navigation for the executive layer (key-facts strip,
+  // finding actions): switch tab, then scroll to the section once it exists.
+  // Two frames rather than one — the tab's panels mount on the next render,
+  // and the Reveal wrappers need a beat before offsets are meaningful.
+  const navigateTo = useCallback((target: Tab, anchor?: string) => {
+    setTab(target);
+    if (!anchor) return;
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }),
+    );
+  }, []);
 
   // Deep-link support: a notification (or any other link) can open the page
   // straight into a specific tab via `?tab=`. Reacts on every client-side
@@ -186,79 +178,29 @@ function PortfolioPageInner() {
   const cashSlice = report?.allocation.byAssetClass.slices.find((s) => s.key === "cash");
   const cash = { value: cashSlice?.value ?? 0, weight: cashSlice?.weight ?? 0 };
 
-  /* ── Materiality lens ─────────────────────────────────────────────────
-     Flags derive from the report the page already fetched (concentration
-     breaches the allocation engine computed) plus one small baseline
-     exchange: the current per-holding scores are POSTed to
-     /api/materiality/portfolio, which returns the scores captured on the
-     PREVIOUS visit — nothing is rebuilt server-side. Toggling the lens is
-     pure presentation. Main portfolio only for the baseline: the two-slot
-     fingerprint is one page-wide blob, and letting a view-only portfolio
-     overwrite Main's baseline would corrupt the comparison. */
-  const lens = useMaterialityLens();
-  const [priorScores, setPriorScores] = useState<Record<string, number | null> | null>(null);
-
-  useEffect(() => {
-    if (!report || report.holdingCount === 0 || !isMain) return;
-    const scores: Record<string, number | null> = {};
-    for (const h of report.holdings) {
-      if (h.symbol) scores[h.symbol.toUpperCase()] = h.score?.score ?? null;
-    }
-    let cancelled = false;
-    void fetch("/api/materiality/portfolio", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scores }),
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (!cancelled && d) setPriorScores(d.priorScores ?? null); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-    // Keyed on generatedAt: one exchange per report build, not per re-render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [report?.generatedAt, isMain]);
-
-  const lensFlags = useMemo(() => {
-    if (!report || report.holdingCount === 0) {
-      return { count: 0, concentration: [] as MaterialityVerdict[], concAgg: undefined as MaterialityVerdict | undefined, crossings: [] as MaterialityVerdict[], materialCrossings: [] as MaterialityVerdict[] };
-    }
-    // `now` is unused by concentration/tierCrossing items (no freshness checks
-    // on this page), so a constant keeps the memo pure per react-hooks/purity.
-    const ctx: MaterialityContext = { now: 0, priorScores: isMain ? priorScores : null };
-    const concentration = report.concentration.map((c) =>
-      isMaterial({ kind: "concentration", label: c.label, pct: c.pct, severity: c.severity, message: c.message }, ctx),
-    );
-    const crossings = report.holdings
-      .filter((h) => h.symbol)
-      .map((h) => isMaterial({ kind: "tierCrossing", symbol: h.symbol!.toUpperCase(), currentScore: h.score?.score ?? null }, ctx));
-    return {
-      count: materialCount([...concentration, ...crossings]),
-      concentration,
-      concAgg: pickVerdict(concentration),
-      crossings,
-      materialCrossings: crossings.filter((v) => v.material),
-    };
-  }, [report, priorScores, isMain]);
-
   return (
     <PageShell width="wide">
       <ArrivalHighlight targetId={highlightTarget} />
       <PageHeader
         title="Portfolio"
-        description="Your entire net investable portfolio — every asset class, one system."
+        description="Holdings, allocation, P&L, risk, and health across every asset class you own — with every recommended change simulated before it's shown."
         actions={
           <div className="flex items-center gap-3">
             {/* When these numbers were priced. Without it, an overnight-stale
                 "Today +0.42%" is presented with exactly the authority of a quote
                 from ten seconds ago. */}
             {report && <AsOfStamp generatedAt={report.generatedAt} />}
-            {report && report.holdingCount > 0 && (
-              <LensControl count={lensFlags.count} active={lens.active} onToggle={lens.toggle} />
-            )}
             {isMain && (
-              <Button variant="primary" size="md" onClick={() => setShowAdd(true)}>
-                Add holding
-              </Button>
+              <>
+                {/* The zero-typing path: photograph the brokerage app, upload,
+                    review the reconciliation, confirm. */}
+                <Button variant="secondary" size="md" onClick={() => setShowImport(true)}>
+                  Update from screenshot
+                </Button>
+                <Button variant="primary" size="md" onClick={() => setShowAdd(true)}>
+                  Add holding
+                </Button>
+              </>
             )}
           </div>
         }
@@ -327,11 +269,16 @@ function PortfolioPageInner() {
             <Card padding="none">
               <BrandEmptyState
                 title="No holdings yet."
-                detail="Add equities, ETFs, bonds, crypto, commodities or cash here. Real estate, private markets and alternatives are added through the Research Hub and appear here automatically."
+                detail="Add equities, ETFs, bonds, crypto, commodities or cash here — or upload a screenshot of your brokerage's holdings page and let UAA read it. Real estate, private markets and alternatives are added through the Research Hub and appear here automatically."
               >
-                <Button variant="primary" size="md" onClick={() => setShowAdd(true)}>
-                  Add your first holding →
-                </Button>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <Button variant="primary" size="md" onClick={() => setShowImport(true)}>
+                    Import from screenshot →
+                  </Button>
+                  <Button variant="secondary" size="md" onClick={() => setShowAdd(true)}>
+                    Add manually
+                  </Button>
+                </div>
               </BrandEmptyState>
             </Card>
           ) : null}
@@ -340,20 +287,15 @@ function PortfolioPageInner() {
 
       {report && report.holdingCount > 0 && (
         <div className="flex flex-col gap-5">
-          {isMain && (
-            <Reveal index={0}>
-              <PortfolioThesisBanner enabled={report.holdingCount > 0} refreshSignal={thesisRefreshSignal} />
-            </Reveal>
-          )}
-
           {/* ── Headline ──────────────────────────────────────────────────────
-              Six tiles, and cash is one of them.
+              Six tiles, and cash is one of them. FIRST on the page — the measured
+              facts render before the AI's reading of them (the thesis banner sits
+              below and fills in on its own schedule, never blocking these).
               Dry powder is a standing, first-class fact for anyone managing a
               book — "how much can I deploy?" is asked more often than almost
               anything else on this page — and it was previously reachable only by
               reading a row inside an allocation bar. */}
-          <MaterialFade active={lens.active} verdict={undefined}>
-          <Reveal index={1} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          <Reveal index={0} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <StatTile
               label="Total value"
               value={<CountUp value={report.totalValue} format={formatCurrency} />}
@@ -401,7 +343,24 @@ function PortfolioPageInner() {
               tone={report.health.total >= 70 ? "positive" : report.health.total >= 50 ? "default" : "warning"}
             />
           </Reveal>
-          </MaterialFade>
+
+          {/* ── Top things to know ───────────────────────────────────────────
+              The executive navigation layer: one scannable line of the facts
+              that most deserve a decision, each linking into the section or
+              workflow where it can be acted on. Derived from the report, so a
+              quiet portfolio renders a quiet (or empty) strip. */}
+          <Reveal index={1}>
+            <KeyFactsStrip report={report} onNavigate={navigateTo} />
+          </Reveal>
+
+          {/* AI interpretation of the figures above — independent fetch, cached
+              by content hash, compact by default. Below the tiles by design:
+              measurement first, reading second. */}
+          {isMain && (
+            <Reveal index={1}>
+              <PortfolioThesisBanner enabled={report.holdingCount > 0} refreshSignal={thesisRefreshSignal} />
+            </Reveal>
+          )}
 
           {/* ── Data-quality disclosure ──────────────────────────────────────────
               A portfolio that is largely self-reported marks has a "total value" that
@@ -463,10 +422,10 @@ function PortfolioPageInner() {
               believes it has three. */}
           {report.concentration.length > 0 && (
             <Reveal index={3} className="flex flex-col gap-1.5">
+              <div id="concentration-findings" className="flex flex-col gap-1.5 scroll-mt-20">
               {(showAllConcentration ? report.concentration : report.concentration.slice(0, 3)).map((c, i) => (
                 <div
                   key={`${c.type}-${c.label}-${i}`}
-                  title={lens.active ? lensFlags.concentration[i]?.reason : undefined}
                   className={`flex items-start gap-2 rounded-lg border px-3.5 py-2.5 ${
                     c.severity === "high"
                       ? "border-negative/25 bg-negative/[0.04]"
@@ -476,9 +435,47 @@ function PortfolioPageInner() {
                   <Badge variant={c.severity === "high" ? "negative" : "warning"}>
                     {c.type}
                   </Badge>
-                  <p className="text-xs leading-relaxed text-muted">{c.message}</p>
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <p className="text-xs leading-relaxed text-muted">{c.message}</p>
+                    {/* PROBLEM → ACTION, only for the workflows that already
+                        exist: rebalancing lives in Optimize, hypotheticals in
+                        the Simulator, and open questions with the assistant —
+                        pre-loaded with this finding so the user never restates
+                        it. Main portfolio only: those tabs act on Main. */}
+                    {isMain && (
+                      <div className="flex flex-wrap items-center gap-x-3 text-[11px]">
+                        <button
+                          type="button"
+                          onClick={() => navigateTo("optimize")}
+                          className="rounded-sm text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                        >
+                          Rebalance in Optimize →
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => navigateTo("simulator")}
+                          className="rounded-sm text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                        >
+                          Test a fix in Simulator
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            askAi(router, {
+                              source: "app",
+                              question: `My portfolio dashboard flagged a ${c.severity}-severity ${c.type} concentration finding: "${c.message}" How much does this matter for my portfolio, and what are my options?`,
+                            })
+                          }
+                          className="rounded-sm text-muted hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                        >
+                          Ask AI why this matters
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
+              </div>
               {report.concentration.length > 3 && (
                 <button
                   onClick={() => setShowAllConcentration((v) => !v)}
@@ -493,26 +490,6 @@ function PortfolioPageInner() {
                 </button>
               )}
             </Reveal>
-          )}
-
-          {/* ── Tier changes since the last visit ───────────────────────────
-              Rendered only while the lens is on: these rows ARE the lens's
-              reason strings for holdings whose score crossed a TIER_EDGES
-              boundary since the previous visit (per the two-slot baseline),
-              giving each crossing a visible anchor even before row-level
-              fading exists inside the holdings table. */}
-          {lens.active && lensFlags.materialCrossings.length > 0 && (
-            <div className="flex flex-col gap-1.5">
-              {lensFlags.materialCrossings.map((v, i) => (
-                <div
-                  key={i}
-                  className="flex items-start gap-2 rounded-lg border border-warning/25 bg-warning/[0.04] px-3.5 py-2.5"
-                >
-                  <Badge variant="warning">tier change</Badge>
-                  <p className="text-xs leading-relaxed text-muted">{v.reason}</p>
-                </div>
-              ))}
-            </div>
           )}
 
           <Reveal index={4}>
@@ -547,31 +524,39 @@ function PortfolioPageInner() {
           {effectiveTab === "dashboard" && (
             <div className="flex flex-col gap-4">
               <div className="grid gap-4 xl:grid-cols-2">
-                <MaterialFade active={lens.active} verdict={undefined}>
+                <div id="panel-trajectory" className="h-full scroll-mt-20">
                   <TrajectoryPanel trajectory={report.trajectory} />
-                </MaterialFade>
-                <MaterialFade active={lens.active} verdict={undefined}>
-                  <HealthPanel health={report.health} />
-                </MaterialFade>
+                </div>
+                <div id="panel-health" className="h-full scroll-mt-20">
+                  <HealthPanel
+                    health={report.health}
+                    holdings={report.holdings}
+                    risk={report.risk}
+                    onNavigate={isMain ? navigateTo : undefined}
+                  />
+                </div>
               </div>
-              {/* Concentration breaches live in the allocation breakdown, so the
-                  panel inherits their verdict and stays crisp when one exists. */}
-              <MaterialFade active={lens.active} verdict={lensFlags.concAgg}>
-                <AllocationPanel allocation={report.allocation} />
-              </MaterialFade>
+              <div id="panel-allocation" className="scroll-mt-20">
+                <AllocationPanel allocation={report.allocation} holdings={report.holdings} />
+              </div>
               {/* `realizedPnl` from the same report: attribution decomposes only
                   what is still held, so without it the panel's total differed from
                   the tile above by exactly the banked P&L and said nothing. */}
-              <MaterialFade active={lens.active} verdict={undefined}>
+              <div id="panel-attribution" className="scroll-mt-20">
                 <AttributionPanel
                   attribution={report.attribution}
                   totalReturnPct={report.totalReturn}
                   realizedPnl={"empty" in report.performance ? 0 : report.performance.realizedPnl}
+                  dayMoves={report.dayMoves}
                 />
-              </MaterialFade>
-              <MaterialFade active={lens.active} verdict={undefined}>
-                <MacroFactorPanel allocation={report.allocation} />
-              </MaterialFade>
+              </div>
+              <div id="panel-macro" className="scroll-mt-20">
+                <MacroFactorPanel
+                  allocation={report.allocation}
+                  holdings={report.holdings}
+                  onOpenRiskLab={() => navigateTo("risk")}
+                />
+              </div>
               {!isMain && <ReadOnlyHoldings holdings={report.holdings} baseCurrency={report.baseCurrency} />}
             </div>
           )}
@@ -595,13 +580,11 @@ function PortfolioPageInner() {
           )}
 
           {effectiveTab === "holdings" && (
-            <MaterialFade active={lens.active} verdict={pickVerdict(lensFlags.crossings)}>
-              <HoldingsPanel
-                holdings={report.holdings}
-                totalValue={report.totalValue}
-                onChanged={() => { refresh(); setThesisRefreshSignal((n) => n + 1); }}
-              />
-            </MaterialFade>
+            <HoldingsPanel
+              holdings={report.holdings}
+              totalValue={report.totalValue}
+              onChanged={() => { refresh(); setThesisRefreshSignal((n) => n + 1); }}
+            />
           )}
 
           {/* Both props come from ONE report, so the panel's reconciliation is
@@ -614,6 +597,13 @@ function PortfolioPageInner() {
           {effectiveTab === "pipeline" && <PipelineBoard />}
 
           {effectiveTab === "risk" && <RiskLab risk={report.risk} scenarios={report.scenarios} />}
+
+          {/* Kept mounted only while active; the panel fetches its own endpoint
+              (one AI synthesis call, content-hash cached server-side) and reuses
+              the thesis's refresh signal so an executed trade re-runs it. */}
+          {effectiveTab === "intelligence" && (
+            <IntelligencePanel enabled refreshSignal={thesisRefreshSignal} />
+          )}
 
           {effectiveTab === "simulator" && <SimulatorPanel realPortfolioHasHoldings={true} />}
 
@@ -640,6 +630,14 @@ function PortfolioPageInner() {
         open={showAdd}
         onClose={() => setShowAdd(false)}
         onSaved={refresh}
+      />
+      <ImportScreenshotDialog
+        open={showImport}
+        onClose={() => setShowImport(false)}
+        onApplied={() => {
+          refresh();
+          setThesisRefreshSignal((n) => n + 1);
+        }}
       />
     </PageShell>
   );

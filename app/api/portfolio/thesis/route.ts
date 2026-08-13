@@ -9,8 +9,8 @@
  * it only re-fires when the portfolio composition actually changes.
  */
 import { NextResponse } from "next/server";
-import { buildPortfolioReport } from "@/lib/portfolio/report";
-import { buildPortfolioThesis } from "@/lib/portfolio/thesis";
+import { getPortfolioReport } from "@/lib/portfolio/report";
+import { getPortfolioThesis } from "@/lib/portfolio/thesis";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,8 +19,19 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
 
   try {
-    const report = await buildPortfolioReport({ baseCurrency: url.searchParams.get("currency") ?? "USD" });
-    const thesis = await buildPortfolioThesis(
+    // Through the platform's `portfolioReport` dataset — the SAME cached build
+    // the page's own /api/portfolio/report fetch just made (2-min TTL + SWR,
+    // invalidated on mutation). This route used to call buildPortfolioReport()
+    // directly, which re-ran the entire two-pass provider fetch on every page
+    // load just to compute a content hash: measured at ~20s per hit even when
+    // the thesis itself was served from its content-hash cache. With the shared
+    // dataset, a cached-thesis load costs milliseconds and the only remaining
+    // slow path is a genuine AI regeneration after the composition changed.
+    const report = await getPortfolioReport({ baseCurrency: url.searchParams.get("currency") ?? "USD" });
+    // Through the `portfolioThesis` dataset: 6h fresh / 24h SWR, persisted,
+    // coalesced, invalidated on every portfolio mutation. A stale thesis is
+    // served instantly while one background regeneration refreshes it.
+    const thesis = await getPortfolioThesis(
       {
         holdings: report.holdings,
         totalValue: report.totalValue,

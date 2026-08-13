@@ -332,6 +332,7 @@ describe("etf: is this fund actually an ETF for this class?", () => {
     topHoldings: null,
     topSectorWeight: null,
     topSector: null,
+    sectorWeights: null,
     equityWeight: null,
     bondWeight: null,
     cashWeight: null,

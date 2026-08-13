@@ -47,7 +47,7 @@ describe("GET /api/ai/portfolio-brief", () => {
 
     const res = await GET(makeRequest());
     const json = await res.json();
-    expect(json.headline).toBe("Portfolio summary — connect an AI provider for intelligence");
+    expect(json.headline).toBe("Portfolio summary — connect an AI provider to generate the written brief");
     expect(json.actionItems).toEqual([]);
   });
 });

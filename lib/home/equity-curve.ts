@@ -30,10 +30,13 @@
 
 import { listLots } from "../db";
 import { getHistory } from "../yahoo";
+import { dominantBenchmark } from "../benchmarks";
 import { priceOnOrBefore } from "../portfolio-performance";
 import type { PortfolioLot } from "../types";
 import type { EquityCurve, EquityCurvePoint } from "./contracts";
 
+// Fallback for the empty state only; live curves benchmark against the
+// market the book mostly holds (lib/benchmarks.ts — NIFTY 50 for India books).
 const BENCHMARK = "SPY";
 export const EQUITY_CURVE_DAYS = 90;
 /** Fetch lookback beyond the window so the step-function has a print to start from. */
@@ -216,8 +219,9 @@ export async function buildEquityCurve(windowDays = EQUITY_CURVE_DAYS): Promise<
         .map((p) => ({ date: p.date.slice(0, 10), close: p.adjClose ?? p.close }))
         .filter((p) => p.close > 0);
 
+    const benchmark = dominantBenchmark(symbols);
     const [benchHistory, symbolHistories, fxHistories] = await Promise.all([
-      getHistory(BENCHMARK, fetchDays).catch(() => []),
+      getHistory(benchmark.symbol, fetchDays).catch(() => []),
       Promise.all(symbols.map((s) => getHistory(s, fetchDays).catch(() => []))),
       Promise.all(currencies.map((c) => getHistory(`${c}USD=X`, fetchDays).catch(() => []))),
     ]);
@@ -228,7 +232,7 @@ export async function buildEquityCurve(windowDays = EQUITY_CURVE_DAYS): Promise<
     return computeEquityCurve({
       lots,
       histories,
-      benchmark: { symbol: BENCHMARK, history: toSeries(benchHistory) },
+      benchmark: { symbol: benchmark.symbol, history: toSeries(benchHistory) },
       fxSeries,
       windowDays,
     });

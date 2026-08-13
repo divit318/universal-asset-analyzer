@@ -56,6 +56,15 @@ export interface VerdictStreamState {
   status: VerdictStatus;
   /** Wall-clock ms since the request started; 0 before it starts. */
   elapsedMs: number;
+  /**
+   * Epoch ms when work on the CURRENT symbol's verdict began — set the moment
+   * the hook starts waiting on it (gate included), not when the first stream
+   * event happens to arrive. Drives a self-ticking elapsed clock in the UI:
+   * the old event-driven `elapsedMs` froze at 0:00 for the entire silent
+   * phase (gate + context assembly + time-to-first-token), which is exactly
+   * the wait it existed to describe. Null when nothing is pending.
+   */
+  startedAt: number | null;
   /** True until the `done` event lands — i.e. more fields are still coming. */
   streaming: boolean;
   error: string | null;
@@ -133,13 +142,18 @@ export function useVerdictStream(
     received: Set<ReportSectionId>;
     status: VerdictStatus;
     elapsedMs: number;
+    startedAt: number | null;
     model: string | null;
     error: string | null;
-  }>({ fields: {}, received: new Set(), status: "idle", elapsedMs: 0, model: null, error: null });
+  }>({ fields: {}, received: new Set(), status: "idle", elapsedMs: 0, startedAt: null, model: null, error: null });
 
   const abortRef = useRef<AbortController | null>(null);
   /** The key currently running or already completed — the dedupe guard. */
   const ranKeyRef = useRef<string | null>(null);
+  /** The symbol the current on-screen fields belong to. Decides whether a key
+   *  change is a new SUBJECT (wipe everything) or a params upgrade for the same
+   *  subject (keep the rendered content — see below). */
+  const shownSymbolRef = useRef<string | null>(null);
   const [attempt, setAttempt] = useState(0);
 
   const query = symbol
@@ -149,9 +163,23 @@ export function useVerdictStream(
 
   useEffect(() => {
     if (!key || !query) {
-      // Not ready yet. Show "waiting" rather than a spinner that implies work is
-      // happening, and do not clear an already-loaded verdict.
-      if (symbol) setState((s) => (s.status === "idle" ? { ...s, status: "waiting" } : s));
+      // Not ready yet (the gate is holding). Show "waiting" rather than a
+      // spinner that implies work is happening. The clock starts HERE — the
+      // gate is part of the wait the user experiences.
+      if (symbol && shownSymbolRef.current !== symbol) {
+        // The SUBJECT changed while gated: the on-screen verdict belongs to the
+        // previous symbol and must not linger under the new one. Abort anything
+        // still in flight for it and clear the dedupe guard so a quick
+        // A → B → A round trip re-runs A rather than matching its stale key.
+        shownSymbolRef.current = symbol;
+        ranKeyRef.current = null;
+        abortRef.current?.abort();
+        setState({ fields: {}, received: new Set(), status: "waiting", elapsedMs: 0, startedAt: Date.now(), model: null, error: null });
+      } else if (symbol) {
+        setState((s) =>
+          s.status === "idle" ? { ...s, status: "waiting", startedAt: s.startedAt ?? Date.now() } : s,
+        );
+      }
       return;
     }
 
@@ -161,14 +189,26 @@ export function useVerdictStream(
 
     // Supersede any in-flight generation for a PREVIOUS key. Aborting matters
     // here beyond tidiness: the route forwards the signal into the orchestrator,
-    // so this actually stops the local inference instead of leaving it to run to
+    // so this actually stops the inference instead of leaving it to run to
     // completion unobserved while the new one queues behind it.
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
 
     const startedAt = Date.now();
-    setState({ fields: {}, received: new Set(), status: "connecting", elapsedMs: 0, model: null, error: null });
+    // Same symbol, new params (e.g. the user's portfolio changed under an open
+    // page): the sections on screen are still this company's verdict — keep
+    // them rendered while the replacement streams in, exactly like a
+    // background refresh. Wiping them re-showed a skeleton over content the
+    // user was reading and reset the elapsed clock, making one visit look
+    // like two failed ones. A NEW symbol is a new subject: everything resets.
+    const sameSubject = shownSymbolRef.current === symbol;
+    shownSymbolRef.current = symbol;
+    setState((s) =>
+      sameSubject && Object.keys(s.fields).length > 0
+        ? { ...s, status: "connecting", elapsedMs: 0, startedAt, error: null }
+        : { fields: {}, received: new Set(), status: "connecting", elapsedMs: 0, startedAt, model: null, error: null },
+    );
 
     void (async () => {
       try {
@@ -227,8 +267,11 @@ export function useVerdictStream(
     // are aborted above, when a genuinely new key arrives, and the unmount effect
     // below handles leaving the page.
     // `query` is derived from key; listing both would double-fire on attempt bumps.
+    // `symbol` IS listed: while the gate holds, key stays null across a symbol
+    // change, and the waiting branch must still run to clear the previous
+    // subject's verdict.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  }, [key, symbol]);
 
   // Abort on real unmount so navigating away stops the inference.
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -245,11 +288,15 @@ export function useVerdictStream(
       }
     : null;
 
+  const pending =
+    state.status === "waiting" || state.status === "connecting" || state.status === "streaming";
+
   return {
     verdict,
     received: state.received,
     status: state.status,
     elapsedMs: state.elapsedMs,
+    startedAt: pending ? state.startedAt : null,
     streaming: state.status === "connecting" || state.status === "streaming",
     error: state.error,
     retry,
@@ -262,6 +309,7 @@ type Setter = React.Dispatch<
     received: Set<ReportSectionId>;
     status: VerdictStatus;
     elapsedMs: number;
+    startedAt: number | null;
     model: string | null;
     error: string | null;
   }>

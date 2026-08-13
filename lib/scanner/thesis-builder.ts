@@ -11,8 +11,9 @@
  * whether it has actually started generating yet.
  */
 
-import { describeError, scannerPrompt, type ScanRunContext } from "./llm";
+import { describeError, mapWithFanout, scannerFanout, scannerPrompt, type ScanRunContext } from "./llm";
 import { extractJsonObject } from "../json-extract";
+import { ScannerThesisWireSchema } from "../ai/schemas/scanner";
 import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
 import type {
   ScannerOpportunity,
@@ -23,7 +24,8 @@ import type {
 
 const TIME_HORIZONS: InvestmentThesis["timeHorizon"][] = ["days", "weeks", "months", "quarters", "years"];
 
-function buildThesisPrompt(
+/** Exported for the eval harness (tests/ai-eval) — pure, no I/O. */
+export function buildThesisPrompt(
   opp: ScannerOpportunity,
   drivingEvents: MarketEvent[],
   sectorImpact: SectorImpact | undefined,
@@ -93,11 +95,9 @@ export async function buildTheses(
   const eventMap = new Map(events.map((e) => [e.id, e]));
   const sectorMap = new Map(sectorImpacts.map((s) => [s.sector, s]));
 
-  const withTheses: ScannerOpportunity[] = [];
   run?.setUnits?.(opportunities.length);
 
-  for (let i = 0; i < opportunities.length; i++) {
-    const opp = opportunities[i];
+  const withTheses = await mapWithFanout(opportunities, run?.fanout ?? scannerFanout(), async (opp, i) => {
     run?.item?.(`${opp.ticker} (${i + 1} of ${opportunities.length})`);
     const drivingEvents = opp.sourceEventIds
       .map((id) => eventMap.get(id))
@@ -109,9 +109,13 @@ export async function buildTheses(
     try {
       const raw = await scannerPrompt(
         run,
-        "investment-thesis",
+        // "wire-thesis", not "investment-thesis" (Phase 4): sharing the IC
+        // pipeline's deep task ran every scanner thesis at the deepest effort
+        // tier — 157-218s and 3-6k tokens per call for ten short fields. The
+        // split gives this stage its own eval-gated pin (see task-registry).
+        "wire-thesis",
         buildThesisPrompt(opp, drivingEvents, sectorImpact),
-        { maxTokens: 1500 },
+        { maxTokens: 1500, wire: ScannerThesisWireSchema, stage: "thesis" },
       );
       const parsed = extractJsonObject(raw, {
         headline: "",
@@ -140,9 +144,9 @@ export async function buildTheses(
       run?.degrade?.(`thesis skipped for ${opp.ticker}: ${describeError(err)}`);
     }
 
-    withTheses.push({ ...opp, thesis });
     run?.tick?.();
-  }
+    return { ...opp, thesis };
+  });
 
   return withTheses;
 }

@@ -11,7 +11,7 @@
  * every figure the model writes must trace back to a line produced here.
  */
 
-import { formatCurrency, formatMarketCap, formatRatio } from "../format";
+import { formatCompactCurrency, formatCurrency, formatRatio } from "../format";
 import type { CompanyContext } from "./types";
 
 /** Portfolio personalization passed through from the client (IOS-computed, per user). */
@@ -45,7 +45,7 @@ export function buildEquityFacts(ctx: CompanyContext): string[] {
   const facts: string[] = [
     `Company: ${ctx.name} (${ctx.symbol})`,
     `Price: ${formatCurrency(q.price, q.currency)} (${q.changePercent >= 0 ? "+" : ""}${q.changePercent.toFixed(2)}% today)`,
-    `Market cap: ${formatMarketCap(q.marketCap)}`,
+    `Market cap: ${formatCompactCurrency(q.marketCap, q.currency)}`,
   ];
 
   if (s) {

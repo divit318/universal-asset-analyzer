@@ -61,19 +61,19 @@ export function CausalChainCard({
           {/* Cause → Effect connector: particles flow once, on arrival, from
               the event into its effects — reuses .particle-flow (globals.css). */}
           <div className="particle-flow flex items-center gap-2 px-0.5">
-            <span className="text-[9px] font-semibold uppercase tracking-widest text-muted/40">Cause</span>
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/40">Cause</span>
             <span className="relative h-2 flex-1">
               <span className="particle" style={{ animationDelay: "0ms" }} />
               <span className="particle" style={{ animationDelay: "300ms" }} />
               <span className="particle" style={{ animationDelay: "600ms" }} />
             </span>
-            <span className="text-[9px] font-semibold uppercase tracking-widest text-muted/40">Effect</span>
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/40">Effect</span>
           </div>
 
           {/* First-order effects */}
           {firstOrder.length > 0 && (
             <div className="flex flex-col gap-1.5">
-              <span className="text-[9px] font-semibold uppercase tracking-widest text-muted/60">
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">
                 1st-Order Effects
               </span>
               {firstOrder.map((effect, i) => (
@@ -100,7 +100,7 @@ export function CausalChainCard({
           {/* Second-order effects */}
           {secondOrder.length > 0 && (
             <div className="flex flex-col gap-1.5">
-              <span className="text-[9px] font-semibold uppercase tracking-widest text-muted/60">
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-muted/60">
                 2nd-Order Effects
               </span>
               {secondOrder.map((effect, i) => (

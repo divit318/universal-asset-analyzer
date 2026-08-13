@@ -10,6 +10,7 @@
 
 import { describeError, scannerPrompt, type ScanRunContext } from "./llm";
 import { extractJsonObject } from "../json-extract";
+import { SectorImpactsWireSchema } from "../ai/schemas/scanner";
 import type { MarketEvent, SectorImpact, SignalDirection } from "../types";
 import type { SectorPerformance } from "./signals";
 import { SECTOR_ETF_MAP } from "../sector-rotation";
@@ -139,7 +140,7 @@ export async function analyzeSectorImpacts(
       run,
       "opportunity-engine",
       buildSectorImpactPrompt(events, sectorPerf),
-      { maxTokens: 2500 },
+      { maxTokens: 2500, wire: SectorImpactsWireSchema, stage: "sector-impact" },
     );
     const parsed = extractJsonObject(raw, { sectorImpacts: [] as unknown[] });
     sectorImpacts = parsed.sectorImpacts

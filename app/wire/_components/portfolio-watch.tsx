@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { NewsItem } from "@/lib/types";
-import { classifyNoise } from "@/lib/wire/tape";
-import { NewsItemRow } from "./news-item";
+import { buildTape } from "@/lib/wire/tape";
+import { Tape } from "./tape";
 import { Skeleton } from "@/app/_components/ui";
 
 interface HoldingNews {
@@ -11,18 +11,30 @@ interface HoldingNews {
   items: NewsItem[];
 }
 
+/** Rows shown before "Show all" — enough to scan, not a firehose. */
+const MAX_VISIBLE_STORIES = 8;
+
+function symbolKey(s: string): string {
+  return s.replace(/\.(NS|BO)$/, "").toUpperCase();
+}
+
 /**
- * Portfolio Watch — news for your holdings, rendered one holding at a time
- * as it streams in from /api/scanner/portfolio-news (bounded-concurrency
- * NDJSON, same reader-loop pattern as the main scan in page.tsx's runScan()).
+ * Portfolio Watch — news for your holdings, streamed one holding at a time
+ * from /api/scanner/portfolio-news (bounded-concurrency NDJSON, same
+ * reader-loop pattern as the main scan in page.tsx's runScan()).
  * Self-contained: loads independently of the /api/scanner/v2 pipeline, so
  * it's the first real content on the page rather than gated behind the
  * slow AI scan.
+ *
+ * Rendering goes through the SAME clustering/dedupe/noise pipeline as The
+ * Tape (lib/wire/tape.ts): one story covered by four outlets is one row, the
+ * exact same article arriving via two holdings' feeds is one article, and
+ * every row carries the holding ticker that surfaced it. The flat per-item
+ * list this replaced rendered ~30 rows with duplicates and no attribution.
  */
 export function PortfolioWatch() {
   const [holdings, setHoldings] = useState<HoldingNews[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showFiltered, setShowFiltered] = useState(false);
   const startedRef = useRef(false);
 
   useEffect(() => {
@@ -67,14 +79,22 @@ export function PortfolioWatch() {
     })();
   }, []);
 
-  if (!loading && holdings.length === 0) return null;
+  // Tag every article with the holding whose feed surfaced it (many arrive
+  // with empty tickers), then cluster. buildTape dedupes exact-URL repeats
+  // across holdings, unioning their tickers.
+  const tapeView = useMemo(() => {
+    if (holdings.length === 0) return null;
+    const items = holdings.flatMap((h) =>
+      h.items.map((item) =>
+        item.tickers.some((t) => symbolKey(t) === symbolKey(h.symbol))
+          ? item
+          : { ...item, tickers: [h.symbol, ...item.tickers] },
+      ),
+    );
+    return buildTape(items);
+  }, [holdings]);
 
-  const rows = holdings.flatMap((h) => h.items.map((item) => ({ item, symbol: h.symbol })));
-  // Holdings-sourced does not mean relevant: generic personal-finance content
-  // arrives via the same ticker feeds. Same rules module and same "show
-  // filtered (N)" affordance as The Tape — down-ranked, never deleted.
-  const visible = rows.filter(({ item }) => !classifyNoise(item).filtered);
-  const noisy = rows.filter(({ item }) => classifyNoise(item).filtered);
+  if (!loading && holdings.length === 0) return null;
 
   // Renders inside the "Portfolio Impact" WireSection (which owns the h2), so
   // this block identifies itself with a sub-label: it is the holdings-news half
@@ -85,8 +105,14 @@ export function PortfolioWatch() {
         <span className="text-xs font-semibold uppercase tracking-widest text-muted/60">
           Holdings News
         </span>
+        {tapeView && (
+          <span className="text-caption text-muted/60">
+            {tapeView.stories.length} stor{tapeView.stories.length === 1 ? "y" : "ies"} across{" "}
+            {holdings.length} holding{holdings.length === 1 ? "" : "s"}
+          </span>
+        )}
         {loading && (
-          <span className="flex items-center gap-1.5 text-xs text-muted">
+          <span className="flex items-center gap-1.5 text-xs text-muted" role="status">
             <span className="relative flex h-1.5 w-1.5 shrink-0">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-positive opacity-75" />
               <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-positive" />
@@ -95,38 +121,8 @@ export function PortfolioWatch() {
           </span>
         )}
       </div>
-      {rows.length > 0 ? (
-        <>
-          <ul className="rounded-xl border border-border bg-surface">
-            {visible.map(({ item, symbol }, i) => (
-              <NewsItemRow key={`${symbol}-${item.url}`} item={item} style={{ animationDelay: `${i * 30}ms` }} />
-            ))}
-            {visible.length === 0 && (
-              <li className="px-4 py-3 text-xs text-muted">
-                All {rows.length} holding-related items were filtered as noise.
-              </li>
-            )}
-          </ul>
-          {noisy.length > 0 && (
-            <>
-              <button
-                type="button"
-                onClick={() => setShowFiltered((v) => !v)}
-                aria-expanded={showFiltered}
-                className="self-start text-xs text-muted transition-colors hover:text-foreground"
-              >
-                {showFiltered ? "Hide" : "Show"} filtered ({noisy.length})
-              </button>
-              {showFiltered && (
-                <ul className="rounded-xl border border-border bg-surface opacity-70">
-                  {noisy.map(({ item, symbol }) => (
-                    <NewsItemRow key={`filtered-${symbol}-${item.url}`} item={item} />
-                  ))}
-                </ul>
-              )}
-            </>
-          )}
-        </>
+      {tapeView ? (
+        <Tape view={tapeView} maxVisible={MAX_VISIBLE_STORIES} />
       ) : (
         <Skeleton height="h-24" radius="rounded-xl" className="border border-border" />
       )}

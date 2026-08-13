@@ -1,5 +1,6 @@
 import { registerClass, coverage, lerpScore, shrinkToConfidence } from "../model/adapter";
 import { marketValuation, yieldIncome, riskModelFor } from "./market-base";
+import { fundGeographyAttributes } from "./reference/risk-models";
 import type { PortfolioClassAdapter } from "../model/adapter";
 
 /**
@@ -101,12 +102,18 @@ export const bondAdapter: PortfolioClassAdapter = {
 
   attributes(raw, ctx) {
     const f = raw.symbol ? ctx.fundamentals.get(raw.symbol.toUpperCase()) : undefined;
+    const rm = riskModelFor(raw, ctx);
+    // Same fund-region fallback as the ETF adapter: bond FUNDS have no profile
+    // country either, and their category ("Intermediate Core Bond", "Emerging
+    // Markets Bond") states the mandate's region.
+    const geo = fundGeographyAttributes(rm.modelId, f?.fundCategory ?? null, f?.country ?? null);
     return {
       sector: "Fixed Income",
       creditQuality: f?.creditQuality ?? null,
-      geography: f?.country ?? null,
+      geography: geo.geography,
+      geographyBasis: geo.geographyBasis,
       currency: f?.currency ?? raw.currency,
-      riskModel: riskModelFor(raw, ctx).label,
+      riskModel: rm.label,
     };
   },
 

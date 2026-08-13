@@ -96,8 +96,16 @@ export interface DataTableProps<T> {
   actions?: (row: T) => ReactNode;
   /** Optional expanded detail panel, shown when the row is clicked. */
   renderDetail?: (row: T) => ReactNode;
-  /** Emphasis for a row (e.g. an alert firing). */
-  rowTone?: (row: T) => "default" | "alert" | "positive";
+  /**
+   * Controlled expansion: which row's detail is open. Pass `null` for none.
+   * Omit entirely (undefined) to keep the default uncontrolled behaviour.
+   * Lets a surface open a row from outside the table — e.g. the watchlist's
+   * attention queue opening the clicked name's decision file.
+   */
+  expandedKey?: string | null;
+  onExpandedChange?: (id: string | null) => void;
+  /** Emphasis for a row (e.g. an alert firing, or a name needing attention). */
+  rowTone?: (row: T) => "default" | "alert" | "positive" | "watch";
   density?: Density;
   onDensityChange?: (d: Density) => void;
   /**
@@ -194,6 +202,7 @@ const ROW_TONE: Record<string, string> = {
   default: "",
   alert: "bg-negative/[0.06]",
   positive: "bg-positive/[0.05]",
+  watch: "bg-warning/[0.05]",
 };
 
 const ARIA_SORT: Record<SortDir, "ascending" | "descending"> = {
@@ -227,6 +236,8 @@ export function DataTable<T>({
   defaultSortDir = "desc",
   actions,
   renderDetail,
+  expandedKey,
+  onExpandedChange,
   rowTone,
   density,
   onDensityChange,
@@ -240,7 +251,17 @@ export function DataTable<T>({
   const [ownSortKey, setOwnSortKey] = useState(defaultSortKey ?? "");
   const [ownSortDir, setOwnSortDir] = useState<SortDir>(defaultSortDir);
   const [ownDensity, setOwnDensity] = useState<Density>("compact");
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [ownExpanded, setOwnExpanded] = useState<string | null>(null);
+  /* Controlled when `expandedKey` is passed (even as null); uncontrolled
+     otherwise — the same convention `sortKey` follows. */
+  const expanded = expandedKey !== undefined ? expandedKey : ownExpanded;
+  const setExpanded = useCallback(
+    (id: string | null) => {
+      if (expandedKey === undefined) setOwnExpanded(id);
+      onExpandedChange?.(id);
+    },
+    [expandedKey, onExpandedChange],
+  );
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
   /** The open menu's element, used to tell an inside click from an outside one. */
@@ -297,7 +318,7 @@ export function DataTable<T>({
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reconciling retained ids against a prop-derived key set; a stale id is not derivable at render time precisely because it is state the component still holds
     if (expanded != null && !liveKeys.has(expanded)) setExpanded(null);
     if (menuOpen != null && !liveKeys.has(menuOpen)) setMenuOpen(null);
-  }, [liveKeys, expanded, menuOpen]);
+  }, [liveKeys, expanded, menuOpen, setExpanded]);
 
   function setSort(col: DataTableColumn<T>) {
     // Clicking the active column flips direction; a new column starts in its own

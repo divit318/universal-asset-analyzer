@@ -2,7 +2,21 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { NewsItem } from "@/lib/types";
 
 const runPromptMock = vi.fn();
-vi.mock("@/lib/ai", () => ({ runPrompt: (...args: unknown[]) => runPromptMock(...args) }));
+// Migrated to the analysis seam (tranche 8). Same reseat convention as the
+// earlier tranches: runPromptMock keeps its (taskType, prompt) recording
+// surface and JSON-string returns; the wrapper parses them into the seam's
+// envelope, and scannerPrompt re-serializes — so stage parsing and every
+// assertion on runPromptMock.mock.calls runs unchanged.
+vi.mock("@/lib/ai/analysis", () => ({
+  runAnalysis: async (req: { taskType: string; prompt: string }) => {
+    const raw = await runPromptMock(req.taskType, req.prompt);
+    return {
+      data: JSON.parse(String(raw)) as unknown,
+      provider: "ollama" as const,
+      meta: { durationMs: 1 },
+    };
+  },
+}));
 
 const { deduplicateIntoEvents } = await import("@/lib/scanner/dedup");
 

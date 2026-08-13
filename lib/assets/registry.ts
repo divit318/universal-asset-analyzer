@@ -19,6 +19,7 @@
 import type {
   AssetClassDefinition,
   AssetClassId,
+  BaseAssetClassId,
   Capability,
   FilterDef,
   MetricDef,
@@ -26,6 +27,7 @@ import type {
 } from "./types";
 import { ASSET_CLASS_IDS } from "./types";
 import { equityClass } from "./equity";
+import { indiaEquityClass } from "./india-equity";
 import { etfClass } from "./etf";
 import { reitClass } from "./reit";
 import { cryptoClass } from "./crypto";
@@ -35,6 +37,7 @@ import { forexClass } from "./forex";
 
 const DEFINITIONS: Record<AssetClassId, AssetClassDefinition> = {
   equity: equityClass,
+  indiaEquity: indiaEquityClass,
   etf: etfClass,
   reit: reitClass,
   crypto: cryptoClass,
@@ -56,6 +59,43 @@ export function isAssetClassId(v: unknown): v is AssetClassId {
 
 export function listAssetClasses(): AssetClassDefinition[] {
   return ASSET_CLASS_IDS.map((id) => DEFINITIONS[id]);
+}
+
+/**
+ * The genuine asset classes — every definition that is not a market-scoped
+ * variant of another (see AssetClassDefinition.marketVariantOf). This is the
+ * list for asset-class *taxonomies*: Compare's tab row, the generic
+ * class-compare APIs, and any other surface presenting "the asset classes".
+ * Screening surfaces (the Screener's universe tabs) keep using
+ * listAssetClasses(), where a market variant is a real, distinct universe.
+ *
+ * The id narrowing (BaseAssetClassId) is safe by construction: the runtime
+ * filter and the type-level exclusion describe the same set, and
+ * tests/asset-registry.test.ts pins them together.
+ */
+export function listBaseAssetClasses(): (AssetClassDefinition & { id: BaseAssetClassId })[] {
+  return listAssetClasses().filter((d) => !d.marketVariantOf) as (AssetClassDefinition & { id: BaseAssetClassId })[];
+}
+
+/** True for definitions like indiaEquity that are a geography-scoped variant of a base class. */
+export function isMarketVariant(id: AssetClassId): boolean {
+  return getAssetClass(id).marketVariantOf != null;
+}
+
+/**
+ * The display name of a definition *as a screening universe* — what the
+ * Screener's universe picker (and any other universe-level surface) renders.
+ *
+ * A base class's universe is just the class ("Equities", "Bonds"). A market
+ * variant's universe self-describes as market + base class ("India Equities"),
+ * composed from data the definition already carries, so a geography can never
+ * render as a bare country name alongside asset classes and read as one of
+ * them. `label` alone stays the *definition's* short name ("India") for
+ * contexts that already establish the class.
+ */
+export function universeLabel(id: AssetClassId): string {
+  const def = getAssetClass(id);
+  return def.marketVariantOf ? `${def.label} ${getAssetClass(def.marketVariantOf).label}` : def.label;
 }
 
 /**
