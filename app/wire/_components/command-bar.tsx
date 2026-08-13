@@ -34,11 +34,50 @@ function UpdatedAgo({ scannedAt }: { scannedAt: string }) {
   );
 }
 
+/** A scan result younger than this may honestly call itself live. */
+const LIVE_WINDOW_MS = 15 * 60_000;
+
 /**
- * The Wire's sticky command bar — title, LIVE indicator, relative scan age,
- * focus input, region chips, inline scan progress, and The Desk link. Scan
- * status lives here, not in a mid-page block, so it's visible wherever the
- * user has scrolled.
+ * Honest state chip: "Scanning" while the pipeline runs, "Live" only while
+ * the newest result is genuinely recent, nothing otherwise. The permanent
+ * LIVE badge this replaces claimed liveness even over a day-old cache.
+ */
+function StatusChip({ loading, scannedAt }: { loading: boolean; scannedAt: string | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (loading) {
+    return (
+      <span className="flex items-center gap-1.5 rounded-full border border-brand/40 bg-brand/10 px-2.5 py-0.5 text-label font-medium uppercase tracking-widest text-brand">
+        <span className="relative flex h-1.5 w-1.5 shrink-0">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-75" />
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-brand" />
+        </span>
+        Scanning
+      </span>
+    );
+  }
+  const ageMs = scannedAt ? now - new Date(scannedAt).getTime() : NaN;
+  if (!Number.isFinite(ageMs) || ageMs > LIVE_WINDOW_MS) return null;
+  return (
+    <span className="flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-label font-medium uppercase tracking-widest text-muted">
+      <span className="relative flex h-1.5 w-1.5 shrink-0">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-positive opacity-75" />
+        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-positive" />
+      </span>
+      Live
+    </span>
+  );
+}
+
+/**
+ * The Wire's sticky command bar — title, honest status chip (Scanning/Live),
+ * relative scan age, focus input, region chips, inline scan progress, and
+ * The Desk link. Scan status lives here, not in a mid-page block, so it's
+ * visible wherever the user has scrolled.
  *
  * Deliberately NOT wrapped in `Reveal`: its fade-rise animation applies a
  * transform, and a transformed ancestor silently disables position:sticky.
@@ -80,13 +119,7 @@ export function CommandBar({
           <div className="flex items-center gap-3 flex-wrap min-w-0">
             <div className="flex items-center gap-2">
               <h1 className="text-lg font-semibold tracking-tight">The Wire</h1>
-              <span className="flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-label font-medium uppercase tracking-widest text-muted">
-                <span className="relative flex h-1.5 w-1.5 shrink-0">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-positive opacity-75" />
-                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-positive" />
-                </span>
-                Live
-              </span>
+              <StatusChip loading={loading} scannedAt={scannedAt} />
             </div>
             {scannedAt && <UpdatedAgo scannedAt={scannedAt} />}
             {fromCache && (

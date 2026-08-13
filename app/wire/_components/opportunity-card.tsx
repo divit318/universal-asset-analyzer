@@ -7,6 +7,7 @@ import { formatCurrency, formatPercent } from "@/lib/format";
 import { InvestmentThesisPanel } from "./investment-thesis-panel";
 import { useIOSSafe } from "@/lib/ios-context";
 import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
+import { modelReadTier, MODEL_READ_LABEL, MODEL_READ_TITLE } from "@/lib/wire/labels";
 
 const CONVICTION_STYLE: Record<string, string> = {
   High: "bg-positive/15 text-positive border-positive/30",
@@ -175,12 +176,11 @@ export function OpportunityCard({
             <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${CONVICTION_STYLE[profile.conviction]}`}>
               {profile.conviction} Conviction
             </span>
-            <span
-              className="text-[10px] text-muted"
-              title="Model-estimated confidence in the thesis — corroborate via the source articles below"
-            >
-              {profile.confidence}% confidence
-            </span>
+            {modelReadTier(profile.confidence) && (
+              <span className="text-[10px] text-muted" title={MODEL_READ_TITLE}>
+                {MODEL_READ_LABEL[modelReadTier(profile.confidence)!]}
+              </span>
+            )}
             <span className="text-[10px] text-muted">· {profile.suggestedHoldingPeriod}</span>
             <span className={`text-[10px] font-medium ${VOLATILITY_STYLE[profile.expectedVolatility]}`}>
               · {profile.expectedVolatility} volatility

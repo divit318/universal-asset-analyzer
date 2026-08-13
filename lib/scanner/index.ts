@@ -457,6 +457,10 @@ export async function runScannerPipeline(
           classifyEvents(c.events, runCtx(api)),
           { events: c.events.length },
         );
+        // First events emission — categorized but not yet causally enriched.
+        // Top Developments renders from this immediately; the enriched
+        // emission below replaces it in place (same key, same event ids).
+        partial(onPartial, "events", c.classifiedEvents);
       },
     },
     {
@@ -489,6 +493,10 @@ export async function runScannerPipeline(
           buildCausalChains(c.classifiedEvents, runCtx(api)),
           { events: c.classifiedEvents.length },
         );
+        // Enriched emission replaces the classified one from the stage above
+        // — Top Developments gains its causal chains the moment they exist,
+        // instead of waiting for Risk Alerts to finish too.
+        partial(onPartial, "events", c.enrichedEvents);
       },
     },
     {
@@ -502,7 +510,6 @@ export async function runScannerPipeline(
           extractRiskAlerts(c.enrichedEvents, runCtx(api)),
           { events: c.enrichedEvents.length },
         );
-        partial(onPartial, "events", c.enrichedEvents);
         partial(onPartial, "riskAlerts", c.riskAlerts);
       },
     },

@@ -26,6 +26,12 @@ interface WireSectionProps {
   title: string;
   /** Compact count/status text rendered as a pill beside the title. */
   badge?: ReactNode;
+  /**
+   * Data provenance for the section, e.g. "from scan · 12m ago" or
+   * "prices · live". Renders subtly beside the title so each zone says where
+   * its numbers come from and how old they are.
+   */
+  meta?: ReactNode;
   /** Extra header controls, right-aligned. */
   actions?: ReactNode;
   collapsible?: boolean;
@@ -40,6 +46,7 @@ export function WireSection({
   id,
   title,
   badge,
+  meta,
   actions,
   collapsible = false,
   defaultCollapsed = false,
@@ -63,6 +70,11 @@ export function WireSection({
           {badge != null && (
             <span className="rounded-full border border-border bg-surface-2 px-2 py-0.5 text-label font-medium text-muted">
               {badge}
+            </span>
+          )}
+          {meta != null && (
+            <span className="truncate font-mono text-label uppercase tracking-wide text-muted/50">
+              {meta}
             </span>
           )}
         </div>
