@@ -1,52 +1,71 @@
 "use client";
 
-import { useEffect, useRef } from "react";
 import { ChevronDown } from "lucide-react";
 import { useMockupEntry } from "../motion/mockup";
 import { Odometer } from "../primitives/odometer";
+import { PANEL_DATA } from "./panel-data";
 
 /**
- * Portfolio Intelligence mockup — static, hand-authored sample data,
- * choreographed ONCE on first viewport entry:
+ * Portfolio Intelligence panel: the REAL demo book, engine-computed.
+ * Value, total return, health grade, the value trajectory and the
+ * allocation come from the committed portfolio_snapshot rows the real
+ * engines wrote (normalizeHoldings -> evaluate -> summaryOf); the movers
+ * are live quotes for the book's actual holdings at generation time.
+ * Baked by scripts/landing-panel-data.ts. Nothing is hand-authored.
+ *
+ * Choreographed ONCE on first viewport entry:
  *   - the allocation donut draws clockwise from 12 o'clock over 800ms,
  *     segments revealing in order of size
- *   - the performance area chart wipes left to right (clip-path) with a
- *     leading dot travelling the line (SMIL animateMotion, JS-triggered,
- *     frozen at the final value)
- *   - the three AI Insight rows stagger in 120ms apart
- *   - the top movers strip does ONE slow marquee pass on entry, then stops
+ *   - the value chart wipes left to right (clip-path)
+ *   - the three engine findings stagger in 120ms apart
+ *   - the movers strip does ONE slow pass on entry, then stops
  * No-JS / reduced motion: final state.
  */
-const ALLOCATION = [
-  { label: "Equities", pct: "62.1%", swatch: "bg-chart-1", text: "text-chart-1", dash: 62.1 },
-  { label: "Bonds", pct: "18.3%", swatch: "bg-chart-2", text: "text-chart-2", dash: 18.3 },
-  { label: "Cash", pct: "10.4%", swatch: "bg-chart-3", text: "text-chart-3", dash: 10.4 },
-  { label: "ETFs", pct: "6.1%", swatch: "bg-chart-4", text: "text-chart-4", dash: 6.1 },
-  { label: "Other", pct: "3.1%", swatch: "bg-chart-5", text: "text-chart-5", dash: 3.1 },
+const P = PANEL_DATA.portfolio;
+
+const SEGMENT_STYLE = [
+  { swatch: "bg-chart-1", text: "text-chart-1" },
+  { swatch: "bg-chart-2", text: "text-chart-2" },
+  { swatch: "bg-chart-3", text: "text-chart-3" },
+  { swatch: "bg-chart-4", text: "text-chart-4" },
+  { swatch: "bg-chart-5", text: "text-chart-5" },
+  { swatch: "bg-brand", text: "text-brand" },
 ];
 
-const INSIGHTS = ["Consider reducing TECH exposure by 8%", "Cash level is above recommended range", "Income assets could help risk-adjusted returns"];
-
-const MOVERS: { ticker: string; delta: string; up: boolean }[] = [
-  { ticker: "AAPL", delta: "+2.63%", up: true },
-  { ticker: "MSFT", delta: "+1.21%", up: true },
-  { ticker: "NVDA", delta: "+3.12%", up: true },
-  { ticker: "BRK.B", delta: "-0.45%", up: false },
-  { ticker: "VTI", delta: "+0.87%", up: true },
-];
-
-const PERF_LINE = "M0 42 L14 36 L26 38 L38 26 L52 30 L66 18 L80 24 L94 14 L108 18 L120 8";
+/* Value chart geometry (viewBox 0 0 120 48), x scaled by real time. */
+const CHART = (() => {
+  const t0 = Date.parse(P.trajectory[0].at);
+  const t1 = Date.parse(P.trajectory[P.trajectory.length - 1].at);
+  const values = P.trajectory.map((p) => p.value / 1e6);
+  const niceMin = Math.floor(Math.min(...values) * 2) / 2;
+  const niceMax = Math.ceil(Math.max(...values) * 2) / 2;
+  const pts = P.trajectory.map((p) => {
+    const x = 2 + ((Date.parse(p.at) - t0) / (t1 - t0)) * 116;
+    const y = 45 - ((p.value / 1e6 - niceMin) / (niceMax - niceMin)) * 42;
+    return [x, y] as const;
+  });
+  const line = `M${pts.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join(" L")}`;
+  // Month tick labels at their true positions along the time axis.
+  const months: { label: string; pct: number }[] = [];
+  const d = new Date(t0);
+  d.setUTCDate(1);
+  for (;;) {
+    d.setUTCMonth(d.getUTCMonth() + 1);
+    if (d.getTime() >= t1) break;
+    months.push({
+      label: d.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" }),
+      pct: ((d.getTime() - t0) / (t1 - t0)) * 100,
+    });
+  }
+  return { niceMin, niceMax, line, area: `${line} V48 H2 Z`, end: pts[pts.length - 1], months };
+})();
 
 function Donut() {
   const c = 2 * Math.PI * 15.9155; // ≈ 100, the classic donut circumference
-  // Each segment starts where the previous ones ended (12 o'clock = offset 25).
-  const offsets = ALLOCATION.map((_, i) => 25 - ALLOCATION.slice(0, i).reduce((sum, s) => sum + s.dash, 0));
-  // Reveal order: largest first (they happen to be declared in size order,
-  // but rank explicitly so a data edit cannot silently break the choreography).
-  const rank = ALLOCATION.map((_, i) => [...ALLOCATION.keys()].sort((a, b) => ALLOCATION[b].dash - ALLOCATION[a].dash).indexOf(i));
+  const offsets = P.allocation.map((_, i) => 25 - P.allocation.slice(0, i).reduce((sum, s) => sum + s.weight, 0));
   return (
     <svg viewBox="0 0 42 42" className="h-16 w-16 shrink-0 -rotate-90" aria-hidden="true">
-      {ALLOCATION.map((seg, i) => (
+      {P.allocation.map((seg, i) => (
         <circle
           key={seg.label}
           cx="21"
@@ -54,8 +73,8 @@ function Donut() {
           r="15.9155"
           fill="none"
           stroke="currentColor"
-          style={{ "--seg": `${(seg.dash / 100) * c} ${c}`, transitionDelay: `${rank[i] * 130}ms` } as React.CSSProperties}
-          className={`${seg.text} transition-[stroke-dasharray] duration-[800ms] ease-out [stroke-dasharray:var(--seg)] [[data-mock=armed]_&]:[stroke-dasharray:0_105]`}
+          style={{ "--seg": `${(seg.weight / 100) * c} ${c}`, transitionDelay: `${i * 130}ms` } as React.CSSProperties}
+          className={`${SEGMENT_STYLE[i % SEGMENT_STYLE.length].text} transition-[stroke-dasharray] duration-[800ms] ease-out [stroke-dasharray:var(--seg)] [[data-mock=armed]_&]:[stroke-dasharray:0_105]`}
           strokeWidth="6"
           strokeDashoffset={(offsets[i] / 100) * c - 25}
         />
@@ -64,89 +83,77 @@ function Donut() {
   );
 }
 
-export function PortfolioMockup() {
+export function PortfolioPanel() {
   const { ref, phase, played } = useMockupEntry();
-  const motionRef = useRef<SVGAnimateMotionElement | null>(null);
-  const dotRef = useRef<SVGCircleElement | null>(null);
-
-  // The leading dot: travels with the wipe, settles at the final value.
-  useEffect(() => {
-    if (phase !== "play") return;
-    const dot = dotRef.current;
-    const m = motionRef.current;
-    if (!dot || !m) return;
-    dot.setAttribute("cx", "0");
-    dot.setAttribute("cy", "0");
-    m.beginElement();
-  }, [phase]);
 
   return (
     <div ref={ref} data-mock={phase} className="flex h-full flex-col p-4 text-left">
       {/* Header */}
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="flex items-center gap-1 text-mk-small font-semibold text-foreground">
           My Portfolio
           <ChevronDown className="h-3.5 w-3.5 text-muted" strokeWidth={2} />
         </p>
-        <div className="flex gap-5 text-right">
+        <div className="flex flex-wrap gap-5 text-right">
           <div>
             <p className="text-micro uppercase tracking-wide text-muted">Value</p>
             <p className="font-mono text-caption font-semibold tabular-nums text-foreground">
-              <Odometer value="$1,245,870" play={played} />
+              <Odometer value={P.valueDisplay} play={played} />
             </p>
           </div>
           <div>
-            <p className="text-micro uppercase tracking-wide text-muted">Day Change</p>
-            <p className="font-mono text-caption font-semibold tabular-nums text-positive">+1.23%</p>
+            <p className="text-micro uppercase tracking-wide text-muted">P&L vs cost</p>
+            <p
+              className={`font-mono text-caption font-semibold tabular-nums ${
+                P.totalReturnPositive ? "text-positive" : "text-negative"
+              }`}
+            >
+              {P.totalReturnDisplay}
+            </p>
           </div>
           <div>
-            <p className="text-micro uppercase tracking-wide text-muted">Total Return YTD</p>
-            <p className="font-mono text-caption font-semibold tabular-nums text-positive">+12.45%</p>
+            <p className="text-micro uppercase tracking-wide text-muted">Health</p>
+            <p className="font-mono text-caption font-semibold tabular-nums text-foreground">
+              {P.health} <span className="text-brand">({P.healthGrade})</span>
+            </p>
           </div>
         </div>
       </div>
 
-      {/* Panels */}
-      <div className="mt-3 grid flex-1 grid-cols-3 gap-2.5">
+      {/* Panels. Mobile collapse: the three cards stack full-width so the
+          value chart, allocation and engine read all stay legible. */}
+      <div className="mt-3 grid flex-1 grid-cols-1 gap-2.5 sm:grid-cols-3">
         <div className="flex flex-col rounded-card border border-hairline bg-surface-2/60 p-3">
           <div className="flex items-center justify-between">
-            <p className="text-caption font-semibold text-foreground">Performance</p>
-            <span className="flex items-center gap-0.5 rounded-control border border-hairline bg-surface-3 px-1.5 py-0.5 font-mono text-micro tabular-nums text-muted">
-              YTD
-              <ChevronDown className="h-2.5 w-2.5" strokeWidth={2} />
+            <p className="text-caption font-semibold text-foreground">Value, US$M</p>
+            <span className="rounded-control border border-hairline bg-surface-3 px-1.5 py-0.5 font-mono text-micro tabular-nums text-muted">
+              since {P.sinceLabel}
             </span>
           </div>
-          <div className="mt-2 flex flex-1 gap-1">
+          <div className="mt-2 flex h-24 gap-1 sm:h-auto sm:flex-1">
             <div className="flex flex-col justify-between text-right font-mono text-micro tabular-nums text-muted">
-              <span>1.4M</span>
-              <span>1.1M</span>
-              <span>0.8M</span>
+              <span>{CHART.niceMax.toFixed(1)}</span>
+              <span>{((CHART.niceMax + CHART.niceMin) / 2).toFixed(1)}</span>
+              <span>{CHART.niceMin.toFixed(1)}</span>
             </div>
             {/* The wipe: a clip-path inset travelling left to right. */}
             <div className="h-full w-full transition-[clip-path] duration-[900ms] ease-out [clip-path:inset(0_0_0_0)] [[data-mock=armed]_&]:[clip-path:inset(0_100%_0_0)]">
-              <svg viewBox="0 0 120 48" className="h-full w-full text-positive" preserveAspectRatio="none" aria-hidden="true">
-                <path d={`${PERF_LINE} V48 H0 Z`} fill="currentColor" fillOpacity="0.12" stroke="none" />
-                <path d={PERF_LINE} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                {/* Leading dot: rides the line via animateMotion, freezes at
-                    the final value. Final position for SSR/no-JS. */}
-                <circle ref={dotRef} cx="120" cy="8" r="2.4" fill="currentColor">
-                  <animateMotion
-                    ref={motionRef}
-                    dur="900ms"
-                    begin="indefinite"
-                    fill="freeze"
-                    keyPoints="0;1"
-                    keyTimes="0;1"
-                    calcMode="linear"
-                    path={PERF_LINE}
-                  />
-                </circle>
+              <svg viewBox="0 0 120 48" className="h-full w-full text-brand" preserveAspectRatio="none" aria-hidden="true">
+                <path d={CHART.area} fill="currentColor" fillOpacity="0.12" stroke="none" />
+                <path d={CHART.line} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                <circle cx={CHART.end[0]} cy={CHART.end[1]} r="2.4" fill="currentColor" />
               </svg>
             </div>
           </div>
-          <div className="mt-1 flex justify-between pl-6 font-mono text-micro tabular-nums text-muted">
-            {["Jan '24", "Mar '24", "May '24", "Jul '24"].map((m) => (
-              <span key={m}>{m}</span>
+          <div className="relative mt-1 h-3.5 pl-6">
+            {CHART.months.map((m) => (
+              <span
+                key={m.label}
+                style={{ left: `calc(1.5rem + ${m.pct}% * 0.8)` }}
+                className="absolute font-mono text-micro tabular-nums text-muted"
+              >
+                {m.label}
+              </span>
             ))}
           </div>
         </div>
@@ -156,11 +163,11 @@ export function PortfolioMockup() {
           <div className="mt-2 flex flex-1 items-center gap-3">
             <Donut />
             <ul className="flex flex-col gap-1">
-              {ALLOCATION.map((seg) => (
+              {P.allocation.map((seg, i) => (
                 <li key={seg.label} className="flex items-center gap-1.5">
-                  <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${seg.swatch}`} />
+                  <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${SEGMENT_STYLE[i % SEGMENT_STYLE.length].swatch}`} />
                   <span className="text-micro text-muted">{seg.label}</span>
-                  <span className="ml-auto font-mono text-micro tabular-nums text-foreground">{seg.pct}</span>
+                  <span className="ml-auto pl-2 font-mono text-micro tabular-nums text-foreground">{seg.pct}</span>
                 </li>
               ))}
             </ul>
@@ -168,30 +175,29 @@ export function PortfolioMockup() {
         </div>
 
         <div className="flex flex-col rounded-card border border-hairline bg-surface-2/60 p-3">
-          <p className="text-caption font-semibold text-foreground">AI Insights</p>
-          {/* justify-evenly absorbs the stretched panel's leftover height at
-              tablet widths instead of pooling it above the pinned link. */}
+          <p className="text-caption font-semibold text-foreground">Engine read</p>
           <ul className="mt-2 flex flex-1 flex-col justify-evenly gap-2">
-            {INSIGHTS.map((tip, i) => (
+            {P.findings.map((tip, i) => (
               <li
                 key={tip}
                 style={{ transitionDelay: `${400 + i * 120}ms` }}
-                className="flex items-start justify-between gap-2 transition-[opacity,transform] duration-500 ease-out [[data-mock=armed]_&]:translate-y-2 [[data-mock=armed]_&]:opacity-0"
+                className="flex items-start gap-2 transition-[opacity,transform] duration-500 ease-out [[data-mock=armed]_&]:translate-y-2 [[data-mock=armed]_&]:opacity-0"
               >
+                <span aria-hidden="true" className="mt-1 h-1 w-1 shrink-0 rounded-full bg-brand" />
                 <span className="text-micro leading-snug text-muted">{tip}</span>
-                <span className="shrink-0 text-micro font-medium text-brand">View</span>
               </li>
             ))}
           </ul>
-          <p className="mt-auto pt-1.5 text-micro font-medium text-brand">View all insights →</p>
+          <p className="mt-auto pt-1.5 text-micro font-medium text-brand">Open the portfolio →</p>
         </div>
       </div>
 
-      {/* Top movers strip: ONE slow pass on entry, then still. Never loops. */}
+      {/* Movers strip: live quotes for the book's holdings at generation time.
+          ONE slow pass on entry, then still. Never loops. */}
       <div className="mt-2.5 flex items-center gap-4 overflow-hidden rounded-card border border-hairline bg-surface-2/60 px-3 py-2">
-        <span className="shrink-0 text-micro uppercase tracking-wide text-muted">Top Movers</span>
+        <span className="shrink-0 text-micro uppercase tracking-wide text-muted">Movers · {P.moversAsOf.slice(5)}</span>
         <div className="flex gap-4 transition-transform duration-[4000ms] ease-out [[data-mock=armed]_&]:translate-x-[70%]">
-          {MOVERS.map((m) => (
+          {P.movers.map((m) => (
             <span key={m.ticker} className="flex items-center gap-1.5 font-mono text-micro tabular-nums">
               <span className="font-semibold text-foreground">{m.ticker}</span>
               <span className={m.up ? "text-positive" : "text-negative"}>{m.delta}</span>
