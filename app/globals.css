@@ -150,6 +150,9 @@
   --animate-mk-value-pulse: mk-value-pulse 700ms var(--ease-out) 1 both;
   /* Try it: the Analyze click's one-shot scale-and-glow on the input. */
   --animate-mk-analyze-flash: mk-analyze-flash 500ms var(--ease-precise) 1 both;
+  /* Try it: a freshly computed result's staged arrival (per-group delay set
+     inline). The pre-loaded fixture never animates; it is present on load. */
+  --animate-mk-demo-enter: mk-demo-enter 400ms var(--ease-out) 1 both;
   /* Pricing: the two aurora arcs' 12s breath (gradient drift, no jitter). */
   --animate-mk-aurora: mk-aurora 12s ease-in-out infinite;
   --animate-mk-aurora-alt: mk-aurora 12s ease-in-out -6s infinite;
@@ -531,11 +534,62 @@ body::before {
   30%  { transform: scale(0.985); box-shadow: 0 0 0 8px color-mix(in srgb, var(--brand) 25%, transparent), 0 0 36px 6px color-mix(in srgb, var(--brand) 32%, transparent); }
   100% { transform: scale(1); }
 }
+/* Try it: a live result's staged arrival, opacity and a short rise only,
+   applied per group with inline delays; reduced motion renders at rest. */
+@keyframes mk-demo-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 /* Pricing: long-exposure aurora drift, a full breath every 12 seconds.
    Amplitude modulation only — the gradients travel and swell, never jitter. */
 @keyframes mk-aurora {
   0%, 100% { transform: translate3d(-4%, 0, 0) scale(1); opacity: 0.5; }
   50%      { transform: translate3d(4%, -3%, 0) scale(1.12); opacity: 0.85; }
+}
+/* Problem: the fragmentation diagram (problem-diagram.tsx). Islands settle
+   once with a short stagger; severed connectors draw in after them and stop
+   visibly short of ever connecting; a very slow, low-amplitude drift keeps
+   the composition from freezing. data-frag="visible" (SSR, no-JS, reduced
+   motion) is the fully settled state, so nothing here can trap content —
+   and the blanket prefers-reduced-motion rule at the bottom of this file
+   neutralizes every animation and transition below. */
+.mk-frag-island {
+  rotate: var(--fr, 0deg);
+}
+[data-frag="hidden"] .mk-frag-island {
+  opacity: 0;
+  transform: translateY(16px);
+  rotate: 0deg;
+}
+[data-frag="live"] .mk-frag-island {
+  transition-property: opacity, transform, rotate;
+  transition-duration: 700ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  transition-delay: var(--frag-d, 0ms);
+}
+/* Under vector-effect: non-scaling-stroke, dash geometry is screen-space, so
+   the draw-in budget is a screen-px dash long enough to cover any connector
+   at any viewport (they are all well under 480px on screen). */
+.mk-frag-edge {
+  stroke-dasharray: 480;
+}
+[data-frag="hidden"] .mk-frag-edge { stroke-dashoffset: 480; }
+[data-frag="live"] .mk-frag-edge {
+  transition: stroke-dashoffset 1100ms cubic-bezier(0.33, 1, 0.68, 1) var(--frag-d, 600ms);
+}
+[data-frag="hidden"] .mk-frag-edge-soft { opacity: 0; }
+[data-frag="live"] .mk-frag-edge-soft {
+  transition: opacity 800ms ease var(--frag-d, 700ms);
+}
+/* Ambient: one gentle vertical breath, period and phase varied per island so
+   the composition never synchronizes. Amplitude 2px — if a viewer can
+   consciously track it, it is too much. */
+@keyframes mk-frag-drift {
+  from { transform: translate3d(0, -1px, 0); }
+  to   { transform: translate3d(0, 1px, 0); }
+}
+[data-frag="live"] .mk-frag-drift {
+  animation: mk-frag-drift var(--drift-t, 18s) ease-in-out var(--drift-d, 0s) infinite alternate;
 }
 [data-mk-root] ::selection,
 [data-mk-root]::selection {

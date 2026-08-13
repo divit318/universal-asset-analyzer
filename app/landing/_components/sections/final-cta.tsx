@@ -6,87 +6,112 @@ import { Reveal } from "../motion/reveal";
 import { SectionShell } from "../primitives/section-shell";
 import { OrnamentalEyebrow } from "../primitives/ornamental-eyebrow";
 import { TwoToneHeadline } from "../primitives/two-tone-headline";
-import { TrustStrip } from "../primitives/trust-strip";
 import { openAuthModal } from "../auth-modal";
-import { PRIMARY_ACTION, FINAL_SECONDARY_ACTION, APP_ENTRY } from "../../landing-config";
+import { FINAL_PRIMARY_ACTION, APP_ENTRY } from "../../landing-config";
 
 /**
- * Final CTA — The Seal (ink/movements/seal.ts). Column discipline: heading
- * above, the 420x220 ink zone in the centre, buttons below. Ink converges
- * from the entry seam into a dense disc, the disc compresses once, sharply,
- * as if stamped, the asset/analyzer mark appears as clean NEGATIVE SPACE
- * inside it, and then everything goes completely still and the loop parks.
- * The last frame of the page is a struck brass seal: evidence in ink,
- * verdicts in brass.
+ * Final CTA, the friction-removal close. Everything above this section has
+ * argued value; a visitor who reaches it is persuaded, and what stops them
+ * now is practical. So this section answers the practical questions as a
+ * compact spec block instead of restating benefits: what starting takes,
+ * how long a first analysis measures, the API key situation stated up
+ * front, the true price with the reason it can be free, and how to leave.
  *
- * The primary action is identical to the hero's, the one constant; the
- * secondary action points FORWARD into the live app rather than back up the
- * page, so the page ends with escalation instead of a loop.
+ * The Seal ink composition and the fourth trust-chip strip are gone: the
+ * chips live once on the page (Solution section), and the close carries no
+ * decoration between the argument and the action. One primary action opens
+ * the live app directly (it is open and free, so a single unambiguous
+ * action beats two competing ones); the optional local account is a quiet
+ * text link, not a rival button.
+ *
+ * Every claim in SPEC_ROWS is verified against the shipped product: the
+ * auth gate is off by default (proxy.ts), the first-analysis timings were
+ * measured against the running app (uncached tickers rendered the computed
+ * analysis in 20 to 30 seconds; a cached ticker in about 3 seconds), the
+ * 15 to 40 second verdict window is the app's own stated typical
+ * (decision-hero.tsx), pricing matches the
+ * Pricing section ($0 today, Pro planned and not billable), and export is
+ * real (/api/export/* plus the SQLite file itself).
  */
-function EdgeStreak({ edge }: { edge: "top" | "bottom" }) {
-  return (
-    <div
-      aria-hidden="true"
-      className={`pointer-events-none absolute inset-x-0 origin-center transition-transform delay-700 duration-[800ms] ease-out [[data-reveal=hidden]_&]:scale-x-0 [[data-reveal=hidden]_&]:delay-0 ${edge === "top" ? "top-0" : "bottom-0"}`}
-    >
-      <div className="mx-auto h-px w-4/5 bg-gradient-to-r from-transparent via-brand to-transparent" />
-      <div className={`mx-auto h-3 w-2/3 bg-gradient-to-r from-transparent via-brand/40 to-transparent blur-md ${edge === "top" ? "-mt-1.5" : "-mb-1.5 -translate-y-1.5"}`} />
-    </div>
-  );
-}
+const SPEC_ROWS: { label: string; body: string }[] = [
+  {
+    label: "To start",
+    body: "One click. The button above opens the app in this browser. An account is optional and stays local; it exists for shared machines.",
+  },
+  {
+    label: "First analysis",
+    body: "Type a ticker. Live market data is pulled once and every figure computes locally: we measured 20 to 30 seconds for a first analysis, about 3 seconds once cached.",
+  },
+  {
+    label: "AI narration",
+    body: "Optional, on your own provider: a Devin CLI login (no API key) or an Anthropic, OpenAI, Gemini, or OpenRouter key pasted once in Settings. Verdicts stream in, typically 15 to 40 seconds. Every computed figure works without it.",
+  },
+  {
+    label: "Price",
+    body: "$0. The full local product, nothing held back. It can be free because your machine does the work and your AI provider bills you directly; there is no server cost to recover. A planned Pro tier adds hosted services on top, and nothing is billable today.",
+  },
+  {
+    label: "Your data",
+    body: "One SQLite database on your disk. Export any analysis to Excel, or copy the file itself; leaving is a file copy, not a request.",
+  },
+];
 
 export function FinalCta({ section, index }: SectionProps) {
   const headingId = `${section.id}-heading`;
 
   return (
     <SectionShell id={section.id} headingId={headingId} band={index % 2 === 1}>
+      <div className="mx-auto flex w-full max-w-3xl flex-col items-center">
         <Reveal delay={0}>
-          <div className="relative overflow-hidden rounded-[20px] border border-border bg-gradient-to-b from-surface/25 to-surface-2/25 px-6 py-12 text-center sm:px-12">
-            <EdgeStreak edge="top" />
-            <EdgeStreak edge="bottom" />
-
-            <div className="relative flex flex-col items-center">
-              <OrnamentalEyebrow>Ready?</OrnamentalEyebrow>
-              <span aria-hidden="true" className="mt-2 h-px w-10 bg-brand/50" />
-              <TwoToneHeadline
-                id={headingId}
-                className="mt-mk-eyebrow"
-                segments={[
-                  { text: "Professional investing", block: true },
-                  { text: "doesn't require ten tools.", tone: "accent", block: true },
-                ]}
-              />
-              <p className="mt-mk-headline max-w-[62ch] text-pretty text-mk-lead text-muted">
-                Every figure computed on your machine. Every claim traced to its source. Your key, your database.
-              </p>
-
-              {/* The Seal's ink zone: heading above, buttons below. */}
-              <div aria-hidden="true" data-ink-target="cta-seal" className="my-6 h-[220px] w-full max-w-[420px]" />
-
-              <div className="flex flex-col items-center gap-3 sm:flex-row">
-                <button
-                  type="button"
-                  onClick={() => openAuthModal("signup")}
-                  className="group inline-flex h-12 items-center justify-center gap-2 rounded-control bg-brand px-7 text-sm font-semibold text-background outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
-                >
-                  {PRIMARY_ACTION}
-                  <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-[3px]">
-                    →
-                  </span>
-                </button>
-                <Link
-                  href={APP_ENTRY}
-                  className="inline-flex h-12 items-center justify-center gap-1.5 rounded-control border border-border bg-surface px-7 text-sm font-semibold text-foreground outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:border-border-strong hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand/40"
-                >
-                  {FINAL_SECONDARY_ACTION}
-                  <span aria-hidden="true">→</span>
-                </Link>
-              </div>
-
-              <TrustStrip className="mt-10" variant="stacked" />
-            </div>
-          </div>
+          <OrnamentalEyebrow>Nothing in the way</OrnamentalEyebrow>
         </Reveal>
+        <Reveal delay={90}>
+          <TwoToneHeadline
+            id={headingId}
+            className="mt-mk-eyebrow"
+            segments={[
+              { text: "The whole terminal,", block: true },
+              { text: "already on your machine.", tone: "accent", block: true },
+            ]}
+          />
+        </Reveal>
+
+        {/* The action sits directly under the argument: no decoration, no
+            subhead, nothing between the headline and the click. */}
+        <Reveal delay={180} className="mt-mk-headline flex flex-col items-center gap-3">
+          {/* prefetch={false}: see hero.tsx — landing links into the app
+              navigate on click only. */}
+          <Link
+            href={APP_ENTRY}
+            prefetch={false}
+            className="group inline-flex h-12 items-center justify-center gap-2 rounded-control bg-brand px-7 text-sm font-semibold text-background outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
+          >
+            {FINAL_PRIMARY_ACTION}
+            <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-[3px]">
+              →
+            </span>
+          </Link>
+          <button
+            type="button"
+            onClick={() => openAuthModal("signup")}
+            className="rounded-control text-mk-small text-muted underline-offset-4 outline-none transition-colors duration-[120ms] hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-brand/40"
+          >
+            or create a local account first
+          </button>
+        </Reveal>
+
+        {/* The friction-removal block: specification, not marketing. */}
+        <Reveal delay={280} className="mt-mk-lead w-full">
+          <dl className="w-full divide-y divide-hairline rounded-panel border border-border bg-surface/70 text-left">
+            {SPEC_ROWS.map((row) => (
+              <div key={row.label} className="grid gap-1 px-5 py-4 sm:grid-cols-[9.5rem_1fr] sm:gap-4 sm:px-6">
+                <dt className="pt-0.5 font-mono text-micro uppercase tracking-widest text-brand">{row.label}</dt>
+                <dd className="text-pretty text-mk-body text-muted">{row.body}</dd>
+              </div>
+            ))}
+          </dl>
+        </Reveal>
+      </div>
     </SectionShell>
   );
 }

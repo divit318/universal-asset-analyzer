@@ -1,12 +1,17 @@
 "use client";
 
-import { Apple, ChevronDown } from "lucide-react";
+import { Apple } from "lucide-react";
 import { Odometer } from "../primitives/odometer";
 import { useMockupEntry } from "../motion/mockup";
+import { PANEL_DATA } from "./panel-data";
 
 /**
- * Research Hub mockup — static, hand-authored sample data (see MockupFrame),
- * choreographed ONCE on first viewport entry (useMockupEntry):
+ * Research Hub panel: REAL data for the ticker in panel-data.ts (quote,
+ * fundamentals, reported revenue by fiscal year, live headlines), generated
+ * by scripts/landing-panel-data.ts. The tab strip is the real Research
+ * page's tab set (app/research/page.tsx TABS). Nothing is hand-authored.
+ *
+ * Choreographed ONCE on first viewport entry (useMockupEntry):
  *   - key metric values roll up on monospace odometers (30ms per column)
  *   - the revenue line draws left to right over 900ms (easeOutQuart) with
  *     the area fill fading in behind it at 60% of the draw
@@ -14,27 +19,21 @@ import { useMockupEntry } from "../motion/mockup";
  *   - the active tab's underline slides in from the left
  * No-JS / reduced motion: final state, no observer, nothing hidden.
  */
-const TABS = ["Overview", "Financials", "News", "Estimates", "Filings", "Peers"];
+const R = PANEL_DATA.research;
 
-const METRICS = [
-  ["Market Cap", "$3.02T"],
-  ["Enterprise Value", "$3.18T"],
-  ["Revenue (TTM)", "$394.3B"],
-  ["Net Income (TTM)", "$99.8B"],
-  ["P/E (TTM)", "34.6x"],
-  ["Dividend Yield", "0.44%"],
-] as const;
+/* Chart geometry (viewBox 0 0 120 44), derived from the real revenue series. */
+const CHART = (() => {
+  const values = R.revenue.map((p) => p.value / 1e9);
+  const niceMin = Math.floor(Math.min(...values) / 50) * 50;
+  const niceMax = Math.ceil(Math.max(...values) / 50) * 50;
+  const x = (i: number) => 4 + (i * 112) / (values.length - 1);
+  const y = (v: number) => 40 - ((v - niceMin) / (niceMax - niceMin)) * 36;
+  const pts = values.map((v, i) => [x(i), y(v)] as const);
+  const line = `M${pts.map(([px, py]) => `${px.toFixed(1)} ${py.toFixed(1)}`).join(" L")}`;
+  return { niceMin, niceMax, pts, line, area: `${line} V44 H4 Z` };
+})();
 
-const NEWS = [
-  ["Apple unveils new AI features", "2h ago"],
-  ["Q3 earnings beat estimates", "1d ago"],
-  ["Apple expands manufacturing", "2d ago"],
-] as const;
-
-const LINE = "M4 36 L28 30 L52 31 L76 22 L100 16 L116 10";
-const AREA = "M4 36 L28 30 L52 31 L76 22 L100 16 L116 10 V44 H4 Z";
-
-export function ResearchHubMockup() {
+export function ResearchHubPanel() {
   const { ref, phase, played } = useMockupEntry();
 
   return (
@@ -47,23 +46,28 @@ export function ResearchHubMockup() {
           </span>
           <div>
             <p className="text-mk-small font-semibold text-foreground">
-              Apple Inc. <span className="font-normal text-muted">AAPL</span>
+              {R.name} <span className="font-normal text-muted">{R.symbol}</span>
             </p>
-            <p className="text-caption text-muted">NASDAQ · Technology Hardware</p>
+            <p className="text-caption text-muted">
+              {R.exchange} · {R.industry}
+            </p>
           </div>
         </div>
         <div className="text-right">
           <p className="font-mono text-mk-small font-semibold tabular-nums text-foreground">
-            $197.96 <span className="font-medium text-positive">(+1.34%)</span>
+            {R.price}{" "}
+            <span className={`font-medium ${R.changePositive ? "text-positive" : "text-negative"}`}>
+              ({R.changePercent})
+            </span>
           </p>
-          <p className="font-mono text-caption tabular-nums text-muted">Market Closed · Aug 7</p>
+          <p className="font-mono text-caption tabular-nums text-muted">As of {R.asOfShort}</p>
         </div>
       </div>
 
-      {/* Tab strip: the active underline slides in from the left on entry. */}
-      <div className="mt-3 flex gap-4 border-b border-hairline">
-        {TABS.map((t, i) => (
-          <span key={t} className={`relative pb-1.5 text-caption ${i === 0 ? "font-semibold text-foreground" : "text-muted"}`}>
+      {/* The real Research page's tab strip; the active underline slides in. */}
+      <div className="mt-3 flex gap-4 overflow-x-auto border-b border-hairline">
+        {R.tabs.map((t, i) => (
+          <span key={t} className={`relative shrink-0 pb-1.5 text-caption ${i === 0 ? "font-semibold text-foreground" : "text-muted"}`}>
             {t}
             {i === 0 && (
               <span
@@ -75,15 +79,13 @@ export function ResearchHubMockup() {
         ))}
       </div>
 
-      {/* Panels */}
-      <div className="mt-3 grid flex-1 grid-cols-3 gap-2.5">
+      {/* Panels. Mobile collapse: the three cards stack full-width so every
+          figure stays legible; nothing is cropped or shrunk. */}
+      <div className="mt-3 grid flex-1 grid-cols-1 gap-2.5 sm:grid-cols-3">
         <div className="flex flex-col rounded-card border border-hairline bg-surface-2/60 p-3">
-          <p className="flex items-center gap-1 text-caption font-semibold text-foreground">
-            Key metrics
-            <ChevronDown className="h-3 w-3 text-muted" strokeWidth={2} />
-          </p>
+          <p className="text-caption font-semibold text-foreground">Key metrics</p>
           <ul className="mt-2 flex flex-1 flex-col justify-evenly gap-2">
-            {METRICS.map(([label, value]) => (
+            {R.metrics.map(([label, value]) => (
               <li key={label} className="flex items-center justify-between gap-2">
                 <span className="text-caption text-muted">{label}</span>
                 <span className="font-mono text-caption font-medium tabular-nums text-foreground">
@@ -95,28 +97,36 @@ export function ResearchHubMockup() {
         </div>
 
         <div className="flex flex-col rounded-card border border-hairline bg-surface-2/60 p-3">
-          <p className="text-caption font-semibold text-foreground">Revenue (TTM)</p>
+          <p className="text-caption font-semibold text-foreground">Revenue, US$B</p>
           <p className="mt-1 font-mono text-mk-lead font-semibold tabular-nums text-foreground">
-            <Odometer value="$394.3B" play={played} />
+            <Odometer value={R.revenueTtmDisplay} play={played} />
           </p>
-          <p className="font-mono text-caption font-medium tabular-nums text-positive">+7.1% YoY</p>
-          <div className="mt-2 flex flex-1 gap-1.5">
+          {R.revenueGrowthDisplay && (
+            <p
+              className={`font-mono text-caption font-medium tabular-nums ${
+                R.revenueGrowthPositive ? "text-positive" : "text-negative"
+              }`}
+            >
+              {R.revenueGrowthDisplay}
+            </p>
+          )}
+          <div className="mt-2 flex h-24 gap-1.5 sm:h-auto sm:flex-1">
             <div className="flex flex-col justify-between text-right font-mono text-micro tabular-nums text-muted">
-              <span>400B</span>
-              <span>300B</span>
-              <span>200B</span>
+              <span>{CHART.niceMax}</span>
+              <span>{(CHART.niceMax + CHART.niceMin) / 2}</span>
+              <span>{CHART.niceMin}</span>
             </div>
-            <svg viewBox="0 0 120 44" className="h-full w-full text-positive" preserveAspectRatio="none" aria-hidden="true">
+            <svg viewBox="0 0 120 44" className="h-full w-full text-brand" preserveAspectRatio="none" aria-hidden="true">
               {/* Area fill fades in behind the line at 60% of the draw. */}
               <path
-                d={AREA}
+                d={CHART.area}
                 fill="currentColor"
                 fillOpacity="0.1"
                 stroke="none"
                 className="transition-opacity duration-[360ms] delay-[540ms] [[data-mock=armed]_&]:opacity-0"
               />
               <path
-                d={LINE}
+                d={CHART.line}
                 pathLength={1}
                 fill="none"
                 stroke="currentColor"
@@ -124,29 +134,22 @@ export function ResearchHubMockup() {
                 strokeLinecap="round"
                 className="transition-[stroke-dashoffset] duration-[900ms] ease-[cubic-bezier(0.25,1,0.5,1)] [stroke-dasharray:1] [stroke-dashoffset:0] [[data-mock=armed]_&]:[stroke-dashoffset:1]"
               />
-              {[
-                [4, 36],
-                [28, 30],
-                [52, 31],
-                [76, 22],
-                [100, 16],
-                [116, 10],
-              ].map(([x, y], i) => (
+              {CHART.pts.map(([x, y], i) => (
                 <circle
                   key={x}
                   cx={x}
                   cy={y}
                   r="1.8"
                   fill="currentColor"
-                  style={{ transitionDelay: `${(i / 5) * 900}ms` }}
+                  style={{ transitionDelay: `${(i / (CHART.pts.length - 1)) * 900}ms` }}
                   className="transition-opacity duration-200 [[data-mock=armed]_&]:opacity-0"
                 />
               ))}
             </svg>
           </div>
           <div className="mt-1 flex justify-between pl-6 font-mono text-micro tabular-nums text-muted">
-            {["2021", "2022", "2023", "2024", "TTM"].map((y) => (
-              <span key={y}>{y}</span>
+            {R.revenue.map((p) => (
+              <span key={p.year}>{p.year}</span>
             ))}
           </div>
         </div>
@@ -154,14 +157,14 @@ export function ResearchHubMockup() {
         <div className="flex flex-col rounded-card border border-hairline bg-surface-2/60 p-3">
           <p className="text-caption font-semibold text-foreground">Recent news</p>
           <ul className="mt-2 flex flex-1 flex-col justify-evenly gap-2.5">
-            {NEWS.map(([headline, when], i) => (
+            {R.news.map((n, i) => (
               <li
-                key={headline}
+                key={n.headline}
                 style={{ transitionDelay: `${300 + i * 80}ms` }}
                 className="flex items-start justify-between gap-2 transition-[opacity,transform] duration-500 ease-out [[data-mock=armed]_&]:translate-y-3 [[data-mock=armed]_&]:opacity-0"
               >
-                <span className="text-caption leading-snug text-foreground">{headline}</span>
-                <span className="shrink-0 font-mono text-micro tabular-nums text-muted">{when}</span>
+                <span className="line-clamp-2 text-caption leading-snug text-foreground">{n.headline}</span>
+                <span className="shrink-0 font-mono text-micro tabular-nums text-muted">{n.date}</span>
               </li>
             ))}
           </ul>

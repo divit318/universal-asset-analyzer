@@ -13,9 +13,9 @@ import { InkField } from "./_components/ink/InkField";
  * marketing chrome — it does not re-declare those. When /landing is promoted to
  * the site root, this shell moves with it unchanged.
  */
-const TITLE = "Universal Asset Analyzer: Every Figure Computed, Every Claim Traced";
+const TITLE = "Universal Asset Analyzer: Investment Research, Running on Your Machine";
 const DESCRIPTION =
-  "Investment research, analysis, and portfolio tools with your data in a local database you own, and AI narration on your own Anthropic key.";
+  "A local-first research terminal: market data, filings, screening, valuation, and portfolio analytics in one auditable workspace — your research in a local database you own, AI narration on your own provider.";
 
 /**
  * SEO for the marketing surface. All of this is native Next Metadata — plain

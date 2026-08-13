@@ -53,8 +53,8 @@ export function LandingFooter() {
         <div className="flex flex-col items-start gap-4 lg:col-span-4">
           <BrandLockup href={LANDING_HOME} size="lg" />
           <p className="max-w-xs text-mk-small text-muted">
-            Institutional-quality equity research that runs on your machine. Your data, your
-            database, your key.
+            Investment research that runs on your machine. Your data, your database, your AI
+            provider.
           </p>
           <div className="flex gap-2">
             {SOCIALS.map(({ icon: Icon, name }) => (
@@ -90,8 +90,11 @@ export function LandingFooter() {
         ))}
 
         <div className="lg:col-span-3 lg:col-start-10 lg:justify-self-end">
+          {/* prefetch={false}: see hero.tsx — landing links into the app
+              navigate on click only. */}
           <Link
             href={APP_ENTRY}
+            prefetch={false}
             className="group inline-flex h-11 shrink-0 items-center gap-2 rounded-control bg-brand px-5 text-sm font-semibold text-background outline-none transition-colors hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
           >
             {PRIMARY_ACTION}

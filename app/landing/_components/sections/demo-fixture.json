@@ -1,0 +1,238 @@
+{
+  "symbol": "RELIANCE.NS",
+  "name": "Reliance Industries Limited",
+  "assetClass": "equity",
+  "assetClassLabel": "Equity · NSE",
+  "currency": "INR",
+  "price": 1327.3,
+  "priceDisplay": "₹1327.30",
+  "priceAsOf": "2026-08-10T09:45:00.000Z",
+  "composite": 57,
+  "recommendation": "HOLD",
+  "recommendationLabel": "Hold",
+  "confidence": 79,
+  "signals": [
+    {
+      "label": "Fundamentals",
+      "value": 66
+    },
+    {
+      "label": "Analysts",
+      "value": 70
+    },
+    {
+      "label": "Momentum",
+      "value": 47
+    },
+    {
+      "label": "Capital allocation",
+      "value": 38
+    },
+    {
+      "label": "Sector rotation",
+      "value": 25
+    }
+  ],
+  "buckets": [
+    {
+      "name": "Valuation",
+      "points": 27,
+      "max": 30,
+      "factors": [
+        {
+          "label": "Analyst upside",
+          "detail": "+26.7% to target",
+          "points": 11,
+          "max": 12
+        },
+        {
+          "label": "PEG ratio",
+          "detail": "PEG 0.82",
+          "points": 10,
+          "max": 10
+        },
+        {
+          "label": "Forward vs trailing P/E",
+          "detail": "Fwd P/E 18.56x vs 24.02x",
+          "points": 6,
+          "max": 8
+        }
+      ]
+    },
+    {
+      "name": "Quality",
+      "points": 12,
+      "max": 25,
+      "factors": [
+        {
+          "label": "Return on equity",
+          "detail": "n/a",
+          "points": 5,
+          "max": 9
+        },
+        {
+          "label": "Operating margin",
+          "detail": "Op margin 12%",
+          "points": 2,
+          "max": 8
+        },
+        {
+          "label": "FCF / net income",
+          "detail": "FCF/NI 0.86",
+          "points": 5,
+          "max": 8
+        }
+      ]
+    },
+    {
+      "name": "Growth",
+      "points": 12,
+      "max": 25,
+      "factors": [
+        {
+          "label": "Revenue growth",
+          "detail": "Rev growth +30%",
+          "points": 9,
+          "max": 9
+        },
+        {
+          "label": "Earnings growth",
+          "detail": "EPS growth -22%",
+          "points": 0,
+          "max": 8
+        },
+        {
+          "label": "Revenue CAGR",
+          "detail": "Rev CAGR 6%",
+          "points": 3,
+          "max": 8
+        }
+      ]
+    },
+    {
+      "name": "Financial Health",
+      "points": 15,
+      "max": 20,
+      "factors": [
+        {
+          "label": "Debt / equity",
+          "detail": "D/E 0.37",
+          "points": 7,
+          "max": 8
+        },
+        {
+          "label": "Current ratio",
+          "detail": "n/a",
+          "points": 3,
+          "max": 6
+        },
+        {
+          "label": "Net debt / EBITDA",
+          "detail": "Net debt/EBITDA 0.77",
+          "points": 5,
+          "max": 6
+        }
+      ]
+    },
+    {
+      "name": "Capital Allocation",
+      "points": 9,
+      "max": 24,
+      "factors": [
+        {
+          "label": "FCF growth (CAGR)",
+          "detail": "n/a",
+          "points": 5,
+          "max": 10
+        },
+        {
+          "label": "Operating margin trend",
+          "detail": "Op margin -0.1pp since 2023",
+          "points": 3,
+          "max": 8
+        },
+        {
+          "label": "Shareholder yield",
+          "detail": "Div yield 0%",
+          "points": 1,
+          "max": 6
+        }
+      ]
+    },
+    {
+      "name": "Sector Rotation",
+      "points": 6,
+      "max": 24,
+      "factors": [
+        {
+          "label": "Relative strength",
+          "detail": "-9.7pp vs sector avg",
+          "points": 0,
+          "max": 10
+        },
+        {
+          "label": "Momentum",
+          "detail": "Momentum +1.1",
+          "points": 5,
+          "max": 8
+        },
+        {
+          "label": "Rank",
+          "detail": "#10/11 · strengthening",
+          "points": 1,
+          "max": 6
+        }
+      ]
+    }
+  ],
+  "metrics": [
+    {
+      "label": "Market cap",
+      "value": "₹17,96,165 Cr",
+      "source": "Yahoo Finance quote"
+    },
+    {
+      "label": "P/E (TTM)",
+      "value": "24.0x",
+      "source": "Yahoo Finance fundamentals"
+    },
+    {
+      "label": "Forward P/E",
+      "value": "18.6x",
+      "source": "Yahoo Finance fundamentals"
+    },
+    {
+      "label": "Revenue growth YoY",
+      "value": "+29.7%",
+      "source": "Yahoo Finance fundamentals"
+    },
+    {
+      "label": "Operating margin",
+      "value": "12.3%",
+      "source": "Yahoo Finance fundamentals"
+    },
+    {
+      "label": "Debt / equity",
+      "value": "0.37x",
+      "source": "Yahoo Finance fundamentals"
+    },
+    {
+      "label": "Analyst target",
+      "value": "₹1681.69 (+26.7%)",
+      "source": "Yahoo Finance consensus · 31 analysts"
+    },
+    {
+      "label": "3-month return",
+      "value": "-1.3%",
+      "source": "Computed from daily closes"
+    }
+  ],
+  "sources": [
+    "Yahoo Finance: quote, fundamentals, analyst consensus",
+    "Financial statements: Yahoo Finance",
+    "Momentum: computed from 5 years of daily closes",
+    "Scoring: lib/scoring.ts decision engine (India weight profile)"
+  ],
+  "computedAt": "2026-08-10T20:40:37.588Z",
+  "fixtureElapsedMs": 682
+}

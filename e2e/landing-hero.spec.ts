@@ -17,24 +17,26 @@ test.describe("landing hero (login rework)", () => {
     const errors = collectPageErrors(page);
     await page.goto("/landing");
 
-    // Exactly one h1, carrying both approved lines.
+    // Exactly one h1, carrying both approved lines (2026-08-11 identity
+    // rebuild: the H1 states what UAA is; the computed/traced thesis is the
+    // eyebrow directly above it).
     const h1 = page.getByRole("heading", { level: 1 });
     await expect(h1).toHaveCount(1);
-    await expect(h1).toContainText("Every figure computed.");
-    await expect(h1).toContainText("Every claim traced.");
+    await expect(h1).toContainText("Investment research,");
+    await expect(h1).toContainText("running on your machine.");
 
-    // Kicker is the committed motto.
-    await expect(page.getByText("Evidence in ink.")).toBeVisible();
+    // Kicker is the thesis line.
+    await expect(page.getByText("Every figure computed.")).toBeVisible();
 
-    // The previously approved headline lives on as the problem-first opener.
+    // The lead names what actually ships: one terminal, engines, owned data.
     await expect(
-      page.getByText("Stop juggling a dozen investing tools.", { exact: false }),
+      page.getByText("UAA is one research terminal", { exact: false }),
     ).toBeVisible();
 
-    // CTA pair: primary opens the modal (asserted in auth.spec.ts), secondary
-    // keeps the committed label and target.
+    // CTA pair: primary enters the open app directly (link, not modal);
+    // secondary jumps to the live demo directly beneath.
     const hero = page.locator("section#hero");
-    await expect(hero.getByRole("button", { name: /Get started/ })).toBeVisible();
+    await expect(hero.getByRole("link", { name: /Open the terminal/ })).toHaveAttribute("href", "/");
     await expect(hero.locator('a[href="#demo"]')).toBeVisible();
 
     // The scroll-scrubbed thesis flow: a live canvas plus spine-derived
@@ -47,13 +49,13 @@ test.describe("landing hero (login rework)", () => {
     expect(filterAllowedErrors(errors)).toEqual([]);
   });
 
-  test("pill nav: centred links, ghost Sign in, filled Get started; shadow arrives past the hero", async ({ page }) => {
+  test("pill nav: centred links, ghost Sign in, brass primary link; shadow arrives past the hero", async ({ page }) => {
     await page.goto("/landing");
     const nav = page.getByRole("navigation", { name: "Primary" });
 
     await expect(nav.locator('a[href="#features"]')).toBeVisible();
     await expect(nav.getByRole("button", { name: "Sign in" })).toBeVisible();
-    await expect(nav.getByRole("button", { name: "Get started" })).toBeVisible();
+    await expect(nav.getByRole("link", { name: "Open the terminal" })).toBeVisible();
 
     // Un-scrolled: no elevated chrome. Past the hero: shadow + stronger blur.
     await expect(nav).not.toHaveClass(/shadow-popover/);
