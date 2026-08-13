@@ -14,11 +14,11 @@ import { collectPageErrors, filterAllowedErrors } from "./helpers";
  */
 const SECTION_ORDER = [
   "hero",
+  "demo",
   "problem",
   "solution",
   "privacy",
   "features",
-  "demo",
   "comparison",
   "pricing",
   "faq",
@@ -50,9 +50,10 @@ test.describe("landing skeleton", () => {
     // The authenticated app header (a `banner` landmark) must NOT be present.
     await expect(page.getByRole("banner")).toHaveCount(0);
 
-    // The pill header's auth pair (login rework) and the anchor nav are present.
+    // The pill header: quiet "Sign in" (local account) plus the primary
+    // action, which enters the open app DIRECTLY — a link, not a modal.
     await expect(page.locator("header").getByRole("button", { name: "Sign in" })).toBeVisible();
-    await expect(page.locator("header").getByRole("button", { name: "Get started" })).toBeVisible();
+    await expect(page.locator("header").getByRole("link", { name: "Open the terminal" })).toHaveAttribute("href", "/");
     await expect(page.locator('header a[href="#features"]')).toBeVisible();
   });
 
@@ -73,20 +74,25 @@ test.describe("landing hero (Milestone 2)", () => {
   test("shows the approved headline, subhead, CTAs and hero art", async ({ page }) => {
     await page.goto("/landing");
 
-    // Exact shipped headline copy (auth session's hero rewrite — two stacked
-    // spans render with no space between them in textContent).
+    // Exact shipped headline copy (2026-08-11 identity rebuild: the H1 says
+    // what UAA IS; the computed/traced thesis moved to the eyebrow above it.
+    // Two stacked spans render with no space between them in textContent).
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-      "Every figure computed.Every claim traced.",
+      "Investment research,running on your machine.",
     );
+
+    // The thesis line survives as the eyebrow.
+    const hero = page.locator("section#hero");
+    await expect(hero.getByText("Every figure computed.", { exact: false })).toBeVisible();
 
     // Subhead names what actually ships: deterministic engines + owned data.
     await expect(
-      page.getByText("deterministic engines compute every metric", { exact: false }),
+      page.getByText("Deterministic engines compute every metric", { exact: false }),
     ).toBeVisible();
 
-    // CTA hierarchy: primary opens the auth modal, secondary jumps to the demo.
-    const hero = page.locator("section#hero");
-    await expect(hero.getByRole("button", { name: /Get started/ })).toBeVisible();
+    // CTA hierarchy: primary enters the open app directly (link, no modal),
+    // secondary jumps to the live demo directly beneath the hero.
+    await expect(hero.getByRole("link", { name: /Open the terminal/ })).toHaveAttribute("href", "/");
     await expect(hero.locator('a[href="#demo"]')).toBeVisible();
 
     // The particle thesis wave renders with its waypoints.
@@ -102,48 +108,146 @@ test.describe("landing problem → solution → demo (Milestone 3)", () => {
     await expect(problem.getByRole("heading", { name: "Why does research feel so fragmented?" })).toBeVisible();
   });
 
-  test("solution section reveals the workbench with feature bullets", async ({ page }) => {
+  test("solution section asserts the mechanism and demonstrates one traced number", async ({ page }) => {
     await page.goto("/landing");
     const solution = page.locator("section#solution");
-    await expect(solution.getByRole("heading", { name: "Meet the Universal Asset Analyzer." })).toBeVisible();
+    await expect(solution.getByRole("heading", { name: "Five sources in. One workbench out." })).toBeVisible();
+    // The trace demonstration: real AAPL FY2025 figures with their filing.
+    await expect(solution.getByText("$98.8B")).toBeVisible();
+    await expect(solution.getByText("Operating cash flow")).toBeVisible();
+    await expect(solution.getByText("0000320193-25-000079")).toBeVisible();
+    // The five capability names survive, demoted to one supporting line.
     await expect(solution.getByText("Market data", { exact: true })).toBeVisible();
   });
 
-  test("demo runs a canned analysis with no network", async ({ page }) => {
+  test("demo pre-loads a real baked engine result before any action", async ({ page }) => {
     await page.goto("/landing");
     const demo = page.locator("section#demo");
 
-    const input = demo.getByPlaceholder("Search any ticker…");
+    // The payoff is visible with ZERO interaction: the baked RELIANCE.NS
+    // analysis (genuine engine output, as-of dated), its attribution, and
+    // the no-AI provenance line.
+    await expect(demo.getByText("RELIANCE.NS").first()).toBeVisible();
+    await expect(demo.getByText("Reliance Industries Limited")).toBeVisible();
+    await expect(demo.getByText("Score attribution")).toBeVisible();
+    await expect(demo.getByText("Computed, not generated", { exact: false })).toBeVisible();
+
+    const input = demo.getByPlaceholder("Any symbol: INFY.NS, QQQ, ETH-USD…");
     await expect(input).toBeVisible();
-    const analyze = demo.getByRole("button", { name: "Analyze" });
-    await expect(analyze).toBeVisible();
+    // Empty input: Analyze is disabled, so there is no dead-click state.
+    await expect(demo.getByRole("button", { name: "Analyze" })).toBeDisabled();
+  });
 
-    // No result before submitting.
-    await expect(demo.getByText("Sample output, not live data")).toHaveCount(0);
+  test("demo streams a live run through /api/landing/demo (mocked here) and renders it staged", async ({ page }) => {
+    // Hermetic: fulfill the demo route with the exact NDJSON shape the server
+    // streams, so the test exercises the client contract without Yahoo.
+    await page.route("**/api/landing/demo**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/x-ndjson",
+        body:
+          [
+            { type: "stage", id: "quote", label: "Quote & asset class", ms: 31 },
+            { type: "stage", id: "data", label: "Fund profile, holdings, 2y prices", ms: 8 },
+            { type: "stage", id: "score", label: "Deterministic score", ms: 0 },
+            {
+              type: "result",
+              elapsedMs: 39,
+              analysis: {
+                symbol: "SPY",
+                name: "State Street SPDR S&P 500 ETF Trust",
+                assetClass: "fund",
+                assetClassLabel: "ETF · NYSE Arca",
+                currency: "USD",
+                price: 773.03,
+                priceDisplay: "$773.03",
+                priceAsOf: "2026-08-10T20:00:00.000Z",
+                composite: 62,
+                recommendation: "BUY",
+                recommendationLabel: "Buy",
+                confidence: null,
+                signals: [],
+                buckets: [
+                  {
+                    name: "Cost",
+                    points: 24,
+                    max: 25,
+                    factors: [{ label: "Expense ratio", detail: "0.09% annual expense ratio", points: 15, max: 16 }],
+                  },
+                ],
+                metrics: [{ label: "Expense ratio", value: "0.09%", source: "Yahoo Finance fund profile" }],
+                sources: ["Yahoo Finance: fund profile, holdings, trailing returns"],
+                computedAt: "2026-08-10T20:00:00.000Z",
+              },
+            },
+          ]
+            .map((e) => JSON.stringify(e))
+            .join("\n") + "\n",
+      }),
+    );
 
-    await input.fill("NVDA");
-    await analyze.click();
+    await page.goto("/landing");
+    const demo = page.locator("section#demo");
 
-    // Canned result (after the skeleton beat) + honest disclaimer appear.
-    await expect(demo.getByText("NVIDIA Corp.")).toBeVisible();
-    await expect(demo.getByText("Composite", { exact: false })).toBeVisible();
-    await expect(demo.getByText("Sample output, not live data")).toBeVisible();
+    await demo.getByRole("button", { name: /SPY/ }).click();
+
+    // The live result replaces the baked one, with measured elapsed time.
+    await expect(demo.getByText("State Street SPDR S&P 500 ETF Trust")).toBeVisible();
+    await expect(demo.getByText("Engines ran live in 0.04s")).toBeVisible();
+    await expect(demo.getByText("0.09% annual expense ratio", { exact: false })).toBeVisible();
+  });
+
+  test("demo failure states surface the server's specific message and keep the last result", async ({ page }) => {
+    await page.route("**/api/landing/demo**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/x-ndjson",
+        body:
+          JSON.stringify({
+            type: "error",
+            code: "unknown_symbol",
+            message: "No listing found for ZZZZQQ. NSE listings need the .NS suffix (RELIANCE.NS), BSE listings .BO, crypto pairs -USD (BTC-USD).",
+          }) + "\n",
+      }),
+    );
+
+    await page.goto("/landing");
+    const demo = page.locator("section#demo");
+
+    await demo.getByPlaceholder("Any symbol: INFY.NS, QQQ, ETH-USD…").fill("ZZZZQQ");
+    await demo.getByRole("button", { name: "Analyze" }).click();
+
+    await expect(demo.getByText("No listing found for ZZZZQQ", { exact: false })).toBeVisible();
+    // The pre-loaded result is still there beneath the error.
+    await expect(demo.getByText("Reliance Industries Limited")).toBeVisible();
   });
 });
 
 test.describe("landing feature showcase (Milestone 4)", () => {
-  test("renders every feature story with an accessible preview placeholder", async ({ page }) => {
+  test("renders every capability row as a real-data panel with provenance", async ({ page }) => {
     await page.goto("/landing");
     const features = page.locator("section#features");
 
-    await expect(features.getByRole("heading", { name: "Company research, per ticker" })).toBeVisible();
-    await expect(features.getByRole("heading", { name: "Build any screener" })).toBeVisible();
+    await expect(features.getByRole("heading", { name: "Profiles with provenance" })).toBeVisible();
+    await expect(features.getByRole("heading", { name: "Rank any universe" })).toBeVisible();
     await expect(features.getByText("Research Hub").first()).toBeVisible();
 
-    // Five feature rows → five illustrative mockups, each an accessible image.
-    await expect(features.getByRole("img", { name: /Illustrative/ })).toHaveCount(5);
+    // The five rows read as ONE workflow: stage labels 01 Discover → 05 Question.
+    await expect(features.getByText("Discover", { exact: true })).toBeVisible();
+    await expect(features.getByText("Question", { exact: true })).toBeVisible();
+
+    // Every panel is a labelled group showing real engine output; the
+    // ILLUSTRATIVE watermark and its role="img" frames are gone for good.
+    await expect(features.getByRole("group", { name: /real data|real pipeline run|real demo book|real output|real captured exchange/ })).toHaveCount(5);
+    await expect(features.getByRole("img", { name: /Illustrative/ })).toHaveCount(0);
+
+    // Each frame carries a provenance footer; data-backed frames carry an
+    // as-of / build date. (The screener's footer leads the section now and
+    // dates its universe build instead.)
+    await expect(features.locator("[data-provenance]")).toHaveCount(5);
+    await expect(features.locator("[data-provenance]").first()).toContainText(/universe built \d{4}-\d{2}-\d{2}/);
     await expect(
-      features.getByRole("img", { name: /Illustrative Research Hub screen/ }),
+      features.locator("[data-provenance]").filter({ hasText: /data as of \d{4}-\d{2}-\d{2}/ }).first(),
     ).toBeVisible();
   });
 });
@@ -162,7 +266,7 @@ test.describe("landing motion (Milestone 5)", () => {
 
     // Below-the-fold content is revealed and reachable.
     await expect(
-      page.locator("section#features").getByRole("heading", { name: "The research stack" }),
+      page.locator("section#features").getByRole("heading", { name: "One workflow, five instruments." }),
     ).toBeVisible();
     expect(filterAllowedErrors(errors)).toEqual([]);
   });
@@ -184,9 +288,9 @@ test.describe("landing motion (Milestone 5)", () => {
       // Nothing is trapped at opacity:0 — the reveal primitive is no-JS-safe.
       await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
       await expect(
-        page.locator("section#features").getByRole("heading", { name: "Company research, per ticker" }),
+        page.locator("section#features").getByRole("heading", { name: "Profiles with provenance" }),
       ).toBeVisible();
-      await expect(page.locator("section#demo").getByPlaceholder("Search any ticker…")).toBeVisible();
+      await expect(page.locator("section#demo").getByPlaceholder("Any symbol: INFY.NS, QQQ, ETH-USD…")).toBeVisible();
     });
   });
 });
@@ -194,7 +298,7 @@ test.describe("landing motion (Milestone 5)", () => {
 test.describe("landing performance & SEO (Milestone 6)", () => {
   test("exposes landing-specific title and social meta", async ({ page }) => {
     await page.goto("/landing");
-    await expect(page).toHaveTitle("Universal Asset Analyzer: Every Figure Computed, Every Claim Traced");
+    await expect(page).toHaveTitle("Universal Asset Analyzer: Investment Research, Running on Your Machine");
     await expect(page.locator('head meta[name="description"]')).toHaveAttribute("content", /local database you own/);
     await expect(page.locator('head meta[property="og:title"]')).toHaveAttribute("content", /Universal Asset Analyzer/);
   });
@@ -226,25 +330,40 @@ test.describe("landing content finalization (Milestone 7)", () => {
     await page.goto("/landing");
 
     await expect(
-      page.locator("section#privacy").getByRole("heading", { name: "Local-first. Your data stays yours." }),
+      page.locator("section#privacy").getByRole("heading", { name: "Never on our servers. There are none." }),
     ).toBeVisible();
 
     const pricing = page.locator("section#pricing");
     await expect(pricing.getByRole("heading", { name: /Free to run\. Pro when you want us to run it\./ })).toBeVisible();
-    // exact: the animated Pro price node's text content also contains "$0"
-    // mid-count-up, which trips strict mode with a substring match.
-    await expect(pricing.getByText("$0", { exact: true })).toBeVisible();
+    await expect(pricing.getByTestId("pricing-free").getByText("$0")).toBeVisible();
 
     // Comparison table has real table semantics and a highlighted UAA column.
+    // 2026-08-11 rebuild: design objectives in words, categories not brands —
+    // no ✓/✗ scoreboard, no named competitors.
     const comparison = page.locator("section#comparison");
     await expect(comparison.getByRole("columnheader", { name: "UAA" })).toBeVisible();
-    await expect(
-      comparison.getByRole("rowheader", { name: "Local-first: your data on your device" }),
-    ).toBeVisible();
+    await expect(comparison.getByRole("rowheader", { name: "Your research lives" })).toBeVisible();
+    // Rendered twice (desktop table + mobile stacked cards); scope to the table.
+    await expect(comparison.getByRole("table").getByText("On your disk, one SQLite file")).toBeVisible();
+    for (const brand of ["ChatGPT", "Perplexity", "Bloomberg"]) {
+      await expect(comparison.getByText(brand)).toHaveCount(0);
+    }
 
+    // Final CTA (friction-removal rebuild): the new headline, one primary
+    // action straight into the app, the quiet account link, the spec block,
+    // and no chip strip or ink zone in the section.
+    const cta = page.locator("section#cta");
     await expect(
-      page.locator("section#cta").getByRole("heading", { name: /Professional investing doesn.t require ten tools/ }),
+      cta.getByRole("heading", { name: /already on your machine/i }),
     ).toBeVisible();
+    await expect(cta.getByRole("link", { name: /Open the terminal/ })).toHaveAttribute("href", "/");
+    await expect(cta.getByRole("button", { name: /create a local account first/ })).toBeVisible();
+    await expect(cta.getByText("First analysis", { exact: true })).toBeVisible();
+    await expect(cta.getByText(/we measured 20 to 30 seconds/)).toBeVisible();
+    await expect(cta.locator("[data-trust-strip]")).toHaveCount(0);
+    await expect(cta.locator("[data-ink-target]")).toHaveCount(0);
+    // The chip strip appears exactly once on the whole page (Solution).
+    await expect(page.locator("[data-trust-strip]")).toHaveCount(1);
   });
 
   test("FAQ accordions expand and reflect what actually ships", async ({ page }) => {
@@ -256,7 +375,7 @@ test.describe("landing content finalization (Milestone 7)", () => {
     await expect(firstButton).toHaveAttribute("aria-expanded", "true");
 
     const aiButton = faq.getByRole("button", { name: "What AI does it use?" });
-    const answer = faq.getByText(/Claude \(Anthropic\) via your own API key/);
+    const answer = faq.getByText(/By default UAA routes through your Devin CLI login/);
     await expect(aiButton).toHaveAttribute("aria-expanded", "false");
     await expect(answer).not.toBeInViewport();
     await aiButton.click();
@@ -376,12 +495,15 @@ test.describe("pricing: two tiers, one of which exists", () => {
     expect(await page.content()).not.toMatch(/\/ forever/);
   });
 
-  test("free CTA opens the auth modal on Create account", async ({ page }) => {
+  test("free CTA enters the open app directly; the auth modal stays on Sign in", async ({ page }) => {
     await page.goto("/landing");
-    await page.locator("section#pricing").getByRole("button", { name: "Get started" }).click();
-    const dialog = page.getByRole("dialog", { name: "Create account" });
-    await expect(dialog).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "Create account" })).toBeVisible();
+    // The app is open and free: the Free card's action is a link, no modal.
+    await expect(
+      page.locator("section#pricing").getByRole("link", { name: "Open the terminal" }),
+    ).toHaveAttribute("href", "/");
+    // The optional local account remains reachable from the header.
+    await page.locator("header").getByRole("button", { name: "Sign in" }).click();
+    await expect(page.getByRole("dialog", { name: "Sign in" })).toBeVisible();
   });
 
   test("currency toggle switches both cards and persists across reload", async ({ page }) => {

@@ -112,29 +112,36 @@ export function shardPoint(lane: number, u: number, v: number, time: number, w: 
   out.s = 3.2 + v * 2.2;
 }
 
-/* ------------------------------ III. The Lens ----------------------------- */
+/* ---------------------------- III. The Streams ---------------------------- */
 
 /**
- * A lens or plume: converging to a bright point at the left end, fanning
- * and bowing outward to the right, formed of visible striations.
- * s: 0..1 along the axis; level: -1..1 striation position; squeeze: 0..1
- * compresses the short axis (the resolve into the sparkline).
+ * Five converging streams: one origin lane per source on the left edge,
+ * loose and scattered there, tightening and brightening rightward until
+ * all five land at a single apex on the right edge (the product panel's
+ * port). The visual argument is order emerging from scatter.
+ * lane: 0..4; u: 0..1 along the stream; v/v2: stable lateral and
+ * longitudinal randoms; apexY: convergence height in the local box.
  */
-export function lensPoint(
-  s: number,
-  level: number,
+export function streamPoint(
+  lane: number,
+  u: number,
+  v: number,
+  v2: number,
   time: number,
-  squeeze: number,
   w: number,
   h: number,
+  apexY: number,
   out: FPoint,
 ): void {
-  const half = h * 0.46 * Math.pow(s, 1.35) * (1 - squeeze * 0.82);
-  const bow = Math.sin(Math.PI * s) * 0.22 * level; // filaments bow outward
-  out.x = s * w;
-  out.y = h * 0.5 + level * half + bow * half + Math.sin(time * 0.8 + level * 6 + s * 9) * 1.5;
-  out.a = 0.55 + 0.45 * (1 - Math.abs(level));
-  out.s = 2.6 + (1 - Math.abs(level)) * 2;
+  const laneY = (lane + 0.5) * (h / 5);
+  const merge = Math.pow(u, 1.7); // hold the lane early, converge late
+  const bow = Math.sin(Math.PI * u) * (laneY - apexY) * 0.1;
+  const spread = Math.pow(1 - u, 1.4) * h * 0.05 + 1.2;
+  const wiggle = Math.sin(time * 0.7 + lane * 2.1 + u * 11) * (1 - u) * 2;
+  out.x = u * w + (v2 - 0.5) * spread;
+  out.y = laneY + (apexY - laneY) * merge + bow + (v - 0.5) * 2 * spread + wiggle;
+  out.a = 0.42 + 0.58 * Math.pow(u, 1.6);
+  out.s = 2.5 + Math.pow(u, 1.6) * 1.6;
 }
 
 /* ------------------------------ IV. The Pinch ----------------------------- */

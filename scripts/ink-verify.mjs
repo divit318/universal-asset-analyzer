@@ -78,6 +78,23 @@ page.on("console", (m) => {
   if (m.type() === "warning" && m.text().includes("keep-out violation")) errors.push(`[assert] ${m.text()}`);
 });
 
+/* The hero renders on a WebGL context (flow-field material); the shared
+   ink canvases stay 2D. __inkRead abstracts the difference: it hands back
+   a readable 2D context for either kind (WebGL is copied through a temp
+   canvas — the hero keeps preserveDrawingBuffer on for exactly this). */
+await page.addInitScript(() => {
+  window.__inkRead = (c) => {
+    const direct = c.getContext("2d");
+    if (direct) return direct;
+    const t = document.createElement("canvas");
+    t.width = c.width;
+    t.height = c.height;
+    const g = t.getContext("2d");
+    g.drawImage(c, 0, 0);
+    return g;
+  };
+});
+
 await page.goto("http://localhost:3000/landing", { waitUntil: "networkidle" });
 await page.waitForTimeout(2200);
 
@@ -98,7 +115,7 @@ async function sampleCanvases(rects, selector = "[data-ink-field]") {
     let hot = 0;
     let total = 0;
     for (const c of layers) {
-      const g = c.getContext("2d");
+      const g = window.__inkRead(c);
       const box = c.getBoundingClientRect();
       const fixed = sel === "[data-ink-field]";
       const dpr = c.width / (fixed ? innerWidth : box.width);
@@ -259,7 +276,7 @@ if (!reduced) {
   const FORMATIONS = [
     { id: "hero", zone: '[data-ink-target="hero-ink"]', selector: "[data-hero-field]", go: async () => page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" })) },
     { id: "shards", zone: '[data-ink-target="problem-ink"]', go: () => scrollToZone('[data-ink-target="problem-ink"]') },
-    { id: "lens", zone: '[data-ink-target="solution-ink"]', go: () => scrollToZone('[data-ink-target="solution-ink"]', 0.45) },
+    { id: "streams", zone: '[data-ink-target="solution-ink"]', go: () => scrollToZone('[data-ink-target="solution-ink"]', 0.45) },
     { id: "pinch", zone: '[data-ink-target="privacy-ink"]', go: () => scrollToZone('[data-ink-target="privacy-ink"]') },
     { id: "well", zone: '[data-ink-target="demo-well"]', go: () => scrollToZone('[data-ink-target="demo-well"]') },
     {
@@ -322,7 +339,7 @@ if (!reduced) {
       gate("hero-no-linking", noLinks, "engine reports no hero/ribbon link pass");
       const bbox = await page.evaluate(([sel, zone]) => {
         const c = document.querySelector(sel);
-        const g = c.getContext("2d");
+        const g = window.__inkRead(c);
         const box = c.getBoundingClientRect();
         const dpr = c.width / box.width;
         const d = g.getImageData(0, 0, c.width, c.height).data;
@@ -355,7 +372,7 @@ if (!reduced) {
       // the outermost 2px column of each edge (defect 1.1).
       const bleed = await page.evaluate((sel) => {
         const c = document.querySelector(sel);
-        const g2 = c.getContext("2d");
+        const g2 = window.__inkRead(c);
         const count = (d) => {
           let n = 0;
           for (let i = 3; i < d.length; i += 4) if (d[i] > 12) n++;
@@ -377,7 +394,7 @@ if (!reduced) {
       // bins; near-empty pairs are noise, not edges.
       const clipEdge = await page.evaluate((sel) => {
         const c = document.querySelector(sel);
-        const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+        const d = window.__inkRead(c).getImageData(0, 0, c.width, c.height).data;
         const BIN = 8;
         const nBins = Math.floor(c.width / BIN);
         const counts = new Array(nBins).fill(0);
@@ -409,7 +426,7 @@ if (!reduced) {
       // hue band (gold hue, real saturation).
       const hue = await page.evaluate((sel) => {
         const c = document.querySelector(sel);
-        const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+        const d = window.__inkRead(c).getImageData(0, 0, c.width, c.height).data;
         const lums = [];
         const idxs = [];
         for (let i = 0; i < d.length; i += 4) {
@@ -451,7 +468,7 @@ if (!reduced) {
       // contiguous region tracking the spine, not scattered points.
       const corePres = await page.evaluate((sel) => {
         const c = document.querySelector(sel);
-        const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+        const d = window.__inkRead(c).getImageData(0, 0, c.width, c.height).data;
         const GW = 96;
         const GH = 60;
         const grid = new Uint8Array(GW * GH);

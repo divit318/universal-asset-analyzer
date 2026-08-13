@@ -1,88 +1,76 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ShieldCheck, Shield, Database, FileText, TrendingUp, Lock, Sparkles, Check, X, type LucideIcon } from "lucide-react";
+import { Compass, Database, Cpu, FileText, PieChart, Sparkles, Wallet, type LucideIcon } from "lucide-react";
 import type { SectionProps } from "../section-registry";
 import { SectionShell } from "../primitives/section-shell";
 import { SectionHeader } from "../primitives/section-header";
 import { useSectionProgress, useReducedMotion } from "../motion/hooks";
 
 /**
- * Compare — The Ledger, in Movement IV's Silence: ZERO canvas ink. The
- * section is carried entirely by DOM and SVG; the table builds as you
- * descend:
- *   - column rules draw DOWNWARD, staggered left to right by 100ms
- *   - row rules draw ACROSS, staggered top to bottom, scroll-latched
- *   - checkmarks STROKE in like ink (a real two-segment path draw, 240ms)
- *   - X marks do not animate: they fade in flat, gray, 50% alpha, 400ms.
- *     The asymmetry is the argument.
- *   - the UAA column carries a slow brass leaf sweep (6s travel / 14s
- *     period), the one looping effect on the page
+ * Compare — The Ledger, rebuilt (2026-08-11) from a ✓/✗ scoreboard into a
+ * statement of design objectives. The old table claimed general assistants
+ * "lack SEC filings" — indefensible in a world where they browse — and made
+ * the section read as an attack. The new one compares what each CATEGORY of
+ * tool is built for, in words, and lets UAA's architecture speak for itself.
+ * Categories, not brand names, so the table cannot rot as vendors ship.
+ *
+ * Motion survives the rebuild: row rules draw ACROSS as you descend
+ * (scroll-latched), the UAA column carries the slow brass leaf sweep (the
+ * one looping effect on the page), and the UAA cell text is set in
+ * foreground ink while the neighbouring categories sit muted — hierarchy by
+ * tone, not by checkmark asymmetry.
  *
  * No-JS / reduced motion: the [data-comp-anim] gate is never set, so every
  * cell renders in its final state. Below 768px the table becomes one stacked
- * card per feature with four labelled cells (fits 375px).
+ * card per dimension with three labelled cells (fits 375px).
  */
-const COMPETITORS = ["UAA", "ChatGPT", "Perplexity", "Bloomberg"] as const;
+const COLUMNS = ["UAA", "General AI chat", "Institutional terminals"] as const;
 
-const ROWS: { icon: LucideIcon; label: string; has: boolean[] }[] = [
-  { icon: Shield, label: "Local-first: your data on your device", has: [true, false, false, false] },
-  { icon: Database, label: "Research data stored on your device", has: [true, false, false, false] },
-  { icon: FileText, label: "SEC filings & fundamentals", has: [true, false, false, true] },
-  { icon: TrendingUp, label: "Portfolio & valuation engines", has: [true, false, false, true] },
-  { icon: Lock, label: "No subscription required", has: [true, false, false, false] },
+interface CompareRow {
+  icon: LucideIcon;
+  label: string;
+  /** One cell per column, same order as COLUMNS. */
+  cells: [string, string, string];
+}
+
+const ROWS: CompareRow[] = [
+  {
+    icon: Compass,
+    label: "Built as",
+    cells: ["A research terminal on your hardware", "A general-purpose assistant", "An enterprise data platform"],
+  },
+  {
+    icon: Database,
+    label: "Your research lives",
+    cells: ["On your disk, one SQLite file", "On the provider's servers", "On vendor infrastructure"],
+  },
+  {
+    icon: Cpu,
+    label: "Numbers computed by",
+    cells: ["Deterministic engines, on your machine", "The language model, in prose", "Licensed vendor systems"],
+  },
+  {
+    icon: FileText,
+    label: "Provenance",
+    cells: ["Every figure keeps source and date", "Citations, when the mode provides them", "Vendor-verified, inside the platform"],
+  },
+  {
+    icon: PieChart,
+    label: "Portfolio context",
+    cells: ["Computed from your actual lots", "Whatever you paste into the chat", "Enterprise portfolio modules"],
+  },
+  {
+    icon: Sparkles,
+    label: "The AI layer",
+    cells: ["Optional — your provider, your account", "The product itself", "Bundled vendor assistants"],
+  },
+  {
+    icon: Wallet,
+    label: "Cost to run",
+    cells: ["Free; your AI provider bills you directly", "Free tiers to ~$20+/month", "Enterprise contracts"],
+  },
 ];
-
-/** A checkmark that strokes in like ink: two segments, 240ms, ease-out. */
-function InkCheck({ uaa, delay }: { uaa: boolean; delay: number }) {
-  return (
-    <>
-      <svg viewBox="0 0 16 16" className={`mx-auto h-4 w-4 ${uaa ? "text-brand" : "text-foreground"}`} aria-hidden="true">
-        <path
-          d="M3 8.5 L6.5 12 L13 4.5"
-          pathLength={1}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          style={{ transitionDelay: `${delay}ms` }}
-          className="transition-[stroke-dashoffset] duration-[240ms] ease-out [stroke-dasharray:1] [stroke-dashoffset:0] [[data-comp-anim]_[data-comp-row]:not([data-drawn])_&]:[stroke-dashoffset:1]"
-        />
-      </svg>
-      <span className="sr-only">Yes</span>
-    </>
-  );
-}
-
-/** An X that does NOT animate: a flat, gray fade. No rendering care. */
-function FlatX() {
-  return (
-    <>
-      <X
-        className="mx-auto h-4 w-4 text-foreground opacity-50 transition-opacity duration-[400ms] [[data-comp-anim]_[data-comp-row]:not([data-drawn])_&]:opacity-0"
-        strokeWidth={2}
-        aria-hidden="true"
-      />
-      <span className="sr-only">No</span>
-    </>
-  );
-}
-
-/** Static cell for the mobile stacked cards (always final state). */
-function StaticCell({ has, uaa }: { has: boolean; uaa: boolean }) {
-  return has ? (
-    <>
-      <Check className={`mx-auto h-4 w-4 ${uaa ? "text-brand" : "text-foreground"}`} strokeWidth={2.5} aria-hidden="true" />
-      <span className="sr-only">Yes</span>
-    </>
-  ) : (
-    <>
-      <X className="mx-auto h-4 w-4 text-foreground opacity-50" strokeWidth={2} aria-hidden="true" />
-      <span className="sr-only">No</span>
-    </>
-  );
-}
 
 export function Comparison({ section, index }: SectionProps) {
   const headingId = `${section.id}-heading`;
@@ -104,7 +92,7 @@ export function Comparison({ section, index }: SectionProps) {
     // Scroll-latched: rows rule themselves in as the reader descends.
     box.querySelectorAll<HTMLElement>("[data-comp-row]").forEach((row, i) => {
       if (row.dataset.drawn === "1") return;
-      if (p > 0.22 + i * 0.055) row.dataset.drawn = "1";
+      if (p > 0.18 + i * 0.05) row.dataset.drawn = "1";
     });
   });
 
@@ -114,7 +102,15 @@ export function Comparison({ section, index }: SectionProps) {
             <SectionHeader
               eyebrow="Compare"
               headingId={headingId}
-              segments={[{ text: "How UAA" }, { text: "stacks up", tone: "accent" }]}
+              segments={[{ text: "Three tools," }, { text: "three different jobs.", tone: "accent" }]}
+              lead={
+                <>
+                  General assistants and institutional terminals are excellent at what they are
+                  built for. UAA is built for something else: research you can audit, on hardware
+                  you own.
+                </>
+              }
+              className="items-center"
             />
 
             {/* Desktop/tablet table */}
@@ -123,38 +119,32 @@ export function Comparison({ section, index }: SectionProps) {
               data-comp-anim={animArmed ? "" : undefined}
               className="mt-mk-lead hidden md:block"
             >
-              <table className="w-full border-separate border-spacing-0 text-mk-body">
+              <table className="w-full table-fixed border-separate border-spacing-0 text-mk-body">
                 <caption className="sr-only">
-                  Feature comparison of UAA against ChatGPT, Perplexity, and Bloomberg
+                  Design objectives of UAA compared with general AI chat apps and institutional
+                  terminals
                 </caption>
                 <thead>
                   <tr>
-                    <th scope="col" className="p-3 text-left font-medium text-muted" />
-                    {COMPETITORS.map((c) => (
+                    <th scope="col" className="w-[19%] p-3 text-left font-medium text-muted" />
+                    {COLUMNS.map((c) => (
                       <th
                         key={c}
                         scope="col"
-                        className={`relative p-3 text-center font-semibold ${
+                        className={`p-3 text-left font-semibold ${
                           c === "UAA"
-                            ? "rounded-t-card border-x border-t border-brand bg-brand-muted text-brand"
-                            : "text-muted"
+                            ? "w-[29%] rounded-t-card border-x border-t border-brand bg-brand-muted text-brand"
+                            : "w-[26%] text-muted"
                         }`}
                       >
-                        {c === "UAA" ? (
-                          <span className="flex items-center justify-center gap-1.5">
-                            <ShieldCheck className="h-4 w-4" strokeWidth={2} aria-hidden="true" />
-                            UAA
-                          </span>
-                        ) : (
-                          c
-                        )}
+                        {c}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {ROWS.map((row, ri) => (
-                    <tr key={row.label} data-comp-row className="group">
+                    <tr key={row.label} data-comp-row className="group align-top">
                       <th
                         scope="row"
                         className="relative border-t border-transparent p-3 text-left font-normal text-foreground transition-colors group-hover:bg-surface-2/70"
@@ -164,17 +154,17 @@ export function Comparison({ section, index }: SectionProps) {
                           aria-hidden="true"
                           className="absolute inset-x-0 top-0 h-px origin-left bg-hairline transition-transform duration-[240ms] ease-out [[data-comp-anim]_[data-comp-row]:not([data-drawn])_&]:scale-x-0"
                         />
-                        <span className="flex items-center gap-2.5">
+                        <span className="flex items-center gap-2.5 text-mk-small font-medium">
                           <row.icon className="h-4 w-4 shrink-0 text-brand" strokeWidth={1.75} aria-hidden="true" />
                           {row.label}
                         </span>
                       </th>
-                      {row.has.map((has, ci) => {
-                        const uaa = COMPETITORS[ci] === "UAA";
+                      {row.cells.map((cell, ci) => {
+                        const uaa = COLUMNS[ci] === "UAA";
                         return (
                           <td
-                            key={COMPETITORS[ci]}
-                            className={`relative border-t border-transparent p-3 text-center transition-colors ${
+                            key={COLUMNS[ci]}
+                            className={`relative border-t border-transparent p-3 text-left transition-colors ${
                               uaa
                                 ? `overflow-hidden border-x border-brand bg-brand-muted ${ri === ROWS.length - 1 ? "rounded-b-card border-b" : ""}`
                                 : "group-hover:bg-surface-2/70"
@@ -203,7 +193,14 @@ export function Comparison({ section, index }: SectionProps) {
                                 className="pointer-events-none absolute inset-x-0 top-0 h-full animate-mk-leaf-sweep bg-gradient-to-b from-transparent via-brand/12 to-transparent motion-reduce:animate-none motion-reduce:opacity-0"
                               />
                             )}
-                            {has ? <InkCheck uaa={uaa} delay={240 + ci * 60} /> : <FlatX />}
+                            <span
+                              style={{ transitionDelay: `${180 + ci * 80}ms` }}
+                              className={`block text-mk-small transition-opacity duration-[400ms] [[data-comp-anim]_[data-comp-row]:not([data-drawn])_&]:opacity-0 ${
+                                uaa ? "font-medium text-foreground" : "text-muted"
+                              }`}
+                            >
+                              {cell}
+                            </span>
                           </td>
                         );
                       })}
@@ -213,7 +210,7 @@ export function Comparison({ section, index }: SectionProps) {
               </table>
             </div>
 
-            {/* Mobile: one stacked card per feature (readable at 375px). */}
+            {/* Mobile: one stacked card per dimension (readable at 375px). */}
             <ul className="mt-mk-lead flex flex-col gap-3 md:hidden">
               {ROWS.map((row) => (
                 <li key={row.label} className="rounded-card border border-hairline bg-surface-2/50 p-4">
@@ -221,38 +218,31 @@ export function Comparison({ section, index }: SectionProps) {
                     <row.icon className="h-4 w-4 shrink-0 text-brand" strokeWidth={1.75} aria-hidden="true" />
                     {row.label}
                   </p>
-                  <div className="mt-3 grid grid-cols-4 gap-2">
-                    {row.has.map((has, i) => (
-                      <div
-                        key={COMPETITORS[i]}
-                        className={`flex flex-col items-center gap-1 rounded-control px-1 py-2 ${
-                          COMPETITORS[i] === "UAA" ? "border border-brand/40 bg-brand-muted" : "bg-surface-3/50"
-                        }`}
-                      >
-                        <span className={`text-micro font-medium ${COMPETITORS[i] === "UAA" ? "text-brand" : "text-muted"}`}>
-                          {COMPETITORS[i]}
-                        </span>
-                        <StaticCell has={has} uaa={COMPETITORS[i] === "UAA"} />
-                      </div>
-                    ))}
+                  <div className="mt-3 flex flex-col gap-1.5">
+                    {row.cells.map((cell, i) => {
+                      const uaa = COLUMNS[i] === "UAA";
+                      return (
+                        <div
+                          key={COLUMNS[i]}
+                          className={`rounded-control px-3 py-2 ${uaa ? "border border-brand/40 bg-brand-muted" : "bg-surface-3/50"}`}
+                        >
+                          <p className={`text-micro font-medium uppercase tracking-wide ${uaa ? "text-brand" : "text-muted"}`}>
+                            {COLUMNS[i]}
+                          </p>
+                          <p className={`mt-0.5 text-mk-small ${uaa ? "font-medium text-foreground" : "text-muted"}`}>{cell}</p>
+                        </div>
+                      );
+                    })}
                   </div>
                 </li>
               ))}
             </ul>
 
-            {/* Closing pill + honesty caption: the most credible sentence on
-                the page, faded in last, unanimated. */}
-            <div className="mt-mk-lead flex flex-col items-center gap-3">
-              <p className="flex items-center gap-2.5 rounded-full border border-border bg-surface px-5 py-3 text-center text-mk-small text-foreground">
-                <Sparkles className="h-4 w-4 shrink-0 text-brand" strokeWidth={2} aria-hidden="true" />
-                <span>
-                  <span className="text-brand">Local database</span>, deterministic engines,{" "}
-                  <span className="text-brand">your own AI key</span> — compared line by line above.
-                </span>
-              </p>
-              <p className="text-caption text-muted">
-                Comparison reflects publicly documented capabilities as of{" "}
-                <span className="font-mono tabular-nums">{today}</span>.
+            {/* Honesty caption: the most credible sentence in the section. */}
+            <div className="mt-mk-lead flex flex-col items-center gap-1.5">
+              <p className="text-center text-caption text-muted">
+                Categories, not scoreboards: each column describes a class of product as publicly
+                documented as of <span className="font-mono tabular-nums">{today}</span>.
               </p>
             </div>
           </div>

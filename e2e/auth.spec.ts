@@ -12,8 +12,11 @@ import { E2E_USER } from "./global-setup";
 async function openModal(page: Page, tab: "signin" | "signup") {
   await page.goto("/landing");
   const nav = page.getByRole("navigation", { name: "Primary" });
+  // The primary CTAs enter the open app directly (2026-08-11 rebuild); the
+  // modal's triggers are the nav's "Sign in" and the final CTA's quiet
+  // account link (openAuthModal("signup")).
   if (tab === "signin") await nav.getByRole("button", { name: "Sign in" }).click();
-  else await page.locator("section#hero").getByRole("button", { name: /Get started/ }).click();
+  else await page.locator("section#cta").getByRole("button", { name: /create a local account first/ }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   // Settle: the modal moves focus to the email field one frame after opening;
   // filling before that frame can race the focus hop.
@@ -21,12 +24,12 @@ async function openModal(page: Page, tab: "signin" | "signup") {
 }
 
 test.describe("modal mechanics", () => {
-  test("nav Sign in opens on the Sign in tab; hero CTA opens on Create account", async ({ page }) => {
+  test("nav Sign in opens on the Sign in tab; final-CTA account link opens on Create account", async ({ page }) => {
     await openModal(page, "signin");
     await expect(page.getByRole("tab", { name: "Sign in" })).toHaveAttribute("aria-selected", "true");
     await page.keyboard.press("Escape");
 
-    await page.locator("section#hero").getByRole("button", { name: /Get started/ }).click();
+    await page.locator("section#cta").getByRole("button", { name: /create a local account first/ }).click();
     await expect(page.getByRole("tab", { name: "Create account" })).toHaveAttribute("aria-selected", "true");
   });
 

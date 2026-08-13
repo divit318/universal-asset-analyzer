@@ -29,15 +29,15 @@ const FAQS: { q: string; a: string }[] = [
   },
   {
     q: "Which markets are supported?",
-    a: "U.S. and Indian equities today, with more on the way.",
+    a: "U.S. and Indian markets are first-class today, and analysis spans seven asset classes — equities, ETFs, REITs, crypto, commodities, bonds, and currencies — through public data sources. More markets are on the way.",
   },
   {
     q: "What AI does it use?",
-    a: "Claude (Anthropic) via your own API key, entered once in Settings. Every number in the app is computed locally by deterministic engines; the model only writes the narrative.",
+    a: "Your own. By default UAA routes through your Devin CLI login, with no API key at all; or bring your own Anthropic, OpenAI, Gemini, or OpenRouter key, entered once in Settings. Every number in the app is computed locally by deterministic engines; the model only writes the narrative.",
   },
   {
     q: "Is there a subscription?",
-    a: "The local product is free, and your only running cost is your own Anthropic API usage. A paid Pro tier (managed AI, licensed data, sync) is planned but not yet available; see Pricing to register interest.",
+    a: "The local product is free, and your only running cost is your own AI usage, billed by your provider. A paid Pro tier (managed AI, licensed data, sync) is planned but not yet available; see Pricing to register interest.",
   },
 ];
 

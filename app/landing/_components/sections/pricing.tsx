@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { Check, Clock, KeyRound } from "lucide-react";
 import type { SectionProps } from "../section-registry";
@@ -7,8 +8,7 @@ import { Reveal } from "../motion/reveal";
 import { SectionShell } from "../primitives/section-shell";
 import { SectionHeader } from "../primitives/section-header";
 import { Odometer } from "../primitives/odometer";
-import { openAuthModal } from "../auth-modal";
-import { PRIMARY_ACTION } from "../../landing-config";
+import { APP_ENTRY, PRIMARY_ACTION } from "../../landing-config";
 
 /**
  * Pricing — two tiers, one of which exists.
@@ -117,7 +117,7 @@ const FIGURES = {
     freePrice: "$0",
     proPrice: "$180",
     proSuffix: "/ year",
-    proNote: "$19 / month",
+    proNote: "or $19 month-to-month",
     inputRate: "$5",
     outputRate: "$25",
     tierLow: "≈ 2¢",
@@ -297,8 +297,8 @@ export function Pricing({ section, index }: SectionProps) {
             ]}
             lead={
               <>
-                The local product is free and complete: your machine, your database, your Anthropic
-                key. A paid tier is planned for the things that genuinely need a server. It
+                The local product is free and complete: your machine, your database, your AI
+                provider. A paid tier is planned for the things that genuinely need a server. It
                 doesn&apos;t exist yet, and nothing here is billable.
               </>
             }
@@ -349,16 +349,18 @@ export function Pricing({ section, index }: SectionProps) {
                 ))}
               </ul>
 
-              <button
-                type="button"
-                onClick={() => openAuthModal("signup")}
+              {/* prefetch={false}: see hero.tsx — landing links into the app
+                  navigate on click only. */}
+              <Link
+                href={APP_ENTRY}
+                prefetch={false}
                 className="group mt-auto inline-flex h-12 w-full items-center justify-center gap-2 rounded-control bg-brand text-sm font-semibold text-background outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
               >
                 {PRIMARY_ACTION}
                 <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-0.5">
                   →
                 </span>
-              </button>
+              </Link>
             </div>
 
           {/* ------------------------------- PRO ------------------------------- */}
@@ -371,12 +373,12 @@ export function Pricing({ section, index }: SectionProps) {
                   Planned, not yet available
                 </p>
               </div>
-              <p className="mt-3 flex items-baseline gap-2">
+              <p className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1">
                 <span className="font-mono text-5xl font-semibold tabular-nums tracking-tight text-foreground">
                   <Odometer value={figures.proPrice} />
                 </span>
                 <span className="text-mk-body text-muted">{figures.proSuffix}</span>
-                <span className="text-mk-small text-muted">({figures.proNote})</span>
+                <span className="text-mk-small text-muted">· {figures.proNote}</span>
               </p>
               <p className="mt-2 text-mk-body text-muted">
                 Intended pricing. Nothing is purchasable today; this card exists to ask, not to sell.
@@ -409,10 +411,12 @@ export function Pricing({ section, index }: SectionProps) {
             </span>
             <div className="min-w-0 flex-1">
               <p className="text-mk-body font-semibold text-foreground">
-                What does &ldquo;your own Anthropic key&rdquo; cost?
+                What does the AI narration cost?
               </p>
               <p className="mt-2 text-pretty text-mk-body text-muted">
-                Anthropic bills you directly at Claude Opus 5&apos;s published rate:{" "}
+                With the default Devin CLI login there is no API key at all — usage draws on your
+                existing Devin plan. On your own key, the provider bills you directly: at Claude Opus
+                5&apos;s published rate that is{" "}
                 <span className="font-mono tabular-nums text-foreground">{figures.inputRate}</span> per million input
                 tokens, <span className="font-mono tabular-nums text-foreground">{figures.outputRate}</span> per million
                 output. Every UAA call has a hard output cap in code, so the worst case per analysis is knowable, not

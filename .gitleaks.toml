@@ -1,0 +1,9 @@
+# Gitleaks configuration for Universal Asset Analyzer.
+# Run: gitleaks git --no-banner --redact        (history scan)
+#      gitleaks dir --no-banner --redact        (working-tree scan)
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Unit-test fixtures — deliberately fake keys (e.g. sk-fromenv…) used to exercise lib/ai key resolution. Real keys must never appear in tests; they live in env vars or ~/.uaa/<provider>_api_key."
+paths = ['''tests/.*\.test\.ts$''']

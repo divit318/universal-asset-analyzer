@@ -33,6 +33,17 @@ export function useMockupEntry<T extends HTMLElement = HTMLDivElement>(): {
     if (!el || prefersReducedMotion()) return;
     // Must match SSR markup (final state) first, then arm the entrance.
     setPhase("armed");
+    // Already on screen at arm time (deep link, reload mid-page): play now —
+    // an armed frame sitting visibly empty is worse than a missed entrance.
+    if (el.getBoundingClientRect().top < window.innerHeight * 0.85) {
+      requestAnimationFrame(() => requestAnimationFrame(() => setPhase("play")));
+      return;
+    }
+    // Threshold 0.15 (matching <Reveal>), not the old 0.35: a fast flick can
+    // hop straight past a strict threshold's window and leave the frame stuck
+    // hidden ($0.00 odometers, empty rails) until a lucky re-cross. Firing at
+    // 15% keeps the choreography visible and makes the miss practically
+    // impossible.
     const io = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -40,7 +51,7 @@ export function useMockupEntry<T extends HTMLElement = HTMLDivElement>(): {
           io.disconnect(); // once, ever
         }
       },
-      { threshold: 0.35 },
+      { threshold: 0.15 },
     );
     io.observe(el);
     return () => io.disconnect();
