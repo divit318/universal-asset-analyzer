@@ -220,11 +220,6 @@ function getDb(): DatabaseSync {
       data       TEXT NOT NULL,
       created_at INTEGER NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS kg_snapshot (
-      scope_key    TEXT PRIMARY KEY,
-      graph        TEXT NOT NULL,
-      generated_at TEXT NOT NULL
-    );
     /* Portfolio Intelligence: the previous run's findings + holdings weights,
      * kept so a fresh run can report what changed since the last one. Singleton
      * row, no global prune -- scanner_cache would evict it within the hour. */
@@ -2948,32 +2943,14 @@ export function putScannerSnapshot(result: string, generatedAt: string): void {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Knowledge Graph snapshots — the previous graph per scope, kept so a fresh  */
-/* build can report "what changed since your last visit". One row per scope   */
-/* key ("symbol:AAPL", "portfolio", …), no global prune (see scanner_snapshot */
-/* above for why scanner_cache is the wrong home for anything long-lived).    */
+/* NOTE — `kg_snapshot` (the old Knowledge Graph's per-scope "what changed     */
+/* since your last visit" store) was dropped with the feature. Its replacement */
+/* is portfolio_intelligence_snapshot below, which diffs against the LEDGER    */
+/* rather than against a previous rendering of a graph: "you added a position" */
+/* is a change worth reporting, "the graph now has three fewer event nodes"    */
+/* never was. The table is left in place on existing databases (harmless, and  */
+/* dropping user data on upgrade is worse); nothing reads or writes it.        */
 /* -------------------------------------------------------------------------- */
-
-interface KgSnapshotRow {
-  graph: string;
-  generated_at: string;
-}
-
-export function getKgSnapshot(scopeKey: string): { graph: string; generatedAt: string } | null {
-  const row = getDb()
-    .prepare("SELECT graph, generated_at FROM kg_snapshot WHERE scope_key = ?")
-    .get(scopeKey) as unknown as KgSnapshotRow | undefined;
-  return row ? { graph: row.graph, generatedAt: row.generated_at } : null;
-}
-
-export function putKgSnapshot(scopeKey: string, graph: string, generatedAt: string): void {
-  getDb()
-    .prepare(
-      `INSERT INTO kg_snapshot (scope_key, graph, generated_at) VALUES (?, ?, ?)
-       ON CONFLICT(scope_key) DO UPDATE SET graph = excluded.graph, generated_at = excluded.generated_at`,
-    )
-    .run(scopeKey, graph, generatedAt);
-}
 
 /* -------------------------------------------------------------------------- */
 /* Portfolio Intelligence snapshot — the previous run, kept indefinitely so a */

@@ -73,7 +73,7 @@ import { FinancialInsightCard } from "./_components/financial-insight-card";
 import { PeerCompetitivePosition } from "./_components/peer-competitive-position";
 import { ArrivalHighlight, useArrivalTarget } from "@/app/_components/arrival-highlight";
 import { TimelinePreviewCard } from "./_components/timeline-preview-card";
-import { GraphPreviewCard } from "./_components/graph-preview-card";
+import { YourExposureCard } from "./_components/your-exposure-card";
 import { RelatedOpportunitiesCard } from "./_components/related-opportunities-card";
 import { AddToPortfolioModal } from "@/app/_components/portfolio/add-to-portfolio-modal";
 
@@ -270,6 +270,15 @@ function buildVerdictParams(
   params.actionReason = fit.action.reason;
   return params;
 }
+
+/**
+ * How long the verdict request will wait for its personalization inputs (the
+ * IOS profile and the research score's dataset) before firing anyway with
+ * whatever is known. Sized above the warm path (both settle inside ~1s) so it
+ * normally never fires, and far below the pathological cold paths it exists to
+ * cap (a cold portfolio-report build measured 24.7s on 2026-08-12).
+ */
+const VERDICT_GATE_DEADLINE_MS = 3_000;
 
 interface IndiaDerivedData extends IndiaDerivedFundamentals {
   promoterHolding: number | null;
@@ -745,11 +754,29 @@ function ResearchWorkspace({
               // every section has settled even if this entry never got a value.
               : entrySettled(fundamentalsEntry.status) || !bundleStreaming;
 
+  // The gate above is a WAIT, and every wait needs a ceiling. Its normal cost
+  // is small (warm: the profile and fundamentals both settle inside ~1s), but
+  // its worst case is not bounded by anything the user can see: a cold
+  // portfolio-report build measured 24.7s (2026-08-12), and the verdict —
+  // this page's flagship output — sat frozen behind it the whole time, waiting
+  // for personalization params it could live without. Past the deadline the
+  // request fires with whatever is known; if the profile settles later with
+  // real fit params, the key change upgrades the verdict in place (the hook
+  // keeps the on-screen sections while the personalized replacement streams).
+  // That duplicate generation is deliberately accepted: it happens only on the
+  // pathological cold paths, where the alternative was a ~30s empty skeleton.
+  const [gateExpiredFor, setGateExpiredFor] = useState<string | null>(null);
+  useEffect(() => {
+    const t = window.setTimeout(() => setGateExpiredFor(quote.symbol), VERDICT_GATE_DEADLINE_MS);
+    return () => window.clearTimeout(t);
+  }, [quote.symbol]);
+  const gateExpired = gateExpiredFor === quote.symbol;
+
   const verdictParams = buildVerdictParams(portfolioFit, ios?.profile ?? null);
 
   const verdictStream = useVerdictStream(quote.symbol, verdictParams, {
     // `ios == null` means there is no IOS provider at all — nothing to wait for.
-    enabled: (ios == null || ios.profileReady) && scoreInputsSettled,
+    enabled: ((ios == null || ios.profileReady) && scoreInputsSettled) || gateExpired,
   });
   const verdict = verdictStream.verdict;
 
@@ -907,10 +934,10 @@ function ResearchWorkspace({
               <Clock3 className="h-4 w-4" strokeWidth={1.75} /> Journal
             </Link>
             <Link
-              href={`/knowledge-graph?scope=symbol&id=${encodeURIComponent(quote.symbol)}`}
+              href={`/exposure?issuer=${encodeURIComponent(quote.symbol)}`}
               className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-2 text-sm text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
             >
-              <Network className="h-4 w-4" strokeWidth={1.75} /> Graph
+              <Network className="h-4 w-4" strokeWidth={1.75} /> Exposure
             </Link>
             <button
               onClick={onCopyLink}
@@ -1724,7 +1751,7 @@ function ResearchWorkspace({
             symbol={quote.symbol}
             onLoaded={(mostRecent) => setNearestTimelineEvent(mostRecent)}
           />
-          <GraphPreviewCard symbol={quote.symbol} />
+          <YourExposureCard symbol={quote.symbol} />
           <RelatedOpportunitiesCard symbol={quote.symbol} />
 
           {/* Fund profile (family, category, expense ratio, asset allocation) */}

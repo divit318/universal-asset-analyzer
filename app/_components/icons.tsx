@@ -180,18 +180,23 @@ export function ThematicIcon(props: IconProps) {
   );
 }
 
-export function KnowledgeGraphIcon(props: IconProps) {
+/**
+ * Exposure — three routes of different weight converging on one holding.
+ *
+ * Replaces the old KnowledgeGraphIcon, a ring of four equal circles joined by
+ * equal lines. That drawing was an accurate summary of the feature it labelled
+ * (undifferentiated entities, undifferentiated relationships) and the wrong
+ * picture for this one: here the whole point is that the routes have different
+ * magnitudes and they all arrive at the same place.
+ */
+export function ExposureIcon(props: IconProps) {
   return (
     <Base {...props}>
-      <circle cx={6} cy={7} r={1.6} fill="none" stroke="currentColor" strokeWidth={1.3} />
-      <circle cx={18} cy={7} r={1.6} fill="none" stroke="currentColor" strokeWidth={1.3} />
-      <circle cx={6} cy={17} r={1.6} fill="none" stroke="currentColor" strokeWidth={1.3} />
-      <circle cx={18} cy={17} r={1.6} fill="none" stroke="currentColor" strokeWidth={1.3} />
-      <line x1={7.4} y1={8.2} x2={10.8} y2={10.8} stroke="currentColor" strokeWidth={1.2} strokeOpacity={0.5} />
-      <line x1={16.6} y1={8.2} x2={13.2} y2={10.8} stroke="currentColor" strokeWidth={1.2} strokeOpacity={0.5} />
-      <line x1={7.4} y1={15.8} x2={10.8} y2={13.2} stroke="currentColor" strokeWidth={1.2} strokeOpacity={0.5} />
-      <line x1={16.6} y1={15.8} x2={13.2} y2={13.2} stroke="currentColor" strokeWidth={1.2} strokeOpacity={0.5} />
-      <Diamond cx={12} cy={12} s={2.4} />
+      <line x1={4} y1={4.5} x2={4} y2={19.5} stroke="currentColor" strokeWidth={1.3} />
+      <path d="M4.8 6.5 C 10 6.5, 12 11, 17.2 11" fill="none" stroke="currentColor" strokeWidth={2.4} strokeOpacity={0.85} strokeLinecap="round" />
+      <path d="M4.8 12 C 10 12, 12 12, 17.2 12" fill="none" stroke="currentColor" strokeWidth={1.4} strokeOpacity={0.55} strokeLinecap="round" />
+      <path d="M4.8 17.5 C 10 17.5, 12 13, 17.2 13" fill="none" stroke="currentColor" strokeWidth={0.9} strokeOpacity={0.4} strokeLinecap="round" />
+      <Diamond cx={19.4} cy={12} s={2.4} />
     </Base>
   );
 }

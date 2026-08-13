@@ -15,7 +15,6 @@ const nextConfig: NextConfig = {
     optimizePackageImports: [
       "recharts",
       "lucide-react",
-      "d3-force",
     ],
   },
   // Drop console.* from production client bundles (keep warn/error for triage).
@@ -34,6 +33,12 @@ const nextConfig: NextConfig = {
     return [
       { source: "/scanner", destination: "/wire", permanent: true },
       { source: "/dcf", destination: "/valuation", permanent: true },
+      // The Knowledge Graph became Exposure (app/knowledge-graph -> app/exposure).
+      // Not a rename: the old page drew companies, sectors, watchlists and news
+      // as interchangeable circles, and the new one answers a single question
+      // ("what do I actually own, and what moves with it?") from the portfolio
+      // ledger. Old links land on the thing that replaced them.
+      { source: "/knowledge-graph", destination: "/exposure", permanent: true },
     ];
   },
 };

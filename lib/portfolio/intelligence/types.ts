@@ -55,6 +55,28 @@ export interface IntelligenceInput {
 export type FindingSeverity = "high" | "medium" | "low";
 
 /**
+ * Where a finding's evidence lives in the Exposure graph (/exposure).
+ *
+ * This is the seam between the two halves of the product: the detectors say
+ * SOMETHING IS INTERESTING, and the graph shows EXACTLY WHY. A detector
+ * declares how its evidence should be drawn; no mapping table in the UI, and
+ * no chance of a finding linking to a view that cannot explain it.
+ *
+ * `null` (the default) means the finding is self-explanatory in its evidence
+ * lines and has no useful visual — behavioural findings like anchoring, where
+ * there is no exposure route to draw.
+ */
+export type FindingExplore =
+  /** Trace one issuer's routes into the book. `target` = issuer symbol. */
+  | { kind: "trace"; target: string }
+  /** Two funds' shared constituents. `target` = "VOO+VGT". */
+  | { kind: "overlap"; target: string }
+  /** One position's fan-out into what it contains. `target` = ledger label. */
+  | { kind: "position"; target: string }
+  /** A cluster of co-moving lines. `target` = "NVDA+AMD+AVGO". */
+  | { kind: "cluster"; target: string };
+
+/**
  * Every evidence line declares what kind of claim it is, and the UI renders the
  * label. "observed" came straight from a provider or the ledger; "derived" was
  * computed here from observed inputs. AI interpretation never appears in
@@ -90,6 +112,11 @@ export interface IntelligenceFinding {
   caveat?: string;
   /** % of portfolio value implicated — context chip in the UI. */
   weightPct?: number;
+  /**
+   * Which Exposure view proves this finding. Absent = no route to draw, so the
+   * evidence lines are the whole story. See {@link FindingExplore}.
+   */
+  explore?: FindingExplore;
   /** Deterministic ordering key (severity band × magnitude). Never displayed. */
   rank: number;
 }

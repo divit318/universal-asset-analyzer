@@ -1551,12 +1551,6 @@ function WatchlistPageInner() {
           >
             The Desk
           </Link>
-          <Link
-            href="/knowledge-graph?scope=watchlist&id=watchlist"
-            className="flex items-center rounded-lg border border-border px-4 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
-          >
-            Graph
-          </Link>
           <button
             onClick={() => { void load(); void loadPulse(); refreshNow(); }}
             className="rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-surface-2"

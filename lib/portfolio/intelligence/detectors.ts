@@ -16,6 +16,7 @@
  * Adding a detector = one function here + one entry in DETECTORS. Nothing else.
  */
 
+import { canonicalizeSector } from "../../gics-sectors";
 import { FACTOR_LABEL, FACTOR_SHOCK_UNIT, FACTORS } from "../model/types";
 import type { Holding } from "../model/types";
 import type {
@@ -97,6 +98,7 @@ const hiddenConcentration: Detector = (input, ctx) => {
         blindSpot: `Holding ${e.symbol} through funds can make the exposure feel diversified when economically it is still one company. Worth asking: does the direct position still add something the funds don't already provide?`,
         caveat: TOP10_CAVEAT,
         weightPct: e.totalPct,
+        explore: { kind: "trace", target: e.symbol },
         rank: rankOf(severity, e.totalPct),
       });
     } else if (e.totalPct >= 5) {
@@ -115,6 +117,7 @@ const hiddenConcentration: Detector = (input, ctx) => {
         whyItMatters: `This is a top-of-book single-company exposure that never appears as a line item, so it is easy to size other positions as if it did not exist.`,
         caveat: TOP10_CAVEAT,
         weightPct: e.totalPct,
+        explore: { kind: "trace", target: e.symbol },
         rank: rankOf(severity, e.totalPct),
       });
     }
@@ -182,6 +185,7 @@ const fundOverlapDetector: Detector = (input) => {
           "This pattern may indicate incremental buying — adding a fund that 'looks good' without checking what the existing funds already hold. If the duplication is deliberate (e.g. tax lots, fee arbitrage), it is worth being deliberate on purpose.",
         caveat: overlap.shared.length > 0 ? TOP10_CAVEAT : undefined,
         weightPct: combined,
+        explore: { kind: "overlap", target: `${overlap.a}+${overlap.b}` },
         rank: rankOf(severity, combined),
       });
     }
@@ -231,6 +235,7 @@ const etfRecreated: Detector = (input) => {
         "Worth asking of each echoed name: what does holding it directly add that the fund doesn't already provide — higher conviction sizing, or just familiarity?",
       caveat: TOP10_CAVEAT,
       weightPct: directWeight + h.weight,
+      explore: { kind: "position", target: h.symbol.toUpperCase() },
       rank: rankOf(severity, directWeight + h.weight),
     });
   }
@@ -276,6 +281,7 @@ const correlationCluster: Detector = (input) => {
       blindSpot:
         "Counting these as separate positions may make the portfolio feel more spread out than its returns say it is. The honest position count treats this block as one.",
       weightPct: c.weight,
+      explore: { kind: "cluster", target: [...c.members].sort().join("+") },
       rank: rankOf(severity, c.weight),
     } satisfies IntelligenceFinding;
   });
@@ -295,6 +301,26 @@ const sectorBet: Detector = (input, ctx) => {
   if (top.pct < stated + 8) return [];
 
   const severity: FindingSeverity = top.pct >= 45 ? "high" : "medium";
+
+  /* Which single line contributes the most of this sector's hidden component.
+     A sector is not an entity the exposure graph draws — its node types are
+     positions, issuers and drivers — but the LINE delivering most of the
+     surprise is, and opening it is what shows the reader where the bet came
+     from. Without this the page's loudest finding is also its only dead end. */
+  let biggestFund: { label: string; contribution: number } | null = null;
+  for (const h of input.holdings) {
+    if (!h.symbol || !isFundWrapper(h) || h.weight <= 0) continue;
+    const fund = input.funds.get(h.symbol.toUpperCase());
+    const sw = fund?.sectorWeights?.find(
+      (s) => (canonicalizeSector(s.sector) ?? s.sector) === top.sector,
+    );
+    if (!sw) continue;
+    const contribution = h.weight * (sw.weightPercent / 100);
+    if (!biggestFund || contribution > biggestFund.contribution) {
+      biggestFund = { label: holdingLabel(h), contribution };
+    }
+  }
+
   return [
     {
       id: `sector-bet:${top.sector}`,
@@ -311,6 +337,7 @@ const sectorBet: Detector = (input, ctx) => {
       blindSpot: `Spreading a sector bet across wrappers may make it feel like several decisions. Economically it is one view on ${top.sector.toLowerCase()}, and it deserves to be sized as one.`,
       caveat: "Fund sector weights are provider-reported for the equity sleeve of each fund; non-equity value is excluded rather than estimated.",
       weightPct: top.pct,
+      explore: biggestFund ? { kind: "position", target: biggestFund.label } : undefined,
       rank: rankOf(severity, top.pct),
     },
   ];
@@ -528,6 +555,7 @@ const internalHedge: Detector = (input) => {
         blindSpot:
           "Offsetting positions accumulated at different times may indicate two theses that were never reconciled — each made sense alone, together they partially cancel.",
         weightPct: best.weight,
+        explore: { kind: "cluster", target: [best.a, best.b].sort().join("+") },
         rank: rankOf("medium", best.weight / 2),
       });
     }

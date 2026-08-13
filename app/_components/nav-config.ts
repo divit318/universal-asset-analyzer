@@ -9,7 +9,7 @@ import {
   CompareIcon,
   DcfIcon,
   IcReportIcon,
-  KnowledgeGraphIcon,
+  ExposureIcon,
   PortfolioIcon,
   WatchlistIcon,
   JournalIcon,
@@ -103,9 +103,6 @@ export const NAV: NavObjective[] = [
       // is a portfolio job rather than a research one.
       { href: "/valuation", label: "Valuation", desc: "Your living valuation case per company", icon: DcfIcon, symbolParam: "symbol", keywords: ["valuation", "intrinsic", "cash flow", "wacc", "dcf", "reverse dcf", "fair value", "margin of safety", "case"] },
       { href: "/ic-report", label: "IC Report", desc: "9-agent institutional deep dive", icon: IcReportIcon, symbolParam: "symbol", keywords: ["committee", "thesis", "bull", "bear", "deep dive"] },
-      // Promoted from two levels deep inside the dissolved /intelligence (§4.3).
-      // Its deep-link is scope+id, not a plain ?symbol=, so no symbolParam here.
-      { href: "/knowledge-graph", label: "Knowledge Graph", desc: "Explore how your names connect", icon: KnowledgeGraphIcon, keywords: ["graph", "network", "relationships", "connections", "map"] },
     ],
   },
   {
@@ -120,6 +117,11 @@ export const NAV: NavObjective[] = [
       // the two judgment-grading surfaces close the menu — and the session.
       { href: "/portfolio", label: "Portfolio", desc: "Holdings, P&L & AI CIO memo", icon: PortfolioIcon, keywords: ["holdings", "pnl", "cio", "positions", "decisions"] },
       { href: "/watchlist", label: "Watchlist", desc: "Track names, alerts & notes", icon: WatchlistIcon, keywords: ["watch", "alerts", "notes", "targets"] },
+      // Moved here from Research, where its predecessor (the Knowledge Graph)
+      // sat because it could be scoped to any symbol. This one cannot: without a
+      // ledger there is no effective exposure, no route and no driver, so it is
+      // a portfolio job and belongs beside the book it reads.
+      { href: "/exposure", label: "Exposure", desc: "What you actually own, and what moves with it", icon: ExposureIcon, keywords: ["exposure", "look-through", "look through", "concentration", "overlap", "hidden", "etf", "trace", "blast radius", "drivers", "graph", "connections"] },
       { href: "/calendar", label: "Calendar", desc: "Earnings & ex-dividend dates", icon: CalendarIcon, keywords: ["earnings", "dividend", "dates", "events"] },
       // The book of cases. A portfolio job, not a research one: "which of my
       // valuations have broken?" is asked while reviewing what you own, and it
