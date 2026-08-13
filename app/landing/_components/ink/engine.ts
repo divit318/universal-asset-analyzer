@@ -683,13 +683,15 @@ export function createInkEngine(
         const gl = layer[i] === 1 ? gFront! : g;
         gl.globalAlpha = Math.min(layer[i] === 1 ? 0.35 : 1, stop === 0 ? Math.min(1, a * 1.25) : stop === 1 ? a * 0.85 : a * 0.55);
         const rr = stop === 0 ? sz * 0.8 : stop === 1 ? sz : sz * 1.35;
-        if (mat.shape === "streak" && mat.streakLength > 0) {
-          const vxi = vx[i];
-          const vyi = vy[i];
-          const sp = Math.hypot(vxi, vyi) + 1e-3;
+        const spd = mat.shape === "streak" && mat.streakLength > 0 ? Math.hypot(vx[i], vy[i]) : 0;
+        // Streaks need a real velocity to orient along; below 1px/s the
+        // direction basis collapses the transform to ~zero scale, so a
+        // settled streak renders as a plain dot instead of vanishing.
+        if (spd > 1) {
+          const sp = spd + 1e-3;
           const len = rr + mat.streakLength * Math.min(1, sp / 60);
-          const cA = vxi / sp;
-          const sA = vyi / sp;
+          const cA = vx[i] / sp;
+          const sA = vy[i] / sp;
           gl.setTransform(dpr * cA, dpr * sA, -dpr * sA, dpr * cA, x * dpr, y * dpr);
           gl.drawImage(spr, -len / 2, -rr / 2, len, rr);
           gl.setTransform(dpr, 0, 0, dpr, 0, 0);

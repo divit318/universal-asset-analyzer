@@ -1,11 +1,8 @@
 import type { Movement } from "../types";
-import { lensMovement } from "./lens";
-import { wellMovement } from "./well";
-import { sealMovement } from "./seal";
+import { streamsMovement } from "./streams";
 
 /**
- * Movements on the shared ink engine, in scroll order: Lens (solution) ·
- * Well (demo) · Seal (cta).
+ * Movements on the shared ink engine, in scroll order: Streams (solution).
  *
  * The HERO is deliberately absent: it runs its own trail-accumulation
  * canvas (../hero-field.ts) because trails must persist between frames and
@@ -14,11 +11,14 @@ import { sealMovement } from "./seal";
  * that work now (shards.ts remains for reference). Pinch (privacy) retired
  * with the Local-first rebuild: the section now argues with a proof block,
  * and evidence spends credibility on atmosphere (pinch.ts remains for
- * reference). Silence (features, comparison, pricing, faq) is the
- * deliberate absence of an entry.
+ * reference). Well (demo) retired with the Try It rebuild: the section now
+ * loads with a real pre-loaded engine result, and the output region belongs
+ * to the output (well.ts remains for reference). Seal (cta) retired with
+ * the final-CTA rebuild: the close now removes friction with a spec block,
+ * and nothing decorative sits between the argument and the action (seal.ts
+ * remains for reference). Silence (features, comparison, pricing, faq) is
+ * the deliberate absence of an entry.
  */
 export const INK_MOVEMENTS: Movement[] = [
-  lensMovement,
-  wellMovement,
-  sealMovement,
+  streamsMovement,
 ];

@@ -276,7 +276,7 @@ if (!reduced) {
   const FORMATIONS = [
     { id: "hero", zone: '[data-ink-target="hero-ink"]', selector: "[data-hero-field]", go: async () => page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" })) },
     { id: "shards", zone: '[data-ink-target="problem-ink"]', go: () => scrollToZone('[data-ink-target="problem-ink"]') },
-    { id: "lens", zone: '[data-ink-target="solution-ink"]', go: () => scrollToZone('[data-ink-target="solution-ink"]', 0.45) },
+    { id: "streams", zone: '[data-ink-target="solution-ink"]', go: () => scrollToZone('[data-ink-target="solution-ink"]', 0.45) },
     { id: "pinch", zone: '[data-ink-target="privacy-ink"]', go: () => scrollToZone('[data-ink-target="privacy-ink"]') },
     { id: "well", zone: '[data-ink-target="demo-well"]', go: () => scrollToZone('[data-ink-target="demo-well"]') },
     {
