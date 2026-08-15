@@ -1,4 +1,5 @@
 import type { DerivativesSummary } from "@/lib/derivatives-analysis";
+import { formatPerShare } from "@/lib/format";
 
 const TERM_STRUCTURE_LABEL: Record<NonNullable<DerivativesSummary["termStructure"]>, string> = {
   backwardation: "Backwardation (near-term richer)",
@@ -18,7 +19,16 @@ function GreeksRow({ label, greeks }: { label: string; greeks: DerivativesSummar
   );
 }
 
-export function DerivativesSummaryCard({ summary }: { summary: DerivativesSummary }) {
+export function DerivativesSummaryCard({
+  summary,
+  currency,
+}: {
+  summary: DerivativesSummary;
+  /** Listing currency of the underlying (Quote.currency) — strikes are struck in it, not in dollars. */
+  currency: string;
+}) {
+  // Strikes are exact contract values: whole where whole, 2dp otherwise.
+  const strike = (v: number) => formatPerShare(v, currency, v % 1 === 0 ? 0 : 2);
   return (
     <section className="card-lift flex flex-col gap-4 rounded-xl border border-border bg-surface p-5">
       <div className="flex items-baseline justify-between gap-2">
@@ -54,7 +64,7 @@ export function DerivativesSummaryCard({ summary }: { summary: DerivativesSummar
             <ul className="flex flex-col gap-1">
               {summary.topCallStrikes.map((s) => (
                 <li key={s.strike} className="flex items-center justify-between text-xs">
-                  <span className="font-mono">${s.strike}</span>
+                  <span className="font-mono">{strike(s.strike)}</span>
                   <span className="text-muted">{s.openInterest.toLocaleString()}</span>
                 </li>
               ))}
@@ -69,7 +79,7 @@ export function DerivativesSummaryCard({ summary }: { summary: DerivativesSummar
             <ul className="flex flex-col gap-1">
               {summary.topPutStrikes.map((s) => (
                 <li key={s.strike} className="flex items-center justify-between text-xs">
-                  <span className="font-mono">${s.strike}</span>
+                  <span className="font-mono">{strike(s.strike)}</span>
                   <span className="text-muted">{s.openInterest.toLocaleString()}</span>
                 </li>
               ))}
@@ -83,7 +93,7 @@ export function DerivativesSummaryCard({ summary }: { summary: DerivativesSummar
       {(summary.atmCallGreeks || summary.atmPutGreeks) && (
         <div className="flex flex-col gap-1">
           <span className="text-caption uppercase tracking-wide text-muted">
-            ATM Greeks (strike ${summary.atmStrike ?? "—"}, Black-Scholes from chain IV)
+            ATM Greeks (strike {summary.atmStrike != null ? strike(summary.atmStrike) : "—"}, Black-Scholes from chain IV)
           </span>
           <dl className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-2">
             <GreeksRow label="Call" greeks={summary.atmCallGreeks} />

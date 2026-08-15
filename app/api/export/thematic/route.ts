@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { guardedExport } from "@/lib/download";
 import { isRenderableReport } from "@/lib/thematic-theme";
 import type { ThematicReport } from "@/lib/thematic-engine";
 
@@ -29,7 +30,11 @@ function styleHeader(ws: ExcelJS.Worksheet): void {
 }
 
 /** POST /api/export/thematic — body: { report: ThematicReport } */
-export async function POST(req: Request): Promise<Response> {
+export function POST(req: Request): Promise<Response> {
+  return guardedExport("api/export/thematic", () => buildThematicExport(req));
+}
+
+async function buildThematicExport(req: Request): Promise<Response> {
   let report: ThematicReport;
   try {
     const body = (await req.json()) as { report?: unknown };

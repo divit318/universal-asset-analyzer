@@ -3,8 +3,11 @@
  * Calls the route handlers directly (not via HTTP) to avoid starting a server.
  * Checks: correct MIME type, Content-Disposition header, non-empty body,
  * magic bytes (Excel = 0x50 0x4B, PDF = %PDF-).
+ *
+ * /api/export/valuation has its own file (tests/valuation-export-route.test.ts)
+ * because it needs an isolated DB_PATH set before lib/db loads.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                     */
@@ -39,6 +42,55 @@ function isXlsxMagic(buf: Uint8Array): boolean {
 async function responseToUint8(res: Response): Promise<Uint8Array> {
   return new Uint8Array(await res.arrayBuffer());
 }
+
+/* -------------------------------------------------------------------------- */
+/* The shared failure guard                                                    */
+/* -------------------------------------------------------------------------- */
+
+describe("guardedExport", () => {
+  /* Every /api/export/* route returns through this. Before it existed, a throw
+     mid-workbook-generation surfaced as a 500 with an EMPTY body — which the
+     client rendered as the useless "Export failed (500)", and which is how the
+     Valuation export's reserved-sheet-name crash went undiagnosed. */
+
+  it("passes a successful build through untouched", async () => {
+    const { guardedExport } = await import("@/lib/download");
+    const res = await guardedExport("test", async () => new Response("ok", { status: 200 }));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("ok");
+  });
+
+  it("converts a throw into a readable plain-text 500 and logs it", async () => {
+    const { guardedExport } = await import("@/lib/download");
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const res = await guardedExport("test", async () => {
+        throw new Error("The name \"History\" is protected. Please use a different name.");
+      });
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe(
+        'Export failed: The name "History" is protected. Please use a different name.',
+      );
+      expect(spy).toHaveBeenCalledOnce();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("stays readable when the thrown value is not an Error", async () => {
+    const { guardedExport } = await import("@/lib/download");
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const res = await guardedExport("test", async () => {
+        throw "boom";
+      });
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("Export failed");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
 
 /* -------------------------------------------------------------------------- */
 /* Screener Excel                                                              */
@@ -251,7 +303,11 @@ describe("GET /api/export/watchlist", () => {
        raw, which split into two fields and shifted the last three columns of
        every row. Field counts are the only way to catch that class of bug. */
     const { GET } = await import("@/app/api/export/watchlist/route");
-    const text = await (await GET(new Request("http://localhost/api/export/watchlist"))).text();
+    const res = await GET(new Request("http://localhost/api/export/watchlist"));
+    // Guarded failures come back as a one-line 500 body, which would make the
+    // field-count loop below pass vacuously — fail loudly instead.
+    expect(res.status).toBe(200);
+    const text = await res.text();
     const lines = text.split("\r\n").filter((l) => l && !l.startsWith("#"));
     const countFields = (line: string) => {
       let n = 1;
@@ -366,6 +422,31 @@ describe("POST /api/export/compare", () => {
     expect(res.status).toBe(200);
     const buf = await responseToUint8(res);
     expect(isXlsxMagic(buf)).toBe(true);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Class comparison Excel (non-equity)                                         */
+/* -------------------------------------------------------------------------- */
+
+describe("POST /api/export/compare-class", () => {
+  it("rejects the equity class — it has its own export route", async () => {
+    const { POST } = await import("@/app/api/export/compare-class/route");
+    const res = await POST(makeRequest({ assetClass: "equity", entries: [] }));
+    expect(res.status).toBe(400);
+  });
+
+  it("answers a malformed payload with a readable 500, not an empty body", async () => {
+    // `entries` missing entirely used to throw an uncaught TypeError.
+    const { POST } = await import("@/app/api/export/compare-class/route");
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const res = await POST(makeRequest({ assetClass: "etf" }));
+      expect(res.status).toBe(500);
+      expect(await res.text()).toContain("Export failed");
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

@@ -66,6 +66,7 @@ export default function ValuationPage() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [exportErr, setExportErr] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [events, setEvents] = useState<ValuationEvent[] | null>(null);
   const [eventsAt, setEventsAt] = useState(0);
   const [showHistory, setShowHistory] = useState(false);
@@ -194,6 +195,31 @@ export default function ValuationPage() {
     }
   }, [vcase]);
 
+  /**
+   * Exports the persisted case — assumptions with provenance and reasoning,
+   * AI's objections, and the full version history — rather than just the seven
+   * numbers it currently resolves to. Guarded against double-clicks: a second
+   * export of the same case adds nothing but server load.
+   */
+  const exportCase = useCallback(async () => {
+    if (!symbol || exporting) return;
+    setExporting(true);
+    setExportErr(null);
+    try {
+      await downloadBlob(
+        "/api/export/valuation",
+        `valuation-${symbol}-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        "POST",
+        { symbol },
+      );
+    } catch (e) {
+      console.error("[valuation] export failed:", e);
+      setExportErr(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  }, [symbol, exporting]);
+
   const loadHistory = useCallback(async () => {
     if (!symbol) return;
     try {
@@ -261,21 +287,12 @@ export default function ValuationPage() {
         </button>
         {vcase ? (
           <button
-            onClick={() => {
-              setExportErr(null);
-              // Exports the persisted case — assumptions with provenance and
-              // reasoning, AI's objections, and the full version history — rather
-              // than just the seven numbers it currently resolves to.
-              void downloadBlob(
-                "/api/export/valuation",
-                `valuation-${symbol}-${new Date().toISOString().slice(0, 10)}.xlsx`,
-                "POST",
-                { symbol },
-              ).catch((e: unknown) => setExportErr(e instanceof Error ? e.message : "Export failed"));
-            }}
-            className="shrink-0 rounded-lg border border-border px-4 py-2 text-sm font-medium transition-colors hover:bg-surface-2"
+            onClick={() => void exportCase()}
+            disabled={exporting}
+            aria-busy={exporting}
+            className="shrink-0 rounded-lg border border-border px-4 py-2 text-sm font-medium transition-colors hover:bg-surface-2 disabled:opacity-50"
           >
-            ↓ Export case
+            {exporting ? "Exporting…" : "↓ Export case"}
           </button>
         ) : null}
       </Reveal>

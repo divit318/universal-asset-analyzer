@@ -60,6 +60,16 @@ export function formatCurrency(
   currency = "USD",
 ): string {
   if (!isRenderable(value)) return "—";
+  // Pence-quoted listings (LSE "GBp"/"GBX", JSE "ZAc"): Intl normalizes the
+  // code to GBP/ZAR and prints "£521.74" for a 521.74p quote — a 100× lie.
+  // Per-share values in these codes render with the minor-unit suffix, the
+  // same convention the LSE itself prints. (Yahoo's MAGNITUDE fields — market
+  // cap, AUM — arrive in the MAJOR unit even on GBp quotes, so
+  // formatCompactCurrency correctly keeps "£" for them.)
+  const suffix = MINOR_UNIT_SUFFIX[currency];
+  if (suffix) {
+    return `${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${suffix}`;
+  }
   return value.toLocaleString("en-US", {
     style: "currency",
     currency,
@@ -122,6 +132,14 @@ export function formatCompact(value: number | null | undefined): string {
   return value.toFixed(0);
 }
 
+/**
+ * Compact dollar amount for USD-QUOTED instruments ONLY (crypto "-USD" pairs,
+ * USD futures, AI spend). Anything with a listing/reporting currency must use
+ * {@link formatCompactCurrency} instead — this helper cannot say anything but
+ * "$", and putting it in front of an INR/JPY/KRW figure mislabels the number
+ * by the FX rate. (2026-08-14 audit: every non-USD-guaranteed call site was
+ * migrated off this function; new call sites must be USD-guaranteed.)
+ */
 export function formatMarketCap(value: number | null | undefined): string {
   if (!isRenderable(value)) return "—";
   return `$${formatCompact(value)}`;
@@ -148,6 +166,25 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
   TWD: "NT$",
   BRL: "R$",
   SGD: "S$",
+};
+
+/**
+ * Quote currencies denominated in 1/100 of their major unit. Yahoo prices LSE
+ * listings in "GBp" (pence) and JSE listings in "ZAc" (cents): a 435.5p quote
+ * shown as "£435.50" would overstate the price 100×, and dividing by 100
+ * would silently convert a value we were given. Brokers and the LSE itself
+ * print pence with a suffix ("435.5p") — so do we. Lookup is case-sensitive:
+ * uppercase "GBP" is real pounds and must keep the "£".
+ *
+ * Applies to PER-SHARE-scale values only (price, targets, EPS, dividends).
+ * Yahoo's magnitude fields (marketCap, AUM) arrive in the MAJOR unit even on
+ * pence-quoted listings — verified live 2026-08-14: BP.L price 521.7 (pence)
+ * beside marketCap 8.06e10 (pounds) — so the compact formatters keep "£".
+ */
+const MINOR_UNIT_SUFFIX: Record<string, string> = {
+  GBp: "p",
+  GBX: "p",
+  ZAc: "c",
 };
 
 /** Display symbol for an ISO 4217 code, falling back to the code itself. */
@@ -194,19 +231,150 @@ export function formatCompactCurrency(
 }
 
 /**
- * A per-share figure (EPS) in its reporting currency. Separate from
- * {@link formatCompactCurrency} because per-share values are never compacted —
- * "$1.2K EPS" would be nonsense — but they carry the same currency hazard.
+ * A per-share figure (EPS, dividend per share) in its reporting currency.
+ * Separate from {@link formatCompactCurrency} because per-share values are
+ * never compacted — "$1.2K EPS" would be nonsense — but they carry the same
+ * currency hazard. `digits` exists for dividends, which are declared to the
+ * tenth of a cent ($0.2575) and would be destroyed by 2dp rounding. A missing
+ * currency renders a bare number — never an assumed "$".
  */
 export function formatPerShare(
   value: number | null | undefined,
   currency: string | null | undefined,
+  digits = 2,
 ): string {
   if (!isRenderable(value)) return "—";
-  const code = (currency ?? "USD").toUpperCase();
-  const symbol = CURRENCY_SYMBOLS[currency ?? ""] ?? CURRENCY_SYMBOLS[code];
-  const amount = value.toFixed(2);
+  const amount = value.toFixed(digits);
+  if (currency == null || currency === "") return amount;
+  const suffix = MINOR_UNIT_SUFFIX[currency];
+  if (suffix) return `${amount}${suffix}`; // per-share values on pence-quoted listings ARE pence
+  const code = currency.toUpperCase();
+  const symbol = CURRENCY_SYMBOLS[currency] ?? CURRENCY_SYMBOLS[code];
   return symbol ? `${symbol}${amount}` : `${code} ${amount}`;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Chart currency formatting                                                  */
+/*                                                                            */
+/* THE formatter pair for monetary values on chart surfaces (y-axis ticks,   */
+/* tooltips). Every Research Hub chart formats through these two functions   */
+/* with the currency that travelled with the data — never a hardcoded "$".   */
+/* The 7974.T chart rendered "¥14,655" as "$14655" because each chart owned  */
+/* a private dollar-only fmtPrice; centralizing here is what makes that      */
+/* class of bug structurally impossible to reintroduce per-chart.            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A price-scaled monetary value for chart axes and tooltips, in the
+ * instrument's own currency.
+ *
+ * - Adaptive precision (2dp under 10, 1dp under 100, whole above) — the same
+ *   ramp the charts always used, so US output is unchanged.
+ * - Thousands separators (Indian grouping for INR), which four-digit-plus
+ *   prices (7974.T ¥14,655, MRF ₹1,20,000) were missing entirely.
+ * - Unknown ISO codes fall back to a "CODE 123" prefix — unambiguous, per
+ *   {@link currencySymbol}.
+ * - A null/undefined currency renders a bare number. Missing metadata must
+ *   surface as "no unit", never as a silently assumed "$".
+ */
+export function formatChartPrice(
+  value: number | null | undefined,
+  currency: string | null | undefined,
+): string {
+  if (!isRenderable(value)) return "—";
+  const abs = Math.abs(value);
+  const digits = abs < 10 ? 2 : abs < 100 ? 1 : 0;
+  const code = (currency ?? "").toUpperCase();
+  const amount = abs.toLocaleString(code === "INR" ? "en-IN" : "en-US", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+  const sign = value < 0 ? "-" : "";
+  if (currency == null || currency === "") return `${sign}${amount}`;
+  const suffix = MINOR_UNIT_SUFFIX[currency];
+  if (suffix) return `${sign}${amount}${suffix}`;
+  const symbol = CURRENCY_SYMBOLS[currency] ?? CURRENCY_SYMBOLS[code];
+  return symbol ? `${sign}${symbol}${amount}` : `${sign}${code} ${amount}`;
+}
+
+/** 391.04 → "391", 48.04 → "48", 9.64 → "9.6" — one decimal only while it says something. */
+function compactAmount(x: number): string {
+  return x >= 100 ? x.toFixed(0) : x.toFixed(1).replace(/\.0$/, "");
+}
+
+/**
+ * A large monetary magnitude compacted for chart axis ticks: "$391B",
+ * "¥48T", "€250M". INR compacts in Indian units — "₹964 Cr", "₹3.9K Cr",
+ * "₹9.6L Cr" — the same convention the India financial charts print, because
+ * "₹9,640B" is not a number an Indian filing ever shows. Tooltips, which have
+ * room for precision, should use {@link formatCompactCurrency} instead; this
+ * is the tick-sized rendering. Same missing-currency contract as
+ * {@link formatChartPrice}: no currency, no symbol — never an assumed "$".
+ */
+export function formatChartMoneyCompact(
+  value: number | null | undefined,
+  currency: string | null | undefined,
+): string {
+  if (!isRenderable(value)) return "—";
+  const sign = value < 0 ? "-" : "";
+  const abs = Math.abs(value);
+  const code = (currency ?? "").toUpperCase();
+  if (code === "INR") {
+    const amount =
+      abs >= 1e12
+        ? `${compactAmount(abs / 1e12)}L Cr` // lakh crore
+        : abs >= 1e10
+          ? `${compactAmount(abs / 1e10)}K Cr` // thousand crore
+          : abs >= 1e7
+            ? `${compactAmount(abs / 1e7)} Cr`
+            : abs >= 1e5
+              ? `${compactAmount(abs / 1e5)} L`
+              : abs.toLocaleString("en-IN", { maximumFractionDigits: 0 });
+    return `${sign}₹${amount}`;
+  }
+  let amount = abs.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  for (const [threshold, unit] of [[1e12, "T"], [1e9, "B"], [1e6, "M"], [1e3, "K"]] as const) {
+    if (abs >= threshold) {
+      amount = `${compactAmount(abs / threshold)}${unit}`;
+      break;
+    }
+  }
+  if (currency == null || currency === "") return `${sign}${amount}`;
+  // No MINOR_UNIT_SUFFIX branch here on purpose: magnitude fields on
+  // pence-quoted listings arrive in POUNDS (see MINOR_UNIT_SUFFIX doc), so
+  // "GBp" on a magnitude keeps the "£" via CURRENCY_SYMBOLS.
+  const symbol = CURRENCY_SYMBOLS[currency] ?? CURRENCY_SYMBOLS[code];
+  return symbol ? `${sign}${symbol}${amount}` : `${sign}${code} ${amount}`;
+}
+
+/**
+ * ExcelJS numFmt string for a currency, so exported cells stay NUMBERS (sort,
+ * sum, chart in Excel) while displaying the right unit: `"₹"#,##0.00`,
+ * `"¥"#,##0.00`, `#,##0.00"p"` for pence-quoted listings, and a plain
+ * `#,##0.00` when the currency is unknown — never an assumed "$".
+ */
+export function excelMoneyFormat(currency: string | null | undefined): string {
+  if (currency == null || currency === "") return "#,##0.00";
+  const suffix = MINOR_UNIT_SUFFIX[currency];
+  if (suffix) return `#,##0.00"${suffix}"`;
+  return `"${currencySymbol(currency)}"#,##0.00`;
+}
+
+/**
+ * The currency financial-STATEMENT magnitudes are denominated in.
+ *
+ * Statements (lib/statements.ts) come primarily from Yahoo's fundamentals
+ * time series, which reports in the company's own reporting currency —
+ * `financialCurrency` — not the listing currency: an ADR like TSM trades in
+ * USD but reports revenue in TWD. Falls back to the listing currency (they
+ * are identical for non-ADRs) for snapshots cached before the field existed,
+ * and to null — an explicit "unlabelled" — when neither is known.
+ */
+export function statementsCurrency(
+  financialCurrency: string | null | undefined,
+  listingCurrency: string | null | undefined,
+): string | null {
+  return financialCurrency ?? listingCurrency ?? null;
 }
 
 export function formatDate(iso: string | null | undefined): string {

@@ -25,6 +25,7 @@ import type { ChartQARelatedTarget } from "@/lib/ai-chart-qa";
 import type { ScreenerInCompany, ScreenerInPeer } from "@/lib/screener-in";
 import type { CorporateActions } from "@/lib/yahoo";
 import type { NseResultsMeta } from "@/lib/india-news";
+import { downloadBlob } from "@/lib/download";
 import { detectMarket, MARKET_BADGE, MARKET_LABEL, type MarketRegion } from "@/lib/market";
 import { benchmarkForSymbol } from "@/lib/benchmarks";
 import { detectAssetClass, ASSET_CLASS_LABEL } from "@/lib/asset-class";
@@ -40,6 +41,7 @@ import {
   formatDate,
   formatPercent,
   formatRatio,
+  statementsCurrency,
 } from "@/lib/format";
 
 // Universal components
@@ -781,18 +783,20 @@ function ResearchWorkspace({
   const verdict = verdictStream.verdict;
 
   async function downloadReport() {
+    if (downloading) return;
     setDownloading(true);
     try {
-      const res = await fetch(`/api/report?symbol=${encodeURIComponent(quote.symbol)}`);
-      if (!res.ok) throw new Error();
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${quote.symbol}_Research_${new Date().toISOString().slice(0, 10)}.xlsx`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch { /* non-critical */ } finally {
+      // The shared helper, not a hand-rolled blob dance — and a visible toast
+      // on failure. This used to swallow every error as "non-critical", which
+      // read as a button that does nothing when the report route failed.
+      await downloadBlob(
+        `/api/report?symbol=${encodeURIComponent(quote.symbol)}`,
+        `${quote.symbol}_Research_${new Date().toISOString().slice(0, 10)}.xlsx`,
+      );
+    } catch (e) {
+      console.error("[research] report export failed:", e);
+      toast(e instanceof Error && e.message ? e.message : "Report export failed", "error");
+    } finally {
       setDownloading(false);
     }
   }
@@ -1196,6 +1200,7 @@ function ResearchWorkspace({
           // Fallback label is market-aware: an Indian stock whose benchmark
           // fetch failed must not be captioned against the S&P 500.
           benchmarks={benchmarks ?? { market: [], marketLabel: benchmarkForSymbol(quote.symbol).label, sectorEtf: null, sector: [] }}
+          currency={quote.currency}
           news={news}
           onAskAI={handleChartAskAI}
           onOpenTechnical={handleOpenTechnical}
@@ -1545,14 +1550,22 @@ function ResearchWorkspace({
               <DataProvenance source="yahoo" asOf={fundamentalsEntry.updatedAt} ttlHours={24} />
               {/* The conviction block (score ring, pillars, subscores) lives on
                   the Conviction tab ONLY — it was previously duplicated here. */}
-              {hasEarnings && <EarningsCard earnings={fundamentals.earnings} />}
+              {hasEarnings && <EarningsCard earnings={fundamentals.earnings} currency={quote.currency} />}
 
               {/* Financial charts grid. A resolved-but-empty peer set renders
                   NOTHING — a permanent "Peer data unavailable" box is worse
                   than a tighter grid. */}
               <div className="grid gap-4 lg:grid-cols-2">
                 {hasStatements && <MarginTrendChart statements={fundamentals.statements!} sector={fundamentals.snapshot?.sector} />}
-                {hasStatements && <RevenueFcfChart statements={fundamentals.statements!} />}
+                {hasStatements && (
+                  <RevenueFcfChart
+                    statements={fundamentals.statements!}
+                    // Reporting currency, not the listing currency: an ADR's
+                    // statements arrive in its home currency (TSM: TWD on a
+                    // USD listing). Identical to quote.currency otherwise.
+                    currency={statementsCurrency(fundamentals.snapshot.financialCurrency, quote.currency)}
+                  />
+                )}
                 {valuation.length >= 2 && (
                   <ValuationHistoryChart valuation={valuation} snapshot={fundamentals.snapshot} />
                 )}
@@ -1704,7 +1717,7 @@ function ResearchWorkspace({
                   the SEBI-regulated shareholding pattern above IS the ownership
                   story — Yahoo's US-style insider table is almost always empty
                   for NSE names, so it renders only when it has something. */}
-              {hasOwnership && <OwnershipCard ownership={fundamentals!.ownership} />}
+              {hasOwnership && <OwnershipCard ownership={fundamentals!.ownership} currency={quote.currency} />}
               {(!isIndia || (fundamentals?.insider?.transactions.length ?? 0) > 0) && (
                 <InsiderTable insider={fundamentals?.insider ?? { transactions: [], netValue: 0, buyCount: 0, sellCount: 0 }} currency={quote.currency} />
               )}
@@ -1765,16 +1778,16 @@ function ResearchWorkspace({
             <LoadingPanel height="h-40" message="Loading options chain…" />
           ) : isDerivativesSummaryComplete(derivativesSummary) ? (
             <div className="flex flex-col gap-4">
-              <DerivativesSummaryCard summary={derivativesSummary} />
+              <DerivativesSummaryCard summary={derivativesSummary} currency={quote.currency} />
               <div className="grid gap-4 sm:grid-cols-2">
-                <AiDerivativesInsight section="volatility" symbol={quote.symbol} underlyingName={quote.name} summary={derivativesSummary} />
-                <AiDerivativesInsight section="positioning" symbol={quote.symbol} underlyingName={quote.name} summary={derivativesSummary} />
+                <AiDerivativesInsight section="volatility" symbol={quote.symbol} underlyingName={quote.name} summary={derivativesSummary} currency={quote.currency} />
+                <AiDerivativesInsight section="positioning" symbol={quote.symbol} underlyingName={quote.name} summary={derivativesSummary} currency={quote.currency} />
               </div>
             </div>
           ) : null}
 
           {/* Analyst consensus */}
-          {fundamentals?.analyst && <AnalystCard analyst={fundamentals.analyst} />}
+          {fundamentals?.analyst && <AnalystCard analyst={fundamentals.analyst} currency={quote.currency} />}
 
           {/* Risks render on the Analysis tab only (WhySection's "Biggest
               Risks") — the risk heatmap here duplicated the same list. */}

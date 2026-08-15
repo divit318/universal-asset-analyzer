@@ -43,6 +43,13 @@ export interface CalendarEvent {
   dividendAmount?: number | null;
   dividendYield?: number | null;
   paymentDate?: string | null;
+  /**
+   * Listing currency the dividend is declared per share in (Quote.currency,
+   * yahoo.ts CorporateActions doc). Travels with the amount for the same
+   * reason estimateCurrency does: a hardcoded dollar sign would mislabel a
+   * ¥/₹/pence dividend. Absent (older cached payloads) → bare number.
+   */
+  currency?: string;
 
   // Macro
   country?: string;
@@ -315,7 +322,7 @@ export async function getCalendarEvents(): Promise<CalendarResponse> {
     /* The currency the EPS/revenue estimates are reported in. Yahoo denominates
        them in the company's *financial* currency, which for a non-US listing is
        not USD — SK hynix reports in KRW, so its revenue estimate is ~84e12.
-       Rendering that under a hardcoded "$" produced "$84.12T", a number three
+       Rendering that under a hardcoded dollar produced "$84.12T", a number three
        orders of magnitude wrong and instantly discrediting. Falls back to the
        quote's own currency, then USD. */
     const fin = (raw.financialData ?? {}) as Record<string, unknown>;
@@ -382,6 +389,9 @@ export async function getCalendarEvents(): Promise<CalendarResponse> {
           dividendAmount: divRate != null ? +(divRate / 4).toFixed(4) : null,
           dividendYield: rawYield != null ? +(rawYield * 100).toFixed(2) : null,
           paymentDate: payDate,
+          // dividendRate is per share in the LISTING currency — not the
+          // financialCurrency the earnings estimates use.
+          currency: (pr.currency as string | undefined) ?? undefined,
         });
       }
     }

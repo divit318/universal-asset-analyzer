@@ -2,6 +2,7 @@
 
 import type { OwnershipData } from "@/lib/types";
 import { describeOwnership } from "@/lib/ownership-insight";
+import { formatCompactCurrency } from "@/lib/format";
 import { Reveal } from "@/app/_components/reveal";
 import { ValueBar } from "@/app/_components/value-bar";
 
@@ -74,7 +75,14 @@ function OwnershipInsight({ ownership }: { ownership: OwnershipData }) {
   );
 }
 
-export function OwnershipCard({ ownership }: { ownership: OwnershipData }) {
+export function OwnershipCard({
+  ownership,
+  currency,
+}: {
+  ownership: OwnershipData;
+  /** Listing currency (Quote.currency) — Yahoo reports holder position values in it. */
+  currency: string;
+}) {
   const {
     institutionsPctHeld,
     insidersPctHeld,
@@ -194,7 +202,7 @@ export function OwnershipCard({ ownership }: { ownership: OwnershipData }) {
                       </td>
                     )}
                     <td className="hidden px-3 py-2 text-right font-mono text-muted sm:table-cell">
-                      {h.value != null ? `$${compact(h.value)}` : "—"}
+                      {formatCompactCurrency(h.value, currency)}
                     </td>
                   </Reveal>
                 ))}

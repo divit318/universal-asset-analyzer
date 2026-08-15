@@ -19,6 +19,7 @@ import {
 } from "recharts";
 import type { FinancialStatements, PeerComparison } from "@/lib/types";
 import { useChartTheme } from "@/app/_components/chart-theme";
+import { formatChartMoneyCompact, formatCompact, formatCompactCurrency } from "@/lib/format";
 import { niceTicks } from "@/lib/chart-scale";
 import { sectorGroup } from "@/lib/sector";
 
@@ -117,28 +118,47 @@ export function MarginTrendChart({ statements, sector }: { statements: Financial
 /* Revenue + free cash flow                                                   */
 /* -------------------------------------------------------------------------- */
 
-export function RevenueFcfChart({ statements }: { statements: FinancialStatements }) {
+export function RevenueFcfChart({
+  statements,
+  currency,
+}: {
+  statements: FinancialStatements;
+  /**
+   * Reporting currency of the statement figures — statementsCurrency(...) at
+   * the call site (financialCurrency, ADR-safe, falling back to the listing
+   * currency). Absent → unlabelled magnitudes, never assumed dollars.
+   */
+  currency?: string | null;
+}) {
   const ct = useChartTheme();
   const AXIS = ct.axis, GRID = ct.grid, tooltipStyle = ct.tooltip;
   const rev = map(statements.revenue);
   const fcf = map(statements.freeCashFlow);
-  const bn = (m: Map<number, number>, fy: number) =>
-    m.has(fy) ? +(m.get(fy)! / 1e9).toFixed(1) : null;
+  const raw = (m: Map<number, number>, fy: number) => (m.has(fy) ? m.get(fy)! : null);
 
+  // Raw currency units — the axis and tooltip compact them in the currency's
+  // own convention (₹ crore, ¥ trillions) instead of a hardwired "$ billions".
   const data = statements.fiscalYears.map((fy) => ({
     year: `FY${String(fy).slice(-2)}`,
-    Revenue: bn(rev, fy),
-    "Free cash flow": bn(fcf, fy),
+    Revenue: raw(rev, fy),
+    "Free cash flow": raw(fcf, fy),
   }));
 
+  const fmtTick = (v: number) => formatChartMoneyCompact(v, currency);
+  const fmtValue = (v: unknown) =>
+    currency ? formatCompactCurrency(Number(v), currency) : formatCompact(Number(v));
+
   return (
-    <ChartFrame title="Revenue & free cash flow" subtitle="$ billions, by fiscal year">
+    <ChartFrame
+      title="Revenue & free cash flow"
+      subtitle={currency ? `by fiscal year, in ${currency.toUpperCase()}` : "by fiscal year"}
+    >
       <ResponsiveContainer width="100%" height={240}>
-        <BarChart data={data} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
+        <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
           <CartesianGrid stroke={GRID} vertical={false} />
           <XAxis dataKey="year" stroke={AXIS} tick={{ fontSize: 12 }} />
-          <YAxis stroke={AXIS} tick={{ fontSize: 12 }} unit="B" />
-          <Tooltip contentStyle={tooltipStyle} formatter={(v) => `$${v}B`} cursor={{ fill: ct.cursorFill }} />
+          <YAxis stroke={AXIS} tick={{ fontSize: 12 }} tickFormatter={fmtTick} />
+          <Tooltip contentStyle={tooltipStyle} formatter={fmtValue} cursor={{ fill: ct.cursorFill }} />
           <Legend wrapperStyle={{ fontSize: 12 }} />
           <Bar dataKey="Revenue" fill={ct.blue} radius={[3, 3, 0, 0]} />
           <Bar dataKey="Free cash flow" fill={ct.positive} radius={[3, 3, 0, 0]} />

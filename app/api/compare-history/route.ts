@@ -63,6 +63,11 @@ export async function GET(request: Request) {
   // Build response — convert prices to USD where possible
   const data: Record<string, { date: string; close: number; adjClose: number }[]> = {};
   const convertedSymbols: string[] = [];
+  // Per-symbol USD rate actually applied to its series (1 for USD listings,
+  // absent when the FX fetch failed and the series stayed unconverted). The
+  // client's market-cap mode needs it: caps arrive in the LISTING currency,
+  // and plotting a raw ₹19.9T beside a $4.4T on one axis is meaningless.
+  const fxToUsd: Record<string, number> = {};
 
   for (const r of results) {
     if (r.status !== "fulfilled") continue;
@@ -71,6 +76,8 @@ export async function GET(request: Request) {
     const needsConversion = currency !== "USD" && rate != null;
 
     if (needsConversion) convertedSymbols.push(symbol);
+    if (currency === "USD") fxToUsd[symbol] = 1;
+    else if (rate != null) fxToUsd[symbol] = rate;
 
     data[symbol] = history.map((p) => {
       const adj = p.adjClose ?? p.close;
@@ -82,5 +89,5 @@ export async function GET(request: Request) {
     });
   }
 
-  return Response.json({ ...data, _meta: { currencies: currencyMap, convertedToUsd: convertedSymbols } });
+  return Response.json({ ...data, _meta: { currencies: currencyMap, convertedToUsd: convertedSymbols, fxToUsd } });
 }

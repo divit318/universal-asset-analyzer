@@ -15,7 +15,14 @@ const DIST = [
   { label: "Strong sell", color: "var(--negative)"  },
 ];
 
-export function AnalystCard({ analyst }: { analyst: AnalystConsensus }) {
+export function AnalystCard({
+  analyst,
+  currency,
+}: {
+  analyst: AnalystConsensus;
+  /** Listing currency (Quote.currency) — Yahoo quotes price targets in it, not USD. */
+  currency: string;
+}) {
   const counts = [analyst.strongBuy, analyst.buy, analyst.hold, analyst.sell, analyst.strongSell];
   // ONE source for the analyst count: the sum of the rendered distribution.
   // The "N analysts" label, the segmented bar, and the legend all derive from
@@ -42,11 +49,11 @@ export function AnalystCard({ analyst }: { analyst: AnalystConsensus }) {
           <span className="text-xs uppercase tracking-wide text-muted">Mean target</span>
           <span className="text-2xl font-semibold tabular-nums">
             {analyst.targetMean != null
-              ? <CountUp value={analyst.targetMean} format={(v) => formatCurrency(v)} durationMs={800} />
-              : formatCurrency(null)}
+              ? <CountUp value={analyst.targetMean} format={(v) => formatCurrency(v, currency)} durationMs={800} />
+              : formatCurrency(null, currency)}
           </span>
           <span className="text-xs text-muted">
-            {formatCurrency(analyst.targetLow)} – {formatCurrency(analyst.targetHigh)}
+            {formatCurrency(analyst.targetLow, currency)} – {formatCurrency(analyst.targetHigh, currency)}
           </span>
         </div>
         <div className="flex flex-col gap-0.5">

@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { guardedExport } from "@/lib/download";
 import { currencySymbol } from "@/lib/format";
 import { normalizeSymbol } from "@/lib/market";
 import { getValuationCase, listValuationEvents } from "@/lib/db";
@@ -21,6 +22,7 @@ import {
   buildScenarios,
   buildSensitivity,
   describeScenario,
+  impliedUpside,
 } from "@/lib/valuation/dcf";
 import { getEnginePrior } from "@/lib/valuation/engine-prior";
 
@@ -76,7 +78,11 @@ function headerRow(ws: ExcelJS.Worksheet, cells: string[]) {
   return row;
 }
 
-export async function POST(request: Request) {
+export function POST(request: Request): Promise<Response> {
+  return guardedExport("api/export/valuation", () => buildValuationExport(request));
+}
+
+async function buildValuationExport(request: Request): Promise<Response> {
   let body: { symbol?: string };
   try {
     body = (await request.json()) as { symbol?: string };
@@ -260,7 +266,10 @@ function buildHistorySheet(
   wb: ExcelJS.Workbook, vcase: ValuationCase,
   events: ReturnType<typeof listValuationEvents>, money: string,
 ) {
-  const ws = wb.addWorksheet("History");
+  // Never name this sheet "History": the bare word is reserved by the XLSX
+  // spec for Excel's change-tracking log, and ExcelJS throws on it — which
+  // took the whole export down (2026-08-14).
+  const ws = wb.addWorksheet("Version History");
   ws.columns = [
     { width: 8 }, { width: 22 }, { width: 16 }, { width: 20 },
     { width: 16 }, { width: 16 }, { width: 52 }, { width: 46 },
@@ -330,15 +339,45 @@ function buildModelSheet(
     row.eachCell((c) => { c.font = { size: 9 }; });
   }
 
+  // The bridge from the projection to the per-share figure — same numbers the
+  // engine already computed, so the file shows its working end to end.
+  if (scen.base.invalidReason === null) {
+    ws.addRow([]);
+    const bridge: [string, number, boolean][] = [
+      ["PV of forecast years", scen.base.pvExplicit, false],
+      ["PV of terminal value", scen.base.pvTerminalValue, false],
+      ["Enterprise value", scen.base.enterpriseValue, true],
+      ["Less: net debt", dcf.netDebt, false],
+      ["Equity value", scen.base.equityValue, true],
+    ];
+    for (const [label, value, emphasize] of bridge) {
+      const row = ws.addRow([label, value]);
+      row.getCell(1).font = { size: 9, bold: emphasize };
+      row.getCell(2).numFmt = bn;
+      row.getCell(2).font = { size: 9, bold: emphasize };
+      if (emphasize) { row.getCell(1).fill = GRAY; row.getCell(2).fill = GRAY; }
+    }
+    const fv = ws.addRow(["→ Fair value per share", scen.base.fairValuePerShare ?? "—"]);
+    fv.getCell(1).font = { size: 10, bold: true, color: { argb: "FF1D4ED8" } };
+    fv.getCell(2).numFmt = money;
+    fv.getCell(2).font = { size: 10, bold: true, color: { argb: "FF1D4ED8" } };
+    fv.eachCell((c) => { c.fill = BRAND; });
+  }
+
   ws.addRow([]);
-  headerRow(ws, ["Scenario", "Fair value", "Assumptions"]);
+  headerRow(ws, ["Scenario", "Fair value", "Upside vs price", "Assumptions"]);
+  const price = vcase.priceAt;
+  const upside = (v: number | null): string => {
+    const u = impliedUpside(v, price);
+    return u == null ? "—" : `${u >= 0 ? "+" : ""}${u.toFixed(1)}%`;
+  };
   const rows: [string, number | null, string][] = [
     ["Bear", scen.bear.fairValuePerShare, describeScenario(dcf, scen.bearAssumptions)],
     ["Base", scen.base.fairValuePerShare, "Your assumptions as saved"],
     ["Bull", scen.bull.fairValuePerShare, describeScenario(dcf, scen.bullAssumptions)],
   ];
   for (const [label, value, note] of rows) {
-    const row = ws.addRow([label, value ?? "—", note]);
+    const row = ws.addRow([label, value ?? "—", upside(value), note]);
     if (value != null) row.getCell(2).numFmt = money;
     row.eachCell((c) => { c.font = { size: 9 }; });
     if (label === "Base") row.eachCell((c) => { c.fill = BRAND; });

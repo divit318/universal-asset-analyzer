@@ -161,7 +161,7 @@ export function EventDrawer({ event, onClose }: EventDrawerProps) {
             <Section title="Dividend Details">
               <Row
                 label="Dividend (Quarterly)"
-                value={event.dividendAmount != null ? `$${event.dividendAmount.toFixed(4)}` : "—"}
+                value={formatPerShare(event.dividendAmount, event.currency, 4)}
               />
               <Row
                 label="Annual Yield"

@@ -9,14 +9,18 @@
 
 import { runPromptWithMeta } from "./ai";
 import type { DerivativesSummary } from "./derivatives-analysis";
+import { formatPerShare } from "./format";
 import type { ChatMessage } from "./ai-research";
 
-function derivativesDataBlock(underlyingName: string, summary: DerivativesSummary): string {
+function derivativesDataBlock(underlyingName: string, summary: DerivativesSummary, currency: string | null): string {
+  // Strikes are struck in the underlying's LISTING currency; the model
+  // narrates whatever symbol appears here, so a hardcoded dollar would have
+  // it describing non-USD strikes as dollars. Unknown currency → bare number.
   const fmtStrikes = (rows: { strike: number; openInterest: number }[]) =>
-    rows.map((r) => `$${r.strike} (${r.openInterest.toLocaleString()} OI)`).join(", ") || "none available";
+    rows.map((r) => `${formatPerShare(r.strike, currency, r.strike % 1 === 0 ? 0 : 2)} (${r.openInterest.toLocaleString()} OI)`).join(", ") || "none available";
 
   return `UNDERLYING: ${summary.underlyingSymbol} — ${underlyingName}
-Price: ${summary.underlyingPrice}
+Price: ${summary.underlyingPrice}${currency ? ` ${currency}` : ""}
 
 OPTIONS CHAIN:
   Nearest expiration: ${summary.nearestExpiration ?? "n/a"}
@@ -40,12 +44,14 @@ export interface DerivativesSectionInsightInput {
   section: DerivativesInsightSection;
   underlyingName: string;
   summary: DerivativesSummary;
+  /** Listing currency of the underlying (Quote.currency) — strikes are struck in it. */
+  currency?: string | null;
 }
 
 export async function derivativesSectionInsight(
   input: DerivativesSectionInsightInput,
 ): Promise<{ insight: string; model: string }> {
-  const { section, underlyingName, summary } = input;
+  const { section, underlyingName, summary, currency } = input;
 
   const focus = section === "volatility"
     ? "Interpret the implied volatility level and term structure. Is the market pricing elevated near-term uncertainty (backwardation) or a normal upward-sloping curve (contango)? What might explain the current IV level?"
@@ -53,7 +59,7 @@ export async function derivativesSectionInsight(
 
   const prompt = `You are an options markets analyst. In 2-3 sentences, ${focus}
 
-${derivativesDataBlock(underlyingName, summary)}
+${derivativesDataBlock(underlyingName, summary, currency ?? null)}
 
 Be direct and cite specific numbers from the data above. Do not make a directional recommendation on the underlying stock/fund itself — stay focused on what the options market is pricing.`;
 
@@ -66,15 +72,17 @@ export interface DerivativesChatInput {
   summary: DerivativesSummary;
   history: ChatMessage[];
   question: string;
+  /** Listing currency of the underlying (Quote.currency) — strikes are struck in it. */
+  currency?: string | null;
 }
 
 export async function derivativesChatWithData(input: DerivativesChatInput): Promise<{ answer: string; model: string }> {
-  const { underlyingName, summary, history, question } = input;
+  const { underlyingName, summary, history, question, currency } = input;
 
   const system = `You are an expert options markets analyst. Using ONLY the structured data below, answer the user's question about this underlying's options chain. Be precise, cite specific numbers. If asked about something not in the data (e.g. a specific far-dated strike not listed), say so clearly rather than guessing. Keep answers concise (3-6 sentences unless the question requires more).
 
 DATA:
-${derivativesDataBlock(underlyingName, summary)}`;
+${derivativesDataBlock(underlyingName, summary, currency ?? null)}`;
 
   const conversationHistory = history.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n");
   const fullPrompt = conversationHistory

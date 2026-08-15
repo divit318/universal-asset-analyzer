@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { guardedExport } from "@/lib/download";
 import { currencySymbol } from "@/lib/format";
 import {
   type DcfAssumptions,
@@ -45,7 +46,11 @@ const RED_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { a
 const GRAY_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF1F5F9" } };
 
 /** POST /api/export/dcf — body: DcfExportPayload */
-export async function POST(req: Request): Promise<Response> {
+export function POST(req: Request): Promise<Response> {
+  return guardedExport("api/export/dcf", () => buildDcfExport(req));
+}
+
+async function buildDcfExport(req: Request): Promise<Response> {
   let payload: DcfExportPayload;
   try {
     payload = await req.json() as DcfExportPayload;

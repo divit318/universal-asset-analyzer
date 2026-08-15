@@ -1,8 +1,9 @@
 import ExcelJS from "exceljs";
 import { classSections, compositeScoreSection, getRawValue, type ClassSectionDef } from "@/app/compare/_components/class-sections";
+import { guardedExport } from "@/lib/download";
 import { isAssetClassId, isMarketVariant, getAssetClass } from "@/lib/assets/registry";
 import type { AssetClassId } from "@/lib/assets/types";
-import type { ClassCompareEntry } from "@/lib/compare/types";
+import { classPriceDisplay, type ClassCompareEntry } from "@/lib/compare/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,7 +34,11 @@ function bestIndex(values: (number | string | null)[], higherBetter: boolean | n
 }
 
 /** POST /api/export/compare-class — body: ClassExportPayload */
-export async function POST(req: Request): Promise<Response> {
+export function POST(req: Request): Promise<Response> {
+  return guardedExport("api/export/compare-class", () => buildCompareClassExport(req));
+}
+
+async function buildCompareClassExport(req: Request): Promise<Response> {
   let payload: ClassExportPayload;
   try {
     payload = await req.json() as ClassExportPayload;
@@ -78,7 +83,7 @@ export async function POST(req: Request): Promise<Response> {
   ws.getCell(2, 1).alignment = { horizontal: "left", vertical: "middle" };
   entries.forEach((e, i) => {
     const cell = ws.getCell(2, i + 2);
-    cell.value = e.price != null ? `$${e.price.toFixed(2)}` : "—";
+    cell.value = e.price != null ? classPriceDisplay(assetClass, e.price) : "—";
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF334155" } };
     cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 9 };
     cell.alignment = { horizontal: "center", vertical: "middle" };
@@ -209,7 +214,7 @@ export async function POST(req: Request): Promise<Response> {
   // the full metric table already on Sheet 1.
   const summaryRows: Array<{ label: string; getValue: (e: ClassCompareEntry) => string }> = [
     { label: "Name", getValue: (e) => e.name ?? "—" },
-    { label: "Current Price", getValue: (e) => (e.price != null ? `$${e.price.toFixed(2)}` : "—") },
+    { label: "Current Price", getValue: (e) => (e.price != null ? classPriceDisplay(assetClass, e.price) : "—") },
     { label: "Change", getValue: (e) => (e.changePercent != null ? `${e.changePercent >= 0 ? "+" : ""}${e.changePercent.toFixed(2)}%` : "—") },
     { label: "Overall Score", getValue: (e) => (e.scores.overall != null ? `${Math.round(e.scores.overall)}/100` : "—") },
   ];

@@ -1,6 +1,10 @@
-import { getFreshFundamentals, listWatchlist, listWatchlistByGroup } from "@/lib/db";
+import { getFreshFundamentals, getIdeaEvidence, listWatchlist, listWatchlistByGroup } from "@/lib/db";
+import { guardedExport } from "@/lib/download";
+import { formatCompact, formatCompactCurrency } from "@/lib/format";
 import { getQuotes } from "@/lib/yahoo";
-import { STAGE_LABEL } from "@/lib/idea-stage";
+import { isPipelineSymbol } from "@/lib/idea-stage";
+import { deriveWorkflow, EMPTY_EVIDENCE, WORKFLOW_LABEL } from "@/lib/ideas/evidence";
+import { listRawHoldings } from "@/lib/portfolio/store";
 import {
   formatAge,
   isTargetReached,
@@ -43,12 +47,10 @@ function fmtPct(v: number | null | undefined, digits = 2): string {
   return `${v >= 0 ? "+" : ""}${v.toFixed(digits)}%`;
 }
 
-function fmtMcap(v: number | null): string {
+/** Market cap in the row's own listing currency (₹, ¥, £…), blank when unknown — the CSV already carries a Currency column, and the glyph must agree with it. */
+function fmtMcap(v: number | null, currency: string | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "";
-  if (v >= 1e12) return `$${(v / 1e12).toFixed(2)}T`;
-  if (v >= 1e9) return `$${(v / 1e9).toFixed(2)}B`;
-  if (v >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
-  return `$${v.toFixed(0)}`;
+  return currency ? formatCompactCurrency(v, currency) : formatCompact(v);
 }
 
 /**
@@ -58,7 +60,11 @@ function fmtMcap(v: number | null): string {
  * at" matches the screen; unscoped it exports everything tracked, which is the
  * pre-named-lists behaviour.
  */
-export async function GET(request: Request): Promise<Response> {
+export function GET(request: Request): Promise<Response> {
+  return guardedExport("api/export/watchlist", () => buildWatchlistExport(request));
+}
+
+async function buildWatchlistExport(request: Request): Promise<Response> {
   const groupParam = new URL(request.url).searchParams.get("group");
   const groupId = groupParam != null && Number.isInteger(Number(groupParam)) ? Number(groupParam) : null;
   const items: WatchlistItem[] = groupId != null ? listWatchlistByGroup(groupId) : listWatchlist();
@@ -109,13 +115,27 @@ export async function GET(request: Request): Promise<Response> {
     "52W High",
     "Market Cap",
     "Drop Alert (%)",
-    "Idea Stage",
+    "Workflow",
     "Sector",
     "Thesis",
     "Added Date",
     "Days on Watchlist",
     "Status",
   ];
+
+  // Workflow is derived the same way /api/watchlist derives it — evidence plus
+  // the ledger — so the file can never disagree with the screen it exports.
+  const evidence = getIdeaEvidence(items.map((i) => i.symbol));
+  let held = new Set<string>();
+  try {
+    held = new Set(
+      listRawHoldings()
+        .map((h) => h.symbol?.toUpperCase())
+        .filter((s): s is string => isPipelineSymbol(s)),
+    );
+  } catch {
+    /* a holdings read failure degrades the column, never the export */
+  }
 
   const rows = items.map((item) => {
     const q = quoteMap[item.symbol];
@@ -151,9 +171,18 @@ export async function GET(request: Request): Promise<Response> {
       num(rangePosition52Week(price, q?.fiftyTwoWeekLow, q?.fiftyTwoWeekHigh), 1),
       num(q?.fiftyTwoWeekLow ?? null),
       num(q?.fiftyTwoWeekHigh ?? null),
-      fmtMcap(q?.marketCap ?? null),
+      fmtMcap(q?.marketCap ?? null, q?.currency),
       num(item.alertPctDrop, 1),
-      esc(STAGE_LABEL[item.stage]),
+      esc(
+        WORKFLOW_LABEL[
+          deriveWorkflow({
+            held: held.has(item.symbol.toUpperCase()),
+            stage: item.stage,
+            item,
+            evidence: evidence.get(item.symbol.toUpperCase()) ?? EMPTY_EVIDENCE,
+          })
+        ],
+      ),
       esc(item.sector ?? sectorBySymbol.get(item.symbol) ?? ""),
       esc(item.notes),
       // ISO, and escaped. The localized "Jul 26, 2026" this used to emit contains
