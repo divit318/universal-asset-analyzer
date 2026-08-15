@@ -38,6 +38,7 @@ export async function GET(request: Request) {
     conviction: null,
     horizon: null,
     lastReviewedAt: null,
+    lastResearchedAt: null,
     stage: "surfaced",
     stageChangedAt: null,
     // A synthetic item for a symbol that may not be tracked at all: it has no

@@ -30,11 +30,15 @@ import { formatCurrency, formatDate, formatPercent, toneClass } from "@/lib/form
 import { formatAge, upsidePercent } from "@/lib/watchlist-metrics";
 import { agoLabel } from "@/lib/provenance";
 import { daysUntil, type SymbolPulse } from "@/lib/watchlist-pulse";
+import type { IdeaEvidence, IdeaWorkflow, NextAction } from "@/lib/ideas/evidence";
 import type { PortfolioFitAnalysis } from "@/lib/ios/types";
 import type { Conviction, Quote, TargetDirection, ThesisHorizon, WatchlistItem } from "@/lib/types";
+import { EvidenceTrail } from "./evidence-trail";
+import { NextActionButton, type IdeaActHandler } from "./next-action-button";
 import { RangeBar52Week } from "./range-bar";
 import { TargetHistory } from "./target-history";
 import { WhatsNew } from "./whats-new";
+import { WorkflowBadge } from "./workflow-badge";
 
 const DIRECTION_LABEL: Record<TargetDirection, string> = {
   above: "rises to or above",
@@ -70,6 +74,10 @@ export function WatchlistRowDetail({
   pulse,
   checking,
   revisionCount,
+  workflow,
+  evidence,
+  action,
+  onAct,
   onEditTarget,
   onEditThesis,
   onMarkReviewed,
@@ -83,6 +91,11 @@ export function WatchlistRowDetail({
   pulse: SymbolPulse | null;
   checking: boolean;
   revisionCount: number;
+  /** The derived idea file: workflow, observed evidence, and the one next act. */
+  workflow?: IdeaWorkflow;
+  evidence?: IdeaEvidence;
+  action?: NextAction;
+  onAct?: IdeaActHandler;
   onEditTarget: () => void;
   onEditThesis: () => void;
   onMarkReviewed: () => void;
@@ -93,7 +106,42 @@ export function WatchlistRowDetail({
   const hasThesis = Boolean(item.notes || item.buyTrigger || item.sellTrigger);
 
   return (
-    <div className="grid gap-5 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,1fr)]">
+    <div className="flex flex-col px-4 py-4">
+      {/* The idea file, first: where the decision stands, what work exists,
+          and the one thing that moves it — each artifact linking to the
+          surface that produced it, so the Watchlist and the Research Hub stay
+          one continuous workflow rather than two records of the same name. */}
+      {workflow && evidence && action && onAct ? (
+        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-hairline bg-surface-2/40 px-3 py-2.5">
+          <WorkflowBadge workflow={workflow} />
+          <EvidenceTrail item={item} evidence={evidence} />
+          <span className="flex items-center gap-2 lg:ml-auto">
+            <Link
+              href={`/research?symbol=${encodeURIComponent(item.symbol)}`}
+              className="text-[11px] text-brand underline-offset-2 hover:underline"
+            >
+              {evidence.lastResearchedAt ? "Continue research →" : "Start research →"}
+            </Link>
+            <Link
+              href={`/valuation?symbol=${encodeURIComponent(item.symbol)}`}
+              className="text-[11px] text-brand underline-offset-2 hover:underline"
+            >
+              {evidence.valuationCases > 0 ? "Open valuation →" : "Run a valuation →"}
+            </Link>
+            {evidence.journalDecisions > 0 ? (
+              <Link
+                href={`/journal?symbol=${encodeURIComponent(item.symbol)}`}
+                className="text-[11px] text-brand underline-offset-2 hover:underline"
+              >
+                Journal ({evidence.journalDecisions}) →
+              </Link>
+            ) : null}
+            <NextActionButton action={action} symbol={item.symbol} onAct={onAct} />
+          </span>
+        </div>
+      ) : null}
+
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,1fr)]">
       {/* Left: this name's own facts and levels */}
       <div className="flex min-w-0 flex-col gap-4">
         {alerts.length > 0 && (
@@ -308,6 +356,7 @@ export function WatchlistRowDetail({
             Portfolio fit is still loading for this name.
           </div>
         )}
+      </div>
       </div>
     </div>
   );

@@ -203,6 +203,12 @@ export interface WatchlistItem {
   horizon: ThesisHorizon | null;
   /** Epoch-ms of the last explicit thesis review; null = never reviewed. */
   lastReviewedAt: number | null;
+  /**
+   * ISO timestamp of the last observed research activity (Research Hub visit
+   * or AI research session). Durable — the visit log alone is pruned. Null =
+   * no research on record, which must render as exactly that.
+   */
+  lastResearchedAt: string | null;
   /** Idea lifecycle stage. Defaults to "surfaced" for every row (§4.5). */
   stage: IdeaStage;
   /** Epoch-ms when the stage last changed; null for rows predating the migration. */
@@ -650,6 +656,14 @@ export interface FinancialStatements {
 export interface FundamentalsSnapshot {
   symbol: string;
   price: number | null;
+  /**
+   * ISO code of the currency the financialData figures (and the Yahoo
+   * statements built from the same source) are reported in. Differs from the
+   * listing currency for ADRs — TSM reports TWD on a USD listing. Optional so
+   * snapshots cached before the field reached this type deserialize unchanged;
+   * lib/fundamentals.ts has populated it since FundamentalsSnapshotWithCurrency.
+   */
+  financialCurrency?: string | null;
   sector?: string | null;
   industry?: string | null;
   trailingPE: number | null;
