@@ -1,6 +1,6 @@
 import type { AssetClassId } from "@/lib/assets/types";
 import type { ClassCompareEntry } from "@/lib/compare/types";
-import { formatCompact } from "@/lib/format";
+import { formatCompact, formatCurrency } from "@/lib/format";
 import { getMetric } from "@/lib/assets/registry";
 
 /**
@@ -40,7 +40,9 @@ const pctAbs = (v: number) => `${v.toFixed(1)}%`;
 const xRatio = (v: number) => `${v.toFixed(1)}x`;
 const yrs = (v: number) => `${v.toFixed(1)}y`;
 const usd = (v: number) => formatCompact(v);
-const price = (v: number) => `$${v.toFixed(2)}`;
+// Only the commodity section uses this — front-month futures are USD-quoted
+// by construction (lib/screener/universes/commodity), so the dollar is data.
+const price = (v: number) => formatCurrency(v, "USD");
 const score100 = (v: number) => `${Math.round(v)}`;
 const tier = (v: number) => (v === 1 ? "1 · Deepest" : v === 2 ? "2 · Moderate" : v === 3 ? "3 · Thinnest" : `${v}`);
 

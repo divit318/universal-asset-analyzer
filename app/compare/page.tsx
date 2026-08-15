@@ -44,7 +44,7 @@ const ClassCompareView = dynamic(
   () => import("./_components/class-compare-view").then((m) => m.ClassCompareView),
   { ssr: false, loading: () => chartFallback },
 );
-import { formatCurrency, formatMarketCap, formatPercent, ordinal } from "@/lib/format";
+import { formatCompactCurrency, formatCurrency, formatPercent, ordinal } from "@/lib/format";
 import { resolveRowHighlights, type RowHighlights } from "@/lib/compare/metrics";
 import { SECTIONS, bucketPct, rowValues, score100, type MetricDef, type SectionDef } from "@/lib/compare/registry";
 import { useIOSSafe } from "@/lib/ios-context";
@@ -1272,7 +1272,7 @@ function StockCard({ entry, color, colorBg }: { entry: CompareEntry; color: stri
             {formatCurrency(quote.change, quote.currency)} ({formatPercent(quote.changePercent)})
           </div>
           <div className="mt-1 text-xs text-muted">
-            {formatMarketCap(quote.marketCap)}
+            {formatCompactCurrency(quote.marketCap, quote.currency)}
           </div>
         </div>
       )}

@@ -40,6 +40,12 @@ interface MetricConfig {
 
 const fmtPct = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
 const fmtPctAbs = (v: number) => `${v.toFixed(1)}%`;
+/* The dollar in fmtMoney/fmtPrice is EARNED, not assumed: every series these
+   format (Stock Price closes, market caps) is normalized to USD before it
+   reaches the chart — /api/compare-history converts non-USD closes and ships
+   the per-symbol fx rate the market-cap mode applies — with the "non-USD
+   values converted to USD" badge as the user-facing disclosure. Same-axis
+   cross-market comparison requires one unit; USD is that unit here. */
 const fmtMoney = (v: number) => {
   if (v >= 1e12) return `$${(v / 1e12).toFixed(2)}T`;
   if (v >= 1e9) return `$${(v / 1e9).toFixed(2)}B`;
@@ -427,6 +433,7 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
   const [metric, setMetric] = useState<Metric>("return");
   const [historyMap, setHistoryMap] = useState<HistoryMap>({});
   const [convertedSymbols, setConvertedSymbols] = useState<string[]>([]);
+  const [fxToUsd, setFxToUsd] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
   const [metricOpen, setMetricOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -458,8 +465,9 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
         .then((r) => r.json())
         .then((raw: Record<string, unknown>) => {
           if (cancelled) return;
-          const meta = raw["_meta"] as { convertedToUsd?: string[] } | undefined;
+          const meta = raw["_meta"] as { convertedToUsd?: string[]; fxToUsd?: Record<string, number> } | undefined;
           setConvertedSymbols(meta?.convertedToUsd ?? []);
+          setFxToUsd(meta?.fxToUsd ?? {});
           // Strip _meta before storing history map
           delete raw["_meta"];
           setHistoryMap(raw as HistoryMap);
@@ -513,16 +521,23 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
           const base = baseline[sym];
           pt[sym] = base ? +((price / base - 1) * 100).toFixed(3) : null;
         } else if (metric === "price") {
-          pt[sym] = raw.close; // always raw price for Stock Price chart
+          pt[sym] = raw.close; // always raw price for Stock Price chart (series already USD-converted by the API)
         } else {
+          // Market cap arrives in the LISTING currency while the close series
+          // is already USD — the close/latestClose RATIO cancels the currency,
+          // so without the fx factor an INR cap would plot raw against USD
+          // caps under a "$" axis (₹19.9T drawn 4.5× Apple). Same conversion
+          // contract as the price series, same badge disclosure. A symbol
+          // whose FX rate failed to resolve plots nothing rather than a lie.
+          const fx = fxToUsd[sym];
           const mcap = marketCaps[sym];
           const latestClose = filtered[sym]?.[filtered[sym].length - 1]?.close;
-          pt[sym] = mcap && latestClose ? +(mcap * (raw.close / latestClose)) : null;
+          pt[sym] = mcap && latestClose && fx != null ? +(mcap * fx * (raw.close / latestClose)) : null;
         }
       }
       return pt;
     });
-  }, [historyMap, symbols, period, metric, marketCaps, isPrice]);
+  }, [historyMap, symbols, period, metric, marketCaps, isPrice, fxToUsd]);
 
   /* ── annual chart data ── */
   const annualData = useMemo<AnnualChartPoint[]>(() => {
@@ -693,7 +708,7 @@ export function CompareChart({ symbols, colors, marketCaps, entries = [] }: Prop
         })}
         {isPrice && convertedSymbols.length > 0 && (
           <span className="ml-2 rounded-md bg-warning/10 px-2 py-0.5 text-[10px] font-medium text-warning">
-            non-USD prices converted to USD
+            non-USD values converted to USD
           </span>
         )}
         <span className="ml-auto text-xs font-medium text-muted">{cfg.label}</span>

@@ -81,7 +81,7 @@ function input(): IntelligenceInput {
     // that shares this input type can be constructed.
     allocation: {} as IntelligenceInput["allocation"],
     risk: { correlation: null } as unknown as IntelligenceInput["risk"],
-    health: {} as IntelligenceInput["health"],
+    alignment: {} as IntelligenceInput["alignment"],
     attribution: null,
     baseCurrency: "USD",
     funds: new Map([

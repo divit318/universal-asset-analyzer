@@ -12,6 +12,7 @@
  */
 
 import { describeError, mapWithFanout, scannerFanout, scannerPrompt, type ScanRunContext } from "./llm";
+import { formatCompactCurrency } from "../format";
 import { extractJsonObject } from "../json-extract";
 import { ScannerThesisWireSchema } from "../ai/schemas/scanner";
 import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
@@ -46,7 +47,7 @@ export function buildThesisPrompt(
     : "Fundamentals: not available";
 
   const quoteContext = opp.quote
-    ? `Price: ${opp.quote.price?.toFixed(2)} ${opp.quote.currency} (${opp.quote.changePercent?.toFixed(2)}% today) | P/E: ${opp.quote.peRatio ?? "n/a"} | Mkt Cap: ${opp.quote.marketCap ? (opp.quote.marketCap / 1e9).toFixed(1) + "B" : "n/a"}`
+    ? `Price: ${opp.quote.price?.toFixed(2)} ${opp.quote.currency} (${opp.quote.changePercent?.toFixed(2)}% today) | P/E: ${opp.quote.peRatio ?? "n/a"} | Mkt Cap: ${opp.quote.marketCap ? formatCompactCurrency(opp.quote.marketCap, opp.quote.currency) : "n/a"}`
     : "Quote: not available";
 
   const sectorContext = sectorImpact

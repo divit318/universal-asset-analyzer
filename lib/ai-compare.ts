@@ -23,7 +23,7 @@ import { getFinancialStatements } from "./statements";
 import { getHistory, getQuote, getQuoteMeta, getQuoteSummaryMeta } from "./yahoo";
 import { resolveRowHighlights } from "./compare/metrics";
 import { computeScore, computeMomentum, assessRisks, classifyInvestmentPersonality } from "./scoring";
-import { formatCurrency, formatPercent, formatMarketCap } from "./format";
+import { formatCompactCurrency, formatCurrency, formatPercent } from "./format";
 import { extractJsonObject } from "./json-extract";
 import { verifyGrounding, collectClaimText, type GroundingReport } from "./ai/grounding";
 import { computeEntryBenchmarks, peerGroupOf, loadBenchmarkUniverse, type PeerBenchmark } from "./compare/benchmarks";
@@ -262,7 +262,7 @@ function buildComparePrompt(stocks: CompareStock[]): { prompt: string; evidence:
     header,
     divider,
     row("Price", stocks.map((s) => formatCurrency(s.quote.price, s.quote.currency))),
-    row("Mkt Cap", stocks.map((s) => formatMarketCap(s.quote.marketCap))),
+    row("Mkt Cap", stocks.map((s) => formatCompactCurrency(s.quote.marketCap, s.quote.currency))),
     row("Today chg", stocks.map((s) => formatPercent(s.quote.changePercent))),
     divider,
     row("Composite score", scores.map((sc) => fmt.score(sc.composite))),

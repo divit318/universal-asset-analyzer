@@ -494,15 +494,17 @@ export const GOLDEN_CASES: GoldenCase[] = [
         coverage: { observedPct: 100, proxiedPct: 0, unmodelledPct: 0, holdingsObserved: 3, holdingsProxied: 0, holdingsUnmodelled: 0 },
         correlation: null,
       },
-      health: {
-        total: 61, totalExact: 61, grade: "B",
-        dimensions: [
-          { name: "Liquidity", score: 95, scoreExact: 95, weight: 0.1, coverage: 1, effectiveWeight: 0.1, trend: "good", explanation: "95% of value is same-day liquid.", methodology: "" },
-          { name: "Concentration", score: 34, scoreExact: 34, weight: 0.1, coverage: 1, effectiveWeight: 0.1, trend: "weak", explanation: "NVDA is 46% of the book; top holding above the 25% guideline.", methodology: "" },
-          { name: "Income", score: 42, scoreExact: 42, weight: 0.1, coverage: 1, effectiveWeight: 0.1, trend: "weak", explanation: "Dividend income covers little of the book.", methodology: "" },
+      alignment: {
+        score: 61, scoreExact: 61, label: "Mixed", status: "scored", confirmed: false,
+        themes: [
+          { id: "liquidity", label: "Liquidity", question: "", priority: 2, weightShare: 1 / 3, score: 95, scoreExact: 95, status: "aligned", unratedReason: null, finding: "95% of value is same-day liquid.", basis: "", evidencePct: 100, facts: [], mismatch: null },
+          { id: "concentration", label: "Concentration", question: "", priority: 2, weightShare: 1 / 3, score: 34, scoreExact: 34, status: "mismatch", unratedReason: null, finding: "NVDA is 46% of the book; top holding above the 25% position cap.", basis: "", evidencePct: 100, facts: [], mismatch: null },
+          { id: "income", label: "Income", question: "", priority: 2, weightShare: 1 / 3, score: 42, scoreExact: 42, status: "tension", unratedReason: null, finding: "Dividend income covers little of the book.", basis: "", evidencePct: 100, facts: [], mismatch: null },
         ],
+        mismatches: [],
+        dataGaps: [],
         summary: "Concentrated growth book with a large cash reserve.",
-        coveragePct: 100,
+        evidencePct: 100,
       },
     } as unknown as Parameters<typeof buildPortfolioThesisPrompt>[0];
 
@@ -527,7 +529,7 @@ export const GOLDEN_CASES: GoldenCase[] = [
         const uncited = [...strengths, ...risks].filter((s) => typeof s === "string" && !/\d/.test(s));
         if (uncited.length > 0) failures.push(`${uncited.length} strength/risk item(s) cite no figure`);
         // One-figure-one-direction: the 46% NVDA weight is a settled RISK
-        // (health explanation says so); it must not appear as a strength.
+        // (the alignment concentration finding says so); it must not appear as a strength.
         const asStrength = strengths.some((s) => typeof s === "string" && /46\s?%|46 percent/i.test(s));
         if (asStrength) failures.push("the 46% concentration figure was framed as a strength");
         const grounding = verifyGrounding(JSON.stringify(obj), thesisPrompt);

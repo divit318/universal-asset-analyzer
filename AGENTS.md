@@ -53,6 +53,8 @@ CLAUDE.md / ARCHITECTURE.md > MERGE_POLICY.md > the developer's prompt.
 - Scoring logic → `lib/composite.ts` only
 - Signal detection → `lib/event-screener.ts` only
 - Portfolio math → `lib/portfolio-analytics.ts` only
+- Portfolio alignment (investor policy × measured facts) → `lib/portfolio/alignment/` only
+- Idea workflow & evidence (derived, never hand-set) → `lib/ideas/evidence.ts` only
 - DB operations → `lib/db.ts` CRUD functions only
 - Format utilities → `lib/format.ts` only
 - If logic exists, call it. Don't copy-paste.
@@ -85,6 +87,15 @@ CLAUDE.md / ARCHITECTURE.md > MERGE_POLICY.md > the developer's prompt.
   bands/labels/tones live in `lib/recommendation.ts` (single source of truth).
 - `lib/fundamental-screener.ts` — Filtering + caching. Use for screening workflows.
 - `lib/event-screener.ts` — Signals. Use for event-driven workflows.
+- `lib/portfolio/alignment/` — Portfolio Alignment (2026-08-14, replaced the
+  universal-weights Portfolio Health score): `policy.ts` is the investor's own
+  priorities/tolerances (persisted in `portfolio_policy`, assumed defaults are
+  labelled `confirmed: false`); `engine.ts` scores measured facts AGAINST that
+  policy across 7 themes (structure, resilience, concentration incl. correlation
+  clusters, liquidity, and conditional income/inflation/exposure). Deterministic,
+  no letter grades, opted-out themes are facts not judgments, unmeasurable themes
+  are excluded BY NAME. Every `alignmentDelta` in sizing/cash/decisions differences
+  `AlignmentReport.scoreExact` under ONE policy carried on the evaluation.
 - `lib/thematic-engine.ts` — 10-stage thematic analysis framework.
 - `lib/ic-agents.ts` — 9-domain multi-agent pipeline. Use for institutional research.
 - `lib/ic/` — IC Report platform (2026-08-02 hardening): `canonical.ts` is the
@@ -339,6 +350,13 @@ npm run build             # catches Server/Client boundary errors tsc misses
                           # NEVER while `next dev` is running — they race for .next/
 ```
 
+> **Turbopack CSS cache trap** (2026-08-15): edits to `app/globals.css` (new
+> rules AND `@theme` token changes) are often NOT picked up by dev-server HMR
+> or even a plain restart — the persistent cache serves stale CSS. If a CSS
+> change doesn't render: `scripts/ops/uaa stop && rm -rf .next &&
+> scripts/ops/uaa start`. Same treatment after `npm run build` repopulates
+> `.next` before a dev restart (a stale-CSS dev render will follow otherwise).
+
 **Live AI verification** (spends the user's Devin plan / API keys — small prompts):
 
 ```bash
@@ -420,7 +438,7 @@ grep for it — it is often already there:
 | `/api/ai/report` streaming route | nobody | 103s → 28s to first content |
 | `aiVerdict` cache policy in `lib/platform/registry.ts` | nobody | 115.3s → 0.04s on a repeat view |
 | Scanner's staged progress UI | only the Scanner | reused as `<TaskProgress>` |
-| `watchlist.stage` (§4.5) + `/api/pipeline` | only the Portfolio board | Watchlist — where the decision is actually made — got a Stage column |
+| `watchlist.stage` (§4.5) + `/api/pipeline` | only the (since-deleted) Portfolio pipeline board | Watchlist got a Stage column; superseded 2026-08 by the evidence-derived workflow (`lib/ideas/evidence.ts`) — `/api/pipeline` no longer exists |
 | `PortfolioFitAnalysis.dimensions` / `.reasons` / `.confidence` | Research + Compare | answered "why is this an 83?" on the Watchlist with zero new backend |
 | `Quote.fiftyTwoWeekHigh` / `Low` | the CSV export only | "From high" column + a range bar with the target plotted on it |
 | `DataTable`'s `onDensityChange` | nobody (density reset every visit) | persisted view state |

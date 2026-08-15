@@ -6,6 +6,15 @@ interface StatTileProps {
   sublabel?: React.ReactNode;
   tone?: StatTone;
   className?: string;
+  /**
+   * Makes the tile a real button (hover ring, focus ring, pointer) — for
+   * headline stats that double as navigation into the section that explains
+   * them. Pair with `actionLabel` so assistive tech hears the destination,
+   * not just the number.
+   */
+  onClick?: () => void;
+  /** Screen-reader suffix describing where the click goes, e.g. "view holdings". */
+  actionLabel?: string;
 }
 
 const TONE_BORDER: Record<StatTone, string> = {
@@ -31,13 +40,30 @@ const TONE_ACCENT: Record<StatTone, string> = {
 
 /** Value + label tile — hero stat rows (portfolio value, P&L, health score, etc).
     A hairline left accent encodes tone; value uses tabular-nums so figures align. */
-export function StatTile({ label, value, sublabel, tone = "default", className = "" }: StatTileProps) {
-  return (
-    <div className={`relative overflow-hidden rounded-card border p-5 shadow-card ${TONE_BORDER[tone]} ${className}`}>
+export function StatTile({ label, value, sublabel, tone = "default", className = "", onClick, actionLabel }: StatTileProps) {
+  const base = `relative overflow-hidden rounded-card border p-5 shadow-card ${TONE_BORDER[tone]} ${className}`;
+
+  const body = (
+    <>
       <span aria-hidden className={`absolute inset-y-3 left-0 w-0.5 rounded-full ${TONE_ACCENT[tone]}`} />
-      <span className="text-label font-semibold uppercase tracking-widest text-muted/70">{label}</span>
-      <p className={`mt-1 font-mono text-xl font-bold tabular-nums ${TONE_TEXT[tone]}`}>{value}</p>
-      {sublabel && <p className="truncate text-xs text-muted">{sublabel}</p>}
-    </div>
+      <span className="block text-label font-semibold uppercase tracking-widest text-muted/70">{label}</span>
+      <span className={`mt-1 block font-mono text-xl font-bold tabular-nums ${TONE_TEXT[tone]}`}>{value}</span>
+      {sublabel && <span className="block truncate text-xs text-muted">{sublabel}</span>}
+    </>
   );
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label={actionLabel ? `${label} — ${actionLabel}` : undefined}
+        className={`${base} block w-full cursor-pointer text-left outline-none transition-colors hover:border-border-strong focus-visible:ring-2 focus-visible:ring-brand/40`}
+      >
+        {body}
+      </button>
+    );
+  }
+
+  return <div className={base}>{body}</div>;
 }

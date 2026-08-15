@@ -349,7 +349,7 @@ export function AppAssistant() {
         onClick={() => setOpen(false)}
         aria-hidden="true"
       />
-      <aside
+      <section
         role="dialog"
         aria-modal="true"
         aria-label="AI Assistant"
@@ -496,7 +496,7 @@ export function AppAssistant() {
             </button>
           </div>
         </div>
-      </aside>
+      </section>
     </>,
     document.body,
   );

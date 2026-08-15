@@ -1,5 +1,5 @@
 import type { Filing, Quote } from "./types";
-import { formatCurrency, formatMarketCap, formatPercent } from "./format";
+import { formatCompactCurrency, formatCurrency, formatPercent } from "./format";
 
 export interface AnalysisInput {
   quote: Quote;
@@ -25,7 +25,7 @@ export function buildAnalysisPrompt({ quote, filings }: AnalysisInput): string {
     "",
     `Symbol: ${quote.symbol} (${quote.name})`,
     `Price: ${formatCurrency(quote.price, quote.currency)} (${formatPercent(quote.changePercent)} today)`,
-    `Market cap: ${formatMarketCap(quote.marketCap)}`,
+    `Market cap: ${formatCompactCurrency(quote.marketCap, quote.currency)}`,
     `P/E ratio: ${quote.peRatio ?? "n/a"}`,
     `52-week range: ${formatCurrency(quote.fiftyTwoWeekLow, quote.currency)} – ${formatCurrency(quote.fiftyTwoWeekHigh, quote.currency)}`,
     "",
