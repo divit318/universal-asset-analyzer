@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { normalizeHoldings } from "@/lib/portfolio/model/holding";
 import { computeAllocation, computeConcentration } from "@/lib/portfolio/engines/allocation";
 import { computeRisk } from "@/lib/portfolio/engines/risk";
-import { computeHealth } from "@/lib/portfolio/engines/health";
+import { computeAlignment } from "@/lib/portfolio/alignment/engine";
+import { DEFAULT_POLICY } from "@/lib/portfolio/alignment/policy";
 import { runScenario, runAllScenarios, getScenario, applyShocks, compareScenarioSets, SCENARIOS } from "@/lib/portfolio/engines/scenario";
 import { evaluate, applyTargetPlanConserving, estimateImpact } from "@/lib/portfolio/engines/simulate";
 import { optimize, DEFAULT_CONSTRAINTS, computeTradeImpacts, type Objective } from "@/lib/portfolio/engines/optimize";
@@ -592,38 +593,54 @@ describe("risk", () => {
   });
 });
 
-describe("health score", () => {
-  it("ABSTAINS instead of scoring 50 on dimensions that do not apply", () => {
+describe("alignment score", () => {
+  it("reports unrated themes BY NAME instead of scoring them a fabricated midpoint", () => {
     const c = ctx();
-    // An all-bond portfolio: Holding Quality can speak, but geography/correlation
-    // cannot. The old engine returned a fabricated 50 for each.
+    // An all-bond portfolio under the default (unconfirmed) policy: income,
+    // inflation and exposure carry priority 0 — they must surface as opted-out
+    // facts, never as invented scores, and carry no weight in the total.
     const { holdings, totalValue } = normalizeHoldings(
       [raw({ id: "b", assetClass: "bond", symbol: "IEF", quantity: 100 })], c,
     );
     const alloc = computeAllocation(holdings, totalValue);
     const risk = computeRisk(holdings, totalValue, alloc, c);
-    const health = computeHealth(holdings, totalValue, alloc, risk);
+    const alignment = computeAlignment(holdings, totalValue, alloc, risk, DEFAULT_POLICY);
 
-    const abstained = health.dimensions.filter((d) => d.score === null);
-    expect(abstained.length).toBeGreaterThan(0);
-    // No dimension may report exactly the old fabricated midpoint by default.
-    expect(health.coveragePct).toBeLessThan(100);
-    // Redistributed weights must still sum to 1 across scoring dimensions.
-    const sum = health.dimensions.reduce((s, d) => s + d.effectiveWeight, 0);
+    expect(alignment.status).toBe("scored");
+    const unrated = alignment.themes.filter((t) => t.score === null);
+    expect(unrated.length).toBeGreaterThan(0);
+    for (const t of unrated) {
+      expect(t.unratedReason).not.toBeNull(); // named, never silently blended
+      expect(t.weightShare).toBe(0);
+      expect(t.finding.length).toBeGreaterThan(0); // the fact is still stated
+    }
+    // Renormalized shares must still sum to 1 across the rated themes.
+    const sum = alignment.themes.reduce((s, t) => s + t.weightShare, 0);
     expect(sum).toBeCloseTo(1, 5);
   });
 
-  it("penalizes a portfolio with no cash buffer", () => {
+  it("scores a zero-cash book below one holding a cash buffer on the liquidity theme", () => {
     const c = ctx();
-    const { holdings, totalValue } = normalizeHoldings(
+    const noCashHoldings = normalizeHoldings(
       [raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 100 })], c,
     );
-    const alloc = computeAllocation(holdings, totalValue);
-    const risk = computeRisk(holdings, totalValue, alloc, c);
-    const health = computeHealth(holdings, totalValue, alloc, risk);
+    const withCashHoldings = normalizeHoldings(
+      [
+        raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 100 }),
+        raw({ id: "cash", assetClass: "cash", quantity: 1_500, unit: "currency" }),
+      ], c,
+    );
 
-    const cash = health.dimensions.find((d) => d.name === "Cash Management")!;
-    expect(cash.score).toBeLessThan(50);
+    const liquidityScore = (h: typeof noCashHoldings) => {
+      const alloc = computeAllocation(h.holdings, h.totalValue);
+      const risk = computeRisk(h.holdings, h.totalValue, alloc, c);
+      const alignment = computeAlignment(h.holdings, h.totalValue, alloc, risk, DEFAULT_POLICY);
+      return alignment.themes.find((t) => t.id === "liquidity")!.scoreExact!;
+    };
+
+    // 0% cash sits below the policy's cash band (1–25%); the theme must charge
+    // for the missing buffer rather than call both books identical.
+    expect(liquidityScore(noCashHoldings)).toBeLessThan(liquidityScore(withCashHoldings));
   });
 
   it("treats cash as inflation-exposed, not riskless", () => {
@@ -635,9 +652,23 @@ describe("health score", () => {
     const risk = computeRisk(holdings, totalValue, alloc, c);
 
     expect(risk.inflationSensitivity).toBeLessThan(0);
-    const health = computeHealth(holdings, totalValue, alloc, risk);
-    const infl = health.dimensions.find((d) => d.name === "Inflation Protection")!;
-    expect(infl.score).toBeLessThan(50);
+
+    // With inflation OFF (default policy) the exposure is still stated as a fact…
+    const factOnly = computeAlignment(holdings, totalValue, alloc, risk, DEFAULT_POLICY)
+      .themes.find((t) => t.id === "inflation")!;
+    expect(factOnly.score).toBeNull();
+    expect(factOnly.unratedReason).toBe("opted_out");
+    expect(factOnly.finding).toMatch(/inflation/i);
+
+    // …and turning the priority ON makes the theme an actual judgment.
+    const inflationOn = {
+      ...DEFAULT_POLICY,
+      priorities: { ...DEFAULT_POLICY.priorities, inflation: 2 as const },
+    };
+    const judged = computeAlignment(holdings, totalValue, alloc, risk, inflationOn)
+      .themes.find((t) => t.id === "inflation")!;
+    expect(judged.score).not.toBeNull();
+    expect(judged.status).not.toBeNull();
   });
 });
 
@@ -935,7 +966,8 @@ describe("computeTradeImpacts", () => {
     for (const t of result.trades) {
       const impact = impacts.get(t.holdingId);
       expect(impact).toBeDefined();
-      expect(typeof impact!.healthDelta).toBe("number");
+      expect(impact!.alignmentDelta).not.toBeNull();
+      expect(typeof impact!.alignmentDelta).toBe("number");
     }
   });
 
@@ -1094,7 +1126,8 @@ describe("portfolio thesis — content hash and fallback", () => {
     const evaluation = evaluate(holdings, c);
 
     const thesis = fallbackThesis(evaluation);
-    expect(thesis).toContain(String(evaluation.health.total));
+    expect(evaluation.alignment.score).not.toBeNull();
+    expect(thesis).toContain(`Alignment with the stated policy: ${evaluation.alignment.score}/100`);
     expect(thesis.length).toBeGreaterThan(0);
 
     const identity = fallbackIdentity(evaluation);

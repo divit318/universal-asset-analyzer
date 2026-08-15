@@ -318,7 +318,8 @@ describe("previewTrades", () => {
 
     // The DB is untouched — this is purely a hypothetical evaluation.
     expect(impact).toBeDefined();
-    expect(typeof impact.healthDelta).toBe("number");
+    expect(impact.alignmentDelta).not.toBeNull();
+    expect(typeof impact.alignmentDelta).toBe("number");
   });
 
   it("does not mutate the input evaluation's holdings", () => {

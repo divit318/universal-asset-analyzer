@@ -14,19 +14,25 @@ import { getDataset } from "../platform";
 import { maybeMetric, type Metric } from "../metric";
 import { buildMarketContext } from "./context";
 import { normalizeHoldings } from "./model/holding";
+import { loadInvestorPolicy } from "./alignment/store";
 import { evaluate, type PortfolioEvaluation } from "./engines/simulate";
 import { computeConcentration, type ConcentrationFinding } from "./engines/allocation";
 import { computeAttribution, type ReturnAttribution } from "./engines/attribution";
 import { getPortfolioTrajectory, type PortfolioTrajectory } from "./history";
 import { runAllScenarios, type ScenarioResult } from "./engines/scenario";
 import { computeRecommendations, getRelevantCandidateSymbols, type Recommendation } from "./engines/recommend";
+import { applyDecisionMemory } from "./engines/decision-memory";
+import { computeDiscovery, type DiscoveryCandidate } from "./engines/discovery";
+import { CANDIDATES } from "./engines/candidates";
+import { listDecisionDismissals, listWatchlist } from "../db";
 import { buildDecisionCards, type DecisionCard } from "./engines/decision";
 import { optimize, DEFAULT_CONSTRAINTS, type Objective, type OptimizationResult } from "./engines/optimize";
 import { buildPerformance, isEmptyPerformance, type PerformanceBlock } from "./performance";
 import type { Holding, MarketContext, RawHolding } from "./model/types";
 import type { PortfolioAllocation } from "./engines/allocation";
 import type { UniversalRisk } from "./engines/risk";
-import type { HealthScore } from "./engines/health";
+import type { AlignmentReport } from "./alignment/engine";
+import type { InvestorPolicy } from "./alignment/policy";
 
 export interface BuiltEvaluation {
   raws: RawHolding[];
@@ -46,18 +52,22 @@ export interface BuiltEvaluation {
  * uses internally, instead of re-fetching or re-deriving anything.
  */
 export async function buildEvaluation(opts: ReportOptions = {}): Promise<BuiltEvaluation> {
-  const raws = listRawHoldings(opts.portfolioId ?? 1);
+  const portfolioId = opts.portfolioId ?? 1;
+  const raws = listRawHoldings(portfolioId);
   const extra = opts.extraCandidateSymbols ?? [];
+  // The investor's own policy is part of the evaluation: alignment is facts ×
+  // policy, and every downstream simulation differences evaluations under it.
+  const policy = loadInvestorPolicy(portfolioId);
 
   let ctx = await buildMarketContext(raws, { baseCurrency: opts.baseCurrency, candidateSymbols: extra });
   let { holdings, totalCost, marketPricedPct, stalePct } = normalizeHoldings(raws, ctx);
-  let evaluation: PortfolioEvaluation = evaluate(holdings, ctx);
+  let evaluation: PortfolioEvaluation = evaluate(holdings, ctx, policy);
 
   const neededCandidates = [...new Set([...extra, ...getRelevantCandidateSymbols(evaluation)])];
   if (neededCandidates.length > extra.length) {
     ctx = await buildMarketContext(raws, { baseCurrency: opts.baseCurrency, candidateSymbols: neededCandidates });
     ({ holdings, totalCost, marketPricedPct, stalePct } = normalizeHoldings(raws, ctx));
-    evaluation = evaluate(holdings, ctx);
+    evaluation = evaluate(holdings, ctx, policy);
   }
 
   return { raws, ctx, evaluation, totalCost, marketPricedPct, stalePct };
@@ -147,11 +157,28 @@ export interface UniversalPortfolioReport {
   trajectory: PortfolioTrajectory | null;
   concentration: ConcentrationFinding[];
   risk: UniversalRisk;
-  health: HealthScore;
+  /** Facts × the investor's own policy — see lib/portfolio/alignment/engine.ts. */
+  alignment: AlignmentReport;
+  /** The policy the alignment was scored against (assumed defaults until confirmed). */
+  policy: InvestorPolicy;
   scenarios: ScenarioResult[];
   recommendations: Recommendation[];
   /** Same recommendations, ranked and narrated as investment-committee decisions. */
   decisions: DecisionCard[];
+  /**
+   * Theses the investor dismissed and that remain suppressed — shown as a
+   * restorable memory ("you declined this on …"), never re-pitched as new.
+   * Because suppression happens HERE, every consumer of this report
+   * (Decisions tab, Today's attention queue, home spotlight, digest) shares
+   * one memory instead of independently rediscovering rejected ideas.
+   */
+  suppressedDecisions: {
+    thesisKey: string;
+    title: string;
+    dismissedAt: string;
+    /** What would bring it back, in plain language. */
+    reviveWhen: string;
+  }[];
   optimization: OptimizationResult;
   /**
    * True when BOTH engines agree there is nothing left to do for the current
@@ -296,12 +323,28 @@ export async function getPortfolioReport(
   opts: ReportOptions = {},
   cacheOpts: { fresh?: boolean } = {},
 ): Promise<UniversalPortfolioReport> {
+  // The investor policy AND the decision memory are part of the REPORT'S
+  // IDENTITY, not just its inputs. Invalidation alone proved insufficient: a
+  // rebuild in flight when either was written could finish after the
+  // invalidate and write a stale report back under the same key with a fresh
+  // timestamp — SWR then served decisions computed against limits the
+  // investor had already changed (observed live: six hours of "you said 15%"
+  // after the tolerance was raised to 30%), or re-showed a thesis dismissed
+  // seconds earlier. Keying on both versions makes the race structurally
+  // impossible: a save/dismissal is a NEW key, and stale writes land on a key
+  // nothing reads anymore.
+  const portfolioId = opts.portfolioId ?? 1;
+  const policyVersion = loadInvestorPolicy(portfolioId).updatedAt ?? "defaults";
+  const dismissals = listDecisionDismissals(portfolioId);
+  const memoryVersion = `${dismissals.length}:${dismissals.reduce((m, d) => (d.dismissedAt > m ? d.dismissedAt : m), "")}`;
   const { data } = await getDataset(
     "portfolioReport",
     {
       objective: opts.objective ?? "maximize_sharpe",
-      portfolioId: opts.portfolioId ?? 1,
+      portfolioId,
       baseCurrency: opts.baseCurrency ?? "USD",
+      policyVersion,
+      memoryVersion,
       extra: opts.extraCandidateSymbols?.slice().sort().join(",") || undefined,
     },
     () => buildPortfolioReport(opts),
@@ -314,7 +357,22 @@ export async function getPortfolioReport(
 export async function buildPortfolioReport(
   opts: ReportOptions = {},
 ): Promise<UniversalPortfolioReport> {
-  const { ctx, evaluation, totalCost, marketPricedPct, stalePct } = await buildEvaluation(opts);
+  // Discovery-grade context: the REPORT (and only the report — transaction
+  // previews keep the lean two-pass build) also fetches the investor's most
+  // recent watchlist ideas and the curated exposure list, so the discovery
+  // engine researches against real quotes/history instead of skipping
+  // everything for lack of data. Bounded and 2-min platform-cached.
+  const watchlistSymbols = listWatchlist()
+    .filter((w) => w.stage !== "passed" && w.stage !== "exited" && w.stage !== "owned")
+    .sort((a, b) => (b.lastReviewedAt ?? 0) - (a.lastReviewedAt ?? 0))
+    .slice(0, 12)
+    .map((w) => w.symbol);
+  const discoverySymbols = [...new Set([...watchlistSymbols, ...CANDIDATES.map((c) => c.symbol)])];
+
+  const { ctx, evaluation, totalCost, marketPricedPct, stalePct } = await buildEvaluation({
+    ...opts,
+    extraCandidateSymbols: [...new Set([...(opts.extraCandidateSymbols ?? []), ...discoverySymbols])],
+  });
   const totalValue = evaluation.totalValue;
 
   // Performance is derived from THIS evaluation, not re-fetched. One snapshot for
@@ -322,10 +380,79 @@ export async function buildPortfolioReport(
   // $2,074.82 gap that two independent fetches produced.
   const performance = await buildPerformance(evaluation.holdings, ctx.asOf, opts.portfolioId ?? 1, ctx);
 
-  const concentration = computeConcentration(evaluation.holdings, evaluation.allocation);
+  // Policy-relative holding flags: the KNOW-THIS strip and the Alignment panel
+  // must read the same ruler — one cap, one verdict, page-wide.
+  const concentration = computeConcentration(evaluation.holdings, evaluation.allocation, evaluation.policy);
   const scenarios = runAllScenarios(evaluation.holdings, evaluation.totalValue);
-  const recommendations = computeRecommendations(evaluation, ctx);
+  // ── Decision memory: what the investor already considered ────────────────
+  // Freshly generated theses are checked against persisted dismissals BEFORE
+  // any card exists — a rejected idea stays down (until something material
+  // changes), and the freed attention goes to different theses and, when the
+  // corrective list runs thin, to researched discovery candidates.
+  const dismissals = listDecisionDismissals(opts.portfolioId ?? 1);
+  const generated = computeRecommendations(evaluation, ctx);
+  const memory = applyDecisionMemory(generated, dismissals, evaluation);
+
+  // Discovery complements decisions — it never crowds out a genuine fix. It
+  // runs when fewer than three corrective actions survive the memory filter,
+  // which includes both "the book is fine" and "the investor declined the
+  // obvious fixes": exactly the moments a research system should widen the
+  // search instead of repeating itself or going silent.
+  let discoveries: Recommendation[] = [];
+  if (memory.active.length < 3) {
+    const watchlistPool: DiscoveryCandidate[] = listWatchlist()
+      .filter((w) => w.stage !== "passed" && w.stage !== "exited" && w.stage !== "owned")
+      .sort((a, b) => (b.lastReviewedAt ?? 0) - (a.lastReviewedAt ?? 0))
+      .slice(0, 12)
+      .map((w) => ({
+        symbol: w.symbol,
+        name: w.name,
+        source: "watchlist" as const,
+        watchlistNotes: w.notes ?? w.buyTrigger,
+        watchlistConviction: w.conviction,
+      }));
+    const curatedPool: DiscoveryCandidate[] = CANDIDATES.map((c) => ({
+      symbol: c.symbol,
+      name: c.name,
+      assetClass: c.assetClass,
+      source: "curated" as const,
+    }));
+    // Only candidates whose data is ALREADY in context are researched — no
+    // second fetch pass. Held symbols and the gap candidates arrive with the
+    // context; watchlist symbols are included below via extraCandidateSymbols
+    // when the caller asked for discovery-grade context (the report does).
+    discoveries = computeDiscovery(evaluation, ctx, [...watchlistPool, ...curatedPool], {
+      excludeTheses: new Set(dismissals.map((d) => d.thesisKey)),
+      // A discovery must be a NEW idea: never a symbol an active card already
+      // proposes, never another instrument for an asset class an active ADD
+      // already covers ("Add bonds via IEF" + "worth a look: another bond" is
+      // one idea told twice) — and the same bar applies to SUPPRESSED ADDs:
+      // an investor who dismissed "add bond ballast" must not be re-pitched
+      // the identical idea wearing a discovery card ("worth a look: USFR —
+      // ballast" is gap:no_bonds in a softer coat).
+      excludeSymbols: new Set(
+        [...memory.active, ...memory.suppressed.map((s) => s.rec)]
+          .map((r) => r.symbol)
+          .filter((s): s is string => !!s),
+      ),
+      excludeAssetClasses: new Set(
+        [...memory.active, ...memory.suppressed.map((s) => s.rec)]
+          .filter((r) => r.change.kind === "buy")
+          .map((r) => (r.change.kind === "buy" ? r.change.holding.assetClass : null))
+          .filter((c): c is NonNullable<typeof c> => c != null),
+      ),
+    });
+  }
+
+  const recommendations = [...memory.active, ...discoveries];
   const decisions = buildDecisionCards(recommendations, evaluation);
+  const suppressedDecisions = memory.suppressed.map(({ rec, dismissal }) => ({
+    thesisKey: dismissal.thesisKey,
+    title: dismissal.title || rec.title,
+    dismissedAt: dismissal.dismissedAt,
+    reviveWhen:
+      "returns if your policy changes, the position grows ≥5pp past its dismissed size, or its theme falls ≥12 pts — or restore it here",
+  }));
   const optimization = optimize(
     evaluation,
     opts.objective ?? "maximize_sharpe",
@@ -396,12 +523,16 @@ export async function buildPortfolioReport(
     trajectory: getPortfolioTrajectory(),
     concentration,
     risk: evaluation.risk,
-    health: evaluation.health,
+    alignment: evaluation.alignment,
+    policy: evaluation.policy,
     scenarios,
     recommendations,
     decisions,
+    suppressedDecisions,
     optimization,
-    atEquilibrium: optimization.trades.length === 0 && recommendations.length === 0,
+    // Discovery cards are opportunities, not corrective work — a book can be
+    // at equilibrium AND have something worth researching.
+    atEquilibrium: optimization.trades.length === 0 && memory.active.length === 0,
 
     // Money-weighted return, realized/unrealized split, per-position breakdown and
     // the benchmark replication — from the SAME snapshot as everything above, which

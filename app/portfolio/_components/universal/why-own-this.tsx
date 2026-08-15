@@ -41,7 +41,7 @@ export function WhyOwnThis({ holdingId }: { holdingId: string }) {
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); void load(); }}
-        className="self-start rounded-full border border-border bg-surface px-3 py-1 text-[11px] font-medium text-muted transition-colors hover:border-accent/40 hover:text-foreground"
+        className="self-start rounded-full border border-border bg-surface px-3 py-1 text-[11px] font-medium text-muted transition-colors hover:border-accent/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
       >
         Why do I own this?
       </button>
@@ -60,7 +60,7 @@ export function WhyOwnThis({ holdingId }: { holdingId: string }) {
     return (
       <p className="text-[11px] text-muted">
         Unable to explain this holding right now.{" "}
-        <button onClick={(e) => { e.stopPropagation(); setExplanation(null); void load(); }} className="text-brand hover:underline">
+        <button type="button" onClick={(e) => { e.stopPropagation(); setExplanation(null); void load(); }} className="rounded-sm text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40">
           Retry
         </button>
       </p>

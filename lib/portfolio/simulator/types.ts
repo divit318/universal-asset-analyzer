@@ -99,12 +99,34 @@ export interface SimThesis {
 /** Denormalized list-view numbers, refreshed on every evaluation. */
 export interface SimHeadline {
   totalValue: number;
-  healthScore: number | null;
-  healthGrade: string | null;
+  /**
+   * Portfolio-alignment score against the investor's policy. Rows persisted
+   * before the alignment engine carry the legacy `healthScore` instead —
+   * normalizeStoredHeadline maps it across so old simulations keep a number
+   * until their next evaluation refreshes the row.
+   */
+  alignmentScore: number | null;
   holdingCount: number;
   assetClassCount: number;
   annualIncome: number | null;
   asOf: string;
+}
+
+/**
+ * Normalize a headline deserialized from storage. Same boundary pattern (and
+ * same reason) as normalizeStoredProfile: rows written before a field change
+ * yield shapes the type lies about, and the read boundary is the one place
+ * that can fix the whole class. A legacy `healthScore` becomes the displayed
+ * score — the two are different rulers, but for a stale list-view denorm that
+ * is refreshed on next evaluation, showing the old number beats showing "—".
+ */
+export function normalizeStoredHeadline(stored: SimHeadline | null): SimHeadline | null {
+  if (!stored) return null;
+  const raw = stored as SimHeadline & { healthScore?: number | null };
+  return {
+    ...stored,
+    alignmentScore: stored.alignmentScore ?? raw.healthScore ?? null,
+  };
 }
 
 export interface Simulation {

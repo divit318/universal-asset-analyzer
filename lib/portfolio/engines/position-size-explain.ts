@@ -116,14 +116,14 @@ export function buildPositionSizingWhy(plan: PositionSizingPlan): WhyExplanation
 
   return {
     why: topReason,
-    whyNow: Math.abs(plan.impact.healthDelta) > 2
+    whyNow: Math.abs(plan.impact.alignmentDelta ?? 0) > 2
       ? "The measured improvement is large enough that this is a real, quantified gap in the portfolio today, not a marginal one."
       : "The measured effect is real but modest — this is a worthwhile addition, not an urgent one.",
     whyThisAmount: plan.effectiveTargetWeightPct != null
       ? `Sized at ${plan.recommendedAllocationPct.toFixed(1)}% of the portfolio (${money(plan.recommendedAmount)}) — the research case supports up to ${plan.effectiveTargetWeightPct.toFixed(1)}% after portfolio-context adjustments (class weight, sector pressure, correlation), and every tranche up to that point was simulated and measured better than holding cash.`
       : `Sized at ${plan.recommendedAllocationPct.toFixed(1)}% of the portfolio (${money(plan.recommendedAmount)}) — simulated in tranches up to your single-holding limit, this is the point at which buying more of ${plan.symbol} stops measurably beating the alternative of holding the cash under the ${objectiveLabel} objective.`,
     whyNotAlternative: "The alternative measured at every tested size was holding the money as cash — this amount is the point where that stops being the better answer.",
-    whyNotNothing: `Simulating "buy nothing" is the baseline every number above is measured against: 0 health points, 0 allocation change. Leaving this unbought means forgoing the measured ${plan.impact.healthDelta >= 0 ? "+" : ""}${plan.impact.healthDelta.toFixed(1)}-point health improvement above${plan.expectedReturn ? ` and an estimated ${plan.expectedReturn.portfolioDeltaPct >= 0 ? "+" : ""}${plan.expectedReturn.portfolioDeltaPct.toFixed(2)} pp/yr of expected return` : ""}.`,
+    whyNotNothing: `Simulating "buy nothing" is the baseline every number above is measured against: 0 alignment points, 0 allocation change. Leaving this unbought means forgoing the measured ${(plan.impact.alignmentDelta ?? 0) >= 0 ? "+" : ""}${(plan.impact.alignmentDelta ?? 0).toFixed(1)}-point portfolio-alignment improvement above${plan.expectedReturn ? ` and an estimated ${plan.expectedReturn.portfolioDeltaPct >= 0 ? "+" : ""}${plan.expectedReturn.portfolioDeltaPct.toFixed(2)} pp/yr of expected return` : ""}.`,
   };
 }
 
@@ -174,7 +174,7 @@ export function buildTransactionWarnings(
 export function buildSummary(plan: PositionSizingPlan): string {
   if (plan.action === "HOLD") return plan.holdReason ?? "No recommendation.";
   const extras = [
-    `Projected health improvement: ${plan.impact.healthDelta >= 0 ? "+" : ""}${plan.impact.healthDelta.toFixed(1)} points.`,
+    `Projected alignment improvement: ${(plan.impact.alignmentDelta ?? 0) >= 0 ? "+" : ""}${(plan.impact.alignmentDelta ?? 0).toFixed(1)} points.`,
     plan.expectedReturn ? `Estimated expected return: ${plan.expectedReturn.portfolioDeltaPct >= 0 ? "+" : ""}${plan.expectedReturn.portfolioDeltaPct.toFixed(2)} pp/yr.` : null,
   ].filter(Boolean);
   return `${money(plan.recommendedAmount)} (${plan.recommendedAllocationPct.toFixed(1)}%) into ${plan.symbol}. ${extras.join(" ")}`;

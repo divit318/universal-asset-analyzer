@@ -5,14 +5,14 @@ import { useDebouncedSimulation } from "../use-debounced-simulation";
 import type { SelectedTrade } from "./use-trade-selection";
 import type { Objective } from "@/lib/portfolio/engines/optimize";
 import type { ImpactEstimate } from "@/lib/portfolio/engines/simulate";
-import type { HealthScore } from "@/lib/portfolio/engines/health";
+import type { AlignmentReport } from "@/lib/portfolio/alignment/engine";
 import type { UniversalRisk } from "@/lib/portfolio/engines/risk";
 import type { PortfolioAllocation } from "@/lib/portfolio/engines/allocation";
 
 export interface PreviewSide {
   totalValue: number;
   annualIncome: number;
-  health: HealthScore;
+  alignment: AlignmentReport;
   risk: UniversalRisk;
   allocation: PortfolioAllocation;
 }

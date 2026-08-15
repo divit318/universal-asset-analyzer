@@ -64,9 +64,21 @@ function raw(o: Partial<RawHolding> & Pick<RawHolding, "id" | "assetClass">): Ra
   };
 }
 
-/** A concentrated single-holding portfolio — plenty of room for IEF to help diversify. */
+/**
+ * A concentrated single-stock portfolio (~85% AAPL) with idle cash — plenty of
+ * room for IEF to help diversify. The cash sleeve is deliberate: under the
+ * alignment engine's default policy (cash band 1–25%) a ZERO-cash book's first
+ * tranche is honestly better spent topping up cash than buying anything, so a
+ * cashless fixture would test the cash-starvation brake, not the diversifier.
+ */
 function concentrated(c: MarketContext) {
-  const { holdings } = normalizeHoldings([raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 200 })], c);
+  const { holdings } = normalizeHoldings(
+    [
+      raw({ id: "a", assetClass: "equity", symbol: "AAPL", quantity: 200 }),
+      raw({ id: "cash", assetClass: "cash", quantity: 7000, unit: "units", manualValue: 7000, costBasis: 7000 }),
+    ],
+    c,
+  );
   return evaluate(holdings, c);
 }
 
@@ -95,7 +107,8 @@ describe("computePositionSizing — recommends buying a genuine diversifier", ()
     expect(plan.action).toBe("BUY");
     expect(plan.recommendedAmount).toBeGreaterThan(0);
     expect(plan.recommendedShares).toBeGreaterThan(0);
-    expect(plan.impact.healthDelta).toBeGreaterThanOrEqual(0);
+    expect(plan.impact.alignmentDelta).not.toBeNull();
+    expect(plan.impact.alignmentDelta!).toBeGreaterThanOrEqual(0);
   });
 
   it("never recommends beyond the single-holding cap", () => {
@@ -119,7 +132,7 @@ describe("computePositionSizing — marginal benefit curve", () => {
     const c = ctx();
     const evaluation = concentrated(c);
     const plan = computePositionSizing(evaluation, IEF_TARGET, "maximize_diversification", c);
-    expect(plan.marginalBenefit[0]).toEqual({ cumulativeAmount: 0, healthDelta: 0 });
+    expect(plan.marginalBenefit[0]).toEqual({ cumulativeAmount: 0, alignmentDelta: 0 });
     if (plan.action === "BUY") {
       const last = plan.marginalBenefit[plan.marginalBenefit.length - 1];
       expect(last.cumulativeAmount).toBeCloseTo(plan.recommendedAmount, -1);

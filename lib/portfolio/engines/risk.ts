@@ -202,6 +202,13 @@ function quantile(xs: number[], p: number): number {
 /* Correlation                                                                 */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The one definition of "highly correlated" — used by highPairs below AND by
+ * the alignment engine's cluster detection (lib/portfolio/alignment/cluster.ts),
+ * so "these names move as one trade" means the same r everywhere it is said.
+ */
+export const HIGH_CORRELATION_R = 0.75;
+
 export function computeCorrelation(holdings: Holding[], ctx: MarketContext): CorrelationMatrix | null {
   const withHistory: { label: string; series: DatedReturns }[] = [];
   const excluded: string[] = [];
@@ -241,7 +248,7 @@ export function computeCorrelation(holdings: Holding[], ctx: MarketContext): Cor
       matrix[j][i] = r;
       sum += r;
       pairs++;
-      if (r > 0.75) highPairs.push({ a: symbols[i], b: symbols[j], r });
+      if (r > HIGH_CORRELATION_R) highPairs.push({ a: symbols[i], b: symbols[j], r });
     }
   }
 

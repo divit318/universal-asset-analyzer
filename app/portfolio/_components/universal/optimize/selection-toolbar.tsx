@@ -6,7 +6,7 @@ import type { TradeSelectionState } from "./use-trade-selection";
 
 /**
  * Bulk selection controls + live summary (Feature 2). The evidence-based
- * buttons (Highest Impact / Health Improvements / Risk Reduction) are
+ * buttons (Highest Impact / Alignment Improvements / Risk Reduction) are
  * disabled until per-trade impacts have loaded — they select on measured
  * data, not a guess, so there is nothing honest for them to do before then.
  *
@@ -76,12 +76,12 @@ export function SelectionToolbar({
           Select Highest Impact
         </BulkButton>
         <BulkButton
-          onClick={state.selectHealthImprovements}
-          active={is.healthImprovements}
+          onClick={state.selectAlignmentImprovements}
+          active={is.alignmentImprovements}
           disabled={!impactsLoaded}
           title={impactsLoaded ? undefined : "Loading measured impact…"}
         >
-          Select Health Improvements
+          Select Alignment Improvements
         </BulkButton>
         <BulkButton
           onClick={state.selectRiskReduction}

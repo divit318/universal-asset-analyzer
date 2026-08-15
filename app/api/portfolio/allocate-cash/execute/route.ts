@@ -21,9 +21,10 @@ import { listRawHoldings } from "@/lib/portfolio/store";
 import { buildMarketContext } from "@/lib/portfolio/context";
 import { normalizeHoldings } from "@/lib/portfolio/model/holding";
 import { evaluate } from "@/lib/portfolio/engines/simulate";
+import { loadInvestorPolicy } from "@/lib/portfolio/alignment/store";
 import { computeCashAllocation } from "@/lib/portfolio/engines/cash";
 import { candidateSymbols } from "@/lib/portfolio/engines/candidates";
-import { OBJECTIVES, DEFAULT_CONSTRAINTS, type Objective, type Constraints } from "@/lib/portfolio/engines/optimize";
+import { OBJECTIVES, constraintsFromPolicy, type Objective, type Constraints } from "@/lib/portfolio/engines/optimize";
 import { buildCashDepositLots, executeTradeBatch, captureSnapshot, summaryOf } from "@/lib/portfolio/engines/transaction";
 import type { PortfolioAssetClass } from "@/lib/portfolio/model/types";
 
@@ -66,9 +67,14 @@ export async function POST(request: Request) {
     const raws = listRawHoldings();
     const ctx = await buildMarketContext(raws, { candidateSymbols: candidateSymbols() });
     const { holdings } = normalizeHoldings(raws, ctx);
-    const before = evaluate(holdings, ctx);
+    // Same policy on the execute leg as on the preview leg (the sibling
+    // allocate-cash route) — a plan previewed under the investor's policy must
+    // not be re-planned under universal defaults at the moment of execution.
+    const policy = loadInvestorPolicy();
+    const before = evaluate(holdings, ctx, policy);
 
-    const constraints = body.constraints ? { ...DEFAULT_CONSTRAINTS, ...body.constraints } : DEFAULT_CONSTRAINTS;
+    const policyConstraints = constraintsFromPolicy(policy);
+    const constraints = body.constraints ? { ...policyConstraints, ...body.constraints } : policyConstraints;
     const plan = computeCashAllocation(before, body.amount, objective, ctx, constraints, body.customTarget);
 
     const selectedSet = body.selected ? new Set(body.selected.map((s) => s.toUpperCase())) : null;

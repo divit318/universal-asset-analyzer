@@ -2,7 +2,7 @@
  * POST /api/portfolio/new-positions
  *
  * AI-powered new stock recommendations for the portfolio.
- * Analyzes current portfolio gaps, sector exposure, health dimensions,
+ * Analyzes current portfolio gaps, sector exposure, alignment themes,
  * and portfolio objective, then asks the AI platform to suggest NEW stocks
  * (not currently held) that would improve the portfolio.
  */
@@ -67,7 +67,7 @@ function objectivePromptClause(obj: PortfolioObjective): string {
     increase_income:         "Focus on stocks with dividend yield >2.5%, stable payout ratios, and dividend growth history. Prefer utilities, REITs, consumer staples, and financial sectors.",
     beat_benchmark:          "Focus on high-conviction alpha opportunities: stocks with analyst upgrades, earnings momentum, or sectors expected to outperform SPY in the next 6-12 months.",
     preserve_capital:        "Focus on defensive quality companies with fortress balance sheets, low debt, consistent cash flow, and low historical volatility. Avoid speculative names.",
-    ai_optimized:            "Select the best combination of growth, risk management, and diversification based on the current portfolio's gaps and health score. Balance upside with downside protection.",
+    ai_optimized:            "Select the best combination of growth, risk management, and diversification based on the current portfolio's gaps and alignment score. Balance upside with downside protection.",
   };
   return map[obj] ?? map.ai_optimized;
 }
@@ -86,10 +86,13 @@ function buildRecommendationPrompt(
   const sectors = report.allocation.bySector.slices.map((s) => `${s.label}: ${s.weight.toFixed(1)}%`).join(", ");
   const missingExposures = missingSectorsOf(report).join(", ") || "none identified";
   const overweight = overweightSectorsOf(report).join(", ") || "none";
-  const healthScore = report.health.total;
-  const healthDims = report.health.dimensions
-    .map((d) => `${d.name}: ${d.score != null ? `${d.score}/100` : "n/a (abstained — insufficient basis)"}`)
-    .join(", ");
+  const alignmentLine =
+    report.alignment.score == null
+      ? "not scorable"
+      : `${report.alignment.score}/100 (${report.alignment.label})`;
+  const alignmentThemes = report.alignment.themes
+    .map((t) => `${t.label}: ${t.score ?? "n/a"} — ${t.finding}`)
+    .join("; ");
   const watchlistNote = watchlistSymbols.length > 0
     ? `The user's watchlist includes: ${watchlistSymbols.join(", ")}. Prefer recommending watchlist stocks when they fit the objective.`
     : "";
@@ -112,8 +115,8 @@ function buildRecommendationPrompt(
 CURRENT PORTFOLIO:
 - Positions: ${positions || "none"}
 - Sector allocation: ${sectors || "none"}
-- Health score: ${healthScore}/100
-- Health dimensions: ${healthDims}
+- Portfolio alignment: ${alignmentLine}
+- Alignment themes: ${alignmentThemes}
 - Missing exposures: ${missingExposures}
 - Overweight sectors: ${overweight}
 - Portfolio value: $${Math.round(report.totalValue).toLocaleString()}

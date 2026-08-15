@@ -9,7 +9,6 @@ import {
   Tabs,
   DataTable,
   DataTableAction,
-  ScoreChip,
   type DataTableColumn,
   type TabItem,
 } from "@/app/_components/ui";
@@ -21,7 +20,7 @@ import type { SimEvaluation } from "@/lib/portfolio/simulator/evaluate";
 import type { SimHolding, Simulation } from "@/lib/portfolio/simulator/types";
 import type { PortfolioAssetClass } from "@/lib/portfolio/model/types";
 import { AllocationPanel, MacroFactorPanel } from "../universal/allocation-panel";
-import { HealthPanel } from "../universal/health-panel";
+import { AlignmentPanel } from "../universal/alignment-panel";
 import { RiskLab } from "../universal/risk-lab";
 import { AddDialog, AdjustDialog, RemoveDialog, SwapDialog } from "./edit-dialogs";
 
@@ -42,7 +41,7 @@ interface SimRow {
 
 /**
  * A generated portfolio, rendered with the SAME panels as the real one
- * (AllocationPanel / HealthPanel / RiskLab) over a live evaluation. Organized
+ * (AllocationPanel / AlignmentPanel / RiskLab) over a live evaluation. Organized
  * as internal sections rather than one scroll: the Risk Lab alone is a full
  * page, and a single scroll would bury the thesis four screens up.
  */
@@ -240,9 +239,13 @@ export function SimView({
           sublabel={`${evaluation.incomeYieldPct.toFixed(2)}% yield`}
         />
         <StatTile
-          label="Health"
-          value={<ScoreChip kind="health" score={evaluation.health.total} size="md" showLabel={false} />}
-          sublabel={`Grade ${evaluation.health.grade} · ${evaluation.health.coveragePct}% coverage`}
+          label="Alignment"
+          value={evaluation.alignment.score != null ? String(evaluation.alignment.score) : "—"}
+          sublabel={
+            evaluation.alignment.label != null
+              ? `${evaluation.alignment.label} · ${evaluation.alignment.evidencePct}% evidence`
+              : `${evaluation.alignment.evidencePct}% evidence`
+          }
         />
         <StatTile
           label="Volatility"
@@ -278,7 +281,7 @@ export function SimView({
               place attribution between the two; rendered here to keep this overview
               showing exactly what it did before that split. */}
           <MacroFactorPanel allocation={evaluation.allocation} />
-          <HealthPanel health={evaluation.health} />
+          <AlignmentPanel alignment={evaluation.alignment} />
         </div>
       )}
 

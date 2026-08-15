@@ -1,8 +1,8 @@
 /**
  * Portfolio Intelligence — the portfolio critic.
  *
- * The deterministic engines each watch ONE dimension (allocation, risk, health,
- * attribution). This module watches the portfolio as a SYSTEM: what the wrappers
+ * The deterministic engines each watch ONE dimension (allocation, risk,
+ * alignment, attribution). This module watches the portfolio as a SYSTEM: what the wrappers
  * hide (an NVIDIA position spread across three ETFs), what the ticker count
  * overstates (ten securities, three economic bets), and what the investor's own
  * trading pattern may indicate about their blind spots.
@@ -18,7 +18,7 @@
 import type { Holding, PortfolioAssetClass } from "../model/types";
 import type { PortfolioAllocation } from "../engines/allocation";
 import type { UniversalRisk } from "../engines/risk";
-import type { HealthScore } from "../engines/health";
+import type { AlignmentReport } from "../alignment/engine";
 import type { ReturnAttribution } from "../engines/attribution";
 import type { FundHolding, FundSectorWeight } from "../../types";
 
@@ -43,7 +43,7 @@ export interface IntelligenceInput {
   totalValue: number;
   allocation: PortfolioAllocation;
   risk: UniversalRisk;
-  health: HealthScore;
+  alignment: AlignmentReport;
   attribution: ReturnAttribution | null;
   baseCurrency: string;
   /** Upper-cased fund symbol → constituents. A held fund missing here is opaque. */

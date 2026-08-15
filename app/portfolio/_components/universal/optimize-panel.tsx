@@ -371,15 +371,18 @@ export function OptimizePanel({
           {/* Measured, by simulating the whole plan through the real engines. */}
           <div className="flex flex-wrap gap-3 border-t border-border pt-3 text-[11px]">
             <span className="text-muted/70">Full plan impact:</span>
-            <span>
-              <span className="text-muted/70">Health: </span>
-              <span className={`font-mono font-semibold tabular-nums ${
-                optimization.impact.healthDelta >= 0 ? "text-positive" : "text-negative"
-              }`}>
-                {optimization.impact.healthDelta >= 0 ? "+" : ""}
-                {optimization.impact.healthDelta.toFixed(1)} pts
+            {/* Null when either side is unscorable — omitted rather than shown as 0. */}
+            {optimization.impact.alignmentDelta != null && (
+              <span>
+                <span className="text-muted/70">Alignment: </span>
+                <span className={`font-mono font-semibold tabular-nums ${
+                  optimization.impact.alignmentDelta >= 0 ? "text-positive" : "text-negative"
+                }`}>
+                  {optimization.impact.alignmentDelta >= 0 ? "+" : ""}
+                  {optimization.impact.alignmentDelta.toFixed(1)} pts
+                </span>
               </span>
-            </span>
+            )}
             {optimization.impact.riskDelta != null && (
               <span>
                 <span className="text-muted/70">Volatility: </span>

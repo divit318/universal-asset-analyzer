@@ -40,7 +40,7 @@ export interface CashPlanResponse {
   heldAsCash: number;
   heldAsCashReason: HeldCashReason;
   heldAsCashSentence: string;
-  totalHealthDelta: number;
+  totalAlignmentDelta: number;
   marginalBenefit: MarginalBenefitPoint[];
   rejectedOpportunities: NarratedRejection[];
   before: PortfolioEvaluation;

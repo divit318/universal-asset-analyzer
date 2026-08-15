@@ -81,7 +81,7 @@ export interface ScenarioResult {
    * `portfolioImpactPct` before rounding to one decimal.
    *
    * Anything that DIFFERENCES two scenario runs must use this, for the same reason
-   * HealthScore carries `totalExact`: a before/after comparison that subtracts two
+   * AlignmentReport carries `scoreExact`: a before/after comparison that subtracts two
    * values already quantized to 0.1pp cannot resolve a change smaller than that,
    * and it reports the quantization as the answer. That is how the cash plan's
    * scenario table came to show "−8.6% → −6.6%, change 0.0pp" — the columns and

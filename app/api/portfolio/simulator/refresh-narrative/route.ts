@@ -15,6 +15,7 @@ import { AI_RECOVERY_HINT } from "@/lib/ai/availability";
 import { runPromptWithMeta } from "@/lib/ai";
 import { AllModelsFailedError } from "@/lib/ai/router";
 import { getSimulation, updateSimulation } from "@/lib/db";
+import { loadInvestorPolicy } from "@/lib/portfolio/alignment/store";
 import { buildPortfolioThesis } from "@/lib/portfolio/thesis";
 import {
   buildRationalePrompt,
@@ -59,12 +60,15 @@ export async function POST(request: Request) {
     // content-hash cached and falls back deterministically when the AI is
     // down — it never throws the whole resync away.
     const evaluation = await evaluateSimHoldings(holdings, sim.profile.currency);
+    // The same policy evaluateSimHoldings just scored against — a SimEvaluation
+    // does not carry it, and the thesis engine reasons over alignment × policy.
     const thesis = await buildPortfolioThesis({
       holdings: evaluation.holdings,
       totalValue: evaluation.totalValue,
       allocation: evaluation.allocation,
       risk: evaluation.risk,
-      health: evaluation.health,
+      alignment: evaluation.alignment,
+      policy: loadInvestorPolicy(),
     });
 
     const updated = updateSimulation(sim.id, {

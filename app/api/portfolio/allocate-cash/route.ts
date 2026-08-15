@@ -14,9 +14,10 @@ import { listRawHoldings } from "@/lib/portfolio/store";
 import { buildMarketContext } from "@/lib/portfolio/context";
 import { normalizeHoldings } from "@/lib/portfolio/model/holding";
 import { evaluate } from "@/lib/portfolio/engines/simulate";
+import { loadInvestorPolicy } from "@/lib/portfolio/alignment/store";
 import { computeCashAllocation } from "@/lib/portfolio/engines/cash";
 import { candidateSymbols } from "@/lib/portfolio/engines/candidates";
-import { OBJECTIVES, DEFAULT_CONSTRAINTS, type Objective, type Constraints } from "@/lib/portfolio/engines/optimize";
+import { OBJECTIVES, constraintsFromPolicy, type Objective, type Constraints } from "@/lib/portfolio/engines/optimize";
 import { runAllScenarios } from "@/lib/portfolio/engines/scenario";
 import { buildCashWhyExplanation, heldCashSentence, rejectedOpportunitySentence, describeItemImpact, rejectionLabel } from "@/lib/portfolio/engines/cash-explain";
 import type { PortfolioEvaluation } from "@/lib/portfolio/engines/simulate";
@@ -102,9 +103,17 @@ export async function POST(request: Request) {
     // detected gap already points at.
     const ctx = await buildMarketContext(raws, { candidateSymbols: candidateSymbols() });
     const { holdings } = normalizeHoldings(raws, ctx);
-    const evaluation = evaluate(holdings, ctx);
+    // The investor's saved policy, on BOTH legs: the evaluation (so every
+    // tranche duel's alignmentDelta is measured against THEIR policy, not the
+    // assumed defaults this route silently used before) and the hard trade
+    // constraints (their position cap / cash floor / illiquidity ceiling —
+    // not the universal DEFAULT_CONSTRAINTS). An explicit `constraints` body
+    // still overrides field-by-field, as before.
+    const policy = loadInvestorPolicy();
+    const evaluation = evaluate(holdings, ctx, policy);
 
-    const constraints = body.constraints ? { ...DEFAULT_CONSTRAINTS, ...body.constraints } : DEFAULT_CONSTRAINTS;
+    const policyConstraints = constraintsFromPolicy(policy);
+    const constraints = body.constraints ? { ...policyConstraints, ...body.constraints } : policyConstraints;
     const plan = computeCashAllocation(
       evaluation,
       body.amount,

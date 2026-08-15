@@ -235,7 +235,7 @@ describe("score-kind registry", () => {
     // something the number never measured.
     expect(SCORE_KINDS.fit.banded).toBe(false);
     expect(SCORE_KINDS.quality.banded).toBe(false);
-    expect(SCORE_KINDS.health.banded).toBe(false);
+    expect(SCORE_KINDS.alignment.banded).toBe(false);
   });
 
   it("distinguishes two kinds without claiming either is wrong", async () => {

@@ -46,7 +46,9 @@ export function LivePreviewPanel({
           <ImpactRow impact={preview.impact} />
 
           <div className="flex flex-col divide-y divide-border/40 rounded-lg border border-border/60 bg-surface/40 px-3 py-1">
-            <StateRow label="Portfolio health" before={preview.before.health.total} after={preview.after.health.total} decimals={0} />
+            {/* Nullable on purpose: an unscorable book has no alignment score, and
+                StateRow drops the row rather than inventing a number. */}
+            <StateRow label="Portfolio alignment" before={preview.before.alignment.score} after={preview.after.alignment.score} decimals={0} />
             <StateRow
               label="Annualized volatility"
               before={preview.before.risk.annualizedVolatility}

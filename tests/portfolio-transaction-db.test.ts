@@ -92,7 +92,7 @@ describe("Transaction Engine DB layer (isolated test database)", () => {
     const manualBefore = listManualAssets();
 
     const snapshotId = snapshotPortfolio("pre-execution", "maximize_sharpe", {
-      totalValue: 100000, totalCost: 90000, health: 80, healthGrade: "B",
+      totalValue: 100000, totalCost: 90000, alignment: 80,
       volatility: 12, topAssetClassWeight: 40, allocation: [],
     });
 
@@ -152,14 +152,14 @@ describe("Transaction Engine DB layer (isolated test database)", () => {
 
   it("getSnapshot / listSnapshots expose the denormalized summary without the raw holdings blob", () => {
     const id = snapshotPortfolio("manual", null, {
-      totalValue: 55555, totalCost: 50000, health: 90, healthGrade: "A",
+      totalValue: 55555, totalCost: 50000, alignment: 90,
       volatility: 8, topAssetClassWeight: 30, allocation: [{ assetClass: "equity", weight: 60 }],
     });
 
     const single = getSnapshot(id);
     expect(single).not.toBeNull();
     expect(single!.summary.totalValue).toBe(55555);
-    expect(single!.summary.healthGrade).toBe("A");
+    expect(single!.summary.alignment).toBe(90);
     expect(single!.label).toBe("manual");
 
     const list = listSnapshots(50);

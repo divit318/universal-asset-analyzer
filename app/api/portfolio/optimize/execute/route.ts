@@ -22,8 +22,8 @@ interface ExecuteBody {
   trades?: { holdingId: string; partialPct?: number }[];
 }
 
-function summaryOf(evaluation: { totalValue: number; health: { total: number; grade: string }; risk: { annualizedVolatility: number | null } }) {
-  return { totalValue: evaluation.totalValue, health: evaluation.health.total, healthGrade: evaluation.health.grade, volatility: evaluation.risk.annualizedVolatility };
+function summaryOf(evaluation: { totalValue: number; alignment: { score: number | null }; risk: { annualizedVolatility: number | null } }) {
+  return { totalValue: evaluation.totalValue, alignment: evaluation.alignment.score, volatility: evaluation.risk.annualizedVolatility };
 }
 
 export async function POST(request: Request) {

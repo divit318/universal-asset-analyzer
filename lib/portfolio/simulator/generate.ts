@@ -28,6 +28,7 @@ import {
 import { extractJson } from "@/lib/json-extract";
 import { DEFAULT_CONSTRAINTS, OBJECTIVES } from "@/lib/portfolio/engines/optimize";
 import { buildMarketContext } from "@/lib/portfolio/context";
+import { loadInvestorPolicy } from "@/lib/portfolio/alignment/store";
 import { buildPortfolioThesis } from "@/lib/portfolio/thesis";
 import type { MarketContext } from "@/lib/portfolio/model/types";
 import { evaluateSimHoldings, simHoldingsToRaw, type SimEvaluation } from "./evaluate";
@@ -518,7 +519,7 @@ export async function generatePortfolio(
   }
 
   // 4. Evaluation through the real engines
-  emit("evaluate", "Scoring health, risk and stress scenarios…", 65);
+  emit("evaluate", "Scoring alignment, risk and stress scenarios…", 65);
   const evaluation = await evaluateSimHoldings(holdings, profile.currency, ctx);
 
   // 5. Narrate
@@ -528,7 +529,10 @@ export async function generatePortfolio(
     totalValue: evaluation.totalValue,
     allocation: evaluation.allocation,
     risk: evaluation.risk,
-    health: evaluation.health,
+    alignment: evaluation.alignment,
+    // The same policy evaluateSimHoldings scored `evaluation.alignment` under —
+    // pairing an alignment with a different policy would be a category error.
+    policy: loadInvestorPolicy(),
   });
 
   emit("narrate", "Done", 100);

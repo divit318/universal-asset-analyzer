@@ -23,16 +23,16 @@ const money = (n: number) => Math.abs(n).toLocaleString(undefined, { style: "cur
 
 /**
  * The Step-5-style impact line: "increases diversification by X, improves
- * projected health by +Y points and lowers expected volatility by Zpp." Every
+ * projected alignment by +Y points and lowers expected volatility by Zpp." Every
  * clause is conditional on the underlying delta actually being measurable and
- * material — an item that only moved health, say, gets a shorter sentence rather
+ * material — an item that only moved alignment, say, gets a shorter sentence rather
  * than padded boilerplate.
  */
 export function describeItemImpact(item: CashAllocationItem): string {
   const parts: string[] = [];
 
-  if (Math.abs(item.healthDelta) >= 0.1) {
-    parts.push(`improves projected health by ${item.healthDelta > 0 ? "+" : ""}${item.healthDelta.toFixed(1)} points`);
+  if (Math.abs(item.alignmentDelta) >= 0.1) {
+    parts.push(`improves projected alignment by ${item.alignmentDelta > 0 ? "+" : ""}${item.alignmentDelta.toFixed(1)} points`);
   }
   if (item.riskDelta != null && Math.abs(item.riskDelta) >= 0.1) {
     parts.push(`${item.riskDelta < 0 ? "lowers" : "raises"} expected volatility by ${Math.abs(item.riskDelta).toFixed(1)}pp`);
@@ -106,15 +106,15 @@ export function buildCashWhyExplanation(plan: CashAllocationPlan): WhyExplanatio
 
   const top = plan.items[0] ?? null;
   const why = top
-    ? `Under the ${objectiveLabel} objective, ${top.symbol ?? top.name} measured the largest combined health and objective-alignment improvement of every candidate simulated across ${plan.items.length + plan.rejectedOpportunities.length} option${plan.items.length + plan.rejectedOpportunities.length === 1 ? "" : "s"}.`
+    ? `Under the ${objectiveLabel} objective, ${top.symbol ?? top.name} measured the largest combined portfolio-alignment and objective-alignment improvement of every candidate simulated across ${plan.items.length + plan.rejectedOpportunities.length} option${plan.items.length + plan.rejectedOpportunities.length === 1 ? "" : "s"}.`
     : `Under the ${objectiveLabel} objective, no candidate measurably improved the portfolio more than holding the cash.`;
 
-  const whyNow = plan.totalHealthDelta > 2
+  const whyNow = plan.totalAlignmentDelta > 2
     ? "The measured gap this cash closes is large enough that the portfolio is carrying a real, quantified weakness today, not a marginal one."
     : "The measured effect is real but modest — this is a worthwhile deployment, not an urgent one.";
 
   const whyThisAmount = plan.marginalBenefit.length > 1
-    ? `Simulated in ${plan.marginalBenefit.length - 1} tranches so the plan reflects diminishing returns as it fills: the marginal health benefit per dollar shrinks as each tranche is placed, which is exactly why ${deployed > 0 ? "not every dollar went to a single position" : "the optimal answer here is to hold cash"}.`
+    ? `Simulated in ${plan.marginalBenefit.length - 1} tranches so the plan reflects diminishing returns as it fills: the marginal alignment benefit per dollar shrinks as each tranche is placed, which is exactly why ${deployed > 0 ? "not every dollar went to a single position" : "the optimal answer here is to hold cash"}.`
     : "Sized as a single measured tranche.";
 
   const whyNotAlternative = plan.rejectedOpportunities.length > 0
@@ -123,7 +123,7 @@ export function buildCashWhyExplanation(plan: CashAllocationPlan): WhyExplanatio
 
   const whyNotNothing = plan.heldAsCash >= plan.cashAmount
     ? "Simulating full deployment against every candidate is exactly how the optimizer concluded cash was the better answer — this is not the absence of an answer, it is the answer."
-    : `Doing nothing with this cash means forgoing the measured ${plan.totalHealthDelta >= 0 ? "+" : ""}${plan.totalHealthDelta.toFixed(1)}-point health improvement above, indefinitely.`;
+    : `Doing nothing with this cash means forgoing the measured ${plan.totalAlignmentDelta >= 0 ? "+" : ""}${plan.totalAlignmentDelta.toFixed(1)}-point portfolio-alignment improvement above, indefinitely.`;
 
   return { why, whyNow, whyThisAmount, whyNotAlternative, whyNotNothing };
 }

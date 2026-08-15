@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Card, Badge } from "@/app/_components/ui";
 import { CollapsibleSection } from "@/app/_components/collapsible-section";
 import { formatCurrency } from "@/lib/format";
@@ -383,7 +384,23 @@ export function RiskLab({ risk, scenarios }: { risk: UniversalRisk; scenarios: S
             <ul className="flex flex-col gap-1">
               {risk.correlation.highPairs.map((p) => (
                 <li key={`${p.a}-${p.b}`} className="flex items-center justify-between text-xs">
-                  <span className="font-mono text-foreground">{p.a} ↔ {p.b}</span>
+                  {/* Each half of the pair opens its research page — "these two
+                      move together" begs "so what are they, exactly?". */}
+                  <span className="font-mono text-foreground">
+                    <Link
+                      href={`/research?symbol=${encodeURIComponent(p.a)}`}
+                      className="rounded-sm hover:text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                    >
+                      {p.a}
+                    </Link>
+                    {" ↔ "}
+                    <Link
+                      href={`/research?symbol=${encodeURIComponent(p.b)}`}
+                      className="rounded-sm hover:text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                    >
+                      {p.b}
+                    </Link>
+                  </span>
                   <span className="font-mono tabular-nums text-warning">r = {p.r.toFixed(2)}</span>
                 </li>
               ))}
@@ -423,8 +440,10 @@ export function RiskLab({ risk, scenarios }: { risk: UniversalRisk; scenarios: S
             return (
               <button
                 key={s.id}
+                type="button"
                 onClick={() => setSelected(s.id)}
-                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
+                aria-pressed={isActive}
+                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 ${
                   isActive
                     ? "border-brand bg-brand/10 text-foreground"
                     : "border-border text-muted hover:border-brand/40 hover:text-foreground"
@@ -490,7 +509,16 @@ export function RiskLab({ risk, scenarios }: { risk: UniversalRisk; scenarios: S
                     .map((h) => (
                       <tr key={h.id} className="border-b border-border/50">
                         <td className="py-2 text-xs font-medium text-foreground">
-                          {h.symbol ?? h.name}
+                          {h.symbol ? (
+                            <Link
+                              href={`/research?symbol=${encodeURIComponent(h.symbol)}`}
+                              className="rounded-sm hover:text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                            >
+                              {h.symbol}
+                            </Link>
+                          ) : (
+                            h.name
+                          )}
                         </td>
                         {/* No "≤−100%" marker here any more, and no floor to mark:
                             the engine composes factor shocks in log-return space, so

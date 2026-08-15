@@ -17,7 +17,7 @@
  * symbol with 400 observations against one with 275 compared the OLDEST 275
  * observations of each: 275 days ending ~4 months ago against 275 days ending
  * today. The resulting r described no period that ever existed. That number is
- * displayed in the Risk Lab as "r = 0.83" and feeds the Health score's
+ * displayed in the Risk Lab as "r = 0.83" and feeds the alignment score's
  * Correlation dimension.
  *
  * Unequal lengths are not an edge case here. The portfolio is deliberately

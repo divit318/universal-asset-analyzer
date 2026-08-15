@@ -33,7 +33,7 @@ import { computePositionSizing, computePositionSizingAtAmount } from "@/lib/port
 import { deriveAssetSignal, type AssetSignal } from "@/lib/portfolio/engines/asset-signal";
 import { computeRecommendations } from "@/lib/portfolio/engines/recommend";
 import { isIndivisibleHolding } from "@/lib/portfolio/engines/transaction";
-import { OBJECTIVES, DEFAULT_CONSTRAINTS, type Objective, type Constraints } from "@/lib/portfolio/engines/optimize";
+import { OBJECTIVES, constraintsFromPolicy, type Objective, type Constraints } from "@/lib/portfolio/engines/optimize";
 import { type PortfolioAssetClass } from "@/lib/portfolio/model/types";
 import { assetClassFromQuoteType } from "@/lib/portfolio/classes/reference/risk-models";
 import { buildAiExplanation, buildHeadline, buildPositionSizingWhy, buildSummary } from "@/lib/portfolio/engines/position-size-explain";
@@ -137,7 +137,13 @@ export async function POST(request: Request) {
       loadAssetSignal(symbol, quote.price),
     ]);
 
-    const constraints = body.constraints ? { ...DEFAULT_CONSTRAINTS, ...body.constraints } : DEFAULT_CONSTRAINTS;
+    // The evaluation already carries the saved investor policy (buildEvaluation
+    // loads it); the hard trade constraints must come from the SAME policy —
+    // sizing a buy under a universal 20% cap while the investor stated 35%
+    // (or a 10% exception-free cap) is the personalization failure this
+    // system exists to prevent. Explicit body constraints still override.
+    const policyConstraints = constraintsFromPolicy(evaluation.policy);
+    const constraints = body.constraints ? { ...policyConstraints, ...body.constraints } : policyConstraints;
     const hasAmountOverride = body.amount != null && Number.isFinite(body.amount) && body.amount > 0;
     const plan = hasAmountOverride
       ? computePositionSizingAtAmount(evaluation, { symbol, name, assetClass }, body.amount!, objective, ctx, signal)

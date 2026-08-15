@@ -134,7 +134,7 @@ export function RecommendedAllocation({
         </div>
       </div>
 
-      {/* Expected impact — measured (health, volatility) and estimated (expected return, labeled as such). */}
+      {/* Expected impact — measured (alignment, volatility) and estimated (expected return, labeled as such). */}
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 border-t border-border/60 pt-3 sm:grid-cols-3">
         {recommendation.expectedReturn && (
           <ImpactStat
@@ -151,11 +151,14 @@ export function RecommendedAllocation({
             tone={recommendation.impact.riskDelta <= 0 ? "positive" : "neutral"}
           />
         )}
-        <ImpactStat
-          label="Portfolio health"
-          value={`${recommendation.impact.healthDelta >= 0 ? "+" : ""}${recommendation.impact.healthDelta.toFixed(1)} pts`}
-          tone={recommendation.impact.healthDelta >= 0 ? "positive" : "negative"}
-        />
+        {/* Null when either side is unscorable — the stat is omitted rather than shown as 0. */}
+        {recommendation.impact.alignmentDelta != null && (
+          <ImpactStat
+            label="Portfolio alignment"
+            value={`${recommendation.impact.alignmentDelta >= 0 ? "+" : ""}${recommendation.impact.alignmentDelta.toFixed(1)} pts`}
+            tone={recommendation.impact.alignmentDelta >= 0 ? "positive" : "negative"}
+          />
+        )}
         {recommendation.correlationWithHoldings != null && (
           <ImpactStat
             label="Correlation"

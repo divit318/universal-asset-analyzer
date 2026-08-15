@@ -27,7 +27,7 @@ export async function POST(request: Request) {
   }
 
   // Build analytics context from the compact summary
-  const health     = (a.health as { total: number; grade: string; summary: string } | null) ?? null;
+  const alignment  = (a.alignment as { score: number | null; label: string | null; summary: string } | null) ?? null;
   const risk       = (a.risk as { beta?: number; sharpeRatio?: number; maxDrawdown?: number; hhi?: number; concentrationRisk?: string } | null) ?? null;
   const factors    = (a.factors as { topFactor?: string; bottomFactor?: string } | null) ?? null;
   const gaps       = (a.gaps as { missing?: { name: string; priority: string }[]; concentrationScore?: number } | null) ?? null;
@@ -57,7 +57,7 @@ PORTFOLIO SNAPSHOT:
 - Portfolio value: $${totalValue.toLocaleString()}
 - Total return: ${totalReturn >= 0 ? "+" : ""}${totalReturn.toFixed(1)}%
 - Positions: ${posCount}
-- Health score: ${health?.total ?? "—"}/100 (Grade ${health?.grade ?? "—"}) — ${health?.summary ?? ""}
+- Portfolio alignment: ${alignment == null || alignment.score == null ? "not scorable" : `${alignment.score}/100 (${alignment.label})`} — ${alignment?.summary ?? ""}
 - Sector composition: ${sectorSummary}
 - Risk profile: ${riskLine}
 - Dominant factor: ${factors?.topFactor ?? "—"}, underweight: ${factors?.bottomFactor ?? "—"}

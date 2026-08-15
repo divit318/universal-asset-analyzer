@@ -2,7 +2,7 @@
  * POST /api/portfolio/simulator/swap — { id, symbol }
  *
  * AI-suggested alternatives for one holding, each with a measured
- * before/after impact preview (health, volatility, income) computed by
+ * before/after impact preview (alignment, volatility, income) computed by
  * actually applying the swap and re-running the real engines against ONE
  * shared market snapshot — the Decisions tab's "expected portfolio state"
  * pattern, not a guess. Nothing is persisted here; the client confirms a
@@ -27,8 +27,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export interface SwapImpact {
-  healthBefore: number;
-  healthAfter: number;
+  /** Alignment scores are null when the book is unscorable; the UI hides the row. */
+  alignmentBefore: number | null;
+  alignmentAfter: number | null;
   volatilityBefore: number | null;
   volatilityAfter: number | null;
   incomeBefore: number;
@@ -122,8 +123,8 @@ export async function POST(request: Request) {
         name: ctx.quotes.get(s.symbol)?.name ?? s.name,
         holdings: nextHoldings,
         impact: {
-          healthBefore: before.health.total,
-          healthAfter: after.health.total,
+          alignmentBefore: before.alignment.score,
+          alignmentAfter: after.alignment.score,
           volatilityBefore: before.risk.annualizedVolatility,
           volatilityAfter: after.risk.annualizedVolatility,
           incomeBefore: before.annualIncome,

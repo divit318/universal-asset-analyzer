@@ -23,11 +23,16 @@
  */
 
 /**
- * Maximum acceptable weight for any single holding, in %.
+ * Maximum acceptable weight for any single holding, in % — THE DEFAULT.
  *
- * The optimizer will not size a position above this, and the recommendation
- * engine will not complain about a position at or below it — so this one number
- * is the shared equilibrium both engines converge to.
+ * Since the alignment engine shipped, the investor's own cap
+ * (`InvestorPolicy.tolerances.maxPositionPct`) is the number that governs:
+ * DEFAULT_POLICY seeds it from this constant, the recommendation engine's trim
+ * trigger/target read the policy (recommend.ts), and this constant remains the
+ * optimizer's default ceiling until the Optimize stage consumes
+ * `constraintsFromPolicy()` too. The shared-equilibrium reasoning below still
+ * holds — the equilibrium point is now the investor's cap rather than a
+ * universal one.
  */
 export const MAX_SINGLE_HOLDING_PCT = 20;
 

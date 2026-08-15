@@ -89,7 +89,7 @@ describe("ledger isolation", () => {
 
   it("snapshots and restores ONE book without touching the other", () => {
     const summary = {
-      totalValue: 0, totalCost: 0, health: 50, healthGrade: "C",
+      totalValue: 0, totalCost: 0, alignment: 50,
       volatility: null, topAssetClassWeight: 100, allocation: [],
     };
     const snapId = snapshotPortfolio("pre-test", null, summary, second.id);

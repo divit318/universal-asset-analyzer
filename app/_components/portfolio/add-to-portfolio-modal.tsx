@@ -19,7 +19,7 @@ import { FundingSourcePanel } from "./recommendation/funding-source";
 import { ImpactComparison } from "./recommendation/impact-comparison";
 import { AssetHeader } from "./recommendation/asset-header";
 import { BeforeAfter, CollapsibleSection } from "./recommendation/metric-row";
-import { describeRiskDelta, GRADE_TONE } from "./recommendation/format";
+import { describeRiskDelta } from "./recommendation/format";
 import { buildTransactionWarnings } from "@/lib/portfolio/engines/position-size-explain";
 import type { FundingSource, SellSuggestion } from "./recommendation/types";
 import type { DecisionHorizon } from "@/lib/types";
@@ -33,8 +33,9 @@ interface BuyResult {
   currency: string;
   assetClass: string;
   totalCost: number;
-  healthBefore: number | null;
-  healthAfter: number | null;
+  /** Alignment score (0-100) before/after — null when the book is unscorable. */
+  alignmentBefore: number | null;
+  alignmentAfter: number | null;
 }
 
 /**
@@ -278,8 +279,8 @@ export function AddToPortfolioModal({
         currency: json.currency,
         assetClass: json.assetClass,
         totalCost: json.totalCost,
-        healthBefore: current?.before.health.total ?? null,
-        healthAfter: current?.after.health.total ?? null,
+        alignmentBefore: current?.before.alignment.score ?? null,
+        alignmentAfter: current?.after.alignment.score ?? null,
       };
 
       try {
@@ -348,7 +349,7 @@ export function AddToPortfolioModal({
 
   // ---- Success ----
   if (result) {
-    const healthImproved = result.healthBefore != null && result.healthAfter != null && result.healthAfter > result.healthBefore;
+    const alignmentImproved = result.alignmentBefore != null && result.alignmentAfter != null && result.alignmentAfter > result.alignmentBefore;
     return (
       <Dialog open title="Purchase added successfully" onClose={onClose} className="max-w-md">
         <div className="flex flex-col items-center gap-3 py-2 text-center">
@@ -362,13 +363,13 @@ export function AddToPortfolioModal({
           <p className="text-xs text-muted">
             {result.shares.toLocaleString(undefined, { maximumFractionDigits: 6 })} sh of {result.symbol} at {formatCurrency(result.price, result.currency)}/share
           </p>
-          {result.healthBefore != null && result.healthAfter != null && (
+          {result.alignmentBefore != null && result.alignmentAfter != null && (
             <div className="mt-1 w-full rounded-lg border border-border bg-surface-2 px-4 py-2">
               <BeforeAfter
-                label="Portfolio health"
-                before={result.healthBefore.toFixed(0)}
-                after={result.healthAfter.toFixed(0)}
-                tone={healthImproved ? "positive" : undefined}
+                label="Portfolio alignment"
+                before={result.alignmentBefore.toFixed(0)}
+                after={result.alignmentAfter.toFixed(0)}
+                tone={alignmentImproved ? "positive" : undefined}
               />
             </div>
           )}
@@ -389,8 +390,14 @@ export function AddToPortfolioModal({
     // Funding from cash spends finalAmount directly; funding via sold holdings
     // first raises `shortfall` in cash, then the same finalAmount is spent.
     const cashAfter = cashAvailable - finalAmount + (fundingSource !== "cash" ? shortfall : 0);
-    const divBefore = before.health.dimensions.find((d) => d.name === "Diversification")?.score ?? null;
-    const divAfter = after.health.dimensions.find((d) => d.name === "Diversification")?.score ?? null;
+    // Theme-level before/after, matched by id. A theme either side honestly
+    // abstains on (score === null) is skipped rather than rendered as a blank.
+    const themePairs = after.alignment.themes.flatMap((t) => {
+      const b = before.alignment.themes.find((x) => x.id === t.id);
+      return b?.score != null && t.score != null
+        ? [{ id: t.id, label: t.label, beforeScore: b.score, afterScore: t.score }]
+        : [];
+    });
 
     return (
       <Dialog open title={`Confirm purchase — ${item.symbol}`} onClose={onClose} className="max-w-lg">
@@ -408,11 +415,25 @@ export function AddToPortfolioModal({
 
           <Card className="flex flex-col gap-0.5 p-4">
             <h3 className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted">What changes</h3>
-            <BeforeAfter label="Portfolio health" before={before.health.total.toFixed(0)} after={after.health.total.toFixed(0)} tone={after.health.total >= before.health.total ? "positive" : "negative"} />
-            <BeforeAfter label="Portfolio grade" before={before.health.grade} after={after.health.grade} tone={GRADE_TONE[after.health.grade]} />
-            {divBefore != null && divAfter != null && (
-              <BeforeAfter label="Diversification" before={divBefore.toFixed(0)} after={divAfter.toFixed(0)} tone={divAfter >= divBefore ? "positive" : "negative"} />
+            {/* Score only — the alignment engine has no letter grades. The row is
+                dropped when either side is unscorable (score === null). */}
+            {before.alignment.score != null && after.alignment.score != null && (
+              <BeforeAfter
+                label="Portfolio alignment"
+                before={before.alignment.score.toFixed(0)}
+                after={after.alignment.score.toFixed(0)}
+                tone={after.alignment.score >= before.alignment.score ? "positive" : "negative"}
+              />
             )}
+            {themePairs.map((p) => (
+              <BeforeAfter
+                key={p.id}
+                label={p.label}
+                before={p.beforeScore.toFixed(0)}
+                after={p.afterScore.toFixed(0)}
+                tone={p.afterScore >= p.beforeScore ? "positive" : "negative"}
+              />
+            ))}
             <BeforeAfter label="Cash" before={formatCurrency(cashAvailable)} after={formatCurrency(cashAfter)} tone={cashAfter < 0 ? "negative" : undefined} />
             <BeforeAfter
               label="Largest holding"

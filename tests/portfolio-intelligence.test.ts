@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { Holding, PortfolioAssetClass } from "@/lib/portfolio/model/types";
 import type { PortfolioAllocation, AllocationView } from "@/lib/portfolio/engines/allocation";
 import type { UniversalRisk } from "@/lib/portfolio/engines/risk";
-import type { HealthScore } from "@/lib/portfolio/engines/health";
+import type { AlignmentReport } from "@/lib/portfolio/alignment/engine";
 import type { FundLookThrough, IntelligenceInput } from "@/lib/portfolio/intelligence/types";
 import {
   computeEffectiveExposures,
@@ -136,8 +136,21 @@ function risk(over: Partial<UniversalRisk> = {}): UniversalRisk {
   };
 }
 
-function health(): HealthScore {
-  return { total: 75, totalExact: 75, grade: "B", dimensions: [], summary: "", coveragePct: 100 };
+function alignment(): AlignmentReport {
+  return {
+    score: 75,
+    scoreExact: 75,
+    label: "Well aligned",
+    status: "scored",
+    confirmed: false,
+    themes: [],
+    mismatches: [],
+    dataGaps: [],
+    summary: "",
+    evidencePct: 100,
+    objectiveNotes: [],
+    policyConflicts: [],
+  };
 }
 
 function fund(symbol: string, tops: [string, number][], over: Partial<FundLookThrough> = {}): FundLookThrough {
@@ -159,7 +172,7 @@ function input(holdings: Holding[], funds: Map<string, FundLookThrough>, over: P
     totalValue,
     allocation: allocation(),
     risk: risk(),
-    health: health(),
+    alignment: alignment(),
     attribution: null,
     baseCurrency: "USD",
     funds,

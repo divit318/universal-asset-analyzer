@@ -67,7 +67,9 @@ export function ConfirmationModal({
             <span className="pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted/70">
               Expected portfolio state
             </span>
-            <StateRow label="Portfolio health" before={preview.before.health.total} after={preview.after.health.total} decimals={0} />
+            {/* Nullable on purpose: an unscorable book has no alignment score, and
+                StateRow drops the row rather than inventing a number. */}
+            <StateRow label="Portfolio alignment" before={preview.before.alignment.score} after={preview.after.alignment.score} decimals={0} />
             <StateRow
               label="Annualized volatility"
               before={preview.before.risk.annualizedVolatility}

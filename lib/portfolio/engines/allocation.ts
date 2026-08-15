@@ -19,6 +19,8 @@ import type {
   PortfolioAssetClass,
 } from "../model/types";
 import { FACTORS, FACTOR_LABEL } from "../model/types";
+import { CONCENTRATION_HYSTERESIS_PCT } from "../policy";
+import { effectiveCapPct, type InvestorPolicy } from "../alignment/policy";
 
 export interface AllocationSlice {
   key: string;
@@ -262,29 +264,46 @@ export interface ConcentrationFinding {
  * The old engine warned on single-position and single-sector weight only. It would
  * pass a portfolio that is 100% USD, 100% equities, and 45% illiquid without a word
  * — three of the most common ways a real portfolio actually gets hurt.
+ *
+ * HOLDING-level flags are policy-relative when a policy is provided: a position
+ * flags at the investor's own effective cap (their general cap, or their named
+ * exception for that symbol), not at a universal 15/25%. The page header saying
+ * "3 concentration flags" while the Alignment panel below it says "inside your
+ * caps" was the two-rulers bug in miniature. Class/sector/currency/liquidity
+ * flags keep structural fact-thresholds — the policy has no numbers for those,
+ * and inventing policy semantics the editor never showed is the old bug.
  */
 export function computeConcentration(
   holdings: Holding[],
   allocation: PortfolioAllocation,
+  policy?: InvestorPolicy,
 ): ConcentrationFinding[] {
   const out: ConcentrationFinding[] = [];
 
   for (const h of holdings) {
-    if (h.weight >= 25) {
+    // With a policy: flag only above the holding's OWN cap (medium inside the
+    // hysteresis band, high beyond it). Without one: the historical 15/25
+    // fact-thresholds, unchanged for callers that have no policy in scope.
+    const cap = policy ? effectiveCapPct(policy, h.symbol) : null;
+    const mediumAt = cap ?? 15;
+    const highAt = cap != null ? cap + CONCENTRATION_HYSTERESIS_PCT : 25;
+    if (h.weight <= mediumAt) continue;
+    const capText = cap != null ? ` against your ${cap}% ${policy!.exceptions.some((e) => h.symbol && e.symbol === h.symbol.toUpperCase()) ? `exception for ${h.symbol}` : "cap"}` : "";
+    if (h.weight > highAt) {
       out.push({
         type: "holding",
         label: h.symbol ?? h.name,
         pct: h.weight,
         severity: "high",
-        message: `${h.symbol ?? h.name} is ${h.weight.toFixed(1)}% of the portfolio — single-asset concentration risk.`,
+        message: `${h.symbol ?? h.name} is ${h.weight.toFixed(1)}% of the portfolio${capText} — single-asset concentration risk.`,
       });
-    } else if (h.weight >= 15) {
+    } else {
       out.push({
         type: "holding",
         label: h.symbol ?? h.name,
         pct: h.weight,
         severity: "medium",
-        message: `${h.symbol ?? h.name} is ${h.weight.toFixed(1)}% of the portfolio.`,
+        message: `${h.symbol ?? h.name} is ${h.weight.toFixed(1)}% of the portfolio${capText}.`,
       });
     }
   }

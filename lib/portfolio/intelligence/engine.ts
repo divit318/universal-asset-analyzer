@@ -17,7 +17,7 @@ import {
 import type { Holding } from "../model/types";
 import type { PortfolioAllocation } from "../engines/allocation";
 import type { UniversalRisk } from "../engines/risk";
-import type { HealthScore } from "../engines/health";
+import type { AlignmentReport } from "../alignment/engine";
 import type { ReturnAttribution } from "../engines/attribution";
 import { runDetectors } from "./detectors";
 import { lookThroughCoverage } from "./lookthrough";
@@ -144,7 +144,7 @@ export interface IntelligenceParts {
   totalValue: number;
   allocation: PortfolioAllocation;
   risk: UniversalRisk;
-  health: HealthScore;
+  alignment: AlignmentReport;
   attribution: ReturnAttribution | null;
   baseCurrency: string;
 }
@@ -208,8 +208,10 @@ export async function buildPortfolioIntelligence(parts: IntelligenceParts): Prom
   const synthesis = await synthesizeIntelligence(findings, whatChanged, {
     totalValue: parts.totalValue,
     holdingCount: parts.holdings.length,
-    healthTotal: parts.health.total,
-    healthGrade: parts.health.grade,
+    alignmentLine:
+      parts.alignment.score != null
+        ? `${parts.alignment.score}/100 (${parts.alignment.label})`
+        : "not scorable on the available data",
   }, coverage);
 
   return {

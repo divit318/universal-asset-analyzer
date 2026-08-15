@@ -28,7 +28,7 @@ export interface BulkActionState {
   buys: boolean;
   sells: boolean;
   highestImpact: boolean;
-  healthImprovements: boolean;
+  alignmentImprovements: boolean;
   riskReduction: boolean;
 }
 
@@ -89,9 +89,11 @@ export function useTradeSelection(
      based sets are empty until the measured per-trade impacts have loaded. */
   const candidates = useMemo(() => {
     const ids = (ts: TargetWeight[]) => ts.map((t) => t.holdingId);
+    // `alignmentDelta` is null when a side is unscorable — `?? 0` is the explicit
+    // "treat unknown as no measured improvement" fallback these rankings need.
     const rankedByImpact = impacts
       ? [...trades].sort(
-          (a, b) => Math.abs(impacts.get(b.holdingId)?.healthDelta ?? 0) - Math.abs(impacts.get(a.holdingId)?.healthDelta ?? 0),
+          (a, b) => Math.abs(impacts.get(b.holdingId)?.alignmentDelta ?? 0) - Math.abs(impacts.get(a.holdingId)?.alignmentDelta ?? 0),
         )
       : [];
     return {
@@ -99,8 +101,8 @@ export function useTradeSelection(
       buys: ids(trades.filter((t) => t.action === "BUY")),
       sells: ids(trades.filter((t) => t.action === "SELL")),
       highestImpact: ids(rankedByImpact.slice(0, HIGHEST_IMPACT_COUNT)),
-      healthImprovements: impacts
-        ? ids(trades.filter((t) => (impacts.get(t.holdingId)?.healthDelta ?? 0) > 0))
+      alignmentImprovements: impacts
+        ? ids(trades.filter((t) => (impacts.get(t.holdingId)?.alignmentDelta ?? 0) > 0))
         : [],
       riskReduction: impacts
         ? ids(trades.filter((t) => {
@@ -126,9 +128,9 @@ export function useTradeSelection(
     if (!impacts) return;
     setSelected(new Set(candidates.highestImpact));
   }, [candidates, impacts]);
-  const selectHealthImprovements = useCallback(() => {
+  const selectAlignmentImprovements = useCallback(() => {
     if (!impacts) return;
-    setSelected(new Set(candidates.healthImprovements));
+    setSelected(new Set(candidates.alignmentImprovements));
   }, [candidates, impacts]);
   const selectRiskReduction = useCallback(() => {
     if (!impacts) return;
@@ -141,7 +143,7 @@ export function useTradeSelection(
     buys: selectionIs(selected, candidates.buys),
     sells: selectionIs(selected, candidates.sells),
     highestImpact: selectionIs(selected, candidates.highestImpact),
-    healthImprovements: selectionIs(selected, candidates.healthImprovements),
+    alignmentImprovements: selectionIs(selected, candidates.alignmentImprovements),
     riskReduction: selectionIs(selected, candidates.riskReduction),
   }), [selected, candidates]);
 
@@ -174,7 +176,7 @@ export function useTradeSelection(
     selectSells,
     invert,
     selectHighestImpact,
-    selectHealthImprovements,
+    selectAlignmentImprovements,
     selectRiskReduction,
     activeBulkAction,
     partialPct,

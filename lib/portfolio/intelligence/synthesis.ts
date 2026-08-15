@@ -28,8 +28,8 @@ import type {
 export interface SynthesisStats {
   totalValue: number;
   holdingCount: number;
-  healthTotal: number;
-  healthGrade: string;
+  /** "82/100 (Well aligned) vs the investor's own policy", or "not scorable". */
+  alignmentLine: string;
 }
 
 export interface SynthesisResult {
@@ -128,7 +128,7 @@ WHAT CHANGED SINCE THE PREVIOUS ANALYSIS
 ${changes}
 
 PORTFOLIO
-Total value: ${formatCurrency(stats.totalValue)} across ${stats.holdingCount} holdings. Health: ${stats.healthTotal}/100 (${stats.healthGrade}).
+Total value: ${formatCurrency(stats.totalValue)} across ${stats.holdingCount} holdings. Alignment with the investor's stated policy: ${stats.alignmentLine}.
 ${opaqueNote}
 
 Respond with ONLY a raw JSON object — no markdown, no code fences:

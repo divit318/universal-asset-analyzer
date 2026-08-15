@@ -6,9 +6,9 @@
  * Two things here that no other part of the page could say.
  *
  * 1. DRIFT. Every other number was a point-in-time reading, so a stable target and
- *    a steadily concentrating book looked identical. Health and largest-asset-class
- *    weight are both contribution-invariant, which makes them the honest trend
- *    lines to lead with.
+ *    a steadily concentrating book looked identical. The alignment score and the
+ *    largest-asset-class weight are both contribution-invariant, which makes them
+ *    the honest trend lines to lead with.
  *
  * 2. SELF-GRADING. The Decision Center issues advice with a measured expected
  *    impact. Until now nothing ever went back and checked the realised one. A
@@ -92,7 +92,7 @@ export function TrajectoryPanel({ trajectory }: { trajectory: PortfolioTrajector
   const points: TrajectoryPoint[] = t.points;
   const last = points[points.length - 1];
   const lastChange = t.changes[0] ?? null;
-  const healthSeries = points.map((p) => ({ t: Date.parse(p.at), v: p.health }));
+  const scoreSeries = points.map((p) => ({ t: Date.parse(p.at), v: p.score }));
   const concentrationSeries = points.map((p) => ({ t: Date.parse(p.at), v: p.topAssetClassWeight }));
 
   return (
@@ -105,10 +105,10 @@ export function TrajectoryPanel({ trajectory }: { trajectory: PortfolioTrajector
             across {points.length} recorded states.
           </p>
         </div>
-        <Badge variant={t.healthDelta == null || Math.abs(t.healthDelta) < 1 ? "neutral" : t.healthDelta > 0 ? "positive" : "warning"}>
-          {t.healthDelta == null || Math.abs(t.healthDelta) < 1
+        <Badge variant={t.scoreDelta == null || Math.abs(t.scoreDelta) < 1 ? "neutral" : t.scoreDelta > 0 ? "positive" : "warning"}>
+          {t.scoreDelta == null || Math.abs(t.scoreDelta) < 1
             ? "Stable"
-            : t.healthDelta > 0
+            : t.scoreDelta > 0
               ? "Improving"
               : "Deteriorating"}
         </Badge>
@@ -116,13 +116,17 @@ export function TrajectoryPanel({ trajectory }: { trajectory: PortfolioTrajector
 
       <div className="grid gap-2 sm:grid-cols-2">
         <Metric
-          label="Portfolio health"
-          now={`${last.health} ${last.healthGrade}`}
-          d={delta(t.healthDelta, "")}
-          series={healthSeries}
+          label="Portfolio alignment"
+          now={`${last.score}`}
+          d={delta(t.scoreDelta, "")}
+          series={scoreSeries}
           scale="absolute"
           format={(v) => v.toFixed(0)}
-          hint="Full 0-100 scale and a real time axis, so a few points read as a few points."
+          hint={
+            t.scoreDefinitionChanged
+              ? "Earlier points used the retired universal health score; newer ones score against your own policy. The step between regimes is a definition change, not a portfolio change."
+              : "Full 0-100 scale and a real time axis, so a few points read as a few points."
+          }
         />
         <Metric
           label="Largest asset class"
@@ -151,18 +155,18 @@ export function TrajectoryPanel({ trajectory }: { trajectory: PortfolioTrajector
             <span className="text-[10px] font-semibold uppercase tracking-wider text-muted/70">
               Your most recent change
             </span>
-            <Badge variant={lastChange.regressed ? "warning" : lastChange.healthDelta > 0 ? "positive" : "neutral"}>
+            <Badge variant={lastChange.regressed ? "warning" : lastChange.scoreDelta > 0 ? "positive" : "neutral"}>
               {lastChange.regressed
-                ? "Left the book weaker"
-                : lastChange.healthDelta > 0
-                  ? "Improved the book"
+                ? "Left the book less aligned"
+                : lastChange.scoreDelta > 0
+                  ? "Improved alignment"
                   : "Roughly neutral"}
             </Badge>
           </div>
           <p className="text-[11px] leading-relaxed text-muted">
-            On {new Date(lastChange.at).toLocaleDateString()}, health moved{" "}
+            On {new Date(lastChange.at).toLocaleDateString()}, the alignment score moved{" "}
             <strong className="text-foreground">
-              {lastChange.healthBefore} → {lastChange.healthAfter}
+              {lastChange.scoreBefore} → {lastChange.scoreAfter}
             </strong>{" "}
             and the largest asset class moved{" "}
             <strong className="text-foreground">
@@ -170,7 +174,7 @@ export function TrajectoryPanel({ trajectory }: { trajectory: PortfolioTrajector
             </strong>
             .{" "}
             {lastChange.regressed
-              ? "Worth reviewing: the change reduced the portfolio's own health score. That can be a deliberate trade-off — taking concentration risk for expected return — but it should be a choice, not a surprise."
+              ? "Worth reviewing: the change moved the book further from your own stated policy. That can be a deliberate trade-off — taking concentration risk for expected return — but it should be a choice, not a surprise."
               : "Recorded automatically either side of the execution, so this is the realised outcome rather than the projection."}
           </p>
         </div>
@@ -186,8 +190,8 @@ export function TrajectoryPanel({ trajectory }: { trajectory: PortfolioTrajector
               <li key={c.at} className="flex items-center justify-between gap-2 text-[11px]">
                 <span className="text-muted">{new Date(c.at).toLocaleDateString()}</span>
                 <span className="flex items-center gap-3 font-mono tabular-nums">
-                  <span className={c.healthDelta > 0 ? "text-positive" : c.healthDelta < 0 ? "text-negative" : "text-muted"}>
-                    health {c.healthDelta > 0 ? "+" : ""}{c.healthDelta}
+                  <span className={c.scoreDelta > 0 ? "text-positive" : c.scoreDelta < 0 ? "text-negative" : "text-muted"}>
+                    align {c.scoreDelta > 0 ? "+" : ""}{c.scoreDelta}
                   </span>
                   <span className={c.concentrationDelta < 0 ? "text-positive" : c.concentrationDelta > 0 ? "text-negative" : "text-muted"}>
                     conc {c.concentrationDelta > 0 ? "+" : ""}{c.concentrationDelta.toFixed(1)}pp
@@ -201,7 +205,7 @@ export function TrajectoryPanel({ trajectory }: { trajectory: PortfolioTrajector
 
       <p className="text-[10px] leading-relaxed text-muted/60">
         Portfolio value is deliberately not plotted here: it rises when you add money, so a
-        value line blends contributions with returns. Health and concentration are unaffected
+        value line blends contributions with returns. Alignment and concentration are unaffected
         by deposits, which is what makes them readable as trends. For return over time, see
         Performance.
       </p>

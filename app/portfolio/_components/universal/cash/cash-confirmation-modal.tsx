@@ -3,7 +3,6 @@
 import { Dialog } from "@/app/_components/dialog";
 import { Button, Badge } from "@/app/_components/ui";
 import { formatCurrency } from "@/lib/format";
-import { healthGradeOf } from "@/lib/portfolio/engines/health";
 import { StateRow } from "../impact-display";
 import type { CashPlanResponse, NarratedItem } from "./types";
 
@@ -49,16 +48,15 @@ export function CashConfirmationModal({
           <span className="pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted/70">
             Expected portfolio state
           </span>
-          {/* Score + letter, as on the Dashboard tile and the Health panel. A bare
-              "75" here was the only place in the app that dropped the grade, which
-              made the modal's number look like a different statistic from the one
-              the user had just been reading. */}
+          {/* The bare 0-100 alignment score — deliberately no letter grade (the
+              alignment engine has none) and nullable on both sides: an unscorable
+              book has no score, and StateRow drops the row rather than inventing
+              a number. */}
           <StateRow
-            label="Portfolio health"
-            before={plan.before.health.total}
-            after={plan.after.health.total}
+            label="Portfolio alignment"
+            before={plan.before.alignment.score}
+            after={plan.after.alignment.score}
             decimals={0}
-            format={(v) => `${Math.round(v)} ${healthGradeOf(Math.round(v))}`}
           />
           <StateRow
             label="Annualized volatility"

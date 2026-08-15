@@ -17,23 +17,37 @@
 
 import { computeAllocation } from "./allocation";
 import { computeRisk } from "./risk";
-import { computeHealth } from "./health";
+import { computeAlignment } from "../alignment/engine";
+import { DEFAULT_POLICY } from "../alignment/policy";
 import { normalizeHoldings } from "../model/holding";
 import type { Holding, MarketContext, RawHolding } from "../model/types";
 import type { PortfolioAllocation } from "./allocation";
 import type { UniversalRisk } from "./risk";
-import type { HealthScore } from "./health";
+import type { AlignmentReport } from "../alignment/engine";
+import type { InvestorPolicy } from "../alignment/policy";
 
 export interface PortfolioEvaluation {
   holdings: Holding[];
   totalValue: number;
   allocation: PortfolioAllocation;
   risk: UniversalRisk;
-  health: HealthScore;
+  alignment: AlignmentReport;
+  /**
+   * The policy the alignment was scored against, carried ON the evaluation so
+   * every re-evaluation of a hypothetical variant (simulate(), the sizing
+   * tranche loops, optimizer previews) scores before and after under the SAME
+   * policy. Differencing two evaluations scored under different policies is a
+   * category error, and carrying the policy makes it structurally impossible.
+   */
+  policy: InvestorPolicy;
 }
 
 /** Run the full analytics stack over a set of holdings. */
-export function evaluate(holdings: Holding[], ctx: MarketContext): PortfolioEvaluation {
+export function evaluate(
+  holdings: Holding[],
+  ctx: MarketContext,
+  policy: InvestorPolicy = DEFAULT_POLICY,
+): PortfolioEvaluation {
   const totalValue = holdings.reduce((s, h) => s + h.valuation.valueBase, 0);
 
   // Weights must be recomputed for the hypothetical portfolio — a simulated buy
@@ -46,9 +60,9 @@ export function evaluate(holdings: Holding[], ctx: MarketContext): PortfolioEval
 
   const allocation = computeAllocation(reweighted, totalValue);
   const risk = computeRisk(reweighted, totalValue, allocation, ctx);
-  const health = computeHealth(reweighted, totalValue, allocation, risk);
+  const alignment = computeAlignment(reweighted, totalValue, allocation, risk, policy);
 
-  return { holdings: reweighted, totalValue, allocation, risk, health };
+  return { holdings: reweighted, totalValue, allocation, risk, alignment, policy };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -222,9 +236,37 @@ export function applyTargetPlanConserving(
 /* Impact                                                                      */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * One theme's before → after under a simulated change — the TRADEOFF substrate.
+ *
+ * An aggregate delta can hide a conflict: a trade that improves Downside +9 while
+ * pushing Structure −2 nets +7ish and looks universally good. Decisions must be
+ * able to say "improves X at the cost of Y" instead, so the per-theme movement is
+ * measured here, once, from the same two evaluations the aggregate came from.
+ * Only themes rated on BOTH sides appear — a theme that gains or loses a rating
+ * mid-trade has no honest delta.
+ */
+export interface ThemeDelta {
+  id: string;
+  label: string;
+  /** Unrounded, for arithmetic. */
+  before: number;
+  after: number;
+  delta: number;
+  /** The share of the alignment score this theme carries under the policy. */
+  weightShare: number;
+}
+
 export interface ImpactEstimate {
-  /** Change in the universal health score, in points. */
-  healthDelta: number;
+  /**
+   * Change in the portfolio-alignment score, in points, under the SAME investor
+   * policy on both sides. Null when either side is unscorable — a delta between
+   * a score and a non-score is not zero, it is unknown, and consumers that need
+   * a scalar must decide their own fallback explicitly (`?? 0`).
+   */
+  alignmentDelta: number | null;
+  /** Per-theme movement behind `alignmentDelta`, largest |delta| first. */
+  themeDeltas: ThemeDelta[];
   /** Change in annualized volatility, in percentage points. Negative = less risky. */
   riskDelta: number | null;
   /**
@@ -247,6 +289,25 @@ export interface ImpactEstimate {
   liquidityDelta: number;
 }
 
+/** Per-theme deltas for themes rated on BOTH sides. See ThemeDelta. */
+function themeDeltasOf(before: PortfolioEvaluation, after: PortfolioEvaluation): ThemeDelta[] {
+  const afterById = new Map(after.alignment.themes.map((t) => [t.id, t]));
+  const out: ThemeDelta[] = [];
+  for (const b of before.alignment.themes) {
+    const a = afterById.get(b.id);
+    if (b.scoreExact == null || a?.scoreExact == null) continue;
+    out.push({
+      id: b.id,
+      label: b.label,
+      before: b.scoreExact,
+      after: a.scoreExact,
+      delta: a.scoreExact - b.scoreExact,
+      weightShare: b.weightShare,
+    });
+  }
+  return out.sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
+}
+
 /**
  * The difference two portfolios make, measured — not asserted.
  */
@@ -267,7 +328,11 @@ export function estimateImpact(
     // Unrounded on both sides: differencing the DISPLAYED integers made every
     // realistic single-position change measure as exactly 0, which in turn made
     // the sizing loop fall back entirely on its secondary asset-class signal.
-    healthDelta: after.health.totalExact - before.health.totalExact,
+    alignmentDelta:
+      after.alignment.scoreExact != null && before.alignment.scoreExact != null
+        ? after.alignment.scoreExact - before.alignment.scoreExact
+        : null,
+    themeDeltas: themeDeltasOf(before, after),
     riskDelta:
       volBefore != null && volAfter != null
         ? Math.round((volAfter - volBefore) * 10) / 10
@@ -288,6 +353,6 @@ export function simulate(
   changes: PortfolioChange[],
   ctx: MarketContext,
 ): { after: PortfolioEvaluation; impact: ImpactEstimate } {
-  const after = evaluate(applyChanges(before.holdings, changes), ctx);
+  const after = evaluate(applyChanges(before.holdings, changes), ctx, before.policy);
   return { after, impact: estimateImpact(before, after) };
 }

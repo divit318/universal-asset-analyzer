@@ -52,7 +52,7 @@ import { AI_NARRATIVE_UNAVAILABLE, AI_RECOVERY_HINT } from "../ai/availability";
  *
  * The original prompt asked for "one paragraph: the portfolio's style, strengths,
  * weaknesses and dominant theme". On a real book it produced ninety words that
- * restated figures already on the screen — 8.3% VOO, 13.5% cash, health 75 — in
+ * restated figures already on the screen — 8.3% VOO, 13.5% cash, alignment 75 — in
  * prose. That is a summary, not an analysis, and it fails the only test that
  * matters for an AI feature in a tool like this: it did not tell the user anything
  * the deterministic engines had not already told them, better and with citations.
@@ -74,8 +74,8 @@ import { AI_NARRATIVE_UNAVAILABLE, AI_RECOVERY_HINT } from "../ai/availability";
  *     about is not a thesis, and naming the condition converts a vague feeling of
  *     conviction into something the user can actually monitor.
  *
- * The prompt is also given the health engine's WEAKEST dimensions with their own
- * explanations, the return attribution, and the outcome of the user's last change —
+ * The prompt is also given the alignment engine's WEAKEST themes with their own
+ * measured findings, the return attribution, and the outcome of the user's last change —
  * none of which the previous prompt could see. Most of the quality gain is from the
  * grounding, not from the wording.
  *
@@ -133,13 +133,16 @@ export function compositionKey(evaluation: PortfolioEvaluation): string {
 
 /** Grounded, honest summary used when the AI is unavailable or returns nothing usable. */
 export function fallbackThesis(evaluation: PortfolioEvaluation): string {
-  const { allocation, risk, health, totalValue } = evaluation;
+  const { allocation, risk, alignment, totalValue } = evaluation;
   const top = allocation.byAssetClass.slices[0];
   const topLabel = top ? PORTFOLIO_CLASS_LABEL[top.key as keyof typeof PORTFOLIO_CLASS_LABEL] ?? top.label : "no single class";
   const concentrationNote = risk.topAssetClassWeight > 50
     ? `concentrated in ${topLabel.toLowerCase()} (${risk.topAssetClassWeight.toFixed(0)}% of value)`
     : `spread across ${allocation.byAssetClass.slices.length} asset classes with no single one dominating`;
-  return `A ${formatCurrency(totalValue)} portfolio ${concentrationNote}. Health scores ${health.total}/100 (${health.grade}). ` +
+  const alignmentNote = alignment.score != null
+    ? `Alignment with the stated policy: ${alignment.score}/100 (${alignment.label}).`
+    : "Alignment with the stated policy is not scorable on the available data.";
+  return `A ${formatCurrency(totalValue)} portfolio ${concentrationNote}. ${alignmentNote} ` +
     `${AI_NARRATIVE_UNAVAILABLE} ${AI_RECOVERY_HINT}`;
 }
 
@@ -364,7 +367,7 @@ export function resolveSectionConflicts(
 
 /** Exported so the parity harness runs the exact production prompt. */
 export function buildThesisPrompt(evaluation: PortfolioEvaluation, extra: ThesisContext): string {
-  const { holdings, allocation, risk, health, totalValue } = evaluation;
+  const { holdings, allocation, risk, alignment, totalValue } = evaluation;
   const top = [...holdings].sort((a, b) => b.weight - a.weight).slice(0, 10);
   const holdingLines = top
     .map(
@@ -377,15 +380,16 @@ export function buildThesisPrompt(evaluation: PortfolioEvaluation, extra: Thesis
     .map((s) => `${s.label}: ${s.weight.toFixed(1)}%`)
     .join(", ");
 
-  // The health engine's own weakest dimensions, WITH its explanations. The previous
-  // prompt saw only the total, so it could never discuss why the score was what it
-  // was — it had to guess, and a guess about the user's own score is worse than
-  // silence.
-  const weakest = health.dimensions
-    .filter((d) => d.score != null)
+  // The alignment engine's weakest themes, WITH its measured findings. The
+  // previous prompt saw only the total, so it could never discuss why the score
+  // was what it was — it had to guess, and a guess about the user's own score is
+  // worse than silence. Mismatches carry the investor's own limit and the
+  // measured breach, which is exactly the evidence a thesis should cite.
+  const weakest = alignment.themes
+    .filter((t) => t.score != null)
     .sort((a, b) => a.score! - b.score!)
     .slice(0, 4)
-    .map((d) => `${d.name}: ${d.score}/100 — ${d.explanation}`)
+    .map((t) => `${t.label}: ${t.score}/100 — ${t.finding}`)
     .join("\n");
 
   // Correlation pairs and factor loadings are what make a HIDDEN concentration
@@ -418,7 +422,7 @@ export function buildThesisPrompt(evaluation: PortfolioEvaluation, extra: Thesis
     : "Return attribution unavailable (no cost basis recorded).";
 
   const trajectoryLine = extra.lastChange
-    ? `The investor's most recent executed change moved health ${extra.lastChange.healthBefore} -> ${extra.lastChange.healthAfter} ` +
+    ? `The investor's most recent executed change moved the alignment score ${extra.lastChange.scoreBefore} -> ${extra.lastChange.scoreAfter} ` +
       `and the largest asset class ${extra.lastChange.concentrationBefore.toFixed(1)}% -> ${extra.lastChange.concentrationAfter.toFixed(1)}%.`
     : "No executed changes recorded yet.";
 
@@ -431,8 +435,8 @@ export function buildThesisPrompt(evaluation: PortfolioEvaluation, extra: Thesis
    * contradicted the deterministic panels rendered inches away:
    *
    *   • "USD Cash is fully hedged against inflation" — cash is the single worst
-   *     inflation hedge, and the health engine had scored Inflation Protection
-   *     32/100 for exactly that reason.
+   *     inflation hedge, and the scoring engine of the day had scored inflation
+   *     protection 32/100 for exactly that reason.
    *   • "a small number of holdings ... account for 11.3 effective drivers" — 11.3
    *     effective drivers is the definition of a BROAD result; the attribution panel
    *     directly above said "Moderately broad".
@@ -467,7 +471,7 @@ ${groundTruth}
 
 PORTFOLIO
 Total value: ${formatCurrency(totalValue)}
-Health: ${health.total}/100 (${health.grade})
+Alignment with the investor's own stated policy: ${alignment.score != null ? `${alignment.score}/100 (${alignment.label})` : "not scorable"}${alignment.confirmed ? "" : " — scored against assumed defaults the investor has not confirmed"}
 Annualized volatility: ${risk.annualizedVolatility != null ? risk.annualizedVolatility.toFixed(1) + "%" : "not measurable"}
 Beta vs ${risk.benchmarkLabel ?? "market"}: ${risk.beta != null ? risk.beta.toFixed(2) : "not measurable"}
 Largest asset class: ${risk.topAssetClassWeight.toFixed(0)}% · largest single holding: ${risk.topHoldingWeight.toFixed(1)}%
@@ -479,7 +483,7 @@ ${classLines}
 TOP HOLDINGS (weight, own return)
 ${holdingLines}
 
-WEAKEST HEALTH DIMENSIONS
+WEAKEST ALIGNMENT THEMES (scored against the investor's OWN stated policy)
 ${weakest || "none scored"}
 
 MACRO FACTOR EXPOSURE (portfolio % move per unit shock)
@@ -519,23 +523,24 @@ function cleanString(v: unknown): string {
 }
 
 /**
- * Deterministic strengths and risks, derived from the health engine's own
- * dimensions.
+ * Deterministic strengths and risks, derived from the alignment engine's own
+ * themes.
  *
- * The fallback must still be USEFUL, not an apology. Health already knows which
- * dimensions are strong and weak and has written a sentence about each, so an
- * AI outage degrades the thesis from "judgement" to "the measured facts,
- * ranked" rather than to nothing.
+ * The fallback must still be USEFUL, not an apology. The alignment engine
+ * already knows which themes sit inside the investor's limits and which breach
+ * them, and has written a measured sentence about each, so an AI outage
+ * degrades the thesis from "judgement" to "the measured facts, ranked" rather
+ * than to nothing.
  */
 function fallbackStrengthsAndRisks(evaluation: PortfolioEvaluation): { strengths: string[]; risks: string[] } {
-  const scored = evaluation.health.dimensions.filter((d) => d.score != null);
+  const scored = evaluation.alignment.themes.filter((t) => t.score != null);
   const byScore = [...scored].sort((a, b) => b.score! - a.score!);
   return {
-    strengths: byScore.slice(0, 2).map((d) => `${d.name} (${d.score}/100). ${d.explanation}`),
+    strengths: byScore.slice(0, 2).map((t) => `${t.label} (${t.score}/100). ${t.finding}`),
     risks: byScore
       .slice(-2)
       .reverse()
-      .map((d) => `${d.name} (${d.score}/100). ${d.explanation}`),
+      .map((t) => `${t.label} (${t.score}/100). ${t.finding}`),
   };
 }
 

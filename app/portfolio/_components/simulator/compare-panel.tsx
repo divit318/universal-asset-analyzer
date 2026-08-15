@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Card, Badge, Button, ScoreChip } from "@/app/_components/ui";
+import { Card, Badge, Button } from "@/app/_components/ui";
 import { formatCurrency } from "@/lib/format";
 import type { PortfolioAllocation } from "@/lib/portfolio/engines/allocation";
-import type { HealthScore } from "@/lib/portfolio/engines/health";
+import type { AlignmentReport } from "@/lib/portfolio/alignment/engine";
 import type { UniversalRisk } from "@/lib/portfolio/engines/risk";
 import type { ScenarioResult } from "@/lib/portfolio/engines/scenario";
 import type { UniversalPortfolioReport } from "@/lib/portfolio/report";
@@ -22,7 +22,7 @@ interface CompareSide {
   annualIncome: number;
   incomeYieldPct: number;
   allocation: PortfolioAllocation;
-  health: HealthScore;
+  alignment: AlignmentReport;
   risk: UniversalRisk;
   scenarios: ScenarioResult[];
 }
@@ -32,7 +32,7 @@ export type CompareTarget = { kind: "real" } | { kind: "simulation"; id: string 
 /**
  * Side-by-side comparison: a simulation vs the real portfolio, or vs another
  * simulation. Deltas are toned ONLY where one direction is unambiguously
- * better (health up, volatility down); scale numbers like total value get a
+ * better (alignment up, volatility down); scale numbers like total value get a
  * neutral delta — a bigger book is not a better book.
  */
 export function ComparePanel({
@@ -84,7 +84,7 @@ export function ComparePanel({
           annualIncome: ev.annualIncome,
           incomeYieldPct: ev.incomeYieldPct,
           allocation: ev.allocation,
-          health: ev.health,
+          alignment: ev.alignment,
           risk: ev.risk,
           scenarios: ev.scenarios,
         };
@@ -102,7 +102,7 @@ export function ComparePanel({
           annualIncome: r.annualIncome,
           incomeYieldPct: r.incomeYieldPct,
           allocation: r.allocation,
-          health: r.health,
+          alignment: r.alignment,
           risk: r.risk,
           scenarios: r.scenarios,
         };
@@ -225,8 +225,11 @@ function CompareBody({ a, b }: { a: CompareSide; b: CompareSide }) {
 
       {/* ── Headline ── */}
       <CompareSection title="Headline">
-        <CompareRow label="Health score" a={a.health.totalExact} b={b.health.totalExact} format={(v) => String(Math.round(v))} higherBetter />
-        <CompareRow label="Health grade" a={null} b={null} textA={a.health.grade} textB={b.health.grade} />
+        {/* Skipped entirely when either side is unscorable: a delta between a
+            score and a non-score is unknown, not zero. */}
+        {a.alignment.scoreExact != null && b.alignment.scoreExact != null && (
+          <CompareRow label="Alignment score" a={a.alignment.scoreExact} b={b.alignment.scoreExact} format={(v) => String(Math.round(v))} higherBetter />
+        )}
         <CompareRow
           label="Total value"
           a={sameCurrency ? a.totalValue : null}
@@ -282,7 +285,14 @@ function SideHeader({ side, align }: { side: CompareSide; align: "left" | "right
           {side.kind === "real" ? "Real" : "Simulation"}
         </Badge>
       </div>
-      <ScoreChip kind="health" score={side.health.total} size="sm" />
+      {/* Null-safe: an unscorable book reads "—", never a fabricated midpoint. */}
+      <span className="flex items-baseline gap-1.5" title={side.alignment.summary}>
+        <span className="text-[10px] uppercase tracking-widest text-muted">Alignment</span>
+        <span className="font-mono text-sm font-semibold tabular-nums text-foreground">
+          {side.alignment.score ?? "—"}
+        </span>
+        {side.alignment.score != null && <span className="font-mono text-[10px] text-muted/50">/100</span>}
+      </span>
     </div>
   );
 }

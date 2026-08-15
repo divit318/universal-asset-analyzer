@@ -124,8 +124,7 @@ export function summaryOf(evaluation: PortfolioEvaluation): PortfolioSnapshotSum
   return {
     totalValue: evaluation.totalValue,
     totalCost: evaluation.holdings.reduce((s, h) => s + h.costBasisBase, 0),
-    health: evaluation.health.total,
-    healthGrade: evaluation.health.grade,
+    alignment: evaluation.alignment.score,
     volatility: evaluation.risk.annualizedVolatility,
     topAssetClassWeight: evaluation.risk.topAssetClassWeight,
     allocation: evaluation.allocation.byAssetClass.slices.map((s) => ({ assetClass: s.key, weight: s.weight })),

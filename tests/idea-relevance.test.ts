@@ -1,11 +1,15 @@
 /**
  * The Idea Decision Engine (lib/portfolio/engines/idea-relevance.ts).
  *
- * What is pinned here is the set of properties that make the Pipeline a decision
- * surface rather than a list: the ordering is by impact and not by score, an
- * unassessable idea never outranks an evidenced one, the trade engine wins any
- * overlap, every card answers all five questions, and identical inputs produce
- * byte-identical output.
+ * What is pinned here is the set of properties that make the Watchlist a
+ * decision surface rather than a list: the ordering is by impact and not by
+ * score, an unassessable idea never outranks an evidenced one, the trade
+ * engine wins any overlap, every card answers all five questions, and
+ * identical inputs produce byte-identical output.
+ *
+ * Rows are built through the REAL derivation chain (deriveWorkflow →
+ * toIdeaRow), so these tests also pin that a verdict can never contradict the
+ * evidence — the old board's "hasn't been researched" bug class.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -16,9 +20,11 @@ import {
   type IdeaPortfolioContext,
   type LinkedTrade,
 } from "../lib/portfolio/engines/idea-relevance";
-import { buildPipelineRows, type TrackedIdea } from "../lib/idea-stage";
+import { deriveWorkflow, EMPTY_EVIDENCE, type IdeaEvidence } from "../lib/ideas/evidence";
+import { toIdeaRow } from "../lib/ideas/rows";
 import { describeOrigin } from "../lib/idea-source";
 import type { PortfolioFitAnalysis, FitTier } from "../lib/ios/types";
+import type { WatchlistItem } from "../lib/types";
 
 const NOW = Date.parse("2026-07-29T00:00:00Z");
 
@@ -69,18 +75,43 @@ function fit(over: Partial<PortfolioFitAnalysis> & { symbol: string }): Portfoli
   };
 }
 
-const idea = (over: Partial<TrackedIdea> & { symbol: string }): TrackedIdea => ({
+interface IdeaFixture {
+  item: WatchlistItem;
+  held?: boolean;
+  evidence?: Partial<IdeaEvidence>;
+}
+
+const idea = (over: Partial<WatchlistItem> & { symbol: string }): WatchlistItem => ({
   name: over.symbol,
+  addedAt: "2026-07-01T00:00:00Z",
+  targetPrice: null,
+  targetDirection: null,
+  alertPctDrop: null,
+  notes: null,
+  buyTrigger: null,
+  sellTrigger: null,
+  conviction: null,
+  horizon: null,
+  lastReviewedAt: null,
+  lastResearchedAt: null,
   stage: "surfaced",
   stageChangedAt: null,
-  addedAt: "2026-07-01T00:00:00Z",
   source: null,
   sourceDetail: null,
   ...over,
 });
 
-function rowsFor(tracked: TrackedIdea[], holdings: Parameters<typeof buildPipelineRows>[0]["holdings"] = []) {
-  return buildPipelineRows({ tracked, holdings, now: NOW });
+/** Rows through the real chain: evidence → workflow → engine row. */
+function rowsFor(fixtures: IdeaFixture[]) {
+  return fixtures.map(({ item, held = false, evidence }) => {
+    const ev = { ...EMPTY_EVIDENCE, ...evidence };
+    return toIdeaRow(item, {
+      workflow: deriveWorkflow({ held, stage: item.stage, item, evidence: ev }),
+      evidence: ev,
+      held,
+      now: NOW,
+    });
+  });
 }
 
 const context = (over: Partial<IdeaPortfolioContext> = {}): IdeaPortfolioContext => ({
@@ -88,7 +119,7 @@ const context = (over: Partial<IdeaPortfolioContext> = {}): IdeaPortfolioContext
   hasPortfolio: true,
   totalValue: 1_000_000,
   positionHhi: 3_440,
-  healthScore: 75,
+  alignmentScore: 75,
   weights: new Map(),
   sectors: new Map(),
   trades: new Map(),
@@ -128,7 +159,7 @@ describe("impact", () => {
 /* ------------------------------------------------------------------ */
 
 describe("ordering", () => {
-  const rows = rowsFor([idea({ symbol: "AAA" }), idea({ symbol: "BBB" }), idea({ symbol: "CCC" })]);
+  const rows = rowsFor([{ item: idea({ symbol: "AAA" }) }, { item: idea({ symbol: "BBB" }) }, { item: idea({ symbol: "CCC" }) }]);
 
   it("ranks by impact, not by fit score", () => {
     const fits = new Map([
@@ -150,7 +181,7 @@ describe("ordering", () => {
   });
 
   it("gives every idea a distinct rank out of the same total", () => {
-    const fits = new Map(rows.map((r) => [r.symbol, fit({ symbol: r.symbol })]));
+    const fits = new Map<string, PortfolioFitAnalysis>(rows.map((r) => [r.symbol, fit({ symbol: r.symbol })]));
     const out = buildIdeaAssessments({ rows, fits, context: context() });
     expect(new Set(out.map((a) => a.priority)).size).toBe(rows.length);
     for (const a of out) expect(a.rationale.whyThisOne).toContain(`of ${rows.length} tracked ideas`);
@@ -167,15 +198,13 @@ describe("verdicts", () => {
     title: "Trim AAPL by $40,000",
     rationale: "AAPL is 31% of the book, above your 25% position limit.",
     amount: 40_000,
-    healthDelta: 2.4,
+    alignmentDelta: 2.4,
     confidence: 78,
     alternativesEvaluated: 14,
   };
 
   it("defers to the trade engine whenever it has simulated a trade", () => {
-    const rows = rowsFor([idea({ symbol: "AAPL", stage: "owned" })], [
-      { symbol: "AAPL", name: "Apple", assetClass: "equity", acquiredAt: "2026-01-01" },
-    ]);
+    const rows = rowsFor([{ item: idea({ symbol: "AAPL", stage: "owned" }), held: true }]);
     const out = buildIdeaAssessments({
       rows,
       fits: new Map([["AAPL", fit({ symbol: "AAPL", fitScore: 90 })]]),
@@ -188,9 +217,7 @@ describe("verdicts", () => {
   });
 
   it("calls an oversized holding a sizing question, never a sell", () => {
-    const rows = rowsFor([idea({ symbol: "VOO", stage: "owned" })], [
-      { symbol: "VOO", name: "Vanguard S&P 500", assetClass: "etf", acquiredAt: "2026-01-01" },
-    ]);
+    const rows = rowsFor([{ item: idea({ symbol: "VOO", stage: "owned" }), held: true }]);
     const out = buildIdeaAssessments({
       rows,
       fits: new Map([["VOO", fit({ symbol: "VOO", suggestedAllocationPct: 3 })]]),
@@ -203,9 +230,7 @@ describe("verdicts", () => {
   });
 
   it("leaves a correctly-sized holding alone", () => {
-    const rows = rowsFor([idea({ symbol: "O", stage: "owned" })], [
-      { symbol: "O", name: "Realty Income", assetClass: "reit", acquiredAt: "2026-01-01" },
-    ]);
+    const rows = rowsFor([{ item: idea({ symbol: "O", stage: "owned" }), held: true }]);
     const out = buildIdeaAssessments({
       rows,
       fits: new Map([["O", fit({ symbol: "O", suggestedAllocationPct: 3 })]]),
@@ -215,7 +240,7 @@ describe("verdicts", () => {
   });
 
   it("deprioritizes a poor fit — and keeps it", () => {
-    const rows = rowsFor([idea({ symbol: "USDT-USD" })]);
+    const rows = rowsFor([{ item: idea({ symbol: "USDT-USD" }) }]);
     const out = buildIdeaAssessments({
       rows,
       fits: new Map([["USDT-USD", fit({ symbol: "USDT-USD", fitScore: 22, fitTier: "avoid" })]]),
@@ -229,7 +254,7 @@ describe("verdicts", () => {
   it("never says 'hold' about something you don't hold", () => {
     // A stablecoin the portfolio has never held was labelled HOLD on the rendered
     // board, which reads as advice to keep something the user doesn't have.
-    const rows = rowsFor([idea({ symbol: "USDT-USD" })]);
+    const rows = rowsFor([{ item: idea({ symbol: "USDT-USD" }) }]);
     const out = buildIdeaAssessments({
       rows,
       fits: new Map([["USDT-USD", fit({ symbol: "USDT-USD", fitScore: 57, fitTier: "neutral", confidence: 35 })]]),
@@ -239,10 +264,24 @@ describe("verdicts", () => {
     expect(out[0].headline).toContain("35% of the fit score is evidenced");
   });
 
-  it("routes a thesis-stage idea to a decision, not to more research", () => {
-    const rows = rowsFor([idea({ symbol: "BAC", stage: "thesis" })]);
+  it("routes a written-up idea to a decision, not to more research", () => {
+    // A thesis EXISTS (the written view is the artifact); the derived workflow
+    // is `ready`, and the honest ask is a decision.
+    const rows = rowsFor([{ item: idea({ symbol: "BAC", notes: "Banks re-rate as deposit costs fall." }) }]);
     const out = buildIdeaAssessments({ rows, fits: new Map([["BAC", fit({ symbol: "BAC" })]]), context: context() });
     expect(out[0].verdict).toBe("decide");
+  });
+
+  it("asks for a THESIS — never more research — once research evidence exists", () => {
+    // The old board's bug class: a researched name whose stage nobody touched
+    // was told "hasn't been researched". The verdict must now follow evidence.
+    const rows = rowsFor([
+      { item: idea({ symbol: "SOFI" }), evidence: { lastResearchedAt: "2026-07-26T00:00:00Z" } },
+    ]);
+    const out = buildIdeaAssessments({ rows, fits: new Map([["SOFI", fit({ symbol: "SOFI" })]]), context: context() });
+    expect(out[0].verdict).toBe("thesis");
+    expect(out[0].headline).not.toContain("hasn't been researched");
+    expect(out[0].headline).toContain("research exists");
   });
 });
 
@@ -252,7 +291,10 @@ describe("verdicts", () => {
 
 describe("rationale", () => {
   it("answers all five questions for every idea, assessed or not", () => {
-    const rows = rowsFor([idea({ symbol: "AAA", source: "screener", sourceDetail: "Equity screen · rank #4" }), idea({ symbol: "ZZZ" })]);
+    const rows = rowsFor([
+      { item: idea({ symbol: "AAA", source: "screener", sourceDetail: "Equity screen · rank #4" }) },
+      { item: idea({ symbol: "ZZZ" }) },
+    ]);
     const out = buildIdeaAssessments({
       rows,
       fits: new Map([["AAA", fit({ symbol: "AAA" })]]),
@@ -266,27 +308,29 @@ describe("rationale", () => {
   });
 
   it("grounds 'why am I seeing this' in the recorded origin", () => {
-    const rows = rowsFor([idea({ symbol: "AAA", source: "screener", sourceDetail: "Crypto screen · rank #7" })]);
+    const rows = rowsFor([{ item: idea({ symbol: "AAA", source: "screener", sourceDetail: "Crypto screen · rank #7" }) }]);
     const out = buildIdeaAssessments({ rows, fits: new Map(), context: context() });
     expect(out[0].rationale.whySeeing).toContain("Surfaced by a screen");
     expect(out[0].rationale.whySeeing).toContain("Crypto screen · rank #7");
   });
 
   it("says so when the origin was never recorded, rather than inventing one", () => {
-    const rows = rowsFor([idea({ symbol: "LEGACY" })]);
+    const rows = rowsFor([{ item: idea({ symbol: "LEGACY" }) }]);
     const out = buildIdeaAssessments({ rows, fits: new Map(), context: context() });
     expect(out[0].rationale.whySeeing).toContain("Origin not recorded");
   });
 
   it("never claims a market-timing signal it doesn't have", () => {
-    const rows = rowsFor([idea({ symbol: "AAA", stageChangedAt: NOW - 40 * 86_400_000 })]);
+    const rows = rowsFor([
+      { item: idea({ symbol: "AAA", addedAt: new Date(NOW - 40 * 86_400_000).toISOString() }) },
+    ]);
     const out = buildIdeaAssessments({ rows, fits: new Map([["AAA", fit({ symbol: "AAA" })]]), context: context() });
     expect(out[0].rationale.whyNow).toContain("No timing signal");
     expect(out[0].rationale.whyNow).toContain("40d");
   });
 
   it("reports a real price-target distance when one exists", () => {
-    const rows = rowsFor([idea({ symbol: "AAA", targetPrice: 100, targetDirection: "below" })]);
+    const rows = rowsFor([{ item: idea({ symbol: "AAA", targetPrice: 100, targetDirection: "below" }) }]);
     const out = buildIdeaAssessments({
       rows,
       fits: new Map([["AAA", fit({ symbol: "AAA" })]]),
@@ -297,11 +341,11 @@ describe("rationale", () => {
     expect(out[0].rationale.whyNow).toContain("$100");
   });
 
-  it("compares against real pipeline alternatives, never fabricated ones", () => {
+  it("compares against real tracked alternatives, never fabricated ones", () => {
     const rows = rowsFor([
-      idea({ symbol: "KGC" }),
-      idea({ symbol: "AU" }),
-      idea({ symbol: "NEM" }),
+      { item: idea({ symbol: "KGC" }) },
+      { item: idea({ symbol: "AU" }) },
+      { item: idea({ symbol: "NEM" }) },
     ]);
     const sectors = new Map([
       ["KGC", "Materials"],
@@ -325,7 +369,7 @@ describe("rationale", () => {
     // ("adds missing Utilities exposure") lost to a 24%-weight Objective
     // dimension scoring 87, so a specific gap-filling idea was explained as
     // "well-rounded fundamentals".
-    const rows = rowsFor([idea({ symbol: "SBS" })]);
+    const rows = rowsFor([{ item: idea({ symbol: "SBS" }) }]);
     const out = buildIdeaAssessments({
       rows,
       fits: new Map([
@@ -350,24 +394,26 @@ describe("rationale", () => {
   });
 
   it("names the gap it fills, rather than the dimension's label", () => {
-    const rows = rowsFor([idea({ symbol: "SBS" })]);
+    const rows = rowsFor([{ item: idea({ symbol: "SBS" }) }]);
     const out = buildIdeaAssessments({ rows, fits: new Map([["SBS", fit({ symbol: "SBS" })]]), context: context() });
     // "Sector stays unfilled" said nothing; the message names the exposure.
     expect(out[0].expected?.fills).toBe("Portfolio holds no Healthcare exposure");
     expect(out[0].rationale.ifIgnored).toContain("Portfolio holds no Healthcare exposure");
   });
 
-  it("uses stage LABELS in prose, never the stored identifiers", () => {
-    const rows = rowsFor([idea({ symbol: "AAA", stage: "researching" })]);
+  it("uses workflow LABELS in prose, never the stored identifiers", () => {
+    const rows = rowsFor([
+      { item: idea({ symbol: "AAA" }), evidence: { lastResearchedAt: "2026-07-20T00:00:00Z" } },
+    ]);
     const out = buildIdeaAssessments({ rows, fits: new Map(), context: context() });
-    expect(out[0].rationale.whySeeing).toContain("Researching");
-    expect(out[0].rationale.whySeeing).not.toContain("in researching");
+    expect(out[0].rationale.whySeeing).toContain("In work");
+    expect(out[0].rationale.whySeeing).not.toContain("working");
   });
 
   it("orders identically to the ranks it displays, even when impact ties", () => {
     // The board sorts by `priority`; if two ideas tie on impact the engine
     // separates them by fit, and any second ordering would show #27 above #26.
-    const rows = rowsFor([idea({ symbol: "VCLT" }), idea({ symbol: "VOO" })]);
+    const rows = rowsFor([{ item: idea({ symbol: "VCLT" }) }, { item: idea({ symbol: "VOO" }) }]);
     const fits = new Map([
       ["VCLT", fit({ symbol: "VCLT", fitScore: 57, confidence: 51, suggestedAllocationPct: 4 })],
       ["VOO", fit({ symbol: "VOO", fitScore: 58, confidence: 51, suggestedAllocationPct: 4 })],
@@ -382,7 +428,7 @@ describe("rationale", () => {
   });
 
   it("states the counterfactual in measured terms", () => {
-    const rows = rowsFor([idea({ symbol: "AAA" })]);
+    const rows = rowsFor([{ item: idea({ symbol: "AAA" }) }]);
     const out = buildIdeaAssessments({
       rows,
       fits: new Map([["AAA", fit({ symbol: "AAA", projectedHHI: 3_300 })]]),
@@ -400,7 +446,7 @@ describe("rationale", () => {
 
 describe("explainability", () => {
   it("publishes the impact formula and every factor behind it", () => {
-    const rows = rowsFor([idea({ symbol: "AAA" })]);
+    const rows = rowsFor([{ item: idea({ symbol: "AAA" }) }]);
     const out = buildIdeaAssessments({ rows, fits: new Map([["AAA", fit({ symbol: "AAA" })]]), context: context() });
     const ex = out[0].explanation!;
     expect(ex.method).toContain("movable share");
@@ -412,13 +458,13 @@ describe("explainability", () => {
   });
 
   it("declares that fit is not the trade engine", () => {
-    const rows = rowsFor([idea({ symbol: "AAA" })]);
+    const rows = rowsFor([{ item: idea({ symbol: "AAA" }) }]);
     const out = buildIdeaAssessments({ rows, fits: new Map([["AAA", fit({ symbol: "AAA" })]]), context: context() });
     expect(out[0].explanation!.caveats.join(" ")).toContain("Decisions tab");
   });
 
   it("offers no explanation at all rather than an empty one when there is no fit", () => {
-    const rows = rowsFor([idea({ symbol: "HE=F" })]);
+    const rows = rowsFor([{ item: idea({ symbol: "HE=F" }) }]);
     const out = buildIdeaAssessments({ rows, fits: new Map(), context: context() });
     expect(out[0].explanation).toBeNull();
     expect(out[0].impactPct).toBeNull();
@@ -426,7 +472,10 @@ describe("explainability", () => {
   });
 
   it("is deterministic — identical inputs produce identical output", () => {
-    const rows = rowsFor([idea({ symbol: "AAA" }), idea({ symbol: "BBB", stage: "thesis" })]);
+    const rows = rowsFor([
+      { item: idea({ symbol: "AAA" }) },
+      { item: idea({ symbol: "BBB", notes: "a written view" }) },
+    ]);
     const fits = new Map([
       ["AAA", fit({ symbol: "AAA" })],
       ["BBB", fit({ symbol: "BBB", fitScore: 55 })],
@@ -437,7 +486,7 @@ describe("explainability", () => {
   });
 
   it("degrades honestly with no portfolio at all", () => {
-    const rows = rowsFor([idea({ symbol: "AAA" })]);
+    const rows = rowsFor([{ item: idea({ symbol: "AAA" }) }]);
     const out = buildIdeaAssessments({
       rows,
       fits: new Map([["AAA", fit({ symbol: "AAA", isGeneric: true })]]),

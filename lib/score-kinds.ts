@@ -30,7 +30,7 @@
  * Pure and client-safe — no imports beyond types.
  */
 
-export type ScoreKindId = "conviction" | "screen" | "quality" | "fit" | "quant" | "health";
+export type ScoreKindId = "conviction" | "screen" | "quality" | "fit" | "quant" | "alignment";
 
 export interface ScoreKindSpec {
   id: ScoreKindId;
@@ -103,13 +103,13 @@ export const SCORE_KINDS: Record<ScoreKindId, ScoreKindSpec> = {
     banded: true,
   },
 
-  health: {
-    id: "health",
-    label: "Portfolio health",
-    question: "How sound is the book as a whole?",
-    engine: "Health engine (lib/portfolio/engines/health.ts)",
+  alignment: {
+    id: "alignment",
+    label: "Portfolio alignment",
+    question: "How closely does the book match what YOU said you want?",
+    engine: "Alignment engine (lib/portfolio/alignment/engine.ts)",
     inputs:
-      "Diversification, liquidity, income, risk and cost dimensions, each weighted by how much of the portfolio it could actually be measured on. Dimensions with no basis abstain instead of scoring 50.",
+      "Measured portfolio facts (structure, downside, concentration, liquidity, income, inflation, geography) evaluated against your own stated priorities and tolerances. Themes you opted out of are facts, not judgments; unmeasurable themes are excluded by name, never guessed.",
     banded: false,
   },
 };
