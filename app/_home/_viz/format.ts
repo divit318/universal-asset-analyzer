@@ -37,16 +37,17 @@ export function fmtMoney(value: number | null | undefined): string {
 }
 
 /**
- * Grade band → data colour (§16 — data-only colour). One mapping shared by
- * every surface that renders the health grade, so the brief's KPI strip and
- * the Portfolio Health ring can never disagree about what a "B" looks like.
+ * Alignment-score band → data colour (§16 — data-only colour). One mapping,
+ * on the alignment engine's own label bands (alignmentLabelOf: ≥70 aligned,
+ * <55 strained), shared by every surface that renders the score — so the
+ * brief's KPI strip and the Alignment ring can never disagree about what a
+ * 68 looks like.
  */
-export function gradeTone(grade: string | null): { stroke: string; text: string } {
-  const g = (grade ?? "").charAt(0).toUpperCase();
-  if (g === "A" || g === "B") return { stroke: "var(--positive)", text: "text-positive" };
-  if (g === "C") return { stroke: "var(--warning)", text: "text-warning" };
-  if (g === "D" || g === "F") return { stroke: "var(--negative)", text: "text-negative" };
-  return { stroke: "var(--brand)", text: "text-foreground" };
+export function alignmentToneViz(score: number | null): { stroke: string; text: string } {
+  if (score == null) return { stroke: "var(--brand)", text: "text-foreground" };
+  if (score >= 70) return { stroke: "var(--positive)", text: "text-positive" };
+  if (score >= 55) return { stroke: "var(--warning)", text: "text-warning" };
+  return { stroke: "var(--negative)", text: "text-negative" };
 }
 
 /**

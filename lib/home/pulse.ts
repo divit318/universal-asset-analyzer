@@ -3,25 +3,60 @@
  *
  * A pure projection of `UniversalPortfolioReport` onto the handful of facts
  * that belong on a homepage. Every number here is *read* from an engine that
- * already computed it — health from engines/health, concentration from
+ * already computed it — alignment from portfolio/alignment, concentration from
  * engines/allocation, drift from engines/optimize's classTargets, movers from
  * the holdings themselves. This module deliberately computes nothing new:
- * a second, subtly-different "portfolio health" on the homepage is precisely
+ * a second, subtly-different "portfolio score" on the homepage is precisely
  * the drift this codebase has already had to unwind once.
  *
  * Pure — no I/O. Unit-tested in tests/home-pulse.test.ts.
  */
 
 import type { UniversalPortfolioReport } from "../portfolio/report";
-import type { HealthScore } from "../portfolio/engines/health";
+import type { AlignmentReport } from "../portfolio/alignment/engine";
 import { metricSessionState } from "../metric";
-import type { DayContributor, HealthFactor, HealthRadarAxis, PortfolioPulse, PulseMover } from "./contracts";
+import type { AlignmentFactor, AlignmentRadarAxis, DayContributor, PortfolioPulse, PulseMover, PulsePosition, PulseSleeve } from "./contracts";
+
+/** How many "top of book" rows the pulse carries — the Today page's table. */
+const TOP_POSITIONS = 6;
+
+/**
+ * Largest positions by weight, with the session move joined from the report's
+ * stamped day moves. Display-only projection — no new math.
+ */
+function buildTopPositions(report: UniversalPortfolioReport): PulsePosition[] {
+  const dayBySymbol = new Map(
+    report.dayMoves.map((m) => [m.symbol, m.dayChange?.value ?? null]),
+  );
+  return report.holdings
+    .filter((h) => h.symbol != null && h.weight > 0)
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, TOP_POSITIONS)
+    .map((h) => ({
+      symbol: h.symbol as string,
+      name: h.name,
+      weightPct: h.weight,
+      dayChangePct: dayBySymbol.get(h.symbol as string) ?? null,
+    }));
+}
+
+/** Asset-class sleeves, straight from the allocation engine's own slices. */
+function buildSleeves(report: UniversalPortfolioReport): PulseSleeve[] {
+  return report.allocation.byAssetClass.slices
+    .filter((s) => s.weight >= 0.05)
+    .sort((a, b) => b.weight - a.weight)
+    .map((s) => ({ key: s.key, label: s.label, pct: s.weight }));
+}
 
 /** An empty portfolio has no pulse. It says so, rather than rendering zeros. */
 const EMPTY: PortfolioPulse = {
   status: "empty",
-  healthScore: null,
-  healthGrade: null,
+  topPositions: [],
+  sleeves: [],
+  alignmentScore: null,
+  alignmentLabel: null,
+  alignmentConfirmed: false,
+  topMismatch: null,
   totalValue: 0,
   todayChangePct: 0,
   todayChangeDollar: 0,
@@ -40,8 +75,8 @@ const EMPTY: PortfolioPulse = {
   radar: [],
   biggestStrength: null,
   biggestWeakness: null,
-  healthCoveragePct: null,
-  healthFactors: [],
+  alignmentEvidencePct: null,
+  alignmentFactors: [],
   topContributors: [],
   topContributorsResidualBps: null,
   dayCoveragePct: null,
@@ -100,74 +135,50 @@ export function buildTopContributors(
 }
 
 /**
- * Short axis labels for the radar. Keyed by the health engine's own dimension
- * names — so if a dimension is renamed there, the radar loses a label rather
+ * Short axis labels for the radar. Keyed by the alignment engine's own theme
+ * labels — so if a theme is renamed there, the radar loses a label rather
  * than silently drawing a mislabelled spoke.
  */
 const RADAR_SHORT: Record<string, string> = {
-  "Diversification": "Divers.",
-  "Expected Drawdown": "Risk",
-  "Holding Quality": "Quality",
-  "Income": "Income",
+  "Structure": "Structure",
+  "Downside": "Downside",
+  "Concentration": "Concentr.",
   "Liquidity": "Liquidity",
-  "Asset Allocation": "Allocation",
-  "Correlation": "Correl.",
-  "Inflation Protection": "Inflation",
-  "Currency Diversification": "Currency",
-  "Geographic Diversification": "Geography",
-  "Cash Management": "Cash",
+  "Income": "Income",
+  "Inflation": "Inflation",
+  "Geography & currency": "Geography",
 };
 
 /**
- * The dimensions the radar draws, in a fixed order so a portfolio's shape is
- * comparable to itself over time. Up to six are shown — a hexagon reads cleanly;
- * eleven spokes are a hairball. The rest still count toward strength/weakness.
+ * Projects the alignment engine's themes onto radar spokes. Reads scores
+ * verbatim; a spoke's value IS the theme's score. Themes with a stated
+ * priority but no score (insufficient data) draw faded (`covered: false`) at a
+ * neutral fallback so the shape stays a closed polygon rather than collapsing
+ * to the centre; opted-out themes are omitted entirely — the investor said
+ * they are not part of the picture.
  */
-const RADAR_AXES = [
-  "Diversification",
-  "Expected Drawdown",
-  "Holding Quality",
-  "Income",
-  "Liquidity",
-  "Asset Allocation",
-] as const;
+export function buildAlignmentRadar(alignment: AlignmentReport): AlignmentRadarAxis[] {
+  const themes = (alignment.themes ?? []).filter((t) => t.priority > 0);
+  const axes: AlignmentRadarAxis[] = themes.map((t) => ({
+    axis: t.label,
+    shortLabel: RADAR_SHORT[t.label] ?? t.label,
+    score: t.score ?? 45,
+    covered: t.score != null,
+  }));
 
-/**
- * Projects the health engine's dimensions onto radar spokes. Reads scores
- * verbatim; a spoke's value IS the dimension's score. Abstained/missing
- * dimensions are drawn faded (`covered: false`) at their fallback so the shape
- * stays a closed polygon rather than collapsing to the centre.
- */
-export function buildHealthRadar(health: HealthScore): HealthRadarAxis[] {
-  const dimensions = health.dimensions ?? [];
-  const byName = new Map(dimensions.map((d) => [d.name, d]));
-  const axes: HealthRadarAxis[] = [];
-
-  for (const name of RADAR_AXES) {
-    const dim = byName.get(name);
-    if (!dim) continue;
-    const covered = dim.score != null && dim.coverage > 0;
-    axes.push({
-      axis: name,
-      shortLabel: RADAR_SHORT[name] ?? name,
-      score: dim.score ?? 45,
-      covered,
-    });
-  }
-
-  // A radar needs at least three spokes to be a shape. If the canonical set is
-  // too thin (an unusual, single-asset-class book), fall back to whatever
-  // covered dimensions exist, best-first.
+  // A radar needs at least three spokes to be a shape. With fewer stated
+  // priorities than that (a deliberately minimal policy), show the rated
+  // themes anyway, best-first — faded facts are not drawn as judgments.
   if (axes.length < 3) {
-    return dimensions
-      .filter((d) => d.score != null)
+    return (alignment.themes ?? [])
+      .filter((t) => t.score != null)
       .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
       .slice(0, 6)
-      .map((d) => ({
-        axis: d.name,
-        shortLabel: RADAR_SHORT[d.name] ?? d.name,
-        score: d.score as number,
-        covered: d.coverage > 0,
+      .map((t) => ({
+        axis: t.label,
+        shortLabel: RADAR_SHORT[t.label] ?? t.label,
+        score: t.score as number,
+        covered: true,
       }));
   }
 
@@ -175,24 +186,36 @@ export function buildHealthRadar(health: HealthScore): HealthRadarAxis[] {
 }
 
 /**
- * Projects the health engine's dimensions onto explanation rows, reading the
- * engine's OWN arithmetic verbatim: `effectiveWeight` (weight × coverage,
- * renormalized) and `scoreExact × effectiveWeight` are exactly the terms
- * `computeHealth` summed to produce `totalExact` — so the rows genuinely add
+ * Projects the alignment engine's themes onto explanation rows, reading the
+ * engine's OWN arithmetic verbatim: `weightShare` (priority share, renormalized
+ * over rated themes) and `scoreExact × weightShare` are exactly the terms
+ * `computeAlignment` summed to produce `scoreExact` — so the rows genuinely add
  * up to the number on screen, rather than approximating it.
  */
-export function buildHealthFactors(health: HealthScore): HealthFactor[] {
-  const dims = health.dimensions ?? [];
+export function buildAlignmentFactors(alignment: AlignmentReport): AlignmentFactor[] {
+  const themes = alignment.themes ?? [];
+  if (alignment.score == null) {
+    // No score, no decomposition to reconcile — every theme renders as a fact.
+    return themes.map((t) => ({
+      label: t.label,
+      score: t.score,
+      weightShare: null,
+      contributionPts: null,
+      covered: t.score != null,
+      evidencePct: t.evidencePct,
+      unratedReason: t.unratedReason,
+    }));
+  }
 
   // Largest-remainder rounding at 0.1-pt granularity so the displayed
-  // contributions sum EXACTLY to the health score on screen (audit NI-07).
+  // contributions sum EXACTLY to the alignment score on screen (audit NI-07).
   // Rounding each term independently drifted the decomposition ~0.4 pts from
   // the headline while explain.ts promised the rows "genuinely add up". The
-  // target is the DISPLAYED total (health.total), so what the user can sum
+  // target is the DISPLAYED total (alignment.score), so what the user can sum
   // matches what the user can see; each row moves at most 0.1 pt from the
   // engine's exact term to absorb the display rounding.
-  const target = Math.round(health.total * 10);
-  const exactTenths = dims.map((d) => (d.score != null ? (d.scoreExact ?? 0) * d.effectiveWeight * 10 : null));
+  const target = Math.round(alignment.score * 10);
+  const exactTenths = themes.map((t) => (t.score != null ? (t.scoreExact ?? 0) * t.weightShare * 10 : null));
   const floors = exactTenths.map((v) => (v != null ? Math.floor(v) : null));
   let deficit = target - floors.reduce<number>((s, v) => s + (v ?? 0), 0);
   const order = exactTenths
@@ -222,20 +245,21 @@ export function buildHealthFactors(health: HealthScore): HealthFactor[] {
     if (!moved) break;
   }
 
-  return dims
-    .map<HealthFactor>((d, i) => {
-      const scored = d.score != null;
+  return themes
+    .map<AlignmentFactor>((t, i) => {
+      const scored = t.score != null;
       return {
-        label: d.name,
-        score: d.score,
-        weightShare: scored ? d.effectiveWeight : null,
+        label: t.label,
+        score: t.score,
+        weightShare: scored ? t.weightShare : null,
         contributionPts: scored && tenths[i] != null ? (tenths[i] as number) / 10 : null,
-        covered: scored && d.coverage > 0,
-        coveragePct: Math.round(d.coverage * 100),
+        covered: scored,
+        evidencePct: t.evidencePct,
+        unratedReason: t.unratedReason,
       };
     })
-    // Biggest contributors first; abstained dimensions sink to the bottom
-    // (they still render, faded — an abstention is information).
+    // Biggest contributors first; unrated themes sink to the bottom
+    // (they still render, faded — an opt-out or a data gap is information).
     .sort((a, b) => (b.contributionPts ?? -1) - (a.contributionPts ?? -1));
 }
 
@@ -299,22 +323,25 @@ export function buildPortfolioPulse(report: UniversalPortfolioReport | null, now
   const drift = [...report.optimization.classTargets]
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))[0];
 
-  // Strength/weakness are the best/worst *covered* dimensions — an abstained
-  // dimension has no opinion and must not be presented as a weakness.
-  const scoredDims = (report.health.dimensions ?? [])
-    .filter((d) => d.score != null && d.coverage > 0)
+  // Strength/weakness are the best/worst *rated* themes — an unrated theme
+  // (opted out or unmeasurable) has no opinion and must not be presented as a
+  // weakness.
+  const ratedThemes = (report.alignment.themes ?? [])
+    .filter((t) => t.score != null)
     .sort((a, b) => (a.score as number) - (b.score as number));
-  const biggestWeakness = scoredDims[0]
-    ? { label: scoredDims[0].name, score: scoredDims[0].score as number }
+  const biggestWeakness = ratedThemes[0]
+    ? { label: ratedThemes[0].label, score: ratedThemes[0].score as number }
     : null;
-  const biggestStrength = scoredDims.length > 1
-    ? { label: scoredDims[scoredDims.length - 1].name, score: scoredDims[scoredDims.length - 1].score as number }
+  const biggestStrength = ratedThemes.length > 1
+    ? { label: ratedThemes[ratedThemes.length - 1].label, score: ratedThemes[ratedThemes.length - 1].score as number }
     : null;
 
   return {
     status: "ok",
-    healthScore: report.health.total,
-    healthGrade: report.health.grade,
+    alignmentScore: report.alignment.score,
+    alignmentLabel: report.alignment.label,
+    alignmentConfirmed: report.alignment.confirmed,
+    topMismatch: report.alignment.mismatches[0]?.summary ?? null,
     totalValue: report.totalValue,
     todayChangePct: report.todayChangePct,
     todayChangeDollar: report.todayChangeDollar,
@@ -331,6 +358,8 @@ export function buildPortfolioPulse(report: UniversalPortfolioReport | null, now
     largestRisk: topConcern ? { title: topConcern.label, description: topConcern.message } : null,
     largestOpportunity: topRec ? { symbol: topRec.symbol as string, reason: topRec.rationale } : null,
     cashPct: cashSlice?.weight ?? 0,
+    topPositions: buildTopPositions(report),
+    sleeves: buildSleeves(report),
     diversificationScore: diversificationFromHhi(report.allocation.byAssetClass.hhi),
     // A sub-1pp drift is noise, not a finding worth a line on the homepage.
     largestDrift: drift && Math.abs(drift.delta) >= 1 ? { label: drift.label, driftPct: drift.delta } : null,
@@ -338,11 +367,11 @@ export function buildPortfolioPulse(report: UniversalPortfolioReport | null, now
     // surfaces are structurally incapable of disagreeing.
     totalReturnOnCostPct: report.totalReturn,
     marketPricedPct: report.marketPricedPct,
-    radar: buildHealthRadar(report.health),
+    radar: buildAlignmentRadar(report.alignment),
     biggestStrength,
     biggestWeakness,
-    healthCoveragePct: report.health.coveragePct ?? null,
-    healthFactors: buildHealthFactors(report.health),
+    alignmentEvidencePct: report.alignment.score != null ? report.alignment.evidencePct : null,
+    alignmentFactors: buildAlignmentFactors(report.alignment),
     ...(() => {
       const { contributors, residualBps } = buildTopContributors(
         scored,

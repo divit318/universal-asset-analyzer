@@ -32,7 +32,7 @@ export async function GET() {
       try {
         // The portfolio facts come from the *universal* report — the same one
         // the Book strip renders — so the narrative and the numbers beside it
-        // can never quote two different health grades. Both reads go through
+        // can never quote two different alignment scores. Both reads go through
         // the platform cache (audit PF-02): serving a cached brief no longer
         // costs an 8-second engine rebuild (audit PF-03's real fix).
         const [ctx, report] = await Promise.all([

@@ -6,7 +6,7 @@
  * sector rotation, the watchlist alert engine, the calendar, the decision
  * journal. This module adds no scoring, no ranking, and no thresholds of its
  * own — the same contract lib/mission-control.ts holds, and for the same
- * reason: a homepage that computes its own version of "portfolio health" will
+ * reason: a homepage that computes its own version of "portfolio alignment" will
  * drift from /portfolio's version, and then neither is trustworthy.
  *
  * Two hard rules it enforces:
@@ -276,7 +276,7 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
     attention,
 
     marketIntelligence:
-      market ?? { status: "degraded", groups: [], breadthPct: null, sentiment: null, regime: null, sectorAttention: [] },
+      market ?? { status: "degraded", groups: [], breadthPct: null, sentiment: null, regime: null, sectorAttention: [], sectors: [] },
 
     portfolioPulse: buildPortfolioPulse(report),
 

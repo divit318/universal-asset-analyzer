@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Today · UAA — Level 10 prototype</title>
+  <meta name="description" content="Isolated visual prototype of the UAA Today dashboard. Sample data only." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='4' y='4' width='8' height='8' transform='rotate(45 8 8)' fill='%23c8a96e'/%3E%3C/svg%3E" />
+</head>
+<body>
+  <a class="skip-link" href="#masthead">Skip to content</a>
+  <div class="progress" aria-hidden="true"><span id="progress-bar"></span></div>
+
+  <!-- ────────────────────────── Chrome ────────────────────────── -->
+  <header class="chrome">
+    <div class="shell chrome-inner">
+      <div class="chrome-brand">
+        <span class="diamond" aria-hidden="true"></span>
+        <span class="brand-name">UAA</span>
+        <span class="brand-page">TODAY</span>
+      </div>
+      <nav class="chrome-nav" aria-label="Primary">
+        <a href="#" class="is-active" aria-current="page">Today</a>
+        <a href="#" data-stub>Research</a>
+        <a href="#" data-stub>Portfolio</a>
+        <a href="#" data-stub>Screener</a>
+        <a href="#" data-stub>The Wire</a>
+      </nav>
+      <div class="chrome-right">
+        <span class="chrome-clock mono" id="clock" aria-hidden="true">07:04:12</span>
+        <button class="kbd-chip" id="palette-open" aria-haspopup="dialog" aria-keyshortcuts="Meta+K">
+          <span aria-hidden="true">⌘K</span><span class="sr-only">Open command palette</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Section rail (wide screens) -->
+  <nav class="rail" aria-label="Sections">
+    <a href="#masthead" data-rail="masthead"><span></span>State</a>
+    <a href="#verdict" data-rail="verdict"><span></span>Verdict</a>
+    <a href="#signals" data-rail="signals"><span></span>Signals</a>
+    <a href="#week" data-rail="week"><span></span>Week</a>
+    <a href="#book" data-rail="book"><span></span>Book</a>
+    <a href="#markets" data-rail="markets"><span></span>Markets</a>
+  </nav>
+
+  <main>
+    <!-- ────────────────────────── I · State ────────────────────────── -->
+    <section id="masthead" class="masthead" aria-label="Portfolio state">
+      <div class="shell">
+        <div class="dateline">
+          <p class="eyebrow"><span class="dot" aria-hidden="true"></span>Saturday · August 15, 2026</p>
+          <p class="dateline-session mono">MARKETS CLOSED · LAST SESSION FRI AUG 14 · BRIEF 07:04</p>
+        </div>
+
+        <div class="state-strip">
+          <div class="state-value">
+            <span class="state-label">The book</span>
+            <span class="state-number mono" id="book-value" data-count="2847392" data-fmt="usd">$0</span>
+          </div>
+          <dl class="state-metrics">
+            <div>
+              <dt>Friday</dt>
+              <dd class="mono pos"><span data-count="11824" data-fmt="usd-sign">+$0</span> <span class="dim">(+0.42%)</span></dd>
+            </div>
+            <div>
+              <dt>Week vs SPX</dt>
+              <dd class="mono pos">+1.9% <span class="dim">/ +0.8pp</span></dd>
+            </div>
+            <div>
+              <dt>YTD</dt>
+              <dd class="mono pos">+18.6%</dd>
+            </div>
+            <div>
+              <dt>Cash</dt>
+              <dd class="mono">4.2%</dd>
+            </div>
+            <div>
+              <dt>State</dt>
+              <dd class="mono brass">AT HIGH</dd>
+            </div>
+            <div class="state-risk">
+              <dt>Risk posture</dt>
+              <dd>
+                <span class="risk-band" aria-hidden="true"><i id="risk-marker"></i></span>
+                <span class="mono brass risk-word">STRETCHED</span>
+              </dd>
+            </div>
+          </dl>
+        </div>
+      </div>
+
+      <!-- The Pulse Filament — signature element -->
+      <figure class="filament" aria-label="Portfolio value, last 30 sessions, versus S&P 500 rebased">
+        <div class="filament-canvas" id="filament"></div>
+        <figcaption class="filament-legend mono">
+          <span><i class="swatch swatch-you" aria-hidden="true"></i>YOU +5.0%</span>
+          <span><i class="swatch swatch-spx" aria-hidden="true"></i>SPX +3.2%</span>
+          <span class="dim">30 SESSIONS</span>
+        </figcaption>
+        <div class="scrub mono" id="scrub" role="status" aria-live="off" hidden></div>
+      </figure>
+    </section>
+
+    <!-- ────────────────────────── II · Verdict ────────────────────────── -->
+    <section id="verdict" class="verdict" aria-labelledby="verdict-h">
+      <div class="shell">
+        <p class="eyebrow eyebrow-rule" data-reveal>The verdict<span class="eyebrow-diamond" aria-hidden="true"></span><span class="eyebrow-line" aria-hidden="true"></span></p>
+        <h1 id="verdict-h" class="verdict-lede" data-reveal>
+          A good week, <em>carried by a narrow spine.</em>
+        </h1>
+        <p class="verdict-body" data-reveal id="verdict-body"></p>
+        <p class="verdict-source mono" data-reveal id="verdict-source"></p>
+      </div>
+    </section>
+
+    <!-- ────────────────────────── III · Signals ────────────────────────── -->
+    <section id="signals" class="signals" aria-labelledby="signals-h">
+      <div class="shell">
+        <header class="section-head" data-reveal>
+          <h2 id="signals-h" class="eyebrow">Signals — what needs you<span class="eyebrow-diamond" aria-hidden="true"></span><span class="eyebrow-line" aria-hidden="true"></span></h2>
+          <p class="section-note mono">16 OBSERVED · 3 SURFACED</p>
+        </header>
+        <p class="signals-preface" data-reveal>Everything was processed. These three carry the weight.</p>
+        <ol class="signal-list" id="signal-list"></ol>
+
+        <div class="ledger" data-reveal>
+          <button class="ledger-toggle" id="ledger-toggle" aria-expanded="false" aria-controls="ledger-body">
+            <span class="ledger-diamond" aria-hidden="true"></span>
+            <span class="ledger-label">The other thirteen</span>
+            <span class="ledger-sub">processed — nothing urgent</span>
+            <span class="ledger-caret mono" aria-hidden="true">＋</span>
+          </button>
+          <div class="ledger-body" id="ledger-body" hidden>
+            <ul class="ledger-list" id="ledger-list"></ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ────────────────────────── IV · The Week ────────────────────────── -->
+    <section id="week" class="week" aria-labelledby="week-h">
+      <div class="shell">
+        <header class="section-head" data-reveal>
+          <h2 id="week-h" class="eyebrow">The week — now to horizon<span class="eyebrow-diamond" aria-hidden="true"></span><span class="eyebrow-line" aria-hidden="true"></span></h2>
+          <p class="section-note mono">DECISION DEADLINE WED 16:00 ET</p>
+        </header>
+        <div class="week-rail" id="week-rail"></div>
+      </div>
+    </section>
+
+    <!-- ────────────────────────── V · The Book ────────────────────────── -->
+    <section id="book" class="book" aria-labelledby="book-h">
+      <div class="shell">
+        <header class="section-head" data-reveal>
+          <h2 id="book-h" class="eyebrow">The book — where you stand<span class="eyebrow-diamond" aria-hidden="true"></span><span class="eyebrow-line" aria-hidden="true"></span></h2>
+          <p class="section-note mono">POLICY OF RECORD · SEP 1 REVIEW</p>
+        </header>
+        <div class="book-grid">
+          <div class="book-col" data-reveal>
+            <h3 class="col-title">Alignment <span class="dim">vs your policy</span></h3>
+            <div class="align-overall">
+              <span class="align-score mono" data-count="68" data-fmt="int">0</span>
+              <span class="align-scale mono dim">/ 100</span>
+            </div>
+            <ul class="align-list" id="align-list"></ul>
+            <p class="col-foot" id="align-note"></p>
+          </div>
+          <div class="book-col" data-reveal>
+            <h3 class="col-title">Friday’s P&L <span class="dim">attribution</span></h3>
+            <ul class="attr-list" id="attr-list"></ul>
+            <h3 class="col-title col-title-gap">Composition</h3>
+            <div class="sleeve-bar" id="sleeve-bar" role="img" aria-label="Portfolio composition by sleeve"></div>
+            <ul class="sleeve-legend mono" id="sleeve-legend"></ul>
+          </div>
+          <div class="book-col" data-reveal>
+            <h3 class="col-title">Positions <span class="dim">top of book</span></h3>
+            <table class="pos-table mono" id="pos-table" aria-label="Largest positions">
+              <thead><tr><th scope="col">SYM</th><th scope="col">WT</th><th scope="col"></th><th scope="col">FRI</th></tr></thead>
+              <tbody></tbody>
+            </table>
+            <h3 class="col-title col-title-gap">Radar <span class="dim">entering the pipeline</span></h3>
+            <ul class="radar-list" id="radar-list"></ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ────────────────────────── VI · Markets ────────────────────────── -->
+    <section id="markets" class="markets" aria-labelledby="markets-h">
+      <div class="shell">
+        <header class="section-head" data-reveal>
+          <h2 id="markets-h" class="eyebrow">Markets — the tape<span class="eyebrow-diamond" aria-hidden="true"></span><span class="eyebrow-line" aria-hidden="true"></span></h2>
+          <p class="section-note mono">EQUITIES FROZEN AT FRI CLOSE · CRYPTO LIVE</p>
+        </header>
+        <div class="tape-grid" id="tape-grid" data-reveal></div>
+        <div class="sector-strip" data-reveal>
+          <p class="sector-label mono">SECTORS · FRI</p>
+          <div class="sector-cells" id="sector-cells"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="shell foot-inner">
+      <p class="foot-seal"><span class="diamond" aria-hidden="true"></span>Every figure computed. Every claim traced.</p>
+      <p class="mono dim">GENERATED LOCALLY · 07:04:12 · YOUR DATABASE, YOUR KEYS</p>
+    </div>
+  </footer>
+
+  <!-- Command palette -->
+  <div class="palette-overlay" id="palette" hidden>
+    <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette">
+      <div class="palette-head">
+        <span class="palette-prompt mono" aria-hidden="true">›</span>
+        <input type="text" id="palette-input" placeholder="Where to, or what to run…" autocomplete="off" spellcheck="false" />
+        <span class="kbd-chip mono" aria-hidden="true">ESC</span>
+      </div>
+      <ul class="palette-list" id="palette-list" role="listbox" aria-label="Commands"></ul>
+      <p class="palette-foot mono dim">↑↓ NAVIGATE · ↵ RUN · PROTOTYPE — ACTIONS ARE STUBBED</p>
+    </div>
+  </div>
+
+  <div class="toast mono" id="toast" role="status" aria-live="polite" hidden></div>
+  <p class="proto-tag mono" aria-hidden="true">LEVEL 10 CONCEPT · ISOLATED PROTOTYPE</p>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,14 +1,14 @@
 /**
- * HealthRadar — a pure-SVG radar of the portfolio's health dimensions.
+ * AlignmentRadar — a pure-SVG radar of the portfolio's alignment themes.
  *
  * No charting library: a radar is a dozen lines of trigonometry, and pulling
  * Recharts in for it would ship a polar-chart bundle to render six points. The
- * polygon is the health engine's real dimension scores; faded spokes are the
+ * polygon is the alignment engine's real theme scores; faded spokes are the
  * dimensions that abstained (coverage 0), drawn at their fallback so the shape
  * stays closed rather than collapsing to the centre and reading as "zero".
  */
 
-import type { HealthRadarAxis } from "@/lib/home/contracts";
+import type { AlignmentRadarAxis } from "@/lib/home/contracts";
 
 const CX = 110;
 const CY = 104;
@@ -20,7 +20,7 @@ function pointAt(angleDeg: number, radius: number): [number, number] {
   return [CX + radius * Math.cos(rad), CY + radius * Math.sin(rad)];
 }
 
-function polygon(axes: HealthRadarAxis[], scale: (a: HealthRadarAxis) => number): string {
+function polygon(axes: AlignmentRadarAxis[], scale: (a: AlignmentRadarAxis) => number): string {
   return axes
     .map((a, i) => {
       const angle = -90 + (i * 360) / axes.length;
@@ -30,7 +30,7 @@ function polygon(axes: HealthRadarAxis[], scale: (a: HealthRadarAxis) => number)
     .join(" ");
 }
 
-export function HealthRadar({ axes, className }: { axes: HealthRadarAxis[]; className?: string }) {
+export function AlignmentRadar({ axes, className }: { axes: AlignmentRadarAxis[]; className?: string }) {
   if (axes.length < 3) return null;
 
   const dataPoints = polygon(axes, (a) => Math.max(0, Math.min(1, a.score / 100)));
@@ -40,7 +40,7 @@ export function HealthRadar({ axes, className }: { axes: HealthRadarAxis[]; clas
       viewBox="0 0 220 208"
       className={className}
       role="img"
-      aria-label="Portfolio health radar across risk dimensions"
+      aria-label="Portfolio alignment radar across your policy themes"
     >
       {/* concentric reference rings */}
       {RINGS.map((r) => (

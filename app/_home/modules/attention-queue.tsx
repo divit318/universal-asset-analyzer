@@ -60,7 +60,6 @@ import {
   priorityBucket,
   withFromToday,
 } from "@/lib/home/attention";
-import { STAGE_LABEL } from "@/lib/idea-stage";
 import { SymbolTag } from "../_atmosphere/symbol-link";
 import { ExplainableValue } from "../_atmosphere/explain-popover";
 import { AnchoredPopover } from "../_atmosphere/anchored-popover";
@@ -197,7 +196,15 @@ function contextChips(ctx: SymbolContext | undefined): string[] {
   if (!ctx) return [];
   const chips: string[] = [];
   if (ctx.heldWeightPct != null) chips.push(`${ctx.heldWeightPct.toFixed(1)}% of book`);
-  if (ctx.watchlistStage && ctx.heldWeightPct == null) chips.push(STAGE_LABEL[ctx.watchlistStage] ?? ctx.watchlistStage);
+  // The stored stage's manual middle (surfaced/researching/thesis) was retired
+  // by the 2026-08 watchlist consolidation — the Watchlist now derives workflow
+  // from evidence. This chip states only what the stored value still means:
+  // tracked, passed, or exited. Research recency has its own chip below.
+  if (ctx.watchlistStage && ctx.heldWeightPct == null) {
+    chips.push(
+      ctx.watchlistStage === "passed" ? "Passed" : ctx.watchlistStage === "exited" ? "Exited" : "On watchlist",
+    );
+  }
   if (ctx.lastResearchedAt) chips.push(`Researched ${daysAgo(ctx.lastResearchedAt)}`);
   return chips;
 }
@@ -591,16 +598,20 @@ function SpotlightCard({
       {impact ? (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-control border border-border/70 bg-surface/70 px-3 py-2">
           <span className="text-label font-semibold uppercase tracking-wide text-faint">If executed</span>
-          <ExplainableValue explanation={decisionExplanation}>
-            <span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums">
-              <span className="text-muted">Health {impact.healthBefore}</span>
-              <ArrowRight className="h-3 w-3 text-faint" strokeWidth={2} />
-              <span className={impact.healthDelta >= 0 ? "font-semibold text-positive" : "font-semibold text-negative"}>
-                {impact.healthAfter}
+          {/* Nullable end to end: an unscorable book has no before/after, and
+              the row simply omits the alignment leg rather than showing 0s. */}
+          {impact.alignmentBefore != null && impact.alignmentAfter != null && impact.alignmentDelta != null ? (
+            <ExplainableValue explanation={decisionExplanation}>
+              <span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums">
+                <span className="text-muted">Alignment {impact.alignmentBefore}</span>
+                <ArrowRight className="h-3 w-3 text-faint" strokeWidth={2} />
+                <span className={impact.alignmentDelta >= 0 ? "font-semibold text-positive" : "font-semibold text-negative"}>
+                  {impact.alignmentAfter}
+                </span>
+                <span className="text-faint">({impact.alignmentDelta >= 0 ? "+" : ""}{impact.alignmentDelta.toFixed(1)})</span>
               </span>
-              <span className="text-faint">({impact.healthDelta >= 0 ? "+" : ""}{impact.healthDelta.toFixed(1)})</span>
-            </span>
-          </ExplainableValue>
+            </ExplainableValue>
+          ) : null}
           {impact.riskDeltaPp != null ? (
             <span className="font-mono text-xs tabular-nums text-muted">
               vol {impact.riskDeltaPp > 0 ? "+" : "−"}{Math.abs(impact.riskDeltaPp).toFixed(1)}pp
@@ -925,6 +936,12 @@ export function AttentionQueueModule() {
           kind: item.kind,
           occursAt: item.occursAt,
           storyKey: item.storyKey ?? null,
+          // A decision-backed story's dismissal is SEMANTIC: it writes the
+          // shared decision memory ("I considered this action"), so the
+          // Decisions tab, digest and spotlight stop repeating the thesis
+          // too. Snoozes stay presentation-only — a chosen deadline is not a
+          // considered "no".
+          thesis: mode === "snooze" ? null : item.thesis ?? null,
           ...opts.extras,
         }),
       })
@@ -954,7 +971,13 @@ export function AttentionQueueModule() {
               fetch("/api/home/attention/dismiss", {
                 method: "DELETE",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ dedupeKey: item.dedupeKey, storyKey: item.storyKey ?? null }),
+                body: JSON.stringify({
+                  dedupeKey: item.dedupeKey,
+                  storyKey: item.storyKey ?? null,
+                  // Undo reverses BOTH records — the story hide and the
+                  // decision-memory row it wrote.
+                  thesisKey: item.thesis?.key ?? null,
+                }),
               }).catch(() => {});
               setPending((prev) => {
                 const n = new Set(prev);

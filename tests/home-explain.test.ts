@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { explainAttentionScore, explainDecision, explainHealth, explainSentiment } from "@/lib/home/explain";
+import { explainAttentionScore, explainDecision, explainAlignment, explainSentiment } from "@/lib/home/explain";
 import { SCORE_EXPONENTS, scoreSeed, priorityBucket } from "@/lib/home/attention";
 import type { AttentionItem, PortfolioPulse, RecommendedAction, SentimentGauge } from "@/lib/home/contracts";
 
@@ -25,8 +25,10 @@ function attentionItem(overrides: Partial<AttentionItem> = {}): AttentionItem {
 function pulse(overrides: Partial<PortfolioPulse> = {}): PortfolioPulse {
   return {
     status: "ok",
-    healthScore: 72,
-    healthGrade: "B",
+    alignmentScore: 72,
+    alignmentLabel: "Well aligned",
+    alignmentConfirmed: false,
+    topMismatch: null,
     totalValue: 100_000,
     todayChangePct: 0,
     todayChangeDollar: 0,
@@ -45,15 +47,18 @@ function pulse(overrides: Partial<PortfolioPulse> = {}): PortfolioPulse {
     radar: [],
     biggestStrength: null,
     biggestWeakness: null,
-    healthCoveragePct: 85,
-    healthFactors: [
-      { label: "Diversification", score: 80, weightShare: 0.5, contributionPts: 40, covered: true, coveragePct: 100 },
-      { label: "Income", score: 64, weightShare: 0.5, contributionPts: 32, covered: true, coveragePct: 70 },
-      { label: "Geography", score: null, weightShare: null, contributionPts: null, covered: false, coveragePct: 0 },
+    alignmentEvidencePct: 85,
+    alignmentFactors: [
+      { label: "Concentration", score: 80, weightShare: 0.5, contributionPts: 40, covered: true, evidencePct: 100, unratedReason: null },
+      { label: "Liquidity", score: 64, weightShare: 0.5, contributionPts: 32, covered: true, evidencePct: 70, unratedReason: null },
+      { label: "Income", score: null, weightShare: null, contributionPts: null, covered: false, evidencePct: 100, unratedReason: "opted_out" },
+      { label: "Geography & currency", score: null, weightShare: null, contributionPts: null, covered: false, evidencePct: 20, unratedReason: "insufficient_data" },
     ],
     topContributors: [],
     topContributorsResidualBps: null,
     dayCoveragePct: null,
+    topPositions: [],
+    sleeves: [],
     ...overrides,
   };
 }
@@ -73,27 +78,34 @@ describe("explainAttentionScore", () => {
   });
 });
 
-describe("explainHealth", () => {
+describe("explainAlignment", () => {
   it("returns null when there is nothing to decompose", () => {
-    expect(explainHealth(pulse({ healthScore: null }))).toBeNull();
-    expect(explainHealth(pulse({ healthFactors: [] }))).toBeNull();
+    expect(explainAlignment(pulse({ alignmentScore: null }))).toBeNull();
+    expect(explainAlignment(pulse({ alignmentFactors: [] }))).toBeNull();
   });
 
   it("carries the engine's own contributions, which sum to the total", () => {
-    const ex = explainHealth(pulse());
+    const ex = explainAlignment(pulse());
     expect(ex).not.toBeNull();
-    const contribs = pulse().healthFactors.map((f) => f.contributionPts ?? 0);
+    const contribs = pulse().alignmentFactors.map((f) => f.contributionPts ?? 0);
     expect(contribs.reduce((a, b) => a + b, 0)).toBe(72);
-    // abstained dimension renders as a muted row, not a fake score
-    const abstained = ex!.factors.find((f) => f.label === "Geography");
-    expect(abstained?.muted).toBe(true);
-    expect(abstained?.display).toBe("abstained");
+    // unrated themes render as muted rows, not fake scores — and each states why
+    const optedOut = ex!.factors.find((f) => f.label === "Income");
+    expect(optedOut?.muted).toBe(true);
+    expect(optedOut?.display).toBe("not a priority");
+    const noData = ex!.factors.find((f) => f.label === "Geography & currency");
+    expect(noData?.muted).toBe(true);
+    expect(noData?.display).toBe("insufficient data");
   });
 
-  it("flags incomplete coverage as a caveat", () => {
-    const ex = explainHealth(pulse());
-    expect(ex!.caveats.some((c) => c.includes("15%"))).toBe(true);
+  it("flags thin evidence and an unconfirmed policy as caveats", () => {
+    const ex = explainAlignment(pulse());
+    expect(ex!.caveats.some((c) => c.includes("85%"))).toBe(true);
     expect(ex!.confidence?.label).toContain("85%");
+    // scored against assumed defaults until the investor saves a policy
+    expect(ex!.caveats.some((c) => c.includes("assumed default"))).toBe(true);
+    const confirmed = explainAlignment(pulse({ alignmentConfirmed: true }));
+    expect(confirmed!.caveats.some((c) => c.includes("assumed default"))).toBe(false);
   });
 });
 
@@ -139,14 +151,15 @@ describe("explainDecision", () => {
       whyNotNothing: "nothing",
     },
     impact: {
-      healthBefore: 72,
-      healthAfter: 75.1,
-      healthDelta: 3.1,
+      alignmentBefore: 72,
+      alignmentAfter: 75.1,
+      alignmentDelta: 3.1,
       riskDeltaPp: -0.8,
       incomeDeltaAnnual: 120,
       diversificationDelta: -200,
     },
     alternativesEvaluated: 12,
+    thesis: null,
   };
 
   it("returns null for unscored queue items rather than inventing a breakdown", () => {
@@ -156,8 +169,8 @@ describe("explainDecision", () => {
   it("states the simulated before → after and the honest no-forecast caveat", () => {
     const ex = explainDecision(decision);
     expect(ex).not.toBeNull();
-    const health = ex!.factors.find((f) => f.label === "Health impact");
-    expect(health?.detail).toContain("72 → 75.1");
+    const alignment = ex!.factors.find((f) => f.label === "Alignment impact");
+    expect(alignment?.detail).toContain("72 → 75.1");
     expect(ex!.caveats.some((c) => c.includes("12 alternative"))).toBe(true);
     expect(ex!.caveats.some((c) => c.includes("No forward price-return"))).toBe(true);
     // risk reduction (negative delta) is presented as a positive factor

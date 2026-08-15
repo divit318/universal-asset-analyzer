@@ -46,18 +46,18 @@ import type { HomeBrief } from "./contracts";
  *
  * Deliberately NOT read from `MissionControlContext.report`, which is the
  * *legacy* PortfolioReport. Portfolio Pulse renders the *universal* report, and
- * the two engines score health differently — so sourcing the prose from one and
- * the numbers from the other put "Health B · 72/100" in a badge directly above
- * an AI sentence reading "Health grade C (67/100)". Same page, same portfolio,
- * two answers.
+ * the two engines score differently — so sourcing the prose from one and
+ * the numbers from the other put one score in a badge directly above an AI
+ * sentence citing a different one. Same page, same portfolio, two answers.
  *
  * Both now come from the universal report. If the number in the prose ever
  * disagrees with the number in the badge again, it is a bug in one engine, not
  * an artifact of the homepage reading two.
  */
 export interface BriefPortfolio {
-  healthGrade: string;
-  healthTotal: number;
+  /** "82/100 (Well aligned)" or "not scorable" — policy-relative, pre-rendered. */
+  alignmentLine: string;
+  alignmentScore: number | null;
   alertCount: number;
   todayChangePct: number;
   topRecommendation: string | null;
@@ -70,6 +70,14 @@ export interface BriefPortfolio {
   residualBps: number | null;
   /** The threat engine's top measured vulnerability. */
   topThreat: { title: string; detail: string } | null;
+  /**
+   * The investor policy's identity (`policy.updatedAt`) — part of the brief's
+   * CACHE KEY, never shown. Without it, a policy change that happens not to
+   * move the rounded alignment score kept serving prose written for the OLD
+   * policy ("your stated 4%/yr income requirement…") for up to an hour —
+   * an AI narrative contradicting the deterministic panels beside it.
+   */
+  policyVersion: string | null;
 }
 
 /**
@@ -86,8 +94,11 @@ export function toBriefPortfolio(report: UniversalPortfolioReport | null): Brief
   const pulse = buildPortfolioPulse(report);
   const threats = buildThreats(report);
   return {
-    healthGrade: report.health.grade,
-    healthTotal: report.health.total,
+    alignmentLine:
+      report.alignment.score != null
+        ? `${report.alignment.score}/100 (${report.alignment.label})`
+        : "not scorable",
+    alignmentScore: report.alignment.score,
     // Concentration findings are what the universal engine raises in place of
     // the legacy report's `alerts`.
     alertCount: report.concentration.length,
@@ -98,6 +109,7 @@ export function toBriefPortfolio(report: UniversalPortfolioReport | null): Brief
     contributors: pulse.topContributors.map((c) => ({ symbol: c.symbol, bps: Math.round(c.bps * 10) / 10 })),
     residualBps: pulse.topContributorsResidualBps != null ? Math.round(pulse.topContributorsResidualBps * 10) / 10 : null,
     topThreat: threats.threats[0] ? { title: threats.threats[0].title, detail: threats.threats[0].detail } : null,
+    policyVersion: report.policy.updatedAt,
   };
 }
 
@@ -128,7 +140,7 @@ export function deterministicBriefing(
     parts.push(`Multi-week leadership: ${ctx.rotation.leaders.join(", ")}.`);
   }
   if (portfolio) {
-    parts.push(`Portfolio health grade ${portfolio.healthGrade} (${portfolio.healthTotal}/100), ${portfolio.alertCount} concentration finding(s).`);
+    parts.push(`Portfolio alignment ${portfolio.alignmentLine} vs your stated policy, ${portfolio.alertCount} concentration finding(s).`);
     // The richer fact pack (Wave 4) makes the deterministic floor genuinely
     // informative: the day's driver and the top measured risk, engine-sourced.
     if (portfolio.contributors.length > 0) {
@@ -170,7 +182,7 @@ export function buildHomeBriefPrompt(ctx: MissionControlContext, portfolio: Brie
 
   const portfolioDesc = portfolio
     ? [
-        `Health grade ${portfolio.healthGrade} (${portfolio.healthTotal}/100).`,
+        `Alignment with the investor's stated policy: ${portfolio.alignmentLine}.`,
         // One decimal, same as every chip and stat on the page — the brief once
         // said "+0.81%" beside a chip reading "+0.8%" (audit F-22 formatting).
         `Today ${portfolio.todayChangePct >= 0 ? "+" : ""}${portfolio.todayChangePct.toFixed(1)}%${portfolio.dayCoveragePct != null && portfolio.dayCoveragePct < 95 ? ` (prices ${Math.round(portfolio.dayCoveragePct)}% of the book; the rest is cash or manually valued)` : ""}.`,
@@ -210,7 +222,7 @@ Return ONLY valid JSON in exactly this shape:
     "regime": "1-2 sentences: what kind of market this is and what that implies for this book.",
     "opportunities": "1-2 sentences, grounded in the rotation leaders, the engine recommendation, or the cash position. If none of those support an opportunity, say so.",
     "risks": "1-2 sentences on the top measured risk above and what would make it bite.",
-    "portfolio": "1-3 sentences interpreting the day attribution and health facts. No restating without interpreting.",
+    "portfolio": "1-3 sentences interpreting the day attribution and alignment facts. No restating without interpreting.",
     "sectors": "1-2 sentences on the sector picture, distinguishing today's breadth from the multi-week rotation.",
     "recommendations": ["3 to 5 short, specific actions, each traceable to a fact above"]
   }
@@ -242,9 +254,11 @@ export function buildBriefFacts(
   if (portfolio) {
     facts.push(
       { value: portfolio.todayChangePct, kind: "percent", metric: "portfolio day change", period: "day", sessionDate: today },
-      { value: portfolio.healthTotal, kind: "plain", metric: "health grade" },
       { value: portfolio.alertCount, kind: "plain", metric: "concentration findings" },
     );
+    if (portfolio.alignmentScore != null) {
+      facts.push({ value: portfolio.alignmentScore, kind: "plain", metric: "alignment score" });
+    }
     // The Wave-4 fact-pack additions (audit LQ-07): every number the richer
     // prompt now carries must also be checkable evidence, or the verifier
     // would flag the model for citing what we gave it.
@@ -318,19 +332,23 @@ function noteText(note: HomeBrief["note"]): string {
 /**
  * Cache key: the hour, plus the facts that would change what the note *says*.
  * Regenerating the same note because the clock ticked is a wasted model call;
- * regenerating it because the portfolio's health grade moved is the point.
+ * regenerating it because the portfolio's alignment score moved is the point.
  */
 function cacheKey(ctx: MissionControlContext, portfolio: BriefPortfolio | null): string {
   return [
     "home-brief",
     new Date().toISOString().slice(0, 13),
-    portfolio ? `${portfolio.healthGrade}-${portfolio.healthTotal}-${portfolio.alertCount}` : "no-portfolio",
+    portfolio ? `${portfolio.alignmentScore ?? "na"}-${portfolio.alertCount}` : "no-portfolio",
     // Audit LQ-05: the old key missed real state changes the note narrates.
     // The day P&L's SIGN flipping, the cash weight moving a band, or the top
     // threat changing all make the cached prose wrong even inside one hour.
     portfolio ? `day${portfolio.todayChangePct >= 0 ? "+" : "-"}` : "",
     portfolio?.cashPct != null ? `cash${Math.round(portfolio.cashPct / 5) * 5}` : "",
     portfolio?.topThreat?.title ?? "no-threat",
+    // The POLICY is part of what the note narrates ("your stated tolerance…"),
+    // so its identity is part of the key — a policy save regenerates the prose
+    // even when the rounded score happens not to move.
+    portfolio?.policyVersion ?? "defaults",
     ctx.rotation?.asOf ?? "no-rotation",
     ctx.regime?.trend ?? "no-regime",
   ].join(":");
@@ -351,7 +369,7 @@ export async function generateHomeBrief(
     headline: fallbackText,
     note: null,
     portfolioSummary: portfolio
-      ? `Health grade ${portfolio.healthGrade} (${portfolio.healthTotal}/100) with ${portfolio.alertCount} concentration finding(s).`
+      ? `Alignment ${portfolio.alignmentLine} with ${portfolio.alertCount} concentration finding(s).`
       : "No portfolio tracked yet.",
     aiGenerated: false,
     generatedAt: new Date().toISOString(),

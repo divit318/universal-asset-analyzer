@@ -308,10 +308,16 @@ export function seedsFromActions(actions: RecommendedAction[], now: number = Dat
     const impact = a.decisionScore != null ? a.decisionScore / 100 : SEVERITY_IMPACT[a.severity];
     const band = a.decisionScore != null ? scoreBand(a.decisionScore) : a.severity;
     const decay = observationDecay(a.observedAt, now);
+    // A discovery ("worth a look") is a research opportunity, not a corrective
+    // action — on Today it wears the SIGNAL kind (idea semantics, the 30-day
+    // dismissal rhythm of a passed-on idea), never the ACT-NOW chip. The
+    // act / research / watch / informational distinction is the page's
+    // hierarchy; letting an INVESTIGATE card impersonate an ACTION blurs it.
+    const isDiscovery = a.action === "INVESTIGATE";
     return {
       id: `action:${a.id}`,
       dedupeKey: `action:${a.symbol ?? "portfolio"}:${band}`,
-      kind: "action",
+      kind: isDiscovery ? "signal" : "action",
       symbol: a.symbol,
       headline: a.title.slice(0, 60),
       rationale: a.reason,
@@ -321,8 +327,16 @@ export function seedsFromActions(actions: RecommendedAction[], now: number = Dat
       occursAt: null,
       observedAt: a.observedAt ?? null,
       primaryAction: {
-        label: a.source === "decision" ? "Open decision" : "Review",
-        href: a.source === "decision" ? "/portfolio?tab=decisions" : a.href,
+        label: isDiscovery
+          ? `Research ${a.symbol ?? "the candidate"}`
+          : a.source === "decision"
+            ? "Open decision"
+            : "Review",
+        href: isDiscovery && a.symbol
+          ? `/research?symbol=${encodeURIComponent(a.symbol)}`
+          : a.source === "decision"
+            ? "/portfolio?tab=decisions"
+            : a.href,
       },
       source: "actions",
       // A trim/REDUCE decision is the executable form of a concentration
@@ -331,6 +345,10 @@ export function seedsFromActions(actions: RecommendedAction[], now: number = Dat
         a.action === "REDUCE" && (a.subject ?? a.symbol)
           ? `concentration:${storySlug(a.subject ?? (a.symbol as string))}`
           : null,
+      // The decision thesis rides along so dismissing this story on Today
+      // writes the SAME memory the Decisions tab reads (decision-memory.ts) —
+      // one considered "no", every surface.
+      thesis: a.thesis ?? null,
     } satisfies AttentionSeed;
   });
 }

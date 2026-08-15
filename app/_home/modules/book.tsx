@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Portfolio Health — "how is my book?" answered in one card (§4.1, P6).
+ * Portfolio Book — "how is my book, and does it match my policy?" in one card (§4.1, P6).
  *
  * Merges the two portfolio vitals cards this redesign retired
  * (`portfolio-pulse` + `portfolio-performance`) so the glanceable invariant
@@ -20,9 +20,9 @@ import type { CSSProperties } from "react";
 import { toneClass } from "@/lib/format";
 import type { EquityCurve, PortfolioPulse } from "@/lib/home/contracts";
 import { formatFact } from "@/lib/home/facts";
-import { explainHealth } from "@/lib/home/explain";
+import { explainAlignment } from "@/lib/home/explain";
 import { getHomeModule } from "@/lib/home/registry";
-import { fmtSignedPct, fmtSignedMoney, gradeTone } from "../_viz/format";
+import { fmtSignedPct, fmtSignedMoney, alignmentToneViz } from "../_viz/format";
 import { MetricDelta, shortSessionDate, shortTime } from "../_viz/stamped";
 import { ExplainableValue } from "../_atmosphere/explain-popover";
 import { ModuleShell } from "../module-shell";
@@ -65,13 +65,14 @@ function ContributionBar({ rows }: { rows: { key: string; bps: number }[] }) {
   );
 }
 
-/** A monochrome-track health ring, data-coloured by band. 96px, 6px stroke,
- *  filled arc from 12 o'clock clockwise over a 12%-foreground track. */
-function HealthRing({ score, grade }: { score: number | null; grade: string | null }) {
+/** A monochrome-track alignment ring, data-coloured by band. 96px, 6px stroke,
+ *  filled arc from 12 o'clock clockwise over a 12%-foreground track. The
+ *  centre is the score itself — there are deliberately no letter grades. */
+function AlignmentRing({ score, label }: { score: number | null; label: string | null }) {
   const R = 44;
   const C = 2 * Math.PI * R;
   const pct = score != null ? Math.max(0, Math.min(100, score)) / 100 : 0;
-  const tone = gradeTone(grade);
+  const tone = alignmentToneViz(score);
   return (
     <div className="relative flex h-24 w-24 shrink-0 items-center justify-center">
       <svg viewBox="0 0 96 96" className="h-full w-full -rotate-90" aria-hidden>
@@ -89,8 +90,10 @@ function HealthRing({ score, grade }: { score: number | null; grade: string | nu
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-[30px] font-semibold leading-none text-foreground">{grade ?? "—"}</span>
-        <span className={`${NUM} mt-1 text-[11px] leading-none text-muted`}>{score ?? "—"} / 100</span>
+        <span className={`${NUM} text-[26px] font-semibold leading-none text-foreground`}>{score ?? "—"}</span>
+        <span className="mt-1 max-w-[72px] text-center text-[9px] font-semibold uppercase leading-tight tracking-wide text-muted">
+          {label ?? "alignment"}
+        </span>
       </div>
     </div>
   );
@@ -211,10 +214,10 @@ export function BookModule() {
   const facts = useHomeSlice("facts");
   const { refreshDigest } = useHome();
 
-  // The change engine's health delta, when it found a material one — the card
-  // shows state, but "state + how it moved since you left" is what a returning
-  // user actually needs to know.
-  const healthChange = changes.data?.changes.find((c) => c.kind === "health") ?? null;
+  // The change engine's alignment delta, when it found a material one — the
+  // card shows state, but "state + how it moved since you left" is what a
+  // returning user actually needs to know.
+  const alignmentChange = changes.data?.changes.find((c) => c.kind === "alignment") ?? null;
 
   const unmet = pulse.data?.status === "empty" ? ("portfolio" as const) : null;
 
@@ -245,7 +248,7 @@ export function BookModule() {
         return (
           <div className="flex h-full flex-col">
             {/* Zone 1 strip (audit 06 restructure B): four cells at lg+, a
-                2-column stack below. Left to right: health + day P&L, return
+                2-column stack below. Left to right: alignment + day P&L, return
                 vs benchmark + cash, the 90-day comparison, and the day's
                 attribution WITH its residual so it reaches its own total. */}
             <div className="grid grid-cols-1 gap-x-8 gap-y-5 pt-1 sm:grid-cols-2 lg:grid-cols-[auto_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1.2fr)]">
@@ -254,8 +257,8 @@ export function BookModule() {
                   same line as the three sibling cells' labels; the change pill
                   therefore renders BELOW the figures, never above the label. */}
               <div className="flex items-start gap-5 lg:pr-2">
-                <ExplainableValue explanation={explainHealth(d)} underline={false}>
-                  <HealthRing score={d.healthScore} grade={d.healthGrade} />
+                <ExplainableValue explanation={explainAlignment(d)} underline={false}>
+                  <AlignmentRing score={d.alignmentScore} label={d.alignmentLabel} />
                 </ExplainableValue>
                 <div className="flex min-w-0 flex-col gap-1">
                   <span className={LABEL}>Day P&amp;L</span>
@@ -282,14 +285,14 @@ export function BookModule() {
                       <span className={`${NUM} text-sm text-foreground/60`}>{parts.join(" · ")}</span>
                     ) : null;
                   })()}
-                  {healthChange ? (
+                  {alignmentChange ? (
                     <span
                       className={`mt-0.5 w-fit rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                        healthChange.tone === "improved" ? "bg-positive/10 text-positive" : "bg-negative/10 text-negative"
+                        alignmentChange.tone === "improved" ? "bg-positive/10 text-positive" : "bg-negative/10 text-negative"
                       }`}
-                      title={healthChange.detail}
+                      title={alignmentChange.detail}
                     >
-                      {healthChange.tone === "improved" ? "▲" : "▼"} health since last visit
+                      {alignmentChange.tone === "improved" ? "▲" : "▼"} alignment since last visit
                     </span>
                   ) : null}
                 </div>

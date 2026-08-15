@@ -305,6 +305,7 @@ describe("feeders", () => {
         decisionScore: 76, priority: 1, confidence: 0.7, expectedImpact: null, expectedImprovement: null,
         severity: "high", href: "/research?symbol=MSFT", source: "decision",
         why: null, impact: null, alternativesEvaluated: null,
+    thesis: null,
       },
     ];
     const [s] = seedsFromActions(actions);
@@ -320,6 +321,7 @@ describe("feeders", () => {
       id: "d1", symbol: "MSFT", subject: "MSFT", action: "REDUCE", title: "Trim", reason: "x", decisionScore: 76,
       priority: 1, confidence: 0.7, expectedImpact: null, expectedImprovement: null, severity: "high",
       href: "/x", source: "decision", why: null, impact: null, alternativesEvaluated: null,
+    thesis: null,
     };
     const before = seedsFromActions([base])[0].dedupeKey;
     const after = seedsFromActions([{ ...base, decisionScore: 64 }])[0].dedupeKey;
@@ -331,6 +333,7 @@ describe("feeders", () => {
       id: "n1", symbol: "AAPL", subject: null, action: "REVIEW", title: "AAPL down 8.7%", reason: "x", decisionScore: null,
       priority: 1, confidence: null, expectedImpact: null, expectedImprovement: null, severity: "high",
       href: "/x", source: "queue", why: null, impact: null, alternativesEvaluated: null,
+    thesis: null,
     };
     const fresh = seedsFromActions([{ ...base, observedAt: new Date(NOW - 2 * HOUR).toISOString() }], NOW)[0];
     const aging = seedsFromActions([{ ...base, observedAt: new Date(NOW - 2 * DAY).toISOString() }], NOW)[0];
