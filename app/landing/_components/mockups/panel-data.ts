@@ -494,8 +494,7 @@ export const PANEL_DATA = {
     "totalReturnDisplay": "+2.3%",
     "totalReturnPositive": true,
     "sinceLabel": "May 2026",
-    "health": "75",
-    "healthGrade": "B",
+    "alignment": "75",
     "volatilityDisplay": "8.3%",
     "trajectory": [
       {
@@ -611,7 +610,7 @@ export const PANEL_DATA = {
       }
     ],
     "findings": [
-      "Health 75 (B), volatility 8.3%",
+      "Alignment 75, volatility 8.3%",
       "Equities is the largest sleeve at 35.8%",
       "5 asset classes held; top weight 35.8%"
     ],

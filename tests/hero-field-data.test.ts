@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildHeroSeries, gaussianSmooth, magnitudeQuantile, packHeroSeries, resampleLinear } from "@/app/landing/_components/ink/hero-data";
-import { rectFalloffField, SDF_FALLOFF_PX } from "@/app/landing/_components/ink/hero-sdf";
+import { keepFactor } from "@/app/landing/_components/meridian/plate";
+import { computeGeometry, deriveStations, limbPoint, stationPoint, STATION_COUNT } from "@/app/landing/_components/meridian/stations";
 import series from "@/app/landing/_components/ink/hero-series.json";
 
 describe("hero series bake math", () => {
@@ -79,33 +80,67 @@ describe("committed hero-series.json asset", () => {
   });
 });
 
-describe("hero text-exclusion falloff field", () => {
-  it("is fully open with no rects", () => {
-    const f = rectFalloffField([], 8, 8, 800, 400);
-    expect(f.every((v) => v === 255)).toBe(true);
+describe("meridian geometry", () => {
+  const geo = computeGeometry(1440, 900, false);
+
+  it("the limb is a dome across the upper third, bleeding off both edges", () => {
+    const left = limbPoint(geo, geo.phi0);
+    const apex = limbPoint(geo, 0);
+    const right = limbPoint(geo, geo.phi1);
+    expect(left.x).toBeLessThan(0); // off the left edge
+    expect(right.x).toBeGreaterThan(1440); // off the right edge
+    expect(apex.y).toBeCloseTo(900 * 0.24, 0);
+    expect(left.y).toBeGreaterThan(apex.y); // dome, not a line
+    expect(right.y).toBeGreaterThan(apex.y);
+    expect(left.y).toBeLessThan(900); // still on the plate
   });
 
-  it("is 0 inside a rect and ramps smoothly to 255 at the falloff radius", () => {
-    const w = 64;
-    const h = 32;
-    const cssW = 1280;
-    const cssH = 640;
-    const rect = { x0: 100, y0: 100, x1: 300, y1: 200 };
-    const f = rectFalloffField([rect], w, h, cssW, cssH);
-    const at = (x: number, y: number) => f[Math.floor((y / cssH) * h) * w + Math.floor((x / cssW) * w)];
-    expect(at(200, 150)).toBe(0); // inside
-    const near = at(300 + 40, 150);
-    const far = at(300 + 120, 150);
-    expect(near).toBeGreaterThan(0);
-    expect(far).toBeGreaterThan(near); // monotone falloff
-    expect(at(300 + SDF_FALLOFF_PX + 60, 150)).toBe(255); // beyond the radius
+  it("derives one station per calendar year of the committed series", () => {
+    const stations = deriveStations(series);
+    expect(stations).toHaveLength(STATION_COUNT);
+    expect(stations[0].year).toBe(2007);
+    expect(stations[stations.length - 1].year).toBe(2026);
+    for (const s of stations) {
+      expect(s.v).toBeGreaterThanOrEqual(0);
+      expect(s.v).toBeLessThanOrEqual(1);
+    }
+    // Time is monotone left → right across the sky.
+    const xs = stations.map((s) => stationPoint(geo, s, false).x);
+    for (let i = 1; i < xs.length; i++) expect(xs[i]).toBeGreaterThan(xs[i - 1]);
   });
 
-  it("takes the union (min distance) over multiple rects", () => {
-    const a = { x0: 0, y0: 0, x1: 100, y1: 100 };
-    const b = { x0: 500, y0: 0, x1: 600, y1: 100 };
-    const one = rectFalloffField([a], 64, 16, 640, 160);
-    const both = rectFalloffField([a, b], 64, 16, 640, 160);
-    for (let i = 0; i < one.length; i++) expect(both[i]).toBeLessThanOrEqual(one[i]);
+  it("stations hang ABOVE the limb, clear of the nav band", () => {
+    const stations = deriveStations(series);
+    for (const s of stations) {
+      const p = stationPoint(geo, s, false);
+      if (p.x < 0 || p.x > geo.w) continue; // off-plate stations are clipped anyway
+      const phi = Math.asin((p.x - geo.cx) / geo.R);
+      expect(p.y).toBeLessThan(limbPoint(geo, phi).y); // above the arc
+      expect(p.y).toBeGreaterThanOrEqual(900 * 0.11 - 1e-6); // below the nav
+    }
+  });
+});
+
+describe("meridian keep-out falloff", () => {
+  const rect = { x: 100, y: 100, w: 200, h: 100 };
+
+  it("is fully open with no rects and floors near zero inside a rect", () => {
+    expect(keepFactor([], 400, 400)).toBe(1);
+    expect(keepFactor([rect], 200, 150)).toBeLessThanOrEqual(0.05);
+  });
+
+  it("ramps monotonically from the rect edge to open space", () => {
+    const near = keepFactor([rect], 340, 150); // 14px past pad
+    const far = keepFactor([rect], 420, 150);
+    expect(near).toBeGreaterThan(0.04);
+    expect(far).toBeGreaterThan(near);
+    expect(keepFactor([rect], 600, 150)).toBe(1); // beyond the feather
+  });
+
+  it("takes the union (minimum) over multiple rects", () => {
+    const b = { x: 500, y: 100, w: 100, h: 100 };
+    const one = keepFactor([rect], 450, 150);
+    const both = keepFactor([rect, b], 450, 150);
+    expect(both).toBeLessThanOrEqual(one);
   });
 });

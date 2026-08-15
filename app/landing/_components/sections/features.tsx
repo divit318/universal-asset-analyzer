@@ -106,14 +106,14 @@ const CAPABILITIES: (Capability | null)[] = [
     stage: "04",
     verb: "Decide",
     module: "Portfolio Intelligence",
-    title: "The whole book, graded",
+    title: "The whole book, scored",
     description:
-      "Value, allocation, concentration, and a health grade recomputed from your actual lots on every change — what a position does to the book, not just to itself.",
+      "Value, allocation, concentration, and an alignment score recomputed from your actual lots and your own policy on every change — what a position does to the book, not just to itself.",
     cta: "Open the portfolio",
     href: appRoute("/portfolio"),
     icon: PieChart,
     mockup: PortfolioPanel,
-    mockupLabel: `Portfolio Intelligence panel showing the real demo book: value ${PANEL_DATA.portfolio.valueDisplay}, health ${PANEL_DATA.portfolio.health} (${PANEL_DATA.portfolio.healthGrade}), engine-computed trajectory, allocation, and live movers.`,
+    mockupLabel: `Portfolio Intelligence panel showing the real demo book: value ${PANEL_DATA.portfolio.valueDisplay}, the portfolio-alignment score, engine-computed trajectory, allocation, and live movers.`,
     provenance: `demo book · engine snapshots · movers as of ${PANEL_DATA.portfolio.moversAsOf}`,
   },
   PANEL_DATA.assistant

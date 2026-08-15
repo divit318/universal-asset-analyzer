@@ -16,21 +16,23 @@
  *   8. Copy integrity: the served page must not contain reference-image
  *      contamination strings.
  *
- * Hero-specific gates (full-bleed filament ribbon):
- *   - hero-edge-bleed: lit pixels in the outermost 2px columns of BOTH the
- *     left and right hero edges (the ribbon is full-bleed, defect 1.1).
- *   - hero-no-clip-edge: no adjacent-column lit-density drop > 70%
- *     (catches column-clamping regressions).
- *   - hero-hue: dim strand pixels stay in the brass band (white is earned
- *     by overlap, never assigned).
- *   - hero-core-presence: >= 1.5% of lit pixels above 85% luminance,
- *     contiguous and tracking the spine.
+ * Hero-specific gates (the Meridian observatory plate, 2026-08 redesign):
+ *   - hero-limb-bleed: lit pixels in the outermost 2px columns of BOTH
+ *     edges in the sky band (the limb + dust bleed off both edges — the
+ *     instrument is larger than the window).
+ *   - hero-record-resolved: at the pin's end every station of the record
+ *     (one per calendar year of the committed series) is active.
+ *   - hero-verdict: the verdict star (2026) renders hot pixels + its ring
+ *     at the position the engine reports.
+ *   - hero-keepout: the meridian canvas keeps its ink out of the h1/lead
+ *     rects (the keepFactor floor, measured, not assumed).
+ *   - hero-hue: dim pixels stay in the brass band (white-gold is earned
+ *     by the verdict and particle cores, never assigned to the field).
  *   - text-contrast: headline / paragraph / buttons >= 4.5:1 against their
  *     actual rendered backdrop. Run at 1280 / 1440 / 1920 / 2560 via
  *     --hero-only for the non-default widths.
- *   - --vortex: five-minute run, screenshot every 15s (archived for the
- *     manual closed-loop check) and the per-strand orbit cap sampled: no
- *     strand may exceed 400 degrees of net turn in a 90-frame window.
+ *   - --vortex: long-run screenshot archive of the plate at rest (the
+ *     meridian has no strands, so no orbit cap applies).
  *
  * Usage: node scripts/ink-verify.mjs [--reduced] [--width=1440] [--update-ref]
  *        [--hero-only] [--vortex]
@@ -201,21 +203,12 @@ const heroClip = await page.evaluate(() => {
 
 if (vortex && !reduced) {
   const SAMPLES = 20; // 5 minutes at one sample per 15s
-  let maxTurn = 0;
-  let respawns = 0;
   for (let k = 0; k < SAMPLES; k++) {
     await page.waitForTimeout(15000);
-    const orbit = await page.evaluate(() => window.__uaaHeroFieldDebug?.orbit?.());
-    maxTurn = Math.max(maxTurn, orbit?.maxWindowTurnDeg ?? 999);
-    respawns = orbit?.respawns ?? -1;
+    const stats = await page.evaluate(() => window.__uaaMeridianDebug?.stats?.());
     await page.screenshot({ path: `${OUT}/vortex-${String(k).padStart(2, "0")}.png`, clip: heroClip });
-    report.push(`INFO  vortex sample ${k + 1}/${SAMPLES}  maxWindowTurn ${(orbit?.maxWindowTurnDeg ?? 999).toFixed(0)}deg  orbit respawns ${respawns}`);
+    report.push(`INFO  plate sample ${k + 1}/${SAMPLES}  frame p75 ${stats?.p75 ?? "?"}ms`);
   }
-  gate(
-    "no-vortex",
-    maxTurn <= 400 + 30,
-    `max per-strand net turn ${maxTurn.toFixed(0)}deg in any 90-frame window over 5min (cap 400, small overshoot tolerated for the frame the cap fires); ${respawns} orbit respawns; screenshots ${OUT}/vortex-*.png`,
-  );
   gate("console", errors.length === 0, errors.length ? errors.slice(0, 6).join(" | ") : "clean");
   await browser.close();
   console.log(report.join("\n"));
@@ -274,7 +267,19 @@ if (!reduced) {
      links. Six formations, each at its peak. -------- */
 
   const FORMATIONS = [
-    { id: "hero", zone: '[data-ink-target="hero-ink"]', selector: "[data-hero-field]", go: async () => page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" })) },
+    {
+      id: "hero",
+      zone: '[data-ink-target="hero-ink"]',
+      selector: "[data-hero-field]",
+      // Peak = the END of the pinned act (progress 1): the record fully
+      // resolved, the verdict measured. The identity shot above is the
+      // arrival state; the formation gates measure the resolved state.
+      go: async () =>
+        page.evaluate(() => {
+          const hero = document.getElementById("hero");
+          window.scrollTo({ top: hero.offsetHeight - innerHeight, behavior: "instant" });
+        }),
+    },
     { id: "shards", zone: '[data-ink-target="problem-ink"]', go: () => scrollToZone('[data-ink-target="problem-ink"]') },
     { id: "streams", zone: '[data-ink-target="solution-ink"]', go: () => scrollToZone('[data-ink-target="solution-ink"]', 0.45) },
     { id: "pinch", zone: '[data-ink-target="privacy-ink"]', go: () => scrollToZone('[data-ink-target="privacy-ink"]') },
@@ -323,53 +328,34 @@ if (!reduced) {
         }, f.id);
     const { lit, hot, total } = await sampleCanvases(regions.length ? regions : [clipped], selector);
     const covPct = (lit / total) * 100;
-    gate(`coverage:${f.id}`, covPct >= 4, `${covPct.toFixed(2)}% of bounds lit (min 4%)`);
+    // The meridian is deliberately sparse — gold is rare, the words own
+    // their darkness — so the hero's floor is lower than a formation's
+    // (measured 1.1% at 1440; wide plates dilute further as the dust
+    // pool caps at 1150).
+    const covMin = f.selector ? 0.6 : 4;
+    gate(`coverage:${f.id}`, covPct >= covMin, `${covPct.toFixed(2)}% of bounds lit (min ${covMin}%)`);
     const corePct = lit > 0 ? (hot / lit) * 100 : 0;
-    // The hero's additive filament accumulation legitimately runs hotter.
-    const coreLo = f.selector ? 4 : 3;
-    const coreHi = f.selector ? 15 : 14;
+    // Hero: dust bodies are brass (below the hot bar); heat belongs to
+    // particle cores, station diamonds and the verdict — a wide band, but
+    // both walls still catch real failures (blown-out field / no cores).
+    const coreLo = f.selector ? 0.5 : 3;
+    const coreHi = f.selector ? 30 : 14;
     gate(`core-ratio:${f.id}`, corePct >= coreLo && corePct <= coreHi, `${corePct.toFixed(2)}% of lit pixels above 70% luminance (${coreLo}-${coreHi}%)`);
     if (f.selector) {
-      // The hero uses trail accumulation, never neighbour linking: assert
-      // the engine draws zero hero links, and the fill spans the zone.
-      const noLinks = await page.evaluate(() => {
-        const links = window.__uaaInkDebug.links();
-        return !("hero" in links) && !("ribbon" in links);
-      });
-      gate("hero-no-linking", noLinks, "engine reports no hero/ribbon link pass");
-      const bbox = await page.evaluate(([sel, zone]) => {
-        const c = document.querySelector(sel);
-        const g = window.__inkRead(c);
-        const box = c.getBoundingClientRect();
-        const dpr = c.width / box.width;
-        const d = g.getImageData(0, 0, c.width, c.height).data;
-        let x0 = c.width, x1 = 0, y0 = c.height, y1 = 0;
-        for (let y = 0; y < c.height; y += 2) {
-          for (let x = 0; x < c.width; x += 2) {
-            if (d[(y * c.width + x) * 4 + 3] > 12) {
-              if (x < x0) x0 = x;
-              if (x > x1) x1 = x;
-              if (y < y0) y0 = y;
-              if (y > y1) y1 = y;
-            }
-          }
-        }
-        // Canvas-space bbox -> viewport -> intersect with the zone rect.
-        const vb = { x0: box.left + x0 / dpr, x1: box.left + x1 / dpr, y0: box.top + y0 / dpr, y1: box.top + y1 / dpr };
-        const ix0 = Math.max(vb.x0, zone.x);
-        const ix1 = Math.min(vb.x1, zone.x + zone.w);
-        const iy0 = Math.max(vb.y0, zone.y);
-        const iy1 = Math.min(vb.y1, zone.y + zone.h);
-        return { wFrac: Math.max(0, ix1 - ix0) / zone.w, hFrac: Math.max(0, iy1 - iy0) / zone.h };
-      }, [f.selector, zr]);
-      gate(
-        "hero-zone-fill",
-        bbox.wFrac >= 0.82 && bbox.hFrac >= 0.62,
-        `lit bbox covers ${(bbox.wFrac * 100).toFixed(0)}% of zone width, ${(bbox.hFrac * 100).toFixed(0)}% of height (need 82% / 62%)`,
-      );
-      // FULL BLEED: the ribbon spans the hero edge to edge, bleeding off
-      // BOTH the left and right viewport edges. Lit pixels required in
-      // the outermost 2px column of each edge (defect 1.1).
+      // THE RECORD RESOLVES: at the pin's end, every station of the
+      // committed series (one per calendar year) must be active.
+      const record = await page.evaluate(() => window.__uaaMeridianDebug?.stations?.());
+      gate("hero-record-resolved", record != null && record.active === record.total, `stations active ${record?.active}/${record?.total} at progress ${await page.evaluate(() => window.__uaaMeridianDebug?.progress?.().toFixed(3))}`);
+
+      // LIMB BLEED: the instrument is larger than the window — the limb
+      // (plus its companion rulings and dust) must be lit in the
+      // outermost 2px columns of BOTH edges. Measured at the ARRIVAL
+      // state (scroll 0): at the pin's end the release recede pulls the
+      // whole plate a breath inward by design. A wide-plate contract:
+      // below 1280 the text keep-out rightfully owns the edge rows where
+      // the dome dips past the words, so narrow widths report INFO only.
+      await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+      await page.waitForTimeout(900);
       const bleed = await page.evaluate((sel) => {
         const c = document.querySelector(sel);
         const g2 = window.__inkRead(c);
@@ -383,42 +369,26 @@ if (!reduced) {
           litRight: count(g2.getImageData(c.width - 2, 0, 2, c.height).data),
         };
       }, f.selector);
-      // The left entry is a near-single faint thread BY DESIGN (spec 2:
-      // thin entry + intensity ramp), so its presence bar is lower than
-      // the wide bright exit's.
-      gate("hero-edge-bleed", bleed.litLeft > 8 && bleed.litRight > 20, `left edge ${bleed.litLeft} lit px (min 9), right edge ${bleed.litRight} lit px (min 21)`);
+      if (width >= 1280) {
+        gate("hero-limb-bleed", bleed.litLeft > 8 && bleed.litRight > 8, `left edge ${bleed.litLeft} lit px, right edge ${bleed.litRight} lit px (min 9 each)`);
+      } else {
+        report.push(`INFO  hero-limb-bleed  left ${bleed.litLeft} / right ${bleed.litRight} lit px (informational below 1280px)`);
+      }
+      await f.go();
+      await page.waitForTimeout(900);
 
-      // NO VERTICAL CLIP EDGE: no adjacent column pair where lit-pixel
-      // density drops by more than 70% (catches column-clamping
-      // regressions like the old right-hand ink zone). Columns are 8px
-      // bins; near-empty pairs are noise, not edges.
-      const clipEdge = await page.evaluate((sel) => {
-        const c = document.querySelector(sel);
-        const d = window.__inkRead(c).getImageData(0, 0, c.width, c.height).data;
-        const BIN = 8;
-        const nBins = Math.floor(c.width / BIN);
-        const counts = new Array(nBins).fill(0);
-        for (let y = 0; y < c.height; y += 2) {
-          for (let x = 0; x < c.width; x += 2) {
-            if (d[(y * c.width + x) * 4 + 3] > 12) counts[Math.min(nBins - 1, Math.floor(x / BIN))]++;
-          }
-        }
-        const per = (c.height / 2) * (BIN / 2); // samples per bin
-        let worst = 0;
-        let at = -1;
-        for (let i = 0; i + 1 < nBins; i++) {
-          const hi = Math.max(counts[i], counts[i + 1]);
-          const lo = Math.min(counts[i], counts[i + 1]);
-          if (hi / per < 0.02) continue;
-          const drop = 1 - lo / Math.max(1, hi);
-          if (drop > worst) {
-            worst = drop;
-            at = i;
-          }
-        }
-        return { worst, at, nBins };
-      }, f.selector);
-      gate("hero-no-clip-edge", clipEdge.worst <= 0.7, `max adjacent-column lit-density drop ${(clipEdge.worst * 100).toFixed(0)}% at bin ${clipEdge.at}/${clipEdge.nBins} (limit 70%)`);
+      // KEEP-OUT, measured on the meridian canvas itself: the words own
+      // their darkness. Inside the h1 and lead rects (deflated 12px), lit
+      // pixels stay under 1%.
+      const keepRects = await page.evaluate(() => {
+        const els = [document.querySelector("#hero h1"), document.querySelector("#hero [data-lead]")].filter(Boolean);
+        return els.map((el) => {
+          const r = el.getBoundingClientRect();
+          return { x: r.left + 12, y: r.top + 12, w: r.width - 24, h: r.height - 24 };
+        });
+      });
+      const ko = await sampleCanvases(keepRects, f.selector);
+      gate("hero-keepout", (ko.lit / ko.total) * 100 <= 1, `${((ko.lit / ko.total) * 100).toFixed(3)}% lit inside h1/lead rects (max 1%)`);
 
       // HUE CHECK: white must be earned by overlap, never assigned. Sample
       // 200 random lit pixels BELOW the 60th luminance percentile (i.e.
@@ -464,105 +434,40 @@ if (!reduced) {
       }, f.selector);
       gate("hero-hue", hue.n > 0 && (hue.bad / hue.n) * 100 <= 8, `${((hue.bad / Math.max(1, hue.n)) * 100).toFixed(1)}% of dim strand pixels outside the brass band (max 8%)`);
 
-      // CORE PRESENCE: >=1.5% of lit pixels above 85% luminance, forming a
-      // contiguous region tracking the spine, not scattered points.
-      const corePres = await page.evaluate((sel) => {
+      // THE VERDICT: the final year must render as the plate's brightest
+      // object — hot pixels concentrated where the engine says the
+      // verdict star is, with its ring lit around it.
+      const verdict = await page.evaluate((sel) => {
+        const v = window.__uaaMeridianDebug?.verdict?.();
+        if (!v) return null;
         const c = document.querySelector(sel);
-        const d = window.__inkRead(c).getImageData(0, 0, c.width, c.height).data;
-        const GW = 96;
-        const GH = 60;
-        const grid = new Uint8Array(GW * GH);
-        let lit = 0;
-        let hot = 0;
-        let litX0 = GW;
-        let litX1 = 0;
-        const W = c.width;
-        const H = c.height;
-        for (let y = 0; y < H; y += 2) {
-          for (let x = 0; x < W; x += 2) {
-            const i = (y * W + x) * 4;
+        const g2 = window.__inkRead(c);
+        const box = c.getBoundingClientRect();
+        const dpr = c.width / box.width;
+        const sample = (r) => {
+          const x = Math.max(0, Math.round((v.x - r) * dpr));
+          const y = Math.max(0, Math.round((v.y - r) * dpr));
+          const s = Math.round(r * 2 * dpr);
+          const d = g2.getImageData(x, y, Math.min(s, c.width - x), Math.min(s, c.height - y)).data;
+          let lit = 0;
+          let hot = 0;
+          for (let i = 0; i < d.length; i += 4) {
             const a = d[i + 3] / 255;
             if (a * 255 <= 8) continue;
             lit++;
-            const gx = Math.min(GW - 1, Math.floor((x / W) * GW));
-            if (gx < litX0) litX0 = gx;
-            if (gx > litX1) litX1 = gx;
             const lum = (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) * a;
-            if (lum > 0.85 * 255) {
-              hot++;
-              grid[Math.min(GH - 1, Math.floor((y / H) * GH)) * GW + gx] = 1;
-            }
+            if (lum > 0.8 * 255) hot++;
           }
-        }
-        // Bridge radius 3 (~45px): the braid's hot crossing NODES sit tens
-        // of px apart along the spine; a chain of nodes IS the "contiguous
-        // region tracking the spine" the gate demands, while genuinely
-        // scattered isolated specks (the failure this guards against) stay
-        // disconnected at this radius.
-        const R = 3;
-        const dil = new Uint8Array(GW * GH);
-        for (let y = 0; y < GH; y++) {
-          for (let x = 0; x < GW; x++) {
-            const s0 = y * GW + x;
-            outer: for (let oy = -R; oy <= R; oy++) {
-              for (let ox = -R; ox <= R; ox++) {
-                const yy = y + oy;
-                const xx = x + ox;
-                if (yy < 0 || xx < 0 || yy >= GH || xx >= GW) continue;
-                if (grid[yy * GW + xx]) {
-                  dil[s0] = 1;
-                  break outer;
-                }
-              }
-            }
-          }
-        }
-        grid.set(dil);
-        // Largest connected component of hot cells (4-neighbour flood).
-        const seen = new Uint8Array(GW * GH);
-        let best = 0;
-        let bestX0 = 0;
-        let bestX1 = 0;
-        const stack = [];
-        for (let s = 0; s < GW * GH; s++) {
-          if (!grid[s] || seen[s]) continue;
-          let size = 0;
-          let x0 = GW;
-          let x1 = 0;
-          stack.length = 0;
-          stack.push(s);
-          seen[s] = 1;
-          while (stack.length) {
-            const cur = stack.pop();
-            size++;
-            const cx = cur % GW;
-            if (cx < x0) x0 = cx;
-            if (cx > x1) x1 = cx;
-            for (const nb of [cur - 1, cur + 1, cur - GW, cur + GW]) {
-              if (nb < 0 || nb >= GW * GH || seen[nb] || !grid[nb]) continue;
-              if (Math.abs((nb % GW) - cx) > 1) continue;
-              seen[nb] = 1;
-              stack.push(nb);
-            }
-          }
-          if (size > best) {
-            best = size;
-            bestX0 = x0;
-            bestX1 = x1;
-          }
-        }
-        let totalHotCells = 0;
-        for (let s = 0; s < GW * GH; s++) if (grid[s]) totalHotCells++;
-        return {
-          hotPct: lit > 0 ? (hot / lit) * 100 : 0,
-          largestFrac: totalHotCells > 0 ? best / totalHotCells : 0,
-          spanFrac: litX1 > litX0 ? (bestX1 - bestX0) / (litX1 - litX0) : 0,
+          return { lit, hot };
         };
+        return { near: sample(8), ring: sample(20), pos: v };
       }, f.selector);
       gate(
-        "hero-core-presence",
-        corePres.hotPct >= 1.5 && corePres.largestFrac >= 0.4 && corePres.spanFrac >= 0.4,
-        `${corePres.hotPct.toFixed(2)}% of lit pixels above 85% luminance (min 1.5%); largest contiguous region holds ${(corePres.largestFrac * 100).toFixed(0)}% of hot cells and spans ${(corePres.spanFrac * 100).toFixed(0)}% of the lit width (min 40%/40%)`,
+        "hero-verdict",
+        verdict != null && verdict.near.hot >= 4 && verdict.ring.lit > verdict.near.lit,
+        verdict
+          ? `verdict star at (${verdict.pos.x.toFixed(0)}, ${verdict.pos.y.toFixed(0)}): ${verdict.near.hot} hot px in core, ring band lit ${verdict.ring.lit - verdict.near.lit} px`
+          : "no meridian debug handle",
       );
 
       // TEXT CONTRAST: headline, paragraph and buttons vs their ACTUAL
@@ -639,12 +544,10 @@ if (!reduced) {
       for (const t of contrast) gate(`text-contrast:${t.id}@${width}`, t.ratio >= 4.5, `${t.ratio.toFixed(2)}:1 vs rendered backdrop (min 4.5:1)`);
 
       // HERO FRAME TIME: p75 budget 8ms up to 1920, 11ms at 2560.
-      const heroStats = await page.evaluate(() => window.__uaaHeroFieldDebug?.stats?.());
+      const heroStats = await page.evaluate(() => window.__uaaMeridianDebug?.stats?.());
       report.push(`INFO  hero-stats  ${JSON.stringify(heroStats)}`);
       const heroBudget = width >= 2560 ? 11 : 8;
       gate("hero-frame-time", (heroStats?.p75 ?? 99) < heroBudget, `p75 ${heroStats?.p75}ms (budget ${heroBudget}ms at ${width}px)`);
-      const orbit = await page.evaluate(() => window.__uaaHeroFieldDebug?.orbit?.());
-      report.push(`INFO  hero-orbit  ${JSON.stringify(orbit)}`);
     } else {
       const info = await page.evaluate((id) => {
         const m = window.__uaaInkDebug.movements().find((x) => x.id === id);
@@ -738,6 +641,8 @@ if (!reduced) {
 } else {
   const stats = await page.evaluate(() => window.__uaaInkDebug?.stats?.());
   gate("reduced-no-loop", (stats?.samples ?? 1) === 0, `loop samples ${stats?.samples} (must be 0)`);
+  const plate = await page.evaluate(() => window.__uaaMeridianDebug?.stats?.());
+  gate("reduced-no-plate-loop", (plate?.samples ?? 1) === 0, `meridian frame samples ${plate?.samples} (must be 0)`);
 }
 
 gate("console", errors.length === 0, errors.length ? errors.slice(0, 6).join(" | ") : "clean");

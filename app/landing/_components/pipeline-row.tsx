@@ -30,17 +30,17 @@ export function PipelineRow() {
           className="relative flex flex-col items-start pr-6 transition-[filter] duration-300"
         >
           <div className="flex w-full items-center gap-3">
-            <span className="font-mono text-mk-small tabular-nums text-brand">{stage.n}</span>
+            <span className="font-mono text-[11px] tabular-nums tracking-[0.08em] text-brand/80">{stage.n}</span>
             {/* Dotted connector rule to the next stage. */}
             {i < PIPELINE_STAGES.length - 1 && (
               <span
                 aria-hidden="true"
-                className="hidden h-px flex-1 bg-[repeating-linear-gradient(to_right,var(--color-border-strong)_0,var(--color-border-strong)_2px,transparent_2px,transparent_9px)] sm:block"
+                className="hidden h-px flex-1 bg-[repeating-linear-gradient(to_right,var(--color-border-strong)_0,var(--color-border-strong)_2px,transparent_2px,transparent_9px)] opacity-70 sm:block"
               />
             )}
           </div>
-          <span className="mt-2 text-mk-eyebrow uppercase tracking-widest text-foreground">{stage.label}</span>
-          <span className="mt-0.5 text-mk-small text-muted">{stage.sub}</span>
+          <span className="mt-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-foreground/90">{stage.label}</span>
+          <span className="mt-0.5 text-mk-small text-muted/80">{stage.sub}</span>
         </li>
       ))}
     </ol>
