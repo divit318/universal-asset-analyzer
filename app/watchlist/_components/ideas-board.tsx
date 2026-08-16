@@ -121,7 +121,10 @@ function BoardCard({ entry, onAct }: { entry: BoardEntry; onAct: IdeaActHandler 
 
         <span className="truncate text-[11px] text-muted">{item.name}</span>
 
-        <EvidenceTrail item={item} evidence={entry.evidence} />
+        {/* Compact: recency + thesis always, other artifacts once they exist.
+            The full six-chip trail lives in the expanded row — on a card it
+            wraps to two lines of dashes and buries the two facts that matter. */}
+        <EvidenceTrail item={item} evidence={entry.evidence} compact />
 
         {/* Relevance layers in when assessed; the card is complete without it. */}
         {fit && assessment ? (

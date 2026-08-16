@@ -93,6 +93,11 @@ export function DecideDialog({
   return (
     <Dialog open onClose={onClose} title={TITLE[mode](symbol)} description={contextLine}>
       <div className="flex flex-col gap-4">
+        {/* The grounds, visible — the Dialog's `description` prop is
+            screen-reader-only by design, and a decision dialog that doesn't
+            SAY why it opened reads as an unexplained interruption. */}
+        <p className="-mt-1 text-xs leading-snug text-muted">{contextLine}</p>
+
         {/* The file, restated: what you wrote, how sure you were, the level. */}
         <div className="rounded-control border border-hairline bg-surface-2/50 p-3">
           <p className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">

@@ -64,6 +64,10 @@ export function PassDialog({
       description={`${name} leaves the active list. The reason is journaled, and the idea can be reconsidered later.`}
     >
       <div className="flex flex-col gap-4">
+        {/* Visible consequence line — the Dialog `description` is sr-only. */}
+        <p className="-mt-1 text-xs leading-snug text-muted">
+          {name} leaves the active list. The reason is journaled; you can reconsider later.
+        </p>
         <div role="group" aria-label="Reason" className="flex flex-wrap gap-1.5">
           {PASS_REASONS.map((r) => {
             const active = reason === r;
