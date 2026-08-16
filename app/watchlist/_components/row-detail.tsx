@@ -128,6 +128,14 @@ export function WatchlistRowDetail({
             >
               {evidence.valuationCases > 0 ? "Open valuation →" : "Run a valuation →"}
             </Link>
+            {evidence.icReports > 0 ? (
+              <Link
+                href={`/ic-report?symbol=${encodeURIComponent(item.symbol)}`}
+                className="text-[11px] text-brand underline-offset-2 hover:underline"
+              >
+                IC report →
+              </Link>
+            ) : null}
             {evidence.journalDecisions > 0 ? (
               <Link
                 href={`/journal?symbol=${encodeURIComponent(item.symbol)}`}

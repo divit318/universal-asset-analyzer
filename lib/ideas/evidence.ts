@@ -53,6 +53,9 @@ export interface IdeaEvidence {
   /** DCF/valuation cases (valuation_case). */
   valuationCases: number;
   lastValuationAt: string | null;
+  /** Institutional IC reports (ic_report) — the deepest artifact UAA produces. */
+  icReports: number;
+  lastIcReportAt: string | null;
   /** Journal entries (decision table). */
   journalDecisions: number;
   lastDecisionAt: string | null;
@@ -68,6 +71,8 @@ export const EMPTY_EVIDENCE: IdeaEvidence = {
   lastNoteAt: null,
   valuationCases: 0,
   lastValuationAt: null,
+  icReports: 0,
+  lastIcReportAt: null,
   journalDecisions: 0,
   lastDecisionAt: null,
   lastDecisionAction: null,
@@ -119,10 +124,10 @@ export const WORKFLOW_QUESTION: Record<IdeaWorkflow, string> = {
 };
 
 export const WORKFLOW_HELP: Record<IdeaWorkflow, string> = {
-  new: "Tracked, but no research evidence exists yet.",
-  working: "Research evidence exists; no investment view has been written.",
-  ready: "A thesis exists — the remaining step is a decision.",
-  waiting: "Decision taken conditionally: a trigger or price level is armed.",
+  new: "Tracked, but no research evidence exists yet. Opening it in Research moves it to In work.",
+  working: "Research evidence exists; no investment view has been written. Writing the thesis makes it Ready.",
+  ready: "A thesis exists — the remaining step is a decision: buy, arm a trigger, or pass.",
+  waiting: "A thesis plus an armed trigger or price level — decided conditionally, monitoring itself.",
   owned: "Held in the portfolio — derived from the ledger, never set by hand.",
   passed: "Deliberately declined. Kept for the record; can be reconsidered.",
   exited: "Previously owned; the ledger shows the position closed.",
@@ -156,8 +161,20 @@ export function hasResearchEvidence(ev: IdeaEvidence): boolean {
     ev.aiSessions > 0 ||
     ev.noteCount > 0 ||
     ev.valuationCases > 0 ||
+    ev.icReports > 0 ||
     ev.journalDecisions > 0
   );
+}
+
+/**
+ * Deep research: an AI research session or an IC report — artifacts that only
+ * exist because the user worked the name, as opposed to a page visit, whose
+ * depth the app cannot measure. Drives LABELING only ("Researched" vs
+ * "Opened"), never the workflow: a visit still counts as work, because the
+ * worse failure is claiming work doesn't exist when it does.
+ */
+export function hasDeepResearch(ev: IdeaEvidence): boolean {
+  return ev.aiSessions > 0 || ev.icReports > 0;
 }
 
 /**
@@ -214,6 +231,7 @@ export function lastActivityAt(
     epoch(evidence.lastResearchedAt),
     epoch(evidence.lastNoteAt),
     epoch(evidence.lastValuationAt),
+    epoch(evidence.lastIcReportAt),
     epoch(evidence.lastDecisionAt),
   ].filter((t): t is number => t != null);
   return candidates.length > 0 ? Math.max(...candidates) : 0;
@@ -270,6 +288,7 @@ export function evidenceNewerThanThesis(
     epoch(evidence.lastResearchedAt) ?? 0,
     epoch(evidence.lastValuationAt) ?? 0,
     epoch(evidence.lastNoteAt) ?? 0,
+    epoch(evidence.lastIcReportAt) ?? 0,
   );
   return newest > reviewed + 2 * 24 * 60 * 60 * 1000;
 }
@@ -327,13 +346,28 @@ export interface NextAction {
 
 const money = (v: number) => (v >= 1000 ? `$${Math.round(v).toLocaleString("en-US")}` : `$${v.toFixed(2)}`);
 
-/** Compact list of the durable artifacts that exist, for "why this CTA" copy. */
-function artifactPhrase(ev: IdeaEvidence): string {
+function agoPhrase(iso: string | null, now: number): string | null {
+  if (!iso) return null;
+  const days = Math.floor((now - Date.parse(iso)) / DAY_MS);
+  if (!Number.isFinite(days) || days < 0) return "today";
+  return days === 0 ? "today" : days === 1 ? "1d ago" : `${days}d ago`;
+}
+
+/**
+ * Compact list of the durable artifacts that exist, for "why this CTA" copy.
+ * A visit-only trail says WHEN it was opened rather than a generic "activity
+ * exists" — five cards reading the identical sentence tell the user nothing.
+ */
+function artifactPhrase(ev: IdeaEvidence, now: number): string {
   const parts: string[] = [];
+  if (ev.icReports > 0) parts.push("an IC report");
   if (ev.aiSessions > 0) parts.push("AI research");
   if (ev.valuationCases > 0) parts.push("a valuation case");
   if (ev.noteCount > 0) parts.push("notes");
-  if (parts.length === 0) return "Research activity exists";
+  if (parts.length === 0) {
+    const when = agoPhrase(ev.lastResearchedAt, now);
+    return when ? `Opened in Research ${when}` : "Research activity exists";
+  }
   if (parts.length === 1) return `${parts[0][0].toUpperCase()}${parts[0].slice(1)} exists`;
   return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]} exist`;
 }
@@ -373,7 +407,7 @@ export function nextActionFor(input: {
       if (idle >= STALE_AFTER_DAYS.working) {
         return { kind: "triage", label: "Work or pass", detail: `No new work in ${idle}d — continue or let it go.` };
       }
-      return { kind: "thesis", label: "Write thesis", detail: `${artifactPhrase(evidence)}; no investment view recorded.` };
+      return { kind: "thesis", label: "Write thesis", detail: `${artifactPhrase(evidence, now)}; no investment view yet.` };
 
     case "ready": {
       if (evidenceNewerThanThesis(item, evidence)) {
@@ -428,7 +462,7 @@ export function passReason(ev: IdeaEvidence): string | null {
 /* -------------------------------------------------------------------------- */
 
 export interface EvidenceChip {
-  key: "research" | "valuation" | "notes" | "thesis" | "journal";
+  key: "research" | "valuation" | "ic" | "notes" | "thesis" | "journal";
   /** Short chip text, e.g. "Researched 3d ago", "DCF ✓", "Thesis —". */
   label: string;
   present: boolean;
@@ -455,13 +489,26 @@ export function evidenceTrail(
   now: number = Date.now(),
 ): EvidenceChip[] {
   const thesis = hasThesis(item);
+  // Depth is labeled, never inflated: "Researched" is reserved for deep
+  // artifacts (AI sessions, IC reports); a bare page visit reads "Opened".
+  // Both count as work — the distinction is honesty about how much.
+  const deep = hasDeepResearch(evidence);
   return [
     {
       key: "research",
-      present: evidence.lastResearchedAt != null || evidence.aiSessions > 0,
-      label: evidence.lastResearchedAt ? `Researched ${agoDays(evidence.lastResearchedAt, now)}` : "Research —",
+      present: evidence.lastResearchedAt != null || deep,
+      label: evidence.lastResearchedAt
+        ? `${deep ? "Researched" : "Opened"} ${agoDays(evidence.lastResearchedAt, now)}`
+        : "Research —",
       title: evidence.lastResearchedAt
-        ? `Last research activity ${agoDays(evidence.lastResearchedAt, now)}${evidence.aiSessions > 0 ? ` · ${evidence.aiSessions} AI session${evidence.aiSessions === 1 ? "" : "s"}` : ""}`
+        ? deep
+          ? `Last research activity ${agoDays(evidence.lastResearchedAt, now)} · ${[
+              evidence.aiSessions > 0 ? `${evidence.aiSessions} AI session${evidence.aiSessions === 1 ? "" : "s"}` : null,
+              evidence.icReports > 0 ? `${evidence.icReports} IC report${evidence.icReports === 1 ? "" : "s"}` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}`
+          : `Opened in the Research Hub ${agoDays(evidence.lastResearchedAt, now)}. No deeper artifact (AI session, IC report) yet.`
         : "No recorded research activity for this symbol.",
     },
     {
@@ -469,6 +516,14 @@ export function evidenceTrail(
       present: evidence.valuationCases > 0,
       label: evidence.valuationCases > 0 ? "DCF ✓" : "DCF —",
       title: evidence.valuationCases > 0 ? "A valuation case exists for this symbol." : "No valuation case yet.",
+    },
+    {
+      key: "ic",
+      present: evidence.icReports > 0,
+      label: evidence.icReports > 0 ? "IC ✓" : "IC —",
+      title: evidence.icReports > 0
+        ? `${evidence.icReports} institutional report${evidence.icReports === 1 ? "" : "s"} on file.`
+        : "No IC report yet.",
     },
     {
       key: "notes",

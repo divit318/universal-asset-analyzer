@@ -1673,6 +1673,7 @@ function WatchlistPageInner() {
         sortValue: (r) =>
           (r.evidence.lastResearchedAt ? 1 : 0) +
           (r.evidence.valuationCases > 0 ? 1 : 0) +
+          (r.evidence.icReports > 0 ? 1 : 0) +
           (r.evidence.noteCount > 0 ? 1 : 0) +
           (r.item.notes || r.item.buyTrigger || r.item.sellTrigger ? 1 : 0) +
           (r.evidence.journalDecisions > 0 ? 1 : 0),

@@ -1422,6 +1422,8 @@ export function getIdeaEvidence(symbols: string[]): Map<string, IdeaEvidence> {
         lastNoteAt: null,
         valuationCases: 0,
         lastValuationAt: null,
+        icReports: 0,
+        lastIcReportAt: null,
         journalDecisions: 0,
         lastDecisionAt: null,
         lastDecisionAction: null,
@@ -1485,6 +1487,25 @@ export function getIdeaEvidence(symbols: string[]): Map<string, IdeaEvidence> {
     const e = entry(c.sym);
     e.valuationCases = Number(c.n);
     e.lastValuationAt = c.last;
+  }
+
+  // IC reports — created lazily by lib/ic/store.ts on the same file, so the
+  // table may not exist on a database that has never generated one. Guarded:
+  // its absence means "no reports", never a failed evidence read.
+  try {
+    const ics = db
+      .prepare("SELECT upper(symbol) AS sym, COUNT(*) AS n, MAX(generated_at) AS last FROM ic_report GROUP BY upper(symbol)")
+      .all() as unknown as { sym: string; n: number; last: string | null }[];
+    for (const r of ics) {
+      if (!wanted.has(r.sym)) continue;
+      const e = entry(r.sym);
+      e.icReports = Number(r.n);
+      e.lastIcReportAt = r.last;
+      // Generating an institutional report IS research activity.
+      e.lastResearchedAt = maxIso(e.lastResearchedAt, r.last);
+    }
+  } catch {
+    /* no ic_report table yet — a fresh database */
   }
 
   // Journal entries; the latest row also carries the pass reason when the
