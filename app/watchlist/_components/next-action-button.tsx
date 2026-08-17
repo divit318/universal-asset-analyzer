@@ -26,10 +26,18 @@ const TONE: Record<NextActionKind, string> = {
   research: "border-brand/40 text-brand hover:bg-brand/10",
   thesis: "border-brand/40 text-brand hover:bg-brand/10",
   monitor: "border-border text-muted hover:bg-surface-2 hover:text-foreground",
-  portfolio: "border-border text-muted hover:bg-surface-2 hover:text-foreground",
-  reconsider: "border-border text-muted hover:bg-surface-2 hover:text-foreground",
+  portfolio: "",
+  reconsider: "",
   none: "",
 };
+
+/**
+ * Routine, non-asking kinds render as quiet text links rather than buttons:
+ * a table with 23 owned rows otherwise shows 23 identical "Manage" buttons,
+ * and a column of buttons that ask for nothing teaches the user to ignore
+ * the column — which then mutes the four kinds that DO ask.
+ */
+const LINK_KINDS: NextActionKind[] = ["portfolio", "reconsider"];
 
 export function NextActionButton({
   action,
@@ -47,6 +55,21 @@ export function NextActionButton({
       <span title={action.detail} className={`text-[11px] text-faint ${className}`}>
         —
       </span>
+    );
+  }
+  if (LINK_KINDS.includes(action.kind)) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onAct(action.kind, symbol);
+        }}
+        title={action.detail}
+        className={`whitespace-nowrap rounded-control text-[11px] text-muted underline-offset-2 outline-none transition-colors hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-brand/40 ${className}`}
+      >
+        {action.label} →
+      </button>
     );
   }
   return (

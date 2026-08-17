@@ -1423,20 +1423,26 @@ function WatchlistPageInner() {
            (an owned name's stage IS "Owned"), alert state in the attention
            column, row tone and target cell, thesis in its own column — the
            badge cluster that used to live here said everything twice. */
-        render: (r) => (
-          <span className="flex flex-col gap-0.5">
-            <Link
-              href={`/research?symbol=${r.item.symbol}`}
-              onClick={(e) => e.stopPropagation()}
-              className="self-start rounded-control font-mono text-sm font-semibold text-brand hover:underline"
-            >
-              {r.item.symbol}
-            </Link>
-            <span className="block max-w-56 truncate text-[11px] text-muted" title={r.item.name}>
-              {r.item.name}
+        render: (r) => {
+          /* Archive rows (passed/exited) read as history at a glance: the
+             ticker drops its brand colour so the ACTIVE ideas carry the eye.
+             Still fully readable and clickable — history is kept, not hidden. */
+          const archived = r.workflow === "passed" || r.workflow === "exited";
+          return (
+            <span className="flex flex-col gap-0.5">
+              <Link
+                href={`/research?symbol=${r.item.symbol}`}
+                onClick={(e) => e.stopPropagation()}
+                className={`self-start rounded-control font-mono text-sm font-semibold hover:underline ${archived ? "text-muted/70" : "text-brand"}`}
+              >
+                {r.item.symbol}
+              </Link>
+              <span className={`block max-w-56 truncate text-[11px] ${archived ? "text-muted/60" : "text-muted"}`} title={r.item.name}>
+                {r.item.name}
+              </span>
             </span>
-          </span>
-        ),
+          );
+        },
       },
       {
         key: "price",
@@ -1673,6 +1679,7 @@ function WatchlistPageInner() {
         sortValue: (r) =>
           (r.evidence.lastResearchedAt ? 1 : 0) +
           (r.evidence.valuationCases > 0 ? 1 : 0) +
+          (r.evidence.icReports > 0 ? 1 : 0) +
           (r.evidence.noteCount > 0 ? 1 : 0) +
           (r.item.notes || r.item.buyTrigger || r.item.sellTrigger ? 1 : 0) +
           (r.evidence.journalDecisions > 0 ? 1 : 0),
@@ -1822,7 +1829,9 @@ function WatchlistPageInner() {
             )}
           </div>
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
-            <span>Live prices, your own price targets, and the thesis behind each name.</span>
+            {/* The page's one-sentence job. "Saved stocks" is what this must
+                never read as again — it is the ideas workspace. */}
+            <span>Every idea you&rsquo;re considering — where it stands, the evidence behind it, and the next step.</span>
             {/* Freshness is part of the claim "live". A price with no "as of" is
                 an assertion the UI cannot back up. */}
             {!loading && items.length > 0 && (

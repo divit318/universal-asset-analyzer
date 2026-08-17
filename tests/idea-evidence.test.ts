@@ -14,6 +14,7 @@ import {
   EMPTY_EVIDENCE,
   evidenceNewerThanThesis,
   evidenceTrail,
+  hasDeepResearch,
   hasResearchEvidence,
   idleDays,
   isStale,
@@ -125,13 +126,27 @@ describe("deriveWorkflow", () => {
 });
 
 describe("hasResearchEvidence", () => {
-  it("any artifact counts: visit, session, note, valuation, journal", () => {
+  it("any artifact counts: visit, session, note, valuation, IC report, journal", () => {
     expect(hasResearchEvidence(ev())).toBe(false);
     expect(hasResearchEvidence(ev({ lastResearchedAt: daysAgo(1) }))).toBe(true);
     expect(hasResearchEvidence(ev({ aiSessions: 1 }))).toBe(true);
     expect(hasResearchEvidence(ev({ noteCount: 1 }))).toBe(true);
     expect(hasResearchEvidence(ev({ valuationCases: 1 }))).toBe(true);
+    expect(hasResearchEvidence(ev({ icReports: 1 }))).toBe(true);
     expect(hasResearchEvidence(ev({ journalDecisions: 1 }))).toBe(true);
+  });
+
+  it("an IC report alone puts an idea In work", () => {
+    const evidence = ev({ icReports: 1, lastIcReportAt: daysAgo(2) });
+    expect(deriveWorkflow({ held: false, stage: "surfaced", item: wl({ symbol: "A" }), evidence })).toBe("working");
+  });
+
+  it("depth is a labeling distinction, never a workflow one", () => {
+    // A bare visit and an AI session both derive "working"…
+    expect(hasDeepResearch(ev({ lastResearchedAt: daysAgo(1) }))).toBe(false);
+    expect(hasDeepResearch(ev({ aiSessions: 1 }))).toBe(true);
+    expect(hasDeepResearch(ev({ icReports: 1 }))).toBe(true);
+    // …the difference is only how the trail names it (see evidenceTrail tests).
   });
 });
 
@@ -160,6 +175,7 @@ describe("idleness and staleness", () => {
     const item = wl({ symbol: "A", lastReviewedAt: NOW - 10 * 86_400_000 });
     expect(evidenceNewerThanThesis(item, ev({ lastResearchedAt: daysAgo(1) }))).toBe(true);
     expect(evidenceNewerThanThesis(item, ev({ lastResearchedAt: daysAgo(9) }))).toBe(false);
+    expect(evidenceNewerThanThesis(item, ev({ lastIcReportAt: daysAgo(1) }))).toBe(true);
     expect(evidenceNewerThanThesis(wl({ symbol: "A" }), ev({ lastResearchedAt: daysAgo(1) }))).toBe(false);
   });
 });
@@ -205,6 +221,16 @@ describe("nextActionFor", () => {
     expect(a.kind).toBe("thesis");
     expect(a.detail).toContain("valuation case");
     expect(a.detail).toContain("no investment view");
+  });
+
+  it("a visit-only trail states WHEN it was opened, not a generic 'activity exists'", () => {
+    const a = nextActionFor({
+      workflow: "working",
+      item: wl({ symbol: "A" }),
+      evidence: ev({ lastResearchedAt: daysAgo(5) }),
+      now: NOW,
+    });
+    expect(a.detail).toContain("Opened in Research 5d ago");
   });
 
   it("ready → decide", () => {
@@ -297,14 +323,23 @@ describe("nextActionFor", () => {
 describe("evidenceTrail", () => {
   it("renders absent artifacts as explicit dashes, never omitting them", () => {
     const chips = evidenceTrail(wl({ symbol: "A" }), ev(), NOW);
-    expect(chips.map((c) => c.key)).toEqual(["research", "valuation", "notes", "thesis", "journal"]);
+    expect(chips.map((c) => c.key)).toEqual(["research", "valuation", "ic", "notes", "thesis", "journal"]);
     expect(chips.every((c) => !c.present)).toBe(true);
     expect(chips.find((c) => c.key === "thesis")!.label).toBe("Thesis —");
   });
 
-  it("states research recency in days, from the recorded timestamp", () => {
-    const chips = evidenceTrail(wl({ symbol: "A" }), ev({ lastResearchedAt: daysAgo(3) }), NOW);
-    expect(chips.find((c) => c.key === "research")!.label).toBe("Researched 3d ago");
+  it("labels a bare visit 'Opened', reserving 'Researched' for deep artifacts", () => {
+    const shallow = evidenceTrail(wl({ symbol: "A" }), ev({ lastResearchedAt: daysAgo(3) }), NOW);
+    expect(shallow.find((c) => c.key === "research")!.label).toBe("Opened 3d ago");
+    // Still PRESENT — a visit is work; only the word changes.
+    expect(shallow.find((c) => c.key === "research")!.present).toBe(true);
+
+    const deep = evidenceTrail(wl({ symbol: "A" }), ev({ lastResearchedAt: daysAgo(3), aiSessions: 2 }), NOW);
+    expect(deep.find((c) => c.key === "research")!.label).toBe("Researched 3d ago");
+
+    const ic = evidenceTrail(wl({ symbol: "A" }), ev({ lastResearchedAt: daysAgo(1), icReports: 1 }), NOW);
+    expect(ic.find((c) => c.key === "research")!.label).toBe("Researched 1d ago");
+    expect(ic.find((c) => c.key === "ic")!.label).toBe("IC ✓");
   });
 
   it("marks the thesis chip from the written fields, with conviction in the title", () => {

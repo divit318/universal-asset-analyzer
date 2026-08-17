@@ -69,6 +69,25 @@ describe("getIdeaEvidence", () => {
     addToWatchlist("BLANK", "No Work Yet");
     expect(getIdeaEvidence(["BLANK"]).get("BLANK")).toBeUndefined();
   });
+
+  it("tolerates a missing ic_report table (fresh db), then joins it once it exists", async () => {
+    // The queries above already ran without the table — the guard held. Now
+    // create it the way lib/ic/store.ts does (lazily, same file) and insert.
+    const { DatabaseSync } = await import("node:sqlite");
+    const raw = new DatabaseSync(process.env.DB_PATH!);
+    raw.exec(`CREATE TABLE IF NOT EXISTS ic_report (
+      symbol TEXT NOT NULL, generated_at TEXT NOT NULL, market TEXT NOT NULL,
+      model TEXT NOT NULL, report TEXT NOT NULL, PRIMARY KEY (symbol, generated_at))`);
+    raw.prepare("INSERT INTO ic_report (symbol, generated_at, market, model, report) VALUES (?, ?, ?, ?, ?)")
+      .run("NVDA", "2026-08-14T00:00:00.000Z", "US", "test-model", "{}");
+    raw.close();
+
+    const ev = getIdeaEvidence(["NVDA"]).get("NVDA")!;
+    expect(ev.icReports).toBe(1);
+    expect(ev.lastIcReportAt).toBe("2026-08-14T00:00:00.000Z");
+    // Generating an IC report counts as research activity.
+    expect(ev.lastResearchedAt! >= "2026-08-14T00:00:00.000Z").toBe(true);
+  });
 });
 
 describe("passIdea / reactivateIdea", () => {
