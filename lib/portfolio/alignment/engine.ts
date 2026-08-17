@@ -238,6 +238,10 @@ export function alignmentLabelOf(score: number): string {
   return "Misaligned";
 }
 
+// The score → severity mapping (alignmentToneOf) lives in ./tone.ts — a
+// zero-dependency module client components can import — on the same 70/55
+// edges as alignmentLabelOf above. Contract-tested together.
+
 /* -------------------------------------------------------------------------- */
 /* Theme scaffolding                                                           */
 /* -------------------------------------------------------------------------- */

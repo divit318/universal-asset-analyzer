@@ -25,14 +25,7 @@ export function describeDiversification(diversificationDelta: number): string {
   return diversificationDelta < 0 ? "Improves" : "Concentrates";
 }
 
-/**
- * Financial tone for an alignment score, on the engine's own label bands
- * (alignmentLabelOf): ≥70 = aligned enough to read positive, <55 = strained.
- * One helper so a 68 cannot be green in one panel and neutral in another.
- */
-export function alignmentTone(score: number | null): "positive" | "negative" | undefined {
-  if (score == null) return undefined;
-  if (score >= 70) return "positive";
-  if (score < 55) return "negative";
-  return undefined;
-}
+// A local `alignmentTone` helper was removed here (2026-08-17 ruling 3): it
+// had no callers and rendered <55 as negative, contradicting the canonical
+// `alignmentToneOf` in lib/portfolio/alignment/engine.ts (alignment is a fit
+// diagnostic, not a directional call — its severity ceiling is warning).

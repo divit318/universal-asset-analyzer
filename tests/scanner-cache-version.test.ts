@@ -22,7 +22,15 @@ afterAll(() => {
 });
 
 // Imported AFTER DB_PATH is set, so lib/db.ts's lazy getDb() opens the temp file.
-const { putScannerCache, getScannerCache, getScannerCacheAt } = await import("../lib/db");
+const {
+  putScannerCache,
+  getScannerCache,
+  getScannerCacheAt,
+  putScannerSnapshot,
+  getScannerSnapshot,
+  putPortfolioIntelligenceSnapshot,
+  getPortfolioIntelligenceSnapshot,
+} = await import("../lib/db");
 const { SCORING_METHODOLOGY_VERSION } = await import("../lib/recommendation");
 
 describe("scanner_cache methodology versioning", () => {
@@ -68,5 +76,60 @@ describe("scanner_cache methodology versioning", () => {
       .run("vtest:legacy", "legacy-payload", Date.now());
     raw.close();
     expect(getScannerCache("vtest:legacy")).toBeNull();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Long-lived snapshots: stamped on write, flagged (never blanked) on read    */
+/* -------------------------------------------------------------------------- */
+
+describe("snapshot methodology stamping (ruling 2026-08-17)", () => {
+  it("scanner_snapshot: current write reads back non-stale; legacy/foreign versions read back STALE but intact", () => {
+    putScannerSnapshot('{"scannedAt":"2026-08-17"}', "2026-08-17T10:00:00Z");
+    const fresh = getScannerSnapshot();
+    expect(fresh).not.toBeNull();
+    expect(fresh!.methodologyStale).toBe(false);
+    expect(fresh!.result).toBe('{"scannedAt":"2026-08-17"}');
+
+    // Simulate a row from a previous methodology (or NULL: pre-versioning).
+    const raw = new DatabaseSync(process.env.DB_PATH!);
+    raw.prepare("UPDATE scanner_snapshot SET methodology_version = '0000-00.0' WHERE id = 1").run();
+    raw.close();
+    const stale = getScannerSnapshot();
+    // The snapshot is STILL SERVED — flagged, never blanked, never deleted.
+    expect(stale).not.toBeNull();
+    expect(stale!.methodologyStale).toBe(true);
+    expect(stale!.result).toBe('{"scannedAt":"2026-08-17"}');
+
+    const raw2 = new DatabaseSync(process.env.DB_PATH!);
+    raw2.prepare("UPDATE scanner_snapshot SET methodology_version = NULL WHERE id = 1").run();
+    raw2.close();
+    expect(getScannerSnapshot()!.methodologyStale).toBe(true);
+  });
+
+  it("portfolio_intelligence_snapshot: same contract", () => {
+    putPortfolioIntelligenceSnapshot('{"weights":{}}', "2026-08-17T10:00:00Z");
+    expect(getPortfolioIntelligenceSnapshot()!.methodologyStale).toBe(false);
+
+    const raw = new DatabaseSync(process.env.DB_PATH!);
+    raw.prepare("UPDATE portfolio_intelligence_snapshot SET methodology_version = NULL WHERE id = 1").run();
+    raw.close();
+    const legacy = getPortfolioIntelligenceSnapshot();
+    expect(legacy).not.toBeNull();
+    expect(legacy!.methodologyStale).toBe(true);
+    expect(legacy!.data).toBe('{"weights":{}}');
+  });
+
+  it("a rewrite under the current version clears the staleness", () => {
+    putScannerSnapshot('{"scannedAt":"2026-08-18"}', "2026-08-18T10:00:00Z");
+    expect(getScannerSnapshot()!.methodologyStale).toBe(false);
+    expect(getScannerSnapshot()!.generatedAt).toBe("2026-08-18T10:00:00Z");
+    // And the stamp physically stored is the current version.
+    const raw = new DatabaseSync(process.env.DB_PATH!, { readOnly: true });
+    const row = raw.prepare("SELECT methodology_version FROM scanner_snapshot WHERE id = 1").get() as {
+      methodology_version: string;
+    };
+    raw.close();
+    expect(row.methodology_version).toBe(SCORING_METHODOLOGY_VERSION);
   });
 });

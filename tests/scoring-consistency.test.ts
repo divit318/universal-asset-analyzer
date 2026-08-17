@@ -10,7 +10,7 @@
  * primitive both engines normalize with.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, expectTypeOf } from "vitest";
 import { lerp, norm } from "@/lib/score-math";
 import { computeScore } from "@/lib/scoring";
 import {
@@ -32,7 +32,13 @@ import {
   OPPORTUNITY_VERDICT_ORDER,
   SCORING_METHODOLOGY_VERSION,
 } from "@/lib/recommendation";
-import type { AnalystConsensus, FundamentalsSnapshot, Recommendation } from "@/lib/types";
+import type {
+  AnalystConsensus,
+  FundamentalsSnapshot,
+  Recommendation,
+  StockFundamentals,
+  StockMetrics,
+} from "@/lib/types";
 
 const snap = (o: Partial<FundamentalsSnapshot> = {}): FundamentalsSnapshot =>
   ({ sector: null, ...o }) as unknown as FundamentalsSnapshot;
@@ -268,6 +274,37 @@ describe("derived vocabularies stay glued to the canonical bands", () => {
 
   it("names a methodology version for artifacts that outlive the UI", () => {
     expect(SCORING_METHODOLOGY_VERSION).toMatch(/^\d{4}-\d{2}\.\d+$/);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* fundamentals_cache stores inputs, never scores                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The decision NOT to methodology-version fundamentals_cache (2026-08-17
+ * follow-up, ruling 1) rests on exactly one invariant: the cached shape,
+ * StockFundamentals, carries RAW INPUTS only — scores are recomputed after
+ * the live-price merge on every read (lib/dataset.ts assembleMetrics). These
+ * are compile-time assertions: if anyone re-adds a score-shaped field to the
+ * cached type, `tsc --noEmit` fails and the versioning decision must be
+ * revisited.
+ */
+describe("fundamentals cache shape (type-level)", () => {
+  it("StockFundamentals carries no score-shaped field", () => {
+    expectTypeOf<StockFundamentals>().not.toHaveProperty("scores");
+    expectTypeOf<StockFundamentals>().not.toHaveProperty("score");
+    expectTypeOf<StockFundamentals>().not.toHaveProperty("composite");
+    expectTypeOf<StockFundamentals>().not.toHaveProperty("overall");
+    expectTypeOf<StockFundamentals>().not.toHaveProperty("recommendation");
+    expectTypeOf<StockFundamentals>().not.toHaveProperty("verdict");
+    expectTypeOf<StockFundamentals>().not.toHaveProperty("rankScore");
+  });
+
+  it("the Omit is doing real work — the un-cached StockMetrics DOES carry scores", () => {
+    // If StockMetrics ever loses `scores`, the Omit in StockFundamentals
+    // becomes vacuous and this whole invariant silently stops meaning anything.
+    expectTypeOf<StockMetrics>().toHaveProperty("scores");
   });
 });
 

@@ -394,7 +394,10 @@ export function scoreCapitalAllocation(c: ScreenerInCompany, d: IndiaDerivedFund
 /** The India verdict is the canonical band of the composite, in India-market
  *  words and the canonical badge tone. Previously banded at 78/62/46/30 —
  *  which made a composite of 61 read "Hold" here while every other surface
- *  called the same 61 a Buy. */
+ *  called the same 61 a Buy. NOTE: whether India deserves its own calibrated
+ *  edges (as a named variant of lib/recommendation.ts, never a private table)
+ *  is a documented open question — see "Known open calibration question —
+ *  India verdict bands" in ARCHITECTURE.md. */
 export function overallVerdict(composite: number): IndiaSnapshotVerdict {
   const rec = scoreToRecommendation(composite);
   return { label: INDIA_VERDICT_LABEL[rec], style: RECOMMENDATION_TONE[rec] };

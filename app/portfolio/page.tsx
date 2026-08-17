@@ -38,6 +38,7 @@ import { DecisionCenter } from "./_components/universal/decision-center";
 import { HoldingsPanel } from "./_components/universal/holdings-panel";
 import { PerformancePanel } from "./_components/universal/performance-panel";
 import { RiskLab } from "./_components/universal/risk-lab";
+import { alignmentToneOf } from "@/lib/portfolio/alignment/tone";
 import { AlignmentPanel } from "./_components/universal/alignment-panel";
 import { PolicyEditor } from "./_components/universal/policy-editor";
 import { OptimizePanel } from "./_components/universal/optimize-panel";
@@ -420,13 +421,12 @@ function PortfolioPageInner() {
                       : report.alignment.label ?? "vs your policy"
               }
               tone={
-                report.alignment.score == null
-                  ? "default"
-                  : report.alignment.score >= 70
-                    ? "positive"
-                    : report.alignment.score >= 55
-                      ? "default"
-                      : "warning"
+                // Canonical alignment severity (lib/portfolio/alignment/tone.ts).
+                alignmentToneOf(report.alignment.score) === "positive"
+                  ? "positive"
+                  : alignmentToneOf(report.alignment.score) === "warning"
+                    ? "warning"
+                    : "default"
               }
               onClick={() => navigateTo("dashboard", "panel-alignment")}
               actionLabel="see how the book matches your policy"

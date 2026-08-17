@@ -19,10 +19,10 @@ export const SCORE_INTERPRETATION_ALLOWLIST: Record<string, string> = {
     "Sizing-policy gates keyed off the SHARED Recommendation enum plus conviction/allocation minima (0.55 conviction, 2.5% weight) — policy on canonical outputs, not a re-banding of them.",
   "lib/wire/labels.ts":
     "modelReadTier (75/55) tiers an LLM-asserted CONFIDENCE in its own read, not an asset score.",
+  "lib/portfolio/alignment/tone.ts":
+    "The alignment domain's ONE severity mapping (positive/neutral/warning on alignmentLabelOf's 70/55 edges; warning ceiling per 2026-08-17 ruling 3) — every alignment surface derives from it.",
   "app/portfolio/_components/universal/decision-center.tsx":
     "Decision Score is centered at 50 = 'no measurable improvement' (lib/portfolio/engines/decision.ts scoreOf); Buy/Sell band edges would be meaningless on it.",
-  "app/portfolio/_components/universal/alignment-panel.tsx":
-    "Alignment tone on the alignment engine's own label bands (alignmentLabelOf: 70/55) — alignment is a non-banded kind with its own engine (lib/portfolio/alignment/engine.ts).",
   "app/portfolio/_components/universal/key-facts-strip.tsx":
     "Concentration/cash/illiquidity facts judge WEIGHT PERCENTAGES (>=20% single position, >=80% one geography), not 0-100 scores.",
   "app/portfolio/_components/universal/risk-lab.tsx":
@@ -30,7 +30,7 @@ export const SCORE_INTERPRETATION_ALLOWLIST: Record<string, string> = {
   "app/portfolio/_components/universal/attribution-panel.tsx":
     "Return-attribution breadth judgment (top-3 share of P&L >= 70% narrow / <= 40% broad): a weight share, not a score.",
   "app/portfolio/page.tsx":
-    "Cash-weight judgment (>25% drag / <1% no buffer) and alignment tone on the alignment engine's 70/55 label bands.",
+    "Cash-weight judgment (>25% drag / <1% no buffer): a weight percentage, not a score. (Its alignment tone derives from lib/portfolio/alignment/tone.ts.)",
   "app/engine/_components/model-health.tsx":
     "Quant-desk statistical judgments (IC >= 0.06, hit-rate >= 0.55, decay >= 0.5): domain thresholds on model diagnostics, not 0-100 asset scores.",
   "app/engine/_components/conviction-book.tsx":
@@ -53,8 +53,4 @@ export const SCORE_INTERPRETATION_ALLOWLIST: Record<string, string> = {
     "The Wire's single signal-strength grammar (70/45, accent midband): signal strength, not an asset score; deliberately not warning-colored (see file header).",
   "app/_components/ui/score-chip.tsx":
     "neutralTone for NON-BANDED score kinds (quality): highlights >=65, never renders negative — coloring low quality red would assert a sell call the number does not make (lib/score-kinds.ts).",
-  "app/_components/portfolio/recommendation/format.ts":
-    "alignmentTone on the alignment engine's own label bands (alignmentLabelOf: 70/55) — alignment domain, not the canonical bands.",
-  "app/_home/_viz/format.ts":
-    "alignmentToneViz on the alignment engine's own label bands (alignmentLabelOf: 70/55) — alignment domain, not the canonical bands.",
 };

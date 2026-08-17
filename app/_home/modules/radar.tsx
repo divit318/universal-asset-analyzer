@@ -271,7 +271,15 @@ export function RadarModule({ collapsible = false, defaultCollapsed = false }: {
       >
         {(d) => (
           <div className="flex flex-col gap-3">
-            {d.scannerFreshness && d.scannerFreshness.level === "stale" ? (
+            {d.scannerMethodologyStale ? (
+              <p className="text-caption text-warning">
+                From a scan made under an older scoring methodology — verdicts may band
+                differently today.{" "}
+                <Link href="/wire" className="font-semibold underline underline-offset-2">
+                  Re-run the scan →
+                </Link>
+              </p>
+            ) : d.scannerFreshness && d.scannerFreshness.level === "stale" ? (
               <p className="text-caption text-warning">From a stale scan. Re-run the scanner for current signals.</p>
             ) : null}
             <ul role="list" aria-label="Radar candidates" className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">

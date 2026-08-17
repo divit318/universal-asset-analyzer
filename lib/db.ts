@@ -213,9 +213,10 @@ function getDb(): DatabaseSync {
       created_at INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS scanner_snapshot (
-      id           INTEGER PRIMARY KEY CHECK (id = 1),
-      result       TEXT NOT NULL,
-      generated_at TEXT NOT NULL
+      id                  INTEGER PRIMARY KEY CHECK (id = 1),
+      result              TEXT NOT NULL,
+      generated_at        TEXT NOT NULL,
+      methodology_version TEXT
     );
     CREATE TABLE IF NOT EXISTS sector_rotation_snapshot (
       as_of      TEXT PRIMARY KEY,
@@ -226,9 +227,10 @@ function getDb(): DatabaseSync {
      * kept so a fresh run can report what changed since the last one. Singleton
      * row, no global prune -- scanner_cache would evict it within the hour. */
     CREATE TABLE IF NOT EXISTS portfolio_intelligence_snapshot (
-      id           INTEGER PRIMARY KEY CHECK (id = 1),
-      data         TEXT NOT NULL,
-      generated_at TEXT NOT NULL
+      id                  INTEGER PRIMARY KEY CHECK (id = 1),
+      data                TEXT NOT NULL,
+      generated_at        TEXT NOT NULL,
+      methodology_version TEXT
     );
     CREATE TABLE IF NOT EXISTS timeline_event (
       id         TEXT PRIMARY KEY,
@@ -613,6 +615,13 @@ function getDb(): DatabaseSync {
   // their title/body re-rendered from facts at every read, so tense stays
   // honest ("today" only while the session IS today).
   try { db.exec("ALTER TABLE notification ADD COLUMN meta TEXT"); } catch { /* already exists */ }
+  // Which scoring methodology produced a long-lived snapshot (ruling 2026-08-17).
+  // Deliberately nullable and NOT backfilled: a legacy row's methodology was
+  // never recorded, and NULL renders as "produced under an older methodology"
+  // (staleness banner + rerun) rather than being deleted or blanked.
+  for (const table of ["scanner_snapshot", "portfolio_intelligence_snapshot"]) {
+    try { db.exec(`ALTER TABLE ${table} ADD COLUMN methodology_version TEXT`); } catch { /* already exists */ }
+  }
   /*
    * Standing definitions: a saved screen remembers the symbols it matched last
    * time it was loaded, so the next load can say what *changed* rather than just
@@ -3227,22 +3236,41 @@ export function putScannerCache(cacheKey: string, result: string, ttlMs = SCANNE
 interface ScannerSnapshotRow {
   result: string;
   generated_at: string;
+  methodology_version: string | null;
 }
 
-export function getScannerSnapshot(): { result: string; generatedAt: string } | null {
+/**
+ * `methodologyStale` is true when the snapshot was produced under a different
+ * SCORING_METHODOLOGY_VERSION (or before versions were recorded — NULL).
+ * Callers must still RENDER a stale snapshot (it is the user's last real scan,
+ * not garbage) but with a visible staleness banner and a rerun action — never
+ * blank the UI, never delete the row (ruling 2026-08-17).
+ */
+export function getScannerSnapshot(): {
+  result: string;
+  generatedAt: string;
+  methodologyStale: boolean;
+} | null {
   const row = getDb()
-    .prepare("SELECT result, generated_at FROM scanner_snapshot WHERE id = 1")
+    .prepare("SELECT result, generated_at, methodology_version FROM scanner_snapshot WHERE id = 1")
     .get() as unknown as ScannerSnapshotRow | undefined;
-  return row ? { result: row.result, generatedAt: row.generated_at } : null;
+  return row
+    ? {
+        result: row.result,
+        generatedAt: row.generated_at,
+        methodologyStale: row.methodology_version !== SCORING_METHODOLOGY_VERSION,
+      }
+    : null;
 }
 
 export function putScannerSnapshot(result: string, generatedAt: string): void {
   getDb()
     .prepare(
-      `INSERT INTO scanner_snapshot (id, result, generated_at) VALUES (1, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET result = excluded.result, generated_at = excluded.generated_at`,
+      `INSERT INTO scanner_snapshot (id, result, generated_at, methodology_version) VALUES (1, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET result = excluded.result, generated_at = excluded.generated_at,
+         methodology_version = excluded.methodology_version`,
     )
-    .run(result, generatedAt);
+    .run(result, generatedAt, SCORING_METHODOLOGY_VERSION);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -3265,22 +3293,36 @@ export function putScannerSnapshot(result: string, generatedAt: string): void {
 interface PortfolioIntelligenceSnapshotRow {
   data: string;
   generated_at: string;
+  methodology_version: string | null;
 }
 
-export function getPortfolioIntelligenceSnapshot(): { data: string; generatedAt: string } | null {
+/** Same staleness contract as getScannerSnapshot: render + banner + rerun,
+ *  never blank, never delete. NULL (legacy row) counts as stale. */
+export function getPortfolioIntelligenceSnapshot(): {
+  data: string;
+  generatedAt: string;
+  methodologyStale: boolean;
+} | null {
   const row = getDb()
-    .prepare("SELECT data, generated_at FROM portfolio_intelligence_snapshot WHERE id = 1")
+    .prepare("SELECT data, generated_at, methodology_version FROM portfolio_intelligence_snapshot WHERE id = 1")
     .get() as unknown as PortfolioIntelligenceSnapshotRow | undefined;
-  return row ? { data: row.data, generatedAt: row.generated_at } : null;
+  return row
+    ? {
+        data: row.data,
+        generatedAt: row.generated_at,
+        methodologyStale: row.methodology_version !== SCORING_METHODOLOGY_VERSION,
+      }
+    : null;
 }
 
 export function putPortfolioIntelligenceSnapshot(data: string, generatedAt: string): void {
   getDb()
     .prepare(
-      `INSERT INTO portfolio_intelligence_snapshot (id, data, generated_at) VALUES (1, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET data = excluded.data, generated_at = excluded.generated_at`,
+      `INSERT INTO portfolio_intelligence_snapshot (id, data, generated_at, methodology_version) VALUES (1, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET data = excluded.data, generated_at = excluded.generated_at,
+         methodology_version = excluded.methodology_version`,
     )
-    .run(data, generatedAt);
+    .run(data, generatedAt, SCORING_METHODOLOGY_VERSION);
 }
 
 /* -------------------------------------------------------------------------- */

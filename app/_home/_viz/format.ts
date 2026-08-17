@@ -7,6 +7,7 @@
  */
 
 import { formatPercent, formatCompact } from "@/lib/format";
+import { alignmentToneOf } from "@/lib/portfolio/alignment/tone";
 
 /**
  * Signed percent, e.g. +1.2% / −0.5%. Uses a true minus sign for alignment.
@@ -37,17 +38,17 @@ export function fmtMoney(value: number | null | undefined): string {
 }
 
 /**
- * Alignment-score band → data colour (§16 — data-only colour). One mapping,
- * on the alignment engine's own label bands (alignmentLabelOf: ≥70 aligned,
- * <55 strained), shared by every surface that renders the score — so the
- * brief's KPI strip and the Alignment ring can never disagree about what a
- * 68 looks like.
+ * Alignment-score severity → data colour (§16 — data-only colour), derived
+ * from the canonical `alignmentToneOf` (lib/portfolio/alignment/tone.ts).
+ * Previously a private table here that rendered <55 as negative while the
+ * portfolio panel rendered the same score as warning — alignment is a fit
+ * diagnostic, so its ceiling is warning (2026-08-17 ruling 3).
  */
 export function alignmentToneViz(score: number | null): { stroke: string; text: string } {
-  if (score == null) return { stroke: "var(--brand)", text: "text-foreground" };
-  if (score >= 70) return { stroke: "var(--positive)", text: "text-positive" };
-  if (score >= 55) return { stroke: "var(--warning)", text: "text-warning" };
-  return { stroke: "var(--negative)", text: "text-negative" };
+  const tone = alignmentToneOf(score);
+  if (tone === "positive") return { stroke: "var(--positive)", text: "text-positive" };
+  if (tone === "warning") return { stroke: "var(--warning)", text: "text-warning" };
+  return { stroke: "var(--brand)", text: "text-foreground" };
 }
 
 /**

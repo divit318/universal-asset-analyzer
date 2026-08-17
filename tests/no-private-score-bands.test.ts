@@ -122,4 +122,12 @@ describe("no private score-band tables outside lib/recommendation.ts", () => {
       expect(why.length, file).toBeGreaterThan(30);
     }
   });
+
+  it("the allowlist stays capped at 30 entries — a growing allowlist is the guard becoming theater", () => {
+    // Ruling 2026-08-17 (4). If you are the person about to add entry 31:
+    // the answer is almost certainly to route through lib/recommendation.ts
+    // (or the relevant domain's one canonical mapping), not to allowlist.
+    // Raising this cap is a methodology-governance decision, not a test fix.
+    expect(Object.keys(SCORE_INTERPRETATION_ALLOWLIST).length).toBeLessThanOrEqual(30);
+  });
 });

@@ -232,7 +232,7 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
   // module has selected since the module retirement.)
   const opportunity = ctx
     ? buildOpportunitySnapshot(ctx)
-    : { status: "empty" as const, healthIssues: [], opportunities: [], scannerFreshness: null };
+    : { status: "empty" as const, healthIssues: [], opportunities: [], scannerFreshness: null, scannerMethodologyStale: false };
 
   const activity = buildRecentActivity();
 
@@ -293,6 +293,7 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
       status: opportunity.status,
       opportunities: opportunity.opportunities,
       scannerFreshness: opportunity.scannerFreshness,
+      scannerMethodologyStale: opportunity.scannerMethodologyStale,
     },
 
     watchlistIntelligence: buildWatchlistIntelligence(watchlist, watchlistAlerts, upcoming),

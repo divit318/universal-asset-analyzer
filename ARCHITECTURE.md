@@ -191,6 +191,28 @@ meter colors): edit `lib/recommendation.ts` only, bump
 `SCORING_METHODOLOGY_VERSION`, and run `tests/scoring-consistency.test.ts` —
 every consumer derives from it.
 
+**Known open calibration question — India verdict bands.** The India snapshot
+(`lib/india-snapshot.ts`) originally banded its verdict at a private
+78/62/46/30 table. The 2026-08-17 consistency audit collapsed it onto the
+canonical TIER_EDGES (78/60/42/25) as a **correctness fix, not a
+calibration**: the old edges were an unsourced, evenly-spaced 16-point ladder
+introduced without rationale in checkpoint `32f6b24` — the same commit that
+created `lib/recommendation.ts` — and the module was already exporting the
+shared `Recommendation` enum, so a composite of 61 read HOLD on the India
+page while every other surface called the same 61 BUY-tier. What the collapse
+does NOT settle: the canonical edges themselves are US-derived
+(`INDIA_GAP_ANALYSIS.md` item 31 makes the same point about
+`lib/composite.ts`'s normalisation ranges), and the India composite is built
+from screener.in fundamentals with India-calibrated factor bands, so its
+score DISTRIBUTION may sit differently under the shared edges. **Re-fitting
+India-specific verdict edges to a measured Indian score distribution is
+deferred work**: it requires a scored universe large enough to fit against
+(the local cache held 34 names at audit time), and any refit must land as a
+named market variant derived from `lib/recommendation.ts` (a second
+`TIER_EDGES` table with its own vocabulary over the same primitive) — never
+as a private band table, and never colliding with the shared `Recommendation`
+enum, which is the bug the collapse fixed.
+
 ---
 
 ### Screener dataset + filter engine (`lib/dataset.ts`, `lib/screener/`)
