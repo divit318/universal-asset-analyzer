@@ -173,7 +173,7 @@ export function FragmentationDiagram() {
     <div
       ref={ref}
       data-frag={phase}
-      className="relative flex flex-col gap-7 lg:block lg:h-[760px] xl:h-[660px]"
+      className="relative flex flex-col gap-7 overflow-x-clip lg:block lg:h-[760px] lg:overflow-x-visible xl:h-[660px]"
     >
       {/* Severed connectors: desktop composition only. */}
       <svg

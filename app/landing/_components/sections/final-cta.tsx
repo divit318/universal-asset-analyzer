@@ -7,6 +7,7 @@ import { SectionShell } from "../primitives/section-shell";
 import { OrnamentalEyebrow } from "../primitives/ornamental-eyebrow";
 import { TwoToneHeadline } from "../primitives/two-tone-headline";
 import { openAuthModal } from "../auth-modal";
+import { PIPELINE_STAGES } from "../pipeline-row";
 import { FINAL_PRIMARY_ACTION, APP_ENTRY } from "../../landing-config";
 
 /**
@@ -84,7 +85,7 @@ export function FinalCta({ section, index }: SectionProps) {
           <Link
             href={APP_ENTRY}
             prefetch={false}
-            className="group inline-flex h-12 items-center justify-center gap-2 rounded-control bg-brand px-7 text-sm font-semibold text-background outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
+            className="group inline-flex h-12 items-center justify-center gap-2 rounded-control bg-brand px-7 text-sm font-semibold text-background outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:bg-brand-strong active:translate-y-0 active:scale-[0.985] focus-visible:ring-2 focus-visible:ring-brand/40"
           >
             {FINAL_PRIMARY_ACTION}
             <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-[3px]">
@@ -110,6 +111,27 @@ export function FinalCta({ section, index }: SectionProps) {
               </div>
             ))}
           </dl>
+        </Reveal>
+
+        {/* Sign-off: the hero opened with the 01→05 pipeline waiting to run;
+            the page closes with the same five stages, each sealed with a
+            diamond. Decorative recap, so it is hidden from the a11y tree —
+            the argument it summarizes is the page above it. */}
+        <Reveal delay={380} className="mt-mk-group">
+          <p
+            aria-hidden="true"
+            className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 font-mono text-micro uppercase tracking-widest text-muted"
+          >
+            {PIPELINE_STAGES.map((stage) => (
+              <span key={stage.n} className="flex items-center gap-3 whitespace-nowrap">
+                <span>
+                  <span className="text-brand">{stage.n}</span> {stage.label}
+                </span>
+                <span aria-hidden="true" className="inline-block h-1 w-1 rotate-45 bg-brand/60" />
+              </span>
+            ))}
+            <span className="text-foreground">run complete</span>
+          </p>
         </Reveal>
       </div>
     </SectionShell>

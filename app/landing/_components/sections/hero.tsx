@@ -90,7 +90,7 @@ export function Hero({ section }: { section: LandingSection }) {
                 <Link
                   href={APP_ENTRY}
                   prefetch={false}
-                  className="group inline-flex h-12 items-center justify-center gap-2 rounded-control bg-brand px-7 text-sm font-semibold text-background outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
+                  className="group inline-flex h-12 items-center justify-center gap-2 rounded-control bg-brand px-7 text-sm font-semibold text-background outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:bg-brand-strong active:translate-y-0 active:scale-[0.985] focus-visible:ring-2 focus-visible:ring-brand/40"
                 >
                   {PRIMARY_ACTION}
                   <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-[3px]">
@@ -99,7 +99,7 @@ export function Hero({ section }: { section: LandingSection }) {
                 </Link>
                 <a
                   href="#demo"
-                  className="inline-flex h-12 items-center justify-center gap-1.5 rounded-control border border-border bg-surface px-7 text-sm font-semibold text-foreground outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:border-border-strong hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand/40"
+                  className="inline-flex h-12 items-center justify-center gap-1.5 rounded-control border border-border bg-surface px-7 text-sm font-semibold text-foreground outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:border-border-strong hover:bg-surface-2 active:translate-y-0 active:scale-[0.985] focus-visible:ring-2 focus-visible:ring-brand/40"
                 >
                   {SECONDARY_ACTION}
                   <span aria-hidden="true">↓</span>

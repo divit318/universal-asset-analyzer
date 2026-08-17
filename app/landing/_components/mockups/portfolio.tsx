@@ -23,13 +23,18 @@ import { PANEL_DATA } from "./panel-data";
  */
 const P = PANEL_DATA.portfolio;
 
-const SEGMENT_STYLE = [
-  { swatch: "bg-chart-1", text: "text-chart-1" },
-  { swatch: "bg-chart-2", text: "text-chart-2" },
-  { swatch: "bg-chart-3", text: "text-chart-3" },
-  { swatch: "bg-chart-4", text: "text-chart-4" },
-  { swatch: "bg-chart-5", text: "text-chart-5" },
-  { swatch: "bg-brand", text: "text-brand" },
+/* Allocation tones: a brass luminance ramp, ordered by weight (the data
+   already arrives sorted), so size is encoded twice — arc length AND
+   luminance — and the landing page keeps its single-hue discipline. The
+   in-app donut keeps the categorical chart palette; this is the marketing
+   rendering of the same numbers. */
+const SEGMENT_TONES = [
+  "var(--brand)",
+  "color-mix(in oklab, var(--brand) 68%, var(--surface-3))",
+  "color-mix(in oklab, var(--brand) 46%, var(--surface-3))",
+  "color-mix(in oklab, var(--brand) 30%, var(--surface-3))",
+  "color-mix(in oklab, var(--brand) 18%, var(--surface-3))",
+  "color-mix(in oklab, var(--brand) 10%, var(--surface-3))",
 ];
 
 /* Value chart geometry (viewBox 0 0 120 48), x scaled by real time. */
@@ -45,6 +50,13 @@ const CHART = (() => {
     return [x, y] as const;
   });
   const line = `M${pts.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join(" L")}`;
+  // Funding steps: a single-step rise of more than 15% is an addition to the
+  // book (new lots), not a market move — mark it so the jump reads as an
+  // event the engine tracked, never as a rendering error.
+  const steps: { x: number; y: number }[] = [];
+  for (let i = 1; i < pts.length; i++) {
+    if ((values[i] - values[i - 1]) / values[i - 1] > 0.15) steps.push({ x: pts[i][0], y: pts[i][1] });
+  }
   // Month tick labels at their true positions along the time axis.
   const months: { label: string; pct: number }[] = [];
   const d = new Date(t0);
@@ -57,7 +69,7 @@ const CHART = (() => {
       pct: ((d.getTime() - t0) / (t1 - t0)) * 100,
     });
   }
-  return { niceMin, niceMax, line, area: `${line} V48 H2 Z`, end: pts[pts.length - 1], months };
+  return { niceMin, niceMax, line, area: `${line} V48 H2 Z`, end: pts[pts.length - 1], months, steps };
 })();
 
 function Donut() {
@@ -73,8 +85,8 @@ function Donut() {
           r="15.9155"
           fill="none"
           stroke="currentColor"
-          style={{ "--seg": `${(seg.weight / 100) * c} ${c}`, transitionDelay: `${i * 130}ms` } as React.CSSProperties}
-          className={`${SEGMENT_STYLE[i % SEGMENT_STYLE.length].text} transition-[stroke-dasharray] duration-[800ms] ease-out [stroke-dasharray:var(--seg)] [[data-mock=armed]_&]:[stroke-dasharray:0_105]`}
+          style={{ "--seg": `${(seg.weight / 100) * c} ${c}`, transitionDelay: `${i * 130}ms`, color: SEGMENT_TONES[i % SEGMENT_TONES.length] } as React.CSSProperties}
+          className="transition-[stroke-dasharray] duration-[800ms] ease-out [stroke-dasharray:var(--seg)] [[data-mock=armed]_&]:[stroke-dasharray:0_105]"
           strokeWidth="6"
           strokeDashoffset={(offsets[i] / 100) * c - 25}
         />
@@ -136,13 +148,29 @@ export function PortfolioPanel() {
               <span>{((CHART.niceMax + CHART.niceMin) / 2).toFixed(1)}</span>
               <span>{CHART.niceMin.toFixed(1)}</span>
             </div>
-            {/* The wipe: a clip-path inset travelling left to right. */}
-            <div className="h-full w-full transition-[clip-path] duration-[900ms] ease-out [clip-path:inset(0_0_0_0)] [[data-mock=armed]_&]:[clip-path:inset(0_100%_0_0)]">
+            {/* The wipe: a clip-path inset travelling left to right. The
+                markers are HTML overlays, not SVG children: the chart svg is
+                non-uniformly scaled (preserveAspectRatio none), which would
+                stretch any circle into a smear. */}
+            <div className="relative h-full w-full transition-[clip-path] duration-[900ms] ease-out [clip-path:inset(0_0_0_0)] [[data-mock=armed]_&]:[clip-path:inset(0_100%_0_0)]">
               <svg viewBox="0 0 120 48" className="h-full w-full text-brand" preserveAspectRatio="none" aria-hidden="true">
                 <path d={CHART.area} fill="currentColor" fillOpacity="0.12" stroke="none" />
-                <path d={CHART.line} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                <circle cx={CHART.end[0]} cy={CHART.end[1]} r="2.4" fill="currentColor" />
+                <path d={CHART.line} fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
+              {/* Funding-step diamonds: the engine's event markers. */}
+              {CHART.steps.map((s) => (
+                <span
+                  key={`${s.x}-${s.y}`}
+                  aria-hidden="true"
+                  style={{ left: `${(s.x / 120) * 100}%`, top: `${(s.y / 48) * 100}%` }}
+                  className="absolute h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rotate-45 border border-background bg-brand"
+                />
+              ))}
+              <span
+                aria-hidden="true"
+                style={{ left: `${(CHART.end[0] / 120) * 100}%`, top: `${(CHART.end[1] / 48) * 100}%` }}
+                className="absolute h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-brand"
+              />
             </div>
           </div>
           <div className="relative mt-1 h-3.5 pl-6">
@@ -156,16 +184,27 @@ export function PortfolioPanel() {
               </span>
             ))}
           </div>
+          {/* Read the steps honestly: they are funding events the engine
+              tracked, and the true return sits beside them. */}
+          <p className="mt-1.5 flex items-center gap-1.5 whitespace-nowrap font-mono text-micro tabular-nums text-muted">
+            <span aria-hidden="true" className="h-1 w-1 shrink-0 rotate-45 bg-brand" />
+            steps = additions · return vs cost{" "}
+            <span className={P.totalReturnPositive ? "text-positive" : "text-negative"}>{P.totalReturnDisplay}</span>
+          </p>
         </div>
 
-        <div className="rounded-card border border-hairline bg-surface-2/60 p-3">
+        <div className="flex flex-col rounded-card border border-hairline bg-surface-2/60 p-3">
           <p className="text-caption font-semibold text-foreground">Allocation</p>
           <div className="mt-2 flex flex-1 items-center gap-3">
             <Donut />
             <ul className="flex flex-col gap-1">
               {P.allocation.map((seg, i) => (
                 <li key={seg.label} className="flex items-center gap-1.5">
-                  <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${SEGMENT_STYLE[i % SEGMENT_STYLE.length].swatch}`} />
+                  <span
+                    aria-hidden="true"
+                    style={{ backgroundColor: SEGMENT_TONES[i % SEGMENT_TONES.length] }}
+                    className="h-1.5 w-1.5 rounded-full"
+                  />
                   <span className="text-micro text-muted">{seg.label}</span>
                   <span className="ml-auto pl-2 font-mono text-micro tabular-nums text-foreground">{seg.pct}</span>
                 </li>
@@ -176,8 +215,13 @@ export function PortfolioPanel() {
 
         <div className="flex flex-col rounded-card border border-hairline bg-surface-2/60 p-3">
           <p className="text-caption font-semibold text-foreground">Engine read</p>
-          <ul className="mt-2 flex flex-1 flex-col justify-evenly gap-2">
-            {P.findings.map((tip, i) => (
+          {/* Bullets and meter share the card's height as one centred group;
+              the deep link stays pinned to the bottom edge. */}
+          <div className="flex flex-1 flex-col justify-center gap-3">
+          {/* The first finding restates health and volatility, which the
+              meter below now draws — skip it rather than say it twice. */}
+          <ul className="flex flex-col gap-2">
+            {P.findings.slice(1).map((tip, i) => (
               <li
                 key={tip}
                 style={{ transitionDelay: `${400 + i * 120}ms` }}
@@ -188,6 +232,30 @@ export function PortfolioPanel() {
               </li>
             ))}
           </ul>
+          {/* The grade, drawn: health 75/100 as a measured bar, not just a
+              figure — the one place this panel earns a meter. */}
+          <div
+            style={{ transitionDelay: "820ms" }}
+            className="border-t border-hairline pt-2.5 transition-opacity duration-500 [[data-mock=armed]_&]:opacity-0"
+          >
+            <div className="flex items-baseline justify-between">
+              <span className="text-micro uppercase tracking-wide text-muted">Health</span>
+              <span className="font-mono text-micro font-semibold tabular-nums text-foreground">
+                {P.health}/100 <span className="text-brand">({P.healthGrade})</span>
+              </span>
+            </div>
+            <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-surface-3">
+              <div
+                style={{ "--health": `${P.health}%` } as React.CSSProperties}
+                className="h-full w-[var(--health)] rounded-full bg-brand transition-[width] delay-[900ms] duration-[700ms] ease-out [[data-mock=armed]_&]:w-0"
+              />
+            </div>
+            <div className="mt-1 flex justify-between font-mono text-micro tabular-nums text-muted">
+              <span>volatility {P.volatilityDisplay}</span>
+              <span>{P.allocation.length} asset classes</span>
+            </div>
+          </div>
+          </div>
           <p className="mt-auto pt-1.5 text-micro font-medium text-brand">Open the portfolio →</p>
         </div>
       </div>

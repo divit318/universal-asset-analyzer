@@ -22,6 +22,21 @@ import { PANEL_DATA } from "./panel-data";
  */
 const A = PANEL_DATA.assistant;
 
+/* The engine case the reply quotes — the SAME base-scenario bridge the
+   Valuation panel above renders, so every figure in the ledger below is
+   cross-checkable against both the answer text and that panel. */
+const BASE_BRIDGE = PANEL_DATA.valuation.scenarios.find((s) => s.id === "base")?.bridge ?? null;
+
+/* The cited assumptions, pulled from the same engine case by key. */
+const ASSUMPTION = (key: string) =>
+  PANEL_DATA.valuation.assumptions.find((a) => a.key === key) ?? null;
+const CITED_ASSUMPTIONS = [
+  { a: ASSUMPTION("discountRate"), prefix: "WACC" },
+  { a: ASSUMPTION("growthRate1"), prefix: "growth Y1–5" },
+  { a: ASSUMPTION("growthRate2"), prefix: "fade" },
+  { a: ASSUMPTION("terminalGrowth"), prefix: "terminal" },
+].filter((c): c is { a: NonNullable<ReturnType<typeof ASSUMPTION>>; prefix: string } => c.a != null);
+
 /** Bold every figure so the engine-sourced numbers read as data, not prose. */
 function AnswerText({ text }: { text: string }) {
   const parts = text.split(/(\$[\d,.]+[BMT]?|\d+(?:\.\d+)?%|FY\d{4}(?:→FY\d{4})?|\d+\.\d+B)/g);
@@ -146,6 +161,57 @@ export function AiAssistantPanel() {
               {A.model} · {A.generatedAt}
             </span>
           </div>
+
+          {/* The bridge the reply quotes, laid out as the engine computed it.
+              This is the proof of the division of labour: every figure the
+              prose cited, in one auditable arithmetic line — the same base
+              scenario the Valuation panel renders. It occupies the panel's
+              lower half so a short answer never leaves the surface empty. */}
+          {BASE_BRIDGE && (
+            <div
+              style={{ transitionDelay: sourcesIn ? "620ms" : "0ms" }}
+              className={`my-auto rounded-card border border-hairline bg-surface-2/60 p-3 transition-[opacity,transform] duration-500 ease-out ${
+                sourcesIn ? "translate-y-0 opacity-100" : "translate-y-1.5 opacity-0"
+              }`}
+            >
+              <p className="text-micro uppercase tracking-wide text-muted">
+                The bridge the reply quotes · engine case {A.context.symbol}
+              </p>
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                {[
+                  { label: "PV FCF Y1–10", value: BASE_BRIDGE.pvExplicit, op: null },
+                  { label: "PV terminal", value: BASE_BRIDGE.pvTerminal, op: "+" },
+                  { label: "Net debt", value: BASE_BRIDGE.netDebt, op: "−" },
+                ].map((cell) => (
+                  <div key={cell.label} className="min-w-0">
+                    <p className="truncate text-micro text-muted">{cell.label}</p>
+                    <p className="mt-0.5 font-mono text-caption font-semibold tabular-nums text-foreground">
+                      {cell.op && <span className="mr-1 font-normal text-muted">{cell.op}</span>}
+                      {cell.value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-2.5 border-t border-hairline pt-2 font-mono text-micro tabular-nums text-muted">
+                = equity <span className="font-semibold text-foreground">{BASE_BRIDGE.equityValue}</span> ÷{" "}
+                <span className="font-semibold text-foreground">{BASE_BRIDGE.shares}</span> sh ={" "}
+                <span className="font-semibold text-brand">{BASE_BRIDGE.perShare}</span>
+              </p>
+              {/* The rates behind those present values, each with the source
+                  the engine recorded for it — same rail as the Valuation
+                  panel's assumptions column. */}
+              {CITED_ASSUMPTIONS.length > 0 && (
+                <p className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-micro tabular-nums text-muted">
+                  {CITED_ASSUMPTIONS.map(({ a, prefix }) => (
+                    <span key={a.key} className="whitespace-nowrap">
+                      {prefix} <span className="font-semibold text-foreground">{a.display}</span>
+                      <span className="text-muted/70"> · {a.source.toLowerCase()}</span>
+                    </span>
+                  ))}
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
