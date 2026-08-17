@@ -232,22 +232,22 @@ export function PortfolioPanel() {
               </li>
             ))}
           </ul>
-          {/* The grade, drawn: health 75/100 as a measured bar, not just a
+          {/* The grade, drawn: alignment 75/100 as a measured bar, not just a
               figure — the one place this panel earns a meter. */}
           <div
             style={{ transitionDelay: "820ms" }}
             className="border-t border-hairline pt-2.5 transition-opacity duration-500 [[data-mock=armed]_&]:opacity-0"
           >
             <div className="flex items-baseline justify-between">
-              <span className="text-micro uppercase tracking-wide text-muted">Health</span>
+              <span className="text-micro uppercase tracking-wide text-muted">Alignment</span>
               <span className="font-mono text-micro font-semibold tabular-nums text-foreground">
-                {P.health}/100 <span className="text-brand">({P.healthGrade})</span>
+                {P.alignment}<span className="text-muted">/100</span>
               </span>
             </div>
             <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-surface-3">
               <div
-                style={{ "--health": `${P.health}%` } as React.CSSProperties}
-                className="h-full w-[var(--health)] rounded-full bg-brand transition-[width] delay-[900ms] duration-[700ms] ease-out [[data-mock=armed]_&]:w-0"
+                style={{ "--alignment": `${P.alignment}%` } as React.CSSProperties}
+                className="h-full w-[var(--alignment)] rounded-full bg-brand transition-[width] delay-[900ms] duration-[700ms] ease-out [[data-mock=armed]_&]:w-0"
               />
             </div>
             <div className="mt-1 flex justify-between font-mono text-micro tabular-nums text-muted">
