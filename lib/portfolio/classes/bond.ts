@@ -25,6 +25,25 @@ import type { PortfolioClassAdapter } from "../model/adapter";
  * remain `unavailable`; we don't invent them.
  */
 /**
+ * Dominant-rating bucket → credit-quality score. The buckets are Yahoo's
+ * `bondRatings` keys as resolved by context.ts's dominantRating(); the ordering
+ * is the standard rating ladder. `us_government` sits at the top: default-free
+ * in its own currency, and the flight-to-quality asset the stress test already
+ * models with a NEGATIVE spread sensitivity. Absent/`other` → the leg abstains
+ * (renormalized away) rather than guessing.
+ */
+const CREDIT_QUALITY_SCORE: Record<string, number> = {
+  us_government: 100,
+  aaa: 95,
+  aa: 90,
+  a: 82,
+  bbb: 70,
+  bb: 48,
+  b: 30,
+  below_b: 15,
+};
+
+/**
  * Keep the provider's average maturity only where it is consistent with the fund's
  * modelled duration. Duration ≤ maturity always holds for a cash bond, and the two
  * cannot be wildly far apart for a real portfolio; outside that, the field is one of
@@ -118,8 +137,15 @@ export const bondAdapter: PortfolioClassAdapter = {
   },
 
   /**
-   * A bond is scored on yield, duration risk and credit quality — the things a bond
-   * actually is. Not on P/E.
+   * A bond is scored on yield, duration risk, CREDIT QUALITY and cost — the
+   * things a bond actually is. Not on P/E.
+   *
+   * The credit leg exists because yield without credit context is a free pass
+   * for junk: with fund yields flowing from the provider, a 50%-weight raw-yield
+   * leg scored a B-rated high-yield fund ~10 points ABOVE a short Treasury fund
+   * (2026-08 anti-gaming audit). High-yield's extra coupon is compensation for
+   * expected credit losses, not free quality — the same rating buckets that
+   * drive the stress test's credit-spread sensitivity now offset it here.
    */
   score(raw, ctx) {
     const f = raw.symbol ? ctx.fundamentals.get(raw.symbol.toUpperCase()) : undefined;
@@ -131,7 +157,10 @@ export const bondAdapter: PortfolioClassAdapter = {
 
     // Scored on the SAME duration the stress test uses, not the provider field.
     const duration = riskModelFor(raw, ctx).duration;
-    const inputs = [y, duration, f.expenseRatio];
+    // Dominant rating bucket (Yahoo bondRatings keys, resolved in context.ts).
+    // "other" is a real bucket but says nothing about credit → treated as unknown.
+    const credit = CREDIT_QUALITY_SCORE[f.creditQuality ?? ""] ?? null;
+    const inputs = [y, duration, credit, f.expenseRatio];
     const conf = coverage(inputs);
     if (conf === 0) return null;
 
@@ -141,8 +170,8 @@ export const bondAdapter: PortfolioClassAdapter = {
 
     if (y != null) {
       const s = lerpScore(y, 0, 7);
-      weighted += s * 0.5;
-      used += 0.5;
+      weighted += s * 0.35;
+      used += 0.35;
       if (y >= 4.5) why.push(`Attractive ${y.toFixed(2)}% yield`);
     }
     if (duration != null) {
@@ -150,9 +179,14 @@ export const bondAdapter: PortfolioClassAdapter = {
       // risk: shorter = safer. The optimizer, not the scorer, decides whether the
       // portfolio wants that risk.
       const s = lerpScore(duration, 20, 2);
-      weighted += s * 0.3;
-      used += 0.3;
+      weighted += s * 0.25;
+      used += 0.25;
       if (duration >= 10) why.push(`High rate sensitivity (${duration.toFixed(1)}y duration)`);
+    }
+    if (credit != null) {
+      weighted += credit * 0.2;
+      used += 0.2;
+      if (credit <= 40) why.push(`Speculative-grade credit (${f.creditQuality})`);
     }
     if (f.expenseRatio != null) {
       const s = lerpScore(f.expenseRatio, 0.8, 0.03);

@@ -15,7 +15,7 @@
 import "../classes";  // side-effect: registers all twelve class adapters
 import { getClassAdapter } from "./adapter";
 import { instrumentSignalsFor } from "../classes/market-base";
-import { resolveAssetClass } from "../classes/reference/risk-models";
+import { fxExposureOfResolution, resolveRiskModel } from "../classes/reference/risk-models";
 import type { Holding, MarketContext, PortfolioAssetClass, RawHolding } from "./types";
 
 /**
@@ -41,12 +41,33 @@ import type { Holding, MarketContext, PortfolioAssetClass, RawHolding } from "./
  * single authority — this rule decides how much of its answer is safe to apply,
  * never what the answer is.
  */
-function canonicalAssetClass(raw: RawHolding, ctx: MarketContext): PortfolioAssetClass {
-  const resolved = resolveAssetClass(instrumentSignalsFor(raw, ctx));
-  if (resolved === raw.assetClass) return raw.assetClass;
-  return getClassAdapter(resolved).valuationMode === getClassAdapter(raw.assetClass).valuationMode
-    ? resolved
-    : raw.assetClass;
+function canonicalAssetClass(
+  raw: RawHolding,
+  ctx: MarketContext,
+): { assetClass: PortfolioAssetClass; fxExposure: number } {
+  const resolution = resolveRiskModel(instrumentSignalsFor(raw, ctx));
+  const resolved = resolution.model.assetClass;
+
+  /* Economic FX exposure from the SAME resolution, with a denomination fallback:
+     when the resolution has nothing to say (a manual class, or a market holding
+     whose country/category never arrived) but the holding is priced in a
+     non-base currency, its VALUE moves 1:1 with that currency and 1 is the
+     honest answer — the pre-look-through behaviour, kept only as the fallback. */
+  const quoteCurrency = (
+    (raw.symbol ? ctx.quotes.get(raw.symbol.toUpperCase())?.currency : null) ?? raw.currency
+  ).toUpperCase();
+  const resolvedFx = fxExposureOfResolution(resolution);
+  const fxExposure =
+    resolvedFx > 0 ? resolvedFx : quoteCurrency !== ctx.baseCurrency.toUpperCase() ? 1 : 0;
+
+  if (resolved === raw.assetClass) return { assetClass: raw.assetClass, fxExposure };
+  return {
+    assetClass:
+      getClassAdapter(resolved).valuationMode === getClassAdapter(raw.assetClass).valuationMode
+        ? resolved
+        : raw.assetClass,
+    fxExposure,
+  };
 }
 
 /**
@@ -58,7 +79,7 @@ function canonicalAssetClass(raw: RawHolding, ctx: MarketContext): PortfolioAsse
  * failure" rule the IC report pipeline follows.
  */
 function normalizeOne(rawBooked: RawHolding, ctx: MarketContext): Holding {
-  const assetClass = canonicalAssetClass(rawBooked, ctx);
+  const { assetClass, fxExposure } = canonicalAssetClass(rawBooked, ctx);
   // The adapter sees the resolved class too, so its own classification hint agrees
   // with the bucket the holding lands in — the resolution is idempotent, so this
   // cannot oscillate: a bond ETF resolved to `bond` re-resolves to `bond`.
@@ -99,6 +120,7 @@ function normalizeOne(rawBooked: RawHolding, ctx: MarketContext): Holding {
     liquidity,
     income,
     factors,
+    fxExposure,
     metrics,
     attributes,
     score,
@@ -135,6 +157,7 @@ function fallbackHolding(raw: RawHolding, ctx: MarketContext, err: unknown): Hol
     liquidity: "illiquid",
     income: null,
     factors: {},
+    fxExposure: null,
     metrics: {},
     attributes: { error: message },
     score: null,

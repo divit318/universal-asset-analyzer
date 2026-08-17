@@ -55,7 +55,9 @@ export function simHoldingsToRaw(holdings: SimHolding[]): RawHolding[] {
     acquiredAt: now,
     manualValue: null,
     manualValueAsOf: null,
-    meta: {},
+    // Forwarded so class adapters see what a real ledger row would carry —
+    // notably the cash adapter's `meta.yieldPct` (see SimHolding.meta).
+    meta: h.meta ?? {},
   }));
 }
 

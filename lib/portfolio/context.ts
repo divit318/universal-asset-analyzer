@@ -278,7 +278,12 @@ export async function buildMarketContext(
       industry: profile?.assetProfile?.industry ?? null,
       country: profile?.assetProfile?.country ?? null,
       currency: profile?.price?.currency ?? null,
-      dividendYield: snap?.dividendYield ?? null,
+      // Equity dividend yield, falling back to the FUND yield field: Yahoo
+      // populates `summaryDetail.dividendYield` for single names only, and
+      // `summaryDetail.yield` for ETFs/bond funds. Without the fallback every
+      // fund in the book reported 0% income and the fund quality scorers lost
+      // their yield input entirely (audit 2026-08-14).
+      dividendYield: snap?.dividendYield ?? snap?.fundYield ?? null,
       // Carried, but DEMOTED: this field is not effective duration (TLT 3.55,
       // USFR 3.88, VXUS 4.48 — see ContextFundamentals.duration). The risk model
       // measures duration from returns instead and only falls back to this.

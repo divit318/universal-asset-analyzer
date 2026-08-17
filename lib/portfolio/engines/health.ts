@@ -127,7 +127,7 @@ export interface HealthDimension {
  */
 const METHODOLOGY: Record<string, string> = {
   "Asset Allocation":
-    "Half breadth (more asset classes, plateauing at 5+), half balance (penalty grows once the largest class exceeds 40%). Improves by adding a genuinely different asset class or trimming the dominant one.",
+    "Half breadth (EFFECTIVE number of asset classes — dust sleeves don't count — plateauing at 5+), half balance (penalty grows once the largest class exceeds 40%). Improves by adding a genuinely different asset class at meaningful weight or trimming the dominant one.",
   "Diversification":
     "Diversity of holding weights (effective holdings — dust positions don't count), blended with sector spread over the sector-classified share. Improves by evening out position sizes, not by adding tiny positions.",
   "Concentration":
@@ -139,7 +139,7 @@ const METHODOLOGY: Record<string, string> = {
   "Inflation Protection":
     "The portfolio's modelled response to a +1pp inflation surprise, mapped from −7% of value (0) to +6% (100). Improves with real assets: TIPS, commodities, gold, real estate.",
   "Currency Diversification":
-    "55 plus 1.8 points per 1% held in non-base currencies. A home-currency book is treated as adequate, not failing. Improves with unhedged foreign-currency exposure.",
+    "Concave curve on ECONOMIC foreign-currency exposure (look-through: an unhedged international fund counts at its FX pass-through, a hedged fund at zero, an ADR the same as its local listing). A home-currency book starts at an adequate 55; additional exposure earns diminishing credit. Improves with genuinely unhedged foreign exposure, however it is wrapped.",
   "Geographic Diversification":
     "Diversity index across the classified regions only, and the dimension's weight is discounted by the unclassified share. Improves by spreading across regions — or by classifying the unknown part.",
   "Correlation":
@@ -305,6 +305,20 @@ const W = {
  * that matters most. A portfolio holding one asset class is making a single bet,
  * however many names are inside it.
  */
+/**
+ * Breadth anchors: 1 class = 20, 2 = 45, 3 = 65, 4 = 80, 5 = 90, 6+ = 95 —
+ * unchanged from the original raw-count table, now interpolated over the
+ * EFFECTIVE class count so equal-weight books keep their historical scores.
+ */
+const BREADTH_CURVE: [number, number][] = [
+  [1, 20],
+  [2, 45],
+  [3, 65],
+  [4, 80],
+  [5, 90],
+  [6, 95],
+];
+
 function assetAllocation(alloc: PortfolioAllocation): HealthDimension {
   const slices = alloc.byAssetClass.slices;
   if (slices.length === 0) return abstain("Asset Allocation", W.assetAllocation, "No holdings.");
@@ -312,8 +326,16 @@ function assetAllocation(alloc: PortfolioAllocation): HealthDimension {
   const top = slices[0];
   const count = slices.length;
 
-  // 1 class = 20, 2 = 45, 3 = 65, 4 = 80, 5+ = 90+
-  const breadth = clamp([0, 20, 45, 65, 80, 90, 95][Math.min(count, 6)] ?? 95);
+  // EFFECTIVE class count (1/Σp²), not the raw count. The raw count paid a full
+  // breadth step for merely POSSESSING a class: in the 2026-08 optimization
+  // exercise, ~$25 of BTC in a $1,000 book bought the "7 asset classes" anchor
+  // outright. The effective count — the same anti-dust measure Diversification
+  // already uses for holdings — credits a class in proportion to the weight
+  // actually allocated to it, continuously: a 0.2% sleeve moves it by ~0.01
+  // classes, a 10% sleeve by a meaningful fraction. N EQUAL classes still give
+  // exactly N, so honest books score precisely what they did before.
+  const effClasses = effectiveCount(slices.map((s) => s.weight));
+  const breadth = clamp(lerpTable(effClasses, BREADTH_CURVE));
   // Penalize a dominant class.
   const balance = clamp(100 - Math.max(0, top.weight - 40) * 1.6);
 
@@ -321,7 +343,7 @@ function assetAllocation(alloc: PortfolioAllocation): HealthDimension {
   const explanation =
     count === 1
       ? `100% in ${top.label}. This is a single-asset-class portfolio — diversification within it does not change that.`
-      : `${count} asset classes. Largest: ${top.label} at ${top.weight.toFixed(0)}%.`;
+      : `${count} asset classes (effective ${effClasses.toFixed(1)}). Largest: ${top.label} at ${top.weight.toFixed(0)}%.`;
 
   return dim("Asset Allocation", score, W.assetAllocation, explanation);
 }
@@ -488,19 +510,37 @@ function inflationProtection(risk: UniversalRisk): HealthDimension {
  * rationally home-biased. The floor is therefore "adequate, consider diversifying"
  * (≈55) rather than the old near-fail 35: we flag the absence of currency
  * diversification without asserting it is unhealthy.
+ *
+ * Two corrections from the 2026-08 anti-gaming audit:
+ *
+ *  1. ECONOMIC exposure, not denomination. The old input (foreignCurrencyPct)
+ *     read the quote currency only, so VEA — an unhedged basket of foreign
+ *     shares — earned nothing while swapping a USD ADR for its foreign listing
+ *     earned full credit: a venue arbitrage with no economic content. The input
+ *     is now `fxExposurePct`, the FX_PASS_THROUGH look-through the stress tests
+ *     already use, so the dimension and the `usd` factor agree.
+ *
+ *  2. CONCAVE, not linear-to-a-cap. `55 + 1.8×pct` paid a fixed bounty per FX
+ *     point up to exactly 25% then nothing — a shape that told an optimizer to
+ *     buy foreign listings until the cap and then stop. Diminishing marginal
+ *     credit (the same correction Income received for yield-chasing): the curve
+ *     matches the old line near ~15% exposure, so typical books barely move,
+ *     while the 25% cliff and the flat top are gone.
  */
+const FX_HALF_SATURATION = 16; // e-folding scale in FX-exposure points; ≈old line at 15%.
 function currencyDiversification(risk: UniversalRisk, alloc: PortfolioAllocation): HealthDimension {
   const count = alloc.byCurrency.slices.length;
   if (count === 0) return abstain("Currency Diversification", W.currency, "No holdings.");
 
-  const score = clamp(55 + risk.foreignCurrencyPct * 1.8);
+  const fx = Math.max(0, risk.fxExposurePct);
+  const score = clamp(55 + 45 * (1 - Math.exp(-fx / FX_HALF_SATURATION)));
   return dim(
     "Currency Diversification",
     score,
     W.currency,
-    count === 1
-      ? `Entirely ${alloc.byCurrency.slices[0].label}-denominated. No currency diversification — reasonable if your spending is in this currency.`
-      : `${risk.foreignCurrencyPct.toFixed(0)}% in non-base currencies across ${count} currencies.`,
+    fx < 1
+      ? `No economic foreign-currency exposure — reasonable if your spending is in ${alloc.byCurrency.slices[0]?.label ?? "the base currency"}.`
+      : `${fx.toFixed(0)}% economic non-base-currency exposure (look-through: unhedged international funds and foreign issuers count, hedged funds don't).`,
   );
 }
 

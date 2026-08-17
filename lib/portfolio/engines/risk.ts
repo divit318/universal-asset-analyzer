@@ -109,8 +109,16 @@ export interface UniversalRisk {
   duration: number | null;
   /** Net credit-spread sensitivity: % loss per 1pp of spread widening. */
   creditSensitivity: number | null;
-  /** % of value in currencies other than base. */
+  /** % of value DENOMINATED in currencies other than base (quote currency). */
   foreignCurrencyPct: number;
+  /**
+   * % of value ECONOMICALLY exposed to non-base currencies, look-through — a
+   * USD-quoted unhedged international fund counts at its FX_PASS_THROUGH share,
+   * a hedged fund at zero, a foreign single name at the same share whether held
+   * locally or as an ADR. This is what the Currency Diversification dimension
+   * scores; `foreignCurrencyPct` remains the denomination fact the FX views show.
+   */
+  fxExposurePct: number;
   /** % of value that cannot be liquidated within days. */
   illiquidPct: number;
   /**
@@ -450,6 +458,17 @@ export function computeRisk(
     .filter((s) => s.key !== base)
     .reduce((sum, s) => sum + s.weight, 0);
 
+  // ECONOMIC FX exposure — look-through, not denomination. A USD-quoted
+  // international fund carries its FX_PASS_THROUGH share; a hedged fund carries
+  // none; a foreign single name carries the same share whether held as the
+  // local listing or as an ADR. Denomination is the fallback for holdings the
+  // normalizer could not resolve (fixtures, failed holdings).
+  const fxExposurePct = holdings.reduce((sum, h) => {
+    const share =
+      h.fxExposure ?? (h.currency.toUpperCase() !== base ? 1 : 0);
+    return sum + h.weight * Math.max(0, Math.min(1, share));
+  }, 0);
+
   // Weight AND count, from the one shared definition of illiquid — so the Risk
   // Lab's figure and the Holdings tab's ILLIQUID badge always describe the same
   // set of holdings.
@@ -477,6 +496,7 @@ export function computeRisk(
     duration,
     creditSensitivity,
     foreignCurrencyPct: Math.round(foreignCurrencyPct * 10) / 10,
+    fxExposurePct: Math.round(fxExposurePct * 10) / 10,
     illiquidPct: Math.round(illiquidPct * 10) / 10,
     illiquidHoldings,
     inflationSensitivity: inflationSens,

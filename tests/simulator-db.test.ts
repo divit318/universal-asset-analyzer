@@ -141,6 +141,21 @@ describe("parseSimHoldings", () => {
     expect(parseSimHoldings([{ ...voo, symbol: null }])).toHaveProperty("error");
   });
 
+  it("passes a plain-object meta through (cash APY parity with the real ledger)", () => {
+    const cash = { ...voo, symbol: null, assetClass: "cash", name: "Cash", meta: { yieldPct: 4.2 } };
+    const res = parseSimHoldings([cash]);
+    if ("error" in res) throw new Error(res.error);
+    expect(res.holdings[0].meta).toEqual({ yieldPct: 4.2 });
+    // Absent meta stays absent — no fabricated default.
+    const bare = parseSimHoldings([{ ...voo }]);
+    if ("error" in bare) throw new Error(bare.error);
+    expect("meta" in bare.holdings[0]).toBe(false);
+    // Non-object meta is dropped rather than persisted.
+    const junk = parseSimHoldings([{ ...voo, meta: [1, 2] }]);
+    if ("error" in junk) throw new Error(junk.error);
+    expect("meta" in junk.holdings[0]).toBe(false);
+  });
+
   it("rejects NaN/zero/negative quantities — a persisted NaN would poison every evaluation", () => {
     expect(parseSimHoldings([{ ...voo, quantity: "abc" }])).toHaveProperty("error");
     expect(parseSimHoldings([{ ...voo, quantity: 0 }])).toHaveProperty("error");

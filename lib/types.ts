@@ -657,6 +657,16 @@ export interface FundamentalsSnapshot {
   pegRatio: number | null;
   priceToBook: number | null;
   dividendYield: number | null;
+  /**
+   * The FUND's yield (trailing distribution / SEC 30-day), as a fraction.
+   * Yahoo populates `summaryDetail.dividendYield` for single equities ONLY;
+   * funds carry `summaryDetail.yield` instead, and reading just `dividendYield`
+   * silently reported every ETF and bond fund as yielding nothing (the Income
+   * dimension and the fund quality scorers all inherited that zero). Kept as a
+   * SEPARATE field so equity consumers of `dividendYield` are untouched;
+   * fund-aware consumers read `dividendYield ?? fundYield`.
+   */
+  fundYield?: number | null;
   returnOnEquity: number | null;
   returnOnAssets: number | null;
   grossMargins: number | null;

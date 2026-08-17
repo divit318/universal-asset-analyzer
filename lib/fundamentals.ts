@@ -113,9 +113,10 @@ interface RawInstitutionHolder {
 interface RawSummary {
   assetProfile?: { sector?: string; industry?: string };
   financialData?: RawFinancialData;
-  summaryDetail?: { trailingPE?: number; forwardPE?: number; dividendYield?: number; priceToSalesTrailing12Months?: number };
+  summaryDetail?: { trailingPE?: number; forwardPE?: number; dividendYield?: number; yield?: number; priceToSalesTrailing12Months?: number };
   defaultKeyStatistics?: {
     forwardPE?: number;
+    yield?: number;
     pegRatio?: number;
     priceToBook?: number;
     bookValue?: number;
@@ -171,6 +172,10 @@ export function mapSnapshot(symbol: string, raw: RawSummary): FundamentalsSnapsh
     pegRatio: n(ks.pegRatio),
     priceToBook: n(ks.priceToBook),
     dividendYield: n(sd.dividendYield),
+    // Funds report their yield in `summaryDetail.yield` (mirrored in
+    // defaultKeyStatistics.yield), NOT `dividendYield` — that field is
+    // equity-only. Mapped separately so nothing equity-facing changes meaning.
+    fundYield: n(sd.yield ?? ks.yield),
     // No derived fallback for ROE (or ROA): Yahoo omits both for some
     // non-US listings (observed: KOTAKBANK.NS). A netIncomeToCommon / ending
     // book equity fallback was tried and reverted — Yahoo's own figure uses
