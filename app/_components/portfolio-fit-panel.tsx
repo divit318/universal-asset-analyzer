@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ChevronDown } from "lucide-react";
 import type { PortfolioFitAnalysis, FitTier, FitDimension } from "@/lib/ios/types";
+import { fitMeterTone } from "@/lib/ios/unified-action";
 import { ScoreRing } from "./score-ring";
 import { ValueBar } from "./value-bar";
 import { CountUp } from "./count-up";
@@ -70,8 +71,8 @@ const IMPACT_TEXT: Record<FitDimension["impact"], string> = {
 /* -------------------------------------------------------------------------- */
 
 function DimensionRow({ dim }: { dim: FitDimension }) {
-  const barColor =
-    dim.score >= 65 ? "bg-positive" : dim.score >= 45 ? "bg-warning" : "bg-negative";
+  // Canonical fit-tier edges — previously a private 65/45 table.
+  const barColor = fitMeterTone(dim.score).bar;
 
   return (
     <div>

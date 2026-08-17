@@ -3,9 +3,10 @@
 import Link from "next/link";
 import type { CSSProperties } from "react";
 import type { EmergingTheme } from "@/lib/types";
+import { strengthBarTone } from "./strength";
 
 function MomentumBar({ value }: { value: number }) {
-  const color = value >= 70 ? "bg-positive" : value >= 45 ? "bg-accent" : "bg-muted/40";
+  const color = strengthBarTone(value);
   return (
     <div className="flex items-center gap-2">
       <div className="flex-1 h-1 rounded-full bg-surface-3 overflow-hidden">

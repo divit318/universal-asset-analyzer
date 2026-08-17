@@ -28,6 +28,7 @@ const VERDICT_STYLE = {
   strong: "bg-positive/80 text-background",
   moderate: "bg-accent text-background",
   weak: "bg-muted/40 text-foreground",
+  avoid: "bg-negative/80 text-background",
 };
 
 function ScoreBar({

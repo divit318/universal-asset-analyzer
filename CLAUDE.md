@@ -122,12 +122,12 @@ The design philosophy is **transparency over convenience**: users see the resear
 |--------|---------|-----------|
 | **Home** (`/`) | Personalized daily dashboard composed from an independent module registry (today's brief, recent activity, watchlist/market intel, sector rotation). Adding a module never touches `app/page.tsx` — register it, map it, place it in the layout. | `lib/home/registry.ts`, `lib/home/layout.ts`, `app/_home/module-map.ts` |
 | **Research** (`/research`, `/research/india`) | Deep equity research: quote, history, filings, news, insider trades, copilot chat (persisted per session). India variant uses screener.in API. | `lib/ai-research.ts`, `lib/edgar.ts`, `lib/news.ts`, `lib/screener-in.ts` |
-| **Screener** (`/screener`) | Fundamental screening with 24h cached Yahoo data, live prices, composite scoring (value/quality/momentum). | `lib/fundamental-screener.ts`, `lib/composite.ts`, `lib/dataset.ts` |
-| **Scanner** (`/scanner`) | Event-driven signals: earnings surprises, insider transactions, technical breaks. | `lib/event-screener.ts`, `lib/indicators.ts` |
+| **Screener** (`/screener`) | Universal screening across 7 asset classes: 12h-cached fundamentals, live prices, composite scoring + percentile ranking. | `lib/screener/`, `lib/composite.ts`, `lib/dataset.ts` |
+| **Scanner** (surfaced in `/wire`) | Event-driven scan pipeline: market events → sector impacts → scored opportunities (canonical verdicts via `lib/recommendation.ts`). | `lib/scanner/`, `lib/event-screener.ts`, `lib/indicators.ts` |
 | **Compare** (`/compare`) | "Asset Comparison" — equity comparison across 14 metrics (price, growth, profitability, valuation, leverage) plus a parallel, class-tailored framework for ETF/REIT/crypto/commodity/bond/forex (metrics, composite scores, risk flags, AI verdict per class). | `lib/ai-compare.ts` (equity), `lib/compare/` (non-equity framework) |
 | **Portfolio** (`/portfolio`) | Holdings tracking, P&L, portfolio metrics (beta, correlation, sector concentration), position fit analysis. | `lib/portfolio-analytics.ts`, `lib/db.ts` |
 | **Watchlist** (`/watchlist`) | Tracked tickers with alerts, notes, bulk monitoring. | `lib/db.ts` |
-| **DCF** (`/dcf`) | Intrinsic value calculator with sensitivity analysis. | `lib/fundamentals.ts` |
+| **Valuation** (`/valuation`, `/valuation/register`) | DCF workspace with scenarios/sensitivity plus the register of saved cases. | `lib/valuation/` |
 | **Calendar** (`/calendar`) | Earnings calendar with dates and pre/post event performance. | `app/api/calendar/route.ts` |
 | **IC Report** (`/ic-report`) | Institutional research via multi-agent pipeline (9 agent domains: business, industry, competition, management, capitalAllocation, accounting, valuation, governance, risk). | `lib/ic-agents.ts`, `lib/ic-questions.ts`, `lib/ic-signals.ts` |
 | **Engine** (`/engine`) | Quant scorecard powered by Python DuckDB pipeline. Runs separately, outputs Parquet, read-only from Next.js. | `engine/daily_run.py` |
@@ -145,8 +145,9 @@ The design philosophy is **transparency over convenience**: users see the resear
 
 **Scoring & Screening**
 - `lib/composite.ts` — Deterministic scoring (value/quality/momentum). All changes must be tested in `tests/composite.test.ts`.
-- `lib/fundamental-screener.ts` — Filter logic + cache management (24h TTL)
-- `lib/dataset.ts` — Merge cached fundamentals + live prices for screener
+- `lib/recommendation.ts` — canonical bands + every derived vocabulary (grades, opportunity verdicts, meter tones, export palette) and `SCORING_METHODOLOGY_VERSION`. Guarded by `tests/no-private-score-bands.test.ts`.
+- `lib/screener/` — filter engine, percentile ranking, formats (the old `lib/fundamental-screener.ts` no longer exists)
+- `lib/dataset.ts` — 12h fundamentals cache + live-price merge for the screener (scores recomputed on read, never cached)
 - `lib/event-screener.ts` — Signal generation (earnings surprises, insider transactions, breaks)
 - `lib/indicators.ts` — Technical indicators (RSI, moving averages, Bollinger bands)
 - `lib/thematic-engine.ts` — 10-stage thematic analysis framework
@@ -297,8 +298,10 @@ scanner_cache
   out the cascade.
 - **Parquet**: Daily output from quant engine, read-only from Next.js (outside the platform).
 - **Two legacy SQLite stores predate the platform and still exist**:
-  `fundamentals_cache` (the Screener's 24h snapshot, `lib/dataset.ts`) and
-  `scanner_cache` (a 15-min keyed store for AI output, used by `lib/timeline.ts`,
+  `fundamentals_cache` (the Screener's 12h raw-fundamentals snapshot, `lib/dataset.ts`;
+  scores are recomputed on read, never stored) and
+  `scanner_cache` (a 15-min keyed store for AI/scan output whose keys are prefixed
+  with `SCORING_METHODOLOGY_VERSION`, so a methodology bump is a cache miss; used by `lib/timeline.ts`,
   `lib/movement-explainer.ts`, `lib/ai-financial-insight.ts`). Both sit *above*
   platform-routed fetches rather than bypassing them — they memoize derived
   results, not provider calls — so they are not a second provider path. They are
@@ -335,7 +338,7 @@ scanner_cache
 - Same workflow refinement (e.g., add export → `lib/download.ts`)
 
 **Create New Modules When**:
-- Distinct user workflow (e.g., `/dcf`, `/engine`, `/portfolio`)
+- Distinct user workflow (e.g., `/valuation`, `/engine`, `/portfolio`)
 - New data model (new DB tables or state structure)
 - Cross-cutting concern (e.g., `/api/export/*`)
 

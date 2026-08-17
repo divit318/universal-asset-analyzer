@@ -4,6 +4,7 @@ import { getFundamentals } from "@/lib/fundamentals";
 import { normalizeSymbol } from "@/lib/market";
 import { getFinancialStatements } from "@/lib/statements";
 import { getFundamentalsTimeSeries, getHistory, getQuote } from "@/lib/yahoo";
+import { scoreStep, SCORING_METHODOLOGY_VERSION } from "@/lib/recommendation";
 import { assessRisks, computeMomentum, computeScore } from "@/lib/scoring";
 import { getRecentFilings } from "@/lib/edgar";
 import { getPeerComparison } from "@/lib/peers";
@@ -24,6 +25,13 @@ const MUTED = "FF64748B";
 const BGALT = "FFF8FAFC";
 const BGHEAD = "FFE2E8F0";
 const BORDER_CLR = "FFE2E8F0";
+
+/** Report-palette color for a 0-100 score, from the canonical band steps
+ *  (lib/recommendation.ts) — previously an inline 70/45 table. */
+const scoreArgbFont = (v: number): string => {
+  const step = scoreStep(v);
+  return step === "high" ? POS : step === "mid" ? AMBER : NEG;
+};
 
 /* ─── formatters ─────────────────────────────────────────────────────────── */
 const f2 = (v: number | null | undefined, d = 2): string =>
@@ -221,6 +229,7 @@ async function generateReport(request: Request): Promise<Response> {
   wb.creator = "Universal Asset Analyzer";
   wb.created = new Date();
   wb.modified = new Date();
+  wb.subject = `Scoring methodology ${SCORING_METHODOLOGY_VERSION}`;
 
   /* ════════════════════════════════════════════════════════════════════
      SHEET 1 — OVERVIEW
@@ -276,7 +285,7 @@ async function generateReport(request: Request): Promise<Response> {
 
     if (score) {
       ws.getCell(r, 3).value = `Fundamental Score: ${Math.round(score.total)}/100`;
-      ws.getCell(r, 3).font = { name: "Calibri", bold: true, size: 12, color: { argb: score.total >= 70 ? POS : score.total >= 45 ? AMBER : NEG } };
+      ws.getCell(r, 3).font = { name: "Calibri", bold: true, size: 12, color: { argb: scoreArgbFont(score.total) } };
       ws.getCell(r, 4).value = `Rating: ${score.recommendation.replace("_", " ")}`;
       ws.getCell(r, 4).font = { name: "Calibri", bold: true, size: 12, color: { argb: NAVY } };
     }
@@ -324,7 +333,7 @@ async function generateReport(request: Request): Promise<Response> {
       r = tableHeader(ws, r, ["Category", "Points", "Max", "Score %"]);
       score.buckets.forEach((b, i) => {
         const pct = b.max > 0 ? b.points / b.max : 0;
-        const color = pct >= 0.7 ? POS : pct >= 0.4 ? AMBER : NEG;
+        const color = scoreArgbFont(pct * 100);
         r = dataRow(ws, r, [b.name, b.points, b.max, `${(pct * 100).toFixed(0)}%`], {
           bgArgb: i % 2 === 0 ? WHITE : BGALT,
           colColors: [undefined, color, undefined, color],
@@ -335,7 +344,7 @@ async function generateReport(request: Request): Promise<Response> {
         const cell = ws.getCell(r, ci + 1);
         cell.value = v;
         cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: BGHEAD } };
-        cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: score.total >= 70 ? POS : score.total >= 45 ? AMBER : NEG } };
+        cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: scoreArgbFont(score.total) } };
         cell.alignment = { horizontal: ci === 0 ? "left" : "right", vertical: "middle" };
         cell.border = thinBorder;
       });

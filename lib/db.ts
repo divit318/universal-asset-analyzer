@@ -16,6 +16,7 @@ import type {
   ValuationMethod,
 } from "./valuation/case";
 import { renderAlertText, type AlertEvent, type AlertFacts } from "./alerts";
+import { SCORING_METHODOLOGY_VERSION } from "./recommendation";
 import type { AttentionDismissal } from "./home/contracts";
 import { normalizeStoredHeadline, type Simulation, type SimProfile, type SimHolding, type SimThesis, type SimHeadline } from "./portfolio/simulator/types";
 import { normalizeStoredProfile } from "./portfolio/simulator/profile";
@@ -3160,6 +3161,17 @@ export function getSessionMessages(sessionId: string): StoredMessage[] {
 
 const SCANNER_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
 
+/**
+ * Methodology-versioned cache key. scanner_cache rows store OPAQUE JSON that
+ * can embed canonical scoring outputs (a cached ScannerResult carries every
+ * opportunity's verdict), so a methodology bump must be a cache miss — a 15-min
+ * TTL serving pre-bump verdicts after the bands changed is a silent
+ * contradiction. Applied here, at the single chokepoint, so no caller can
+ * forget it; entries written under the previous version become unreachable and
+ * age out via the existing prune.
+ */
+const versionedKey = (cacheKey: string): string => `m${SCORING_METHODOLOGY_VERSION}:${cacheKey}`;
+
 interface ScannerCacheRow {
   result: string;
   created_at: number;
@@ -3169,7 +3181,7 @@ export function getScannerCache(cacheKey: string, ttlMs = SCANNER_CACHE_TTL): st
   const cutoff = Date.now() - ttlMs;
   const row = getDb()
     .prepare("SELECT result, created_at FROM scanner_cache WHERE cache_key = ? AND created_at >= ?")
-    .get(cacheKey, cutoff) as unknown as ScannerCacheRow | undefined;
+    .get(versionedKey(cacheKey), cutoff) as unknown as ScannerCacheRow | undefined;
   return row?.result ?? null;
 }
 
@@ -3181,7 +3193,7 @@ export function getScannerCache(cacheKey: string, ttlMs = SCANNER_CACHE_TTL): st
 export function getScannerCacheAt(cacheKey: string): number | null {
   const row = getDb()
     .prepare("SELECT created_at FROM scanner_cache WHERE cache_key = ?")
-    .get(cacheKey) as { created_at: number } | undefined;
+    .get(versionedKey(cacheKey)) as { created_at: number } | undefined;
   return row?.created_at ?? null;
 }
 
@@ -3191,7 +3203,7 @@ export function putScannerCache(cacheKey: string, result: string, ttlMs = SCANNE
       `INSERT INTO scanner_cache (cache_key, result, created_at) VALUES (?, ?, ?)
        ON CONFLICT(cache_key) DO UPDATE SET result = excluded.result, created_at = excluded.created_at`,
     )
-    .run(cacheKey, result, Date.now());
+    .run(versionedKey(cacheKey), result, Date.now());
   // Prune entries older than the LONGEST TTL any caller uses (stage-level LLM
   // entries live 60 minutes — see lib/scanner/prompt-cache.ts), so a shorter-
   // lived writer can't evict a longer-lived reader's still-valid rows.

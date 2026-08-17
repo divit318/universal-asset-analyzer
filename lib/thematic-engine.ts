@@ -32,8 +32,9 @@ import { getFreshFundamentals } from "./db";
 import { fetchMarketNews } from "./news";
 import { getHistory, getQuotes } from "./yahoo";
 import { coerceParsedObject } from "./json-extract";
+import { OPPORTUNITY_VERDICT_ORDER, scoreToOpportunityVerdict } from "./recommendation";
 import { normalizeTheme } from "./thematic-theme";
-import type { StockFundamentals, NewsItem } from "./types";
+import type { StockFundamentals, NewsItem, OpportunityVerdict } from "./types";
 
 /* ─────────────────────────── Public types ──────────────────────────── */
 
@@ -274,7 +275,8 @@ export interface OpportunityScore {
   /** The same breakdown as an ordered, self-describing list — what the UI renders. */
   factors: ScoreFactor[];
   topCompanies: TierCompany[];       // top 5 by quality × relevance
-  verdict: "exceptional" | "strong" | "moderate" | "weak" | "avoid";
+  /** Canonical opportunity vocabulary — scoreToOpportunityVerdict(themeScore), minus any capital-cycle cap. */
+  verdict: OpportunityVerdict;
   verdictRationale: string;
   /** Set when the capital cycle contradicts the headline score (see capVerdict). */
   verdictCaveat: string | null;
@@ -1590,11 +1592,10 @@ export function computeOpportunityScore(
     Math.min(100, Math.round(factors.reduce((sum, f) => sum + f.score * f.weight, 0))),
   );
 
-  const rawVerdict: OpportunityScore["verdict"] =
-    themeScore >= 80 ? "exceptional" :
-    themeScore >= 65 ? "strong" :
-    themeScore >= 50 ? "moderate" :
-    themeScore >= 35 ? "weak" : "avoid";
+  // Canonical bands (lib/recommendation.ts) — previously a private 80/65/50/35
+  // table here while the Scanner used 75/60/45, so the same word meant two
+  // different score ranges depending on the page.
+  const rawVerdict = scoreToOpportunityVerdict(themeScore);
 
   const riskFlags = collectRiskFlags(bottleneck, supplyDemand, commodity, tierCompanies, failed);
 
@@ -1609,9 +1610,8 @@ export function computeOpportunityScore(
     supplyDemand.investmentSignal === "avoid" ||
     (supplyDemand.capitalCyclePhase === "late" && supplyDemand.investmentSignal === "weak") ||
     supplyDemand.capitalCyclePhase === "downturn";
-  const ORDER: OpportunityScore["verdict"][] = ["avoid", "weak", "moderate", "strong", "exceptional"];
   const verdict = cycleContradicts
-    ? ORDER[Math.max(0, ORDER.indexOf(rawVerdict) - 1)]
+    ? OPPORTUNITY_VERDICT_ORDER[Math.max(0, OPPORTUNITY_VERDICT_ORDER.indexOf(rawVerdict) - 1)]
     : rawVerdict;
   const verdictCaveat = cycleContradicts
     ? `Structural score is ${rawVerdict.toUpperCase()}, but the capital cycle reads ${supplyDemand.capitalCyclePhase} with a "${supplyDemand.investmentSignal}" entry signal — the theme may be right and the timing late.`

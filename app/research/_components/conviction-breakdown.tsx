@@ -5,6 +5,7 @@ import {
   RECOMMENDATION_ARC,
   RECOMMENDATION_LABEL,
   RECOMMENDATION_TONE,
+  scoreMeterTone,
   scoreToRecommendation,
 } from "@/lib/recommendation";
 import { CountUp } from "@/app/_components/count-up";
@@ -13,10 +14,10 @@ import { Reveal } from "@/app/_components/reveal";
 import { ScoreRing } from "@/app/_components/score-ring";
 import { ValueBar } from "@/app/_components/value-bar";
 
+/** Canonical 3-step meter grammar — previously a private 65/42 table that
+ *  turned green 5 points later than every other bar in the app. */
 function barColor(pct: number) {
-  if (pct >= 65) return "bg-positive";
-  if (pct >= 42) return "bg-warning";
-  return "bg-negative";
+  return scoreMeterTone(pct).bar;
 }
 
 function confidenceLabel(pct: number) {

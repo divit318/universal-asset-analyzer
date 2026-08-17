@@ -94,6 +94,21 @@ describe("scoreOpportunities — factor score scale", () => {
   });
 });
 
+describe("scoreOpportunities — canonical verdict", () => {
+  it("the verdict is always scoreToOpportunityVerdict(composite) — no private band table", async () => {
+    const { scoreToOpportunityVerdict } = await import("@/lib/recommendation");
+    const cases = [
+      opportunity({ id: "hi", ticker: "HI", compositeScores: compositeScores({ overall: 90, value: 85, momentum: 85 }), quote: quoteWith(2) }),
+      opportunity({ id: "mid", ticker: "MID", compositeScores: compositeScores({ overall: 50 }) }),
+      opportunity({ id: "lo", ticker: "LO", compositeScores: compositeScores({ overall: 5, value: 5, momentum: 5 }) }),
+    ];
+    const scored = scoreOpportunities(cases, [sectorImpact("Technology", 60)]);
+    for (const o of scored) {
+      expect(o.opportunityScore.verdict, o.ticker).toBe(scoreToOpportunityVerdict(o.opportunityScore.composite));
+    }
+  });
+});
+
 describe("scoreOpportunities — differentiation", () => {
   it("clearly strong and clearly weak inputs produce different composites and verdicts", () => {
     const strong = opportunity({

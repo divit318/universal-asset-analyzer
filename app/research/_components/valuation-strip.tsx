@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { StripResponse } from "@/app/api/valuation/strip/route";
 import { formatCurrency } from "@/lib/format";
 import { IMPLIED_GROWTH_LABEL, IMPLIED_GROWTH_CAVEAT } from "@/lib/valuation/case";
+import { marginOfSafetyTone } from "@/lib/valuation/dcf";
 
 /**
  * The Research Hub's valuation strip — read-only, by design.
@@ -63,10 +64,7 @@ export function ValuationStrip({ symbol, price }: Props) {
   }
 
   const mos = summary.result.marginOfSafety;
-  const mosTone = mos == null ? "text-muted"
-    : mos >= 20 ? "text-positive"
-    : mos >= 0 ? "text-yellow-500 light:text-yellow-700"
-    : "text-negative";
+  const mosTone = marginOfSafetyTone(mos);
 
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface px-4 py-3">

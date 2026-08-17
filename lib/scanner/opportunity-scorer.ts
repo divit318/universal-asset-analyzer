@@ -13,6 +13,7 @@
 
 import type { ScannerOpportunity, OpportunityScore, SectorImpact } from "../types";
 import { buildOpportunityProfile } from "../opportunity-engine";
+import { scoreToOpportunityVerdict } from "../recommendation";
 import { getLatestSectorRotation, findSectorRotationEntry } from "../sector-rotation";
 
 /** Weights for the composite opportunity score */
@@ -22,13 +23,6 @@ const WEIGHTS = {
   valuation: 0.20,
   momentum: 0.20,
 };
-
-function scoreToVerdict(score: number): OpportunityScore["verdict"] {
-  if (score >= 75) return "exceptional";
-  if (score >= 60) return "strong";
-  if (score >= 45) return "moderate";
-  return "weak";
-}
 
 function computeMomentumScore(opp: ScannerOpportunity): number {
   // Base momentum from composite scorer (if available)
@@ -113,7 +107,7 @@ export function scoreOpportunities(
       valuation,
       momentum,
       composite,
-      verdict: scoreToVerdict(composite),
+      verdict: scoreToOpportunityVerdict(composite),
     };
 
     const sectorStrength = sectorStrengthMap.get(opp.theme);

@@ -51,6 +51,7 @@ import { useIOSSafe } from "@/lib/ios-context";
 import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
 import { PageShell, Skeleton } from "@/app/_components/ui";
 import type { PortfolioFitAnalysis } from "@/lib/ios/types";
+import { fitMeterTone } from "@/lib/ios/unified-action";
 
 // Base asset classes only (lib/assets/registry.ts): market variants like
 // indiaEquity are a geography, not an asset class — Indian equities compare
@@ -1767,8 +1768,8 @@ function PortfolioFitSection({
           display: (f: PortfolioFitAnalysis) => string;
           render?: (f: PortfolioFitAnalysis, i: number) => ReactNode;
         }
-        const scoreTone = (score: number) =>
-          score >= 65 ? "text-positive" : score >= 45 ? "text-warning" : "text-negative";
+        // Canonical fit-tier edges — previously a private 65/45 table.
+        const scoreTone = (score: number) => fitMeterTone(score).text;
         const fitRows: FitRow[] = [
           {
             label: "Portfolio Fit Score",

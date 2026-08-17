@@ -29,6 +29,7 @@ import {
   buildScenarios,
   buildSensitivity,
   describeScenario,
+  marginOfSafetyTone,
 } from "@/lib/valuation/dcf";
 import { VALUATION_METHOD_LABEL, VALUATION_METHOD_SCOPE } from "@/lib/valuation/case";
 import type { DeliveredGrowth } from "@/lib/valuation/prefill";
@@ -248,7 +249,7 @@ export default function ValuationPage() {
   const scenarios = computable && dcf ? buildScenarios(dcf) : null;
   const sensitivity = computable && dcf ? buildSensitivity(dcf) : null;
   const mos = vcase?.result.marginOfSafety ?? null;
-  const mosColor = mos == null ? "" : mos >= 20 ? "text-positive" : mos >= 0 ? "text-yellow-500 light:text-yellow-700" : "text-negative";
+  const mosColor = mos == null ? "" : marginOfSafetyTone(mos);
   const fresh = vcase ? caseFreshness(vcase.updatedAt) : null;
 
   const iosFit = ios?.profileReady && symbol

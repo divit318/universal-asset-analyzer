@@ -57,7 +57,7 @@ import type {
   PortfolioFitAnalysis,
   ContextualRanking,
 } from "./types";
-import { deriveUnifiedAction, fitTier } from "./unified-action";
+import { deriveUnifiedAction, fitTier, FIT_TIER_EDGES } from "./unified-action";
 import { scoreLabel } from "../recommendation";
 
 /* -------------------------------------------------------------------------- */
@@ -127,11 +127,13 @@ function hasFundamentals(asset: FitAssetData): boolean {
   return asset.scoreResult != null;
 }
 
-/** Impact is only asserted when we actually have evidence for the dimension. */
+/** Impact is only asserted when we actually have evidence for the dimension.
+ *  Banded at the fit tiers (good/neutral) — previously the same 62/45 edges,
+ *  but hardcoded rather than referencing FIT_TIER_EDGES. */
 function impactOf(score: number, confidence: number): FitDimension["impact"] {
   if (confidence < 0.4) return "neutral";
-  if (score >= 62) return "positive";
-  if (score >= 45) return "neutral";
+  if (score >= FIT_TIER_EDGES.good) return "positive";
+  if (score >= FIT_TIER_EDGES.neutral) return "neutral";
   return "negative";
 }
 

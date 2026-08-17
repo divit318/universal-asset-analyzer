@@ -13,6 +13,7 @@ import {
   VALUATION_METHOD_SCOPE,
 } from "@/lib/valuation/case";
 import { CASE_FLAG_DETAIL, CASE_FLAG_LABEL, type CaseFlag } from "@/lib/valuation/summary";
+import { marginOfSafetyTone } from "@/lib/valuation/dcf";
 
 /**
  * The Valuation Register — your book of cases.
@@ -234,10 +235,7 @@ function RevaluationLine({ result }: { result: RevaluationSummary }) {
 
 function RegisterTableRow({ row }: { row: RegisterRow }) {
   const mos = row.result.marginOfSafety;
-  const mosTone = mos == null ? "text-muted"
-    : mos >= 20 ? "text-positive"
-    : mos >= 0 ? "text-yellow-500 light:text-yellow-700"
-    : "text-negative";
+  const mosTone = marginOfSafetyTone(mos);
 
   return (
     <tr className="border-b border-border last:border-b-0 hover:bg-surface-2">

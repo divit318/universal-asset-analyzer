@@ -762,6 +762,14 @@ export type Recommendation =
   | "SELL"
   | "STRONG_SELL";
 
+/**
+ * Opportunity vocabulary — the 5-tier Recommendation expressed in the language
+ * of opportunity attractiveness (Scanner opportunities, Thematic themes).
+ * Derived ONLY via lib/recommendation.ts's scoreToOpportunityVerdict, so a 76
+ * can never be "exceptional" on one surface and "strong" on another.
+ */
+export type OpportunityVerdict = "exceptional" | "strong" | "moderate" | "weak" | "avoid";
+
 /** Price/technical momentum signal derived from the daily price history. */
 export interface MomentumSignal {
   score: number; // 0-100
@@ -1019,7 +1027,8 @@ export interface OpportunityScore {
   valuation: number;          // 0-100
   momentum: number;           // 0-100
   composite: number;          // 0-100 weighted blend
-  verdict: "exceptional" | "strong" | "moderate" | "weak";
+  /** Canonical verdict for `composite` — always scoreToOpportunityVerdict(composite). */
+  verdict: OpportunityVerdict;
 }
 
 export interface InvestmentThesis {

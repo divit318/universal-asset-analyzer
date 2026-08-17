@@ -22,6 +22,7 @@ import type {
   ScreenerInStatementRow,
 } from "./screener-in";
 import { indianFiscalLabel } from "./format";
+import { RECOMMENDATION_TONE, scoreToRecommendation } from "./recommendation";
 import type { Recommendation } from "./types";
 
 /* -------------------------------------------------------------------------- */
@@ -254,14 +255,16 @@ export interface IndiaSnapshotVerdict {
   style: string;
 }
 
-/** Map the India verdict onto the shared Recommendation enum so other modules
- *  (e.g. the Macro Context ladder) render India stocks from screener.in too. */
-const VERDICT_TO_RECOMMENDATION: Record<IndiaVerdictLabel, Recommendation> = {
-  "Strong Buy": "STRONG_BUY",
-  Accumulate: "BUY",
-  Hold: "HOLD",
-  Reduce: "SELL",
-  Avoid: "STRONG_SELL",
+/** India-market vocabulary over the canonical 5 tiers. The words differ from
+ *  the US labels (Accumulate/Reduce is how Indian brokerage research speaks),
+ *  but the underlying bands are lib/recommendation.ts's TIER_EDGES — a 61 is a
+ *  BUY-tier score whether the page renders "Buy" or "Accumulate". */
+const INDIA_VERDICT_LABEL: Record<Recommendation, IndiaVerdictLabel> = {
+  STRONG_BUY: "Strong Buy",
+  BUY: "Accumulate",
+  HOLD: "Hold",
+  SELL: "Reduce",
+  STRONG_SELL: "Avoid",
 };
 
 export interface IndiaDataQuality {
@@ -388,12 +391,13 @@ export function scoreCapitalAllocation(c: ScreenerInCompany, d: IndiaDerivedFund
   return scoreBucket(factors);
 }
 
+/** The India verdict is the canonical band of the composite, in India-market
+ *  words and the canonical badge tone. Previously banded at 78/62/46/30 —
+ *  which made a composite of 61 read "Hold" here while every other surface
+ *  called the same 61 a Buy. */
 export function overallVerdict(composite: number): IndiaSnapshotVerdict {
-  if (composite >= 78) return { label: "Strong Buy", style: "text-positive border-positive/40 bg-positive/12" };
-  if (composite >= 62) return { label: "Accumulate", style: "text-positive border-positive/30 bg-positive/8" };
-  if (composite >= 46) return { label: "Hold", style: "text-warning border-warning/40 bg-warning/10" };
-  if (composite >= 30) return { label: "Reduce", style: "text-negative border-negative/30 bg-negative/8" };
-  return { label: "Avoid", style: "text-negative border-negative/40 bg-negative/12" };
+  const rec = scoreToRecommendation(composite);
+  return { label: INDIA_VERDICT_LABEL[rec], style: RECOMMENDATION_TONE[rec] };
 }
 
 function computeStrengths(c: ScreenerInCompany, d: IndiaDerivedFundamentals): string[] {
@@ -482,7 +486,7 @@ export function computeIndiaSnapshot(
     capitalAllocation: capitalAllocation.score,
     composite,
     verdict,
-    recommendation: VERDICT_TO_RECOMMENDATION[verdict.label],
+    recommendation: scoreToRecommendation(composite),
     strengths: computeStrengths(company, derived),
     risks: computeRisks(company, derived),
     dataQuality: {
