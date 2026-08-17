@@ -331,8 +331,11 @@ async function buildScreener() {
 interface SnapshotSummary {
   totalValue: number;
   totalCost: number;
-  health: number;
-  healthGrade: string;
+  /** Portfolio-alignment score (nullable — a book can be unscorable). Rows
+   * written before the alignment engine carry the legacy `health` score
+   * instead; the grade that came with it is gone for good. */
+  alignment?: number | null;
+  health?: number;
   volatility: number;
   topAssetClassWeight: number;
   allocation: { assetClass: string; weight: number }[];
@@ -386,14 +389,17 @@ async function buildPortfolio() {
     }));
 
   const alloc = [...latest.allocation].sort((a, b) => b.weight - a.weight);
+  // Alignment score for the panel — legacy `health` rows keep a number until
+  // the demo snapshots are recaptured; an unscorable book reads "—".
+  const alignmentScore = latest.alignment ?? latest.health ?? null;
+  const alignmentDisplay = alignmentScore != null ? `${Math.round(alignmentScore)}` : "—";
 
   return {
     valueDisplay: `$${Math.round(latest.totalValue).toLocaleString("en-US")}`,
     totalReturnDisplay: `${totalReturn >= 0 ? "+" : ""}${totalReturn.toFixed(1)}%`,
     totalReturnPositive: totalReturn >= 0,
     sinceLabel,
-    health: `${latest.health}`,
-    healthGrade: latest.healthGrade,
+    alignment: alignmentDisplay,
     volatilityDisplay: `${latest.volatility.toFixed(1)}%`,
     trajectory: points.map((p) => ({ at: p.at.slice(0, 10), value: p.value })),
     allocation: alloc.map((a) => ({
@@ -403,7 +409,7 @@ async function buildPortfolio() {
     })),
     /** Deterministic engine findings from the snapshot, not AI prose. */
     findings: [
-      `Health ${latest.health} (${latest.healthGrade}), volatility ${latest.volatility.toFixed(1)}%`,
+      `Alignment ${alignmentDisplay}, volatility ${latest.volatility.toFixed(1)}%`,
       `${CLASS_LABEL[alloc[0].assetClass] ?? alloc[0].assetClass} is the largest sleeve at ${alloc[0].weight.toFixed(1)}%`,
       `${alloc.length} asset classes held; top weight ${latest.topAssetClassWeight.toFixed(1)}%`,
     ],
@@ -565,7 +571,7 @@ export type PanelData = typeof PANEL_DATA;
   console.log(`valuation: ${valuation.symbol} spot ${valuation.spotDisplay} base FV ${valuation.scenarios[1].fairValue} (${valuation.scenarios[1].upside})`);
   console.log(`research: ${research.symbol} ${research.price} (${research.changePercent}), ${research.news.length} headlines`);
   console.log(`screener: ${screener.total} of ${screener.universe} matched in ${screener.screenedIn}`);
-  console.log(`portfolio: ${portfolio.valueDisplay}, health ${portfolio.health} (${portfolio.healthGrade}), ${portfolio.movers.length} movers`);
+  console.log(`portfolio: ${portfolio.valueDisplay}, alignment ${portfolio.alignment}, ${portfolio.movers.length} movers`);
   console.log(assistant ? `assistant: model ${assistant.model}, ${assistant.answer.length} chars` : "assistant: OMITTED");
 }
 

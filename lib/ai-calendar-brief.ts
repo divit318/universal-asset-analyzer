@@ -5,6 +5,7 @@
  */
 
 import type { CalendarEvent } from "@/app/api/calendar/route";
+import { formatPerShare } from "./format";
 import { runAnalysis } from "./ai/analysis";
 import { TextAnalysisSchema, TextWireSchema, TEXT_SCHEMA_VERSION } from "./ai/schemas/text";
 
@@ -17,7 +18,10 @@ export function buildCalendarBriefPrompt(events: CalendarEvent[], weekStart: str
   const dividends = events.filter((e) => e.type === "exDividend");
 
   const earningsLines = earnings.map((e) =>
-    `- ${e.symbol ?? e.name}${e.quarter ? ` (${e.quarter})` : ""}${e.epsEstimate != null ? ` | EPS est. $${e.epsEstimate.toFixed(2)}` : ""}`,
+    // Estimates carry their own reporting currency — the model repeats
+    // whatever symbol we print, so a hardcoded dollar would make the brief
+    // narrate ₩/₹/¥ figures as dollars.
+    `- ${e.symbol ?? e.name}${e.quarter ? ` (${e.quarter})` : ""}${e.epsEstimate != null ? ` | EPS est. ${formatPerShare(e.epsEstimate, e.estimateCurrency)}` : ""}`,
   ).join("\n") || "None";
 
   const macroLines = macro

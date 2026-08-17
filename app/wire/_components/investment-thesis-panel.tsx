@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import type { InvestmentThesis } from "@/lib/types";
+import { modelReadTier, MODEL_READ_TITLE } from "@/lib/wire/labels";
 
 const HORIZON_LABEL: Record<InvestmentThesis["timeHorizon"], string> = {
   days:     "Days",
@@ -95,14 +96,13 @@ export function InvestmentThesisPanel({
           </span>
           <span className="text-xs font-semibold">{HORIZON_LABEL[thesis.timeHorizon]}</span>
         </div>
-        <div
-          className="flex flex-col gap-0.5"
-          title="Model-estimated confidence in this thesis — not a measured statistic"
-        >
+        <div className="flex flex-col gap-0.5" title={MODEL_READ_TITLE}>
           <span className="text-[10px] font-medium uppercase tracking-widest text-muted/60">
-            Confidence
+            Model read
           </span>
-          <span className="text-xs font-semibold">{thesis.confidence}%</span>
+          <span className="text-xs font-semibold capitalize">
+            {modelReadTier(thesis.confidence) ?? "—"}
+          </span>
         </div>
         <div className="ml-auto flex gap-1.5">
           <Link
@@ -110,12 +110,6 @@ export function InvestmentThesisPanel({
             className="rounded-md border border-border px-2.5 py-1 text-xs text-muted hover:border-accent/40 hover:text-accent transition-colors"
           >
             Journal
-          </Link>
-          <Link
-            href={`/knowledge-graph?scope=symbol&id=${encodeURIComponent(ticker)}`}
-            className="rounded-md border border-border px-2.5 py-1 text-xs text-muted hover:border-accent/40 hover:text-accent transition-colors"
-          >
-            Graph
           </Link>
           <Link
             href={`/ic-report?symbol=${encodeURIComponent(ticker)}`}

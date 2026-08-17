@@ -8,7 +8,7 @@
  *   1. Header — eyebrow + live regime, and the visit's meta (what changed,
  *      reading time, generation time) on one line.
  *   2. KPI strip — the four figures the headline is about (value, today's
- *      move, health grade, actions), promoted ABOVE the narrative so the
+ *      move, alignment score, actions), promoted ABOVE the narrative so the
  *      numbers land before the prose does.
  *   3. Narrative — the AI headline split client-side into a display-size
  *      verdict (first sentence) and a receding supporting paragraph.
@@ -26,8 +26,8 @@
 import { useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { Sparkles, ArrowRight, CirclePlay } from "lucide-react";
-import { explainHealth } from "@/lib/home/explain";
-import { fmtSignedPct, fmtSignedMoney, fmtMoney, gradeTone } from "../_viz/format";
+import { explainAlignment } from "@/lib/home/explain";
+import { fmtSignedPct, fmtSignedMoney, fmtMoney, alignmentToneViz } from "../_viz/format";
 import { MetricDelta } from "../_viz/stamped";
 import { SymbolTag } from "../_atmosphere/symbol-link";
 import { ExplainableValue } from "../_atmosphere/explain-popover";
@@ -176,7 +176,7 @@ export function TodaysBriefModule() {
   const decisionCount = actions.data ? actions.data.actions.length : null;
   const regime = market.data?.regime?.trend ?? null;
   const tone = regimeTone(regime);
-  const grade = hasPulse ? gradeTone(p!.healthGrade) : null;
+  const alignTone = hasPulse ? alignmentToneViz(p!.alignmentScore) : null;
 
   // The one place the hero's chrome borrows a data colour: a hairline accent on
   // the top edge, driven by the portfolio's move today (green up / red down),
@@ -305,12 +305,12 @@ export function TodaysBriefModule() {
                   captionTone={p!.todayChangeDollar >= 0 ? "text-positive" : "text-negative"}
                   className="border-l border-foreground/8 px-6"
                 />
-                {p!.healthGrade ? (
+                {p!.alignmentScore != null ? (
                   <div className="flex flex-col gap-1 pr-6 lg:border-l lg:border-foreground/8 lg:px-6">
-                    <span className={LABEL}>Grade</span>
-                    <ExplainableValue explanation={explainHealth(p!)} underline={false}>
-                      <span className={`${NUM} text-[30px] font-semibold leading-none ${grade!.text}`}>
-                        {p!.healthGrade} {p!.healthScore ?? "—"}
+                    <span className={LABEL}>Alignment</span>
+                    <ExplainableValue explanation={explainAlignment(p!)} underline={false}>
+                      <span className={`${NUM} text-[30px] font-semibold leading-none ${alignTone!.text}`}>
+                        {p!.alignmentScore}
                       </span>
                     </ExplainableValue>
                   </div>

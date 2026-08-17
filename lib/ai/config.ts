@@ -197,7 +197,7 @@ export const TASK_MODEL_PINS: Partial<Record<TaskType, string[]>> = {
   /* ---- light: parsing and one-liners; latency is the product -------------- */
   "market-summary": LIGHT_PIN,
   "daily-briefing": LIGHT_PIN,
-  "knowledge-graph-explain": LIGHT_PIN,
+  "exposure-cluster-label": LIGHT_PIN,
   "calendar-brief": LIGHT_PIN,
   "nl-screener": LIGHT_PIN,
   "quick-summary": LIGHT_PIN,

@@ -84,14 +84,14 @@ export async function POST(request: Request) {
       before: {
         totalValue: evaluation.totalValue,
         annualIncome: annualIncomeOf(evaluation),
-        health: evaluation.health,
+        alignment: evaluation.alignment,
         risk: evaluation.risk,
         allocation: evaluation.allocation,
       },
       after: {
         totalValue: result.after.totalValue,
         annualIncome: annualIncomeOf(result.after),
-        health: result.after.health,
+        alignment: result.after.alignment,
         risk: result.after.risk,
         allocation: result.after.allocation,
       },

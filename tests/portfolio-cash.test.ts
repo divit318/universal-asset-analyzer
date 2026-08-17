@@ -313,14 +313,14 @@ describe("computeCashAllocation — constraint enforcement", () => {
 });
 
 describe("computeCashAllocation — marginal benefit curve", () => {
-  it("is internally consistent — last cumulative point matches totalHealthDelta and cashAmount actually deployed", () => {
+  it("is internally consistent — last cumulative point matches totalAlignmentDelta and cashAmount actually deployed", () => {
     const c = ctx();
     const evaluation = concentrated(c);
     const plan = computeCashAllocation(evaluation, 60_000, "maximize_diversification", c);
 
-    expect(plan.marginalBenefit[0]).toEqual({ cumulativeAmount: 0, healthDelta: 0 });
+    expect(plan.marginalBenefit[0]).toEqual({ cumulativeAmount: 0, alignmentDelta: 0 });
     const last = plan.marginalBenefit[plan.marginalBenefit.length - 1];
-    expect(last.healthDelta).toBeCloseTo(plan.totalHealthDelta, 5);
+    expect(last.alignmentDelta).toBeCloseTo(plan.totalAlignmentDelta, 5);
     // One point per tranche actually run, plus the zero point.
     expect(plan.marginalBenefit.length).toBeLessThanOrEqual(DEFAULT_TRANCHES + 1);
   });
@@ -329,15 +329,15 @@ describe("computeCashAllocation — marginal benefit curve", () => {
     const c = ctx();
     const evaluation = concentrated(c);
     // A large deployment into a single-holding, single-class portfolio should show
-    // its biggest health gains early (fixing the "no diversification at all" gap)
+    // its biggest alignment gains early (fixing the "no diversification at all" gap)
     // and taper as the portfolio approaches the objective's target mix.
     const plan = computeCashAllocation(evaluation, 300_000, "maximize_diversification", c);
     expect(plan.marginalBenefit.length).toBeGreaterThan(2);
 
-    const firstStep = plan.marginalBenefit[1].healthDelta - plan.marginalBenefit[0].healthDelta;
+    const firstStep = plan.marginalBenefit[1].alignmentDelta - plan.marginalBenefit[0].alignmentDelta;
     const lastStep =
-      plan.marginalBenefit[plan.marginalBenefit.length - 1].healthDelta -
-      plan.marginalBenefit[plan.marginalBenefit.length - 2].healthDelta;
+      plan.marginalBenefit[plan.marginalBenefit.length - 1].alignmentDelta -
+      plan.marginalBenefit[plan.marginalBenefit.length - 2].alignmentDelta;
     expect(firstStep).toBeGreaterThanOrEqual(lastStep - 0.5);
   });
 });
@@ -371,7 +371,7 @@ describe("computeCashAllocation — alternatives and rejected opportunities", ()
 });
 
 describe("computeCashAllocation — repeated deployment shows diminishing benefit", () => {
-  it("a second, equal-sized deployment under the same objective measures a smaller total health improvement than the first", () => {
+  it("a second, equal-sized deployment under the same objective measures a smaller total alignment improvement than the first", () => {
     // The honest analog of "idempotent" for a strictly-additive engine: it cannot
     // propose "zero trades" the way a full rebalance can (the cash still has to go
     // SOMEWHERE, even if that's cash itself) — but once the first deployment has
@@ -386,6 +386,6 @@ describe("computeCashAllocation — repeated deployment shows diminishing benefi
     // to reconstruct it by replaying trades.
     const second = computeCashAllocation(first.after, 80_000, objective, c);
 
-    expect(second.totalHealthDelta).toBeLessThanOrEqual(first.totalHealthDelta + 0.5);
+    expect(second.totalAlignmentDelta).toBeLessThanOrEqual(first.totalAlignmentDelta + 0.5);
   });
 });

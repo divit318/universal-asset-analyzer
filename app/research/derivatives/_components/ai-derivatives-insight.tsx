@@ -7,6 +7,8 @@ interface AiDerivativesInsightProps {
   symbol: string;
   underlyingName: string;
   summary: DerivativesSummary;
+  /** Listing currency of the underlying (Quote.currency) — strikes are struck in it. */
+  currency: string;
 }
 
 const SECTION_LABELS: Record<DerivativesInsightSection, string> = {
@@ -19,7 +21,7 @@ const PROMPT_HINTS: Record<DerivativesInsightSection, string> = {
   positioning: "what does the open-interest positioning mean?",
 };
 
-export function AiDerivativesInsight({ section, symbol, underlyingName, summary }: AiDerivativesInsightProps) {
+export function AiDerivativesInsight({ section, symbol, underlyingName, summary, currency }: AiDerivativesInsightProps) {
   return (
     <AiInsightPanel
       label={SECTION_LABELS[section]}
@@ -29,7 +31,7 @@ export function AiDerivativesInsight({ section, symbol, underlyingName, summary 
         const res = await fetch("/api/derivatives", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ section, underlyingName, summary }),
+          body: JSON.stringify({ section, underlyingName, summary, currency }),
         });
         const json = (await res.json()) as { insight?: string; model?: string; error?: string };
         if (!res.ok) throw new Error(json.error ?? "AI analysis failed");

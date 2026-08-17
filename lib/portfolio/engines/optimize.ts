@@ -25,6 +25,7 @@ import { evaluate, estimateImpact, applyTargetPlanConserving, type PortfolioEval
 import type { Holding, MarketContext, PortfolioAssetClass } from "../model/types";
 import { PORTFOLIO_CLASS_LABEL, describeIlliquidWeight, isIlliquid } from "../model/types";
 import { MAX_SINGLE_HOLDING_PCT, MATERIAL_WEIGHT_DELTA_PCT } from "../policy";
+import type { InvestorPolicy } from "../alignment/policy";
 import { formatCurrency } from "../../format";
 
 export type Objective =
@@ -148,6 +149,42 @@ export const DEFAULT_CONSTRAINTS: Constraints = {
   excludedSymbols: [],
   lockedHoldingIds: [],
 };
+
+/**
+ * Hard trade constraints derived from the INVESTOR'S OWN policy — the bridge
+ * that keeps "one concentration limit" true across surfaces:
+ *
+ *   maxHoldingPct  = the investor's stated position cap (the same number the
+ *                    alignment engine's concentration theme and recommend.ts's
+ *                    trim trigger use), never the universal default;
+ *   minCashPct     = the floor of their stated cash band — a cash-deployment
+ *                    plan must not spend below the buffer the investor said
+ *                    they keep;
+ *   maxIlliquidPct = the complement of their liquidity floor — buying an
+ *                    illiquid sleeve past what "must stay sellable within
+ *                    days" permits is a policy breach, whatever it does for
+ *                    returns.
+ *
+ * Class/sector/country caps stay at the base values: the alignment policy has
+ * no per-class numbers (the structure theme judges the MIX against the goal
+ * band, which is a target question for the optimizer, not a hard cap), and
+ * inventing policy semantics the editor never showed the investor would be the
+ * old universal-weights bug in a new coat.
+ *
+ * Consumed today by the cash-deployment flow (the Decisions tab); the Optimize
+ * tab is the documented next stage.
+ */
+export function constraintsFromPolicy(
+  policy: InvestorPolicy,
+  base: Constraints = DEFAULT_CONSTRAINTS,
+): Constraints {
+  return {
+    ...base,
+    maxHoldingPct: policy.tolerances.maxPositionPct,
+    minCashPct: policy.tolerances.cashRangePct[0],
+    maxIlliquidPct: Math.max(0, Math.min(100, 100 - policy.tolerances.liquidityFloorPct)),
+  };
+}
 
 export interface TargetWeight {
   holdingId: string;

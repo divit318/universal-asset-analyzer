@@ -128,7 +128,25 @@ describe("the equity prompt states the established conclusions", () => {
     const { prompt } = buildVerdictPrompt(ctx(67), null);
     expect(prompt).toContain('MUST be exactly "bullish"');
     expect(prompt).toContain("67/100");
-    expect(prompt).toContain("copied verbatim from the DATA block");
+    // Every figure must be copied, never derived. The wording widened when the
+    // deterministic brief was added (both blocks are now quotable sources);
+    // the guarantee it protects — no invented numbers — is unchanged, and is
+    // now explicit about derived figures, which is how "12.5% below the
+    // 52-week high" got through the grounding checker.
+    expect(prompt).toContain("copied verbatim from the DATA");
+    expect(prompt).toContain("Do not compute, derive, round differently, or invent any figure");
+  });
+
+  it("asks for the synthesis the page cannot compute, not the metrics it can", () => {
+    const { prompt } = buildVerdictPrompt(ctx(67), null);
+    // The two fields that make the verdict worth generating at all.
+    expect(prompt).toContain('"tension"');
+    expect(prompt).toContain('"triggers"');
+    // keyMetrics is NOT requested for equities — the page renders those cards
+    // itself, so asking the model to re-emit them was cost without information.
+    expect(prompt).not.toContain('"keyMetrics"');
+    // And the prose is explicitly bounded, so the verdict stays readable.
+    expect(prompt).toContain("MAXIMUM 65 words");
   });
 
   it("subscore percentages in the facts use the SAME formula the UI renders", () => {

@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { guardedExport } from "@/lib/download";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -69,7 +70,11 @@ const BLUE: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb:
 const WHITE_FONT: Partial<ExcelJS.Font> = { bold: true, color: { argb: "FFFFFFFF" }, size: 10 };
 
 /** POST /api/export/engine — body: { rows: ScorecardRow[] } */
-export async function POST(req: Request): Promise<Response> {
+export function POST(req: Request): Promise<Response> {
+  return guardedExport("api/export/engine", () => buildEngineExport(req));
+}
+
+async function buildEngineExport(req: Request): Promise<Response> {
   let rows: ScorecardRow[] = [];
   try {
     const body = await req.json() as { rows?: ScorecardRow[] };

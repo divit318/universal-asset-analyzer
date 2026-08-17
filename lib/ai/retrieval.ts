@@ -13,10 +13,11 @@
 
 import {
   formatCompact,
+  formatCompactCurrency,
   formatCurrency,
-  formatMarketCap,
   formatNumber,
   formatPercent,
+  statementsCurrency,
 } from "../format";
 import { describeOwnership } from "../ownership-insight";
 import { getScannerCache } from "../db";
@@ -106,6 +107,11 @@ function block(
 export function buildBlocks(ctx: CompanyContext): ContextBlock[] {
   const out: (ContextBlock | null)[] = [];
   const cur = ctx.quote.currency;
+  // financialData-sourced magnitudes (cash/debt/FCF/EV) and the statement
+  // history are in the REPORTING currency, which differs from `cur` for
+  // ADR-class names (TSM: TWD figures on a USD listing). The model narrates
+  // whatever symbol we print here, so the symbol must be the data's own.
+  const finCur = statementsCurrency(ctx.snapshot?.financialCurrency, cur);
 
   // Overview / business — always high priority (the anchor).
   if (ctx.profile) {
@@ -116,7 +122,7 @@ export function buildBlocks(ctx: CompanyContext): ContextBlock[] {
       ["Industry", p.industry ?? "—"],
       ["Country", p.country ?? "—"],
       ["Employees", p.employees != null ? formatCompact(p.employees) : "—"],
-      ["Enterprise value", p.enterpriseValue != null ? formatMarketCap(p.enterpriseValue) : "—"],
+      ["Enterprise value", p.enterpriseValue != null ? formatCompactCurrency(p.enterpriseValue, finCur) : "—"],
     ]);
     out.push(block("overview", "yahoo:profile", "Business overview", [desc, meta].filter(Boolean).join("\n\n"), 100));
     if (p.officers.length) {
@@ -129,7 +135,7 @@ export function buildBlocks(ctx: CompanyContext): ContextBlock[] {
   const q = ctx.quote;
   out.push(block("price", "yahoo:price", "Price & market data", lines([
     ["Price", `${formatCurrency(q.price, cur)} (${formatPercent(q.changePercent)} today)`],
-    ["Market cap", formatMarketCap(q.marketCap)],
+    ["Market cap", formatCompactCurrency(q.marketCap, cur)],
     ["52-week range", `${formatCurrency(q.fiftyTwoWeekLow, cur)} – ${formatCurrency(q.fiftyTwoWeekHigh, cur)}`],
     ["Volume", q.volume != null ? formatCompact(q.volume) : "—"],
     ["Exchange", q.exchange ?? "—"],
@@ -163,9 +169,9 @@ export function buildBlocks(ctx: CompanyContext): ContextBlock[] {
       ["Debt / equity", formatNumber(s.debtToEquity)],
       ["Current ratio", formatNumber(s.currentRatio)],
       ["Quick ratio", formatNumber(s.quickRatio)],
-      ["Total cash", s.totalCash != null ? formatMarketCap(s.totalCash) : "—"],
-      ["Total debt", s.totalDebt != null ? formatMarketCap(s.totalDebt) : "—"],
-      ["Free cash flow", s.freeCashflow != null ? formatMarketCap(s.freeCashflow) : "—"],
+      ["Total cash", s.totalCash != null ? formatCompactCurrency(s.totalCash, finCur) : "—"],
+      ["Total debt", s.totalDebt != null ? formatCompactCurrency(s.totalDebt, finCur) : "—"],
+      ["Free cash flow", s.freeCashflow != null ? formatCompactCurrency(s.freeCashflow, finCur) : "—"],
     ]), 50));
   }
 
@@ -179,9 +185,9 @@ export function buildBlocks(ctx: CompanyContext): ContextBlock[] {
       return [`${label} (${fy.join("/")})`, cells] as [string, string];
     };
     out.push(block("statements", "edgar:statements", "Financial statement history (annual)", lines([
-      row("Revenue", st.revenue, (v) => `$${formatCompact(v)}`),
-      row("Net income", st.netIncome, (v) => `$${formatCompact(v)}`),
-      row("Free cash flow", st.freeCashFlow, (v) => `$${formatCompact(v)}`),
+      row("Revenue", st.revenue, (v) => formatCompactCurrency(v, finCur)),
+      row("Net income", st.netIncome, (v) => formatCompactCurrency(v, finCur)),
+      row("Free cash flow", st.freeCashFlow, (v) => formatCompactCurrency(v, finCur)),
       row("Operating margin", st.operatingMargin, (v) => fpct(v)),
     ]), 45));
   }
@@ -203,7 +209,7 @@ export function buildBlocks(ctx: CompanyContext): ContextBlock[] {
   const ins = ctx.insider;
   if (ins && ins.transactions.length) {
     out.push(block("insider", "yahoo:insider", "Insider activity (recent)", lines([
-      ["Net insider value", `${ins.netValue >= 0 ? "+" : ""}$${formatCompact(Math.abs(ins.netValue))} (${ins.buyCount} buys / ${ins.sellCount} sells)`],
+      ["Net insider value", `${ins.netValue >= 0 ? "+" : "-"}${formatCompactCurrency(Math.abs(ins.netValue), cur)} (${ins.buyCount} buys / ${ins.sellCount} sells)`],
       ["Latest", ins.transactions.slice(0, 4).map((t) => `${t.date} ${t.name} ${t.type}`).join("; ")],
     ]), 30));
   }
@@ -259,11 +265,14 @@ export function buildBlocks(ctx: CompanyContext): ContextBlock[] {
     ]), 25));
   }
 
-  // Knowledge Graph — top related entities.
-  if (ctx.graphNeighbors.length) {
-    out.push(block("knowledgeGraph", "platform:knowledge-graph", "Knowledge Graph — related entities", ctx.graphNeighbors
-      .map((n) => `- ${n.label} (${n.relationship})`)
-      .join("\n"), 25));
+  // What the reader already owns of this name, every route counted.
+  if (ctx.yourExposure) {
+    const e = ctx.yourExposure;
+    out.push(block("yourExposure", "platform:exposure", "Your existing exposure to this company", lines([
+      ["Effective exposure", `${e.effectivePct.toFixed(2)}% of portfolio (floor — fund look-through sees top-10 constituents only)`],
+      ["Held directly", e.directPct > 0 ? `${e.directPct.toFixed(2)}%` : "none"],
+      ["Routes", e.routes.map((r) => `${r.via} ${r.pct.toFixed(2)}%`).join(", ") || "—"],
+    ]), 60));
   }
 
   // Movement Explainer — only if already cached (MovementExplainerCard's

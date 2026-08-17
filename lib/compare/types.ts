@@ -1,4 +1,5 @@
 import type { AssetClassId } from "../assets/types";
+import { formatCurrency } from "../format";
 import type { FundHolding } from "../types";
 import type { CurvePoint } from "../screener/universes/commodity";
 import type { CompositeScoreResult } from "./composite-scores";
@@ -39,4 +40,19 @@ export interface ClassCompareEntry {
   riskFlags?: ClassRiskFlag[];
   /** When the Screener universe backing this entry was last built — the freshness signal for every metric above. */
   universeAsOf?: string | null;
+}
+
+/**
+ * THE price rendering for a class-compare entry — shared by the compare card
+ * and the Excel export so they cannot disagree.
+ *
+ * Non-equity class universes are USD-denominated by construction (US-listed
+ * ETF/REIT/bond universes, "-USD" crypto pairs, USD-quoted futures — see
+ * lib/screener/universes/), so the dollar is a property of the data. The one
+ * exception is forex, whose "price" is an exchange RATE quoted in the pair's
+ * counter currency: labelling a USDJPY rate "$147.32" would claim yen are
+ * dollars, so rates render bare at FX precision.
+ */
+export function classPriceDisplay(assetClass: AssetClassId, price: number): string {
+  return assetClass === "forex" ? price.toFixed(4) : formatCurrency(price, "USD");
 }

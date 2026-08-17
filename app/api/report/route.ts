@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { formatCompactCurrency, formatCurrency, formatPerShare, statementsCurrency } from "@/lib/format";
 import { getFundamentals } from "@/lib/fundamentals";
 import { normalizeSymbol } from "@/lib/market";
 import { getFinancialStatements } from "@/lib/statements";
@@ -32,15 +33,14 @@ const f2 = (v: number | null | undefined, d = 2): string =>
 const fPct = (v: number | null | undefined, d = 1): string =>
   v == null || !Number.isFinite(v) ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(d)}%`;
 
-const fMoney = (v: number | null | undefined): string => {
-  if (v == null || !Number.isFinite(v)) return "—";
-  const a = Math.abs(v), s = v < 0 ? "-$" : "$";
-  if (a >= 1e12) return `${s}${(a / 1e12).toFixed(2)}T`;
-  if (a >= 1e9)  return `${s}${(a / 1e9).toFixed(2)}B`;
-  if (a >= 1e6)  return `${s}${(a / 1e6).toFixed(2)}M`;
-  if (a >= 1e3)  return `${s}${(a / 1e3).toFixed(2)}K`;
-  return `${s}${a.toFixed(2)}`;
-};
+/**
+ * Compact money in an EXPLICIT currency — the report covers every listing
+ * (7974.T, RELIANCE.NS, BP.L), so no cell may bake in a dollar sign. Quote-
+ * scale figures pass q.currency; financialData/statement figures pass the
+ * reporting currency (statementsCurrency), which differs for ADR-class names.
+ */
+const fMoney = (v: number | null | undefined, currency: string): string =>
+  formatCompactCurrency(v, currency);
 
 const rv = (v: unknown): number | null => {
   if (v == null) return null;
@@ -207,6 +207,9 @@ async function generateReport(request: Request): Promise<Response> {
   const analyst   = fund?.analyst ?? null;
   const insider   = fund?.insider ?? null;
   const ownership = fund?.ownership ?? null;
+  // Reporting currency for financialData/statement magnitudes (TSM: TWD on a
+  // USD listing); identical to the listing currency for non-ADRs.
+  const finCur    = statementsCurrency(snap?.financialCurrency, q.currency) ?? q.currency;
   const earnings  = fund?.earnings ?? null;
   const momentum  = computeMomentum(hist);
   const score     = fund && snap ? computeScore(snap, stmts, analyst!, momentum) : null;
@@ -261,13 +264,13 @@ async function generateReport(request: Request): Promise<Response> {
     // Price row
     ws.getRow(r).height = 30;
     const priceCell = ws.getCell(r, 1);
-    priceCell.value = q.currency === "USD" ? `$${q.price.toFixed(2)}` : `${q.price.toFixed(2)} ${q.currency}`;
+    priceCell.value = formatCurrency(q.price, q.currency);
     priceCell.font = { name: "Calibri", bold: true, size: 22, color: { argb: "FF111827" } };
     priceCell.alignment = { horizontal: "left", vertical: "middle" };
 
     const pos = q.changePercent >= 0;
     const chgCell = ws.getCell(r, 2);
-    chgCell.value = `${pos ? "+" : ""}$${q.change.toFixed(2)}  (${pos ? "+" : ""}${q.changePercent.toFixed(2)}%)`;
+    chgCell.value = `${pos ? "+" : ""}${formatCurrency(q.change, q.currency)}  (${pos ? "+" : ""}${q.changePercent.toFixed(2)}%)`;
     chgCell.font = { name: "Calibri", bold: true, size: 13, color: { argb: pos ? POS : NEG } };
     chgCell.alignment = { horizontal: "left", vertical: "middle" };
 
@@ -287,13 +290,13 @@ async function generateReport(request: Request): Promise<Response> {
       ? f2((q.marketCap + (snap.totalDebt ?? 0) - (snap.totalCash ?? 0)) / snap.ebitda) : "—";
 
     const stats: [string, string, string, string][] = [
-      ["Market Cap",       fMoney(q.marketCap),           "52-Wk High",        q.fiftyTwoWeekHigh != null ? `$${q.fiftyTwoWeekHigh.toFixed(2)}` : "—"],
-      ["P/E (Trailing)",   f2(q.peRatio),                 "52-Wk Low",         q.fiftyTwoWeekLow != null ? `$${q.fiftyTwoWeekLow.toFixed(2)}` : "—"],
+      ["Market Cap",       fMoney(q.marketCap, q.currency), "52-Wk High",      formatCurrency(q.fiftyTwoWeekHigh, q.currency)],
+      ["P/E (Trailing)",   f2(q.peRatio),                 "52-Wk Low",         formatCurrency(q.fiftyTwoWeekLow, q.currency)],
       ["Forward P/E",      f2(snap?.forwardPE),           "Volume",            q.volume != null ? q.volume.toLocaleString() : "—"],
       ["PEG Ratio",        f2(snap?.pegRatio),            "Dividend Yield",    snap?.dividendYield != null ? `${(snap.dividendYield * 100).toFixed(2)}%` : "—"],
-      ["Price / Book",     f2(snap?.priceToBook),         "Free Cash Flow",    fMoney(snap?.freeCashflow)],
-      ["EV / EBITDA",      ev,                            "Total Cash",        fMoney(snap?.totalCash)],
-      ["Debt / Equity",    snap?.debtToEquity != null ? `${f2(snap.debtToEquity)}x` : "—", "Total Debt", fMoney(snap?.totalDebt)],
+      ["Price / Book",     f2(snap?.priceToBook),         "Free Cash Flow",    fMoney(snap?.freeCashflow, finCur)],
+      ["EV / EBITDA",      ev,                            "Total Cash",        fMoney(snap?.totalCash, finCur)],
+      ["Debt / Equity",    snap?.debtToEquity != null ? `${f2(snap.debtToEquity)}x` : "—", "Total Debt", fMoney(snap?.totalDebt, finCur)],
       ["Current Ratio",    snap?.currentRatio != null ? `${f2(snap.currentRatio)}x` : "—", "Revenue Growth", snap?.revenueGrowth != null ? fPct(snap.revenueGrowth * 100) : "—"],
       ["Return on Equity", snap?.returnOnEquity != null ? `${(snap.returnOnEquity * 100).toFixed(1)}%` : "—", "Earnings Growth", snap?.earningsGrowth != null ? fPct(snap.earningsGrowth * 100) : "—"],
       ["Net Margin",       snap?.profitMargins != null ? `${(snap.profitMargins * 100).toFixed(1)}%` : "—", "Exchange", q.exchange ?? "—"],
@@ -364,11 +367,14 @@ async function generateReport(request: Request): Promise<Response> {
       ];
 
       let r = 1;
+      // This sheet's source is getFinancialStatements — the EDGAR path, which
+      // extracts USD-unit XBRL facts exclusively (lib/statements.ts) — so the
+      // USD here is a property of the data, not an assumption.
       r = sectionHeader(ws, r, yrs.length + 2, "INCOME STATEMENT  (figures in USD)");
       r = tableHeader(ws, r, ["Metric", ...yrs.map(String), "CAGR"]);
 
       const findV = (arr: { fy: number; value: number }[], y: number) => {
-        const x = arr.find(a => a.fy === y); return x ? fMoney(x.value) : "—";
+        const x = arr.find(a => a.fy === y); return x ? fMoney(x.value, "USD") : "—";
       };
       // margins are stored as ratios (0.479 = 47.9%)
       const findM = (arr: { fy: number; value: number }[], y: number) => {
@@ -439,9 +445,9 @@ async function generateReport(request: Request): Promise<Response> {
       { label: "Price / Book",  value: f2(snap?.priceToBook), context: "" },
       { label: "EV / EBITDA",   value: ev,                    context: "" },
       { label: "Dividend Yield",value: snap?.dividendYield != null ? `${(snap.dividendYield * 100).toFixed(2)}%` : "—", context: "" },
-      { label: "Free Cash Flow",value: fMoney(snap?.freeCashflow), context: "annual" },
-      { label: "Total Cash",    value: fMoney(snap?.totalCash),  context: "" },
-      { label: "Total Debt",    value: fMoney(snap?.totalDebt),  context: "" },
+      { label: "Free Cash Flow",value: fMoney(snap?.freeCashflow, finCur), context: "annual" },
+      { label: "Total Cash",    value: fMoney(snap?.totalCash, finCur),  context: "" },
+      { label: "Total Debt",    value: fMoney(snap?.totalDebt, finCur),  context: "" },
     ];
 
     valRows.forEach(({ label, value, context, color }, i) => {
@@ -504,9 +510,9 @@ async function generateReport(request: Request): Promise<Response> {
       r = sectionHeader(ws, r, 4, "ANALYST CONSENSUS");
 
       kvBlock(ws, r, [
-        { label: "Mean Price Target",   value: analyst.targetMean != null ? `$${analyst.targetMean.toFixed(2)}` : "—" },
-        { label: "High Price Target",   value: analyst.targetHigh != null ? `$${analyst.targetHigh.toFixed(2)}` : "—" },
-        { label: "Low Price Target",    value: analyst.targetLow != null ? `$${analyst.targetLow.toFixed(2)}` : "—" },
+        { label: "Mean Price Target",   value: formatCurrency(analyst.targetMean, q.currency) },
+        { label: "High Price Target",   value: formatCurrency(analyst.targetHigh, q.currency) },
+        { label: "Low Price Target",    value: formatCurrency(analyst.targetLow, q.currency) },
         { label: "Upside / Downside",   value: analyst.upsidePercent != null ? fPct(analyst.upsidePercent) : "—", color: analyst.upsidePercent != null ? (analyst.upsidePercent > 0 ? POS : NEG) : MUTED },
         { label: "Analyst Count",       value: String(analyst.numberOfOpinions ?? "—") },
         { label: "Recommendation",      value: (analyst.recommendationKey ?? "—").toUpperCase() },
@@ -539,16 +545,16 @@ async function generateReport(request: Request): Promise<Response> {
         const color = surprisePct != null ? (surprisePct >= 0 ? POS : NEG) : undefined;
         r = dataRow(ws, r, [
           e.quarter,
-          e.epsActual != null ? `$${e.epsActual.toFixed(2)}` : "—",
-          e.epsEstimate != null ? `$${e.epsEstimate.toFixed(2)}` : "—",
+          formatPerShare(e.epsActual, q.currency),
+          formatPerShare(e.epsEstimate, q.currency),
           surprisePct != null ? fPct(surprisePct) : "—",
         ], { bgArgb: i % 2 === 0 ? WHITE : BGALT, colColors: [undefined, undefined, undefined, color] });
       });
       r++;
 
       const eps: string[] = [];
-      if (earnings.trailingEps != null) eps.push(`Trailing EPS: $${earnings.trailingEps.toFixed(2)}`);
-      if (earnings.forwardEps != null)  eps.push(`Forward EPS: $${earnings.forwardEps.toFixed(2)}`);
+      if (earnings.trailingEps != null) eps.push(`Trailing EPS: ${formatPerShare(earnings.trailingEps, q.currency)}`);
+      if (earnings.forwardEps != null)  eps.push(`Forward EPS: ${formatPerShare(earnings.forwardEps, q.currency)}`);
       if (earnings.nextDate) eps.push(`Next Earnings: ${earnings.nextDate}`);
       if (eps.length) {
         ws.mergeCells(r, 1, r, 4);
@@ -644,7 +650,7 @@ async function generateReport(request: Request): Promise<Response> {
             h.name,
             h.pctHeld != null ? `${(h.pctHeld * 100).toFixed(2)}%` : "—",
             h.shares != null ? h.shares.toLocaleString() : "—",
-            fMoney(h.value),
+            fMoney(h.value, q.currency),
           ], { bgArgb: i % 2 === 0 ? WHITE : BGALT });
         });
         r++;
@@ -673,7 +679,7 @@ async function generateReport(request: Request): Promise<Response> {
       r = sectionHeader(ws, r, 4, "INSIDER ACTIVITY");
       ws.mergeCells(r, 1, r, 4);
       const netCell = ws.getCell(r, 1);
-      netCell.value = `${insider.buyCount} buys / ${insider.sellCount} sells  ·  Net value: ${fMoney(insider.netValue)}`;
+      netCell.value = `${insider.buyCount} buys / ${insider.sellCount} sells  ·  Net value: ${fMoney(insider.netValue, q.currency)}`;
       netCell.font = { name: "Calibri", size: 10, italic: true };
       r++;
       r = tableHeader(ws, r, ["Insider", "Type", "Date", "Shares"]);
@@ -757,7 +763,7 @@ async function generateReport(request: Request): Promise<Response> {
       const bg = i % 2 === 0 ? WHITE : BGALT;
       [
         p.date,
-        `$${p.close.toFixed(2)}`,
+        formatCurrency(p.close, q.currency),
         p.volume != null ? p.volume.toLocaleString() : "—",
       ].forEach((v, ci) => {
         const cell = ws.getCell(rn, ci + 1);

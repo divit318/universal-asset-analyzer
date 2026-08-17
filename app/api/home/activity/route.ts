@@ -7,7 +7,7 @@
  * than an error the calling page has to handle.
  */
 import { NextResponse } from "next/server";
-import { recordActivity } from "@/lib/db";
+import { recordActivity, touchIdeaResearch } from "@/lib/db";
 import { isActivityKind } from "@/lib/home/activity";
 
 export const runtime = "nodejs";
@@ -36,6 +36,10 @@ export async function POST(request: Request) {
 
     if (isActivityKind(kind) && ref && label && isAppPath) {
       recordActivity({ kind, ref, label, href });
+      // Research visits also stamp the tracked idea's durable recency — the
+      // activity table prunes itself, and the Watchlist's derived workflow
+      // must never forget that a name was researched (lib/ideas/evidence.ts).
+      if (kind === "research") touchIdeaResearch(ref);
     }
   } catch {
     // Malformed body — drop it. See the note above on why this isn't an error.

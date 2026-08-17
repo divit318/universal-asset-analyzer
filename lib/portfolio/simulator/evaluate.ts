@@ -11,10 +11,11 @@
 import { buildMarketContext } from "@/lib/portfolio/context";
 import { normalizeHoldings } from "@/lib/portfolio/model/holding";
 import { evaluate } from "@/lib/portfolio/engines/simulate";
+import { loadInvestorPolicy } from "@/lib/portfolio/alignment/store";
 import { runAllScenarios, type ScenarioResult } from "@/lib/portfolio/engines/scenario";
 import type { Holding, HoldingUnit, MarketContext, RawHolding } from "@/lib/portfolio/model/types";
 import type { PortfolioAllocation } from "@/lib/portfolio/engines/allocation";
-import type { HealthScore } from "@/lib/portfolio/engines/health";
+import type { AlignmentReport } from "@/lib/portfolio/alignment/engine";
 import type { UniversalRisk } from "@/lib/portfolio/engines/risk";
 import type { SimHeadline, SimHolding } from "./types";
 
@@ -23,7 +24,12 @@ export interface SimEvaluation {
   totalValue: number;
   allocation: PortfolioAllocation;
   risk: UniversalRisk;
-  health: HealthScore;
+  /**
+   * Scored against the SAME investor policy as the real portfolio — the
+   * hypothetical book belongs to the same investor, so "would this fit me
+   * better?" only means something if both sides share one definition of "me".
+   */
+  alignment: AlignmentReport;
   scenarios: ScenarioResult[];
   annualIncome: number;
   incomeYieldPct: number;
@@ -85,7 +91,7 @@ export async function evaluateSimHoldings(
   rebaseCostToLive(raws, ctx);
 
   const { holdings: normalized, marketPricedPct } = normalizeHoldings(raws, ctx);
-  const evaluation = evaluate(normalized, ctx);
+  const evaluation = evaluate(normalized, ctx, loadInvestorPolicy());
   const scenarios = runAllScenarios(evaluation.holdings, evaluation.totalValue);
   const annualIncome = evaluation.holdings.reduce((s, h) => s + (h.income?.annual ?? 0), 0);
 
@@ -94,7 +100,7 @@ export async function evaluateSimHoldings(
     totalValue: evaluation.totalValue,
     allocation: evaluation.allocation,
     risk: evaluation.risk,
-    health: evaluation.health,
+    alignment: evaluation.alignment,
     scenarios,
     annualIncome,
     incomeYieldPct: evaluation.totalValue > 0 ? (annualIncome / evaluation.totalValue) * 100 : 0,
@@ -107,8 +113,7 @@ export async function evaluateSimHoldings(
 export function headlineFrom(evaluation: SimEvaluation): SimHeadline {
   return {
     totalValue: evaluation.totalValue,
-    healthScore: evaluation.health.total,
-    healthGrade: evaluation.health.grade,
+    alignmentScore: evaluation.alignment.score,
     holdingCount: evaluation.holdings.length,
     assetClassCount: evaluation.allocation.byAssetClass.slices.length,
     annualIncome: evaluation.annualIncome,

@@ -351,13 +351,9 @@ export function Pricing({ section, index }: SectionProps) {
 
               {/* prefetch={false}: see hero.tsx — landing links into the app
                   navigate on click only. */}
-              <Link
-                href={APP_ENTRY}
-                prefetch={false}
-                className="group mt-auto inline-flex h-12 w-full items-center justify-center gap-2 rounded-control bg-brand text-sm font-semibold text-background outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40"
-              >
+              <Link href={APP_ENTRY} prefetch={false} className="mk-btn mk-btn-primary group mt-auto inline-flex h-12 w-full gap-2 text-sm">
                 {PRIMARY_ACTION}
-                <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-0.5">
+                <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-0.5 motion-reduce:transition-none">
                   →
                 </span>
               </Link>

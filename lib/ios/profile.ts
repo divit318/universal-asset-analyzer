@@ -36,7 +36,7 @@ export interface IOSReportInput {
   styleWeights: StyleWeights;
   marketCapWeights: MarketCapWeights;
   hhi: number;
-  healthScore: number;
+  alignmentScore: number | null;
   annualizedVolatility: number | null;
   beta: number | null;
 }
@@ -163,7 +163,7 @@ export function fromUniversalReport(report: UniversalPortfolioReport): IOSReport
     // Position-level, which is what projectHHI() and the Pipeline's
     // "position-level concentration moves X → Y" copy both assume.
     hhi: report.risk.positionHhi,
-    healthScore: report.health.total,
+    alignmentScore: report.alignment.score,
     annualizedVolatility: report.risk.annualizedVolatility,
     beta: report.risk.beta,
   };
@@ -234,7 +234,7 @@ export function buildInvestmentProfile(
     styleWeights: input.styleWeights,
     marketCapWeights: input.marketCapWeights,
     hhi: input.hhi,
-    healthScore: input.healthScore,
+    alignmentScore: input.alignmentScore,
     annualizedVolatility: input.annualizedVolatility,
     beta: input.beta,
     behavioral,

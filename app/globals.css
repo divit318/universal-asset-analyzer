@@ -105,6 +105,14 @@
   --text-mk-hero-split--line-height: 1.12;
   --text-mk-hero-split--letter-spacing: -0.02em;
   --text-mk-hero-split--font-weight: 600;
+  /* The Meridian hero's architectural tier: the h1 alone. 44–79px, sized
+     so "running on your machine." sets as ONE italic line inside the
+     content measure at >=1024px wide, with an svh guard so short laptop
+     viewports keep the whole plate (words + pipeline strip) on screen. */
+  --text-mk-colossal: min(clamp(2.75rem, 6.1vw, 4.95rem), 9.2svh);
+  --text-mk-colossal--line-height: 1.05;
+  --text-mk-colossal--letter-spacing: -0.024em;
+  --text-mk-colossal--font-weight: 600;
   --text-mk-display--font-weight: 600;
   --text-mk-feature: clamp(1.5rem, 2.2vw, 2rem);        /* 24–32px */
   --text-mk-feature--line-height: 1.2;
@@ -591,6 +599,137 @@ body::before {
 [data-frag="live"] .mk-frag-drift {
   animation: mk-frag-drift var(--drift-t, 18s) ease-in-out var(--drift-d, 0s) infinite alternate;
 }
+/* ── The Meridian (hero) material system ────────────────────────────────
+   Gold is light, not paint: the headline's second line is GILDED once on
+   arrival (a band of champagne light crossing brass, then still), the
+   thesis line rides the limb as engraved lettering, and a static grain
+   tile keeps the darkness material. All of it collapses to its final
+   state under the blanket reduced-motion rule at the end of this file. */
+@keyframes mk-gild-sweep {
+  from { background-position: 0% 0; }
+  to   { background-position: 100% 0; }
+}
+[data-mk-root] .mk-gild {
+  background-image: linear-gradient(
+    104deg,
+    var(--brand) 0%,
+    var(--brand) 38%,
+    var(--brand-strong) 47%,
+    color-mix(in srgb, var(--brand-strong) 55%, var(--foreground)) 50%,
+    var(--brand-strong) 53%,
+    var(--brand) 62%,
+    var(--brand) 100%
+  );
+  background-size: 300% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: mk-gild-sweep var(--duration-plot) var(--ease-out) 500ms 1 both;
+}
+[data-mk-root] .mk-limb-legend {
+  fill: var(--brand);
+  opacity: 0.8;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-weight: 500;
+}
+[data-mk-root] .mk-grain {
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.42'/%3E%3C/svg%3E");
+  background-size: 160px 160px;
+  mix-blend-mode: overlay;
+  opacity: 0.05;
+}
+[data-theme="light"] [data-mk-root] .mk-grain,
+[data-theme="light"][data-mk-root] .mk-grain {
+  mix-blend-mode: multiply;
+  opacity: 0.035;
+}
+
+/* ── Machined buttons ───────────────────────────────────────────────────
+   The landing's control language: a rectangle with two opposing 45° cuts
+   (the brand's terminal diamond, half-buried in each corner), a 1px
+   metal edge built from the element's own background (clip-path clips
+   real borders), and a specular light that crosses on hover. No pills,
+   no fills pretending to be gold paint. */
+/* Display is deliberately NOT set here: it stays with the caller's
+   utilities (inline-flex / hidden sm:inline-flex), so responsive
+   visibility never loses a specificity fight with this class. */
+[data-mk-root] .mk-btn {
+  --mk-cut: 9px;
+  position: relative;
+  isolation: isolate;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  clip-path: polygon(
+    var(--mk-cut) 0, 100% 0,
+    100% calc(100% - var(--mk-cut)), calc(100% - var(--mk-cut)) 100%,
+    0 100%, 0 var(--mk-cut)
+  );
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  outline: none;
+  transition: background-color var(--duration-base) var(--ease-precise), color var(--duration-base) var(--ease-precise);
+}
+[data-mk-root] .mk-btn::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  z-index: -1;
+  clip-path: polygon(
+    calc(var(--mk-cut) - 0.6px) 0, 100% 0,
+    100% calc(100% - var(--mk-cut) + 0.6px), calc(100% - var(--mk-cut) + 0.6px) 100%,
+    0 100%, 0 calc(var(--mk-cut) - 0.6px)
+  );
+  transition: background-color var(--duration-base) var(--ease-precise);
+}
+/* Specular pass: one band of light crossing the metal on hover. */
+[data-mk-root] .mk-btn::after {
+  content: "";
+  position: absolute;
+  inset: -2px -40%;
+  z-index: -1;
+  background: linear-gradient(
+    100deg,
+    transparent 32%,
+    color-mix(in srgb, var(--brand-strong) 26%, transparent) 50%,
+    transparent 68%
+  );
+  transform: translateX(-110%);
+  transition: transform var(--duration-arrival) var(--ease-out);
+}
+[data-mk-root] .mk-btn:hover::after { transform: translateX(110%); }
+[data-mk-root] .mk-btn:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 45%, transparent);
+}
+/* Press: an instant, tiny sink — tactile confirmation on every mk-btn. */
+[data-mk-root] .mk-btn:active { transform: scale(0.985); }
+/* Primary: brass edge, warm charcoal metal, brass lettering. */
+[data-mk-root] .mk-btn-primary {
+  background: linear-gradient(160deg, color-mix(in srgb, var(--brand) 62%, transparent), color-mix(in srgb, var(--brand) 26%, transparent));
+  color: var(--brand-strong);
+}
+[data-mk-root] .mk-btn-primary::before {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--brand) 16%, var(--background)), color-mix(in srgb, var(--brand) 7%, var(--background)));
+}
+[data-mk-root] .mk-btn-primary:hover { color: var(--brand-strong); background: var(--brand); }
+[data-mk-root] .mk-btn-primary:hover::before {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--brand) 24%, var(--background)), color-mix(in srgb, var(--brand) 12%, var(--background)));
+}
+/* Quiet: neutral hairline edge, near-invisible metal, ink lettering. */
+[data-mk-root] .mk-btn-quiet {
+  background: color-mix(in srgb, var(--border-strong) 80%, transparent);
+  color: var(--foreground);
+}
+[data-mk-root] .mk-btn-quiet::before {
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+}
+[data-mk-root] .mk-btn-quiet:hover { background: var(--border-strong); }
+[data-mk-root] .mk-btn-quiet:hover::before { background: var(--surface-2); }
+
 [data-mk-root] ::selection,
 [data-mk-root]::selection {
   background: color-mix(in srgb, var(--brand) 30%, transparent);
@@ -1354,3 +1493,100 @@ html:has([data-mk-root])::-webkit-scrollbar-thumb:hover { background: var(--bord
    (#15803d / #b91c1c) since the 2026-08-07 Market Overview audit, so the
    scoped block was pure drift risk — a place for the two palettes to diverge
    silently. One token, one value. */
+
+/* ══════════════════════════════════════════════════════════════════════
+   Today — "The Morning Ledger" (approved Level-10 prototype, 2026-08-15).
+   Editorial briefing layout: hairline sections, brass presence lines, the
+   pulse filament. Motion uses the existing tokens only. Prefix: .tdy-*
+   ══════════════════════════════════════════════════════════════════════ */
+
+.tdy-shell { max-width: 72.5rem; margin-inline: auto; padding-inline: 28px; }
+.tdy-bleed { width: 100vw; margin-left: calc(50% - 50vw); }
+
+/* Eyebrow rule + diamond terminus (landing OrnamentalEyebrow DNA). */
+.tdy-eyebrow-diamond { width: 4px; height: 4px; transform: rotate(45deg); background: var(--brand); flex: none; }
+.tdy-eyebrow-line { height: 1px; width: 64px; flex: none; background: linear-gradient(90deg, var(--brand), transparent); }
+
+/* The pulse filament. */
+.tdy-fil-you {
+  fill: none; stroke: var(--brand); stroke-width: 1.5; vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--brand) 35%, transparent));
+}
+.tdy-fil-bench { fill: none; stroke: color-mix(in srgb, var(--foreground) 16%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.tdy-fil-grid { stroke: var(--hairline); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.tdy-fil-area { opacity: 0; transition: opacity var(--duration-arrival) var(--ease-out); }
+.tdy-fil-area.is-in { opacity: 1; }
+.tdy-fil-halo { fill: var(--brand); opacity: 0.25; animation: uaa-breathe 4s var(--ease-precise) infinite; }
+.tdy-fil-cross { stroke: color-mix(in srgb, var(--foreground) 11%, transparent); stroke-width: 1; opacity: 0; transition: opacity var(--duration-fast) var(--ease-precise); }
+.tdy-fil-node { opacity: 0; transition: opacity var(--duration-fast) var(--ease-precise); }
+.is-scrubbing .tdy-fil-cross, .is-scrubbing .tdy-fil-node { opacity: 1; }
+
+/* Signal rows: brass presence line grows on hover, stays while open. */
+.tdy-signal { position: relative; }
+.tdy-signal::before {
+  content: ""; position: absolute; left: -28px; top: 0; bottom: 0; width: 2px;
+  background: linear-gradient(180deg, var(--brand), transparent 85%);
+  transform: scaleY(0); transform-origin: top;
+  transition: transform var(--duration-base) var(--ease-precise);
+}
+.tdy-signal:hover::before, .tdy-signal.is-open::before { transform: scaleY(1); }
+
+/* WHY affordance + caret: appear on hover, caret rotates 45° when open. */
+.tdy-why-hint {
+  opacity: 0; transform: translateX(6px);
+  transition: opacity var(--duration-base) var(--ease-precise), transform var(--duration-base) var(--ease-precise);
+}
+.tdy-signal-row:hover .tdy-why-hint, .tdy-signal-row:focus-visible .tdy-why-hint { opacity: 1; transform: translateX(0); }
+.tdy-signal.is-open .tdy-why-hint { opacity: 0; }
+.tdy-caret { transition: transform var(--duration-panel) var(--ease-precise), color var(--duration-base) var(--ease-precise), border-color var(--duration-base) var(--ease-precise); }
+.tdy-signal.is-open .tdy-caret { transform: rotate(45deg); }
+
+/* Height-animated expansion (panel/ledger). Height is set from JS. */
+.tdy-expand { overflow: hidden; height: 0; transition: height var(--duration-panel) var(--ease-precise); }
+
+/* Score-audit meters: draw when the panel opens. */
+.tdy-audit-track i {
+  display: block; height: 100%; background: var(--brand);
+  transform: scaleX(var(--v, 0)); transform-origin: left;
+  transition: transform var(--duration-draw) var(--ease-out) 300ms;
+}
+.tdy-signal:not(.is-open) .tdy-audit-track i { transform: scaleX(0); transition: none; }
+
+/* Row exit (dismiss): fade + slide, then the JS collapses the height. */
+.tdy-exit {
+  opacity: 0 !important; transform: translateX(12px);
+  transition: opacity var(--duration-panel) var(--ease-precise), transform var(--duration-panel) var(--ease-precise);
+}
+
+/* Week-zone detail: closed until hover/focus (grid-rows reveal). */
+.tdy-zi-detail { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--duration-panel) var(--ease-precise); }
+.tdy-zi-detail > div { overflow: hidden; opacity: 0; transition: opacity var(--duration-base) var(--ease-precise); }
+.tdy-zone-item:hover .tdy-zi-detail, .tdy-zone-item:focus-within .tdy-zi-detail { grid-template-rows: 1fr; }
+.tdy-zone-item:hover .tdy-zi-detail > div, .tdy-zone-item:focus-within .tdy-zi-detail > div { opacity: 1; }
+@media (max-width: 760px) {
+  .tdy-zi-detail { grid-template-rows: 1fr; }
+  .tdy-zi-detail > div { opacity: 1; }
+}
+
+/* Bars that draw when their section arrives (alignment, attribution, weights). */
+.tdy-bar { transform: scaleX(0); transform-origin: left; }
+.is-in .tdy-bar { transform: scaleX(var(--w, 1)); transition: transform var(--duration-draw) var(--ease-out) var(--d, 0ms); }
+
+/* Radar fit ring — stroke draw on arrival. */
+.tdy-ring-fg { fill: none; stroke: var(--brand); stroke-width: 2; stroke-linecap: round; stroke-dasharray: var(--c); stroke-dashoffset: var(--c); }
+.is-in .tdy-ring-fg { stroke-dashoffset: var(--o); transition: stroke-dashoffset var(--duration-plot) var(--ease-out) var(--d, 0ms); }
+
+/* Scroll reveal for Today sections (same grammar as .uaa-reveal, view-gated). */
+.tdy-reveal { opacity: 0; transform: translateY(14px); }
+.tdy-reveal.is-in {
+  opacity: 1; transform: translateY(0);
+  transition: opacity var(--duration-arrival) var(--ease-out) var(--reveal-delay, 0ms),
+              transform var(--duration-arrival) var(--ease-out) var(--reveal-delay, 0ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tdy-reveal, .tdy-bar, .tdy-fil-area { opacity: 1; transform: none; transition: none; }
+  .is-in .tdy-bar { transform: scaleX(var(--w, 1)); }
+  .tdy-fil-halo { animation: none; }
+  .is-in .tdy-ring-fg { stroke-dashoffset: var(--o); transition: none; }
+}

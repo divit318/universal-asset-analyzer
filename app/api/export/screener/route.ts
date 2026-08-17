@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { guardedExport } from "@/lib/download";
 import { getAssetClass, getMetric, isAssetClassId, unavailableMetrics } from "@/lib/assets/registry";
 import type { AssetClassId } from "@/lib/assets/types";
 import type { RankedCandidate } from "@/lib/screener/types";
@@ -61,7 +62,11 @@ function numberFormat(unit: string): string {
 }
 
 /** POST /api/export/screener — body: { assetClass, rows: RankedCandidate[] } */
-export async function POST(req: Request): Promise<Response> {
+export function POST(req: Request): Promise<Response> {
+  return guardedExport("api/export/screener", () => buildScreenerExport(req));
+}
+
+async function buildScreenerExport(req: Request): Promise<Response> {
   let assetClass: AssetClassId;
   let rows: RankedCandidate[];
 

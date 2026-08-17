@@ -22,6 +22,7 @@
  */
 
 import { buildActionQueue } from "../mission-control";
+import { thesisKeyOf } from "../portfolio/engines/decision-memory";
 import type { UniversalPortfolioReport } from "../portfolio/report";
 import type { Notification, WatchlistAlert } from "../types";
 import type { RecommendedAction, RecommendedActions } from "./contracts";
@@ -44,13 +45,13 @@ export function buildRecommendedActions(
   const hasPortfolio = (report?.holdingCount ?? 0) > 0;
 
   if (decisions.length > 0) {
-    // Before → after is stated on the engine's exact (unrounded) health total —
-    // differencing the rounded display total quantizes small deltas to zero,
-    // the exact bug HealthDimension.scoreExact exists to prevent. Both ends
-    // render at the SAME 0.1 precision so before + delta = after on screen
-    // (audit NI-09: "68 → 71.1 (+3.3)" was internally off by 0.2).
-    const healthExact = report?.health?.totalExact ?? report?.health?.total ?? 0;
-    const healthBefore = Math.round(healthExact * 10) / 10;
+    // Before → after is stated on the engine's exact (unrounded) alignment
+    // score — differencing the rounded display total quantizes small deltas to
+    // zero, the exact bug AlignmentTheme.scoreExact exists to prevent. Both
+    // ends render at the SAME 0.1 precision so before + delta = after on
+    // screen (audit NI-09: "68 → 71.1 (+3.3)" was internally off by 0.2).
+    const alignmentExact = report?.alignment?.scoreExact ?? null;
+    const alignmentBefore = alignmentExact != null ? Math.round(alignmentExact * 10) / 10 : null;
 
     const actions: RecommendedAction[] = [...decisions]
       // The engine already assigned decisionPriority (1 = "if you make one
@@ -75,16 +76,36 @@ export function buildRecommendedActions(
           ? `/research?symbol=${encodeURIComponent(d.recommendation.symbol)}`
           : "/portfolio?tab=decisions",
         source: "decision",
+        // The underlying thesis + revival context, so a dismissal from ANY
+        // surface writes the one shared decision memory (decision-memory.ts).
+        thesis: (() => {
+          const themeId = d.recommendation.theme;
+          const theme = themeId ? report?.alignment?.themes.find((t) => t.id === themeId) : null;
+          const holding = d.recommendation.symbol
+            ? report?.holdings.find((h) => h.symbol?.toUpperCase() === d.recommendation.symbol!.toUpperCase())
+            : null;
+          return {
+            key: thesisKeyOf(d.recommendation),
+            title: d.recommendation.title,
+            policyUpdatedAt: report?.policy?.updatedAt ?? null,
+            themeId: themeId ?? null,
+            themeScore: theme?.score ?? null,
+            subjectWeightPct: holding ? Math.round(holding.weight * 10) / 10 : null,
+          };
+        })(),
         // Carry the engine's full memo through — the dashboard's decision
         // spotlight renders it verbatim; flattening it here is what previously
         // reduced an IC memo to a one-line "reason".
         why: d.why,
         impact: {
-          healthBefore,
+          alignmentBefore,
           // Differenced from the ROUNDED before, so the three displayed
           // numbers are arithmetically consistent at display precision.
-          healthAfter: Math.round((healthBefore + d.recommendation.impact.healthDelta) * 10) / 10,
-          healthDelta: d.recommendation.impact.healthDelta,
+          alignmentAfter:
+            alignmentBefore != null && d.recommendation.impact.alignmentDelta != null
+              ? Math.round((alignmentBefore + d.recommendation.impact.alignmentDelta) * 10) / 10
+              : null,
+          alignmentDelta: d.recommendation.impact.alignmentDelta,
           riskDeltaPp: d.recommendation.impact.riskDelta,
           incomeDeltaAnnual: d.recommendation.impact.incomeDelta,
           diversificationDelta: d.recommendation.impact.diversificationDelta,
@@ -125,6 +146,7 @@ export function buildRecommendedActions(
     why: null,
     impact: null,
     alternativesEvaluated: null,
+    thesis: null,
   }));
 
   return {

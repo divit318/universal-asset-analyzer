@@ -11,19 +11,20 @@ import { AuthModalHost, openAuthModal } from "./auth-modal";
 import { useScrollVelocity } from "./motion/hooks";
 
 /**
- * The marketing nav — a floating pill whose LEFT edge aligns to the content
- * column (the same measure-content + mk-pad grid every section uses), so the
- * lockup sits on the same vertical axis as the left-aligned hero's eyebrow,
- * headline and CTAs: logo left, the six anchor links, theme toggle, ghost
- * "Sign in" (the optional local account's modal), and a brass-BORDERED
- * "Open the terminal" — a LINK into the open app (the hero's filled button
- * is the page's one primary action; the nav instance is its quiet echo).
+ * The marketing nav — a full-width hairline bar that is almost not there.
+ * At the top of the page it is pure typography on the plate: lockup on the
+ * content axis, thin anchor links, a ghost "Sign in", and the one machined
+ * CTA. Past 100px a warm veil (background at 4/5 opacity + blur) and a
+ * bottom hairline arrive over 200ms so the bar reads as chrome only once
+ * there is content to protect. No pill, no card, no rounded chrome — the
+ * nav must lose every fight for attention with the hero behind it.
  *
- * Scroll state: past 100px the pill's background opacity rises and a 1px
- * border fades in over 200ms. Active-section highlighting runs on a single
- * IntersectionObserver across the anchor targets. Mobile collapses to lockup +
- * hamburger opening a full-screen overlay (the shared Drawer primitive at full
- * width, keeping its focus trap / Escape / scroll lock).
+ * Behavior is unchanged from the pill era: the scrolled state still keys
+ * off the shared rAF loop, active-section highlighting still runs on ONE
+ * IntersectionObserver, the single brass indicator still slides between
+ * links (now along the bar's bottom edge, like an instrument index), and
+ * mobile still collapses to lockup + hamburger opening the full-screen
+ * Drawer (focus trap / Escape / scroll lock intact).
  */
 export function LandingHeader() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -82,76 +83,79 @@ export function LandingHeader() {
   }, []);
 
   return (
-    <header className="fixed inset-x-0 top-3 z-40 sm:top-4">
-      {/* The pill lives inside the content measure, left-aligned to it. */}
-      <div className="mx-auto w-full max-w-measure-content px-mk-pad">
+    <header className="fixed inset-x-0 top-0 z-40">
       <nav
         aria-label="Primary"
-        className={`flex h-12 w-full max-w-3xl items-center gap-1 rounded-full border px-2.5 backdrop-blur-xl transition-[background-color,border-color,box-shadow] duration-[200ms] lg:max-w-4xl ${
-          scrolled ? "border-border bg-surface/90 shadow-popover" : "border-transparent bg-surface/55"
+        className={`w-full border-b transition-[background-color,border-color,box-shadow,backdrop-filter] duration-[200ms] ${
+          scrolled ? "border-hairline bg-background/85 shadow-popover backdrop-blur-md" : "border-transparent bg-transparent"
         }`}
       >
-        <BrandLockup href={LANDING_HOME} size="md" className="ml-1 mr-2 shrink-0" />
+        <div className="mx-auto flex h-14 w-full max-w-measure-content items-center gap-5 px-mk-pad">
+          <BrandLockup href={LANDING_HOME} size="md" className="shrink-0" />
 
-        {/* Centre: anchor nav derived from the IA registry, with the active
-            section highlighted. lg, not md: six links + auth pair need ~900px. */}
-        <div ref={linksRef} className="relative hidden flex-1 items-center justify-center gap-0.5 lg:flex">
-          {/* ONE absolutely positioned underline slides between links. */}
-          <span
-            ref={underlineRef}
-            aria-hidden="true"
-            className="absolute bottom-0 left-0 h-px w-[100px] origin-left bg-brand opacity-0 transition-[transform,opacity] duration-[200ms] motion-reduce:transition-none"
-          />
-          {NAV_SECTIONS.map((s) => (
-            <a
-              key={s.id}
-              href={`#${s.id}`}
-              aria-current={active === s.id ? "true" : undefined}
-              className={`rounded-full px-3 py-1.5 text-sm font-medium outline-none transition-colors duration-[200ms] focus-visible:ring-2 focus-visible:ring-brand/40 ${
-                active === s.id ? "text-brand" : "text-muted hover:bg-surface-2 hover:text-foreground"
-              }`}
+          {/* A thin rule separates the mark from the instrument's index. */}
+          <span aria-hidden="true" className="hidden h-4 w-px bg-border-strong/70 lg:block" />
+
+          {/* Anchor nav derived from the IA registry, with the active
+              section highlighted. lg, not md: six links + auth pair need
+              ~900px. The container spans the bar's full height so the ONE
+              sliding indicator rides its bottom edge. */}
+          <div ref={linksRef} className="relative hidden h-full flex-1 items-center justify-center gap-1 lg:flex">
+            <span
+              ref={underlineRef}
+              aria-hidden="true"
+              className="absolute bottom-0 left-0 h-px w-[100px] origin-left bg-brand opacity-0 transition-[transform,opacity] duration-[200ms] motion-reduce:transition-none"
+            />
+            {NAV_SECTIONS.map((s) => (
+              <a
+                key={s.id}
+                href={`#${s.id}`}
+                aria-current={active === s.id ? "true" : undefined}
+                className={`px-3 py-1.5 text-[13px] font-medium tracking-[0.01em] outline-none transition-colors duration-[200ms] focus-visible:ring-2 focus-visible:ring-brand/40 ${
+                  active === s.id ? "text-brand" : "text-muted hover:text-foreground"
+                }`}
+              >
+                {s.nav}
+              </a>
+            ))}
+          </div>
+
+          <div className="ml-auto flex shrink-0 items-center gap-2 lg:ml-0">
+            <ThemeToggle />
+            <button
+              type="button"
+              onClick={() => openAuthModal("signin")}
+              className="hidden px-2.5 py-1.5 text-[13px] font-medium text-muted outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40 sm:inline-flex"
             >
-              {s.nav}
-            </a>
-          ))}
-        </div>
+              Sign in
+            </button>
+            {/* prefetch={false}: see hero.tsx — no speculative app-shell load,
+                and no cached gate redirect poisoning post-sign-in navigation. */}
+            <Link
+              href={APP_ENTRY}
+              prefetch={false}
+              className="mk-btn mk-btn-primary group hidden h-9 gap-1.5 px-4 text-[13px] sm:inline-flex"
+            >
+              {PRIMARY_ACTION}
+              <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-[3px] motion-reduce:transition-none">
+                →
+              </span>
+            </Link>
 
-        <div className="ml-auto flex shrink-0 items-center gap-1.5 lg:ml-0">
-          <ThemeToggle />
-          <button
-            type="button"
-            onClick={() => openAuthModal("signin")}
-            className="hidden rounded-full px-3 py-1.5 text-sm font-medium text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40 sm:inline-flex"
-          >
-            Sign in
-          </button>
-          {/* prefetch={false}: see hero.tsx — no speculative app-shell load,
-              and no cached gate redirect poisoning post-sign-in navigation. */}
-          <Link
-            href={APP_ENTRY}
-            prefetch={false}
-            className="group hidden items-center gap-1.5 rounded-full border border-brand/45 px-3.5 py-1.5 text-sm font-semibold text-brand outline-none transition-colors hover:border-brand hover:bg-brand/10 focus-visible:ring-2 focus-visible:ring-brand/40 sm:inline-flex"
-          >
-            {PRIMARY_ACTION}
-            <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-[3px]">
-              →
-            </span>
-          </Link>
-
-          {/* Mobile/tablet menu toggle */}
-          <button
-            type="button"
-            className="rounded-full p-1.5 text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40 lg:hidden"
-            onClick={() => setMobileOpen(true)}
-            aria-label="Open menu"
-            aria-expanded={mobileOpen}
-            aria-haspopup="dialog"
-          >
-            <Menu className="h-[18px] w-[18px]" aria-hidden="true" />
-          </button>
+            {/* Mobile/tablet menu toggle */}
+            <button
+              type="button"
+              className="p-1.5 text-muted outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40 lg:hidden"
+              onClick={() => setMobileOpen(true)}
+              aria-label="Open menu"
+              aria-expanded={mobileOpen}
+              aria-haspopup="dialog"
+            >
+              <Menu className="h-[18px] w-[18px]" aria-hidden="true" />
+            </button>
+          </div>
         </div>
       </nav>
-      </div>
 
       {/* Full-screen mobile overlay — the shared Drawer primitive stretched to
           the viewport: focus-trapped, Escape closes, background scroll locked. */}

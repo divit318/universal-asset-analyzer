@@ -188,7 +188,20 @@ export const DATASETS: Record<DatasetId, CachePolicy> = {
   // gaps it feeds move with portfolio composition (which invalidates this
   // explicitly on every mutation), not with a price tick, so a background
   // refresh is the correct freshness model here.
-  portfolioReport: { ttlMs: 2 * MINUTE, swrMs: 24 * HOUR, persist: true, source: "platform", label: "Universal portfolio report", dependents: ["missionContext", "homeDigest", "portfolioThesis"] },
+  portfolioReport: { ttlMs: 2 * MINUTE, swrMs: 24 * HOUR, persist: true, source: "platform", label: "Universal portfolio report", dependents: ["missionContext", "homeDigest", "portfolioThesis", "exposureModel"] },
+
+  // The Exposure graph's routes: positions, issuers, and the quantified paths
+  // between them. Derived entirely from `portfolioReport` plus fund
+  // constituents, so it inherits that dataset's invalidation through the
+  // dependency edge above — a trade changes the routes, a price tick does not.
+  exposureModel: { ttlMs: 5 * MINUTE, swrMs: 24 * HOUR, persist: true, source: "platform", label: "Exposure routes", dependents: ["exposureDrivers"] },
+
+  // Drivers: per-issuer industry profiles and the reference-fund co-membership
+  // probes. Deliberately the longest TTL on this page — an industry
+  // classification and a thematic ETF's top ten do not move intraday, and this
+  // is the only expensive part of the feature (tens of provider round-trips on
+  // a cold build). Kept OFF the first paint; see lib/exposure/index.ts.
+  exposureDrivers: { ttlMs: 12 * HOUR, swrMs: 3 * DAY, persist: true, source: "platform", label: "Exposure drivers" },
 
   // The Portfolio page's AI thesis banner. Same policy family as `aiVerdict`
   // and for the same reason: a ~20s generation whose conclusions change with

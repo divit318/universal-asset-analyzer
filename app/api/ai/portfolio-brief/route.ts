@@ -5,6 +5,7 @@ import { runPrompt } from "@/lib/ai";
 import { extractJsonObject } from "@/lib/json-extract";
 import { formatCurrency } from "@/lib/format";
 import { gatherPortfolioManagerEvidence, buildBriefEvidenceSuffix } from "@/lib/ai-portfolio-manager";
+import { alignmentLabelOf } from "@/lib/portfolio/alignment/engine";
 import { AI_RECOVERY_HINT } from "@/lib/ai/availability";
 
 export const runtime = "nodejs";
@@ -23,8 +24,10 @@ export interface PortfolioBrief {
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const healthScore = url.searchParams.get("h");
-  const healthGrade = url.searchParams.get("g");
+  // Portfolio-alignment score (0-100), when the client already has it. Absent
+  // or non-numeric means the book was not scorable — the analytics block then
+  // says so instead of inventing a number.
+  const alignmentParam = url.searchParams.get("alignment");
   const actionCount = url.searchParams.get("actions");
   const topSymbol   = url.searchParams.get("top");
   const topAction   = url.searchParams.get("act");
@@ -75,8 +78,12 @@ export async function GET(request: Request) {
     });
 
   // Build analytics context from query params when available (avoids duplicate heavy fetching)
-  const analyticsCtx = healthScore
-    ? `\nPORTFOLIO ANALYTICS:\nHealth Score: ${healthScore}/100 (Grade ${healthGrade})\nPending decisions: ${actionCount ?? "unknown"} positions need action${topSymbol ? `\nHighest priority: ${topAction?.replace(/_/g, " ") ?? "review"} ${topSymbol}` : ""}`
+  const alignmentScore =
+    alignmentParam != null && alignmentParam !== "" && Number.isFinite(Number(alignmentParam))
+      ? Math.round(Number(alignmentParam))
+      : null;
+  const analyticsCtx = alignmentParam != null
+    ? `\nPORTFOLIO ANALYTICS:\nPortfolio alignment: ${alignmentScore == null ? "not scorable" : `${alignmentScore}/100 (${alignmentLabelOf(alignmentScore)})`}\nPending decisions: ${actionCount ?? "unknown"} positions need action${topSymbol ? `\nHighest priority: ${topAction?.replace(/_/g, " ") ?? "review"} ${topSymbol}` : ""}`
     : "";
 
   // AI Portfolio Manager evidence: Sector Rotation + Watchlist Intelligence,

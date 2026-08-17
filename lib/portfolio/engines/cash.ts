@@ -22,7 +22,7 @@
  * optimizer on 90 days of noisy price history (see optimize.ts's header): there is
  * no honest covariance/expected-return estimate to feed one.
  *
- * Every number this engine produces — health delta, objective-alignment delta,
+ * Every number this engine produces — portfolio-alignment delta, objective-alignment delta,
  * the marginal-benefit curve, why an alternative lost, why a major holding or
  * candidate was never selected — is read directly off the same tranche-by-tranche
  * simulation, never asserted after the fact. English narration of these structured
@@ -109,8 +109,8 @@ export interface CashAllocationItem {
   resultingWeight: number;
   /** What this vehicle is / why it exists as a candidate — static context, not a measured claim. */
   reason: string;
-  /** Health-score improvement attributable to this tranche. Measured, summed across every round this option won. */
-  healthDelta: number;
+  /** Alignment-score improvement attributable to this tranche. Measured, summed across every round this option won. */
+  alignmentDelta: number;
   /** Reduction in distance to the selected objective's strategic target, summed across winning rounds. */
   objectiveAlignmentDelta: number;
   /** Change in annualized volatility (pp), summed across winning rounds. Null when risk coverage never supported a measurement. */
@@ -151,7 +151,7 @@ export interface RejectedOpportunity {
 
 export interface MarginalBenefitPoint {
   cumulativeAmount: number;
-  healthDelta: number;
+  alignmentDelta: number;
 }
 
 export interface CashAllocationPlan {
@@ -169,9 +169,9 @@ export interface CashAllocationPlan {
    */
   heldAsCash: number;
   heldAsCashReason: HeldCashReason;
-  /** Total measured health improvement from the whole plan. */
-  totalHealthDelta: number;
-  /** Cumulative health improvement at each tranche boundary — the diminishing-returns curve, derived for free from the same run that built the plan. */
+  /** Total measured alignment improvement from the whole plan. */
+  totalAlignmentDelta: number;
+  /** Cumulative alignment improvement at each tranche boundary — the diminishing-returns curve, derived for free from the same run that built the plan. */
   marginalBenefit: MarginalBenefitPoint[];
   /** Major candidates/holdings that never won a single tranche, with why. */
   rejectedOpportunities: RejectedOpportunity[];
@@ -268,7 +268,7 @@ function buildOptions(evaluation: PortfolioEvaluation, ctx: MarketContext, const
 
 /**
  * L1 distance between the portfolio's current asset-class mix and the objective's
- * strategic target. Lower is better; this — not raw health — is what "objective
+ * strategic target. Lower is better; this — not the portfolio-alignment score — is what "objective
  * alignment" measures. Exported so other engines that need to score a hypothetical
  * trade against the SAME strategic target (e.g. engines/position-size.ts's
  * single-symbol sizing) reuse this exact formula instead of re-deriving it.
@@ -447,7 +447,7 @@ export function computeCashAllocation(
       items: [],
       heldAsCash: 0,
       heldAsCashReason: "no_opportunity",
-      totalHealthDelta: 0,
+      totalAlignmentDelta: 0,
       marginalBenefit: [],
       rejectedOpportunities: [],
       after: evaluation,
@@ -466,8 +466,8 @@ export function computeCashAllocation(
     {
       option: Option;
       amount: number;
-      healthDelta: number;
       alignmentDelta: number;
+      distanceDelta: number;
       riskDeltaSum: number;
       riskDeltaCount: number;
       diversificationDelta: number;
@@ -481,7 +481,7 @@ export function computeCashAllocation(
 
   let current = evaluation;
   let totalDelta = 0;
-  const marginalBenefit: MarginalBenefitPoint[] = [{ cumulativeAmount: 0, healthDelta: 0 }];
+  const marginalBenefit: MarginalBenefitPoint[] = [{ cumulativeAmount: 0, alignmentDelta: 0 }];
 
   let cashRoundsBeatRealAlternative = 0;
   let cashRoundsBelowThreshold = 0;
@@ -493,7 +493,7 @@ export function computeCashAllocation(
       option: Option;
       score: number;
       distanceImprovement: number;
-      healthDelta: number;
+      alignmentDelta: number;
       riskDelta: number | null;
       diversificationDelta: number;
       incomeDelta: number;
@@ -510,7 +510,7 @@ export function computeCashAllocation(
 
       const blocked = violatesConstraints(opt, after, constraints);
       const distanceImprovement = classDistance(current, desired) - classDistance(after, desired);
-      const score = distanceImprovement * 100 + impact.healthDelta;
+      const score = distanceImprovement * 100 + (impact.alignmentDelta ?? 0);
 
       if (t === 0) initialDistance.set(opt.key, distanceImprovement);
 
@@ -518,7 +518,7 @@ export function computeCashAllocation(
         option: opt,
         score,
         distanceImprovement,
-        healthDelta: impact.healthDelta,
+        alignmentDelta: impact.alignmentDelta ?? 0,
         riskDelta: impact.riskDelta,
         diversificationDelta: impact.diversificationDelta,
         incomeDelta: impact.incomeDelta,
@@ -557,20 +557,20 @@ export function computeCashAllocation(
     wonBy.set(winner.option.key, {
       option: winner.option,
       amount: (prevWin?.amount ?? 0) + trancheSize,
-      healthDelta: (prevWin?.healthDelta ?? 0) + winner.healthDelta,
-      alignmentDelta: (prevWin?.alignmentDelta ?? 0) + winner.distanceImprovement,
+      alignmentDelta: (prevWin?.alignmentDelta ?? 0) + winner.alignmentDelta,
+      distanceDelta: (prevWin?.distanceDelta ?? 0) + winner.distanceImprovement,
       riskDeltaSum: (prevWin?.riskDeltaSum ?? 0) + (winner.riskDelta ?? 0),
       riskDeltaCount: (prevWin?.riskDeltaCount ?? 0) + (winner.riskDelta != null ? 1 : 0),
       diversificationDelta: (prevWin?.diversificationDelta ?? 0) + winner.diversificationDelta,
       incomeDelta: (prevWin?.incomeDelta ?? 0) + winner.incomeDelta,
     });
 
-    totalDelta += winner.healthDelta;
+    totalDelta += winner.alignmentDelta;
     current = winner.after;
     tranchesPlaced = t + 1;
     marginalBenefit.push({
       cumulativeAmount: Math.round((t + 1) * trancheSize * 100) / 100,
-      healthDelta: Math.round(totalDelta * 10) / 10,
+      alignmentDelta: Math.round(totalDelta * 10) / 10,
     });
   }
 
@@ -591,7 +591,7 @@ export function computeCashAllocation(
   );
   const heldAsCash = dollars[dollars.length - 1];
 
-  for (const [i, { option, healthDelta, alignmentDelta, riskDeltaSum, riskDeltaCount, diversificationDelta, incomeDelta }] of wins.entries()) {
+  for (const [i, { option, alignmentDelta, distanceDelta, riskDeltaSum, riskDeltaCount, diversificationDelta, incomeDelta }] of wins.entries()) {
     const dollarAmount = dollars[i];
     const price = option.symbol ? ctx.quotes.get(option.symbol.toUpperCase())?.price ?? null : null;
     const resulting = current.holdings.find(
@@ -631,8 +631,8 @@ export function computeCashAllocation(
         ? Math.round((resulting.valuation.valueBase / Math.max(finalTotal, 1)) * 1000) / 10
         : Math.round((dollarAmount / Math.max(finalTotal, 1)) * 1000) / 10,
       reason: option.reason,
-      healthDelta: Math.round(healthDelta * 10) / 10,
-      objectiveAlignmentDelta: Math.round(alignmentDelta * 10) / 10,
+      alignmentDelta: Math.round(alignmentDelta * 10) / 10,
+      objectiveAlignmentDelta: Math.round(distanceDelta * 10) / 10,
       riskDelta: riskDeltaCount > 0 ? Math.round(riskDeltaSum * 10) / 10 : null,
       diversificationDelta: Math.round(diversificationDelta),
       incomeDelta: Math.round(incomeDelta),
@@ -643,7 +643,7 @@ export function computeCashAllocation(
     });
   }
 
-  items.sort((a, b) => (b.healthDelta * 3 + b.objectiveAlignmentDelta) - (a.healthDelta * 3 + a.objectiveAlignmentDelta));
+  items.sort((a, b) => (b.alignmentDelta * 3 + b.objectiveAlignmentDelta) - (a.alignmentDelta * 3 + a.objectiveAlignmentDelta));
   items.forEach((it, i) => {
     it.rank = i + 1;
   });
@@ -677,7 +677,7 @@ export function computeCashAllocation(
       ? `The portfolio is already well-aligned with the ${OBJECTIVES[objective].label} objective. Holding the full $${money(cashAmount)} in cash is the honest recommendation — no available exposure measurably improves it.`
       : `Deploying $${money(deployed)} across ${items.length} ${items.length === 1 ? "position" : "positions"} under the ${OBJECTIVES[objective].label} objective` +
         (heldAsCash > 0 ? `, holding $${money(heldAsCash)} in cash` : "") +
-        `. Projected health improvement: ${totalDelta >= 0 ? "+" : ""}${totalDelta.toFixed(1)} points.`;
+        `. Projected alignment improvement: ${totalDelta >= 0 ? "+" : ""}${totalDelta.toFixed(1)} points.`;
 
   return {
     cashAmount,
@@ -685,7 +685,7 @@ export function computeCashAllocation(
     items,
     heldAsCash,
     heldAsCashReason,
-    totalHealthDelta: Math.round(totalDelta * 10) / 10,
+    totalAlignmentDelta: Math.round(totalDelta * 10) / 10,
     marginalBenefit,
     rejectedOpportunities,
     after: current,

@@ -6,8 +6,6 @@
  * app/_components because it's presentation, not domain logic.
  */
 
-import type { HealthGrade } from "@/lib/portfolio/engines/health";
-
 /** Below this, a volatility delta is noise relative to the engine's own 1-decimal rounding, not a real change. */
 const RISK_NEGLIGIBLE_PP = 0.3;
 
@@ -27,10 +25,14 @@ export function describeDiversification(diversificationDelta: number): string {
   return diversificationDelta < 0 ? "Improves" : "Concentrates";
 }
 
-export const GRADE_TONE: Record<HealthGrade, "positive" | "negative" | undefined> = {
-  A: "positive",
-  B: "positive",
-  C: undefined,
-  D: "negative",
-  F: "negative",
-};
+/**
+ * Financial tone for an alignment score, on the engine's own label bands
+ * (alignmentLabelOf): ≥70 = aligned enough to read positive, <55 = strained.
+ * One helper so a 68 cannot be green in one panel and neutral in another.
+ */
+export function alignmentTone(score: number | null): "positive" | "negative" | undefined {
+  if (score == null) return undefined;
+  if (score >= 70) return "positive";
+  if (score < 55) return "negative";
+  return undefined;
+}

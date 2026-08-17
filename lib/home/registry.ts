@@ -133,7 +133,7 @@ const DEFINITIONS: Record<HomeModuleId, HomeModuleDefinition> = {
   "radar": {
     id: "radar",
     title: "Radar",
-    description: "Ideas entering the pipeline. Scanner fits and buy candidates.",
+    description: "Ideas entering the watchlist. Scanner fits and buy candidates.",
     loading: "deferred",
     refresh: "on-focus",
     refreshIntervalMs: null,

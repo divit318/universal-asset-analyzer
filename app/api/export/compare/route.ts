@@ -1,5 +1,7 @@
 import ExcelJS from "exceljs";
 import type { CompareEntry } from "@/app/api/compare/route";
+import { guardedExport } from "@/lib/download";
+import { formatCompactCurrency, formatCurrency } from "@/lib/format";
 import { resolveRowHighlights } from "@/lib/compare/metrics";
 import { SECTIONS, rowValues, score100, pctSigned, pctAbs, xRatio } from "@/lib/compare/registry";
 
@@ -25,7 +27,11 @@ const WHITE_FONT: Partial<ExcelJS.Font> = { bold: true, color: { argb: "FFFFFFFF
 const COL_ARGB = ["FF7C3AED", "FF0284C7", "FF0F766E", "FFB45309", "FFBE185D"];
 
 /** POST /api/export/compare — body: CompareExportPayload */
-export async function POST(req: Request): Promise<Response> {
+export function POST(req: Request): Promise<Response> {
+  return guardedExport("api/export/compare", () => buildCompareExport(req));
+}
+
+async function buildCompareExport(req: Request): Promise<Response> {
   let payload: CompareExportPayload;
   try {
     payload = await req.json() as CompareExportPayload;
@@ -70,7 +76,9 @@ export async function POST(req: Request): Promise<Response> {
 
   entries.slice(0, 5).forEach((e, i) => {
     const cell = ws.getCell(2, i + 2);
-    const price = e.quote?.price != null ? `$${e.quote.price.toFixed(2)}` : "—";
+    // Each entry prices in its own listing currency (₹ for RELIANCE.NS, ¥ for
+    // 7974.T) — a cross-market compare must not restate them all as dollars.
+    const price = e.quote?.price != null ? formatCurrency(e.quote.price, e.quote.currency) : "—";
     cell.value = price;
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF334155" } };
     cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 9 };
@@ -222,14 +230,8 @@ export async function POST(req: Request): Promise<Response> {
 
   const summaryRows: Array<{ label: string; getValue: (e: CompareEntry) => string; bold?: boolean }> = [
     { label: "Company", getValue: (e) => e.name ?? "—" },
-    { label: "Current Price", getValue: (e) => e.quote?.price != null ? `$${e.quote.price.toFixed(2)}` : "—" },
-    { label: "Market Cap", getValue: (e) => {
-      const mc = e.quote?.marketCap;
-      if (mc == null) return "—";
-      if (mc >= 1e12) return `$${(mc / 1e12).toFixed(2)}T`;
-      if (mc >= 1e9) return `$${(mc / 1e9).toFixed(1)}B`;
-      return `$${(mc / 1e6).toFixed(0)}M`;
-    }},
+    { label: "Current Price", getValue: (e) => e.quote?.price != null ? formatCurrency(e.quote.price, e.quote.currency) : "—" },
+    { label: "Market Cap", getValue: (e) => formatCompactCurrency(e.quote?.marketCap, e.quote?.currency) },
     { label: "Overall Score", getValue: (e) => e.score?.composite != null ? `${Math.round(e.score.composite)}/100` : "—", bold: true },
     { label: "Recommendation", getValue: (e) => e.score?.recommendation?.replace(/_/g, " ").toUpperCase() ?? "—", bold: true },
     { label: "Forward P/E", getValue: (e) => orDash(e.snapshot?.forwardPE, xRatio) },

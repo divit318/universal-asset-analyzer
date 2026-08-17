@@ -1,13 +1,14 @@
 import { test, expect, type Page } from "@playwright/test";
 
 /**
- * Portfolio Impact explicit-state contract (app/wire/page.tsx, Zone 9).
+ * For You explicit-state contract (app/wire/page.tsx + for-you.tsx) —
+ * carried over from the old Portfolio Impact zone this section replaced.
  *
- * The zone was gated on `symbols.length > 0`, and loadUserSymbols() folded a
- * failed /api/watchlist or /api/portfolio into empty arrays — so a fetch
- * failure silently unmounted the whole section, indistinguishable from the
- * user simply tracking nothing. Same rule as Cause & Effect / Risk Monitor:
- * a failure and a genuine empty each say so in words, on the page.
+ * The zone was once gated on `symbols.length > 0`, and loadUserSymbols()
+ * folded a failed /api/watchlist or /api/portfolio into empty arrays — so a
+ * fetch failure silently unmounted the whole section, indistinguishable from
+ * the user simply tracking nothing. Same rule as Risk Monitor: a failure and
+ * a genuine empty each say so in words, on the page.
  *
  * Route interception (not a live failure) so the states are forced
  * deterministically at mount time.
@@ -35,7 +36,7 @@ test("failed symbols fetch renders an explicit error state with Retry, never unm
 
   await page.goto("/wire");
 
-  const section = page.locator("#portfolio-impact");
+  const section = page.locator("#for-you");
   await expect(section).toBeVisible();
   await expect(
     section.getByText(/Couldn't load your watchlist and portfolio/),
@@ -54,7 +55,7 @@ test("genuinely empty watchlist + portfolio renders the explicit empty state", a
 
   await page.goto("/wire");
 
-  const section = page.locator("#portfolio-impact");
+  const section = page.locator("#for-you");
   await expect(section).toBeVisible();
   await expect(section.getByText(/Nothing tracked yet/)).toBeVisible();
   await expect(section.getByRole("button", { name: "Retry" })).toHaveCount(0);
@@ -71,7 +72,7 @@ test("one endpoint failing renders a partial notice, not a missing section", asy
 
   await page.goto("/wire");
 
-  const section = page.locator("#portfolio-impact");
+  const section = page.locator("#for-you");
   await expect(section).toBeVisible();
   await expect(section.getByText(/Couldn't load your portfolio/)).toBeVisible();
   await expect(section.getByText(/is incomplete/)).toBeVisible();

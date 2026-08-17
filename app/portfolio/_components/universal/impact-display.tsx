@@ -34,7 +34,8 @@ export function ImpactChip({
 export function ImpactRow({ impact }: { impact: ImpactEstimate }) {
   return (
     <div className="flex flex-wrap gap-1.5">
-      <ImpactChip label="Health" value={impact.healthDelta} good={impact.healthDelta > 0} suffix=" pts" />
+      {/* Null when either side is unscorable — ImpactChip hides itself rather than claiming 0. */}
+      <ImpactChip label="Alignment" value={impact.alignmentDelta} good={impact.alignmentDelta != null ? impact.alignmentDelta > 0 : null} suffix=" pts" />
       {/* Lower volatility is better, so a negative riskDelta is good. */}
       <ImpactChip label="Volatility" value={impact.riskDelta} good={impact.riskDelta != null ? impact.riskDelta < 0 : null} suffix="pp" />
       {/* Lower HHI = better diversified. */}
@@ -63,14 +64,15 @@ export function ImpactRow({ impact }: { impact: ImpactEstimate }) {
  * ALWAYS renders the before → after transition, including when the two are equal.
  * An unchanged row used to collapse to a single bare value, which made one row in
  * a table of transitions look like a different KIND of fact: in the Decision
- * Center's expected-state block, "Illiquid share 0.0%" sat under "Portfolio health
- * 75 → 76" and "Annualized volatility 12.1% → 11.7%" and read as a static
- * property rather than as "this change does not move liquidity". Same shape, muted
- * tone — "no change" is an answer to the same question, not a different question.
+ * Center's expected-state block, "Illiquid share 0.0%" sat under "Portfolio
+ * alignment 75 → 76" and "Annualized volatility 12.1% → 11.7%" and read as a
+ * static property rather than as "this change does not move liquidity". Same
+ * shape, muted tone — "no change" is an answer to the same question, not a
+ * different question.
  *
  * `format` overrides the default `toFixed(decimals) + suffix` rendering, so a
  * dollar row goes through the app's currency formatter instead of printing a raw
- * 91141, and a health row can carry its letter grade.
+ * 91141.
  */
 export function StateRow({
   label,

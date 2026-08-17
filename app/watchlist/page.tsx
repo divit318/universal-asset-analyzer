@@ -32,8 +32,9 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { downloadBlob } from "@/lib/download";
-import type { Conviction, IdeaStage, Quote, TargetDirection, WatchlistGroup, WatchlistItem } from "@/lib/types";
+import type { Conviction, Quote, TargetDirection, WatchlistGroup, WatchlistItem } from "@/lib/types";
 import type { WatchlistDigest } from "@/lib/ai-watchlist";
 import { AI_RECOVERY_HINT } from "@/lib/ai/availability";
 import type { PortfolioFitAnalysis } from "@/lib/ios/types";
@@ -51,10 +52,8 @@ import {
   computeAttention,
   computeWatchlistHealth,
   daysUntil,
-  isStaleReview,
   summarizeSinceVisit,
   TARGET_NEAR_PCT,
-  STALE_REVIEW_DAYS,
   type AttentionResult,
   type SymbolPulse,
   type WatchlistPulse,
@@ -69,7 +68,25 @@ import {
 } from "@/lib/watchlist-settings";
 import { formatAsOf } from "@/lib/live-quotes";
 import { detectMarket, type MarketRegion } from "@/lib/market";
-import { IDEA_STAGES, STAGE_LABEL, effectiveStage } from "@/lib/idea-stage";
+import {
+  EMPTY_EVIDENCE,
+  idleDays,
+  nextActionFor,
+  rankNeedsYou,
+  WORKFLOW_ORDER,
+  type IdeaEvidence,
+  type IdeaWorkflow,
+  type NeedsYouInput,
+  type NextAction,
+} from "@/lib/ideas/evidence";
+import { toIdeaRow } from "@/lib/ideas/rows";
+import {
+  buildIdeaAssessments,
+  EMPTY_IDEA_CONTEXT,
+  type IdeaAssessment,
+  type IdeaPortfolioContext,
+  type LinkedTrade,
+} from "@/lib/portfolio/engines/idea-relevance";
 import { ConfirmDialog } from "@/app/_components/dialog";
 import { useToast } from "@/app/_components/toast";
 import { useIOSSafe } from "@/lib/ios-context";
@@ -81,7 +98,13 @@ import { ThesisModal, type ThesisPatch } from "./_components/thesis-modal";
 import { PulseBrief, type PulseBriefRow } from "./_components/pulse-brief";
 import { WatchlistSettings } from "./_components/watchlist-settings";
 import { WatchlistRowDetail, type FiringAlert } from "./_components/row-detail";
-import { StageBadge } from "./_components/stage-badge";
+import { WorkflowBadge } from "./_components/workflow-badge";
+import { EvidenceTrail } from "./_components/evidence-trail";
+import { NextActionButton, type IdeaActHandler } from "./_components/next-action-button";
+import { NeedsYou } from "./_components/needs-you";
+import { PassDialog } from "./_components/pass-dialog";
+import { DecideDialog, type DecideMode } from "./_components/decide-dialog";
+import { IdeasBoard, type BoardEntry } from "./_components/ideas-board";
 import { ListSwitcher } from "./_components/list-switcher";
 import { useLiveQuotes } from "./_components/use-live-quotes";
 import { usePersistedState } from "./_components/use-view-state";
@@ -141,10 +164,26 @@ interface Row {
   earningsIn: number | null;
   /** Non-negative % still to travel to the target; 0 once reached; null without one. */
   targetDistance: number | null;
+  /** Derived workflow state — evidence + the ledger, never a stored label. */
+  workflow: IdeaWorkflow;
+  /** What the app can prove happened: research, valuation, notes, journal. */
+  evidence: IdeaEvidence;
+  /** The one thing that moves this idea forward. */
+  action: NextAction;
+  /** Days since the last recorded activity on the idea. */
+  idle: number;
 }
 
-/** A watchlist item as the API returns it — with the revision count joined on. */
-type WatchlistRow = WatchlistItem & { targetRevisionCount?: number };
+/**
+ * A watchlist item as the API returns it — revision count, ownership, evidence
+ * and derived workflow joined on server-side (one derivation for every view).
+ */
+type WatchlistRow = WatchlistItem & {
+  targetRevisionCount?: number;
+  owned: boolean;
+  evidence: IdeaEvidence;
+  workflow: IdeaWorkflow;
+};
 
 function buildAlerts(
   item: WatchlistItem,
@@ -199,7 +238,9 @@ const SORT_KEYS = [
   "consensus",
   "fromHigh",
   "fit",
-  "stage",
+  "workflow",
+  "evidence",
+  "action",
   "sector",
   "nextEvent",
   "notes",
@@ -313,9 +354,27 @@ function WatchlistPageInner() {
   // fetched on demand so every watchlist stock — including newly-added ones —
   // gets an accurate, differentiated fit score instead of a data-poor neutral.
   const [fitData, setFitData] = useState<Map<string, FitEnrichment>>(new Map());
+  /* Table for scanning many names; board for working the funnel. One dataset. */
+  const [view, setView] = usePersistedState<"table" | "board">(
+    "uaa.watchlist.view",
+    "table",
+    (v): v is "table" | "board" => v === "table" || v === "board",
+  );
+  /* The pass flow and the decide dialog, keyed by symbol so they always render
+     against the freshest row rather than a snapshot. */
+  const [passingSymbol, setPassingSymbol] = useState<string | null>(null);
+  const [deciding, setDeciding] = useState<{ symbol: string; mode: DecideMode } | null>(null);
   const toast = useToast();
   const ios = useIOSSafe();
+  const router = useRouter();
   const highlightTarget = useArrivalTarget();
+
+  /* Deep links from the old Portfolio pipeline tab land on the board view. */
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get("view");
+    if (wanted === "board" || wanted === "table") setView(wanted);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- read the URL once on mount
+  }, []);
 
   const [sortKey, setSortKey] = usePersistedState<string>("uaa.watchlist.sortKey", "", isSortKey);
   const [sortDir, setSortDir] = usePersistedState<SortDir>("uaa.watchlist.sortDir", "desc", isSortDir);
@@ -837,23 +896,50 @@ function WatchlistPageInner() {
     [groups, load, toast],
   );
 
-  const setStage = useCallback(
-    async (item: WatchlistItem, stage: IdeaStage) => {
-      setItems((prev) => prev.map((i) => (i.symbol === item.symbol ? { ...i, stage } : i)));
+  /**
+   * Pass on an idea — the workflow's one deliberate "no". The server journals
+   * the reason (a closed decision entry); the behavioral profile records the
+   * rejection so the Radar and recommendations stop resurfacing the name until
+   * it is reconsidered.
+   */
+  const confirmPass = useCallback(
+    async (symbol: string, reason: string, note: string | null, priceAt: number | null) => {
+      const res = await fetch("/api/watchlist/pass", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol, reason, note, priceAt }),
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(json.error ?? "Couldn't record the pass");
+      }
+      ios?.rejectSymbol(symbol);
+      setPassingSymbol(null);
+      setDeciding(null);
+      toast(`Passed on ${symbol} — reason journaled`);
+      await load();
+    },
+    [ios, load, toast],
+  );
+
+  /** Reopen a passed/exited idea; the derived workflow takes over again. */
+  const reactivate = useCallback(
+    async (symbol: string) => {
       try {
-        const res = await fetch("/api/pipeline", {
-          method: "PATCH",
+        const res = await fetch("/api/watchlist/pass", {
+          method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ symbol: item.symbol, stage, name: item.name }),
+          body: JSON.stringify({ symbol, reactivate: true }),
         });
         if (!res.ok) throw new Error();
-        toast(`${item.symbol} → ${STAGE_LABEL[stage]}`);
+        ios?.clearRejection(symbol);
+        toast(`${symbol} is back on the active list`);
+        await load();
       } catch {
-        setItems((prev) => prev.map((i) => (i.symbol === item.symbol ? { ...i, stage: item.stage } : i)));
-        toast(`Could not move ${item.symbol}`, "error");
+        toast(`Couldn't reopen ${symbol}`, "error");
       }
     },
-    [toast],
+    [ios, load, toast],
   );
 
   // Fetch full research inputs for every symbol. Keyed on the symbol set so
@@ -907,9 +993,8 @@ function WatchlistPageInner() {
   }, [ios?.profile.builtAt, ios?.profileReady, symbolsKey, quoteKeys, fitDataKey]);
 
   /* Everything derived, once per row. */
-  const rows = useMemo<Row[]>(
-    () =>
-      items.map((item) => {
+  const rows = useMemo<Row[]>(() => {
+    return items.map((item) => {
         const quote = quotes[item.symbol];
         const price = isUsablePrice(quote?.price) ? quote!.price : null;
         const direction = resolveTargetDirection(item.targetDirection, item.targetPrice, price);
@@ -922,6 +1007,13 @@ function WatchlistPageInner() {
           opinions: enr?.analystOpinions ?? null,
         };
         const symbolPulse = pulse?.symbols[item.symbol.toUpperCase()] ?? null;
+        /* Ownership: the server's join is the floor; the local set covers a buy
+           made this session before the next refetch lands. */
+        const owned = item.owned || ownedSymbols.has(item.symbol.toUpperCase());
+        const evidence = item.evidence ?? EMPTY_EVIDENCE;
+        /* The server derived the workflow from the same evidence; only the
+           owned override can change it client-side (a buy this session). */
+        const workflow: IdeaWorkflow = owned ? "owned" : item.workflow;
         return {
           item,
           quote,
@@ -932,7 +1024,13 @@ function WatchlistPageInner() {
           upside: upsidePercent(price, item.targetPrice),
           fromHigh: percentFrom52WeekHigh(price, quote?.fiftyTwoWeekHigh),
           fit: fitScores.get(item.symbol),
-          owned: ownedSymbols.has(item.symbol.toUpperCase()),
+          owned,
+          workflow,
+          evidence,
+          /* `now` deliberately left to the lib defaults — same convention as
+             computeAttention/daysUntil below, and what react-hooks/purity asks. */
+          action: nextActionFor({ workflow, item, evidence, price }),
+          idle: idleDays(item, evidence),
           alerts: buildAlerts(item, quote, direction),
           consensus,
           consensusUpside: upsidePercent(price, consensus.mean),
@@ -962,9 +1060,8 @@ function WatchlistPageInner() {
           earningsIn: daysUntil(symbolPulse?.earningsDate ?? null),
           targetDistance: distanceToTargetPercent(price, item.targetPrice, direction),
         };
-      }),
-    [items, quotes, fitScores, fitData, ownedSymbols, benchmarkChange, benchmarkSymbol, moved, pulse, settings],
-  );
+      });
+  }, [items, quotes, fitScores, fitData, ownedSymbols, benchmarkChange, benchmarkSymbol, moved, pulse, settings]);
 
   /* Search: case-insensitive, whitespace/comma tokenised, so "nvda amd" and a
      pasted "NVDA, AMD" both work, and any token matching ticker OR name keeps
@@ -978,28 +1075,24 @@ function WatchlistPageInner() {
       switch (quickFilter) {
         case "attention": if (r.attention.level === "quiet") return false; break;
         case "alerts": if (r.alerts.length === 0) return false; break;
-        case "owned": if (!r.owned) return false; break;
-        case "not-owned": if (r.owned) return false; break;
+        // Workflow chips — the derived state, one value per row.
+        case "new": if (r.workflow !== "new") return false; break;
+        case "working": if (r.workflow !== "working") return false; break;
+        case "ready": if (r.workflow !== "ready") return false; break;
+        case "waiting": if (r.workflow !== "waiting") return false; break;
+        case "owned": if (r.workflow !== "owned") return false; break;
+        case "archive": if (r.workflow !== "passed" && r.workflow !== "exited") return false; break;
         case "near-target":
           if (r.targetDistance == null || r.targetDistance > TARGET_NEAR_PCT) return false;
           break;
         case "earnings":
           if (r.earningsIn == null || r.earningsIn < 0 || r.earningsIn > settings.earningsHorizonDays) return false;
           break;
-        case "high-conviction": if (r.item.conviction !== "high") return false; break;
-        case "no-thesis": if (r.item.notes || r.item.buyTrigger || r.item.sellTrigger) return false; break;
         case "no-target": if (r.item.targetPrice != null) return false; break;
-        case "stale":
-          // The same judgment computeWatchlistHealth counts, per row.
-          if (
-            !isStaleReview({
-              notes: r.item.notes || r.item.buyTrigger || r.item.sellTrigger || null,
-              targetPrice: r.item.targetPrice,
-              lastReviewedAt: r.item.lastReviewedAt,
-              addedAt: r.item.addedAt,
-            })
-          )
-            return false;
+        case "review":
+          // The derived asks: stale (work-or-pass) or contradicted (evidence
+          // newer than the thesis / trigger hit) — the same kinds Needs You ranks.
+          if (r.action.kind !== "triage" && r.action.kind !== "review") return false;
           break;
         default: break;
       }
@@ -1010,6 +1103,174 @@ function WatchlistPageInner() {
   }, [rows, filter, quickFilter, settings.earningsHorizonDays]);
 
   const alertCount = useMemo(() => rows.reduce((n, r) => n + r.alerts.length, 0), [rows]);
+
+  /* ---------------------------------------------------------------------- */
+  /* Relevance — the idea decision engine over the same rows                 */
+  /* ---------------------------------------------------------------------- */
+
+  /* The portfolio context, read off the report the IOS provider already holds —
+     the weights, sectors and trade recommendations here are the same objects
+     the Portfolio page renders. Nothing is recomputed. */
+  const report = ios?.report ?? null;
+  const profile = ios?.profile ?? null;
+  const ideaContext = useMemo<IdeaPortfolioContext>(() => {
+    if (!report || !profile?.hasPortfolio) return EMPTY_IDEA_CONTEXT;
+
+    const weights = new Map<string, number>();
+    const sectors = new Map<string, string>();
+    for (const h of report.holdings) {
+      if (!h.symbol) continue;
+      weights.set(h.symbol.toUpperCase(), h.weight);
+      if (h.attributes?.sector) sectors.set(h.symbol.toUpperCase(), h.attributes.sector);
+    }
+
+    const trades = new Map<string, LinkedTrade>();
+    for (const d of report.decisions) {
+      const symbol = d.recommendation.symbol?.toUpperCase();
+      if (!symbol || trades.has(symbol)) continue;
+      trades.set(symbol, {
+        action: d.recommendation.action,
+        title: d.recommendation.title,
+        rationale: d.recommendation.rationale,
+        amount: d.recommendation.amount,
+        // `alignmentDelta` is already number | null — null means "unmeasurable", never 0.
+        alignmentDelta: d.recommendation.impact?.alignmentDelta ?? null,
+        confidence: Math.round(d.recommendation.confidence),
+        alternativesEvaluated: d.alternativesEvaluated,
+      });
+    }
+
+    return {
+      hasPortfolio: true,
+      totalValue: report.totalValue,
+      positionHhi: report.risk.positionHhi,
+      // `scoreExact`, not `score`: engines that difference alignment scores
+      // must use the unrounded one (see AlignmentReport.scoreExact).
+      alignmentScore: report.alignment.scoreExact,
+      weights,
+      sectors,
+      missingSectors: profile.missingSectors,
+      overweightSectors: profile.overweightSectors,
+      trades,
+      atEquilibrium: report.atEquilibrium,
+    };
+  }, [report, profile]);
+
+  /* One call to the shared engine per row: impact ordering, verdicts, the five
+     questions. Deterministic, and an enhancement — the table and board are
+     complete without it. */
+  const assessments = useMemo(() => {
+    if (rows.length === 0) return new Map<string, IdeaAssessment>();
+    const ideaRows = rows.map((r) =>
+      toIdeaRow(r.item, { workflow: r.workflow, evidence: r.evidence, held: r.owned }),
+    );
+    const fits = new Map<string, PortfolioFitAnalysis>();
+    const prices = new Map<string, number>();
+    for (const r of rows) {
+      const f = fitScores.get(r.item.symbol);
+      if (f) fits.set(r.item.symbol.toUpperCase(), f);
+      if (r.price != null) prices.set(r.item.symbol.toUpperCase(), r.price);
+    }
+    const built = buildIdeaAssessments({ rows: ideaRows, fits, prices, context: ideaContext });
+    return new Map(built.map((a) => [a.symbol, a]));
+  }, [rows, fitScores, ideaContext]);
+
+  /* Needs You — the open decisions, ranked. Disjoint from the pulse above by
+     construction: these are workflow asks, never market events. */
+  const needsYouEntries = useMemo(() => {
+    const inputs: NeedsYouInput[] = rows.map((r) => ({
+      symbol: r.item.symbol,
+      name: r.item.name,
+      workflow: r.workflow,
+      action: r.action,
+      idle: r.idle,
+      priority: assessments.get(r.item.symbol.toUpperCase())?.priority ?? null,
+    }));
+    return rankNeedsYou(inputs);
+  }, [rows, assessments]);
+
+  /* Health-line counts, computed from the exact predicates their filters
+     apply — a count that filters to a different number is worse than none. */
+  const workingCount = useMemo(() => rows.filter((r) => r.workflow === "working").length, [rows]);
+  const reviewCount = useMemo(
+    () => rows.filter((r) => r.action.kind === "triage" || r.action.kind === "review").length,
+    [rows],
+  );
+
+  /* One dispatcher for every next-action affordance on the page. Reads rows
+     through a ref so its identity is stable — it feeds the columns memo, and a
+     per-render identity there would re-sort the table on every quote tick. */
+  const rowsRef = useRef<Row[]>([]);
+  useEffect(() => {
+    rowsRef.current = rows;
+  }, [rows]);
+  const handleAct = useCallback<IdeaActHandler>(
+    (kind, symbol) => {
+      const row = rowsRef.current.find((r) => r.item.symbol === symbol);
+      if (!row) return;
+      switch (kind) {
+        case "research":
+          router.push(`/research?symbol=${encodeURIComponent(symbol)}`);
+          break;
+        case "thesis":
+          setEditingThesis(row.item);
+          break;
+        case "decide":
+          setDeciding({ symbol, mode: "decide" });
+          break;
+        case "review":
+          setDeciding({ symbol, mode: "review" });
+          break;
+        case "triage":
+          setDeciding({ symbol, mode: "triage" });
+          break;
+        case "monitor":
+          setEditingTarget(row.item);
+          break;
+        case "portfolio":
+          router.push("/portfolio?tab=decisions");
+          break;
+        case "reconsider":
+          void reactivate(symbol);
+          break;
+        case "pass":
+          setPassingSymbol(symbol);
+          break;
+        case "none":
+          break;
+      }
+    },
+    [router, reactivate],
+  );
+
+  /* The board reads the whole list (its columns ARE the workflow filter); only
+     the text search applies. Assessment layers in as it arrives. */
+  const boardEntries = useMemo<BoardEntry[]>(() => {
+    const tokens = filter
+      .toLowerCase()
+      .split(/[\s,]+/)
+      .filter(Boolean);
+    return rows
+      .filter(
+        (r) =>
+          tokens.length === 0 ||
+          tokens.some((t) => `${r.item.symbol} ${r.item.name}`.toLowerCase().includes(t)),
+      )
+      .map((r) => ({
+        item: r.item,
+        workflow: r.workflow,
+        evidence: r.evidence,
+        action: r.action,
+        assessment: assessments.get(r.item.symbol.toUpperCase()) ?? null,
+        price: r.price,
+        currency: r.currency,
+        idle: r.idle,
+      }));
+  }, [rows, filter, assessments]);
+
+  /* The rows the open dialogs render against — always the freshest data. */
+  const passingRow = passingSymbol ? rows.find((r) => r.item.symbol === passingSymbol) ?? null : null;
+  const decidingRow = deciding ? rows.find((r) => r.item.symbol === deciding.symbol) ?? null : null;
 
   /* ---------------------------------------------------------------------- */
   /* Triage: attention queue, since-visit summary, list health               */
@@ -1393,17 +1654,42 @@ function WatchlistPageInner() {
         hideBelow: "md",
       },
       {
-        key: "stage",
-        label: "Stage",
-        help: "Where this idea is in your process: Surfaced → Researching → Thesis → Owned, or Passed / Exited. Owned means held in your portfolio right now — this column is the ownership indicator. The same field the Portfolio pipeline board edits.",
+        key: "workflow",
+        label: "Status",
+        help: "Where the decision stands, derived from evidence and your ledger — never a hand-set label. New → In work → Ready to decide → Waiting, with Owned / Passed / Exited as outcomes. Researching a name, writing its thesis, arming a trigger, buying or passing is what moves it.",
         // Sorted by funnel position rather than alphabetically, so the order on
-        // screen is the order of the process. Rendered through effectiveStage so
-        // a name the ledger currently holds ALWAYS reads Owned, even if the
-        // stored stage lags a trade — this column is where ownership lives.
-        sortValue: (r) => IDEA_STAGES.indexOf(effectiveStage(r.item.stage, r.owned)),
+        // screen is the order of the process. Ownership lives here: a name the
+        // ledger holds ALWAYS reads Owned, whatever any stored field says.
+        sortValue: (r) => WORKFLOW_ORDER[r.workflow],
         firstSortDir: "asc",
-        render: (r) => <StageBadge stage={effectiveStage(r.item.stage, r.owned)} />,
+        render: (r) => <WorkflowBadge workflow={r.workflow} />,
         hideBelow: "lg",
+      },
+      {
+        key: "evidence",
+        label: "Evidence",
+        help: "What has actually happened to this idea: research recency, valuation cases, saved notes, a written thesis, journal entries — read from the stores that recorded the work. A dash means the artifact doesn't exist yet; it can never mean the app forgot.",
+        // Sorted by how much of the trail exists, so "least worked" is one click.
+        sortValue: (r) =>
+          (r.evidence.lastResearchedAt ? 1 : 0) +
+          (r.evidence.valuationCases > 0 ? 1 : 0) +
+          (r.evidence.noteCount > 0 ? 1 : 0) +
+          (r.item.notes || r.item.buyTrigger || r.item.sellTrigger ? 1 : 0) +
+          (r.evidence.journalDecisions > 0 ? 1 : 0),
+        render: (r) => <EvidenceTrail item={r.item} evidence={r.evidence} compact />,
+        hideBelow: "xl",
+      },
+      {
+        key: "action",
+        label: "Next",
+        help: "The one thing that moves this idea forward, derived from its workflow and evidence. Hover for the grounds; sorting groups the open decisions first.",
+        // Decisions first, then work, then routine — the same order Needs You uses.
+        sortValue: (r) =>
+          ({ review: 0, decide: 1, thesis: 2, triage: 3, research: 4, monitor: 5, reconsider: 6, portfolio: 7, none: 8 })[
+            r.action.kind
+          ],
+        firstSortDir: "asc",
+        render: (r) => <NextActionButton action={r.action} symbol={r.item.symbol} onAct={handleAct} />,
       },
       {
         key: "sector",
@@ -1488,7 +1774,7 @@ function WatchlistPageInner() {
         hideBelow: "xl",
       },
     ],
-    [hasPortfolio, benchmarkSymbol, settings.earningsHorizonDays],
+    [hasPortfolio, benchmarkSymbol, settings.earningsHorizonDays, handleAct],
   );
 
   /* Column visibility is a view preference; the definitions above stay complete
@@ -1551,12 +1837,6 @@ function WatchlistPageInner() {
           >
             The Desk
           </Link>
-          <Link
-            href="/knowledge-graph?scope=watchlist&id=watchlist"
-            className="flex items-center rounded-lg border border-border px-4 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
-          >
-            Graph
-          </Link>
           <button
             onClick={() => { void load(); void loadPulse(); refreshNow(); }}
             className="rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-surface-2"
@@ -1616,6 +1896,23 @@ function WatchlistPageInner() {
             checkingCount={pulse?.checking.length ?? 0}
             onOpenRow={openRow}
             onShowAll={() => setQuickFilter("attention")}
+          />
+        </Reveal>
+      )}
+
+      {/* Needs You — the open DECISIONS, disjoint from the pulse's market
+          events: a thesis awaiting a call, research without a view, a stale
+          idea, a hit trigger. Acting is the only way an entry leaves. */}
+      {!loading && items.length > 0 && (
+        <Reveal index={2}>
+          <NeedsYou
+            entries={needsYouEntries}
+            total={needsYouEntries.length}
+            onAct={handleAct}
+            onOpen={(symbol) => {
+              if (view === "board") setView("table");
+              openRow(symbol);
+            }}
           />
         </Reveal>
       )}
@@ -1725,7 +2022,7 @@ function WatchlistPageInner() {
 
       {quoteError && !error && (
         <p className="rounded-lg border border-warning/30 bg-warning/[0.07] px-4 py-2.5 text-xs text-warning">
-          {quoteError} Targets, notes and stages are unaffected.
+          {quoteError} Targets, theses and workflow state are unaffected.
         </p>
       )}
 
@@ -1761,29 +2058,49 @@ function WatchlistPageInner() {
               </kbd>
             )}
           </div>
-          <div role="group" aria-label="Quick filters" className="flex flex-wrap gap-1">
-            {/* The configured chips (Customize decides which and in what
-                order); any other filter — reached from the health line or a
-                stale config — appears as a chip only while active, with an
-                explicit way back. */}
-            {[...settings.quickFilters, ...(settings.quickFilters.includes(quickFilter) ? [] : [quickFilter])].map(
-              (qf) => (
-                <button
-                  key={qf}
-                  type="button"
-                  onClick={() => setQuickFilter(quickFilter === qf && qf !== "all" ? "all" : qf)}
-                  aria-pressed={quickFilter === qf}
-                  className={`rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
-                    quickFilter === qf
-                      ? "border-brand/40 bg-brand/10 text-brand"
-                      : "border-border text-muted hover:bg-surface-2 hover:text-foreground"
-                  }`}
-                >
-                  {FILTER_LABEL[qf]}
-                  {quickFilter === qf && qf !== "all" && <span className="ml-1 opacity-70">×</span>}
-                </button>
-              ),
-            )}
+          {/* The board's columns ARE the workflow filter, so the chips render
+              only for the table — two filter systems over one view would fight. */}
+          {view === "table" ? (
+            <div role="group" aria-label="Quick filters" className="flex flex-wrap gap-1">
+              {/* The configured chips (Customize decides which and in what
+                  order); any other filter — reached from the health line or a
+                  stale config — appears as a chip only while active, with an
+                  explicit way back. */}
+              {[...settings.quickFilters, ...(settings.quickFilters.includes(quickFilter) ? [] : [quickFilter])].map(
+                (qf) => (
+                  <button
+                    key={qf}
+                    type="button"
+                    onClick={() => setQuickFilter(quickFilter === qf && qf !== "all" ? "all" : qf)}
+                    aria-pressed={quickFilter === qf}
+                    className={`rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
+                      quickFilter === qf
+                        ? "border-brand/40 bg-brand/10 text-brand"
+                        : "border-border text-muted hover:bg-surface-2 hover:text-foreground"
+                    }`}
+                  >
+                    {FILTER_LABEL[qf]}
+                    {quickFilter === qf && qf !== "all" && <span className="ml-1 opacity-70">×</span>}
+                  </button>
+                ),
+              )}
+            </div>
+          ) : null}
+          {/* Table for scanning; board for working the funnel. Same rows. */}
+          <div role="group" aria-label="View" className="ml-auto flex rounded-lg border border-border p-0.5">
+            {(["table", "board"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setView(v)}
+                aria-pressed={view === v}
+                className={`rounded-[7px] px-2.5 py-1 text-xs transition-colors ${
+                  view === v ? "bg-surface-2 text-foreground" : "text-muted hover:text-foreground"
+                }`}
+              >
+                {v === "table" ? "Table" : "Board"}
+              </button>
+            ))}
           </div>
           <WatchlistSettings settings={settings} onChange={setStoredSettings} />
         </div>
@@ -1829,6 +2146,8 @@ function WatchlistPageInner() {
             </Link>
           </div>
         </div>
+      ) : view === "board" ? (
+        <IdeasBoard entries={boardEntries} onAct={handleAct} />
       ) : (
         <DataTable
           rows={filteredRows}
@@ -1901,13 +2220,15 @@ function WatchlistPageInner() {
               <DataTableAction onClick={() => setEditingThesis(r.item)}>
                 {r.item.notes || r.item.buyTrigger || r.item.sellTrigger ? "Edit thesis…" : "Write thesis…"}
               </DataTableAction>
-              {/* The stage was already stored on every row and edited by the
-                  Pipeline board; the Watchlist is where the decision is made. */}
-              {IDEA_STAGES.filter((s) => s !== r.item.stage && s !== "owned").map((s) => (
-                <DataTableAction key={s} onClick={() => void setStage(r.item, s)}>
-                  Mark {STAGE_LABEL[s].toLowerCase()}
-                </DataTableAction>
-              ))}
+              {/* There is deliberately no "mark researched/thesis" action left:
+                  the workflow is derived from evidence — doing the work IS the
+                  transition. The two judgments the system cannot make remain:
+                  passing, and reopening what was passed or exited. */}
+              {r.workflow === "passed" || r.workflow === "exited" ? (
+                <DataTableAction onClick={() => void reactivate(r.item.symbol)}>Reconsider</DataTableAction>
+              ) : r.workflow !== "owned" ? (
+                <DataTableAction onClick={() => setPassingSymbol(r.item.symbol)}>Pass…</DataTableAction>
+              ) : null}
               {/* Cross-list membership. A symbol's research state is shared, so
                   "copy" genuinely costs nothing and "move" never loses a target. */}
               {groups
@@ -1951,6 +2272,10 @@ function WatchlistPageInner() {
               pulse={r.pulse}
               checking={pulse?.checking.includes(r.item.symbol.toUpperCase()) ?? false}
               revisionCount={r.item.targetRevisionCount ?? 0}
+              workflow={r.workflow}
+              evidence={r.evidence}
+              action={r.action}
+              onAct={handleAct}
               onEditTarget={() => setEditingTarget(r.item)}
               onEditThesis={() => setEditingThesis(r.item)}
               onMarkReviewed={() => void markReviewed(r.item.symbol)}
@@ -1960,15 +2285,19 @@ function WatchlistPageInner() {
       )}
 
       {/* List health: the maintenance debt this list is carrying, said once and
-          made actionable. Each count is a filter, so noticing IS fixing. */}
-      {!loading && items.length > 3 && (health.noThesis > 0 || health.noTarget > 0 || health.staleReview > 0) && (
+          made actionable. Each count is a filter, so noticing IS fixing —
+          which is exactly why every count is computed from the SAME predicate
+          its filter applies. A "40 without a thesis" that filters to 5 rows
+          (the old computeWatchlistHealth count included owned and exited
+          names) teaches the user the numbers here cannot be trusted. */}
+      {!loading && items.length > 3 && (workingCount > 0 || health.noTarget > 0 || reviewCount > 0) && (
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
           <span className="text-label font-semibold uppercase tracking-widest text-muted/60">List health</span>
           {(
             [
-              { key: "no-thesis" as const, count: health.noThesis, label: "without a thesis" },
+              { key: "working" as const, count: workingCount, label: "researched, no thesis yet" },
               { key: "no-target" as const, count: health.noTarget, label: "without a target" },
-              { key: "stale" as const, count: health.staleReview, label: `not reviewed in ${STALE_REVIEW_DAYS}d` },
+              { key: "review" as const, count: reviewCount, label: "needing a review" },
             ] as const
           )
             .filter((h) => h.count > 0)
@@ -2036,7 +2365,52 @@ function WatchlistPageInner() {
             setOwnedSymbols((prev) => new Set(prev).add(result.symbol));
             toast(`Bought ${result.symbol} — added to Portfolio`, "success");
             void loadOwned();
+            // The ledger write auto-transitioned the idea to Owned server-side;
+            // refetch so the workflow column reflects it without a reload.
+            void load();
           }}
+        />
+      )}
+
+      {/* Pass — the deliberate no, with its reason journaled. */}
+      {passingRow && passingSymbol && (
+        <PassDialog
+          symbol={passingSymbol}
+          name={passingRow.item.name}
+          onConfirm={(reason, note) => confirmPass(passingSymbol, reason, note, passingRow.price)}
+          onCancel={() => setPassingSymbol(null)}
+        />
+      )}
+
+      {/* Decide — buy, arm a trigger, or pass, with the idea's file restated. */}
+      {deciding && decidingRow && (
+        <DecideDialog
+          mode={deciding.mode}
+          symbol={decidingRow.item.symbol}
+          name={decidingRow.item.name}
+          notes={decidingRow.item.notes}
+          conviction={decidingRow.item.conviction}
+          targetPrice={decidingRow.item.targetPrice}
+          currency={decidingRow.currency}
+          price={decidingRow.price}
+          contextLine={decidingRow.action.detail}
+          onBuy={() => {
+            setBuyingItem(decidingRow.item);
+            setDeciding(null);
+          }}
+          onTrigger={() => {
+            setEditingTarget(decidingRow.item);
+            setDeciding(null);
+          }}
+          onPass={() => {
+            setPassingSymbol(decidingRow.item.symbol);
+            setDeciding(null);
+          }}
+          onEditThesis={() => {
+            setEditingThesis(decidingRow.item);
+            setDeciding(null);
+          }}
+          onClose={() => setDeciding(null)}
         />
       )}
 

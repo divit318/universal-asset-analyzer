@@ -30,6 +30,7 @@
  * already computed.
  */
 
+import Link from "next/link";
 import { Card, Badge, StatTile } from "@/app/_components/ui";
 import { DataTable, type DataTableColumn } from "@/app/_components/ui";
 import { formatCurrency, formatPercent, formatSignedCurrency, toneClass } from "@/lib/format";
@@ -217,7 +218,13 @@ export function PerformancePanel({
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <div>
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted">
-                vs {p.benchmark.symbol}
+                vs{" "}
+                <Link
+                  href={`/research?symbol=${encodeURIComponent(p.benchmark.symbol)}`}
+                  className="rounded-sm hover:text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                >
+                  {p.benchmark.symbol}
+                </Link>
               </h3>
               <p className="mt-1 text-[11px] leading-relaxed text-muted/70">
                 Your exact contributions and withdrawals, on the same dates, invested in{" "}
@@ -473,7 +480,19 @@ function positionColumns(rows: PositionPerformance[]): DataTableColumn<PositionP
       render: (r) => (
         <div className="flex flex-col">
           <span className="flex items-center gap-1.5">
-            <span className="font-mono text-sm font-semibold text-foreground">{r.symbol}</span>
+            {/* Same affordance as the Holdings table: the symbol IS the door to
+                its research page. Cash rows carry a synthetic CASH-XXX symbol
+                with no research page behind it, so they stay plain text. */}
+            {r.symbol.startsWith("CASH-") ? (
+              <span className="font-mono text-sm font-semibold text-foreground">{r.symbol}</span>
+            ) : (
+              <Link
+                href={`/research?symbol=${encodeURIComponent(r.symbol)}`}
+                className="rounded-sm font-mono text-sm font-semibold text-foreground hover:text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+              >
+                {r.symbol}
+              </Link>
+            )}
             {/* A fully-exited position is in this table because its realized P&L is in
                 the total above it. Without the marker its Value and Cost of $0 read as
                 a data error rather than as "there is nothing left to hold". */}

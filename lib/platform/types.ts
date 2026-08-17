@@ -57,6 +57,10 @@ export type DatasetId =
   // their modules is what the "never add a cache to a module" rule demands.
   | "portfolioReport"
   | "portfolioThesis"
+  // The Exposure graph, in its two stages: the routes (cheap, off the cached
+  // report) and the drivers (industry profiles + reference-fund probes).
+  | "exposureModel"
+  | "exposureDrivers"
   | "missionContext"
   | "homeDigest"
   // Contextual research intelligence (the intel rail): the deterministic card

@@ -9,10 +9,10 @@
  */
 import { describe, it, expect } from "vitest";
 import { buildDashboardFacts, formatFact, reconcileDashboardFacts } from "@/lib/home/facts";
-import { buildTopContributors, buildHealthFactors } from "@/lib/home/pulse";
+import { buildTopContributors, buildAlignmentFactors } from "@/lib/home/pulse";
 import { computeSentiment, vixBand, scoreVolatility } from "@/lib/home/sentiment";
 import { marketToday, marketDayPlus } from "@/lib/home/clock";
-import type { HealthScore } from "@/lib/portfolio/engines/health";
+import type { AlignmentReport, AlignmentTheme } from "@/lib/portfolio/alignment/engine";
 import type {
   AttentionQueue,
   ChangeFeed,
@@ -49,8 +49,10 @@ const mover = (symbol: string, dayDollar: number): PulseMover => ({
 function pulseFixture(over: Partial<PortfolioPulse> = {}): PortfolioPulse {
   return {
     status: "ok",
-    healthScore: 68,
-    healthGrade: "C",
+    alignmentScore: 68,
+    alignmentLabel: "Mixed",
+    alignmentConfirmed: false,
+    topMismatch: null,
     totalValue: 4_069_188,
     todayChangePct: 1.1612,
     todayChangeDollar: 31_682,
@@ -69,11 +71,13 @@ function pulseFixture(over: Partial<PortfolioPulse> = {}): PortfolioPulse {
     radar: [],
     biggestStrength: null,
     biggestWeakness: null,
-    healthCoveragePct: 90,
-    healthFactors: [],
+    alignmentEvidencePct: 90,
+    alignmentFactors: [],
     topContributors: [],
     topContributorsResidualBps: null,
     dayCoveragePct: 67,
+    topPositions: [],
+    sleeves: [],
     ...over,
   };
 }
@@ -89,6 +93,7 @@ function marketFixture(vix: number | null): MarketIntelligence {
     sentiment: computeSentiment({ vixLevel: vix, breadthPct: 82, sp500ChangePct: 0.62 }),
     regime: null,
     sectorAttention: [],
+    sectors: [],
   };
 }
 
@@ -141,7 +146,7 @@ const changesFixture = (n: number): ChangeFeed => ({
   status: "ok",
   baselineAt: null,
   firstVisit: false,
-  changes: Array.from({ length: n }, (_, i) => ({ id: `c${i}`, kind: "health" as const, tone: "neutral" as const, headline: "h", detail: "d", symbol: null, href: null, magnitude: 1 })),
+  changes: Array.from({ length: n }, (_, i) => ({ id: `c${i}`, kind: "alignment" as const, tone: "neutral" as const, headline: "h", detail: "d", symbol: null, href: null, magnitude: 1 })),
 });
 
 function digestFixture(over: { pulse?: Partial<PortfolioPulse>; vix?: number | null; open?: number; changes?: number } = {}) {
@@ -200,34 +205,75 @@ describe("buildTopContributors", () => {
 });
 
 /* ------------------------------------------------------------------ */
-/* Health decomposition reconciles (NI-07)                             */
+/* Alignment decomposition reconciles (NI-07)                          */
 /* ------------------------------------------------------------------ */
 
-describe("buildHealthFactors", () => {
-  it("contributions sum exactly to the displayed total", () => {
-    const health = {
-      total: 68,
-      totalExact: 67.62,
-      grade: "C",
-      coveragePct: 90,
-      dimensions: [
-        { name: "Diversification", score: 55, scoreExact: 55.21, coverage: 1, effectiveWeight: 0.35 },
-        { name: "Liquidity", score: 88, scoreExact: 88.4, coverage: 1, effectiveWeight: 0.3 },
-        { name: "Income", score: 61, scoreExact: 60.9, coverage: 0.7, effectiveWeight: 0.2 },
-        { name: "Quality", score: 74, scoreExact: 73.55, coverage: 0.9, effectiveWeight: 0.15 },
-        { name: "Geography", score: null, scoreExact: null, coverage: 0, effectiveWeight: 0 },
-      ],
-    } as unknown as HealthScore;
+function themeFixture(
+  id: AlignmentTheme["id"],
+  label: string,
+  priority: AlignmentTheme["priority"],
+  weightShare: number,
+  scoreExact: number | null,
+  over: Partial<AlignmentTheme> = {},
+): AlignmentTheme {
+  return {
+    id,
+    label,
+    question: "",
+    priority,
+    weightShare,
+    score: scoreExact != null ? Math.round(scoreExact) : null,
+    scoreExact,
+    status: scoreExact != null ? "aligned" : null,
+    unratedReason: scoreExact != null ? null : "opted_out",
+    finding: "",
+    basis: "",
+    evidencePct: 100,
+    facts: [],
+    mismatch: null,
+    ...over,
+  };
+}
 
-    const factors = buildHealthFactors(health);
+describe("buildAlignmentFactors", () => {
+  it("contributions sum exactly to the displayed total", () => {
+    // Four equal-priority rated themes, exactly the DEFAULT_POLICY shape:
+    // scoreExact = Σ(theme scoreExact × weightShare) = 69.515 → displayed 70.
+    const report: AlignmentReport = {
+      score: 70,
+      scoreExact: 69.515,
+      label: "Well aligned",
+      status: "scored",
+      confirmed: false,
+      themes: [
+        themeFixture("structure", "Structure", 2, 0.25, 55.21),
+        themeFixture("resilience", "Downside", 2, 0.25, 88.4),
+        themeFixture("concentration", "Concentration", 2, 0.25, 60.9),
+        themeFixture("liquidity", "Liquidity", 2, 0.25, 73.55),
+        themeFixture("income", "Income", 0, 0, null),
+      ],
+      mismatches: [],
+      dataGaps: [],
+      summary: "",
+      evidencePct: 100,
+      objectiveNotes: [],
+      policyConflicts: [],
+    };
+
+    const factors = buildAlignmentFactors(report);
     const sum = factors.reduce((s, f) => s + (f.contributionPts ?? 0), 0);
-    expect(sum).toBeCloseTo(68, 6);
-    // Each row stays within a tenth of the engine's exact term.
+    expect(sum).toBeCloseTo(70, 6);
+    // Each row stays within display-rounding distance of the engine's exact term.
     for (const f of factors) {
       if (f.contributionPts == null) continue;
-      const dim = (health.dimensions ?? []).find((d) => d.name === f.label)!;
-      expect(Math.abs(f.contributionPts - (dim.scoreExact ?? 0) * dim.effectiveWeight)).toBeLessThanOrEqual(0.35);
+      const t = report.themes.find((x) => x.label === f.label)!;
+      expect(Math.abs(f.contributionPts - (t.scoreExact ?? 0) * t.weightShare)).toBeLessThanOrEqual(0.35);
     }
+    // The opted-out theme renders as a fact, not a fake contribution.
+    const optedOut = factors.find((f) => f.label === "Income")!;
+    expect(optedOut.contributionPts).toBeNull();
+    expect(optedOut.covered).toBe(false);
+    expect(optedOut.unratedReason).toBe("opted_out");
   });
 });
 
@@ -296,9 +342,9 @@ describe("dashboard facts", () => {
         ],
         // day P&L 1.1612% = 116.12 bps; rows show 65.0; residual carries the rest.
         topContributorsResidualBps: 116.12 - 65.0,
-        healthFactors: [
-          { label: "A", score: 60, weightShare: 0.5, contributionPts: 34.0, covered: true, coveragePct: 100 },
-          { label: "B", score: 68, weightShare: 0.5, contributionPts: 34.0, covered: true, coveragePct: 100 },
+        alignmentFactors: [
+          { label: "A", score: 60, weightShare: 0.5, contributionPts: 34.0, covered: true, evidencePct: 100, unratedReason: null },
+          { label: "B", score: 68, weightShare: 0.5, contributionPts: 34.0, covered: true, evidencePct: 100, unratedReason: null },
         ],
       },
     });
@@ -310,8 +356,8 @@ describe("dashboard facts", () => {
       pulse: {
         topContributors: [{ symbol: "ABNB", name: "Airbnb", bps: 64.1, dayDollar: 17_500 }],
         topContributorsResidualBps: 0, // claims the row is the whole move; it is not
-        healthFactors: [],
-        healthScore: null,
+        alignmentFactors: [],
+        alignmentScore: null,
       },
     });
     const issues = reconcileDashboardFacts(digest);
@@ -319,7 +365,7 @@ describe("dashboard facts", () => {
   });
 
   it("catches counters that disagree with their collections", () => {
-    const digest = digestFixture({ pulse: { topContributors: [], healthFactors: [], healthScore: null } });
+    const digest = digestFixture({ pulse: { topContributors: [], alignmentFactors: [], alignmentScore: null } });
     digest.attention.openCount = 19; // items.length is 3
     const issues = reconcileDashboardFacts(digest);
     expect(issues.map((i) => i.invariant)).toContain("open-count-matches-items");
@@ -329,19 +375,19 @@ describe("dashboard facts", () => {
     const digest = digestFixture({
       pulse: {
         topContributors: [],
-        healthScore: 68,
-        healthFactors: [
-          { label: "A", score: 60, weightShare: 0.5, contributionPts: 30, covered: true, coveragePct: 100 },
-          { label: "B", score: 68, weightShare: 0.5, contributionPts: 34, covered: true, coveragePct: 100 },
+        alignmentScore: 68,
+        alignmentFactors: [
+          { label: "A", score: 60, weightShare: 0.5, contributionPts: 30, covered: true, evidencePct: 100, unratedReason: null },
+          { label: "B", score: 68, weightShare: 0.5, contributionPts: 34, covered: true, evidencePct: 100, unratedReason: null },
         ],
       },
     });
     const issues = reconcileDashboardFacts(digest);
-    expect(issues.map((i) => i.invariant)).toContain("health-factors-sum");
+    expect(issues.map((i) => i.invariant)).toContain("alignment-factors-sum");
   });
 
   it("stamps the XIRR facts with one shared window label", () => {
-    const digest = digestFixture({ pulse: { topContributors: [], healthFactors: [], healthScore: null } });
+    const digest = digestFixture({ pulse: { topContributors: [], alignmentFactors: [], alignmentScore: null } });
     const f: DashboardFacts = digest.facts;
     expect(f.xirrPct.window).toContain("annualized");
     expect(f.xirrPct.window).toContain("95d");
@@ -351,7 +397,7 @@ describe("dashboard facts", () => {
   });
 
   it("formats every percent fact at the single page precision", () => {
-    const digest = digestFixture({ pulse: { topContributors: [], healthFactors: [], healthScore: null } });
+    const digest = digestFixture({ pulse: { topContributors: [], alignmentFactors: [], alignmentScore: null } });
     expect(formatFact(digest.facts.cashPct, "plain")).toBe("32.9%");
     expect(formatFact(digest.facts.dayPnlPct)).toBe("+1.2%");
     expect(formatFact(digest.facts.xirrPct)).toBe("+68.6%");
@@ -360,7 +406,7 @@ describe("dashboard facts", () => {
   });
 
   it("null values render as an em-dash placeholder, never zero", () => {
-    const digest = digestFixture({ vix: null, pulse: { topContributors: [], healthFactors: [], healthScore: null, status: "empty" } });
+    const digest = digestFixture({ vix: null, pulse: { topContributors: [], alignmentFactors: [], alignmentScore: null, status: "empty" } });
     expect(formatFact(digest.facts.vixLevel)).toBe("—");
     expect(formatFact(digest.facts.dayPnlPct)).toBe("—");
   });

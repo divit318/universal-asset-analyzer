@@ -6,8 +6,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  * matter are pinned here:
  *
  *   1. A model that returns nothing usable must degrade to something USEFUL, not to
- *      an apology — the health engine already knows the book's strongest and weakest
- *      dimensions and has written a sentence about each.
+ *      an apology — the alignment engine already knows the book's strongest and
+ *      weakest themes and has written a measured sentence about each.
  *   2. An empty `bearCase` must survive. The prompt explicitly permits it ("if you
  *      have no substantive bear case, return an empty string"), and back-filling a
  *      generic one would defeat the instruction and put a manufactured criticism in
@@ -58,19 +58,25 @@ vi.mock("@/lib/platform/data-layer", () => ({
 
 const { buildPortfolioThesis, getPortfolioThesis, compositionKey } = await import("@/lib/portfolio/thesis");
 import type { PortfolioEvaluation } from "@/lib/portfolio/engines/simulate";
-import type { HealthDimension } from "@/lib/portfolio/engines/health";
+import type { AlignmentTheme } from "@/lib/portfolio/alignment/engine";
+import { DEFAULT_POLICY } from "@/lib/portfolio/alignment/policy";
 
-function dim(name: string, score: number, explanation: string): HealthDimension {
+function theme(id: AlignmentTheme["id"], label: string, score: number, finding: string): AlignmentTheme {
   return {
-    name,
+    id,
+    label,
+    question: "",
+    priority: 2,
+    weightShare: 1 / 3,
     score,
     scoreExact: score,
-    weight: 0.1,
-    coverage: 1,
-    effectiveWeight: 0.1,
-    trend: score >= 62 ? "good" : "weak",
-    explanation,
-    methodology: "",
+    status: score >= 75 ? "aligned" : score >= 40 ? "tension" : "mismatch",
+    unratedReason: null,
+    finding,
+    basis: "",
+    evidencePct: 100,
+    facts: [],
+    mismatch: null,
   };
 }
 
@@ -137,18 +143,25 @@ function evaluation(): PortfolioEvaluation {
       coverage: { observedPct: 100, proxiedPct: 0, unmodelledPct: 0, holdingsObserved: 1, holdingsProxied: 0, holdingsUnmodelled: 0 },
       correlation: null,
     },
-    health: {
-      total: 55,
-      totalExact: 55,
-      grade: "C",
-      dimensions: [
-        dim("Liquidity", 100, "Portfolio is highly liquid."),
-        dim("Asset Allocation", 20, "100% in Equities. This is a single-asset-class portfolio."),
-        dim("Income", 35, "No income generated."),
+    alignment: {
+      score: 55,
+      scoreExact: 55,
+      label: "Mixed",
+      status: "scored",
+      confirmed: false,
+      themes: [
+        theme("liquidity", "Liquidity", 100, "Portfolio is highly liquid — 100% sellable within days."),
+        theme("structure", "Structure", 20, "100% of the book is growth engine — 20pp above the 80% band edge for your goal. This is a single-asset-class portfolio."),
+        theme("concentration", "Concentration", 35, "AAPL is 100.0% of the book against your 20% cap."),
       ],
-      summary: "Weak portfolio.",
-      coveragePct: 90,
+      mismatches: [],
+      dataGaps: [],
+      summary: "Weak alignment.",
+      evidencePct: 90,
+      objectiveNotes: [],
+      policyConflicts: [],
     },
+    policy: DEFAULT_POLICY,
   };
 }
 
@@ -203,7 +216,7 @@ describe("buildPortfolioThesis — AI path", () => {
     const t = await buildPortfolioThesis(evaluation());
     expect(t.source).toBe("ai");
     expect(t.thesis).toContain("single-stock");
-    // Strengths/risks come from the health engine rather than being lost.
+    // Strengths/risks come from the alignment engine rather than being lost.
     expect(t.strengths.length).toBeGreaterThan(0);
     expect(t.risks.length).toBeGreaterThan(0);
     expect(t.strengths[0]).toContain("Liquidity");
@@ -218,15 +231,15 @@ describe("buildPortfolioThesis — AI path", () => {
 });
 
 describe("buildPortfolioThesis — fallback path", () => {
-  it("degrades to the health engine's own strongest and weakest dimensions", async () => {
+  it("degrades to the alignment engine's own strongest and weakest themes", async () => {
     runPromptMock.mockRejectedValue(new Error("AI offline"));
     const t = await buildPortfolioThesis(evaluation());
 
     expect(t.source).toBe("fallback");
-    // Useful, not an apology: the best dimension as a strength...
+    // Useful, not an apology: the best theme as a strength...
     expect(t.strengths.some((s) => s.includes("Liquidity") && s.includes("100"))).toBe(true);
     // ...and the worst as a risk, weakest first.
-    expect(t.risks[0]).toContain("Asset Allocation");
+    expect(t.risks[0]).toContain("Structure");
     expect(t.risks[0]).toContain("20");
   });
 
@@ -263,7 +276,7 @@ describe("getPortfolioThesis — platform cache layer", () => {
     const t = await getPortfolioThesis(evaluation());
     // The user still gets the useful deterministic fallback…
     expect(t.source).toBe("fallback");
-    expect(t.risks[0]).toContain("Asset Allocation");
+    expect(t.risks[0]).toContain("Structure");
     // …but the fetcher REFUSED to hand it to the cache.
     expect(datasetWrites).toHaveLength(0);
   });
@@ -291,15 +304,18 @@ describe("getPortfolioThesis — platform cache layer", () => {
 });
 
 describe("buildPortfolioThesis — prompt grounding", () => {
-  it("gives the model the weakest health dimensions and their explanations", async () => {
+  it("gives the model the weakest alignment themes and their measured findings", async () => {
     runPromptMock.mockResolvedValue(JSON.stringify({ thesis: "ok" }));
     await buildPortfolioThesis(evaluation());
 
     const prompt = String(runPromptMock.mock.calls[0][1]);
-    // The old prompt saw only the health TOTAL, so it could never discuss why.
-    expect(prompt).toContain("WEAKEST HEALTH DIMENSIONS");
-    expect(prompt).toContain("Asset Allocation: 20/100");
+    // The old prompt saw only the score TOTAL, so it could never discuss why.
+    expect(prompt).toContain("WEAKEST ALIGNMENT THEMES");
+    expect(prompt).toContain("Structure: 20/100");
     expect(prompt).toContain("single-asset-class portfolio");
+    // The score line is policy-relative, and unconfirmed defaults are labelled.
+    expect(prompt).toContain("Alignment with the investor's own stated policy: 55/100 (Mixed)");
+    expect(prompt).toContain("scored against assumed defaults");
   });
 
   it("passes attribution and the last change through when supplied", async () => {
@@ -324,9 +340,9 @@ describe("buildPortfolioThesis — prompt grounding", () => {
       lastChange: {
         at: "2025-06-01T00:00:00Z",
         objective: "maximize_sharpe",
-        healthBefore: 78,
-        healthAfter: 75,
-        healthDelta: -3,
+        scoreBefore: 78,
+        scoreAfter: 75,
+        scoreDelta: -3,
         concentrationBefore: 44,
         concentrationAfter: 50.7,
         concentrationDelta: 6.7,
@@ -506,7 +522,7 @@ describe("buildPortfolioThesis — prompt grounding", () => {
       expect(result.risks).toContain(WATCH);
       expect(result.strengths).not.toContain(WORKING);
       // And the surviving strengths must not be an empty column — the per-field
-      // fallback supplies the health engine's own strongest dimensions.
+      // fallback supplies the alignment engine's own strongest themes.
       expect(result.strengths.length).toBeGreaterThan(0);
       expect(result.strengths.join(" ")).not.toMatch(/49%/);
     });

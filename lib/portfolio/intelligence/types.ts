@@ -1,8 +1,8 @@
 /**
  * Portfolio Intelligence — the portfolio critic.
  *
- * The deterministic engines each watch ONE dimension (allocation, risk, health,
- * attribution). This module watches the portfolio as a SYSTEM: what the wrappers
+ * The deterministic engines each watch ONE dimension (allocation, risk,
+ * alignment, attribution). This module watches the portfolio as a SYSTEM: what the wrappers
  * hide (an NVIDIA position spread across three ETFs), what the ticker count
  * overstates (ten securities, three economic bets), and what the investor's own
  * trading pattern may indicate about their blind spots.
@@ -18,7 +18,7 @@
 import type { Holding, PortfolioAssetClass } from "../model/types";
 import type { PortfolioAllocation } from "../engines/allocation";
 import type { UniversalRisk } from "../engines/risk";
-import type { HealthScore } from "../engines/health";
+import type { AlignmentReport } from "../alignment/engine";
 import type { ReturnAttribution } from "../engines/attribution";
 import type { FundHolding, FundSectorWeight } from "../../types";
 
@@ -43,7 +43,7 @@ export interface IntelligenceInput {
   totalValue: number;
   allocation: PortfolioAllocation;
   risk: UniversalRisk;
-  health: HealthScore;
+  alignment: AlignmentReport;
   attribution: ReturnAttribution | null;
   baseCurrency: string;
   /** Upper-cased fund symbol → constituents. A held fund missing here is opaque. */
@@ -53,6 +53,28 @@ export interface IntelligenceInput {
 /* ────────────────────────────── Findings ────────────────────────────── */
 
 export type FindingSeverity = "high" | "medium" | "low";
+
+/**
+ * Where a finding's evidence lives in the Exposure graph (/exposure).
+ *
+ * This is the seam between the two halves of the product: the detectors say
+ * SOMETHING IS INTERESTING, and the graph shows EXACTLY WHY. A detector
+ * declares how its evidence should be drawn; no mapping table in the UI, and
+ * no chance of a finding linking to a view that cannot explain it.
+ *
+ * `null` (the default) means the finding is self-explanatory in its evidence
+ * lines and has no useful visual — behavioural findings like anchoring, where
+ * there is no exposure route to draw.
+ */
+export type FindingExplore =
+  /** Trace one issuer's routes into the book. `target` = issuer symbol. */
+  | { kind: "trace"; target: string }
+  /** Two funds' shared constituents. `target` = "VOO+VGT". */
+  | { kind: "overlap"; target: string }
+  /** One position's fan-out into what it contains. `target` = ledger label. */
+  | { kind: "position"; target: string }
+  /** A cluster of co-moving lines. `target` = "NVDA+AMD+AVGO". */
+  | { kind: "cluster"; target: string };
 
 /**
  * Every evidence line declares what kind of claim it is, and the UI renders the
@@ -90,6 +112,11 @@ export interface IntelligenceFinding {
   caveat?: string;
   /** % of portfolio value implicated — context chip in the UI. */
   weightPct?: number;
+  /**
+   * Which Exposure view proves this finding. Absent = no route to draw, so the
+   * evidence lines are the whole story. See {@link FindingExplore}.
+   */
+  explore?: FindingExplore;
   /** Deterministic ordering key (severity band × magnitude). Never displayed. */
   rank: number;
 }

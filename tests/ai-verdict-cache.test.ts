@@ -171,6 +171,54 @@ describe("stableVerdictIdentity", () => {
   });
 });
 
+describe("stableRequestIdentity (client request key)", () => {
+  // The client-side mirror of stableVerdictIdentity: the hook keys the stream
+  // on this, so live-data drift in the volatile params can never abort an
+  // in-flight generation and pay for a second one (measured live 2026-08-12:
+  // a background portfolio-report revalidation re-keyed the stream and killed
+  // a generation 6.3s in).
+  it("ignores the volatile params that drift with live data", async () => {
+    const { stableRequestIdentity } = await import("@/lib/ai/client/use-verdict-stream");
+    const before = stableRequestIdentity({
+      fitScore: "68",
+      fitTier: "good",
+      isInPortfolio: "true",
+      objective: "ai_optimized",
+      reasons: "5.0% allocation fits comfortably within your limits",
+      actionReason: "Research 72/100 (Buy) with good portfolio fit (65/100).",
+    });
+    const afterTick = stableRequestIdentity({
+      fitScore: "69", // moved a point on a market tick
+      fitTier: "good",
+      isInPortfolio: "true",
+      objective: "ai_optimized",
+      reasons: "5.1% allocation fits comfortably within your limits",
+      actionReason: "Research 73/100 (Buy) with good portfolio fit (66/100).",
+    });
+    expect(before).toBe(afterTick);
+  });
+
+  it("changes when a dimension that materially changes the verdict changes", async () => {
+    const { stableRequestIdentity } = await import("@/lib/ai/client/use-verdict-stream");
+    const good = stableRequestIdentity({ fitTier: "good", action: "add" });
+    const poor = stableRequestIdentity({ fitTier: "poor", action: "avoid" });
+    expect(good).not.toBe(poor);
+  });
+
+  it("mirrors the server identity's normalization (sector order, whole-percent sizing)", async () => {
+    const { stableRequestIdentity } = await import("@/lib/ai/client/use-verdict-stream");
+    const a = stableRequestIdentity({ missingSectors: "Energy, Healthcare", suggestedPct: "4.5" });
+    const b = stableRequestIdentity({ missingSectors: "Healthcare,Energy", suggestedPct: "4.6" });
+    expect(a).toBe(b);
+  });
+
+  it("returns the empty identity for a generic request", async () => {
+    const { stableRequestIdentity } = await import("@/lib/ai/client/use-verdict-stream");
+    expect(stableRequestIdentity(null)).toBe("");
+    expect(stableRequestIdentity({})).toBe("");
+  });
+});
+
 describe("aiVerdict cache policy", () => {
   it("is persisted and long-lived, and is invalidated by the analytical chain", async () => {
     const { DATASETS, dependencyClosure } = await import("@/lib/platform/registry");

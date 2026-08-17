@@ -34,7 +34,7 @@ export async function GET(request: Request) {
       totalValue: report.totalValue,
       allocation: report.allocation,
       risk: report.risk,
-      health: report.health,
+      alignment: report.alignment,
       attribution: report.attribution,
       baseCurrency: report.baseCurrency,
     });

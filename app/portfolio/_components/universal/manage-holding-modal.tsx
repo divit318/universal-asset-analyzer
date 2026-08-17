@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Dialog, ConfirmDialog } from "@/app/_components/dialog";
 import { Button, Field, Input } from "@/app/_components/ui";
 import { useFreshQuote } from "@/app/_components/use-fresh-quote";
@@ -8,7 +8,7 @@ import { formatCurrency } from "@/lib/format";
 import { PORTFOLIO_CLASS_LABEL } from "@/lib/portfolio/model/types";
 import type { Holding } from "@/lib/portfolio/model/types";
 
-type TxMode = "buy" | "sell" | "sell_all";
+export type TxMode = "buy" | "sell" | "sell_all";
 type InputMode = "amount" | "quantity";
 
 interface ManageResult {
@@ -17,6 +17,7 @@ interface ManageResult {
   removed: boolean;
   remainingQuantity: number;
   remainingValue: number;
+  snapshotId: string | null;
 }
 
 /**
@@ -25,11 +26,23 @@ interface ManageResult {
  * thin wrapper around the same Transaction Engine (lib/portfolio/engines/
  * transaction.ts) the Optimize tab's execute route uses — no parallel
  * buy/sell math lives here.
+ *
+ * The Decision Center reuses this modal to EXECUTE its trim/exit/top-up
+ * recommendations: `initialTxMode`/`initialAmount` preload the trade the
+ * engine sized, and `context` carries the decision's one-line "what and why"
+ * into the dialog — the user confirms a prefilled order instead of
+ * reconstructing it.
  */
-export function ManageHoldingModal({ holding, onClose, onSuccess }: {
+export function ManageHoldingModal({ holding, onClose, onSuccess, initialTxMode, initialAmount, context }: {
   holding: Holding;
   onClose: () => void;
   onSuccess: () => void;
+  /** Preselect Buy / Sell / Sell all (e.g. from a Decision Center card). */
+  initialTxMode?: TxMode;
+  /** Prefill the dollar amount — the engine's recommended trade size. */
+  initialAmount?: number;
+  /** Rendered above the form: the decision being executed, so context travels. */
+  context?: ReactNode;
 }) {
   const isManual = holding.id.startsWith("manual:");
   const isCash = holding.assetClass === "cash";
@@ -40,13 +53,19 @@ export function ManageHoldingModal({ holding, onClose, onSuccess }: {
     isTicker,
   );
 
-  const [txMode, setTxMode] = useState<TxMode>(isManual ? "sell_all" : "buy");
+  const [txMode, setTxMode] = useState<TxMode>(initialTxMode ?? (isManual ? "sell_all" : "buy"));
   const [inputMode, setInputMode] = useState<InputMode>("amount");
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(
+    initialAmount != null && initialAmount > 0 && initialTxMode !== "sell_all"
+      ? String(Math.round(initialAmount))
+      : "",
+  );
   const [confirmingSellAll, setConfirmingSellAll] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ManageResult | null>(null);
+  const [undone, setUndone] = useState(false);
+  const [undoing, setUndoing] = useState(false);
   const submittingRef = useRef(false); // belt-and-suspenders against a double click racing the setState above
 
   // Live price for ticker-priced holdings; cash is always 1:1; manual assets
@@ -110,6 +129,7 @@ export function ManageHoldingModal({ holding, onClose, onSuccess }: {
         removed: json.removed,
         remainingQuantity: json.remainingQuantity,
         remainingValue: json.remainingValue,
+        snapshotId: json.snapshotId ?? null,
       });
       onSuccess();
     } catch (e) {
@@ -119,19 +139,47 @@ export function ManageHoldingModal({ holding, onClose, onSuccess }: {
     }
   }
 
+  // Every manage write snapshots the ledger first (the route returns the id),
+  // so a mis-click is reversible from right here — same undo endpoint the
+  // Optimize and Cash flows already use.
+  async function undo() {
+    if (!result?.snapshotId || undoing) return;
+    setUndoing(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/portfolio/optimize/undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ snapshotId: result.snapshotId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Undo failed");
+      setUndone(true);
+      onSuccess();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Undo failed");
+    } finally {
+      setUndoing(false);
+    }
+  }
+
   const title = holding.symbol ? `Manage ${holding.symbol}` : `Manage ${holding.name}`;
 
   /* ── Success screen ── */
   if (result) {
     return (
-      <Dialog open title="Transaction complete" onClose={onClose} className="max-w-md">
+      <Dialog open title={undone ? "Transaction reverted" : "Transaction complete"} onClose={onClose} className="max-w-md">
         <div className="flex flex-col items-center gap-3 py-2 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-positive/15 text-positive">
-            <svg width="22" height="22" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 10l4 4 8-8" />
+          <div className={`flex h-12 w-12 items-center justify-center rounded-full ${undone ? "bg-surface-2 text-muted" : "bg-positive/15 text-positive"}`}>
+            <svg width="22" height="22" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              {undone ? <path d="M4 8h8a4 4 0 1 1 0 8H6M7 5L4 8l3 3" /> : <path d="M4 10l4 4 8-8" />}
             </svg>
           </div>
-          {result.removed ? (
+          {undone ? (
+            <p className="text-sm font-semibold">
+              Reverted — {holding.symbol ?? holding.name} is exactly as it was before this transaction.
+            </p>
+          ) : result.removed ? (
             <>
               <p className="text-sm font-semibold">
                 Sold entire position — {holding.symbol ?? holding.name} removed from your portfolio.
@@ -148,9 +196,17 @@ export function ManageHoldingModal({ holding, onClose, onSuccess }: {
               </p>
             </>
           )}
-          <Button variant="primary" onClick={onClose} className="mt-2 w-full">
-            Done
-          </Button>
+          {error && <p className="text-xs text-negative" role="alert">{error}</p>}
+          <div className="mt-2 flex w-full gap-2">
+            {!undone && result.snapshotId && (
+              <Button variant="secondary" onClick={() => void undo()} disabled={undoing} className="flex-1">
+                {undoing ? "Reverting…" : "Undo"}
+              </Button>
+            )}
+            <Button variant="primary" onClick={onClose} className="flex-1">
+              Done
+            </Button>
+          </div>
         </div>
       </Dialog>
     );
@@ -161,6 +217,7 @@ export function ManageHoldingModal({ holding, onClose, onSuccess }: {
     return (
       <Dialog open title={title} onClose={onClose} className="max-w-md">
         <div className="flex flex-col gap-4">
+          {context}
           <div className="rounded-lg border border-border bg-surface-2 px-4 py-3">
             <p className="text-xs text-muted">{PORTFOLIO_CLASS_LABEL[holding.assetClass]}</p>
             <p className="font-mono text-sm font-semibold">{holding.name}</p>
@@ -218,6 +275,7 @@ export function ManageHoldingModal({ holding, onClose, onSuccess }: {
   return (
     <Dialog open title={title} onClose={onClose} className="max-w-md">
       <div className="flex flex-col gap-4">
+        {context}
         {/* Position summary */}
         <div className="rounded-lg border border-border bg-surface-2 px-4 py-3">
           <div className="flex items-start justify-between gap-3">

@@ -80,6 +80,12 @@ export interface MarketIntelligence {
    * which is what this module is.
    */
   sectorAttention: SectorAttentionChange[];
+  /**
+   * The 11 SPDR sector ETFs' session moves — the Today page's strong→weak
+   * strip. Rides the same batched quote call as the tape (`label` carries the
+   * sector name, not the ETF's). Empty when the provider degraded.
+   */
+  sectors: MarketTicker[];
 }
 
 /* ------------------------------------------------------------------ */
@@ -117,43 +123,72 @@ export interface DayContributor {
 }
 
 /**
- * One spoke of the Portfolio Health radar. Read directly from a scored
- * `HealthDimension` — the radar is a projection of the health engine's real
- * dimensions, never a second, invented set of axes.
+ * One of the book's largest positions — weight and the session's move. Read
+ * from the report's holdings + stamped day moves; nothing recomputed here.
  */
-export interface HealthRadarAxis {
-  /** The health dimension's own name (e.g. "Diversification", "Liquidity"). */
+export interface PulsePosition {
+  symbol: string;
+  name: string;
+  /** % of portfolio value. */
+  weightPct: number;
+  /** Session move vs previous close, %; null when the quote couldn't price it. */
+  dayChangePct: number | null;
+}
+
+/** One asset-class sleeve of the book — share of value, %, descending. */
+export interface PulseSleeve {
+  key: string;
+  label: string;
+  pct: number;
+}
+
+/**
+ * One spoke of the Portfolio Alignment radar. Read directly from a scored
+ * `AlignmentTheme` — the radar is a projection of the alignment engine's real
+ * themes, never a second, invented set of axes.
+ */
+export interface AlignmentRadarAxis {
+  /** The alignment theme's own label (e.g. "Concentration", "Liquidity"). */
   axis: string;
-  /** Short label for tight radar rendering (e.g. "Divers.", "Income"). */
+  /** Short label for tight radar rendering (e.g. "Concentr.", "Income"). */
   shortLabel: string;
   /** 0-100. */
   score: number;
-  /** False when the dimension abstained or was thinly evidenced — drawn faded. */
+  /** False when the theme was unrated (opted out / insufficient data) — drawn faded. */
   covered: boolean;
 }
 
 /**
- * One dimension of the health score, carried with enough of the engine's own
- * arithmetic (weight × coverage, renormalized) that the client can show exactly
- * how the total was produced. Never recomputed client-side beyond display math.
+ * One theme of the alignment score, carried with enough of the engine's own
+ * arithmetic (priority share, renormalized over rated themes) that the client
+ * can show exactly how the total was produced. Never recomputed client-side
+ * beyond display math.
  */
-export interface HealthFactor {
+export interface AlignmentFactor {
   label: string;
-  /** The dimension's own 0-100 score; null = the engine abstained. */
+  /** The theme's own 0-100 score; null = unrated (opted out or insufficient data). */
   score: number | null;
-  /** Share of the renormalized effective weight, 0-1. Null when abstained. */
+  /** Share of the renormalized priority weight, 0-1. Null when unrated. */
   weightShare: number | null;
-  /** weightShare × score — this dimension's points inside the total. */
+  /** weightShare × score — this theme's points inside the total. */
   contributionPts: number | null;
   covered: boolean;
-  /** How much of this dimension's evidence was actually available, 0-100. */
-  coveragePct: number;
+  /** Share of portfolio value the theme's facts could see, 0-100. Disclosure only. */
+  evidencePct: number;
+  /** Why the theme carries no score, when it doesn't. */
+  unratedReason: "opted_out" | "insufficient_data" | null;
 }
 
 export interface PortfolioPulse {
   status: CardStatus;
-  healthScore: number | null;
-  healthGrade: string | null;
+  /** Portfolio-alignment score vs the investor's own policy. Null = unscored. */
+  alignmentScore: number | null;
+  /** "Strongly aligned" … "Misaligned"; null when unscored. */
+  alignmentLabel: string | null;
+  /** False while the score rests on assumed defaults the investor never set. */
+  alignmentConfirmed: boolean;
+  /** The most severe policy mismatch, one sentence in real units. Null = none. */
+  topMismatch: string | null;
   totalValue: number;
   todayChangePct: number;
   todayChangeDollar: number;
@@ -192,21 +227,21 @@ export interface PortfolioPulse {
   totalReturnOnCostPct: number | null;
   /** Share of value that is marked to market rather than self-reported. */
   marketPricedPct: number;
-  /** The health engine's dimensions, projected onto radar spokes. */
-  radar: HealthRadarAxis[];
-  /** Highest-scoring covered dimension — what the book does best. */
+  /** The alignment engine's themes, projected onto radar spokes. */
+  radar: AlignmentRadarAxis[];
+  /** Highest-scoring rated theme — where the book best matches the policy. */
   biggestStrength: { label: string; score: number } | null;
-  /** Lowest-scoring covered dimension — the health score's biggest drag. */
+  /** Lowest-scoring rated theme — the alignment score's biggest drag. */
   biggestWeakness: { label: string; score: number } | null;
-  /** Coverage-adjusted share of health weight that was actually scoreable, 0-100. */
-  healthCoveragePct: number | null;
+  /** Priority-weighted evidence behind the score, 0-100. Disclosure only. */
+  alignmentEvidencePct: number | null;
   /**
-   * The full dimension decomposition behind `healthScore`, for the
-   * click-to-explain UI. Read from the health engine's own dimensions —
+   * The full theme decomposition behind `alignmentScore`, for the
+   * click-to-explain UI. Read from the alignment engine's own themes —
    * the homepage adds no arithmetic of its own beyond the renormalization
    * the engine itself performs.
    */
-  healthFactors: HealthFactor[];
+  alignmentFactors: AlignmentFactor[];
   /**
    * Today's largest contributions to the book's day move (top two positive +
    * the largest negative when the sign mix allows; otherwise the top three by
@@ -227,6 +262,10 @@ export interface PortfolioPulse {
    * this slice; below ~95 the UI must say so next to the number.
    */
   dayCoveragePct: number | null;
+  /** The largest positions by weight — the Today page's "top of book" table. */
+  topPositions: PulsePosition[];
+  /** Asset-class composition, descending by share. */
+  sleeves: PulseSleeve[];
 }
 
 /* ------------------------------------------------------------------ */
@@ -395,6 +434,12 @@ export interface AttentionItem {
   storyKey?: string | null;
   /** Extra links merged in from deduped sibling stories (§12). */
   mergedHrefs?: { label: string; href: string }[];
+  /**
+   * Present when this story is the surface form of a decision thesis:
+   * dismissing it then means "I considered this action" (written to the
+   * shared decision memory), not merely "hide this card here".
+   */
+  thesis?: ActionThesis | null;
 }
 
 /** What a feeder emits — the engine assigns `score`, `id`, and `mergedHrefs`. */
@@ -437,13 +482,14 @@ export interface AttentionQueue {
 /**
  * The measured "current state → proposed action → resulting state" delta of a
  * decision, read verbatim from the engine's `ImpactEstimate` (which was itself
- * produced by *simulating* the trade, not estimating it). `healthAfter` is
- * `healthBefore + healthDelta` on the engine's exact (unrounded) total.
+ * produced by *simulating* the trade, not estimating it). `alignmentAfter` is
+ * `alignmentBefore + alignmentDelta` on the engine's exact (unrounded) score.
+ * All three are null when the book is unscorable — an unknown delta is not 0.
  */
 export interface ActionImpact {
-  healthBefore: number;
-  healthAfter: number;
-  healthDelta: number;
+  alignmentBefore: number | null;
+  alignmentAfter: number | null;
+  alignmentDelta: number | null;
   /** pp change in annualized volatility. Negative = less risky. Null = unmeasurable. */
   riskDeltaPp: number | null;
   /** Change in measured annual income (dividends, coupons, rent), in dollars. */
@@ -487,6 +533,23 @@ export interface RecommendedAction {
   impact: ActionImpact | null;
   /** Real count of simulate() runs behind this pick. Null for queue items. */
   alternativesEvaluated: number | null;
+  /**
+   * The underlying decision thesis (engines/decision-memory.ts) plus the
+   * context a dismissal should be recorded with. Carried so that dismissing
+   * this story ANYWHERE (Today included) writes the one shared decision
+   * memory instead of a per-surface hide. Null for queue-sourced items.
+   */
+  thesis: ActionThesis | null;
+}
+
+/** The revival context a semantic dismissal stores — see decision-memory.ts. */
+export interface ActionThesis {
+  key: string;
+  title: string;
+  policyUpdatedAt: string | null;
+  themeId: string | null;
+  themeScore: number | null;
+  subjectWeightPct: number | null;
 }
 
 export interface RecommendedActions {
@@ -666,7 +729,7 @@ export type HomeBriefChunk =
 /* ------------------------------------------------------------------ */
 
 export type HomeChangeKind =
-  | "health"
+  | "alignment"
   | "regime"
   | "sentiment"
   | "attention-new"
@@ -819,8 +882,8 @@ export interface DashboardFacts {
   dayPnlDollar: Fact;
   /** Share of book value the day move could price (see PortfolioPulse.dayCoveragePct). */
   dayCoveragePct: Fact;
-  healthScore: Fact;
-  healthGrade: Fact<string>;
+  alignmentScore: Fact;
+  alignmentLabel: Fact<string>;
   cashPct: Fact;
   totalReturnOnCostPct: Fact;
   xirrPct: Fact;

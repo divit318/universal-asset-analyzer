@@ -18,8 +18,8 @@ import type { Holding } from "../model/types";
 export type ImplementationDifficulty = "easy" | "moderate" | "hard";
 
 export interface OpportunityCost {
-  /** Health points foregone by NOT making this change — the same healthDelta, reframed as a cost. */
-  healthPointsForegone: number;
+  /** Alignment points foregone by NOT making this change — the same alignmentDelta, reframed as a cost. */
+  alignmentPointsForegone: number;
   incomeForegoneAnnual: number;
   diversificationForegone: number;
   description: string;
@@ -39,6 +39,20 @@ export interface DecisionCard {
   decisionScore: number;
   /** 1 = highest-ranked. "If you only make one change, this should be it." */
   decisionPriority: number;
+  /**
+   * The investor's own rule this decision serves, ready to render ("Driven by
+   * your concentration cap — at most 20% in a single position"). Passed
+   * through from the recommendation so the card and the Alignment panel quote
+   * the same policy in the same words.
+   */
+  policyNote: string;
+  /**
+   * The honest tradeoff, when the trade moves themes in OPPOSITE directions:
+   * "Improves Downside (+9.1) while giving up Structure (−1.8), on your
+   * weights." Null when every material theme movement points the same way —
+   * a manufactured tradeoff would be as dishonest as a hidden one.
+   */
+  themeTradeoff: string | null;
   expectedBenefit: string;
   /** pp change in annualized volatility. Negative = less risky. Null when risk coverage is insufficient to measure it. */
   expectedRiskReduction: number | null;
@@ -62,9 +76,9 @@ export interface DecisionCard {
 }
 
 /**
- * Rescale the engine's existing priority signal (healthDelta × confidence) onto a
- * 0-100 scale, centered on 50 = "doing nothing" (healthDelta 0). The scale factor
- * is chosen so that a strong, confident recommendation (≈10 health points at ≈90%
+ * Rescale the engine's existing priority signal (alignmentDelta × confidence) onto a
+ * 0-100 scale, centered on 50 = "doing nothing" (alignmentDelta 0). The scale factor
+ * is chosen so that a strong, confident recommendation (≈10 alignment points at ≈90%
  * confidence) lands in the high 70s/80s rather than pinning at 100 for every
  * real-world case — leaving room for genuinely exceptional ones to stand out.
  *
@@ -76,7 +90,7 @@ export interface DecisionCard {
  * in both terms, so for equal impact the better-evidenced card always ranks higher.
  */
 function scoreOf(rec: Recommendation): number {
-  const raw = rec.impact.healthDelta * (rec.confidence / 100);
+  const raw = (rec.impact.alignmentDelta ?? 0) * (rec.confidence / 100);
   return Math.round(Math.max(0, Math.min(100, 50 + raw * 3)));
 }
 
@@ -121,7 +135,7 @@ function taxImpactFor(rec: Recommendation, holding: Holding | null): string {
  * measure: the change in annual income (coupons, dividends, rent). This app has no
  * forward price-return forecast for any asset class, and inventing one here would
  * contradict the confidence-weighted-scoring discipline used everywhere else
- * (health, holding scores, risk). Where the trade's real effect is on
+ * (alignment, holding scores, risk). Where the trade's real effect is on
  * diversification or risk rather than income, this says so instead of forcing a
  * number that doesn't exist.
  */
@@ -133,10 +147,31 @@ function returnImpactFor(rec: Recommendation): string {
   return "No material income effect. This app does not forecast price returns, so the case for this change rests on risk, diversification or liquidity — not an expected-return number.";
 }
 
+/**
+ * Name the conflict when one exists. Reads the per-theme deltas simulate.ts
+ * already measured — no re-simulation, no heuristics. Materiality floor of
+ * 0.75 theme-points keeps quote jitter from manufacturing "tradeoffs".
+ */
+const TRADEOFF_MATERIAL_PTS = 0.75;
+
+function themeTradeoffFor(rec: Recommendation): string | null {
+  const material = rec.impact.themeDeltas.filter((t) => Math.abs(t.delta) >= TRADEOFF_MATERIAL_PTS);
+  const gains = material.filter((t) => t.delta > 0);
+  const losses = material.filter((t) => t.delta < 0);
+  if (gains.length === 0 || losses.length === 0) return null;
+
+  const fmt = (list: typeof material) =>
+    list
+      .slice(0, 2)
+      .map((t) => `${t.label} (${t.delta > 0 ? "+" : ""}${t.delta.toFixed(1)})`)
+      .join(" and ");
+  return `Improves ${fmt(gains)} while giving up ${fmt(losses)} — netted on your own priority weights, but the tension is real.`;
+}
+
 function benefitFor(rec: Recommendation): string {
   const parts: string[] = [];
-  if (Math.abs(rec.impact.healthDelta) >= 0.1) {
-    parts.push(`${rec.impact.healthDelta > 0 ? "+" : ""}${rec.impact.healthDelta.toFixed(1)} health points`);
+  if (Math.abs(rec.impact.alignmentDelta ?? 0) >= 0.1) {
+    parts.push(`${(rec.impact.alignmentDelta ?? 0) > 0 ? "+" : ""}${(rec.impact.alignmentDelta ?? 0).toFixed(1)} alignment points`);
   }
   if (rec.impact.riskDelta != null && Math.abs(rec.impact.riskDelta) >= 0.1) {
     parts.push(`${rec.impact.riskDelta < 0 ? "−" : "+"}${Math.abs(rec.impact.riskDelta).toFixed(1)}pp volatility`);
@@ -149,7 +184,7 @@ function benefitFor(rec: Recommendation): string {
 
 function opportunityCostFor(rec: Recommendation): OpportunityCost {
   return {
-    healthPointsForegone: rec.impact.healthDelta,
+    alignmentPointsForegone: rec.impact.alignmentDelta ?? 0,
     incomeForegoneAnnual: rec.impact.incomeDelta,
     diversificationForegone: -rec.impact.diversificationDelta,
     description:
@@ -164,17 +199,17 @@ function whyFor(rec: Recommendation, holding: Holding | null): WhyExplanation {
   const whyNotAlternative = bestAlt
     ? `${rec.alternatives.length} other candidate${rec.alternatives.length === 1 ? "" : "s"} ` +
       `addressing the same gap ${rec.alternatives.length === 1 ? "was" : "were"} simulated — ` +
-      `${rec.alternatives.map((a) => `${a.symbol} (${a.healthDelta >= 0 ? "+" : ""}${a.healthDelta.toFixed(1)})`).join(", ")}. ` +
-      `${rec.symbol ?? rec.subject} measured the largest health-score improvement of the group.`
+      `${rec.alternatives.map((a) => `${a.symbol} (${a.alignmentDelta >= 0 ? "+" : ""}${a.alignmentDelta.toFixed(1)})`).join(", ")}. ` +
+      `${rec.symbol ?? rec.subject} measured the largest alignment-score improvement of the group.`
     : rec.action === "ADD"
       ? "This was the only real candidate simulated for this specific gap."
       : "This decision concerns one specific holding — the alternative is leaving it unchanged, not swapping in a different asset.";
 
   return {
     why: rec.rationale,
-    whyNow: rec.impact.healthDelta > 2
-      ? "The measured gap is large enough that the portfolio is carrying a real, quantified weakness today, not a marginal one."
-      : "The measured effect is real but modest — this is a worthwhile improvement, not an urgent one.",
+    whyNow: (rec.impact.alignmentDelta ?? 0) > 2
+      ? "The measured gap between the book and your stated policy is large enough to be a real, quantified mismatch today, not a marginal one."
+      : "The measured effect is real but modest — this is a worthwhile improvement against your stated policy, not an urgent one.",
     whyThisAmount: `Sized at $${rec.amount.toLocaleString()} (${holding ? `${((rec.amount / Math.max(holding.valuation.valueBase, 1)) * 100).toFixed(0)}% of this holding's value` : "a deliberately conservative slice of the portfolio, not a full restructuring"}) — large enough to move the measured numbers above, small enough to act on without restructuring the rest of the portfolio.`,
     whyNotAlternative,
     // Deliberately does NOT restate opportunityCost.description. The two answer
@@ -185,7 +220,7 @@ function whyFor(rec: Recommendation, holding: Holding | null): WhyExplanation {
     // under Why not do nothing. A memo that repeats itself reads as padding and
     // makes the reader stop looking for new information in later sections.
     whyNotNothing:
-      `"Do nothing" is not an omission here — it is the baseline every number above is measured against: 0 health points, $0 income change, no diversification change. ` +
+      `"Do nothing" is not an omission here — it is the baseline every number above is measured against: 0 alignment points, $0 income change, no diversification change. ` +
       `A candidate whose simulated difference from that baseline is negligible or negative is discarded rather than shown, so this one appears at all only because its measured difference cleared that bar.`,
   };
 }
@@ -219,6 +254,8 @@ export function buildDecisionCards(
       recommendation: rec,
       decisionScore: scoreOf(rec),
       decisionPriority: i + 1,
+      policyNote: rec.policyBasis,
+      themeTradeoff: themeTradeoffFor(rec),
       expectedBenefit: benefitFor(rec),
       expectedRiskReduction: rec.impact.riskDelta,
       expectedReturnImpact: returnImpactFor(rec),

@@ -367,9 +367,11 @@ export function SwapDialog({
                       <Badge variant="neutral">{PORTFOLIO_CLASS_LABEL[holding.assetClass] ?? holding.assetClass}</Badge>
                     </span>
                     {a.why && <span className="text-[11px] leading-relaxed text-muted">{a.why}</span>}
-                    {/* The Decisions tab's "expected portfolio state" — measured, not guessed. */}
+                    {/* The Decisions tab's "expected portfolio state" — measured, not guessed.
+                        The alignment row hides itself (StateRow renders nothing on null)
+                        when either side of the book is unscorable. */}
                     <span className="flex flex-col divide-y divide-border/40 rounded-lg border border-border/60 bg-surface/40 px-3 py-1">
-                      <StateRow label="Portfolio health" before={a.impact.healthBefore} after={a.impact.healthAfter} decimals={0} />
+                      <StateRow label="Portfolio alignment" before={a.impact.alignmentBefore} after={a.impact.alignmentAfter} decimals={0} />
                       <StateRow
                         label="Annualized volatility"
                         before={a.impact.volatilityBefore}

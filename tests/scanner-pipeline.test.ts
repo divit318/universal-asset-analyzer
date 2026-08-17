@@ -59,7 +59,14 @@ describe("runScannerPipeline — stage wiring", () => {
     sectorImpactMock.mockClear();
   });
 
-  it("passes buildCausalChains' output (not the pre-enrichment events) into analyzeSectorImpacts", async () => {
+  // These two run the REAL runStagedPipeline (only the stages are mocked), and
+  // its scheduling overhead is load-sensitive: measured 1.7s on a quiet host,
+  // 8.9s with a dev server + parallel suites competing (2026-08-16, identical
+  // at pre- and post-alignment-wave commits, so not a code regression). On the
+  // 5s default the first test times out and its still-running pipeline then
+  // double-fires the mocks inside the second. Explicit timeout, per vitest's
+  // own advice for long-running tests.
+  it("passes buildCausalChains' output (not the pre-enrichment events) into analyzeSectorImpacts", { timeout: 30_000 }, async () => {
     const enriched = [enrichedEvent()];
     causalEngineMock.mockResolvedValue(enriched);
 
@@ -74,7 +81,7 @@ describe("runScannerPipeline — stage wiring", () => {
     expect(eventsArgPassed[0].causalChain).toHaveLength(1);
   });
 
-  it("runs causal reasoning before sector impact (sequential, not concurrent)", async () => {
+  it("runs causal reasoning before sector impact (sequential, not concurrent)", { timeout: 30_000 }, async () => {
     const callOrder: string[] = [];
     causalEngineMock.mockImplementation(async () => {
       callOrder.push("causal");

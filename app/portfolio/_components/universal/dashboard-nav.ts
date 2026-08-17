@@ -19,7 +19,6 @@ export type Tab =
   | "risk"
   | "intelligence"
   | "decisions"
-  | "pipeline"
   | "optimize"
   | "simulator";
 
@@ -39,7 +38,9 @@ export const TABS: TabItem<Tab>[] = [
   // before deciding anything.
   { id: "intelligence", label: "Intelligence" },
   { id: "decisions",   label: "Decisions"   },
-  { id: "pipeline",    label: "Pipeline"    },
+  // The Idea Pipeline tab moved to the Watchlist (2026-08): unowned ideas are
+  // watchlist state, and two surfaces over one table answered the same
+  // question differently. `?tab=pipeline` deep links redirect there.
   { id: "optimize",    label: "Optimize"    },
   { id: "simulator",   label: "Simulator"   },
 ];

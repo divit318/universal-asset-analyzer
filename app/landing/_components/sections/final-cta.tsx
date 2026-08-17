@@ -82,13 +82,9 @@ export function FinalCta({ section, index }: SectionProps) {
         <Reveal delay={180} className="mt-mk-headline flex flex-col items-center gap-3">
           {/* prefetch={false}: see hero.tsx — landing links into the app
               navigate on click only. */}
-          <Link
-            href={APP_ENTRY}
-            prefetch={false}
-            className="group inline-flex h-12 items-center justify-center gap-2 rounded-control bg-brand px-7 text-sm font-semibold text-background outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:bg-brand-strong active:translate-y-0 active:scale-[0.985] focus-visible:ring-2 focus-visible:ring-brand/40"
-          >
+          <Link href={APP_ENTRY} prefetch={false} className="mk-btn mk-btn-primary group inline-flex h-13 gap-2 px-8 text-sm">
             {FINAL_PRIMARY_ACTION}
-            <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-[3px]">
+            <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-[3px] motion-reduce:transition-none">
               →
             </span>
           </Link>

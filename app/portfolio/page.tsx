@@ -6,7 +6,7 @@
  * ONE page, ONE experience, across every asset class — equities, ETFs, REITs, bonds,
  * commodities, crypto, cash, real estate, private markets, alternatives and
  * structured products. Not a stock dashboard with extra labels bolted on: the
- * allocation, risk, scenario, health, recommendation and optimization engines are all
+ * allocation, risk, scenario, alignment, recommendation and optimization engines are all
  * asset-class-agnostic, and each class plugs its own metrics into them.
  *
  * See PLAN-portfolio-universal.md for the architecture and the audit that motivated it.
@@ -25,6 +25,7 @@ import {
   Badge,
   Card,
 } from "@/app/_components/ui";
+import { downloadBlob } from "@/lib/download";
 import { formatCurrency } from "@/lib/format";
 import type { UniversalPortfolioReport } from "@/lib/portfolio/report";
 import { OBJECTIVES, type Objective } from "@/lib/portfolio/engines/optimize";
@@ -37,7 +38,8 @@ import { DecisionCenter } from "./_components/universal/decision-center";
 import { HoldingsPanel } from "./_components/universal/holdings-panel";
 import { PerformancePanel } from "./_components/universal/performance-panel";
 import { RiskLab } from "./_components/universal/risk-lab";
-import { HealthPanel } from "./_components/universal/health-panel";
+import { AlignmentPanel } from "./_components/universal/alignment-panel";
+import { PolicyEditor } from "./_components/universal/policy-editor";
 import { OptimizePanel } from "./_components/universal/optimize-panel";
 import { CashPanel } from "./_components/universal/cash-panel";
 import { AddHoldingDialog } from "./_components/universal/add-holding-dialog";
@@ -46,7 +48,6 @@ import { PortfolioThesisBanner } from "./_components/universal/portfolio-thesis"
 import { KeyFactsStrip } from "./_components/universal/key-facts-strip";
 import { TABS, TAB_IDS, type Tab } from "./_components/universal/dashboard-nav";
 import { IntelligencePanel } from "./_components/universal/intelligence-panel";
-import { PipelineBoard } from "./_components/pipeline-board";
 import { SimulatorPanel } from "./_components/simulator/simulator-panel";
 import { ReadOnlyHoldings } from "./_components/universal/read-only-holdings";
 import type { PortfolioMeta } from "@/lib/db";
@@ -104,15 +105,27 @@ function PortfolioPageInner() {
   const [showAdd, setShowAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showAllConcentration, setShowAllConcentration] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportErr, setExportErr] = useState<string | null>(null);
+  // A drill-down's pre-seeded Holdings filter ("Technology", "QQQM", "USD") —
+  // how a concentration finding or a decision card lands on exactly the rows
+  // it was talking about. The nonce keys the panel so repeating the same
+  // drill-down re-applies the query even after the user cleared the box.
+  const [holdingsPreset, setHoldingsPreset] = useState<{ query: string; nonce: number } | null>(null);
   const highlightTarget = useArrivalTarget();
   const searchParams = useSearchParams();
   const router = useRouter();
 
   // Tab-and-anchor navigation for the executive layer (key-facts strip,
-  // finding actions): switch tab, then scroll to the section once it exists.
-  // Two frames rather than one — the tab's panels mount on the next render,
-  // and the Reveal wrappers need a beat before offsets are meaningful.
-  const navigateTo = useCallback((target: Tab, anchor?: string) => {
+  // finding actions, decision cards): switch tab, then scroll to the section
+  // once it exists. Two frames rather than one — the tab's panels mount on the
+  // next render, and the Reveal wrappers need a beat before offsets are
+  // meaningful. `opts.holdingsFilter` pre-seeds the Holdings tab's filter box.
+  const navigateTo = useCallback((target: Tab, anchor?: string, opts?: { holdingsFilter?: string }) => {
+    const filter = opts?.holdingsFilter;
+    if (filter != null) {
+      setHoldingsPreset((prev) => ({ query: filter, nonce: (prev?.nonce ?? 0) + 1 }));
+    }
     setTab(target);
     if (!anchor) return;
     requestAnimationFrame(() =>
@@ -129,12 +142,22 @@ function PortfolioPageInner() {
   // than remounting it.
   useEffect(() => {
     const requested = searchParams.get("tab");
+    // The Idea Pipeline tab was absorbed into the Watchlist (2026-08
+    // consolidation). Old deep links — notifications, bookmarks, the AI
+    // assistant's route map — land on the board view there instead of a dead tab.
+    if (requested === "pipeline") {
+      router.replace("/watchlist?view=board");
+      return;
+    }
     // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing to the router's URL state, an external source, not derivable at render time
     if (requested && TAB_IDS.includes(requested)) setTab(requested as Tab);
-  }, [searchParams]);
+  }, [searchParams, router]);
   // Bumped after a trade execution/undo so the (independently-fetched, content-hash
   // cached) Thesis banner knows to refetch — nothing else wires that automatically.
   const [thesisRefreshSignal, setThesisRefreshSignal] = useState(0);
+  // The investor-policy editor (alignment). Saving invalidates the report
+  // server-side; `refresh()` then re-scores the book against the new policy.
+  const [policyEditorOpen, setPolicyEditorOpen] = useState(false);
 
   // CLAUDE.md: client data goes through useDataset — it gives cancellation on
   // param change, in-flight dedup, and per-key re-render. A bare
@@ -178,12 +201,34 @@ function PortfolioPageInner() {
   const cashSlice = report?.allocation.byAssetClass.slices.find((s) => s.key === "cash");
   const cash = { value: cashSlice?.value ?? 0, weight: cashSlice?.weight ?? 0 };
 
+  /**
+   * Holdings as a workbook. The route reads the Main Portfolio (id 1), which is
+   * why the button only renders there. Restores the export the 2026-07-14
+   * universal-platform rebuild dropped while keeping the route and its tests.
+   */
+  const exportExcel = useCallback(async () => {
+    if (exporting) return;
+    setExporting(true);
+    setExportErr(null);
+    try {
+      await downloadBlob(
+        "/api/export/portfolio?format=excel",
+        `portfolio-${new Date().toISOString().slice(0, 10)}.xlsx`,
+      );
+    } catch (e) {
+      console.error("[portfolio] export failed:", e);
+      setExportErr(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  }, [exporting]);
+
   return (
     <PageShell width="wide">
       <ArrivalHighlight targetId={highlightTarget} />
       <PageHeader
         title="Portfolio"
-        description="Holdings, allocation, P&L, risk, and health across every asset class you own — with every recommended change simulated before it's shown."
+        description="Holdings, allocation, P&L, risk, and alignment with your own policy across every asset class you own — with every recommended change simulated before it's shown."
         actions={
           <div className="flex items-center gap-3">
             {/* When these numbers were priced. Without it, an overnight-stale
@@ -192,6 +237,18 @@ function PortfolioPageInner() {
             {report && <AsOfStamp generatedAt={report.generatedAt} />}
             {isMain && (
               <>
+                {exportErr && <span className="text-xs text-negative">{exportErr}</span>}
+                {report && report.holdingCount > 0 && (
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    onClick={() => void exportExcel()}
+                    disabled={exporting}
+                    aria-busy={exporting}
+                  >
+                    {exporting ? "Exporting…" : "Export Excel"}
+                  </Button>
+                )}
                 {/* The zero-typing path: photograph the brokerage app, upload,
                     review the reconciliation, confirm. */}
                 <Button variant="secondary" size="md" onClick={() => setShowImport(true)}>
@@ -295,11 +352,17 @@ function PortfolioPageInner() {
               book — "how much can I deploy?" is asked more often than almost
               anything else on this page — and it was previously reachable only by
               reading a row inside an allocation bar. */}
+          {/* Each tile is also the door into the section that explains its
+              number — total value into the holdings it sums, today's move into
+              the attribution that decomposes it, health into its dimension
+              triage. The number states the fact; the click answers "why?". */}
           <Reveal index={0} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <StatTile
               label="Total value"
               value={<CountUp value={report.totalValue} format={formatCurrency} />}
               sublabel={`${report.holdingCount} holdings · ${report.allocation.byAssetClass.slices.length} asset classes`}
+              onClick={() => navigateTo("holdings")}
+              actionLabel="view all holdings"
             />
             {/* Time-bounded. An unqualified "+0.2%" is not a rate, and sitting next
                 to a "Today +0.42%" that is twice as large it made both figures
@@ -309,12 +372,16 @@ function PortfolioPageInner() {
               value={<CountUp value={report.totalReturn} format={returnPct} />}
               sublabel={`${formatCurrency(report.totalReturnDollar)} · ${periodLabel(report.holdingPeriodDays)}`}
               tone={report.totalReturn >= 0 ? "positive" : "negative"}
+              onClick={() => navigateTo("performance")}
+              actionLabel="open performance breakdown"
             />
             <StatTile
               label="Today"
               value={<CountUp value={report.todayChangePct} format={(v) => pct(v, 2)} />}
               sublabel={formatCurrency(report.todayChangeDollar)}
               tone={report.todayChangePct >= 0 ? "positive" : "negative"}
+              onClick={() => navigateTo("dashboard", "panel-attribution")}
+              actionLabel="see which holdings drove today's move"
             />
             <StatTile
               label="Cash"
@@ -325,6 +392,8 @@ function PortfolioPageInner() {
                   : "No cash buffer"
               }
               tone={cash.weight > 25 ? "warning" : cash.weight < 1 ? "warning" : "default"}
+              onClick={isMain ? () => navigateTo("decisions", "panel-cash") : undefined}
+              actionLabel="open the cash deployment workflow"
             />
             {/* Income counts coupons, rent, staking and interest — not just dividends. */}
             <StatTile
@@ -333,14 +402,34 @@ function PortfolioPageInner() {
               sublabel={`${report.incomeYieldPct.toFixed(2)}% yield`}
             />
             <StatTile
-              label="Health"
-              value={<><CountUp value={report.health.total} format={(v) => Math.round(v).toString()} /> {report.health.grade}</>}
-              sublabel={
-                report.trajectory?.healthDelta != null && Math.abs(report.trajectory.healthDelta) >= 1
-                  ? `${pct(report.trajectory.healthDelta, 0).replace("%", "")} pts over ${report.trajectory.windowDays}d`
-                  : `${report.health.coveragePct}% of dimensions applicable`
+              label="Alignment"
+              value={
+                report.alignment.score != null ? (
+                  <CountUp value={report.alignment.score} format={(v) => Math.round(v).toString()} />
+                ) : (
+                  "—"
+                )
               }
-              tone={report.health.total >= 70 ? "positive" : report.health.total >= 50 ? "default" : "warning"}
+              sublabel={
+                report.alignment.score == null
+                  ? "Not scorable on the available data"
+                  : !report.alignment.confirmed
+                    ? "vs assumed defaults — set yours"
+                    : report.trajectory?.scoreDelta != null && Math.abs(report.trajectory.scoreDelta) >= 1
+                      ? `${pct(report.trajectory.scoreDelta, 0).replace("%", "")} pts over ${report.trajectory.windowDays}d`
+                      : report.alignment.label ?? "vs your policy"
+              }
+              tone={
+                report.alignment.score == null
+                  ? "default"
+                  : report.alignment.score >= 70
+                    ? "positive"
+                    : report.alignment.score >= 55
+                      ? "default"
+                      : "warning"
+              }
+              onClick={() => navigateTo("dashboard", "panel-alignment")}
+              actionLabel="see how the book matches your policy"
             />
           </Reveal>
 
@@ -444,12 +533,25 @@ function PortfolioPageInner() {
                         it. Main portfolio only: those tabs act on Main. */}
                     {isMain && (
                       <div className="flex flex-wrap items-center gap-x-3 text-[11px]">
+                        {/* The dead end this list had: the finding NAMES what is
+                            concentrated but gave no way to see the rows causing
+                            it. Liquidity is the one dimension the holdings
+                            filter can't express, so it stays without one. */}
+                        {c.type !== "liquidity" && (
+                          <button
+                            type="button"
+                            onClick={() => navigateTo("holdings", undefined, { holdingsFilter: c.label })}
+                            className="rounded-sm font-medium text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                          >
+                            See the holdings behind this →
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => navigateTo("optimize")}
                           className="rounded-sm text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
                         >
-                          Rebalance in Optimize →
+                          Rebalance in Optimize
                         </button>
                         <button
                           type="button"
@@ -493,8 +595,15 @@ function PortfolioPageInner() {
           )}
 
           <Reveal index={4}>
+            {/* The Decisions tab wears its queue length — "what should I do?"
+                is the page's headline question, and whether there IS anything
+                to do shouldn't require opening the tab to learn. */}
             <Tabs
-              tabs={isMain ? TABS : TABS.filter((t) => VIEW_ONLY_TABS.includes(t.id))}
+              tabs={(isMain ? TABS : TABS.filter((t) => VIEW_ONLY_TABS.includes(t.id))).map((t) =>
+                t.id === "decisions" && report.decisions.length > 0
+                  ? { ...t, badge: report.decisions.length, badgeVariant: "brand" as const }
+                  : t,
+              )}
               active={effectiveTab}
               onChange={setTab}
               layoutId="portfolio-universal-tabs"
@@ -505,7 +614,7 @@ function PortfolioPageInner() {
               Ordered by the question each section answers, most urgent first:
 
                 1. What changed, and did my last change help?   (Trajectory)
-                   What is actually wrong with it?              (Health, triaged)
+                   Where does it disagree with my policy?       (Alignment)
                 2. What is it made of?                          (Allocation)
                 3. What is carrying this, what is dragging it?   (Attribution)
                 4. What will move it next?                      (Macro factors)
@@ -527,12 +636,12 @@ function PortfolioPageInner() {
                 <div id="panel-trajectory" className="h-full scroll-mt-20">
                   <TrajectoryPanel trajectory={report.trajectory} />
                 </div>
-                <div id="panel-health" className="h-full scroll-mt-20">
-                  <HealthPanel
-                    health={report.health}
-                    holdings={report.holdings}
-                    risk={report.risk}
+                <div id="panel-alignment" className="h-full scroll-mt-20">
+                  <AlignmentPanel
+                    alignment={report.alignment}
+                    policy={report.policy}
                     onNavigate={isMain ? navigateTo : undefined}
+                    onEditPolicy={isMain ? () => setPolicyEditorOpen(true) : undefined}
                   />
                 </div>
               </div>
@@ -565,24 +674,40 @@ function PortfolioPageInner() {
             <div className="flex flex-col gap-5">
               <DecisionCenter
                 decisions={report.decisions}
-                health={report.health}
+                suppressedDecisions={report.suppressedDecisions}
+                policyUpdatedAt={report.policy.updatedAt}
+                portfolioId={portfolioId}
+                alignment={report.alignment}
                 risk={report.risk}
                 assetClassHhi={report.allocation.byAssetClass.hhi}
                 annualIncome={report.annualIncome}
-              />
-              <CashPanel
+                holdings={report.holdings}
+                baseCurrency={report.baseCurrency}
                 onExecuted={() => {
                   refresh();
                   setThesisRefreshSignal((n) => n + 1);
                 }}
+                onNavigate={navigateTo}
               />
+              <div id="panel-cash" className="scroll-mt-20">
+                <CashPanel
+                  onExecuted={() => {
+                    refresh();
+                    setThesisRefreshSignal((n) => n + 1);
+                  }}
+                />
+              </div>
             </div>
           )}
 
           {effectiveTab === "holdings" && (
             <HoldingsPanel
+              // Keyed by the drill-down nonce: repeating "See the holdings behind
+              // this" re-seeds the filter even if the user has since edited it.
+              key={holdingsPreset?.nonce ?? 0}
               holdings={report.holdings}
               totalValue={report.totalValue}
+              initialQuery={holdingsPreset?.query}
               onChanged={() => { refresh(); setThesisRefreshSignal((n) => n + 1); }}
             />
           )}
@@ -593,8 +718,6 @@ function PortfolioPageInner() {
           {effectiveTab === "performance" && (
             <PerformancePanel performance={report.performance} totalValue={report.totalValue} />
           )}
-
-          {effectiveTab === "pipeline" && <PipelineBoard />}
 
           {effectiveTab === "risk" && <RiskLab risk={report.risk} scenarios={report.scenarios} />}
 
@@ -626,6 +749,27 @@ function PortfolioPageInner() {
         </div>
       )}
 
+      {report && (
+        <PolicyEditor
+          open={policyEditorOpen}
+          onClose={() => setPolicyEditorOpen(false)}
+          policy={report.policy}
+          // The measured book, so Advanced mode can preview "score with this
+          // policy: 66 → 74" through the real engine and print the measured
+          // value beside each limit — same facts the report already computed.
+          facts={{
+            holdings: report.holdings,
+            totalValue: report.totalValue,
+            allocation: report.allocation,
+            risk: report.risk,
+          }}
+          portfolioId={portfolioId}
+          onSaved={() => {
+            refresh();
+            setThesisRefreshSignal((n) => n + 1);
+          }}
+        />
+      )}
       <AddHoldingDialog
         open={showAdd}
         onClose={() => setShowAdd(false)}

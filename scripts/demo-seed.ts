@@ -20,7 +20,7 @@
  *      trajectory on its own.
  *   b. Replaces portfolio_snapshot (portfolio 1) with five pre/post-execution
  *      pairs spanning Apr 14 → Jul 28, 2026, so getPortfolioTrajectory() has a
- *      4-month health series (and the real portfolio's snapshot history never
+ *      4-month alignment-score series (and the real portfolio's snapshot history never
  *      appears on camera). Snapshot `holdings` are captured from the rebuilt
  *      ledger, so an accidental Undo restores the dummy book, never garbage.
  *   c. Purges the persisted platform_cache rows that describe the pre-seed
@@ -76,23 +76,20 @@ const POSITIONS: {
 /** Caches that describe the pre-seed book (registry: portfolioReport → missionContext, homeDigest). */
 const STALE_DATASETS = ["portfolioReport", "missionContext", "homeDigest"];
 
-/** Same bands as lib/portfolio/engines/health.ts healthGradeOf(). */
-const gradeOf = (score: number) => (score >= 85 ? "A" : score >= 70 ? "B" : score >= 55 ? "C" : score >= 40 ? "D" : "F");
-
 interface SeedPoint {
   at: string;
   label: "pre-execution" | "post-execution";
   objective: string | null;
   totalValue: number;
   totalCost: number;
-  health: number;
+  alignment: number;
   volatility: number;
   /** { assetClass: weight } — largest becomes topAssetClassWeight. */
   alloc: Record<string, number>;
 }
 
 /**
- * Five executions, Apr → Jul 2026: the initial cash deployment (the big health
+ * Five executions, Apr → Jul 2026: the initial cash deployment (the big alignment
  * jump), three follow-on buys, and a June trim into the drawdown. Values track
  * the book the avg costs imply (~$3.64M deployed April, ~$4.0M by August).
  *
@@ -101,16 +98,16 @@ interface SeedPoint {
  * unexplained overnight drop from the last snapshot to "now".
  */
 const SNAPSHOTS: SeedPoint[] = [
-  { at: "2026-04-14T14:31:00.000Z", label: "pre-execution",  objective: "maximize_diversification", totalValue: 3_642_000, totalCost: 3_640_000, health: 51, volatility: 6.4,  alloc: { cash: 62.3, equity: 24.9, etf: 12.8 } },
-  { at: "2026-04-14T14:33:00.000Z", label: "post-execution", objective: "maximize_diversification", totalValue: 3_641_200, totalCost: 3_640_000, health: 58, volatility: 10.6, alloc: { equity: 41.2, cash: 32.7, etf: 26.1 } },
-  { at: "2026-04-22T15:12:00.000Z", label: "pre-execution",  objective: "maximize_diversification", totalValue: 3_655_000, totalCost: 3_648_000, health: 58, volatility: 10.9, alloc: { equity: 44.0, cash: 29.8, etf: 26.2 } },
-  { at: "2026-04-22T15:14:00.000Z", label: "post-execution", objective: "maximize_diversification", totalValue: 3_654_100, totalCost: 3_648_000, health: 61, volatility: 11.2, alloc: { equity: 46.4, cash: 27.5, etf: 26.1 } },
-  { at: "2026-05-19T14:05:00.000Z", label: "pre-execution",  objective: "maximize_sharpe",          totalValue: 3_721_000, totalCost: 3_712_000, health: 62, volatility: 11.9, alloc: { equity: 47.2, etf: 26.5, cash: 26.3 } },
-  { at: "2026-05-19T14:07:00.000Z", label: "post-execution", objective: "maximize_sharpe",          totalValue: 3_719_800, totalCost: 3_712_000, health: 64, volatility: 11.7, alloc: { equity: 47.6, etf: 26.9, cash: 25.5 } },
-  { at: "2026-06-26T13:45:00.000Z", label: "pre-execution",  objective: "minimize_volatility",      totalValue: 3_566_000, totalCost: 3_778_000, health: 61, volatility: 14.2, alloc: { equity: 45.8, etf: 27.1, cash: 27.1 } },
-  { at: "2026-06-26T13:47:00.000Z", label: "post-execution", objective: "minimize_volatility",      totalValue: 3_564_900, totalCost: 3_778_000, health: 63, volatility: 13.6, alloc: { equity: 45.2, etf: 27.4, cash: 27.4 } },
-  { at: "2026-07-28T14:20:00.000Z", label: "pre-execution",  objective: "maximize_sharpe",          totalValue: 3_931_000, totalCost: 3_778_000, health: 64, volatility: 12.6, alloc: { equity: 48.1, etf: 26.6, cash: 25.3 } },
-  { at: "2026-07-28T14:22:00.000Z", label: "post-execution", objective: "maximize_sharpe",          totalValue: 3_929_600, totalCost: 3_778_000, health: 66, volatility: 12.4, alloc: { equity: 48.4, etf: 26.6, cash: 25.0 } },
+  { at: "2026-04-14T14:31:00.000Z", label: "pre-execution",  objective: "maximize_diversification", totalValue: 3_642_000, totalCost: 3_640_000, alignment: 51, volatility: 6.4,  alloc: { cash: 62.3, equity: 24.9, etf: 12.8 } },
+  { at: "2026-04-14T14:33:00.000Z", label: "post-execution", objective: "maximize_diversification", totalValue: 3_641_200, totalCost: 3_640_000, alignment: 58, volatility: 10.6, alloc: { equity: 41.2, cash: 32.7, etf: 26.1 } },
+  { at: "2026-04-22T15:12:00.000Z", label: "pre-execution",  objective: "maximize_diversification", totalValue: 3_655_000, totalCost: 3_648_000, alignment: 58, volatility: 10.9, alloc: { equity: 44.0, cash: 29.8, etf: 26.2 } },
+  { at: "2026-04-22T15:14:00.000Z", label: "post-execution", objective: "maximize_diversification", totalValue: 3_654_100, totalCost: 3_648_000, alignment: 61, volatility: 11.2, alloc: { equity: 46.4, cash: 27.5, etf: 26.1 } },
+  { at: "2026-05-19T14:05:00.000Z", label: "pre-execution",  objective: "maximize_sharpe",          totalValue: 3_721_000, totalCost: 3_712_000, alignment: 62, volatility: 11.9, alloc: { equity: 47.2, etf: 26.5, cash: 26.3 } },
+  { at: "2026-05-19T14:07:00.000Z", label: "post-execution", objective: "maximize_sharpe",          totalValue: 3_719_800, totalCost: 3_712_000, alignment: 64, volatility: 11.7, alloc: { equity: 47.6, etf: 26.9, cash: 25.5 } },
+  { at: "2026-06-26T13:45:00.000Z", label: "pre-execution",  objective: "minimize_volatility",      totalValue: 3_566_000, totalCost: 3_778_000, alignment: 61, volatility: 14.2, alloc: { equity: 45.8, etf: 27.1, cash: 27.1 } },
+  { at: "2026-06-26T13:47:00.000Z", label: "post-execution", objective: "minimize_volatility",      totalValue: 3_564_900, totalCost: 3_778_000, alignment: 63, volatility: 13.6, alloc: { equity: 45.2, etf: 27.4, cash: 27.4 } },
+  { at: "2026-07-28T14:20:00.000Z", label: "pre-execution",  objective: "maximize_sharpe",          totalValue: 3_931_000, totalCost: 3_778_000, alignment: 64, volatility: 12.6, alloc: { equity: 48.1, etf: 26.6, cash: 25.3 } },
+  { at: "2026-07-28T14:22:00.000Z", label: "post-execution", objective: "maximize_sharpe",          totalValue: 3_929_600, totalCost: 3_778_000, alignment: 66, volatility: 12.4, alloc: { equity: 48.4, etf: 26.6, cash: 25.0 } },
 ];
 
 function fail(msg: string): never {
@@ -172,7 +169,7 @@ function seed() {
   }
 
   // ── b. Replace the snapshot history ───────────────────────────────────────
-  // The old rows describe the REAL portfolio (values, health, allocation) and
+  // The old rows describe the REAL portfolio (values, alignment, allocation) and
   // would render in the trajectory panel on camera. The backup taken above is
   // the recovery path.
   const removed = Number(db.prepare("DELETE FROM portfolio_snapshot WHERE portfolio_id = ?").run(PORTFOLIO_ID).changes);
@@ -192,8 +189,7 @@ function seed() {
     const summary = {
       totalValue: p.totalValue,
       totalCost: p.totalCost,
-      health: p.health,
-      healthGrade: gradeOf(p.health),
+      alignment: p.alignment,
       volatility: p.volatility,
       topAssetClassWeight: Math.max(...Object.values(p.alloc)),
       allocation,

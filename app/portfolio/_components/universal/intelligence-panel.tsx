@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
+import Link from "next/link";
 import { useDataset } from "@/lib/platform/client/use-dataset";
 import { Card, Badge } from "@/app/_components/ui";
 import { LoadingMark } from "@/app/_components/loading-mark";
@@ -8,6 +9,7 @@ import { CollapsibleSection } from "@/app/_components/collapsible-section";
 import { formatDate } from "@/lib/format";
 import type {
   EvidenceLine,
+  FindingExplore,
   IntelligenceFinding,
   PortfolioIntelligence,
   WhatChanged,
@@ -218,6 +220,21 @@ const BASIS_LABEL: Record<EvidenceLine["basis"], string> = {
   derived: "Derived",
 };
 
+/**
+ * Where a finding's proof can be DRAWN. Every detector may declare an Exposure
+ * view (`explore`) that shows exactly why its finding is true — the type
+ * existed here since the Exposure rebuild but this panel never rendered it, so
+ * findings ended in prose when a picture of the actual routes was one link
+ * away. An issuer trace deep-links straight to that trace; the other views
+ * land on /exposure, whose findings rail carries this same finding with its
+ * "show me exactly why" navigation.
+ */
+function exploreHref(explore: FindingExplore): string {
+  return explore.kind === "trace"
+    ? `/exposure?issuer=${encodeURIComponent(explore.target)}`
+    : "/exposure";
+}
+
 function FindingCard({ finding: f, priority }: { finding: IntelligenceFinding; priority: number }) {
   const tone = SEVERITY_BADGE[f.severity];
   return (
@@ -235,14 +252,24 @@ function FindingCard({ finding: f, priority }: { finding: IntelligenceFinding; p
             <p className="mt-1.5 text-xs leading-relaxed text-muted">{f.headline}</p>
           </div>
         </div>
-        {f.weightPct != null && (
-          <span
-            className="shrink-0 cursor-help font-mono text-[11px] tabular-nums text-muted/70 underline decoration-dotted decoration-muted/30 underline-offset-2"
-            title="Share of portfolio value implicated by this finding"
-          >
-            {f.weightPct.toFixed(1)}% involved
-          </span>
-        )}
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          {f.weightPct != null && (
+            <span
+              className="cursor-help font-mono text-[11px] tabular-nums text-muted/70 underline decoration-dotted decoration-muted/30 underline-offset-2"
+              title="Share of portfolio value implicated by this finding"
+            >
+              {f.weightPct.toFixed(1)}% involved
+            </span>
+          )}
+          {f.explore && (
+            <Link
+              href={exploreHref(f.explore)}
+              className="rounded-sm text-[11px] font-medium text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+            >
+              See it drawn in Exposure →
+            </Link>
+          )}
+        </div>
       </div>
 
       <CollapsibleSection title="Evidence & reasoning" subtitle="Every line labelled: observed from data, or derived from it">

@@ -1,129 +1,132 @@
 "use client";
 
 import Link from "next/link";
+import { useRef } from "react";
 import type { LandingSection } from "../../landing-config";
 import { APP_ENTRY, PRIMARY_ACTION, SECONDARY_ACTION } from "../../landing-config";
-import { OrnamentalEyebrow } from "../primitives/ornamental-eyebrow";
-import { TwoToneHeadline } from "../primitives/two-tone-headline";
+import { MeridianField } from "../meridian/MeridianField";
 import { PipelineRow } from "../pipeline-row";
-import { HeroField } from "../hero-field";
 import { Reveal } from "../motion/reveal";
+import { useScrollVelocity } from "../motion/hooks";
+import series from "../ink/hero-series.json";
 
 /**
- * Hero — the filament field is FULL-BLEED: its canvas spans the entire hero
- * body edge to edge (hero-field.tsx), behind the text, and the ribbon
- * bleeds off both the left and right viewport edges. The text keeps its
- * left ~52% column (the headline sets as exactly two lines at every
- * breakpoint, and the lead holds a 60 to 70 character measure); legibility
- * is guaranteed by the spine passing below the text block, the thin dim
- * entry, a left-edge scrim, and the CTA quiet zone. Column discipline
- * remains in force for every other section — this full-bleed treatment is
- * the hero's alone. Beneath the hero body, the 01 to 05 pipeline is a
- * DETACHED typographic row (pipeline-row.tsx) that closes the section; the
- * four trust chips live in the Solution section, where they substantiate
- * its claim instead of restating the pipeline's.
+ * Hero — the Meridian act. The section is a 230–250svh pin: a full-viewport
+ * observatory plate (MeridianField) stays fixed while the visitor's scroll
+ * resolves the dust above the engraved limb into the constellation of the
+ * committed market record. The words never move; only the sky computes.
+ *
+ * Contracts preserved from the previous hero: exactly one h1 carrying the
+ * two approved lines; the thesis kicker readable on the page (now engraved
+ * on the limb as real SVG text); the lead naming what ships; primary CTA a
+ * LINK into the open app; secondary CTA an anchor to #demo; the 01–05
+ * pipeline row visible inside the section from first paint; a single
+ * canvas, aria-hidden. Every text block carries data-mk-keepout so the
+ * field's ink thins beneath it — words own their darkness.
  */
 export function Hero({ section }: { section: LandingSection }) {
   const headingId = `${section.id}-heading`;
+  const cueRef = useRef<HTMLDivElement | null>(null);
+  const cueShown = useRef(true);
+
+  // The cue explains the pin, then leaves the moment the visitor uses it.
+  useScrollVelocity((s) => {
+    const show = s.scrollY < 60;
+    if (show !== cueShown.current) {
+      cueShown.current = show;
+      if (cueRef.current) cueRef.current.style.opacity = show ? "1" : "0";
+    }
+  });
 
   return (
-    /* Below lg there is no spacer column centring the text, so the section
-       itself must clear the fixed nav pill: pt-24 gives the eyebrow ~36px
-       of air under it; at lg+ the grid centring provides the room. */
-    <section id={section.id} aria-labelledby={headingId} className="scroll-mt-22 overflow-hidden border-b border-hairline pt-24 lg:pt-16">
-      {/* The hero body: full-bleed field behind, text column in front. */}
-      <div className="relative pb-64 lg:pb-0">
-        <HeroField />
-        <div data-measure="content" className="relative mx-auto w-full max-w-measure-content px-mk-pad">
-          <div className="grid items-center gap-10 lg:grid-cols-[52fr_48fr] lg:gap-8">
-          {/* data-hero-copy scopes the field's text-exclusion measurement
-              (ink/hero-sdf.ts): every text rect inside thins the material. */}
-          <div data-hero-copy className="flex flex-col items-start">
-            <Reveal delay={0}>
-              {/* Diamond terminus, no trailing rule: over the full-bleed
-                  field the fading hairline had no right-hand anchor and
-                  read as an unfinished stroke. The eyebrow carries the
-                  page's thesis line; the H1 below says what UAA IS. */}
-              <OrnamentalEyebrow variant="left" terminus="diamond">
-                <span className="text-muted">Every figure computed.</span> <span>Every claim traced.</span>
-              </OrnamentalEyebrow>
-            </Reveal>
+    <>
+    <section id={section.id} aria-labelledby={headingId} className="relative h-[205svh] border-b border-hairline sm:h-[225svh] lg:h-[245svh]">
+      <div className="sticky top-0 flex h-svh flex-col overflow-hidden">
+        <MeridianField />
 
-            <Reveal delay={90}>
-              {/* The five-second test: a first-time visitor must know what
-                  UAA is from the H1 alone. Two clean lines at every
-                  breakpoint, never four fragments. */}
-              <TwoToneHeadline
-                as="h1"
-                id={headingId}
-                size="hero-split"
-                align="left"
-                className="mt-mk-eyebrow"
-                segments={[
-                  { text: "Investment research,", block: true },
-                  { text: "running on your machine.", tone: "accent", block: true },
-                ]}
-              />
-            </Reveal>
+        {/* The words: still, in the quiet zone BENEATH the dome. The top
+            padding places the headline's first baseline below the limb's
+            apex (24% of the viewport) with clearance for its feather. */}
+        <div className="relative z-10 mx-auto flex w-full max-w-measure-content flex-1 flex-col justify-start px-mk-pad pt-[max(6.5rem,24svh)] sm:pt-[max(7rem,29svh)]">
+          <Reveal delay={0}>
+            <h1 id={headingId} data-mk-keepout className="font-serif text-mk-colossal -indent-[0.03em]">
+              <span className="block text-foreground">Investment research,</span>
+              <span className="mk-gild block pr-[0.06em] italic">running on your machine.</span>
+            </h1>
+          </Reveal>
 
-            <Reveal delay={180}>
-              {/* Measure: 60 to 70 characters (34rem at 18px), about four
-                  lines at desktop width, so the final line never orphans.
-                  At lg only, the column would cap the measure at ~53
-                  characters and strand "you own." alone; the narrower 26rem
-                  cap there produces a clean five-line rag instead. */}
-              <p data-lead className="mt-mk-headline max-w-[34rem] text-pretty text-mk-lead text-muted lg:max-w-[26rem] xl:max-w-[34rem]">
-                UAA is one research terminal for market data, filings, screening, valuation, and
-                portfolio intelligence. Deterministic engines compute every metric, the AI only
-                explains what they found, and each figure traces back to its source, in a database{" "}
-                <span className="text-brand">you own</span>.
-              </p>
-            </Reveal>
+          <Reveal delay={140}>
+            <p data-mk-keepout data-lead className="mt-6 max-w-[36rem] text-pretty text-mk-lead text-muted sm:mt-7">
+              UAA is one research terminal for market data, filings, screening, valuation, and
+              portfolio intelligence. Deterministic engines compute every metric, the AI only
+              explains what they found, and each figure traces back to its source, in a database{" "}
+              <span className="text-brand">you own</span>.
+            </p>
+          </Reveal>
 
-            <Reveal delay={280}>
-              <div className="mt-mk-lead flex flex-col items-start gap-3 sm:flex-row">
-                {/* prefetch={false} on every APP_ENTRY link on this page: the
-                    marketing surface must not speculatively load the app
-                    shell, and under UAA_AUTH_GATE=on a signed-out prefetch
-                    caches the gate's redirect, which the post-sign-in
-                    router.push would then replay. */}
-                <Link
-                  href={APP_ENTRY}
-                  prefetch={false}
-                  className="group inline-flex h-12 items-center justify-center gap-2 rounded-control bg-brand px-7 text-sm font-semibold text-background outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:bg-brand-strong active:translate-y-0 active:scale-[0.985] focus-visible:ring-2 focus-visible:ring-brand/40"
-                >
-                  {PRIMARY_ACTION}
-                  <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-[3px]">
-                    →
-                  </span>
-                </Link>
-                <a
-                  href="#demo"
-                  className="inline-flex h-12 items-center justify-center gap-1.5 rounded-control border border-border bg-surface px-7 text-sm font-semibold text-foreground outline-none transition-[background-color,border-color,transform] duration-[120ms] hover:-translate-y-px hover:border-border-strong hover:bg-surface-2 active:translate-y-0 active:scale-[0.985] focus-visible:ring-2 focus-visible:ring-brand/40"
-                >
-                  {SECONDARY_ACTION}
-                  <span aria-hidden="true">↓</span>
-                </a>
+          <Reveal delay={260}>
+            <div data-mk-keepout className="mt-9 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:gap-4">
+              {/* prefetch={false} on every APP_ENTRY link on this page: the
+                  marketing surface must not speculatively load the app
+                  shell, and under UAA_AUTH_GATE=on a signed-out prefetch
+                  caches the gate's redirect, which the post-sign-in
+                  router.push would then replay. */}
+              <Link href={APP_ENTRY} prefetch={false} className="mk-btn mk-btn-primary group inline-flex h-13 gap-2 px-8 text-sm">
+                {PRIMARY_ACTION}
+                <span aria-hidden="true" className="transition-transform duration-[200ms] group-hover:translate-x-[3px] motion-reduce:transition-none">
+                  →
+                </span>
+              </Link>
+              <a href="#demo" className="mk-btn mk-btn-quiet inline-flex h-13 gap-2 px-8 text-sm">
+                {SECONDARY_ACTION}
+                <span aria-hidden="true">↓</span>
+              </a>
+            </div>
+          </Reveal>
+
+          {/* The pin's one instruction. Names the metaphor, then gets out
+              of the way on first scroll. Dropped on short viewports where
+              the composition has no air to spare. */}
+          <Reveal delay={420}>
+            <div
+              ref={cueRef}
+              aria-hidden="true"
+              className="mt-12 hidden items-center gap-3 transition-opacity duration-[640ms] sm:flex [@media(max-height:720px)]:hidden motion-reduce:transition-none"
+            >
+              <span className="h-px w-10 bg-gradient-to-r from-brand/60 to-transparent" />
+              <span className="font-mono text-[10px] uppercase tracking-[0.34em] text-brand/70">Scroll to resolve</span>
+            </div>
+          </Reveal>
+        </div>
+
+        {/* The engraved caption strip: the 01–05 pipeline closes the plate.
+            On phones the plate has no room for it (the mobile strip below
+            takes over, OUTSIDE section#hero so hero-scoped queries and
+            screen readers each meet exactly one copy per breakpoint). */}
+        <div className="relative z-10 mx-auto hidden w-full max-w-measure-content px-mk-pad pb-5 sm:pb-7 md:block">
+          <Reveal delay={520}>
+            <div data-mk-keepout className="border-t border-hairline pt-5">
+              <div className="mb-4 flex items-baseline justify-between gap-4">
+                <span aria-hidden="true" className="h-1 w-1 rotate-45 bg-brand/60" />
+                {/* Plate caption: derived from the asset's own metadata so
+                    the line can never drift from what drives the field. */}
+                <p data-hero-attribution className="select-none text-right font-mono text-[10px] uppercase tracking-[0.2em] text-foreground/40">
+                  {series.index} · {series.start.slice(0, 4)}–{series.end.slice(0, 4)} · plotted on the limb · computed locally
+                </p>
               </div>
-            </Reveal>
-          </div>
-
-          {/* Height spacer: keeps the hero body at illustration scale on
-              desktop. The field itself is full-bleed behind this grid. */}
-          <div aria-hidden="true" className="relative hidden h-[440px] w-full lg:block xl:h-[500px]" />
-          </div>
+              <PipelineRow />
+            </div>
+          </Reveal>
         </div>
       </div>
-
-      <div data-measure="content" className="mx-auto w-full max-w-measure-content px-mk-pad">
-        {/* The detached pipeline row closes the hero: full width,
-            typographic, independent. Gaps are spacing-scale values
-            (mk-group above the rule, mk-group below it, mk-lead under
-            the row) so the interval reads deliberate, not leftover. */}
-        <Reveal delay={360} className="mt-mk-group border-t border-hairline pb-mk-lead pt-mk-group">
-          <PipelineRow />
-        </Reveal>
-      </div>
     </section>
+
+    {/* Mobile pipeline strip: the plate's caption, read after the act. */}
+    <div className="border-b border-hairline md:hidden">
+      <div className="mx-auto w-full max-w-measure-content px-mk-pad py-8">
+        <PipelineRow />
+      </div>
+    </div>
+    </>
   );
 }

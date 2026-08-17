@@ -4,6 +4,7 @@ import path from "node:path";
 import type { ChartDrawingRecord, PortfolioPosition, PortfolioLot, ResearchNote, StockFundamentals, WatchlistItem, WatchlistGroup, TargetRevision, IdeaStage, TargetDirection, Conviction, ThesisHorizon, SectorRotationEntry, TimelineEvent, Notification, Decision, DecisionAction, DecisionHorizon, ManualAsset, ManualAssetCategory } from "./types";
 import { aggregateOpenPositions } from "./portfolio-lots";
 import { isIdeaStage, autoStageForTrade, effectiveStage, isPipelineSymbol } from "./idea-stage";
+import type { IdeaEvidence } from "./ideas/evidence";
 import { isIdeaSource, type IdeaSource } from "./idea-source";
 import { isUsablePrice } from "./watchlist-metrics";
 import {
@@ -16,7 +17,7 @@ import type {
 } from "./valuation/case";
 import { renderAlertText, type AlertEvent, type AlertFacts } from "./alerts";
 import type { AttentionDismissal } from "./home/contracts";
-import type { Simulation, SimProfile, SimHolding, SimThesis, SimHeadline } from "./portfolio/simulator/types";
+import { normalizeStoredHeadline, type Simulation, type SimProfile, type SimHolding, type SimThesis, type SimHeadline } from "./portfolio/simulator/types";
 import { normalizeStoredProfile } from "./portfolio/simulator/profile";
 
 let db: DatabaseSync | null = null;
@@ -220,11 +221,6 @@ function getDb(): DatabaseSync {
       data       TEXT NOT NULL,
       created_at INTEGER NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS kg_snapshot (
-      scope_key    TEXT PRIMARY KEY,
-      graph        TEXT NOT NULL,
-      generated_at TEXT NOT NULL
-    );
     /* Portfolio Intelligence: the previous run's findings + holdings weights,
      * kept so a fresh run can report what changed since the last one. Singleton
      * row, no global prune -- scanner_cache would evict it within the hour. */
@@ -323,6 +319,16 @@ function getDb(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS idx_portfolio_snapshot_created ON portfolio_snapshot (created_at DESC);
 
+    /* Investor policy: the investor's stated priorities and tolerances, one row
+     * per portfolio. Versioned JSON validated at the boundary by
+     * lib/portfolio/alignment/policy.ts's parseInvestorPolicy — the DB stores,
+     * the parser trusts nothing. */
+    CREATE TABLE IF NOT EXISTS portfolio_policy (
+      portfolio_id INTEGER PRIMARY KEY,
+      policy       TEXT NOT NULL,
+      updated_at   TEXT NOT NULL
+    );
+
     /* Simulator: AI-generated hypothetical portfolios. A row is a *specification*
      * (intake profile + hypothetical holdings), never a computed result — all
      * analytics are recomputed live through the same engines as the real
@@ -382,6 +388,27 @@ function getDb(): DatabaseSync {
       expires_at   INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_attention_dismissal_expires ON attention_dismissal (expires_at);
+
+    -- Decision-thesis dismissals (lib/portfolio/engines/decision-memory.ts).
+    -- One row per (portfolio, underlying action) the investor explicitly
+    -- declined — "reduce:QQQM", "gap:no_bonds" — with the CONTEXT at dismissal
+    -- (policy version, subject weight, owning theme's score) so revival is a
+    -- measured judgment ("materially worse since") rather than a TTL. Unlike
+    -- attention_dismissal (one UI story identity, per-kind TTL), this is
+    -- consumed by the recommendation PIPELINE, so Decisions, Today, the digest
+    -- and the home spotlight all share one memory. No expiry column: a
+    -- considered "no" lapses only on material change or explicit restore.
+    CREATE TABLE IF NOT EXISTS decision_dismissal (
+      portfolio_id        INTEGER NOT NULL,
+      thesis_key          TEXT NOT NULL,
+      dismissed_at        TEXT NOT NULL,
+      policy_updated_at   TEXT,
+      theme_id            TEXT,
+      theme_score         REAL,
+      subject_weight_pct  REAL,
+      title               TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (portfolio_id, thesis_key)
+    );
 
     -- Dashboard usage events (audit 13, IN-05). Unlike the activity table (a
     -- set of places, upserted) this is an append-only ledger: one row per interaction,
@@ -641,6 +668,26 @@ function getDb(): DatabaseSync {
   ]) {
     try { db.exec(`ALTER TABLE watchlist ADD COLUMN ${col}`); } catch { /* already exists */ }
   }
+  // Durable research recency (2026-08 watchlist/pipeline consolidation). The
+  // visit log (`activity`) upserts on (kind, ref) and prunes itself to 50 rows,
+  // so it alone cannot carry "was this ever researched?" — a fact the derived
+  // workflow (lib/ideas/evidence.ts) depends on. This column is the durable
+  // floor: bumped on every Research Hub visit for a tracked symbol, backfilled
+  // once from the stores that already witnessed research. The backfill only
+  // fills NULLs (a real stamp is never lowered) and is idempotent by shape.
+  try { db.exec("ALTER TABLE watchlist ADD COLUMN last_researched_at TEXT"); } catch { /* already exists */ }
+  try {
+    db.exec(`
+      UPDATE watchlist SET last_researched_at = (
+        SELECT MAX(t) FROM (
+          SELECT a.at AS t FROM activity a WHERE a.kind = 'research' AND upper(a.ref) = watchlist.symbol
+          UNION ALL
+          SELECT rs.updated_at AS t FROM research_session rs WHERE upper(rs.symbol) = watchlist.symbol
+        )
+      )
+      WHERE last_researched_at IS NULL
+    `);
+  } catch { /* activity/research_session may not exist on a brand-new db yet */ }
   /* Named watchlists — seed the default list and adopt every existing symbol
    * into it, so a pre-existing user opens the page to exactly what they had.
    * Both steps are guarded by their own emptiness check rather than a version
@@ -741,6 +788,7 @@ interface WatchlistRow {
   conviction: string | null;
   horizon: string | null;
   last_reviewed_at: number | null;
+  last_researched_at: string | null;
 }
 
 const isConviction = (v: unknown): v is Conviction => v === "low" || v === "medium" || v === "high";
@@ -770,12 +818,13 @@ function rowToWatchlistItem(r: WatchlistRow): WatchlistItem {
     conviction: isConviction(r.conviction) ? r.conviction : null,
     horizon: isHorizon(r.horizon) ? r.horizon : null,
     lastReviewedAt: r.last_reviewed_at ?? null,
+    lastResearchedAt: r.last_researched_at ?? null,
   };
 }
 
 const WATCHLIST_COLUMNS =
   "symbol, name, added_at, target_price, target_direction, alert_pct_drop, notes, stage, stage_changed_at, source, source_detail, " +
-  "buy_trigger, sell_trigger, conviction, horizon, last_reviewed_at";
+  "buy_trigger, sell_trigger, conviction, horizon, last_reviewed_at, last_researched_at";
 
 /**
  * Every tracked symbol, across every named list.
@@ -1326,6 +1375,175 @@ function reconcileStageForLedgerWrite(symbol: string, name: string, kind: "buy" 
   } catch {
     /* stage reconciliation must never break a trade write */
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Idea evidence — what the app can prove happened (lib/ideas/evidence.ts)     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Stamp research activity onto a tracked symbol's row. Called when the
+ * Research Hub logs a visit (see /api/home/activity) — the durable counterpart
+ * to the self-pruning visit log. Monotonic: an older timestamp never lowers a
+ * newer one. A no-op for untracked symbols by design; researching a name you
+ * never tracked is not watchlist state.
+ */
+export function touchIdeaResearch(symbol: string, at: string = new Date().toISOString()): void {
+  getDb()
+    .prepare(
+      `UPDATE watchlist
+       SET last_researched_at = CASE
+         WHEN last_researched_at IS NULL OR last_researched_at < ? THEN ?
+         ELSE last_researched_at
+       END
+       WHERE symbol = ?`,
+    )
+    .run(at, at, symbol.toUpperCase());
+}
+
+/**
+ * The observed research artifacts for a set of symbols, in one pass — the
+ * input `deriveWorkflow` needs. Reads only stores that already exist (research
+ * sessions, notes, valuation cases, the journal, the visit log) rather than
+ * introducing any parallel tracking; the whole point of the consolidation is
+ * that evidence is what already happened, recorded where it happened.
+ */
+export function getIdeaEvidence(symbols: string[]): Map<string, IdeaEvidence> {
+  const db = getDb();
+  const wanted = new Set(symbols.map((s) => s.toUpperCase()));
+  const out = new Map<string, IdeaEvidence>();
+  const entry = (sym: string) => {
+    let e = out.get(sym);
+    if (!e) {
+      e = {
+        lastResearchedAt: null,
+        aiSessions: 0,
+        noteCount: 0,
+        lastNoteAt: null,
+        valuationCases: 0,
+        lastValuationAt: null,
+        journalDecisions: 0,
+        lastDecisionAt: null,
+        lastDecisionAction: null,
+        lastDecisionThesis: null,
+      };
+      out.set(sym, e);
+    }
+    return e;
+  };
+  const maxIso = (a: string | null, b: string | null): string | null =>
+    a == null ? b : b == null ? a : a > b ? a : b;
+
+  // Durable per-row stamp (backfilled at migration, bumped on every visit).
+  const stamps = db
+    .prepare("SELECT symbol, last_researched_at FROM watchlist WHERE last_researched_at IS NOT NULL")
+    .all() as unknown as { symbol: string; last_researched_at: string }[];
+  for (const r of stamps) {
+    const sym = r.symbol.toUpperCase();
+    if (!wanted.has(sym)) continue;
+    const e = entry(sym);
+    e.lastResearchedAt = maxIso(e.lastResearchedAt, r.last_researched_at);
+  }
+
+  // The visit log — may carry a visit newer than the stamp (or predate it).
+  const visits = db
+    .prepare("SELECT ref, at FROM activity WHERE kind = 'research'")
+    .all() as unknown as { ref: string; at: string }[];
+  for (const v of visits) {
+    const sym = v.ref.trim().toUpperCase();
+    if (!wanted.has(sym)) continue;
+    const e = entry(sym);
+    e.lastResearchedAt = maxIso(e.lastResearchedAt, v.at);
+  }
+
+  // AI research sessions — durable, and research recency in their own right.
+  const sessions = db
+    .prepare("SELECT upper(symbol) AS sym, COUNT(*) AS n, MAX(updated_at) AS last FROM research_session GROUP BY upper(symbol)")
+    .all() as unknown as { sym: string; n: number; last: string | null }[];
+  for (const s of sessions) {
+    if (!wanted.has(s.sym)) continue;
+    const e = entry(s.sym);
+    e.aiSessions = Number(s.n);
+    e.lastResearchedAt = maxIso(e.lastResearchedAt, s.last);
+  }
+
+  const notes = db
+    .prepare("SELECT upper(symbol) AS sym, COUNT(*) AS n, MAX(created_at) AS last FROM research_notes GROUP BY upper(symbol)")
+    .all() as unknown as { sym: string; n: number; last: string | null }[];
+  for (const n of notes) {
+    if (!wanted.has(n.sym)) continue;
+    const e = entry(n.sym);
+    e.noteCount = Number(n.n);
+    e.lastNoteAt = n.last;
+  }
+
+  const cases = db
+    .prepare("SELECT upper(symbol) AS sym, COUNT(*) AS n, MAX(updated_at) AS last FROM valuation_case GROUP BY upper(symbol)")
+    .all() as unknown as { sym: string; n: number; last: string | null }[];
+  for (const c of cases) {
+    if (!wanted.has(c.sym)) continue;
+    const e = entry(c.sym);
+    e.valuationCases = Number(c.n);
+    e.lastValuationAt = c.last;
+  }
+
+  // Journal entries; the latest row also carries the pass reason when the
+  // latest act was a pass (action 'avoid').
+  const decisions = db
+    .prepare("SELECT upper(symbol) AS sym, action, thesis, created_at FROM decision ORDER BY created_at ASC, id ASC")
+    .all() as unknown as { sym: string; action: string; thesis: string | null; created_at: string }[];
+  for (const d of decisions) {
+    if (!wanted.has(d.sym)) continue;
+    const e = entry(d.sym);
+    e.journalDecisions += 1;
+    e.lastDecisionAt = d.created_at; // ascending scan: the last write wins
+    e.lastDecisionAction = d.action;
+    e.lastDecisionThesis = d.thesis;
+  }
+
+  return out;
+}
+
+/**
+ * Pass on an idea — the one deliberate "no" in the workflow.
+ *
+ * Does three things atomically enough for a local app: stores the judgment
+ * (stage = 'passed'), and writes a CLOSED journal entry carrying the reason so
+ * the record of why survives the watchlist row itself. The journal is the
+ * system of record for decisions; a pass with no reason on file is exactly the
+ * unaccountable state the old pipeline's unused "Passed" column left behind.
+ */
+export function passIdea(
+  symbol: string,
+  input: { reason: string; note?: string | null; priceAt?: number | null },
+): { changed: boolean } {
+  const sym = symbol.toUpperCase();
+  const row = getDb()
+    .prepare("SELECT name FROM watchlist WHERE symbol = ?")
+    .get(sym) as { name: string } | undefined;
+  if (!row) return { changed: false };
+
+  const { changed } = setIdeaStage(sym, "passed");
+  const thesis = [input.reason.trim(), input.note?.trim()].filter(Boolean).join(" — ");
+  const decision = createDecision({
+    symbol: sym,
+    name: row.name,
+    action: "avoid",
+    conviction: 3,
+    thesis: `Passed: ${thesis}`,
+    priceAt: input.priceAt ?? null,
+  });
+  // A pass is resolved the moment it is logged — it opens nothing to track.
+  closeDecision(decision.id, input.priceAt ?? null);
+  return { changed };
+}
+
+/** Reopen a passed idea. The derived workflow takes over from the evidence. */
+export function reactivateIdea(symbol: string): { changed: boolean } {
+  const sym = symbol.toUpperCase();
+  const current = getIdeaStage(sym);
+  if (current !== "passed" && current !== "exited") return { changed: false };
+  return { changed: setIdeaStage(sym, "surfaced").changed };
 }
 
 /**
@@ -2186,8 +2404,19 @@ export function applyPortfolioImport(writes: PortfolioImportWrite[], portfolioId
 export interface PortfolioSnapshotSummary {
   totalValue: number;
   totalCost: number;
-  health: number;
-  healthGrade: string;
+  /**
+   * Portfolio alignment score at snapshot time (null = not scorable). Rows
+   * written before the alignment engine carry the legacy `health` /
+   * `healthGrade` fields instead; history.ts reads `alignment ?? health` so old
+   * snapshots keep their trend value. The two scores measure different things
+   * (universal weights vs the investor's own policy) — trajectory surfaces note
+   * the definition change rather than pretending the series is homogeneous.
+   */
+  alignment: number | null;
+  /** @deprecated legacy health score on pre-alignment rows. Never written anymore. */
+  health?: number;
+  /** @deprecated legacy letter grade on pre-alignment rows. Never written anymore. */
+  healthGrade?: string;
   volatility: number | null;
   topAssetClassWeight: number;
   allocation: { assetClass: string; weight: number }[];
@@ -2253,6 +2482,39 @@ export function listSnapshots(limit = 20): PortfolioSnapshot[] {
     .prepare("SELECT id, label, objective, summary, created_at FROM portfolio_snapshot ORDER BY created_at DESC LIMIT ?")
     .all(limit) as unknown as Omit<PortfolioSnapshotRow, "holdings">[];
   return rows.map(rowToSnapshot);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Investor policy                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The stored investor policy blob, or null when the investor has never saved
+ * one. Returned as unknown on purpose: the ONLY trusted shape is what
+ * parseInvestorPolicy (lib/portfolio/alignment/policy.ts) makes of it — the DB
+ * layer neither validates nor defaults, so there is exactly one boundary.
+ */
+export function getInvestorPolicyRaw(portfolioId = 1): unknown | null {
+  const row = getDb()
+    .prepare("SELECT policy FROM portfolio_policy WHERE portfolio_id = ?")
+    .get(portfolioId) as unknown as { policy: string } | undefined;
+  if (!row) return null;
+  try {
+    return JSON.parse(row.policy);
+  } catch {
+    // A corrupt blob is an unset policy, not a broken portfolio page.
+    return null;
+  }
+}
+
+export function saveInvestorPolicyRaw(policyJson: string, portfolioId = 1): void {
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO portfolio_policy (portfolio_id, policy, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(portfolio_id) DO UPDATE SET policy = excluded.policy, updated_at = excluded.updated_at`,
+    )
+    .run(portfolioId, policyJson, now);
 }
 
 /**
@@ -2364,7 +2626,10 @@ function rowToSimulation(r: SimulationRow): Simulation {
     profile: normalizeStoredProfile(JSON.parse(r.profile)),
     holdings: JSON.parse(r.holdings),
     thesis: r.thesis ? JSON.parse(r.thesis) : null,
-    headline: r.headline ? JSON.parse(r.headline) : null,
+    // Same boundary rule as profile: headlines persisted before the alignment
+    // engine carry `healthScore`; normalizing here keeps every caller on the
+    // declared shape until the row's next evaluation rewrites it.
+    headline: normalizeStoredHeadline(r.headline ? JSON.parse(r.headline) : null),
     promotedAt: r.promoted_at,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -2948,32 +3213,14 @@ export function putScannerSnapshot(result: string, generatedAt: string): void {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Knowledge Graph snapshots — the previous graph per scope, kept so a fresh  */
-/* build can report "what changed since your last visit". One row per scope   */
-/* key ("symbol:AAPL", "portfolio", …), no global prune (see scanner_snapshot */
-/* above for why scanner_cache is the wrong home for anything long-lived).    */
+/* NOTE — `kg_snapshot` (the old Knowledge Graph's per-scope "what changed     */
+/* since your last visit" store) was dropped with the feature. Its replacement */
+/* is portfolio_intelligence_snapshot below, which diffs against the LEDGER    */
+/* rather than against a previous rendering of a graph: "you added a position" */
+/* is a change worth reporting, "the graph now has three fewer event nodes"    */
+/* never was. The table is left in place on existing databases (harmless, and  */
+/* dropping user data on upgrade is worse); nothing reads or writes it.        */
 /* -------------------------------------------------------------------------- */
-
-interface KgSnapshotRow {
-  graph: string;
-  generated_at: string;
-}
-
-export function getKgSnapshot(scopeKey: string): { graph: string; generatedAt: string } | null {
-  const row = getDb()
-    .prepare("SELECT graph, generated_at FROM kg_snapshot WHERE scope_key = ?")
-    .get(scopeKey) as unknown as KgSnapshotRow | undefined;
-  return row ? { graph: row.graph, generatedAt: row.generated_at } : null;
-}
-
-export function putKgSnapshot(scopeKey: string, graph: string, generatedAt: string): void {
-  getDb()
-    .prepare(
-      `INSERT INTO kg_snapshot (scope_key, graph, generated_at) VALUES (?, ?, ?)
-       ON CONFLICT(scope_key) DO UPDATE SET graph = excluded.graph, generated_at = excluded.generated_at`,
-    )
-    .run(scopeKey, graph, generatedAt);
-}
 
 /* -------------------------------------------------------------------------- */
 /* Portfolio Intelligence snapshot — the previous run, kept indefinitely so a */
@@ -3424,6 +3671,23 @@ export function undismissAttention(dedupeKey: string): void {
 }
 
 /**
+ * Remove every dismissal whose key starts with one of `prefixes` — the
+ * cross-surface Undo path. Attention dedupe keys embed a score BAND
+ * (`action:QQQM:50`), which the restoring surface cannot reconstruct; a
+ * thesis restored in Decisions must also lift the story hide on Today, or
+ * the two surfaces disagree for up to the hide's TTL.
+ */
+export function undismissAttentionByPrefix(prefixes: string[]): void {
+  const db = getDb();
+  for (const p of prefixes) {
+    if (!p) continue;
+    // Escape LIKE wildcards in the prefix itself; append our own %.
+    const escaped = p.replace(/([%_\\])/g, "\\$1");
+    db.prepare("DELETE FROM attention_dismissal WHERE dedupe_key LIKE ? ESCAPE '\\'").run(`${escaped}%`);
+  }
+}
+
+/**
  * Active (unexpired) dismissals, pruning lapsed rows opportunistically on read
  * (§12 — the queue never accumulates dead dismissal rows). The digest joins
  * this into its build server-side (§18).
@@ -3435,6 +3699,73 @@ export function listActiveDismissals(now: number = Date.now()): AttentionDismiss
     .prepare("SELECT dedupe_key, dismissed_at, expires_at FROM attention_dismissal")
     .all() as unknown as AttentionDismissalRow[];
   return rows.map((r) => ({ dedupeKey: r.dedupe_key, dismissedAt: r.dismissed_at, expiresAt: r.expires_at }));
+}
+
+/* -------------------------------------------------------------------------- */
+/* Decision-thesis dismissals (lib/portfolio/engines/decision-memory.ts)       */
+/* -------------------------------------------------------------------------- */
+
+interface DecisionDismissalRow {
+  thesis_key: string;
+  dismissed_at: string;
+  policy_updated_at: string | null;
+  theme_id: string | null;
+  theme_score: number | null;
+  subject_weight_pct: number | null;
+  title: string;
+}
+
+/** Persist (or refresh) the investor's dismissal of one underlying decision thesis. */
+export function dismissDecisionThesis(
+  portfolioId: number,
+  d: {
+    thesisKey: string;
+    dismissedAt: string;
+    policyUpdatedAt: string | null;
+    themeId: string | null;
+    themeScore: number | null;
+    subjectWeightPct: number | null;
+    title: string;
+  },
+): void {
+  getDb()
+    .prepare(
+      `INSERT INTO decision_dismissal (portfolio_id, thesis_key, dismissed_at, policy_updated_at, theme_id, theme_score, subject_weight_pct, title)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(portfolio_id, thesis_key) DO UPDATE SET
+         dismissed_at = excluded.dismissed_at,
+         policy_updated_at = excluded.policy_updated_at,
+         theme_id = excluded.theme_id,
+         theme_score = excluded.theme_score,
+         subject_weight_pct = excluded.subject_weight_pct,
+         title = excluded.title`,
+    )
+    .run(portfolioId, d.thesisKey, d.dismissedAt, d.policyUpdatedAt, d.themeId, d.themeScore, d.subjectWeightPct, d.title);
+}
+
+/** Explicit restore — the investor asks to be shown this thesis again. */
+export function undismissDecisionThesis(portfolioId: number, thesisKey: string): void {
+  getDb()
+    .prepare("DELETE FROM decision_dismissal WHERE portfolio_id = ? AND thesis_key = ?")
+    .run(portfolioId, thesisKey);
+}
+
+/** Every dismissal for a portfolio — the report pipeline joins these per build. */
+export function listDecisionDismissals(portfolioId: number): import("./portfolio/engines/decision-memory").DecisionDismissal[] {
+  const rows = getDb()
+    .prepare(
+      "SELECT thesis_key, dismissed_at, policy_updated_at, theme_id, theme_score, subject_weight_pct, title FROM decision_dismissal WHERE portfolio_id = ?",
+    )
+    .all(portfolioId) as unknown as DecisionDismissalRow[];
+  return rows.map((r) => ({
+    thesisKey: r.thesis_key,
+    dismissedAt: r.dismissed_at,
+    policyUpdatedAt: r.policy_updated_at,
+    themeId: r.theme_id,
+    themeScore: r.theme_score,
+    subjectWeightPct: r.subject_weight_pct,
+    title: r.title,
+  }));
 }
 
 /* -------------------------------------------------------------------------- */

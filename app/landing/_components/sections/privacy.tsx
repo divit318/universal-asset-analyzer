@@ -45,7 +45,7 @@ reviewing a self-directed investor's portfolio.
 
 PORTFOLIO
 Total value: $412,380.00
-Health: 74/100 (B)
+Alignment with the investor's own stated policy: 74/100 (Well aligned)
 Annualized volatility: 13.8%
 Beta vs S&P 500: 1.04
 Largest asset class: 67% · largest single holding: 11.2%

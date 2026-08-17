@@ -13,6 +13,7 @@ import {
   YAxis,
 } from "recharts";
 import type { EarningsData } from "@/lib/types";
+import { formatChartPrice } from "@/lib/format";
 import { useChartTheme } from "@/app/_components/chart-theme";
 
 // Structural + semantic chart colors come from useChartTheme() inside the
@@ -48,10 +49,12 @@ interface TooltipPayloadItem {
 function EarningsTooltip({
   active,
   payload,
+  currency,
   style,
 }: {
   active?: boolean;
   payload?: TooltipPayloadItem[];
+  currency?: string | null;
   style?: React.CSSProperties;
 }) {
   if (!active || !payload?.length) return null;
@@ -62,13 +65,13 @@ function EarningsTooltip({
       {d.epsActual != null && (
         <p className="flex gap-2 text-xs">
           <span className={d.beat ? "text-positive" : "text-negative"}>Actual</span>
-          <span className="font-mono">${d.epsActual.toFixed(2)}</span>
+          <span className="font-mono">{formatChartPrice(d.epsActual, currency)}</span>
         </p>
       )}
       {d.epsEstimate != null && (
         <p className="flex gap-2 text-xs">
           <span className="text-muted">Estimate</span>
-          <span className="font-mono">${d.epsEstimate.toFixed(2)}</span>
+          <span className="font-mono">{formatChartPrice(d.epsEstimate, currency)}</span>
         </p>
       )}
       {d.surprisePercent != null && (
@@ -86,7 +89,14 @@ function EarningsTooltip({
   );
 }
 
-export function EarningsCard({ earnings }: { earnings: EarningsData }) {
+export function EarningsCard({
+  earnings,
+  currency,
+}: {
+  earnings: EarningsData;
+  /** Listing currency (Quote.currency) — Yahoo reports EPS figures in it. Absent → bare numbers. */
+  currency?: string | null;
+}) {
   const ct = useChartTheme();
   const AXIS = ct.axis, GRID = ct.grid, MUTED = ct.axis, POSITIVE = ct.positive, NEGATIVE = ct.negative;
   const { nextDate, nextDateEnd, trailingEps, forwardEps } = earnings;
@@ -149,7 +159,7 @@ export function EarningsCard({ earnings }: { earnings: EarningsData }) {
             <div className="flex flex-col gap-0.5">
               <span className="text-xs uppercase tracking-wide text-muted">TTM EPS</span>
               <span className="font-mono text-sm font-medium">
-                ${trailingEps.toFixed(2)}
+                {formatChartPrice(trailingEps, currency)}
               </span>
             </div>
           )}
@@ -157,7 +167,7 @@ export function EarningsCard({ earnings }: { earnings: EarningsData }) {
             <div className="flex flex-col gap-0.5">
               <span className="text-xs uppercase tracking-wide text-muted">Fwd EPS</span>
               <span className="font-mono text-sm font-medium">
-                ${forwardEps.toFixed(2)}
+                {formatChartPrice(forwardEps, currency)}
               </span>
             </div>
           )}
@@ -196,11 +206,11 @@ export function EarningsCard({ earnings }: { earnings: EarningsData }) {
               tick={{ fontSize: 11, fill: AXIS }}
               tickLine={false}
               axisLine={false}
-              tickFormatter={(v: number) => `$${v.toFixed(1)}`}
+              tickFormatter={(v: number) => formatChartPrice(v, currency)}
               width={44}
             />
             <ReferenceLine y={0} stroke={GRID} />
-            <Tooltip content={<EarningsTooltip style={ct.tooltip} />} cursor={{ fill: ct.cursorFill }} />
+            <Tooltip content={<EarningsTooltip currency={currency} style={ct.tooltip} />} cursor={{ fill: ct.cursorFill }} />
 
             {/* Estimate as a thin background bar */}
             <Bar dataKey="epsEstimate" fill={MUTED} fillOpacity={0.25} radius={[3, 3, 0, 0]} />

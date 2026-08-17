@@ -1,11 +1,15 @@
 import { isValidSymbol } from "@/lib/market";
 import { NextResponse } from "next/server";
 import { isIdeaSource } from "@/lib/idea-source";
+import { isPipelineSymbol } from "@/lib/idea-stage";
+import { deriveWorkflow, EMPTY_EVIDENCE } from "@/lib/ideas/evidence";
+import { listRawHoldings } from "@/lib/portfolio/store";
 import { resolveDisplayName } from "@/lib/yahoo";
 import type { Conviction, TargetDirection, ThesisHorizon } from "@/lib/types";
 import {
   addToWatchlist,
   getFreshFundamentals,
+  getIdeaEvidence,
   listWatchlist,
   listWatchlistByGroup,
   listWatchlistGroups,
@@ -20,10 +24,16 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/watchlist[?group=2] — saved symbols, enriched with cached sector data.
+ * GET /api/watchlist[?group=2] — saved symbols, enriched with cached sector
+ * data, the observed research evidence, and the derived workflow state.
  *
  * Omitting `group` returns every tracked symbol, which is what every non-page
  * caller means and preserves the pre-named-lists contract exactly.
+ *
+ * `workflow` and `evidence` are computed here — one derivation, server-side,
+ * from local SQLite — so the table, the board and every filter read the same
+ * truth. `owned` comes from the same holdings read the Portfolio renders,
+ * never from the stored stage (the ledger wins in both directions).
  */
 export async function GET(request: Request) {
   try {
@@ -41,13 +51,24 @@ export async function GET(request: Request) {
     // Revision counts in one query, so the row can show a history affordance
     // without the page issuing 57 follow-up requests.
     const revisions = targetRevisionCounts(base.map((i) => i.symbol));
+    const evidence = getIdeaEvidence(base.map((i) => i.symbol));
+    const held = new Set(
+      listRawHoldings()
+        .map((h) => h.symbol?.toUpperCase())
+        .filter((s): s is string => isPipelineSymbol(s)),
+    );
     const items = base.map((item) => {
       const f = bySymbol.get(item.symbol);
+      const ev = evidence.get(item.symbol.toUpperCase()) ?? EMPTY_EVIDENCE;
+      const owned = held.has(item.symbol.toUpperCase());
       return {
         ...item,
         sector: f?.sector ?? null,
         dividendYield: f?.dividendYield ?? null,
         targetRevisionCount: revisions.get(item.symbol) ?? 0,
+        owned,
+        evidence: ev,
+        workflow: deriveWorkflow({ held: owned, stage: item.stage, item, evidence: ev }),
       };
     });
     return NextResponse.json({ items, groups: listWatchlistGroups() });

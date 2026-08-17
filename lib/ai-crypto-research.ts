@@ -7,6 +7,7 @@
  */
 
 import { runPromptWithMeta } from "./ai";
+import { formatCompactCurrency } from "./format";
 import type { ScoreResult } from "./types";
 import type { ChatMessage } from "./ai-research";
 
@@ -22,7 +23,7 @@ interface CryptoFacts {
 function cryptoDataBlock(facts: CryptoFacts, score: ScoreResult): string {
   return `CRYPTO ASSET: ${facts.symbol} — ${facts.name}
 Price: ${facts.price} ${facts.currency} (${facts.changePercent >= 0 ? "+" : ""}${facts.changePercent.toFixed(2)}% today)
-Market cap: ${facts.marketCap != null ? `$${(facts.marketCap / 1e9).toFixed(1)}B` : "n/a"}
+Market cap: ${facts.marketCap != null ? formatCompactCurrency(facts.marketCap, facts.currency) : "n/a"}
 
 CRYPTO SCORE: ${score.composite}/100 → ${score.recommendation} (${score.confidence}% confidence)
 Score breakdown: ${score.buckets.map((b) => `${b.name}=${Math.round((b.points / b.max) * 100)}%`).join(", ")}

@@ -51,6 +51,7 @@ function syntheticItem(symbol: string, name: string): WatchlistItem {
     conviction: null,
     horizon: null,
     lastReviewedAt: null,
+    lastResearchedAt: null,
     stage: "surfaced",
     stageChangedAt: null,
     source: null,

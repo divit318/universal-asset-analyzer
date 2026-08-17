@@ -38,15 +38,18 @@
  */
 
 import { buildEquityFacts, buildPortfolioFacts, hasPortfolioContext, type PortfolioFacts } from "./facts";
+import { buildResearchBrief, briefFactLines } from "./tension";
 import { scoreDirection } from "../recommendation";
 import type { DatasetId } from "../platform/types";
 import type { CompanyContext } from "./types";
 
 export type ReportSectionId =
   | "headline"
+  | "tension"
   | "thesis"
   | "catalysts"
   | "risks"
+  | "triggers"
   | "keyMetrics"
   | "confidence"
   | "timeHorizon"
@@ -71,15 +74,30 @@ export interface ReportSectionSpec {
  * order they stream to the user. High-value first: a portfolio manager can act
  * on the headline and thesis long before the key metrics table has been written.
  */
+/**
+ * `tension` and `triggers` are new (2026-08-12) and `keyMetrics` is no longer
+ * requested from the EQUITY prompt — it asked the model to re-emit five numbers
+ * that the page already renders as cards directly above the verdict, which is
+ * the single clearest instance of "restates what I can already see". It stays
+ * in the list because the five non-equity plans (fund/crypto/commodity/forex/
+ * macro in lib/ai/verdict.ts) still ask for it and have no such card strip.
+ *
+ * A section a given asset class does not emit simply never streams: the route
+ * looks each key up with `sectionFor` and skips unknown ones, and the replay
+ * path skips keys absent from the stored verdict. So this list is a superset,
+ * not a contract that every class must satisfy.
+ */
 export const REPORT_SECTIONS: ReportSectionSpec[] = [
   { id: "headline", title: "Investment Summary", order: 1, invalidatedBy: ["fundamentals", "statements", "filings"] },
-  { id: "thesis", title: "Investment Thesis", order: 2, invalidatedBy: ["fundamentals", "statements", "filings"] },
-  { id: "catalysts", title: "Catalysts", order: 3, invalidatedBy: ["fundamentals", "news", "filings"] },
-  { id: "risks", title: "Key Risks", order: 4, invalidatedBy: ["fundamentals", "statements", "filings"] },
-  { id: "confidence", title: "Confidence", order: 5, invalidatedBy: ["fundamentals", "statements"] },
-  { id: "timeHorizon", title: "Time Horizon", order: 6, invalidatedBy: ["fundamentals"] },
-  { id: "keyMetrics", title: "Key Metrics", order: 7, invalidatedBy: ["quote", "fundamentals", "statements"] },
-  { id: "verdict", title: "Investment Verdict", order: 8, invalidatedBy: ["quote", "fundamentals", "statements", "filings"] },
+  { id: "tension", title: "The Central Tension", order: 2, invalidatedBy: ["fundamentals", "statements", "filings"] },
+  { id: "thesis", title: "Investment Thesis", order: 3, invalidatedBy: ["fundamentals", "statements", "filings"] },
+  { id: "catalysts", title: "What Supports It", order: 4, invalidatedBy: ["fundamentals", "news", "filings"] },
+  { id: "risks", title: "What Worries Me", order: 5, invalidatedBy: ["fundamentals", "statements", "filings"] },
+  { id: "triggers", title: "What Changes The Verdict", order: 6, invalidatedBy: ["fundamentals", "statements"] },
+  { id: "confidence", title: "Confidence", order: 7, invalidatedBy: ["fundamentals", "statements"] },
+  { id: "timeHorizon", title: "Time Horizon", order: 8, invalidatedBy: ["fundamentals"] },
+  { id: "keyMetrics", title: "Key Metrics", order: 9, invalidatedBy: ["quote", "fundamentals", "statements"] },
+  { id: "verdict", title: "Investment Verdict", order: 10, invalidatedBy: ["quote", "fundamentals", "statements", "filings"] },
 ];
 
 const BY_ID = new Map(REPORT_SECTIONS.map((s) => [s.id, s]));
@@ -151,36 +169,50 @@ PORTFOLIO PERSONALIZATION (mandatory):
 - If already held: frame as "add to position" vs "initiate new position"${actionRequirement}`
     : "";
 
-  const prompt = `You are an institutional buy-side equity analyst. Based ONLY on the data below, generate a structured investment verdict.
+  // The deterministic brief (lib/ai/tension.ts) — the conflicts, multi-year
+  // trends and verdict triggers, all computed before the model runs. Handing
+  // the model ANALYSIS instead of only a metric list is what turns the output
+  // from restatement into synthesis; see that module's header for the
+  // reasoning and the evidence behind it.
+  const brief = buildResearchBrief(ctx);
+  const briefLines = briefFactLines(brief, ctx.score ?? null);
+
+  const prompt = `You are an institutional buy-side equity analyst writing the one paragraph a portfolio manager will read before deciding. Base everything ONLY on the data below.
 
 DATA:
 ${facts.join("\n")}
 ${portfolioFacts.length > 0 ? "\n" + portfolioFacts.join("\n") : ""}
 
+${briefLines.join("\n")}
+
 Respond with ONLY a raw JSON object — no markdown, no code fences, no explanation outside the JSON. Emit the keys in exactly this order:
 {
-  "headline": "Decisive 10-14 word investment thesis naming the company and the core reason",
-  "thesis": "2-3 sentences: the investment case with specific metrics cited from the data",
-  "catalysts": ["specific catalyst citing a number or fact", "catalyst 2", "catalyst 3"],
-  "risks": ["specific risk citing a number or fact", "risk 2", "risk 3"],
+  "headline": "Decisive 10-14 word investment call naming the company and the core reason",
+  "tension": "ONE sentence naming the single most important conflict in the evidence, or — if the signals agree — saying plainly that they agree and on what",
+  "thesis": "2-3 sentences resolving that tension: why this verdict follows from the evidence, and what the decisive question is",
+  "catalysts": ["strongest supporting evidence, citing a number", "second"],
+  "risks": ["strongest opposing evidence, citing a number", "second"],
+  "triggers": ["a measurable event that would change the verdict", "second"],
   "confidence": "high" or "medium" or "low",
   "timeHorizon": "short-term" or "medium-term" or "long-term",
-  "keyMetrics": [
-    {"label": "metric name", "value": "formatted value", "signal": "positive" or "negative" or "neutral"}
-  ],
   "verdict": "bullish" or "bearish" or "neutral"
 }
 
 REQUIREMENTS:
 ${verdictRequirement}
-- Every score, subscore, or percentage you mention MUST be copied verbatim from the DATA block above (the "Composite score" and "Score breakdown" lines). Do not compute, round differently, or invent any score figure.
-- headline: NO generic phrases like "shows potential" — make a real investment call${hasPortfolioCtx ? " — MUST reference portfolio fit" : ""}
-- catalysts + risks: MUST cite specific numbers from the data. Generic bullets will be rejected.
-- keyMetrics: exactly 5, covering valuation + quality + growth + momentum + analyst
+- Every score, subscore, or percentage you mention MUST be copied verbatim from the DATA or DETERMINISTIC ANALYSIS blocks above. Do not compute, derive, round differently, or invent any figure — including ones that look easy to work out, like distance from a 52-week high.
+- tension: this is the most valuable line you write. Name the actual disagreement from THE CENTRAL DISAGREEMENTS above and say which side the verdict lands on. Never "there are both risks and opportunities".
+- thesis: 2-3 sentences, MAXIMUM 65 words. A portfolio manager must grasp the case in 15 seconds. Do NOT list metrics that appear elsewhere on the page — the user can already see the score breakdown, the P/E and the analyst split. Explain what they MEAN together.
+- catalysts + risks: exactly 2 each, the STRONGEST only. Prioritization is the point; a list of five is a list of none.
+- triggers: exactly 2, measurable and checkable against a future filing or print. Prefer the computed VERDICT TRIGGERS above. Never vague ("execution improves") — always a number or an event.
+- Do NOT restate the score breakdown as a list. It is rendered directly above your text.
 - confidence: high = comprehensive data + clear signal; medium = some gaps or mixed signals; low = limited data${portfolioInstructions}`;
 
   return {
     prompt,
-    evidence: [facts.join("\n"), portfolioFacts.join("\n")].join("\n"),
+    // The brief joins the evidence block so the grounding checker treats the
+    // figures IT computed (trend deltas, gaps) as supported. Without this,
+    // every correctly-cited trend figure would be flagged as unverifiable.
+    evidence: [facts.join("\n"), portfolioFacts.join("\n"), briefLines.join("\n")].join("\n"),
   };
 }

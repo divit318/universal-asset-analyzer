@@ -24,6 +24,7 @@ export function EmergingThemeCard({
   style,
   onShowEvidence,
   evidenceCount,
+  drivingEventCount,
   highlighted = false,
 }: {
   theme: EmergingTheme;
@@ -31,8 +32,11 @@ export function EmergingThemeCard({
   onShowEvidence?: () => void;
   /** Resolved source-article count backing this theme, when known. */
   evidenceCount?: number;
+  /** How many of this scan's events drive the theme — thin evidence says so. */
+  drivingEventCount?: number;
   highlighted?: boolean;
 }) {
+  const thinEvidence = (drivingEventCount ?? 0) <= 1;
   return (
     <div
       className={`card-lift animate-fade-rise flex flex-col gap-3 rounded-xl border bg-surface p-4 transition-colors hover:bg-surface-2 ${
@@ -50,9 +54,19 @@ export function EmergingThemeCard({
           className="text-[10px] font-medium uppercase tracking-widest text-muted/60"
           title="Model-estimated 0–100: how strongly this scan's events support the theme. Open Evidence for the underlying articles."
         >
-          Momentum
+          Signal strength
         </span>
         <MomentumBar value={theme.momentum} />
+        {drivingEventCount != null && (
+          <span
+            className={`text-[10px] ${thinEvidence ? "text-warning" : "text-muted/60"}`}
+            title={thinEvidence ? "This theme rests on at most one of this scan's events — treat the strength read as provisional." : undefined}
+          >
+            {thinEvidence
+              ? `Thin evidence — ${drivingEventCount === 0 ? "no linked events" : "1 event"} this scan`
+              : `Backed by ${drivingEventCount} events${evidenceCount != null ? ` · ${evidenceCount} articles` : ""}`}
+          </span>
+        )}
       </div>
 
       {theme.topTickers.length > 0 && (

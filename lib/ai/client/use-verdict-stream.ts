@@ -75,9 +75,11 @@ export interface VerdictStreamState {
 const EMPTY_VERDICT: Omit<InvestmentVerdict, "model" | "generatedAt"> = {
   verdict: "neutral",
   headline: "",
+  tension: "",
   thesis: "",
   catalysts: [],
   risks: [],
+  triggers: [],
   confidence: "low",
   timeHorizon: "medium-term",
   keyMetrics: [],
@@ -123,12 +125,45 @@ export interface UseVerdictStreamOptions {
 }
 
 /**
+ * The client-side mirror of the server's STABLE verdict identity
+ * (lib/ai/verdict-params.ts stableVerdictIdentity — server-only, it reads the
+ * AI-mode file, so it cannot be imported here). Same rule, same reason: the
+ * request key keeps every dimension that MATERIALLY changes the verdict and
+ * drops the volatile details (fitScore drifts a point on any market tick,
+ * `reasons`/`actionReason` are free text quoting live scores). Keying the
+ * request on the RAW params meant a background portfolio-report revalidation
+ * landing mid-generation re-keyed the stream, ABORTED the in-flight model call
+ * seconds from finishing, and started a second full generation of the same
+ * thesis — measured live on 2026-08-12 (first generation killed 6.3s in).
+ *
+ * The volatile params still reach the prompt: the fetch sends the full param
+ * set as of the moment the key first fired. Only the RE-KEY decision ignores
+ * them, exactly like the server's cache identity.
+ */
+export function stableRequestIdentity(params: Record<string, string> | null): string {
+  if (!params) return "";
+  const parts: string[] = [];
+  for (const k of ["fitTier", "action", "isInPortfolio", "objective"]) {
+    if (params[k]) parts.push(`${k}=${params[k]}`);
+  }
+  if (params.missingSectors) {
+    const sectors = params.missingSectors.split(",").map((s) => s.trim()).filter(Boolean).sort().join(",");
+    if (sectors) parts.push(`missingSectors=${sectors}`);
+  }
+  if (params.suggestedPct) {
+    const pct = Number(params.suggestedPct);
+    if (Number.isFinite(pct)) parts.push(`suggestedPct=${Math.round(pct)}`);
+  }
+  return parts.join("&");
+}
+
+/**
  * Stream the verdict for `symbol`.
  *
- * `params` carries the portfolio personalization (fitScore, fitTier, …). It is
- * serialized into the request key, so a genuine change in personalization does
- * start a new generation, while re-renders that produce an equal param set do
- * not.
+ * `params` carries the portfolio personalization (fitScore, fitTier, …). Its
+ * STABLE identity ({@link stableRequestIdentity}) is the request key, so a
+ * material change in personalization starts a new generation, while re-renders
+ * — or live-data drift in the volatile params — do not.
  */
 export function useVerdictStream(
   symbol: string | null,
@@ -159,7 +194,10 @@ export function useVerdictStream(
   const query = symbol
     ? new URLSearchParams({ symbol, ...(params ?? {}) }).toString()
     : null;
-  const key = query != null && enabled ? `${query}#${attempt}` : null;
+  // Keyed on the STABLE identity, not the raw query — see stableRequestIdentity.
+  // The fetch itself sends `query`, so the prompt still gets the live numbers.
+  const key =
+    symbol != null && enabled ? `${symbol}::${stableRequestIdentity(params)}#${attempt}` : null;
 
   useEffect(() => {
     if (!key || !query) {
@@ -266,30 +304,61 @@ export function useVerdictStream(
     // forever while the server had happily produced a report. Superseded requests
     // are aborted above, when a genuinely new key arrives, and the unmount effect
     // below handles leaving the page.
-    // `query` is derived from key; listing both would double-fire on attempt bumps.
+    // `query` is deliberately NOT a dependency: volatile params (fitScore,
+    // reasons) drift with live data without changing the stable key, and the
+    // stream must not restart when they do. The fetch reads the query of the
+    // render in which the key changed — the live numbers as of first fire.
     // `symbol` IS listed: while the gate holds, key stays null across a symbol
     // change, and the waiting branch must still run to clear the previous
     // subject's verdict.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, symbol]);
 
-  // Abort on real unmount so navigating away stops the inference.
-  useEffect(() => () => abortRef.current?.abort(), []);
+  // Abort on unmount so navigating away stops the inference — and CLEAR THE
+  // DEDUPE GUARD, because this cleanup also runs during StrictMode's simulated
+  // unmount at mount (mount → effects → cleanup → effects again). Aborting
+  // without clearing `ranKeyRef` killed the first pass's fetch while the guard
+  // made the second pass a no-op: the request was never re-issued and the
+  // skeleton sat on screen forever. That was exactly the failure the fetch
+  // effect's "no cleanup-abort" note guards against — reintroduced here by the
+  // unmount abort until the guard reset below. It only bit once the readiness
+  // gate became fast enough (persisted portfolio report) to be OPEN at mount:
+  // a held gate kept `key` null through the StrictMode cycle and masked it.
+  // Measured in a real browser (2026-08-12): fetch started at 512ms, aborted
+  // at 513ms, never retried — verdict never rendered.
+  //
+  // With the reset, StrictMode's second pass restarts the stream cleanly (the
+  // server's broker coalesces the overlap into one generation), and a real
+  // unmount still aborts the inference with nothing left behind to re-run.
+  useEffect(
+    () => () => {
+      ranKeyRef.current = null;
+      abortRef.current?.abort();
+    },
+    [],
+  );
 
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
   const hasAnyField = Object.keys(state.fields).length > 0;
+  const pending =
+    state.status === "waiting" || state.status === "connecting" || state.status === "streaming";
+
+  // The model is only reported by the `done` frame (or by the offline fallback
+  // itself, which carries `model: "unavailable"` inside its fields). While the
+  // stream is LIVE the model is simply not known yet — and that placeholder
+  // must not be the sentinel "unavailable": the hero reads that sentinel as
+  // "the AI is offline" and suppresses every streamed section, which silently
+  // turned the progressive stream back into wait-for-the-done-frame (measured:
+  // thesis streamed at 3.1s, first prose rendered at 5.6s).
   const verdict: InvestmentVerdict | null = hasAnyField
     ? {
         ...EMPTY_VERDICT,
         ...state.fields,
-        model: state.model ?? "unavailable",
+        model: state.fields.model ?? state.model ?? (pending ? "streaming" : "unavailable"),
         generatedAt: state.fields.generatedAt ?? new Date(0).toISOString(),
       }
     : null;
-
-  const pending =
-    state.status === "waiting" || state.status === "connecting" || state.status === "streaming";
 
   return {
     verdict,

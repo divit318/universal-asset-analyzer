@@ -7,7 +7,7 @@ import {
   shouldPromoteBaseline,
   FINGERPRINT_VERSION,
   VISIT_GAP_MS,
-  HEALTH_MATERIAL_PTS,
+  ALIGNMENT_MATERIAL_PTS,
   OPP_SCORE_MATERIAL,
   ATTENTION_NEW_MIN_SCORE,
   type HomeFingerprint,
@@ -22,8 +22,7 @@ function fingerprint(overrides: Partial<HomeFingerprint> = {}): HomeFingerprint 
   return {
     version: FINGERPRINT_VERSION,
     takenAt: "2026-07-25T14:00:00.000Z",
-    healthScore: 72,
-    healthGrade: "B",
+    alignmentScore: 72,
     regimeTrend: "risk-on",
     sentimentLabel: "Neutral",
     sentimentScore: 52,
@@ -71,11 +70,14 @@ function digestSource(overrides: Partial<FingerprintSource> = {}): FingerprintSo
       sentiment: { score: 52, label: "Neutral", components: [], confidence: "medium" },
       regime: { trend: "risk-on", summary: "", breadthPct: 55 },
       sectorAttention: [],
+      sectors: [],
     },
     portfolioPulse: {
       status: "ok",
-      healthScore: 72,
-      healthGrade: "B",
+      alignmentScore: 72,
+      alignmentLabel: "Well aligned",
+      alignmentConfirmed: false,
+      topMismatch: null,
       totalValue: 100_000,
       todayChangePct: 0.4,
       todayChangeDollar: 400,
@@ -94,11 +96,13 @@ function digestSource(overrides: Partial<FingerprintSource> = {}): FingerprintSo
       radar: [],
       biggestStrength: null,
       biggestWeakness: null,
-      healthCoveragePct: 90,
-      healthFactors: [],
+      alignmentEvidencePct: 90,
+      alignmentFactors: [],
       topContributors: [],
       topContributorsResidualBps: null,
       dayCoveragePct: null,
+      topPositions: [],
+      sleeves: [],
     },
     threats: {
       status: "ok",
@@ -145,7 +149,7 @@ describe("captureFingerprint", () => {
   it("projects the digest slices into a versioned fingerprint", () => {
     const fp = captureFingerprint(digestSource());
     expect(fp.version).toBe(FINGERPRINT_VERSION);
-    expect(fp.healthScore).toBe(72);
+    expect(fp.alignmentScore).toBe(72);
     expect(fp.regimeTrend).toBe("risk-on");
     expect(fp.attention).toHaveLength(1);
     expect(fp.attention[0].key).toBe("action:AAPL:70");
@@ -195,21 +199,21 @@ describe("shouldPromoteBaseline", () => {
 describe("diffFingerprints", () => {
   it("returns nothing when nothing material moved", () => {
     const a = fingerprint();
-    // one point of health, one point of opportunity score: both sub-threshold
+    // one point of alignment, one point of opportunity score: both sub-threshold
     const b = fingerprint({
-      healthScore: a.healthScore! + HEALTH_MATERIAL_PTS - 1,
+      alignmentScore: a.alignmentScore! + ALIGNMENT_MATERIAL_PTS - 1,
       opportunities: [{ symbol: "MSFT", score: 78 + OPP_SCORE_MATERIAL - 1, tier: "good" }],
     });
     expect(diffFingerprints(a, b)).toEqual([]);
   });
 
-  it("reports a material health move with before → after in the detail", () => {
-    const changes = diffFingerprints(fingerprint(), fingerprint({ healthScore: 77, healthGrade: "B+" }));
-    const health = changes.find((c) => c.kind === "health");
-    expect(health).toBeDefined();
-    expect(health!.tone).toBe("improved");
-    expect(health!.headline).toContain("77");
-    expect(health!.detail).toContain("72");
+  it("reports a material alignment move with before → after in the detail", () => {
+    const changes = diffFingerprints(fingerprint(), fingerprint({ alignmentScore: 77 }));
+    const alignment = changes.find((c) => c.kind === "alignment");
+    expect(alignment).toBeDefined();
+    expect(alignment!.tone).toBe("improved");
+    expect(alignment!.headline).toContain("77");
+    expect(alignment!.detail).toContain("72");
   });
 
   it("reports a regime shift", () => {
@@ -300,7 +304,7 @@ describe("diffFingerprints", () => {
 
   it("sorts by magnitude descending", () => {
     const next = fingerprint({
-      healthScore: 60, // -12: big
+      alignmentScore: 60, // -12: big
       sentimentLabel: "Greed", // small
     });
     const changes = diffFingerprints(fingerprint(), next);
@@ -323,7 +327,7 @@ describe("buildChangeFeed", () => {
 
   it("carries the baseline timestamp when diffing", () => {
     const base = fingerprint();
-    const feed = buildChangeFeed(base, fingerprint({ healthScore: 77 }));
+    const feed = buildChangeFeed(base, fingerprint({ alignmentScore: 77 }));
     expect(feed.firstVisit).toBe(false);
     expect(feed.baselineAt).toBe(base.takenAt);
     expect(feed.changes.length).toBeGreaterThan(0);

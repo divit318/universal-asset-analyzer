@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Card, Badge, Button, ScoreChip } from "@/app/_components/ui";
+import { Card, Badge, Button } from "@/app/_components/ui";
 import { Dialog } from "@/app/_components/dialog";
 import { formatCurrency } from "@/lib/format";
 import { OBJECTIVES } from "@/lib/portfolio/engines/optimize";
@@ -23,7 +23,7 @@ function relativeDate(iso: string): string {
 }
 
 /**
- * Saved simulations, newest-updated first. Total value and health come from
+ * Saved simulations, newest-updated first. Total value and alignment come from
  * the denormalized headline (refreshed on every evaluation) — a Draft that has
  * never been generated legitimately has neither, and shows neither.
  */
@@ -87,8 +87,14 @@ export function SimulationList({
                         </span>
                       </div>
                     )}
-                    {sim.headline?.healthScore != null && (
-                      <ScoreChip kind="health" score={sim.headline.healthScore} size="sm" />
+                    {sim.headline?.alignmentScore != null && (
+                      <span className="flex items-baseline gap-1.5">
+                        <span className="text-[10px] uppercase tracking-widest text-muted">Alignment</span>
+                        <span className="font-mono text-sm font-semibold tabular-nums text-foreground">
+                          {sim.headline.alignmentScore}
+                        </span>
+                        <span className="font-mono text-[10px] text-muted/50">/100</span>
+                      </span>
                     )}
                   </div>
                 </div>

@@ -5,7 +5,7 @@
  * for the full argument), applied to a single instrument instead of the whole
  * candidate universe: at each small tranche of the search budget, buying more of
  * the target symbol competes against simply holding cash, scored by the exact same
- * `distanceImprovement * 100 + healthDelta` formula cash.ts uses. The moment cash
+ * `distanceImprovement * 100 + alignmentDelta` formula cash.ts uses. The moment cash
  * wins a tranche (or a hard cap blocks the next one), sizing stops — which is what
  * makes the stopping point a measured diminishing-returns point rather than an
  * arbitrary round number.
@@ -56,19 +56,20 @@ export const DEFAULT_SIZING_TRANCHES = 24;
 const NEGLIGIBLE_ADVANTAGE = 0.01;
 
 /**
- * Weight on strategic asset-class alignment relative to the holistic health
- * delta. Kept above 1 on purpose: filling a genuine class gap (a bond-light
- * book buying duration) is exactly the recommendation a position-sizer should
- * make confidently, and health alone moves too slowly per tranche to express
- * that. Health still decides between candidates whose class alignment is a
- * wash — which, before totalExact existed, it could never do.
+ * Weight on strategic asset-class alignment relative to the holistic
+ * portfolio-alignment delta. Kept above 1 on purpose: filling a genuine class
+ * gap (a bond-light book buying duration) is exactly the recommendation a
+ * position-sizer should make confidently, and the alignment score alone moves
+ * too slowly per tranche to express that. Alignment still decides between
+ * candidates whose class alignment is a wash — which, before scoreExact
+ * existed, it could never do.
  */
 const DISTANCE_WEIGHT = 2;
 
 /**
  * Weight on the research-conviction alpha term, per percentage point bought —
  * the same pp units classDistance moves in, so the three terms of a tranche's
- * score (health, class alignment, alpha) are commensurable. Calibrated so full
+ * score (portfolio alignment, class alignment, alpha) are commensurable. Calibrated so full
  * conviction (1.0) can outbid a moderately class-overweight book's distance
  * penalty, while a HOLD-band score (conviction ≲ 0.3) cannot — geometry still
  * wins when the research case is weak.
@@ -112,7 +113,7 @@ export type { MarginalBenefitPoint };
 export interface SizeScenario {
   amount: number;
   shares: number | null;
-  healthDelta: number;
+  alignmentDelta: number;
   /** True for the winning, recommended amount. */
   isRecommended: boolean;
   /** True when this scenario's per-dollar marginal benefit has fallen well below the recommended amount's — i.e. it costs more to achieve little extra. */
@@ -186,7 +187,7 @@ export interface PositionSizingPlan {
   /** The exact state the tranche loop measured at the recommended amount — not reconstructed. */
   after: PortfolioEvaluation;
 
-  /** Cumulative measured health improvement at each tranche boundary, 0 -> recommendedAmount. */
+  /** Cumulative measured alignment improvement at each tranche boundary, 0 -> recommendedAmount. */
   marginalBenefit: MarginalBenefitPoint[];
   /** A handful of round-number checkpoints either side of the recommendation, each independently simulated. */
   scenarios: SizeScenario[];
@@ -332,8 +333,10 @@ function reasonsFor(before: PortfolioEvaluation, after: PortfolioEvaluation, tar
   const cashAfter = after.allocation.byAssetClass.slices.find((s) => s.key === "cash")?.weight ?? 0;
   if (cashBefore - cashAfter > 1) reasons.push(`Puts idle cash to work (${cashBefore.toFixed(1)}% → ${cashAfter.toFixed(1)}%).`);
 
-  if (Math.abs(after.health.total - before.health.total) >= 0.1) {
-    reasons.push(`Projected portfolio health ${after.health.total >= before.health.total ? "improves" : "declines"} from ${before.health.total.toFixed(1)} to ${after.health.total.toFixed(1)}.`);
+  const beforeScore = before.alignment.scoreExact;
+  const afterScore = after.alignment.scoreExact;
+  if (beforeScore != null && afterScore != null && Math.abs(afterScore - beforeScore) >= 0.1) {
+    reasons.push(`Projected portfolio alignment ${afterScore >= beforeScore ? "improves" : "declines"} from ${beforeScore.toFixed(1)} to ${afterScore.toFixed(1)}.`);
   }
 
   return reasons.slice(0, 4);
@@ -428,10 +431,10 @@ export function computePositionSizing(
       recommendedShares: null,
       recommendedAllocationPct: Math.round((after.holdings.find((h) => h.symbol?.toUpperCase() === sym)?.weight ?? 0) * 100) / 100,
       confidence,
-      impact: { healthDelta: 0, riskDelta: null, diversificationDelta: 0, incomeDelta: 0, inflationDelta: null, liquidityDelta: 0 },
+      impact: { alignmentDelta: 0, themeDeltas: [], riskDelta: null, diversificationDelta: 0, incomeDelta: 0, inflationDelta: null, liquidityDelta: 0 },
       before: evaluation,
       after,
-      marginalBenefit: [{ cumulativeAmount: 0, healthDelta: 0 }],
+      marginalBenefit: [{ cumulativeAmount: 0, alignmentDelta: 0 }],
       scenarios: [],
       reasons: opts.reasons ?? [],
     };
@@ -555,8 +558,8 @@ export function computePositionSizing(
   const trancheSize = maxAmount / tranches;
   let current = evaluation;
   let cumulative = 0;
-  let totalHealth = 0;
-  const marginalBenefit: MarginalBenefitPoint[] = [{ cumulativeAmount: 0, healthDelta: 0 }];
+  let totalAlignment = 0;
+  const marginalBenefit: MarginalBenefitPoint[] = [{ cumulativeAmount: 0, alignmentDelta: 0 }];
   // Which brake ended the loop — turned into the user-facing holdReason when it
   // stopped before buying anything at all. "It declined" is not an answer; the
   // binding reason is.
@@ -567,22 +570,22 @@ export function computePositionSizing(
     const { after: buyAfter, impact: buyImpact } = simulate(current, [buyChange], ctx);
     const buyBlocked = violatesConstraints(current, buyAfter, target, template.id, constraints);
     const buyDistanceImprovement = classDistance(current, desired) - classDistance(buyAfter, desired);
-    // healthDelta aggregates diversification/concentration/duration/income
-    // (health.ts's own dimensions); distanceImprovement measures alignment with
+    // alignmentDelta aggregates the alignment engine's themes (vs the
+    // investor's own policy); distanceImprovement measures alignment with
     // the objective's strategic asset-class target. Both are real, and both are
     // measured on the SAME tranche on both sides of the comparison below, which
     // is what makes them comparable at all.
-    const buyScore = buyImpact.healthDelta + buyDistanceImprovement * DISTANCE_WEIGHT;
+    const buyScore = (buyImpact.alignmentDelta ?? 0) + buyDistanceImprovement * DISTANCE_WEIGHT;
 
     const cashChange: PortfolioChange = { kind: "buy", holding: cashTemplate, amount: trancheSize };
     const { after: cashAfter, impact: cashImpact } = simulate(current, [cashChange], ctx);
     const cashDistanceImprovement = classDistance(current, desired) - classDistance(cashAfter, desired);
-    const cashScore = cashImpact.healthDelta + cashDistanceImprovement * DISTANCE_WEIGHT;
+    const cashScore = (cashImpact.alignmentDelta ?? 0) + cashDistanceImprovement * DISTANCE_WEIGHT;
 
     // Brake 1 — the strategic class target.
     //
-    // Without any brake, health alone will size almost anything up to the
-    // concentration cap: every health dimension that rewards diversification
+    // Without any brake, alignment alone will size almost anything up to the
+    // concentration cap: every alignment theme that rewards diversification
     // keeps paying out as you add a new, uncorrelated asset to a concentrated
     // book, tranche after tranche. That logic recommended 13% of the portfolio
     // in bitcoin under Maximize Sharpe — an objective whose target holds no
@@ -627,7 +630,7 @@ export function computePositionSizing(
     // gate compared a per-tranche quantity against a fixed constant, but a
     // tranche is ~1/24th of the room to a concentration cap — on a large book it
     // moves any score by hundredths of a point, so the gate could only ever be
-    // cleared by a large asset-class-gap term. The effect was that health was
+    // cleared by a large asset-class-gap term. The effect was that alignment was
     // decorative and the engine declined almost everything, including assets it
     // had itself measured as better than cash. The margin below is a noise
     // floor on a difference of two same-scale quantities, so it does not
@@ -639,8 +642,8 @@ export function computePositionSizing(
 
     current = buyAfter;
     cumulative += trancheSize;
-    totalHealth += buyImpact.healthDelta;
-    marginalBenefit.push({ cumulativeAmount: Math.round(cumulative), healthDelta: Math.round(totalHealth * 10) / 10 });
+    totalAlignment += buyImpact.alignmentDelta ?? 0;
+    marginalBenefit.push({ cumulativeAmount: Math.round(cumulative), alignmentDelta: Math.round(totalAlignment * 10) / 10 });
   }
 
   const recommendedAmount = Math.round(cumulative);
@@ -672,7 +675,7 @@ export function computePositionSizing(
     });
   }
 
-  // The tranche loop's per-step healthDelta sum telescopes to exactly this same
+  // The tranche loop's per-step alignmentDelta sum telescopes to exactly this same
   // before/after diff, so this is the single source of truth for the plan's impact
   // — no separate accumulation to keep in sync.
   const impact: ImpactEstimate = estimateImpact(evaluation, current);
@@ -682,7 +685,7 @@ export function computePositionSizing(
   const checkpointMultiples = [0.3, 0.7, 1, 1.5];
   const seen = new Set<number>();
   const scenarios: SizeScenario[] = [];
-  const perDollarAtRecommended = recommendedAmount > 0 ? impact.healthDelta / recommendedAmount : 0;
+  const perDollarAtRecommended = recommendedAmount > 0 ? (impact.alignmentDelta ?? 0) / recommendedAmount : 0;
 
   for (const mult of checkpointMultiples) {
     const amount = Math.round(recommendedAmount * mult);
@@ -690,13 +693,13 @@ export function computePositionSizing(
     seen.add(amount);
 
     const { impact: scenarioImpact } = simulate(evaluation, [{ kind: "buy", holding: template, amount }], ctx);
-    const healthDelta = Math.round(scenarioImpact.healthDelta * 10) / 10;
-    const perDollar = amount > 0 ? healthDelta / amount : 0;
+    const alignmentDelta = Math.round((scenarioImpact.alignmentDelta ?? 0) * 10) / 10;
+    const perDollar = amount > 0 ? alignmentDelta / amount : 0;
 
     scenarios.push({
       amount,
       shares: price > 0 ? Math.round((amount / price) * 1000) / 1000 : null,
-      healthDelta,
+      alignmentDelta,
       isRecommended: mult === 1,
       diminishingReturns: mult > 1 && perDollarAtRecommended > 0 && perDollar < perDollarAtRecommended * 0.4,
     });
@@ -791,10 +794,10 @@ export function computePositionSizingAtAmount(
     recommendedShares: null,
     recommendedAllocationPct: evaluation.holdings.find((h) => h.symbol?.toUpperCase() === sym)?.weight ?? 0,
     confidence: 30,
-    impact: { healthDelta: 0, riskDelta: null, diversificationDelta: 0, incomeDelta: 0, inflationDelta: null, liquidityDelta: 0 },
+    impact: { alignmentDelta: 0, themeDeltas: [], riskDelta: null, diversificationDelta: 0, incomeDelta: 0, inflationDelta: null, liquidityDelta: 0 },
     before: evaluation,
     after: evaluation,
-    marginalBenefit: [{ cumulativeAmount: 0, healthDelta: 0 }],
+    marginalBenefit: [{ cumulativeAmount: 0, alignmentDelta: 0 }],
     scenarios: [],
     reasons: [],
   });
@@ -834,7 +837,7 @@ export function computePositionSizingAtAmount(
     impact,
     before: evaluation,
     after,
-    marginalBenefit: [{ cumulativeAmount: 0, healthDelta: 0 }, { cumulativeAmount: Math.round(amount), healthDelta: Math.round(impact.healthDelta * 10) / 10 }],
+    marginalBenefit: [{ cumulativeAmount: 0, alignmentDelta: 0 }, { cumulativeAmount: Math.round(amount), alignmentDelta: Math.round((impact.alignmentDelta ?? 0) * 10) / 10 }],
     scenarios: [],
     reasons: reasonsFor(evaluation, after, target),
   };

@@ -7,7 +7,7 @@ import { PANEL_DATA } from "./panel-data";
 
 /**
  * Portfolio Intelligence panel: the REAL demo book, engine-computed.
- * Value, total return, health grade, the value trajectory and the
+ * Value, total return, the alignment score, the value trajectory and the
  * allocation come from the committed portfolio_snapshot rows the real
  * engines wrote (normalizeHoldings -> evaluate -> summaryOf); the movers
  * are live quotes for the book's actual holdings at generation time.
@@ -124,9 +124,9 @@ export function PortfolioPanel() {
             </p>
           </div>
           <div>
-            <p className="text-micro uppercase tracking-wide text-muted">Health</p>
+            <p className="text-micro uppercase tracking-wide text-muted">Alignment</p>
             <p className="font-mono text-caption font-semibold tabular-nums text-foreground">
-              {P.health} <span className="text-brand">({P.healthGrade})</span>
+              {P.alignment}
             </p>
           </div>
         </div>

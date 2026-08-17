@@ -100,6 +100,12 @@ export interface RouteRequest {
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
+  /**
+   * Wall-clock budget for the WHOLE chain, overriding `TaskConfig.budgetMs`.
+   * Lets a caller that knows its own deadline (a route serving a watched
+   * spinner) tighten the task default without editing the registry.
+   */
+  budgetMs?: number;
   json?: boolean;
   /** JSON Schema for native structured outputs — see ProviderCompleteRequest.jsonSchema. */
   jsonSchema?: Record<string, unknown>;
@@ -359,6 +365,39 @@ function widenForColdStart(model: string, timeoutMs: number): number {
   return Math.min(Math.round(timeoutMs * COLD_START_MULTIPLIER), COLD_START_MAX_MS);
 }
 
+/**
+ * The chain's wall-clock budget tracker (see `TaskConfig.budgetMs`).
+ *
+ * `timeoutMs` bounds ONE attempt; a task with three candidates could therefore
+ * take 3x it, and the ledger shows that happening for real (592–747s waits
+ * behind a 300s per-attempt cap). This closes that gap by making every attempt
+ * share one deadline:
+ *
+ *   - `remaining()` is what is left of the budget right now;
+ *   - `clamp()` shrinks an attempt's own timeout so it cannot overrun the
+ *     budget — an attempt is never given time the task does not have;
+ *   - `exhausted()` stops the chain instead of starting an attempt that has no
+ *     room to succeed.
+ *
+ * A task with no `budgetMs` gets an unlimited tracker, so nothing changes for
+ * background work where a slow truth genuinely beats a fast timeout.
+ */
+const MIN_ATTEMPT_MS = 2_000; // below this an attempt cannot plausibly finish; stop instead of pretending
+
+function budgetTracker(task: TaskConfig, startedAt: number, override?: number) {
+  const budgetMs = override ?? task.budgetMs;
+  return {
+    enabled: budgetMs != null,
+    remaining: () => (budgetMs == null ? Infinity : budgetMs - (Date.now() - startedAt)),
+    /** An attempt may use at most what is left of the shared budget. */
+    clamp: (timeoutMs: number) =>
+      budgetMs == null ? timeoutMs : Math.max(0, Math.min(timeoutMs, budgetMs - (Date.now() - startedAt))),
+    /** No room left for another meaningful attempt. */
+    exhausted: () => budgetMs != null && budgetMs - (Date.now() - startedAt) < MIN_ATTEMPT_MS,
+    budgetMs,
+  };
+}
+
 /** How recent a local success has to be to override a "cold" probe result — just under a local daemon's typical 5-minute default `keep_alive`, so it can't outlive the window the model is actually likely to still be resident. */
 const RECENT_SUCCESS_WINDOW_MS = 4 * 60_000;
 
@@ -524,6 +563,7 @@ export async function route(
   let considered = 0;
   const hasImages = (request.images?.length ?? 0) > 0;
   let visionSkips = 0;
+  const budget = budgetTracker(task, startedAt, request.budgetMs);
 
   for await (const { provider, model } of attemptOrder(taskType, task, providers, opts.model)) {
     if (keyFailedProviders.has(provider.id)) continue;
@@ -533,6 +573,12 @@ export async function route(
     if (hasImages && !canSeeImages(provider, model)) {
       visionSkips += 1;
       continue;
+    }
+    // The task's total wall-clock budget is spent. Stop the chain rather than
+    // start a candidate that cannot finish inside what a human agreed to wait.
+    if (budget.exhausted()) {
+      attemptErrors.push(`budget: ${budget.budgetMs}ms wall-clock budget exhausted after ${considered} attempt(s)`);
+      break;
     }
     considered += 1;
     // An abort is the caller's decision, not a model failure. Retrying the
@@ -559,7 +605,10 @@ export async function route(
         // Detected once per attempt, right before using it — a model can warm
         // up or get evicted while this request was queued at the gate.
         if (local) warm = await isWarm(provider, model);
-        const timeoutMs = warm ? settings.timeoutMs : widenForColdStart(model, settings.timeoutMs);
+        // Clamped to the chain's remaining budget: a cold-start widening (or a
+        // generous per-attempt cap) must never buy time the task as a whole
+        // does not have.
+        const timeoutMs = budget.clamp(warm ? settings.timeoutMs : widenForColdStart(model, settings.timeoutMs));
         attemptStartedAt = Date.now();
         const result = await provider.complete({
           model,
@@ -709,6 +758,10 @@ export async function* routeStream(
   let considered = 0;
   const hasImages = (request.images?.length ?? 0) > 0;
   let visionSkips = 0;
+  // The hero verdict streams through here, so this is the path the product's
+  // "never wait more than ~40s" rule actually has to hold on.
+  const streamStartedAt = Date.now();
+  const budget = budgetTracker(task, streamStartedAt, request.budgetMs);
 
   for await (const { provider, model } of attemptOrder(taskType, task, providers, opts.model)) {
     if (keyFailedProviders.has(provider.id)) continue;
@@ -716,6 +769,10 @@ export async function* routeStream(
     if (hasImages && !canSeeImages(provider, model)) {
       visionSkips += 1;
       continue;
+    }
+    if (budget.exhausted()) {
+      attemptErrors.push(`budget: ${budget.budgetMs}ms wall-clock budget exhausted after ${considered} attempt(s)`);
+      break;
     }
     considered += 1;
     if (request.signal?.aborted) break;
@@ -740,7 +797,9 @@ export async function* routeStream(
       const release = local ? await acquireGenerationSlot(request.signal) : null;
       try {
         if (local) warm = await isWarm(provider, model);
-        const timeoutMs = warm ? settings.timeoutMs : widenForColdStart(model, settings.timeoutMs);
+        // Same clamp as route(): the budget bounds the whole chain, so an
+        // attempt only ever gets what is left of it.
+        const timeoutMs = budget.clamp(warm ? settings.timeoutMs : widenForColdStart(model, settings.timeoutMs));
         attemptStartedAt = Date.now();
         const stream = provider.stream(
           {

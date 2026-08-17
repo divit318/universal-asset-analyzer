@@ -34,6 +34,8 @@ interface DerivativesInsightRequest {
   section: DerivativesInsightSection;
   underlyingName: string;
   summary: DerivativesSummary;
+  /** Listing currency of the underlying — strikes/premiums are struck in it. */
+  currency?: string;
 }
 
 /**
@@ -58,6 +60,7 @@ export async function POST(request: Request) {
       section: body.section,
       underlyingName: body.underlyingName ?? body.summary.underlyingSymbol,
       summary: body.summary,
+      currency: typeof body.currency === "string" ? body.currency : null,
     });
     return NextResponse.json(result);
   } catch (err) {

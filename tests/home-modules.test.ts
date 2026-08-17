@@ -49,7 +49,18 @@ function report(over: Partial<UniversalPortfolioReport> = {}): UniversalPortfoli
     holdings: [holding("AAPL", 40, 4000), holding("MSFT", 10, 1000), holding("XYZ", -15, -1500)],
     generatedAt: new Date(PULSE_NOW).toISOString(),
     dayMoves: [dayMove("AAPL", 2.1, 2100), dayMove("MSFT", 0.4, 400), dayMove("XYZ", -1.5, -1500)],
-    health: { total: 72, grade: "B" },
+    alignment: {
+      score: 72,
+      scoreExact: 72,
+      label: "Well aligned",
+      status: "scored",
+      confirmed: false,
+      themes: [],
+      mismatches: [],
+      dataGaps: [],
+      summary: "",
+      evidencePct: 100,
+    },
     concentration: [
       { type: "sector", label: "Technology", pct: 68, severity: "high", message: "68% in Technology." },
       { type: "holding", label: "AAPL", pct: 30, severity: "medium", message: "30% in AAPL." },
@@ -72,7 +83,7 @@ describe("buildPortfolioPulse", () => {
   it("reports empty — not zeros — when there is no portfolio", () => {
     const p = buildPortfolioPulse(null);
     expect(p.status).toBe("empty");
-    expect(p.healthScore).toBeNull();
+    expect(p.alignmentScore).toBeNull();
     expect(p.bestPerformer).toBeNull();
   });
 
@@ -125,10 +136,10 @@ describe("buildPortfolioPulse", () => {
     expect(buildPortfolioPulse(report()).largestRisk?.title).toBe("Technology");
   });
 
-  it("reads health, cash and drift straight from the engines", () => {
+  it("reads alignment, cash and drift straight from the engines", () => {
     const p = buildPortfolioPulse(report());
-    expect(p.healthScore).toBe(72);
-    expect(p.healthGrade).toBe("B");
+    expect(p.alignmentScore).toBe(72);
+    expect(p.alignmentLabel).toBe("Well aligned");
     expect(p.cashPct).toBe(8);
     expect(p.largestDrift).toEqual({ label: "Bonds", driftPct: -15 });
   });
@@ -161,7 +172,7 @@ const decision = (id: string, score: number, priority: number) =>
   ({
     recommendation: {
       id, action: "ADD", symbol: "BND", title: `Add ${id}`, rationale: "No bond exposure.",
-      impact: { healthDelta: 3.2, riskDelta: -0.5, diversificationDelta: -150, incomeDelta: 200, liquidityDelta: 0 },
+      impact: { alignmentDelta: 3.2, riskDelta: -0.5, diversificationDelta: -150, incomeDelta: 200, liquidityDelta: 0 },
     },
     decisionScore: score,
     decisionPriority: priority,
@@ -170,6 +181,7 @@ const decision = (id: string, score: number, priority: number) =>
     expectedReturnImpact: "+0.4% expected return",
     why: { why: "w", whyNow: "n", whyThisAmount: "a", whyNotAlternative: "alt", whyNotNothing: "z" },
     alternativesEvaluated: 7,
+    thesis: null,
   }) as unknown as UniversalPortfolioReport["decisions"][number];
 
 describe("buildRecommendedActions", () => {
@@ -187,7 +199,7 @@ describe("buildRecommendedActions", () => {
     // The IC memo and the simulated before → after are carried through, not flattened.
     expect(r.actions[0].why?.whyNow).toBe("n");
     expect(r.actions[0].alternativesEvaluated).toBe(7);
-    expect(r.actions[0].impact?.healthDelta).toBe(3.2);
+    expect(r.actions[0].impact?.alignmentDelta).toBe(3.2);
   });
 
   it("derives severity from the decision score", () => {

@@ -31,7 +31,7 @@ export async function GET(request: Request) {
 
     const explanation = await explainHolding(
       holding,
-      { holdings: report.holdings, totalValue: report.totalValue, allocation: report.allocation, risk: report.risk, health: report.health },
+      { holdings: report.holdings, totalValue: report.totalValue, allocation: report.allocation, risk: report.risk, alignment: report.alignment, policy: report.policy },
       report.recommendations,
     );
     return NextResponse.json(explanation);

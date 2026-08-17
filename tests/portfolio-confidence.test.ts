@@ -239,11 +239,11 @@ describe("Confidence never contradicts recommendation ranking", () => {
     expect(recs.length).toBeGreaterThan(0);
     const base = recs[0];
 
-    // decisionScore = 50 + healthDelta × (confidence/100) × 3, monotone in both
+    // decisionScore = 50 + alignmentDelta × (confidence/100) × 3, monotone in both
     // terms. Hold impact fixed, vary only confidence.
     const low = buildDecisionCards([{ ...base, confidence: 30 }], e)[0];
     const high = buildDecisionCards([{ ...base, confidence: 90 }], e)[0];
-    if (base.impact.healthDelta > 0) {
+    if ((base.impact.alignmentDelta ?? 0) > 0) {
       expect(high.decisionScore).toBeGreaterThanOrEqual(low.decisionScore);
     }
   });
@@ -255,14 +255,14 @@ describe("Confidence never contradicts recommendation ranking", () => {
     const confidence = 80;
     const base = { ...recs[0], confidence };
 
-    // decisionScore is DEFINED as round(50 + healthDelta × confidence/100 × 3).
+    // decisionScore is DEFINED as round(50 + alignmentDelta × confidence/100 × 3).
     // It can only match that closed form across a range of impacts if confidence is
     // independent of impact. Under the old ADD formula confidence itself contained
-    // |healthDelta| × 4, which made the real curve convex and this assertion fail.
-    for (const healthDelta of [0.5, 1, 2, 4, 8]) {
-      const score = buildDecisionCards([{ ...base, impact: { ...base.impact, healthDelta } }], e)[0].decisionScore;
-      const linear = Math.round(50 + healthDelta * (confidence / 100) * 3);
-      expect(score, `healthDelta ${healthDelta}`).toBe(linear);
+    // |alignmentDelta| × 4, which made the real curve convex and this assertion fail.
+    for (const alignmentDelta of [0.5, 1, 2, 4, 8]) {
+      const score = buildDecisionCards([{ ...base, impact: { ...base.impact, alignmentDelta } }], e)[0].decisionScore;
+      const linear = Math.round(50 + alignmentDelta * (confidence / 100) * 3);
+      expect(score, `alignmentDelta ${alignmentDelta}`).toBe(linear);
     }
   });
 

@@ -25,6 +25,7 @@ import type { ChartQARelatedTarget } from "@/lib/ai-chart-qa";
 import type { ScreenerInCompany, ScreenerInPeer } from "@/lib/screener-in";
 import type { CorporateActions } from "@/lib/yahoo";
 import type { NseResultsMeta } from "@/lib/india-news";
+import { downloadBlob } from "@/lib/download";
 import { detectMarket, MARKET_BADGE, MARKET_LABEL, type MarketRegion } from "@/lib/market";
 import { benchmarkForSymbol } from "@/lib/benchmarks";
 import { detectAssetClass, ASSET_CLASS_LABEL } from "@/lib/asset-class";
@@ -40,6 +41,7 @@ import {
   formatDate,
   formatPercent,
   formatRatio,
+  statementsCurrency,
 } from "@/lib/format";
 
 // Universal components
@@ -73,7 +75,7 @@ import { FinancialInsightCard } from "./_components/financial-insight-card";
 import { PeerCompetitivePosition } from "./_components/peer-competitive-position";
 import { ArrivalHighlight, useArrivalTarget } from "@/app/_components/arrival-highlight";
 import { TimelinePreviewCard } from "./_components/timeline-preview-card";
-import { GraphPreviewCard } from "./_components/graph-preview-card";
+import { YourExposureCard } from "./_components/your-exposure-card";
 import { RelatedOpportunitiesCard } from "./_components/related-opportunities-card";
 import { AddToPortfolioModal } from "@/app/_components/portfolio/add-to-portfolio-modal";
 
@@ -270,6 +272,15 @@ function buildVerdictParams(
   params.actionReason = fit.action.reason;
   return params;
 }
+
+/**
+ * How long the verdict request will wait for its personalization inputs (the
+ * IOS profile and the research score's dataset) before firing anyway with
+ * whatever is known. Sized above the warm path (both settle inside ~1s) so it
+ * normally never fires, and far below the pathological cold paths it exists to
+ * cap (a cold portfolio-report build measured 24.7s on 2026-08-12).
+ */
+const VERDICT_GATE_DEADLINE_MS = 3_000;
 
 interface IndiaDerivedData extends IndiaDerivedFundamentals {
   promoterHolding: number | null;
@@ -745,27 +756,47 @@ function ResearchWorkspace({
               // every section has settled even if this entry never got a value.
               : entrySettled(fundamentalsEntry.status) || !bundleStreaming;
 
+  // The gate above is a WAIT, and every wait needs a ceiling. Its normal cost
+  // is small (warm: the profile and fundamentals both settle inside ~1s), but
+  // its worst case is not bounded by anything the user can see: a cold
+  // portfolio-report build measured 24.7s (2026-08-12), and the verdict —
+  // this page's flagship output — sat frozen behind it the whole time, waiting
+  // for personalization params it could live without. Past the deadline the
+  // request fires with whatever is known; if the profile settles later with
+  // real fit params, the key change upgrades the verdict in place (the hook
+  // keeps the on-screen sections while the personalized replacement streams).
+  // That duplicate generation is deliberately accepted: it happens only on the
+  // pathological cold paths, where the alternative was a ~30s empty skeleton.
+  const [gateExpiredFor, setGateExpiredFor] = useState<string | null>(null);
+  useEffect(() => {
+    const t = window.setTimeout(() => setGateExpiredFor(quote.symbol), VERDICT_GATE_DEADLINE_MS);
+    return () => window.clearTimeout(t);
+  }, [quote.symbol]);
+  const gateExpired = gateExpiredFor === quote.symbol;
+
   const verdictParams = buildVerdictParams(portfolioFit, ios?.profile ?? null);
 
   const verdictStream = useVerdictStream(quote.symbol, verdictParams, {
     // `ios == null` means there is no IOS provider at all — nothing to wait for.
-    enabled: (ios == null || ios.profileReady) && scoreInputsSettled,
+    enabled: ((ios == null || ios.profileReady) && scoreInputsSettled) || gateExpired,
   });
   const verdict = verdictStream.verdict;
 
   async function downloadReport() {
+    if (downloading) return;
     setDownloading(true);
     try {
-      const res = await fetch(`/api/report?symbol=${encodeURIComponent(quote.symbol)}`);
-      if (!res.ok) throw new Error();
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${quote.symbol}_Research_${new Date().toISOString().slice(0, 10)}.xlsx`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch { /* non-critical */ } finally {
+      // The shared helper, not a hand-rolled blob dance — and a visible toast
+      // on failure. This used to swallow every error as "non-critical", which
+      // read as a button that does nothing when the report route failed.
+      await downloadBlob(
+        `/api/report?symbol=${encodeURIComponent(quote.symbol)}`,
+        `${quote.symbol}_Research_${new Date().toISOString().slice(0, 10)}.xlsx`,
+      );
+    } catch (e) {
+      console.error("[research] report export failed:", e);
+      toast(e instanceof Error && e.message ? e.message : "Report export failed", "error");
+    } finally {
       setDownloading(false);
     }
   }
@@ -907,10 +938,10 @@ function ResearchWorkspace({
               <Clock3 className="h-4 w-4" strokeWidth={1.75} /> Journal
             </Link>
             <Link
-              href={`/knowledge-graph?scope=symbol&id=${encodeURIComponent(quote.symbol)}`}
+              href={`/exposure?issuer=${encodeURIComponent(quote.symbol)}`}
               className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-2 text-sm text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
             >
-              <Network className="h-4 w-4" strokeWidth={1.75} /> Graph
+              <Network className="h-4 w-4" strokeWidth={1.75} /> Exposure
             </Link>
             <button
               onClick={onCopyLink}
@@ -1169,6 +1200,7 @@ function ResearchWorkspace({
           // Fallback label is market-aware: an Indian stock whose benchmark
           // fetch failed must not be captioned against the S&P 500.
           benchmarks={benchmarks ?? { market: [], marketLabel: benchmarkForSymbol(quote.symbol).label, sectorEtf: null, sector: [] }}
+          currency={quote.currency}
           news={news}
           onAskAI={handleChartAskAI}
           onOpenTechnical={handleOpenTechnical}
@@ -1518,14 +1550,22 @@ function ResearchWorkspace({
               <DataProvenance source="yahoo" asOf={fundamentalsEntry.updatedAt} ttlHours={24} />
               {/* The conviction block (score ring, pillars, subscores) lives on
                   the Conviction tab ONLY — it was previously duplicated here. */}
-              {hasEarnings && <EarningsCard earnings={fundamentals.earnings} />}
+              {hasEarnings && <EarningsCard earnings={fundamentals.earnings} currency={quote.currency} />}
 
               {/* Financial charts grid. A resolved-but-empty peer set renders
                   NOTHING — a permanent "Peer data unavailable" box is worse
                   than a tighter grid. */}
               <div className="grid gap-4 lg:grid-cols-2">
                 {hasStatements && <MarginTrendChart statements={fundamentals.statements!} sector={fundamentals.snapshot?.sector} />}
-                {hasStatements && <RevenueFcfChart statements={fundamentals.statements!} />}
+                {hasStatements && (
+                  <RevenueFcfChart
+                    statements={fundamentals.statements!}
+                    // Reporting currency, not the listing currency: an ADR's
+                    // statements arrive in its home currency (TSM: TWD on a
+                    // USD listing). Identical to quote.currency otherwise.
+                    currency={statementsCurrency(fundamentals.snapshot.financialCurrency, quote.currency)}
+                  />
+                )}
                 {valuation.length >= 2 && (
                   <ValuationHistoryChart valuation={valuation} snapshot={fundamentals.snapshot} />
                 )}
@@ -1677,7 +1717,7 @@ function ResearchWorkspace({
                   the SEBI-regulated shareholding pattern above IS the ownership
                   story — Yahoo's US-style insider table is almost always empty
                   for NSE names, so it renders only when it has something. */}
-              {hasOwnership && <OwnershipCard ownership={fundamentals!.ownership} />}
+              {hasOwnership && <OwnershipCard ownership={fundamentals!.ownership} currency={quote.currency} />}
               {(!isIndia || (fundamentals?.insider?.transactions.length ?? 0) > 0) && (
                 <InsiderTable insider={fundamentals?.insider ?? { transactions: [], netValue: 0, buyCount: 0, sellCount: 0 }} currency={quote.currency} />
               )}
@@ -1724,7 +1764,7 @@ function ResearchWorkspace({
             symbol={quote.symbol}
             onLoaded={(mostRecent) => setNearestTimelineEvent(mostRecent)}
           />
-          <GraphPreviewCard symbol={quote.symbol} />
+          <YourExposureCard symbol={quote.symbol} />
           <RelatedOpportunitiesCard symbol={quote.symbol} />
 
           {/* Fund profile (family, category, expense ratio, asset allocation) */}
@@ -1738,16 +1778,16 @@ function ResearchWorkspace({
             <LoadingPanel height="h-40" message="Loading options chain…" />
           ) : isDerivativesSummaryComplete(derivativesSummary) ? (
             <div className="flex flex-col gap-4">
-              <DerivativesSummaryCard summary={derivativesSummary} />
+              <DerivativesSummaryCard summary={derivativesSummary} currency={quote.currency} />
               <div className="grid gap-4 sm:grid-cols-2">
-                <AiDerivativesInsight section="volatility" symbol={quote.symbol} underlyingName={quote.name} summary={derivativesSummary} />
-                <AiDerivativesInsight section="positioning" symbol={quote.symbol} underlyingName={quote.name} summary={derivativesSummary} />
+                <AiDerivativesInsight section="volatility" symbol={quote.symbol} underlyingName={quote.name} summary={derivativesSummary} currency={quote.currency} />
+                <AiDerivativesInsight section="positioning" symbol={quote.symbol} underlyingName={quote.name} summary={derivativesSummary} currency={quote.currency} />
               </div>
             </div>
           ) : null}
 
           {/* Analyst consensus */}
-          {fundamentals?.analyst && <AnalystCard analyst={fundamentals.analyst} />}
+          {fundamentals?.analyst && <AnalystCard analyst={fundamentals.analyst} currency={quote.currency} />}
 
           {/* Risks render on the Analysis tab only (WhySection's "Biggest
               Risks") — the risk heatmap here duplicated the same list. */}

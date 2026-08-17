@@ -21,8 +21,8 @@
  *
  * This is the definition the rest of the app has always used. `HoldingScore.confidence`
  * is documented in model/types.ts as "how much of the class's scoring inputs were
- * actually available", every class adapter computes it that way, and health.ts,
- * allocation.ts and optimize.ts all confidence-WEIGHT their aggregates on that
+ * actually available", every class adapter computes it that way, and
+ * allocation.ts and optimize.ts both confidence-WEIGHT their aggregates on that
  * reading ("a score of 70 at confidence 20 must never outrank a 65 at confidence 90").
  *
  * The recommendation layer was the one place that drifted. It had three different
@@ -54,9 +54,10 @@
  *      card does not know what buying or selling it does. A holding the class
  *      cannot score at all reads 0 here rather than a flattering default —
  *      "unknown must read as unknown" is the same rule that makes `score` nullable.
- *   2. HEALTH COVERAGE (30%) — `health.coveragePct`. The headline claim on every
- *      card is a health delta, so the share of the health score that was actually
- *      scoreable bounds how much that delta can be trusted.
+ *   2. ALIGNMENT EVIDENCE (30%) — `alignment.evidencePct`. The headline claim on
+ *      every card is an alignment delta, so the share of portfolio value the
+ *      scored alignment themes actually observed bounds how much that delta can
+ *      be trusted.
  *   3. MARK QUALITY (20%) — the share of portfolio value priced by a live market
  *      (or held as cash) and not stale. Every delta is measured against this
  *      baseline. Uses the SAME predicate as `normalizeHoldings`' marketPricedPct,
@@ -86,7 +87,7 @@ export const CONFIDENCE_FLOOR = 20;
 export const CONFIDENCE_CEILING = 95;
 
 const WEIGHT_SUBJECT = 0.35;
-const WEIGHT_HEALTH_COVERAGE = 0.30;
+const WEIGHT_ALIGNMENT_EVIDENCE = 0.30;
 const WEIGHT_MARK_QUALITY = 0.20;
 const WEIGHT_RISK_OBSERVABILITY = 0.15;
 
@@ -159,12 +160,12 @@ export function assessConfidence(
     );
   }
 
-  const healthCoverage = clampPct(evaluation.health.coveragePct);
+  const alignmentEvidence = clampPct(evaluation.alignment.evidencePct);
   factors.push({
-    label: "Health coverage",
-    observedPct: healthCoverage,
-    weight: WEIGHT_HEALTH_COVERAGE,
-    detail: `${Math.round(healthCoverage)}% of the health score — which this card's headline delta is measured on — was scoreable.`,
+    label: "Alignment evidence",
+    observedPct: alignmentEvidence,
+    weight: WEIGHT_ALIGNMENT_EVIDENCE,
+    detail: `${Math.round(alignmentEvidence)}% of portfolio value was visible to the alignment themes — which this card's headline delta is measured on.`,
   });
 
   const markQuality = clampPct(markQualityPct(evaluation));

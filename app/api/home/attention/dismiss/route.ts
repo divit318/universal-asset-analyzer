@@ -9,7 +9,7 @@
  * when a story is allowed back.
  */
 import { NextResponse } from "next/server";
-import { dismissAttention, undismissAttention } from "@/lib/db";
+import { dismissAttention, undismissAttention, dismissDecisionThesis, undismissDecisionThesis } from "@/lib/db";
 import { dismissalExpiresAt, MAX_SUPPRESS_MS } from "@/lib/home/attention";
 import { invalidateDataset } from "@/lib/platform";
 import type { AttentionKind } from "@/lib/home/contracts";
@@ -28,6 +28,7 @@ export async function POST(req: Request) {
       storyKey?: unknown;
       snoozeUntil?: unknown;
       mode?: unknown;
+      thesis?: unknown;
     };
     const dedupeKey = typeof body.dedupeKey === "string" ? body.dedupeKey.trim() : "";
     const kind = body.kind as AttentionKind;
@@ -59,6 +60,27 @@ export async function POST(req: Request) {
     // the surviving item's key would let its absorbed twin resurface next
     // build under its own kind.
     if (storyKey) dismissAttention(storyKey, now, expiresAt);
+
+    // A decision-backed story carries its underlying thesis: dismissing it
+    // here is the SAME considered "no" as dismissing the card in Decisions,
+    // so it lands in the one shared decision memory (engines/decision-memory)
+    // — not just this queue's presentation table. The recommendation pipeline
+    // then stops regenerating the idea everywhere at once.
+    const t = body.thesis as Record<string, unknown> | null | undefined;
+    const thesisKey = t && typeof t.key === "string" && t.key.trim() ? t.key.trim().slice(0, 80) : null;
+    if (thesisKey) {
+      dismissDecisionThesis(1, {
+        thesisKey,
+        dismissedAt: new Date(now).toISOString(),
+        policyUpdatedAt: typeof t!.policyUpdatedAt === "string" ? t!.policyUpdatedAt : null,
+        themeId: typeof t!.themeId === "string" ? t!.themeId : null,
+        themeScore: Number.isFinite(Number(t!.themeScore)) ? Number(t!.themeScore) : null,
+        subjectWeightPct: Number.isFinite(Number(t!.subjectWeightPct)) ? Number(t!.subjectWeightPct) : null,
+        title: typeof t!.title === "string" ? t!.title.slice(0, 160) : thesisKey,
+      });
+      invalidateDataset("portfolioReport");
+    }
+
     // The cached digest still contains the item; drop it so a reload inside
     // the TTL reflects the dismissal (audit PF-01/PF-04).
     invalidateDataset("homeDigest");
@@ -72,13 +94,19 @@ export async function POST(req: Request) {
 
 export async function DELETE(req: Request) {
   try {
-    const body = (await req.json()) as { dedupeKey?: unknown; storyKey?: unknown };
+    const body = (await req.json()) as { dedupeKey?: unknown; storyKey?: unknown; thesisKey?: unknown };
     const dedupeKey = typeof body.dedupeKey === "string" ? body.dedupeKey.trim() : "";
     const storyKey = typeof body.storyKey === "string" && body.storyKey.trim() ? body.storyKey.trim() : null;
     if (!dedupeKey) return NextResponse.json({ error: "dedupeKey is required" }, { status: 400 });
 
     undismissAttention(dedupeKey);
     if (storyKey) undismissAttention(storyKey);
+    // Undo restores the decision memory too — the reversal must be as wide as
+    // the act it reverses.
+    if (typeof body.thesisKey === "string" && body.thesisKey.trim()) {
+      undismissDecisionThesis(1, body.thesisKey.trim().slice(0, 80));
+      invalidateDataset("portfolioReport");
+    }
     invalidateDataset("homeDigest");
     return NextResponse.json({ ok: true, dedupeKey });
   } catch (err) {

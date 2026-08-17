@@ -173,15 +173,29 @@ export function DecisionHero({
     });
   }, []);
 
-  if (loading || (!verdict && streaming)) {
-    return (
-      <Skeleton
-        stage="Analyzing the data and writing the investment verdict…"
-        startedAt={startedAt}
-      />
-    );
-  }
-  if (!verdict) {
+  // The deterministic call NEVER waits on the AI.
+  //
+  // This used to read `if (loading || (!verdict && streaming))` → full-page
+  // skeleton, which meant the composite score and its recommendation — already
+  // computed and already on the client from the research bundle (~0.6s) — were
+  // hidden behind a spinner until the model's first field landed. The page's
+  // single most important answer was gated on its least reliable input.
+  //
+  // Now the skeleton is only for the case where there is genuinely nothing to
+  // show: no score AND no verdict. Whenever a score exists the hero renders
+  // immediately with the real call, and the AI's prose shimmers in around it
+  // (see `pending`, below). If the AI never arrives, the hero is still correct
+  // and complete — it just has no narration.
+  const pending = loading || streaming;
+  if (!verdict && !headlineScore) {
+    if (pending) {
+      return (
+        <Skeleton
+          stage="Analyzing the data and writing the investment verdict…"
+          startedAt={startedAt}
+        />
+      );
+    }
     if (!error) return null;
     return (
       <div className="rounded-xl border border-border bg-surface p-6">
@@ -199,11 +213,29 @@ export function DecisionHero({
   }
 
   // When `received` is omitted the verdict is complete, so every field renders.
-  const has = (id: string) => (received ? received.has(id) : true);
+  // A null verdict (score-only hero, AI still working or failed) has nothing.
+  const has = (id: string) => (verdict ? (received ? received.has(id) : true) : false);
   // Color follows the CANONICAL direction: the score's tier when a score
   // exists, the AI verdict word only when there is nothing to compute from.
-  const direction = headlineScore ? scoreDirection(headlineScore.composite) : verdict.verdict;
+  const direction = headlineScore ? scoreDirection(headlineScore.composite) : verdict!.verdict;
   const c = COLORS[direction];
+  /**
+   * The AI half will not arrive.
+   *
+   * Two shapes reach here. Either nothing streamed at all (`!has("thesis")`
+   * once pending has cleared — the router's wall-clock budget guarantees that
+   * happens within `budgetMs` rather than never), or the server sent its
+   * offline fallback, whose `model` is the sentinel "unavailable".
+   *
+   * The second case matters for the UI: that fallback's `catalysts`/`risks`
+   * are recovery instructions ("No AI provider reachable"), not investment
+   * evidence, and rendering them under "What supports it" / "What worries me"
+   * states something false about the company. Both cases collapse to one
+   * honest line, and the deterministic score above is untouched either way.
+   */
+  const aiUnavailable = (!pending && !has("thesis")) || verdict?.model === "unavailable";
+  /** Generated prose — suppressed wholesale when the AI half is unavailable. */
+  const aiText = (id: string) => has(id) && !aiUnavailable;
 
   return (
     <div
@@ -230,28 +262,30 @@ export function DecisionHero({
               </>
             ) : has("verdict") ? (
               <span className={`rounded-lg border px-3 py-1 text-sm font-bold uppercase tracking-widest ${c.badge}`}>
-                {verdict.verdict}
+                {verdict!.verdict}
               </span>
             ) : (
               <span className="h-7 w-24 animate-pulse rounded-lg bg-surface-2" />
             )}
           </div>
           {/* Investment headline */}
-          {has("headline") ? (
+          {aiText("headline") ? (
             <p className="text-base font-semibold leading-snug text-foreground">
-              {verdict.headline}
+              {verdict!.headline}
             </p>
-          ) : (
+          ) : aiUnavailable ? null : (
             <div className="h-4 w-64 animate-pulse rounded bg-surface-2" />
           )}
         </div>
 
         {/* Metadata rail — at most three lines, all label: value, all one case. */}
         <div className="flex shrink-0 flex-col items-end gap-1.5">
-          <div className="flex items-center gap-3 text-caption">
-            <span className="uppercase tracking-widest text-muted">Horizon</span>
-            <span className="uppercase text-foreground">{verdict.timeHorizon.replace("-", " ")}</span>
-          </div>
+          {has("timeHorizon") && (
+            <div className="flex items-center gap-3 text-caption">
+              <span className="uppercase tracking-widest text-muted">Horizon</span>
+              <span className="uppercase text-foreground">{verdict!.timeHorizon.replace("-", " ")}</span>
+            </div>
+          )}
           {dataConfidence != null && (
             <div className="flex items-center gap-3 text-caption" title="How complete the underlying data is — metadata, not conviction.">
               <span className="uppercase tracking-widest text-muted">Data confidence</span>
@@ -262,14 +296,36 @@ export function DecisionHero({
               was traced back to the evidence block. This is the product's
               central claim — it belongs on the flagship verdict, not only on
               the copilot/IC/compare surfaces. */}
-          {verdict.grounding && <GroundingBadge grounding={verdict.grounding} />}
+          {verdict?.grounding && <GroundingBadge grounding={verdict.grounding} />}
         </div>
       </div>
 
+      {/* ── The central tension — the one line that earns the AI's place on
+             this page. Everything else here restates or summarises data the
+             user can see; this names the conflict between signals and says
+             which side the verdict lands on. Given visual weight to match. ── */}
+      {aiText("tension") && verdict!.tension.trim() !== "" && (
+        <p className={`mb-4 border-l-2 ${c.border.replace("/20", "/50")} pl-3 text-sm font-medium leading-6 text-foreground`}>
+          {verdict!.tension}
+        </p>
+      )}
+
       {/* ── Thesis ── */}
-      {has("thesis") ? (
+      {aiText("thesis") ? (
         <p className="mb-5 text-sm leading-6 text-foreground/90">
-          {verdict.thesis}
+          {verdict!.thesis}
+        </p>
+      ) : aiUnavailable ? (
+        // The score above is the real call and stands on its own. Say plainly
+        // that only the narration is missing, rather than shimmering forever.
+        <p className="mb-5 text-sm leading-6 text-muted">
+          AI synthesis unavailable — the score, its breakdown, and all research below are computed
+          locally and remain complete.
+          {onRetry && (
+            <button onClick={onRetry} className="ml-2 underline underline-offset-2 hover:text-foreground">
+              Retry synthesis
+            </button>
+          )}
         </p>
       ) : (
         <div className="mb-5">
@@ -282,44 +338,65 @@ export function DecisionHero({
       <div className="mb-5 grid gap-4 sm:grid-cols-2">
         <div>
           <p className="mb-2.5 text-label font-semibold uppercase tracking-widest text-positive/70">
-            Why Own
+            What supports it
           </p>
-          {has("catalysts") ? (
+          {aiText("catalysts") ? (
             <ul className="space-y-1.5">
-              {verdict.catalysts.slice(0, 2).map((cat, i) => (
+              {verdict!.catalysts.slice(0, 2).map((cat, i) => (
                 <Reveal key={i} as="li" index={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
                   <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${c.bullet}`} />
                   {cat}
                 </Reveal>
               ))}
             </ul>
-          ) : (
+          ) : aiUnavailable ? null : (
             <PendingLines widths={[80, 70, 60]} />
           )}
         </div>
         <div>
           <p className="mb-2.5 text-label font-semibold uppercase tracking-widest text-negative/70">
-            Why Avoid
+            What worries me
           </p>
-          {has("risks") ? (
+          {aiText("risks") ? (
             <ul className="space-y-1.5">
-              {verdict.risks.slice(0, 2).map((risk, i) => (
+              {verdict!.risks.slice(0, 2).map((risk, i) => (
                 <Reveal key={i} as="li" index={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
                   <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-negative/50" />
                   {risk}
                 </Reveal>
               ))}
             </ul>
-          ) : (
+          ) : aiUnavailable ? null : (
             <PendingLines widths={[75, 65, 55]} />
           )}
         </div>
       </div>
 
-      {/* ── Key metrics strip ── */}
-      {verdict.keyMetrics.length > 0 && (
+      {/* ── What would change the verdict — the closing line, and the one the
+             user can actually check next quarter. Deliberately last: it is what
+             you carry away once the call itself has been read. ── */}
+      {aiText("triggers") && verdict!.triggers.length > 0 && (
+        <div className="mb-5 rounded-lg border border-border bg-surface/60 p-3">
+          <p className="mb-2 text-label font-semibold uppercase tracking-widest text-muted">
+            What changes the verdict
+          </p>
+          <ul className="space-y-1.5">
+            {verdict!.triggers.slice(0, 2).map((t, i) => (
+              <li key={i} className="flex gap-2 text-xs leading-5 text-foreground/80">
+                <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${c.dot}`} />
+                {t}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* ── Key metrics strip — non-equity classes only. The equity prompt no
+             longer requests it: those five figures are rendered as cards on
+             this same page, so re-emitting them was cost without information. ── */}
+      {(verdict?.keyMetrics.length ?? 0) > 0 && (
         <div className="flex flex-wrap gap-2 border-t border-border pt-4">
-          {verdict.keyMetrics.map((m, i) => (
+          {verdict!.keyMetrics.map((m, i) => (
             <div
               key={i}
               className="card-lift flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5"

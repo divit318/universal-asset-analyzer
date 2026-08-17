@@ -34,12 +34,15 @@ function topShifts(before: PortfolioEvaluation, after: PortfolioEvaluation, dime
     .slice(0, n);
 }
 
-/** Before/after score for a named health dimension — omitted entirely when either side honestly abstains (score === null), matching the engine's own discipline of never scoring what it can't measure. */
-function dimensionRow(before: PortfolioEvaluation, after: PortfolioEvaluation, name: string, label: string) {
-  const b = before.health.dimensions.find((d) => d.name === name);
-  const a = after.health.dimensions.find((d) => d.name === name);
-  if (b?.score == null || a?.score == null) return null;
-  return <Row key={name} label={label} before={b.score.toFixed(0)} after={a.score.toFixed(0)} />;
+/** Before/after score for each alignment theme — a theme is omitted entirely when either side honestly abstains (score === null), matching the engine's own discipline of never scoring what it can't measure. */
+function themeRows(before: PortfolioEvaluation, after: PortfolioEvaluation) {
+  return after.alignment.themes
+    .map((t) => {
+      const b = before.alignment.themes.find((x) => x.id === t.id);
+      if (b?.score == null || t.score == null) return null;
+      return <Row key={t.id} label={`${t.label} score`} before={b.score.toFixed(0)} after={t.score.toFixed(0)} />;
+    })
+    .filter(Boolean);
 }
 
 /** Section 6 — Expected Portfolio Impact. Only metrics actually calculated by the engines — never invented. */
@@ -49,23 +52,18 @@ export function ImpactComparison({ before, after }: { before: PortfolioEvaluatio
   const geoShifts = topShifts(before, after, "byGeography");
   const currencyShifts = topShifts(before, after, "byCurrency");
 
-  const dimensionRows = [
-    dimensionRow(before, after, "Diversification", "Diversification score"),
-    dimensionRow(before, after, "Concentration", "Concentration score"),
-    dimensionRow(before, after, "Liquidity", "Liquidity score"),
-    dimensionRow(before, after, "Income", "Income score"),
-    dimensionRow(before, after, "Inflation Protection", "Inflation protection score"),
-    dimensionRow(before, after, "Currency Diversification", "Currency diversification score"),
-    dimensionRow(before, after, "Geographic Diversification", "Geographic diversification score"),
-    dimensionRow(before, after, "Correlation", "Correlation score"),
-    dimensionRow(before, after, "Expected Drawdown", "Expected drawdown score"),
-  ].filter(Boolean);
+  const dimensionRows = themeRows(before, after);
 
   return (
     <Card className="flex flex-col gap-1 p-4">
       <h3 className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted">Expected portfolio impact</h3>
 
-      <Row label="Portfolio health" before={before.health.total.toFixed(1)} after={after.health.total.toFixed(1)} />
+      {/* scoreExact on both sides (comparisons difference the unrounded score); "—" when a side is unscorable. */}
+      <Row
+        label="Portfolio alignment"
+        before={before.alignment.scoreExact != null ? before.alignment.scoreExact.toFixed(1) : "—"}
+        after={after.alignment.scoreExact != null ? after.alignment.scoreExact.toFixed(1) : "—"}
+      />
       {before.risk.annualizedVolatility != null && after.risk.annualizedVolatility != null && (
         <Row label="Annualized volatility" before={before.risk.annualizedVolatility.toFixed(1)} after={after.risk.annualizedVolatility.toFixed(1)} unit="%" />
       )}

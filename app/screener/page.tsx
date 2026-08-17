@@ -777,9 +777,11 @@ export default function ScreenerPage() {
   const exportXlsx = async () => {
     if (!rows?.length) return;
     try {
+      // Same name the route puts in Content-Disposition — dated, so two
+      // screens exported on different days never overwrite each other.
       await downloadBlob(
         "/api/export/screener",
-        `uaa-${assetClass}-screen.xlsx`,
+        `uaa-${assetClass}-screen-${new Date().toISOString().slice(0, 10)}.xlsx`,
         "POST",
         { assetClass, rows },
       );

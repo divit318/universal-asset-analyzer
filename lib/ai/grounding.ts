@@ -405,7 +405,7 @@ const METRIC_LEXICON = [
   "price target",
   "target",
   "upside",
-  "health grade",
+  "alignment score",
 ] as const;
 
 function sentencesOf(text: string): string[] {

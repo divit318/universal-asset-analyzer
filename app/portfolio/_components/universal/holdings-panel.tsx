@@ -529,7 +529,18 @@ function ClassGroup({ assetClass, holdings, totalValue, sortKey, sortDir, onSort
 /* Panel                                                                       */
 /* -------------------------------------------------------------------------- */
 
-export function HoldingsPanel({ holdings, totalValue, onChanged }: { holdings: Holding[]; totalValue: number; onChanged: () => void }) {
+export function HoldingsPanel({ holdings, totalValue, onChanged, initialQuery }: {
+  holdings: Holding[];
+  totalValue: number;
+  onChanged: () => void;
+  /**
+   * Pre-seeds the filter box — how a concentration finding, key fact or
+   * decision card lands the user on exactly the holdings it was talking
+   * about instead of the full table. The user can clear or retype freely;
+   * remount (keyed by the caller) re-applies it.
+   */
+  initialQuery?: string;
+}) {
   // Owned here, not inside a row: a Sell All (or a background refresh landing
   // mid-transaction) can make the holding this modal is open for disappear
   // from the next `holdings` prop entirely. State scoped to a row would
@@ -547,7 +558,7 @@ export function HoldingsPanel({ holdings, totalValue, onChanged }: { holdings: H
   // each DataTable's own uncontrolled state, clicking "P&L" on the equity group
   // would leave the bond group sorted by value, and the page would show two
   // different rankings claiming to be one table.
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery ?? "");
   const [sortKey, setSortKey] = useState("value");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   // Density is lifted for the same reason as the sort, and rendered as ONE
@@ -565,6 +576,9 @@ export function HoldingsPanel({ holdings, totalValue, onChanged }: { holdings: H
   }, []);
 
   const needle = query.trim().toUpperCase();
+  // Geography and currency are in the match set because concentration findings
+  // are raised on BOTH dimensions ("84% United States", "100% USD") — a finding
+  // that hands its own label to this filter has to actually match something.
   const filtered = useMemo(
     () =>
       needle === ""
@@ -574,6 +588,8 @@ export function HoldingsPanel({ holdings, totalValue, onChanged }: { holdings: H
               (h.symbol ?? "").toUpperCase().includes(needle) ||
               h.name.toUpperCase().includes(needle) ||
               (h.attributes.sector ?? "").toUpperCase().includes(needle) ||
+              (h.attributes.geography ?? "").toUpperCase().includes(needle) ||
+              h.currency.toUpperCase() === needle ||
               PORTFOLIO_CLASS_LABEL[h.assetClass].toUpperCase().includes(needle),
           ),
     [holdings, needle],
@@ -597,12 +613,12 @@ export function HoldingsPanel({ holdings, totalValue, onChanged }: { holdings: H
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <label className="flex items-center gap-2">
-          <span className="sr-only">Filter holdings by symbol, name, sector or asset class</span>
+          <span className="sr-only">Filter holdings by symbol, name, sector, geography, currency or asset class</span>
           <input
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filter by symbol, name, sector or class…"
+            placeholder="Filter by symbol, name, sector, geography or class…"
             className="w-72 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted/60 focus:border-brand focus:outline-none"
           />
         </label>

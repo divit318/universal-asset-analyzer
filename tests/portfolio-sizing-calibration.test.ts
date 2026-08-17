@@ -104,10 +104,10 @@ function lopsidedPortfolio(c: MarketContext) {
   return evaluate(holdings, c);
 }
 
-describe("health score resolution", () => {
+describe("alignment score resolution", () => {
   const c = ctx();
 
-  it("moves totalExact when a single position is added, even if the displayed integer does not", () => {
+  it("moves scoreExact when a single position is added, even if the displayed integer does not", () => {
     const evaluation = lopsidedPortfolio(c);
     const template = evaluation.holdings.find((h) => h.symbol === "BONDETF")!;
 
@@ -115,29 +115,32 @@ describe("health score resolution", () => {
     const change: PortfolioChange = { kind: "buy", holding: template, amount: 2000 };
     const { after } = simulate(evaluation, [change], c);
 
-    const deltaExact = after.health.totalExact - evaluation.health.totalExact;
+    expect(evaluation.alignment.scoreExact).not.toBeNull();
+    expect(after.alignment.scoreExact).not.toBeNull();
+    const deltaExact = after.alignment.scoreExact! - evaluation.alignment.scoreExact!;
     expect(deltaExact).not.toBe(0);
     expect(Number.isFinite(deltaExact)).toBe(true);
 
     // The regression: differencing the DISPLAYED integers is what used to be
     // fed to the sizing loop, and it quantizes this same change to nothing.
-    const deltaDisplayed = after.health.total - evaluation.health.total;
+    const deltaDisplayed = after.alignment.score! - evaluation.alignment.score!;
     expect(Math.abs(deltaExact)).toBeGreaterThan(Math.abs(deltaDisplayed) === 0 ? 0 : -1);
   });
 
   it("keeps the displayed total the rounded form of the exact total", () => {
     const evaluation = lopsidedPortfolio(c);
-    expect(evaluation.health.total).toBe(Math.round(evaluation.health.totalExact));
+    expect(evaluation.alignment.score).toBe(Math.round(evaluation.alignment.scoreExact!));
   });
 
-  it("carries scoreExact on every scoring dimension and rounds it into score", () => {
+  it("carries scoreExact on every scored theme and rounds it into score", () => {
     const evaluation = lopsidedPortfolio(c);
-    for (const d of evaluation.health.dimensions) {
-      if (d.score == null) {
-        expect(d.scoreExact).toBeNull();
+    expect(evaluation.alignment.themes.length).toBeGreaterThan(0);
+    for (const t of evaluation.alignment.themes) {
+      if (t.score == null) {
+        expect(t.scoreExact).toBeNull();
       } else {
-        expect(d.scoreExact).not.toBeNull();
-        expect(d.score).toBe(Math.round(d.scoreExact!));
+        expect(t.scoreExact).not.toBeNull();
+        expect(t.score).toBe(Math.round(t.scoreExact!));
       }
     }
   });
@@ -174,11 +177,12 @@ describe("sizing calibration on a lopsided portfolio", () => {
     }
   });
 
-  it("reports a non-zero measured health impact for whatever it recommends", () => {
+  it("reports a non-zero measured alignment impact for whatever it recommends", () => {
     const bond = size("BONDETF", "bond");
     expect(bond.action).toBe("BUY");
     // Previously this was structurally always 0.0 — the loop could not see it.
-    expect(bond.impact.healthDelta).not.toBe(0);
+    expect(bond.impact.alignmentDelta).not.toBeNull();
+    expect(bond.impact.alignmentDelta).not.toBe(0);
   });
 
   it("respects the concentration cap it sizes against", () => {

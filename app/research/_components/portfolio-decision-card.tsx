@@ -20,10 +20,12 @@ const ACTION_STYLE: Record<Recommendation["action"], string> = {
   REDUCE:     "border-warning/40 bg-warning/10 text-warning",
   SELL:       "border-negative/40 bg-negative/10 text-negative",
   REALLOCATE: "border-brand/40 bg-brand/8 text-brand",
+  INVESTIGATE: "border-brand/40 bg-brand/8 text-brand",
 };
 
 const ACTION_LABEL: Record<Recommendation["action"], string> = {
   ADD: "Add", INCREASE: "Increase", HOLD: "Hold", REDUCE: "Reduce", SELL: "Sell", REALLOCATE: "Reallocate",
+  INVESTIGATE: "Worth a look",
 };
 
 export function PortfolioDecisionCard({ recommendation }: { recommendation: Recommendation }) {
@@ -56,12 +58,15 @@ export function PortfolioDecisionCard({ recommendation }: { recommendation: Reco
       <p className="text-xs leading-5 text-foreground/85">{r.rationale}</p>
 
       <div className="flex flex-wrap gap-3 border-t border-border pt-2.5 text-[11px]">
-        <span>
-          <span className="text-muted">Health: </span>
-          <span className={`font-mono font-semibold ${i.healthDelta >= 0 ? "text-positive" : "text-negative"}`}>
-            {i.healthDelta >= 0 ? "+" : ""}{i.healthDelta.toFixed(1)}pts
+        {/* Null when either side is unscorable — omitted rather than shown as 0. */}
+        {i.alignmentDelta != null && (
+          <span>
+            <span className="text-muted">Alignment: </span>
+            <span className={`font-mono font-semibold ${i.alignmentDelta >= 0 ? "text-positive" : "text-negative"}`}>
+              {i.alignmentDelta >= 0 ? "+" : ""}{i.alignmentDelta.toFixed(1)}pts
+            </span>
           </span>
-        </span>
+        )}
         {i.riskDelta != null && (
           <span>
             <span className="text-muted">Volatility: </span>

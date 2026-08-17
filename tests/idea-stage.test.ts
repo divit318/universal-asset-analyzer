@@ -1,29 +1,22 @@
 /**
- * The Idea lifecycle's pure logic (§4.5): the unambiguous auto-transitions and
- * the days-in-stage math. Kept separate from the DB integration test so the
- * transition rules are pinned without touching SQLite.
+ * The stored stage's surviving logic: vocabulary validation, the ledger's
+ * unambiguous auto-transitions, and effectiveStage (the ledger wins in both
+ * directions). The manual funnel that used to live here was replaced by the
+ * evidence-derived workflow — see tests/idea-evidence.test.ts.
  */
 
 import { describe, it, expect } from "vitest";
 import {
   autoStageForTrade,
-  daysInStage,
-  PIPELINE_STAGES,
-  TERMINAL_STAGES,
+  effectiveStage,
   IDEA_STAGES,
   isIdeaStage,
-  STAGE_LABEL,
+  isPipelineSymbol,
 } from "@/lib/idea-stage";
 
 describe("stage vocabulary", () => {
-  it("lists the funnel then the terminal outcomes", () => {
-    expect(PIPELINE_STAGES).toEqual(["surfaced", "researching", "thesis", "owned"]);
-    expect(TERMINAL_STAGES).toEqual(["passed", "exited"]);
+  it("lists every value the column may store", () => {
     expect(IDEA_STAGES).toEqual(["surfaced", "researching", "thesis", "owned", "passed", "exited"]);
-  });
-
-  it("labels every stage", () => {
-    for (const s of IDEA_STAGES) expect(STAGE_LABEL[s]).toBeTruthy();
   });
 
   it("validates stage strings", () => {
@@ -32,6 +25,36 @@ describe("stage vocabulary", () => {
     expect(isIdeaStage("bogus")).toBe(false);
     expect(isIdeaStage(null)).toBe(false);
     expect(isIdeaStage(3)).toBe(false);
+  });
+});
+
+describe("isPipelineSymbol", () => {
+  it("accepts everything a market quotes", () => {
+    for (const sym of ["NVDA", "BRK.B", "HE=F", "USDCHF=X", "^GSPC", "BTC-USD"]) {
+      expect(isPipelineSymbol(sym)).toBe(true);
+    }
+  });
+
+  it("rejects cash, nulls and non-tickers", () => {
+    expect(isPipelineSymbol("CASH-USD")).toBe(false);
+    expect(isPipelineSymbol(null)).toBe(false);
+    expect(isPipelineSymbol("not a ticker!")).toBe(false);
+  });
+});
+
+describe("effectiveStage — the ledger wins in both directions", () => {
+  it("a held name reads owned whatever is stored", () => {
+    expect(effectiveStage("surfaced", true)).toBe("owned");
+    expect(effectiveStage("passed", true)).toBe("owned");
+  });
+
+  it("a stored owned for a name no longer held reads exited", () => {
+    expect(effectiveStage("owned", false)).toBe("exited");
+  });
+
+  it("otherwise the stored value stands", () => {
+    expect(effectiveStage("passed", false)).toBe("passed");
+    expect(effectiveStage("surfaced", false)).toBe("surfaced");
   });
 });
 
@@ -59,21 +82,5 @@ describe("autoStageForTrade", () => {
 
   it("normalizes case", () => {
     expect(autoStageForTrade({ kind: "buy", assetClass: "equity", symbol: "nvda", stillHeld: true })).toBe("owned");
-  });
-});
-
-describe("daysInStage", () => {
-  const NOW = Date.parse("2026-07-19T12:00:00Z");
-
-  it("counts whole days from the stage-changed timestamp", () => {
-    expect(daysInStage(NOW - 3 * 86_400_000, "2020-01-01", NOW)).toBe(3);
-  });
-
-  it("falls back to added-at when the stage timestamp is null (pre-migration rows)", () => {
-    expect(daysInStage(null, new Date(NOW - 5 * 86_400_000).toISOString(), NOW)).toBe(5);
-  });
-
-  it("never goes negative", () => {
-    expect(daysInStage(NOW + 86_400_000, "2020-01-01", NOW)).toBe(0);
   });
 });

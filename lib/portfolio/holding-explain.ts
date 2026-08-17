@@ -102,7 +102,7 @@ Macro factor exposures: ${factorLines || "negligible"}
 
 PORTFOLIO CONTEXT
 Total value: ${formatCurrency(evaluation.totalValue)}
-Health: ${evaluation.health.total}/100
+Portfolio alignment: ${evaluation.alignment.score == null ? "unscored" : `${evaluation.alignment.score}/100 (${evaluation.alignment.label})`}
 Top asset-class weight: ${evaluation.risk.topAssetClassWeight.toFixed(0)}%
 ${activeRec ? `The decision engine currently recommends acting on this holding: "${activeRec.title}" — ${activeRec.rationale}` : "The decision engine has no active recommendation to change this holding."}
 

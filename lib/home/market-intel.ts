@@ -19,6 +19,7 @@
 
 import { getQuotes, getHistory } from "../yahoo";
 import { dayChange } from "../day-change";
+import { SECTOR_ETFS } from "../sector-rotation";
 import { computeSentiment } from "./sentiment";
 import type { MarketGroup, MarketGroupId, MarketIntelligence, MarketTicker, SectorAttentionChange } from "./contracts";
 import type { CardStatus } from "../mission-control";
@@ -89,7 +90,14 @@ const TAPE: { id: MarketGroupId; label: string; tickers: { symbol: string; label
   },
 ];
 
-const ALL_SYMBOLS = TAPE.flatMap((g) => g.tickers.map((t) => t.symbol));
+/**
+ * The 11 SPDR sector ETFs join the tape's single batched quote call — the
+ * Today page's strong→weak sector strip costs no second provider round-trip.
+ */
+const ALL_SYMBOLS = [
+  ...TAPE.flatMap((g) => g.tickers.map((t) => t.symbol)),
+  ...SECTOR_ETFS.map((s) => s.ticker),
+];
 
 /**
  * The curated set that gets a sparkline. NOT every tape symbol — fetching a
@@ -151,6 +159,7 @@ export async function buildMarketIntelligence(inputs: MarketIntelInputs): Promis
       sentiment: null,
       regime: toRegimeSummary(inputs.regime),
       sectorAttention: inputs.sectorAttention,
+      sectors: [],
     };
   }
 
@@ -187,6 +196,25 @@ export async function buildMarketIntelligence(inputs: MarketIntelInputs): Promis
     sp500ChangePct: sp500?.changePercent ?? null,
   });
 
+  // Strong→weak, priced sectors only. `dayChange` applies the same stale-quote
+  // gate the tape rows get, so a dead ETF quote drops out rather than lying.
+  const sectors: MarketTicker[] = SECTOR_ETFS.map<MarketTicker | null>((s) => {
+    const q = bySymbol.get(s.ticker.toUpperCase());
+    if (!q || q.price == null || q.changePercent == null) return null;
+    const dc = dayChange(q);
+    return {
+      symbol: s.ticker,
+      label: s.sector,
+      price: q.price,
+      changePct: q.changePercent,
+      sessionDate: dc?.sessionDate ?? null,
+      asOf: dc?.asOf ?? null,
+      series: null,
+    };
+  })
+    .filter((s): s is MarketTicker => s != null)
+    .sort((a, b) => (b.changePct ?? 0) - (a.changePct ?? 0));
+
   const received = groups.reduce((n, g) => n + g.tickers.filter((t) => t.price != null).length, 0);
   const status: CardStatus = received === 0 ? "empty" : received < ALL_SYMBOLS.length / 2 ? "degraded" : "ok";
 
@@ -197,6 +225,7 @@ export async function buildMarketIntelligence(inputs: MarketIntelInputs): Promis
     sentiment,
     regime: toRegimeSummary(inputs.regime),
     sectorAttention: inputs.sectorAttention,
+    sectors,
   };
 }
 

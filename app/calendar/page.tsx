@@ -192,7 +192,7 @@ function EarningsRow({ ev, onClick, isPortfolio, isWatchlist }: {
           {/* Meta row */}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted">
             {ev.quarter && <span>{ev.quarter}</span>}
-            {/* Estimates render in their OWN reporting currency. A hardcoded "$"
+            {/* Estimates render in their OWN reporting currency. A hardcoded dollar
                 turned SK hynix's ₩84.1T revenue estimate into "$84.12T". */}
             {ev.epsEstimate != null && (
               <span>EPS est. <span className="text-foreground">{formatPerShare(ev.epsEstimate, ev.estimateCurrency)}</span></span>
@@ -256,7 +256,7 @@ function DividendRow({ ev, onClick, isPortfolio, isWatchlist }: {
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted">
             {ev.dividendAmount != null && (
-              <span>Div. <span className="text-foreground">${ev.dividendAmount.toFixed(4)}</span></span>
+              <span>Div. <span className="text-foreground">{formatPerShare(ev.dividendAmount, ev.currency, 4)}</span></span>
             )}
             {ev.dividendYield != null && (
               <span>Yield <span className="text-foreground">{ev.dividendYield.toFixed(2)}%</span></span>

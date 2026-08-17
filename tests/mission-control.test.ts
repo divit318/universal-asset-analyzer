@@ -244,7 +244,7 @@ describe("buildOpportunitySnapshot", () => {
       holdingCount: 1,
       totalValue: 10_000,
       risk: { positionHhi: 5000, annualizedVolatility: 15, beta: 1, illiquidPct: 0, topHoldingWeight: 100, topSectorWeight: 0, correlation: null, maxDrawdown: null },
-      health: { total: 70 },
+      alignment: { score: 70, scoreExact: 70, label: "Well aligned", status: "scored", confirmed: false, themes: [], mismatches: [], dataGaps: [], summary: "", evidencePct: 100 },
     });
     const result = buildOpportunitySnapshot({ report: r, rotation: null, regime: null, watchlistAlerts: [], scannerFreshness: null });
 

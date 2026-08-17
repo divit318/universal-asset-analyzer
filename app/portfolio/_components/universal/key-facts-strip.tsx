@@ -28,6 +28,8 @@ export interface KeyFact {
   tab: Tab;
   /** Optional element id to scroll to once the tab is active. */
   anchor?: string;
+  /** Pre-seed the Holdings filter so the click lands on the rows the fact is about. */
+  holdingsFilter?: string;
 }
 
 /** Derive the strip's items from the report. Pure; exported for tests. */
@@ -43,6 +45,7 @@ export function deriveKeyFacts(report: UniversalPortfolioReport): KeyFact[] {
       reason: `Largest single position. ${top.weight.toFixed(1)}% of the portfolio rides on it.`,
       tone: top.weight >= 20 ? "warning" : "neutral",
       tab: "holdings",
+      holdingsFilter: top.symbol ?? top.name,
     });
   }
 
@@ -130,7 +133,7 @@ export function KeyFactsStrip({
   onNavigate,
 }: {
   report: UniversalPortfolioReport;
-  onNavigate: (tab: Tab, anchor?: string) => void;
+  onNavigate: (tab: Tab, anchor?: string, opts?: { holdingsFilter?: string }) => void;
 }) {
   const facts = deriveKeyFacts(report);
   if (facts.length === 0) return null;
@@ -146,7 +149,7 @@ export function KeyFactsStrip({
           <button
             type="button"
             title={f.reason}
-            onClick={() => onNavigate(f.tab, f.anchor)}
+            onClick={() => onNavigate(f.tab, f.anchor, f.holdingsFilter ? { holdingsFilter: f.holdingsFilter } : undefined)}
             className={`rounded-sm font-mono tabular-nums underline-offset-2 transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 ${
               f.tone === "warning" ? "text-warning hover:text-warning" : "text-muted hover:text-foreground"
             }`}

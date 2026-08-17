@@ -32,7 +32,9 @@ import type {
   HomeDigest,
 } from "./contracts";
 
-export const FINGERPRINT_VERSION = 1;
+// v2: healthScore/healthGrade → alignmentScore. Old blobs read as first-visit
+// rather than diffing two different rulers into a fake "score fell" change.
+export const FINGERPRINT_VERSION = 2;
 
 /** A digest build this long after the previous one starts a new "visit". */
 export const VISIT_GAP_MS = 45 * 60 * 1000;
@@ -41,8 +43,8 @@ export const VISIT_GAP_MS = 45 * 60 * 1000;
 /* Materiality thresholds — all tunable in one place                   */
 /* ------------------------------------------------------------------ */
 
-/** Health-score moves under this many points are jitter, not news. */
-export const HEALTH_MATERIAL_PTS = 2;
+/** Alignment-score moves under this many points are jitter, not news. */
+export const ALIGNMENT_MATERIAL_PTS = 2;
 /** Opportunity-fit moves under this many points don't resurface an idea. */
 export const OPP_SCORE_MATERIAL = 5;
 /** Drift must worsen by at least this many pp to be re-raised as a change. */
@@ -62,8 +64,7 @@ const SEVERITY_RANK: Record<"high" | "medium" | "low", number> = { high: 2, medi
 export interface HomeFingerprint {
   version: number;
   takenAt: string;
-  healthScore: number | null;
-  healthGrade: string | null;
+  alignmentScore: number | null;
   regimeTrend: string | null;
   sentimentLabel: string | null;
   sentimentScore: number | null;
@@ -92,8 +93,7 @@ export function captureFingerprint(digest: FingerprintSource, takenAt: string = 
   return {
     version: FINGERPRINT_VERSION,
     takenAt,
-    healthScore: digest.portfolioPulse.healthScore,
-    healthGrade: digest.portfolioPulse.healthGrade,
+    alignmentScore: digest.portfolioPulse.alignmentScore,
     regimeTrend: digest.marketIntelligence.regime?.trend ?? null,
     sentimentLabel: digest.marketIntelligence.sentiment?.label ?? null,
     sentimentScore: digest.marketIntelligence.sentiment?.score ?? null,
@@ -167,17 +167,17 @@ function change(
 export function diffFingerprints(prev: HomeFingerprint, next: HomeFingerprint): HomeChange[] {
   const out: HomeChange[] = [];
 
-  /* ---- portfolio health ---- */
-  if (prev.healthScore != null && next.healthScore != null) {
-    const delta = next.healthScore - prev.healthScore;
-    if (Math.abs(delta) >= HEALTH_MATERIAL_PTS) {
+  /* ---- portfolio alignment ---- */
+  if (prev.alignmentScore != null && next.alignmentScore != null) {
+    const delta = next.alignmentScore - prev.alignmentScore;
+    if (Math.abs(delta) >= ALIGNMENT_MATERIAL_PTS) {
       const up = delta > 0;
       out.push(change(
-        "health",
+        "alignment",
         up ? "improved" : "worsened",
-        "health",
-        `Portfolio health ${up ? "rose" : "fell"} to ${next.healthGrade ?? "?"} (${next.healthScore})`,
-        `Was ${prev.healthScore}${prev.healthGrade ? ` (${prev.healthGrade})` : ""} at your last visit — a ${up ? "+" : ""}${delta}-point move.`,
+        "alignment",
+        `Portfolio alignment ${up ? "rose" : "fell"} to ${next.alignmentScore}`,
+        `Was ${prev.alignmentScore} at your last visit — a ${up ? "+" : ""}${delta}-point move against your stated policy.`,
         Math.abs(delta) * 4,
         null,
         "/portfolio",

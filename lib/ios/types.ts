@@ -74,8 +74,8 @@ export interface InvestmentProfile {
 
   /** Herfindahl-Hirschman Index from RiskAnalytics (0-10000; lower = diversified). */
   hhi: number;
-  /** Overall portfolio health score 0-100. */
-  healthScore: number;
+  /** Portfolio-alignment score vs the investor's policy, 0-100. Null = unscored. */
+  alignmentScore: number | null;
   /** Annualized portfolio volatility % (null when insufficient history). */
   annualizedVolatility: number | null;
   /** Portfolio beta vs SPY. */
@@ -110,7 +110,7 @@ export const EMPTY_PROFILE: InvestmentProfile = {
   styleWeights: { growth: 50, value: 50, momentum: 50, quality: 50, income: 50 },
   marketCapWeights: { large: 0, mid: 0, small: 0 },
   hhi: 0,
-  healthScore: 0,
+  alignmentScore: null,
   annualizedVolatility: null,
   beta: null,
   behavioral: DEFAULT_BEHAVIORAL,

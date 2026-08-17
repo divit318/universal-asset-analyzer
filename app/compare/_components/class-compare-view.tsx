@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useState } from "react";
 import type { AssetClassId } from "@/lib/assets/types";
-import type { ClassCompareEntry } from "@/lib/compare/types";
+import { formatCompactCurrency } from "@/lib/format";
+import { classPriceDisplay, type ClassCompareEntry } from "@/lib/compare/types";
 import type { PeerBenchmark } from "@/lib/compare/benchmarks";
 import {
   classSections,
@@ -54,7 +55,10 @@ function SignatureChart({ assetClass, entries }: { assetClass: AssetClassId; ent
   const pct = (v: number) => `${v.toFixed(1)}%`;
   const xRatio = (v: number) => `${v.toFixed(1)}x`;
   const yrs = (v: number) => `${v.toFixed(1)}y`;
-  const usd = (v: number) => `$${(v / 1e9).toFixed(1)}B`;
+  // AUM/market-cap bubbles for the ETF/REIT/bond scatters — those universes
+  // are US-listed, USD-denominated by construction (lib/screener/universes/),
+  // so the dollar is a property of the data.
+  const usd = (v: number) => formatCompactCurrency(v, "USD");
 
   switch (assetClass) {
     case "etf": {
@@ -159,7 +163,7 @@ function ClassStockCard({
 
       {entry.price != null && (
         <div className="mt-3">
-          <div className="font-mono text-xl font-semibold">${entry.price.toFixed(2)}</div>
+          <div className="font-mono text-xl font-semibold">{classPriceDisplay(assetClass, entry.price)}</div>
           {entry.changePercent != null && (
             <div className={`text-xs font-mono ${pos ? "text-positive" : "text-negative"}`}>
               {pos ? "+" : ""}{entry.changePercent.toFixed(2)}%

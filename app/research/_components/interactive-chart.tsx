@@ -17,6 +17,7 @@ import {
 } from "recharts";
 import { Maximize2 } from "lucide-react";
 import type { HistoryPoint, NewsItem } from "@/lib/types";
+import { formatChartPrice } from "@/lib/format";
 import { niceTicks } from "@/lib/chart-scale";
 import type { ChartQARelatedTarget } from "@/lib/ai-chart-qa";
 import { CandleChart } from "./candle-chart";
@@ -54,6 +55,12 @@ interface Props {
   symbol: string;
   history: HistoryPoint[];
   benchmarks: Benchmarks;
+  /**
+   * Listing currency of `history` (Quote.currency), e.g. "JPY" for 7974.T.
+   * Optional so callers without a quote render bare numbers — the axis and
+   * tooltip must never claim dollars for a series that isn't dollars.
+   */
+  currency?: string | null;
   news?: NewsItem[];
   onAskAI?: (payload: AskAIPayload) => void;
   onOpenTechnical?: () => void;
@@ -99,9 +106,9 @@ function buildSmaMap(data: HistoryPoint[], window: number): Map<string, number> 
 /* Formatting helpers                                                          */
 /* -------------------------------------------------------------------------- */
 
-function fmtPrice(v: number): string {
-  return v < 10 ? `$${v.toFixed(2)}` : v < 100 ? `$${v.toFixed(1)}` : `$${v.toFixed(0)}`;
-}
+/* Price ticks/tooltips format through lib/format's formatChartPrice with the
+   listing currency — the old local fmtPrice stamped a dollar sign onto every
+   market (7974.T rendered as $14655). */
 
 function fmtVol(v: number): string {
   if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
@@ -146,6 +153,7 @@ function PriceTooltip({
   payload,
   label,
   symbol,
+  currency,
   showSma50,
   showSma200,
   sma50Color,
@@ -156,6 +164,7 @@ function PriceTooltip({
   payload?: TooltipPayloadItem[];
   label?: string;
   symbol: string;
+  currency?: string | null;
   showSma50: boolean;
   showSma200: boolean;
   sma50Color: string;
@@ -170,19 +179,19 @@ function PriceTooltip({
       {byKey.price != null && (
         <p className="flex items-center gap-2 text-xs">
           <span className="font-medium text-foreground">{symbol}</span>
-          <span className="font-mono">{fmtPrice(byKey.price as number)}</span>
+          <span className="font-mono">{formatChartPrice(byKey.price as number, currency)}</span>
         </p>
       )}
       {showSma50 && byKey.sma50 != null && (
         <p className="flex items-center gap-2 text-xs">
           <span style={{ color: sma50Color }}>SMA 50</span>
-          <span className="font-mono">{fmtPrice(byKey.sma50 as number)}</span>
+          <span className="font-mono">{formatChartPrice(byKey.sma50 as number, currency)}</span>
         </p>
       )}
       {showSma200 && byKey.sma200 != null && (
         <p className="flex items-center gap-2 text-xs">
           <span style={{ color: sma200Color }}>SMA 200</span>
-          <span className="font-mono">{fmtPrice(byKey.sma200 as number)}</span>
+          <span className="font-mono">{formatChartPrice(byKey.sma200 as number, currency)}</span>
         </p>
       )}
       {byKey.volume != null && (byKey.volume as number) > 0 && (
@@ -230,7 +239,7 @@ function RelativeTooltip({
 /* Main component                                                              */
 /* -------------------------------------------------------------------------- */
 
-export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, onOpenTechnical, onNavigate }: Props) {
+export function InteractiveChart({ symbol, history, benchmarks, currency, news, onAskAI, onOpenTechnical, onNavigate }: Props) {
   const ct = useChartTheme();
   const AXIS = ct.axis;
   const GRID = ct.grid;
@@ -487,7 +496,7 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
                 tick={{ fontSize: 11, fill: AXIS }}
                 tickLine={false}
                 axisLine={false}
-                tickFormatter={fmtPrice}
+                tickFormatter={(v: number) => formatChartPrice(v, currency)}
                 width={56}
                 ticks={priceTicks}
                 domain={
@@ -500,6 +509,7 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
                 content={
                   <PriceTooltip
                     symbol={symbol}
+                    currency={currency}
                     showSma50={showSma50}
                     showSma200={showSma200}
                     sma50Color={AMBER}
@@ -595,6 +605,7 @@ export function InteractiveChart({ symbol, history, benchmarks, news, onAskAI, o
           symbol={symbol}
           history={history}
           since={since}
+          currency={currency}
           periodLabel={period}
           news={news}
           onAskAI={onAskAI}

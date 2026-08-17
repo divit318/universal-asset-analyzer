@@ -79,8 +79,8 @@ export function buildDashboardFacts(
     dayPnlPct: fact(pulse.status === "empty" ? null : pulse.todayChangePct, "percent", PRECISION.percent, "today", pulseAsOf, "portfolio/report.todayChangePct"),
     dayPnlDollar: fact(pulse.status === "empty" ? null : pulse.todayChangeDollar, "currency", PRECISION.currency, "today", pulseAsOf, "portfolio/report.todayChangeDollar"),
     dayCoveragePct: fact(pulse.dayCoveragePct, "percent", 0, "today", pulseAsOf, "home/pulse.dayCoveragePct"),
-    healthScore: fact(pulse.healthScore, "score", PRECISION.score, "now", pulseAsOf, "portfolio/engines/health.total"),
-    healthGrade: fact(pulse.healthGrade, "text", 0, "now", pulseAsOf, "portfolio/engines/health.grade"),
+    alignmentScore: fact(pulse.alignmentScore, "score", PRECISION.score, "now", pulseAsOf, "portfolio/alignment/engine.score"),
+    alignmentLabel: fact(pulse.alignmentLabel, "text", 0, "now", pulseAsOf, "portfolio/alignment/engine.label"),
     cashPct: fact(pulse.cashPct, "percent", PRECISION.percent, "now", pulseAsOf, "portfolio/report.allocation.cash"),
     totalReturnOnCostPct: fact(pulse.totalReturnOnCostPct, "percent", PRECISION.percent, "since inception, cumulative", pulseAsOf, "portfolio/report.totalReturn"),
     xirrPct: fact(perf.status === "ok" ? perf.xirrPct : null, "percent", PRECISION.percent, xirrWindow, null, "portfolio-performance.xirr"),
@@ -175,11 +175,11 @@ export function reconcileDashboardFacts(digest: Pick<HomeDigest, "facts" | "port
     }
   }
 
-  // 2. Health decomposition reconciles: covered factor contributions sum to the total (0.1 pt granularity).
-  if (pulse.healthScore != null && pulse.healthFactors.length > 0) {
-    const sum = pulse.healthFactors.reduce((s, x) => s + (x.contributionPts ?? 0), 0);
-    if (!close(sum, pulse.healthScore, 0.51)) {
-      push("health-factors-sum", `factor contributions ${sum.toFixed(1)} != health ${pulse.healthScore}`);
+  // 2. Alignment decomposition reconciles: rated theme contributions sum to the total (0.1 pt granularity).
+  if (pulse.alignmentScore != null && pulse.alignmentFactors.length > 0) {
+    const sum = pulse.alignmentFactors.reduce((s, x) => s + (x.contributionPts ?? 0), 0);
+    if (!close(sum, pulse.alignmentScore, 0.51)) {
+      push("alignment-factors-sum", `theme contributions ${sum.toFixed(1)} != alignment ${pulse.alignmentScore}`);
     }
   }
 
@@ -201,7 +201,7 @@ export function reconcileDashboardFacts(digest: Pick<HomeDigest, "facts" | "port
   if (pulse.status !== "empty") {
     if (f.dayPnlPct.value !== pulse.todayChangePct) push("fact-day-pnl", "facts.dayPnlPct drifted from pulse.todayChangePct");
     if (f.cashPct.value !== pulse.cashPct) push("fact-cash", "facts.cashPct drifted from pulse.cashPct");
-    if (f.healthScore.value !== pulse.healthScore) push("fact-health", "facts.healthScore drifted from pulse.healthScore");
+    if (f.alignmentScore.value !== pulse.alignmentScore) push("fact-alignment", "facts.alignmentScore drifted from pulse.alignmentScore");
   }
 
   // 5. Benchmark comparison shares one window and one methodology on both sides.

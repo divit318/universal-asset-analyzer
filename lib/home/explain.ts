@@ -1,7 +1,7 @@
 /**
  * Explainability — one contract for "how was this number produced?".
  *
- * Every major score the dashboard renders (health grade, attention score,
+ * Every major score the dashboard renders (alignment score, attention score,
  * sentiment gauge, decision score) can be decomposed on click. This module
  * builds those decompositions as pure projections of data the engines already
  * shipped in the digest — it never recomputes a score, and where a factor's
@@ -126,50 +126,57 @@ export function explainOpportunityScore(item: OpportunitySnapshotItem): ScoreExp
 }
 
 /**
- * The portfolio health total, decomposed into the engine's own dimensions.
- * `weightShare × score` are exactly the terms `computeHealth` summed, so these
- * rows genuinely add to the number on screen.
+ * The portfolio alignment score, decomposed into the engine's own themes.
+ * `weightShare × score` are exactly the terms `computeAlignment` summed, so
+ * these rows genuinely add to the number on screen. Weights are the INVESTOR'S
+ * stated priorities, not UAA's — that is the whole point of the score.
  */
-export function explainHealth(pulse: PortfolioPulse): ScoreExplanation | null {
-  if (pulse.healthScore == null || pulse.healthFactors.length === 0) return null;
+export function explainAlignment(pulse: PortfolioPulse): ScoreExplanation | null {
+  if (pulse.alignmentScore == null || pulse.alignmentFactors.length === 0) return null;
 
-  const factors: ExplanationFactor[] = pulse.healthFactors.map((f) => {
+  const factors: ExplanationFactor[] = pulse.alignmentFactors.map((f) => {
     if (f.score == null || f.weightShare == null) {
       return {
         label: f.label,
-        display: "abstained",
+        display: f.unratedReason === "opted_out" ? "not a priority" : "insufficient data",
         bar: 0,
         direction: 0 as const,
-        detail: "Not enough evidence to score this dimension for this portfolio — it carries no weight rather than a guessed value.",
+        detail:
+          f.unratedReason === "opted_out"
+            ? "You've said this doesn't matter to you — it is reported as a fact and carries no weight in the score."
+            : "Cannot be measured honestly on this book's data, so it is excluded from the score by name rather than guessed.",
         muted: true,
       };
     }
     return {
       label: f.label,
-      display: `${Math.round(f.score)} · ${pct(f.weightShare)} wt`,
+      display: `${Math.round(f.score)} · ${pct(f.weightShare)} of score`,
       bar: f.score / 100,
-      direction: (f.score >= (pulse.healthScore ?? 0) ? 1 : -1) as 1 | -1,
+      direction: (f.score >= (pulse.alignmentScore ?? 0) ? 1 : -1) as 1 | -1,
       detail:
-        `${f.contributionPts != null ? `Contributes ${f.contributionPts} of the total. ` : ""}` +
-        (f.coveragePct < 100 ? `Scored on ${f.coveragePct}% of the book's evidence, so its weight is discounted accordingly.` : ""),
+        `${f.contributionPts != null ? `Contributes ${f.contributionPts} of the total, weighted by your stated priority. ` : ""}` +
+        (f.evidencePct < 100 ? `The underlying facts cover ${f.evidencePct}% of portfolio value.` : ""),
       muted: !f.covered,
     };
   });
 
   const caveats: string[] = [];
-  if (pulse.healthCoveragePct != null && pulse.healthCoveragePct < 90) {
-    caveats.push(`${100 - Math.round(pulse.healthCoveragePct)}% of the nominal scoring weight could not be evidenced for this portfolio.`);
+  if (!pulse.alignmentConfirmed) {
+    caveats.push("Scored against assumed default priorities — set your own policy on the Portfolio page to make this score yours.");
+  }
+  if (pulse.alignmentEvidencePct != null && pulse.alignmentEvidencePct < 90) {
+    caveats.push(`The facts behind the scored themes cover ${Math.round(pulse.alignmentEvidencePct)}% of portfolio value — stated as disclosure, never blended into the arithmetic.`);
   }
 
   return {
-    title: "Portfolio health",
-    value: `${pulse.healthGrade ?? "?"} · ${pulse.healthScore}/100`,
-    method: "Weighted average of the dimension scores below; each weight is scaled by how much of the book that dimension could actually evidence, then renormalized. Contributions are shown at 0.1-pt precision and sum to the total.",
+    title: "Portfolio alignment",
+    value: `${pulse.alignmentScore}/100${pulse.alignmentLabel ? ` · ${pulse.alignmentLabel}` : ""}`,
+    method: "Weighted average of the theme scores below, weighted by YOUR stated priorities (renormalized over the themes that could be measured). Themes you opted out of are facts, not judgments. Contributions are shown at 0.1-pt precision and sum to the total.",
     confidence:
-      pulse.healthCoveragePct != null
+      pulse.alignmentEvidencePct != null
         ? {
-            label: `${Math.round(pulse.healthCoveragePct)}% coverage`,
-            detail: "Share of the scoring weight resting on measured evidence rather than abstentions.",
+            label: `${Math.round(pulse.alignmentEvidencePct)}% evidence`,
+            detail: "Priority-weighted share of portfolio value the scored themes could actually see.",
           }
         : null,
     factors,
@@ -209,15 +216,19 @@ export function explainDecision(action: RecommendedAction): ScoreExplanation | n
   if (action.decisionScore == null || action.impact == null) return null;
   const im = action.impact;
 
-  const factors: ExplanationFactor[] = [
-    {
-      label: "Health impact",
-      display: `${im.healthDelta >= 0 ? "+" : ""}${im.healthDelta.toFixed(1)} pts`,
-      bar: Math.min(1, Math.abs(im.healthDelta) / 10),
-      direction: im.healthDelta > 0 ? 1 : im.healthDelta < 0 ? -1 : 0,
-      detail: `Portfolio health ${im.healthBefore} → ${im.healthAfter} if executed.`,
-    },
-  ];
+  const factors: ExplanationFactor[] = [];
+  if (im.alignmentDelta != null) {
+    factors.push({
+      label: "Alignment impact",
+      display: `${im.alignmentDelta >= 0 ? "+" : ""}${im.alignmentDelta.toFixed(1)} pts`,
+      bar: Math.min(1, Math.abs(im.alignmentDelta) / 10),
+      direction: im.alignmentDelta > 0 ? 1 : im.alignmentDelta < 0 ? -1 : 0,
+      detail:
+        im.alignmentBefore != null && im.alignmentAfter != null
+          ? `Portfolio alignment ${im.alignmentBefore} → ${im.alignmentAfter} if executed, against your stated policy.`
+          : "Measured change in how closely the book matches your stated policy.",
+    });
+  }
 
   if (im.riskDeltaPp != null) {
     factors.push({
@@ -252,7 +263,7 @@ export function explainDecision(action: RecommendedAction): ScoreExplanation | n
   return {
     title: "Decision score",
     value: `${action.decisionScore}/100`,
-    method: "Measured health impact × the engine's confidence, rescaled to 0-100 with 50 = \"doing nothing\". Every delta below comes from simulating the trade, not estimating it.",
+    method: "Measured alignment impact × the engine's confidence, rescaled to 0-100 with 50 = \"doing nothing\". Every delta below comes from simulating the trade, not estimating it.",
     confidence:
       action.confidence != null
         ? {
@@ -263,7 +274,7 @@ export function explainDecision(action: RecommendedAction): ScoreExplanation | n
     factors,
     caveats: [
       `${action.alternativesEvaluated ?? 0} alternative allocations were actually simulated before this pick.`,
-      "No forward price-return is forecast anywhere in this app — the case rests on measured health, risk, income, and diversification effects.",
+      "No forward price-return is forecast anywhere in this app — the case rests on measured alignment, risk, income, and diversification effects.",
     ],
   };
 }

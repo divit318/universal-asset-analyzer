@@ -1,6 +1,8 @@
 import ExcelJS from "exceljs";
 import PDFDocument from "pdfkit";
 import { drawBrandMark } from "@/lib/brand/pdf";
+import { guardedExport } from "@/lib/download";
+import { excelMoneyFormat, formatCompact, formatCompactCurrency, formatCurrency } from "@/lib/format";
 import { listPortfolio } from "@/lib/db";
 import { getQuotes } from "@/lib/yahoo";
 import type { PortfolioPosition, Quote } from "@/lib/types";
@@ -45,13 +47,23 @@ async function buildPositions(): Promise<{ positions: EnrichedPosition[]; totalC
   return { positions: enriched, totalCost, totalValue };
 }
 
-function compact(v: number): string {
-  const abs = Math.abs(v);
-  if (abs >= 1e12) return `$${(v / 1e12).toFixed(2)}T`;
-  if (abs >= 1e9) return `$${(v / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
-  if (abs >= 1e3) return `$${(v / 1e3).toFixed(1)}K`;
-  return `$${v.toFixed(2)}`;
+/** Compact money in the position's own quote currency; bare when unknown — never an assumed dollar. */
+function money(v: number, currency: string | null): string {
+  return currency ? formatCompactCurrency(v, currency) : formatCompact(v);
+}
+
+/**
+ * The single currency every position quotes in, or null when the book mixes
+ * currencies (an INR holding beside US ones) or no quotes resolved. Totals are
+ * raw sums of per-position values — labelling a mixed-currency sum with any
+ * one symbol would be wrong, so mixed books get unlabelled totals plus a note.
+ * (No FX conversion here by design; the IOS portfolio engines own that.)
+ */
+function commonCurrency(positions: EnrichedPosition[]): string | null {
+  const currencies = new Set(
+    positions.map((p) => p.quote?.currency).filter((c): c is string => c != null),
+  );
+  return currencies.size === 1 ? [...currencies][0] : null;
 }
 
 /* ──────────────────────────── Excel ──────────────────────────── */
@@ -88,9 +100,13 @@ async function buildExcel(positions: EnrichedPosition[], totalCost: number, tota
   titleCell.alignment = { horizontal: "center", vertical: "middle" };
   ws.getRow(1).height = 26;
 
-  // Header row
+  const commonCcy = commonCurrency(positions);
+  const mixed = commonCcy == null && positions.some((p) => p.quote?.currency != null);
+
+  // Header row — the money columns' currency is carried by each cell's
+  // numFmt (per-position quote currency), so the header stays symbol-free.
   const hdr = ws.getRow(2);
-  hdr.values = ["Symbol", "Company Name", "Shares", "Avg Cost", "Cost Basis", "Current Price", "Current Value", "Unrealized P&L ($)", "Unrealized P&L (%)", "Weight (%)"];
+  hdr.values = ["Symbol", "Company Name", "Shares", "Avg Cost", "Cost Basis", "Current Price", "Current Value", "Unrealized P&L", "Unrealized P&L (%)", "Weight (%)"];
   hdr.eachCell((cell) => {
     cell.fill = BLUE;
     cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 9 };
@@ -118,7 +134,11 @@ async function buildExcel(positions: EnrichedPosition[], totalCost: number, tota
     const fill: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: i % 2 === 0 ? "FFFFFFFF" : "FFF8FAFC" } };
     r.eachCell((cell) => { cell.fill = fill; cell.font = { size: 9 }; cell.alignment = { vertical: "middle" }; });
     r.getCell(1).font = { bold: true, size: 9, color: { argb: "FF1D4ED8" } };
-    [4, 5, 6, 7, 8].forEach((col) => { r.getCell(col).numFmt = '$#,##0.00'; r.getCell(col).alignment = { horizontal: "right" }; });
+    // Money cells display in the position's own quote currency (₹ for an NSE
+    // holding, ¥ for a TSE one) — a book is not all dollars just because the
+    // export used to say so.
+    const rowFmt = excelMoneyFormat(p.quote?.currency);
+    [4, 5, 6, 7, 8].forEach((col) => { r.getCell(col).numFmt = rowFmt; r.getCell(col).alignment = { horizontal: "right" }; });
     r.getCell(9).numFmt = '+0.00%;-0.00%';
     r.getCell(9).alignment = { horizontal: "right" };
     r.getCell(10).numFmt = '0.00%';
@@ -133,17 +153,20 @@ async function buildExcel(positions: EnrichedPosition[], totalCost: number, tota
     r.height = 18;
   });
 
-  // Totals row
+  // Totals row. A mixed-currency book's totals are raw unconverted sums —
+  // they get NO currency format and an explicit note instead of a false glyph.
   ws.addRow([]);
   const totRow = ws.addRow([
-    "TOTAL", "", "", "", totalCost, null, totalValue, totalReturnDollar, totalReturnPct / 100, 1,
+    mixed ? "TOTAL (mixed currencies — unconverted sum)" : "TOTAL",
+    "", "", "", totalCost, null, totalValue, totalReturnDollar, totalReturnPct / 100, 1,
   ]);
   totRow.eachCell((cell) => {
     cell.fill = NAVY;
     cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 10 };
     cell.alignment = { vertical: "middle" };
   });
-  [5, 7, 8].forEach((col) => { totRow.getCell(col).numFmt = '$#,##0.00'; totRow.getCell(col).alignment = { horizontal: "right" }; });
+  const totFmt = excelMoneyFormat(commonCcy);
+  [5, 7, 8].forEach((col) => { totRow.getCell(col).numFmt = totFmt; totRow.getCell(col).alignment = { horizontal: "right" }; });
   totRow.getCell(9).numFmt = '+0.00%;-0.00%';
   totRow.getCell(9).alignment = { horizontal: "right" };
   totRow.getCell(10).numFmt = '0%';
@@ -171,11 +194,12 @@ async function buildExcel(positions: EnrichedPosition[], totalCost: number, tota
   wsSumm.getRow(1).height = 24;
   wsSumm.addRow([]);
 
-  addSummRow("Total Cost Basis", compact(totalCost), true);
-  addSummRow("Total Current Value", compact(totalValue), true);
-  addSummRow("Unrealized P&L ($)", (totalReturnDollar >= 0 ? "+" : "") + compact(totalReturnDollar), true);
+  addSummRow("Total Cost Basis", money(totalCost, commonCcy), true);
+  addSummRow("Total Current Value", money(totalValue, commonCcy), true);
+  addSummRow(`Unrealized P&L${commonCcy ? ` (${commonCcy})` : ""}`, (totalReturnDollar >= 0 ? "+" : "") + money(totalReturnDollar, commonCcy), true);
   addSummRow("Unrealized P&L (%)", `${totalReturnPct >= 0 ? "+" : ""}${totalReturnPct.toFixed(2)}%`, true);
   addSummRow("Number of Positions", String(positions.length));
+  if (mixed) addSummRow("Note", "Positions quote in multiple currencies; totals are unconverted sums.");
   addSummRow("Report Date", new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }));
 
   return Buffer.from(await wb.xlsx.writeBuffer());
@@ -194,6 +218,8 @@ async function buildPdf(positions: EnrichedPosition[], totalCost: number, totalV
     const totalReturnDollar = totalValue - totalCost;
     const totalReturnPct = totalCost > 0 ? (totalReturnDollar / totalCost) * 100 : 0;
     const dateStr = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+    const commonCcy = commonCurrency(positions);
+    const mixed = commonCcy == null && positions.some((p) => p.quote?.currency != null);
 
     // ── Cover header ──
     // The mark sits on the dark banner, so it needs the light-ink scheme; the
@@ -208,9 +234,9 @@ async function buildPdf(positions: EnrichedPosition[], totalCost: number, totalV
 
     // ── Summary cards ──
     const cards: Array<{ label: string; value: string; sub?: string; positive?: boolean }> = [
-      { label: "Total Value", value: compact(totalValue) },
-      { label: "Cost Basis", value: compact(totalCost) },
-      { label: "Unrealized P&L", value: `${totalReturnDollar >= 0 ? "+" : ""}${compact(totalReturnDollar)}`, sub: `${totalReturnPct >= 0 ? "+" : ""}${totalReturnPct.toFixed(2)}%`, positive: totalReturnDollar >= 0 },
+      { label: "Total Value", value: money(totalValue, commonCcy) },
+      { label: "Cost Basis", value: money(totalCost, commonCcy) },
+      { label: "Unrealized P&L", value: `${totalReturnDollar >= 0 ? "+" : ""}${money(totalReturnDollar, commonCcy)}`, sub: `${totalReturnPct >= 0 ? "+" : ""}${totalReturnPct.toFixed(2)}%`, positive: totalReturnDollar >= 0 },
       { label: "Positions", value: String(positions.length) },
     ];
 
@@ -235,7 +261,7 @@ async function buildPdf(positions: EnrichedPosition[], totalCost: number, totalV
     doc.moveDown(0.3);
 
     const colWidths = [55, 130, 45, 60, 65, 65, 65, 55];
-    const colLabels = ["Symbol", "Company Name", "Shares", "Avg Cost", "Cost Basis", "Current Value", "P&L ($)", "P&L (%)"];
+    const colLabels = ["Symbol", "Company Name", "Shares", "Avg Cost", "Cost Basis", "Current Value", "P&L", "P&L (%)"];
 
     // Header row
     let cx = L;
@@ -259,14 +285,15 @@ async function buildPdf(positions: EnrichedPosition[], totalCost: number, totalV
       doc.rect(L, doc.y, W, rowH).fill(bg);
 
       cx = L;
+      const rowCcy = p.quote?.currency ?? null;
       const cells: Array<{ val: string; color?: string; align?: "left" | "right" | "center" }> = [
         { val: p.symbol, color: "#1d4ed8", align: "left" },
         { val: p.name.length > 20 ? p.name.slice(0, 18) + "…" : p.name, align: "left" },
         { val: p.shares.toFixed(p.shares % 1 === 0 ? 0 : 3), align: "right" },
-        { val: `$${p.avgCost.toFixed(2)}`, align: "right" },
-        { val: compact(p.costBasis), align: "right" },
-        { val: p.currentValue != null ? compact(p.currentValue) : "—", align: "right" },
-        { val: p.unrealizedPL != null ? `${p.unrealizedPL >= 0 ? "+" : ""}${compact(p.unrealizedPL)}` : "—", color: p.unrealizedPL == null ? "#6b7280" : p.unrealizedPL >= 0 ? "#16a34a" : "#dc2626", align: "right" },
+        { val: rowCcy ? formatCurrency(p.avgCost, rowCcy) : p.avgCost.toFixed(2), align: "right" },
+        { val: money(p.costBasis, rowCcy), align: "right" },
+        { val: p.currentValue != null ? money(p.currentValue, rowCcy) : "—", align: "right" },
+        { val: p.unrealizedPL != null ? `${p.unrealizedPL >= 0 ? "+" : ""}${money(p.unrealizedPL, rowCcy)}` : "—", color: p.unrealizedPL == null ? "#6b7280" : p.unrealizedPL >= 0 ? "#16a34a" : "#dc2626", align: "right" },
         { val: p.unrealizedPct != null ? `${p.unrealizedPct >= 0 ? "+" : ""}${p.unrealizedPct.toFixed(1)}%` : "—", color: p.unrealizedPct == null ? "#6b7280" : p.unrealizedPct >= 0 ? "#16a34a" : "#dc2626", align: "right" },
       ];
 
@@ -281,8 +308,8 @@ async function buildPdf(positions: EnrichedPosition[], totalCost: number, totalV
     // Totals row
     doc.rect(L, doc.y, W, 20).fill("#0f172a");
     cx = L;
-    const totCells = ["TOTAL", "", "", "", compact(totalCost), compact(totalValue),
-      `${totalReturnDollar >= 0 ? "+" : ""}${compact(totalReturnDollar)}`,
+    const totCells = ["TOTAL", "", "", "", money(totalCost, commonCcy), money(totalValue, commonCcy),
+      `${totalReturnDollar >= 0 ? "+" : ""}${money(totalReturnDollar, commonCcy)}`,
       `${totalReturnPct >= 0 ? "+" : ""}${totalReturnPct.toFixed(1)}%`];
     totCells.forEach((val, i) => {
       const color = i >= 6 ? (totalReturnDollar >= 0 ? "#86efac" : "#fca5a5") : "#ffffff";
@@ -294,7 +321,8 @@ async function buildPdf(positions: EnrichedPosition[], totalCost: number, totalV
 
     // ── Footer ──
     doc.fontSize(7).fill("#9ca3af")
-      .text(`Generated by Universal Asset Analyzer · ${dateStr} · Prices are live at time of export and may not reflect real-time values.`,
+      .text(
+        `Generated by Universal Asset Analyzer · ${dateStr} · Prices are live at time of export and may not reflect real-time values.${mixed ? " Positions quote in multiple currencies; totals are unconverted sums." : ""}`,
         L, doc.page.height - 35, { width: W, align: "center" });
 
     doc.end();
@@ -302,7 +330,11 @@ async function buildPdf(positions: EnrichedPosition[], totalCost: number, totalV
 }
 
 /** GET /api/export/portfolio?format=excel|pdf */
-export async function GET(req: Request): Promise<Response> {
+export function GET(req: Request): Promise<Response> {
+  return guardedExport("api/export/portfolio", () => buildPortfolioExport(req));
+}
+
+async function buildPortfolioExport(req: Request): Promise<Response> {
   const format = new URL(req.url).searchParams.get("format") ?? "excel";
   const { positions, totalCost, totalValue } = await buildPositions();
   const date = new Date().toISOString().slice(0, 10);

@@ -538,3 +538,92 @@ describe("route: keepAlive", () => {
     expect(provider.requests[0].keepAlive).toBe("10m");
   });
 });
+
+/**
+ * The chain's wall-clock budget (TaskConfig.budgetMs).
+ *
+ * `timeoutMs` bounds ONE attempt; before the budget existed nothing bounded
+ * the SUM, so a task with N candidates could take N × timeoutMs. That is not
+ * hypothetical — the ai_call ledger holds 42 rows recording 592–747s waits
+ * under the message "Devin CLI timed out after 300000ms", i.e. a 300s cap
+ * producing ten-minute waits by falling through the chain. These tests pin the
+ * product rule that the research page depends on: the user's wait is bounded
+ * by the budget, not by the budget times the candidate count.
+ */
+describe("route: wall-clock budget", () => {
+  /** A provider whose every attempt burns `delayMs` before failing. */
+  class SlowProvider extends FakeProvider {
+    constructor(installed: ProviderModelInfo[], private delayMs: number) {
+      super(installed, {});
+    }
+    async complete(request: ProviderCompleteRequest): Promise<ProviderCompleteResult> {
+      this.calls.push(request.model);
+      this.requests.push(request);
+      await new Promise((r) => setTimeout(r, this.delayMs));
+      throw new Error("stalled");
+    }
+  }
+
+  it("stops the chain once the budget is spent instead of walking every candidate", async () => {
+    const provider = new SlowProvider(TIERS, 60);
+    const startedAt = Date.now();
+
+    await expect(
+      route(
+        "explain-movement",
+        { messages: [{ role: "user", content: "hi" }], budgetMs: 100 },
+        { providers: [provider] },
+      ),
+    ).rejects.toThrow(AllModelsFailedError);
+
+    // Three tiers × 60ms = 180ms if the chain ran to completion. The budget
+    // stops it after the attempt that crosses 100ms.
+    expect(Date.now() - startedAt).toBeLessThan(170);
+    expect(provider.calls.length).toBeLessThan(3);
+  });
+
+  it("names the budget in the failure, so an exhausted wait is diagnosable", async () => {
+    const provider = new SlowProvider(TIERS, 60);
+    const err: unknown = await route(
+      "explain-movement",
+      { messages: [{ role: "user", content: "hi" }], budgetMs: 100 },
+      { providers: [provider] },
+    ).then(
+      () => new Error("expected the chain to fail"),
+      (e: unknown) => e,
+    );
+
+    expect(err).toBeInstanceOf(AllModelsFailedError);
+    expect((err as Error).message).toContain("wall-clock budget exhausted");
+  });
+
+  it("clamps an attempt's own timeout to what remains of the budget", async () => {
+    const provider = new FakeProvider(TIERS, {
+      "claude-opus-5-medium": { content: "ok", reasoning: "" },
+    });
+    await route(
+      "explain-movement",
+      { messages: [{ role: "user", content: "hi" }], budgetMs: 5_000 },
+      { providers: [provider] },
+    );
+    // The task/model timeout is far larger than 5s; the budget must win.
+    expect(provider.requests[0].timeoutMs).toBeLessThanOrEqual(5_000);
+  });
+
+  it("leaves budget-free tasks completely unbounded — background work is unaffected", async () => {
+    const provider = new FakeProvider(TIERS, {
+      "claude-opus-5-high": { content: "ok", reasoning: "" },
+    });
+    await route("investment-thesis", { messages: [{ role: "user", content: "hi" }] }, { providers: [provider] });
+    // investment-thesis declares no budgetMs, so its per-attempt timeout stands.
+    expect(provider.requests[0].timeoutMs).toBeGreaterThan(10_000);
+  });
+
+  it("the research hero verdict declares a budget inside the product's latency rule", () => {
+    // The hard product requirement: nothing in Research waits >40-50s.
+    expect(TASK_REGISTRY["investment-verdict"].budgetMs).toBeLessThanOrEqual(50_000);
+    expect(TASK_REGISTRY["investment-verdict"].timeoutMs).toBeLessThanOrEqual(
+      TASK_REGISTRY["investment-verdict"].budgetMs!,
+    );
+  });
+});

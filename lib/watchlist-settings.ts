@@ -31,14 +31,16 @@ export const WATCHLIST_FILTERS = [
   "all",
   "attention",
   "alerts",
+  "new",
+  "working",
+  "ready",
+  "waiting",
   "owned",
-  "not-owned",
+  "archive",
   "near-target",
   "earnings",
-  "high-conviction",
-  "no-thesis",
   "no-target",
-  "stale",
+  "review",
 ] as const;
 
 export type WatchlistFilter = (typeof WATCHLIST_FILTERS)[number];
@@ -50,14 +52,16 @@ export const FILTER_LABEL: Record<WatchlistFilter, string> = {
   all: "All",
   attention: "Needs attention",
   alerts: "Alerts firing",
+  new: "New",
+  working: "In work",
+  ready: "Ready to decide",
+  waiting: "Waiting",
   owned: "Owned",
-  "not-owned": "Not owned",
+  archive: "Passed & exited",
   "near-target": "Near target",
   earnings: "Earnings soon",
-  "high-conviction": "High conviction",
-  "no-thesis": "No thesis",
   "no-target": "No target",
-  stale: "Stale review",
+  review: "Needs review",
 };
 
 /** One line for the settings popover: what the filter selects. */
@@ -65,14 +69,16 @@ export const FILTER_DESCRIPTION: Record<WatchlistFilter, string> = {
   all: "Everything on the list",
   attention: "Names with a live reason to look",
   alerts: "Price alerts firing right now",
+  new: "Tracked, no research evidence yet",
+  working: "Research exists, no investment view",
+  ready: "A thesis exists — a decision is open",
+  waiting: "Decision armed, waiting on a trigger",
   owned: "Already held in your portfolio",
-  "not-owned": "Candidates you don't hold yet",
+  archive: "Passed on, or positions closed",
   "near-target": "Within a few percent of your level, or past it",
   earnings: "Reporting within your earnings horizon",
-  "high-conviction": "Marked high conviction in the thesis",
-  "no-thesis": "Missing a written thesis",
   "no-target": "No price level being watched",
-  stale: "Thesis not reviewed in 90 days",
+  review: "Stale, or evidence newer than the thesis",
 };
 
 /** The label as a predicate, for the empty state's "No name currently …". */
@@ -80,18 +86,27 @@ export const FILTER_EMPTY: Record<WatchlistFilter, string> = {
   all: "is on this list", // unreachable: "all" with no rows renders the list empty state instead
   attention: "needs attention — a quiet list is the good outcome",
   alerts: "has an alert firing",
+  new: "is waiting for its first research — nothing here is unworked",
+  working: "is mid-research — every worked idea has a view or a decision",
+  ready: "is waiting on a decision — no unresolved calls right now",
+  waiting: "has a trigger armed — nothing is waiting on a level",
   owned: "is held in your portfolio",
-  "not-owned": "is outside your portfolio",
+  archive: "has been passed on or exited",
   "near-target": "is near or past your target",
   earnings: "reports earnings within your horizon",
-  "high-conviction": "is marked high conviction",
-  "no-thesis": "is missing a thesis",
   "no-target": "is missing a target",
-  stale: "has a thesis older than a 90-day review",
+  review: "needs a review — nothing is stale or contradicted",
 };
 
 /** The chips a fresh install shows, in order. */
-export const DEFAULT_QUICK_FILTERS: WatchlistFilter[] = ["all", "attention", "alerts", "owned", "earnings"];
+export const DEFAULT_QUICK_FILTERS: WatchlistFilter[] = [
+  "all",
+  "attention",
+  "working",
+  "ready",
+  "waiting",
+  "owned",
+];
 
 /* -------------------------------------------------------------------------- */
 /* Columns                                                                     */
@@ -109,7 +124,9 @@ export const HIDEABLE_COLUMNS: Array<{ key: string; label: string }> = [
   { key: "consensus", label: "Consensus" },
   { key: "fromHigh", label: "From high" },
   { key: "fit", label: "Portfolio fit" },
-  { key: "stage", label: "Stage" },
+  { key: "workflow", label: "Status" },
+  { key: "evidence", label: "Evidence" },
+  { key: "action", label: "Next action" },
   { key: "sector", label: "Sector" },
   { key: "nextEvent", label: "Next event" },
   { key: "notes", label: "Thesis" },

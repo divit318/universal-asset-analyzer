@@ -15,6 +15,7 @@ import {
   YAxis,
 } from "recharts";
 import type { HistoryPoint, NewsItem } from "@/lib/types";
+import { formatChartPrice } from "@/lib/format";
 import { buildTechnicalSummary, calcSma, type CandlePattern } from "@/lib/indicators";
 import { buildTechnicalSignals, type TechnicalSignal } from "@/lib/pattern-signals";
 import { useChartTheme, type ChartTheme } from "@/app/_components/chart-theme";
@@ -56,6 +57,8 @@ export interface CandleChartProps {
   symbol: string;
   history: HistoryPoint[];
   since: string;
+  /** Listing currency of `history` (Quote.currency). Absent → bare numbers, never assumed dollars. */
+  currency?: string | null;
   /** Display label for the current period selector (e.g. "6M") — read-only in the Analysis Panel. */
   periodLabel?: string;
   news?: NewsItem[];
@@ -67,9 +70,9 @@ export interface CandleChartProps {
 /* Formatters                                                                  */
 /* -------------------------------------------------------------------------- */
 
-function fmtPrice(v: number): string {
-  return v < 10 ? `$${v.toFixed(2)}` : v < 100 ? `$${v.toFixed(1)}` : `$${v.toFixed(0)}`;
-}
+/* Price ticks/tooltips format through lib/format's formatChartPrice with the
+   listing currency — the old local fmtPrice stamped a dollar sign onto every
+   market. */
 
 function fmtVol(v: number): string {
   if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
@@ -208,11 +211,12 @@ function makeCandleShape(
 
 function CandleTooltip({
   active, payload, label,
-  showSma50, showSma200, showBB, ct,
+  currency, showSma50, showSma200, showBB, ct,
 }: {
   active?: boolean;
   payload?: { payload: CandleData }[];
   label?: string;
+  currency?: string | null;
   showSma50: boolean;
   showSma200: boolean;
   showBB: boolean;
@@ -223,35 +227,36 @@ function CandleTooltip({
   if (!row) return null;
   const bullish = row.close >= row.open;
   const ohlc = bullish ? ct.positive : ct.negative;
+  const price = (v: number) => formatChartPrice(v, currency);
   return (
     <div style={ct.tooltip}>
       <p className="mb-1.5 text-xs text-muted">{label ? fmtDate(label) : ""}</p>
       <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
         <span className="text-muted">O</span>
-        <span className="font-mono" style={{ color: ohlc }}>{fmtPrice(row.open)}</span>
+        <span className="font-mono" style={{ color: ohlc }}>{price(row.open)}</span>
         <span className="text-muted">H</span>
-        <span className="font-mono" style={{ color: ohlc }}>{fmtPrice(row.high)}</span>
+        <span className="font-mono" style={{ color: ohlc }}>{price(row.high)}</span>
         <span className="text-muted">L</span>
-        <span className="font-mono" style={{ color: ohlc }}>{fmtPrice(row.low)}</span>
+        <span className="font-mono" style={{ color: ohlc }}>{price(row.low)}</span>
         <span className="text-muted">C</span>
-        <span className="font-mono" style={{ color: ohlc }}>{fmtPrice(row.close)}</span>
+        <span className="font-mono" style={{ color: ohlc }}>{price(row.close)}</span>
         {row.volume > 0 && <>
           <span className="text-muted">Vol</span>
           <span className="font-mono text-muted">{fmtVol(row.volume)}</span>
         </>}
         {showSma50 && row.sma50 != null && <>
           <span style={{ color: ct.amber }}>SMA 50</span>
-          <span className="font-mono">{fmtPrice(row.sma50)}</span>
+          <span className="font-mono">{price(row.sma50)}</span>
         </>}
         {showSma200 && row.sma200 != null && <>
           <span style={{ color: ct.purple }}>SMA 200</span>
-          <span className="font-mono">{fmtPrice(row.sma200)}</span>
+          <span className="font-mono">{price(row.sma200)}</span>
         </>}
         {showBB && row.bbUpper != null && <>
           <span style={{ color: ct.teal }}>BB Upper</span>
-          <span className="font-mono">{fmtPrice(row.bbUpper)}</span>
+          <span className="font-mono">{price(row.bbUpper)}</span>
           <span style={{ color: ct.teal }}>BB Lower</span>
-          <span className="font-mono">{fmtPrice(row.bbLower!)}</span>
+          <span className="font-mono">{price(row.bbLower!)}</span>
         </>}
       </div>
     </div>
@@ -316,6 +321,7 @@ export function CandleChart({
   symbol,
   history,
   since,
+  currency,
   periodLabel,
   news,
   onAskAI = () => {},
@@ -592,13 +598,14 @@ export function CandleChart({
               tick={{ fontSize: 11, fill: AXIS }}
               tickLine={false}
               axisLine={false}
-              tickFormatter={fmtPrice}
+              tickFormatter={(v: number) => formatChartPrice(v, currency)}
               width={56}
               domain={[yMin, yMax]}
             />
             <Tooltip
               content={
                 <CandleTooltip
+                  currency={currency}
                   showSma50={showSma50}
                   showSma200={showSma200}
                   showBB={showBB}

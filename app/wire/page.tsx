@@ -10,20 +10,20 @@ import type {
   ScannerStageFailure,
 } from "@/lib/types";
 import { CATEGORY_LABELS, type OpportunityCategory } from "@/lib/opportunity-engine";
-import { MarketRegimeBanner } from "./_components/market-regime-banner";
-import { MarketSummaryCard } from "./_components/market-summary-card";
-import { UnifiedSectorRotation } from "./_components/unified-sector-rotation";
 import { useBootReady } from "@/app/_components/boot-context";
+import { MarketNow, type PulseData } from "./_components/market-now";
+import { Developments } from "./_components/developments";
+import { ForYou } from "./_components/for-you";
+import { DeltaStrip } from "./_components/delta-strip";
+import { IdeaRow } from "./_components/idea-row";
+import { TheFeed } from "./_components/the-feed";
 import { OpportunityCard } from "./_components/opportunity-card";
 import { EmergingThemeCard } from "./_components/emerging-theme-card";
-import { CausalChainCard } from "./_components/causal-chain";
 import { RiskAlertRow } from "./_components/risk-alert-row";
 import { CommandBar, type Focus } from "./_components/command-bar";
 import { WireSection } from "./_components/wire-section";
+import { UnifiedSectorRotation } from "./_components/unified-sector-rotation";
 import { recordScanDuration } from "@/lib/scanner-eta";
-import { WatchlistImpact, PortfolioImpact } from "./_components/watchlist-portfolio-impact";
-import { PortfolioWatch } from "./_components/portfolio-watch";
-import { Tape } from "./_components/tape";
 import { buildTape, type TapeStory } from "@/lib/wire/tape";
 import { EvidenceDrawer } from "./_components/evidence-drawer";
 import {
@@ -34,6 +34,14 @@ import {
   insightsForStories,
   type EvidenceRequest,
 } from "@/lib/wire/evidence";
+import { rankDevelopments } from "@/lib/wire/developments";
+import { buildPersonalImpact } from "@/lib/wire/personal";
+import {
+  fingerprintScan,
+  diffScans,
+  isScanFingerprint,
+  type ScanFingerprint,
+} from "@/lib/wire/delta";
 import { canonicalizeSector } from "@/lib/gics-sectors";
 import { SectionNav, type WireSection as WireSectionId } from "./_components/section-nav";
 import { useIOSSafe } from "@/lib/ios-context";
@@ -43,6 +51,12 @@ import { useToast } from "@/app/_components/toast";
 import { usePersistedState } from "@/app/_components/use-persisted-state";
 
 const CACHE_KEY = "uaa_scanner_v3";
+
+/** Previous/last scan fingerprints for the "Since your last scan" diff. */
+const FP_KEY = "uaa.wire.fingerprints";
+
+/** How many ideas the Wire leads with; the rest sit behind "View all". */
+const TOP_IDEAS_LIMIT = 6;
 
 /**
  * Only Global/India are real backend-routed sources (fetchMarketNews in
@@ -63,18 +77,22 @@ function focusToParams(focus: Focus): { india: boolean; global: boolean; querySe
   }
 }
 
-// Insight-first order: regime → interpretation → actionable ideas → context →
-// the raw feed last. The command bar is sticky and not a nav target.
+/**
+ * Causal-flow order: what's happening (Market Now, instant) → what matters
+ * (Top Developments) → what it means for me (For You) → why/where (Sector
+ * Map, Themes, Risks) → actionable ideas → the raw feed last. "Since your
+ * last scan" renders between Market Now and Developments but is a strip,
+ * not a nav target.
+ */
 const WIRE_SECTIONS: WireSectionId[] = [
-  { id: "market-state", label: "Market State" },
-  { id: "ai-summary", label: "AI Market Summary" },
-  { id: "opportunities", label: "Opportunities" },
-  { id: "emerging-themes", label: "Emerging Themes" },
-  { id: "cause-effect", label: "Cause & Effect" },
-  { id: "sector-rotation", label: "Sector Rotation" },
+  { id: "market-now", label: "Market Now" },
+  { id: "developments", label: "Top Developments" },
+  { id: "for-you", label: "For You" },
+  { id: "sector-map", label: "Sector Map" },
+  { id: "themes", label: "Emerging Themes" },
   { id: "risk-monitor", label: "Risk Monitor" },
-  { id: "portfolio-impact", label: "Portfolio Impact" },
-  { id: "the-tape", label: "The Tape" },
+  { id: "ideas", label: "Ideas" },
+  { id: "feed", label: "The Feed" },
 ];
 
 const THEME_SECTOR: Record<string, string> = {
@@ -134,7 +152,7 @@ function SectionSkeleton({ height = "h-40" }: { height?: string }) {
 const isStringArray = (v: unknown): v is string[] =>
   Array.isArray(v) && v.every((x) => typeof x === "string");
 
-/** .NS/.BO-insensitive symbol key, matching the impact panels' comparison. */
+/** .NS/.BO-insensitive symbol key, matching the personal-impact comparison. */
 function symbolKey(symbol: string): string {
   return symbol.replace(/\.(NS|BO)$/, "").toUpperCase();
 }
@@ -147,18 +165,22 @@ function symbolKey(symbol: string): string {
 // stops being meaningful (a tab left open overnight) auto-rescans.
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 
-function saveCache(result: ScannerResult) {
+function saveCache(result: ScannerResult, wasDefault: boolean | null) {
   try {
-    sessionStorage.setItem(CACHE_KEY, JSON.stringify({ result, cachedAt: Date.now() }));
+    sessionStorage.setItem(CACHE_KEY, JSON.stringify({ result, cachedAt: Date.now(), wasDefault }));
   } catch { /* storage unavailable */ }
 }
 
-function loadCache(): ScannerResult | null {
+function loadCache(): { result: ScannerResult; wasDefault: boolean | null } | null {
   try {
     const raw = sessionStorage.getItem(CACHE_KEY);
     if (!raw) return null;
-    const { result, cachedAt } = JSON.parse(raw) as { result: ScannerResult; cachedAt: number };
-    return Date.now() - cachedAt < CACHE_TTL ? result : null;
+    const { result, cachedAt, wasDefault } = JSON.parse(raw) as {
+      result: ScannerResult;
+      cachedAt: number;
+      wasDefault?: boolean | null;
+    };
+    return Date.now() - cachedAt < CACHE_TTL ? { result, wasDefault: wasDefault ?? null } : null;
   } catch { return null; }
 }
 
@@ -171,18 +193,16 @@ function extractSymbols(value: unknown, key: string): string[] {
     .filter((s): s is string => typeof s === "string");
 }
 
-/** Load watchlist/portfolio symbols from the API for impact panels.
+/** Load watchlist/portfolio symbols from the API for the For You section.
  *  /api/watchlist returns { items, groups } (since the Watchlist rebuild);
  *  /api/portfolio returns { holdings, positions } — `positions` is the
- *  market-symbol view the impact panels' ticker match needs. Treating either
- *  payload as a bare array threw, emptied BOTH lists, and silently removed
- *  the Portfolio Impact zone from the page.
+ *  market-symbol view the impact matching needs. Treating either payload as
+ *  a bare array threw, emptied BOTH lists, and silently removed the
+ *  personalized zone from the page.
  *
  *  Failure is REPORTED, not folded into []: an empty list means "you track
  *  nothing", a failed fetch means "we don't know what you track" — the page
- *  must render those differently (a section gated on `symbols.length > 0`
- *  silently unmounted on fetch failure, indistinguishable from having no
- *  holdings). */
+ *  must render those differently. */
 async function loadUserSymbols(): Promise<{
   watchlist: string[];
   portfolio: string[];
@@ -212,7 +232,6 @@ export default function ScannerPage() {
   const [focus, setFocus] = useState<Focus>("global");
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<ScannerProgressEvent | null>(null);
-  const [scanStartedAt, setScanStartedAt] = useState<number | null>(null);
   const [result, setResult] = useState<ScannerResult | null>(null);
   // Fields streamed in before the full result lands — see runScan()'s reader
   // loop. `result`, once set, always wins per-field (display below spreads
@@ -228,15 +247,26 @@ export default function ScannerPage() {
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([]);
   const [portfolioSymbols, setPortfolioSymbols] = useState<string[]>([]);
   // "loading" until the symbols fetch settles; failed endpoints by name after.
-  // Distinguishes "you track nothing" from "we couldn't find out" — the
-  // Portfolio Impact section renders those as different states.
   const [symbolsLoading, setSymbolsLoading] = useState(true);
   const [symbolsFailed, setSymbolsFailed] = useState<string[]>([]);
+
+  // Tier-1: live market pulse — independent of the scan pipeline entirely.
+  const [pulse, setPulse] = useState<PulseData | null>(null);
+  const [pulseFailed, setPulseFailed] = useState(false);
+
+  // "Since your last scan" — the previous scan's fingerprint, if this
+  // browser saw one. Deltas derive from it at render time.
+  const [fpPrev, setFpPrev] = useState<ScanFingerprint | null>(null);
+  // True when the scan whose result is on screen used default parameters
+  // (blank query, Global focus) — themed scans are not diffed: "new theme:
+  // Copper Squeeze" right after searching copper is noise, not news.
+  const wasDefaultScanRef = useRef<boolean | null>(null);
 
   useBootReady(!loading, "wire");
 
   const [fitRanking, setFitRanking] = useState(false);
   const [activeCategory, setActiveCategory] = useState<OpportunityCategory | "all">("all");
+  const [showAllIdeas, setShowAllIdeas] = useState(false);
 
   const toast = useToast();
   // Dismissals persist across visits and scans (an idea you rejected should
@@ -244,7 +274,7 @@ export default function ScannerPage() {
   const [dismissed, setDismissed] = usePersistedState<string[]>("uaa.wire.dismissed", [], isStringArray);
 
   // Evidence linking: which insight's sources are open in the drawer, and
-  // which Tape story is being traced through its downstream insights.
+  // which Feed story is being traced through its downstream insights.
   const [evidence, setEvidence] = useState<EvidenceRequest | null>(null);
   const [trace, setTrace] = useState<TapeStory | null>(null);
 
@@ -282,16 +312,28 @@ export default function ScannerPage() {
     fetchUserSymbols();
   }
 
+  function fetchPulse() {
+    fetch("/api/wire/pulse")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((data: PulseData) => {
+        setPulse(data);
+        setPulseFailed(false);
+      })
+      .catch(() => setPulseFailed(true));
+  }
+
   useEffect(() => {
-    // Load user symbols for impact panels
+    // Tier 1 in parallel: live pulse + user symbols — neither waits on the scan.
+    fetchPulse();
     fetchUserSymbols();
 
     // Try client cache first, then auto-scan
     const cached = loadCache();
     if (cached) {
+      wasDefaultScanRef.current = cached.wasDefault;
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setResult(cached);
-       
+      setResult(cached.result);
+
       setFromCache(true);
     } else {
       void runScan();
@@ -299,10 +341,44 @@ export default function ScannerPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Rotate the scan fingerprints when a NEW default scan lands, and restore
+  // the previous one across reloads (same scannedAt → same baseline). The
+  // deltas themselves derive at render, so StrictMode's double-run is
+  // harmless — the store update is idempotent per scannedAt.
+  useEffect(() => {
+    if (!result) return;
+    try {
+      const curr = fingerprintScan(result);
+      const raw = window.localStorage.getItem(FP_KEY);
+      const stored = raw
+        ? (JSON.parse(raw) as { prev: unknown; last: unknown })
+        : null;
+      const last = stored && isScanFingerprint(stored.last) ? stored.last : null;
+      const prev = stored && isScanFingerprint(stored.prev) ? stored.prev : null;
+
+      if (last && last.scannedAt === curr.scannedAt) {
+        // Same scan as last visit — restore its baseline for a stable strip.
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- adopting persisted state after mount; localStorage does not exist during render
+        setFpPrev(prev);
+      } else if (wasDefaultScanRef.current === true) {
+        // New default scan — the old "last" becomes the comparison baseline.
+        window.localStorage.setItem(FP_KEY, JSON.stringify({ prev: last, last: curr }));
+        setFpPrev(last);
+      } else {
+        // Themed scan (or unknown provenance) — never diffed, never stored
+        // as a baseline: "new theme: Copper Squeeze" right after the user
+        // searched copper would be noise, not news.
+        setFpPrev(null);
+      }
+    } catch { /* storage unavailable — no delta strip */ }
+  }, [result]);
+
   async function runScan(e?: React.FormEvent, overrideQuery?: string, overrideFocus?: Focus) {
     e?.preventDefault();
     const q = overrideQuery ?? query;
-    const { india, global } = focusToParams(overrideFocus ?? focus);
+    const activeFocus = overrideFocus ?? focus;
+    const { india, global } = focusToParams(activeFocus);
+    wasDefaultScanRef.current = !q.trim() && activeFocus === "global";
 
     // Abort any in-flight scan
     abortRef.current?.abort();
@@ -317,8 +393,10 @@ export default function ScannerPage() {
     setProgress(null);
     setStageFailures([]);
     setStall(null);
-    setScanStartedAt(scanStart);
     setFromCache(false);
+    // A fresh scan deserves fresh reaction joins — the pulse is 60s-cached
+    // server-side, so this is cheap.
+    fetchPulse();
 
     try {
       const res = await fetch("/api/scanner/v2", {
@@ -381,12 +459,12 @@ export default function ScannerPage() {
           } else if (msg.type === "result") {
             setResult(msg.data);
             setStageFailures(msg.data.stageFailures ?? []);
-            saveCache(msg.data);
+            saveCache(msg.data, wasDefaultScanRef.current);
             recordScanDuration(Date.now() - scanStart);
           } else if (msg.type === "cached") {
             setResult(msg.data);
             setStageFailures(msg.data.stageFailures ?? []);
-            saveCache(msg.data);
+            saveCache(msg.data, wasDefaultScanRef.current);
             setFromCache(true);
           } else if (msg.type === "cancelled") {
             // The job stopped server-side (this or another subscriber cancelled).
@@ -407,7 +485,6 @@ export default function ScannerPage() {
       if (abortRef.current === abort) {
         setLoading(false);
         setProgress(null);
-        setScanStartedAt(null);
       }
     }
   }
@@ -436,17 +513,20 @@ export default function ScannerPage() {
     setLoading(false);
     setProgress(null);
     setStall(null);
-    setScanStartedAt(null);
   }
 
   // Once `result` lands it wins per-field over `partial` (spread order below),
   // so nothing here ever shows stale streamed data next to the final version.
   const display: Partial<ScannerResult> = { ...partial, ...result };
-  const allOpportunities = display.opportunities ?? [];
-  const causalEvents = (display.events ?? []).filter((e) => e.causalChain.length > 0).slice(0, 6);
+  const displayOpportunities = display.opportunities;
+  const displayEvents = display.events;
+  // Memoized so downstream useMemos (developments, personal impact) key on
+  // the underlying arrays' identity, not on a fresh `?? []` every render.
+  const allOpportunities = useMemo(() => displayOpportunities ?? [], [displayOpportunities]);
+  const events = useMemo(() => displayEvents ?? [], [displayEvents]);
 
-  // Dismissed ideas leave the Opportunities zone (only — impact panels still
-  // reflect the full scan) and can be restored from the section header.
+  // Dismissed ideas leave the Ideas zone (only — For You still reflects the
+  // full scan) and can be restored from the section header.
   const dismissedSet = new Set(dismissed.map(symbolKey));
   const isDismissed = (o: ScannerOpportunity) => dismissedSet.has(symbolKey(o.ticker));
   const opportunities = allOpportunities.filter((o) => !isDismissed(o));
@@ -455,8 +535,8 @@ export default function ScannerPage() {
   const dismissedCount = allOpportunities.length - opportunities.length;
 
   // Join each opportunity back to the market event that produced it — the
-  // "why now" line and its corroboration count on the card.
-  const eventById = new Map((display.events ?? []).map((e) => [e.id, e]));
+  // "why now" line and its corroboration count.
+  const eventById = new Map(events.map((e) => [e.id, e]));
   function triggerFor(opp: ScannerOpportunity): { headline: string; sourceCount: number } | null {
     const evs = opp.sourceEventIds
       .map((id) => eventById.get(id))
@@ -487,12 +567,11 @@ export default function ScannerPage() {
 
   // ── Evidence joins (lib/wire/evidence.ts — pure, derivation-backed, so
   //    payloads cached before storyIds existed still resolve) ──
-  const events = display.events ?? [];
   const evidenceArticles = evidence
     ? resolveArticles(evidence.storyIds, display.newsItems ?? [], events)
     : [];
 
-  // Forward trace from a Tape story: light up every downstream insight.
+  // Forward trace from a Feed story: light up every downstream insight.
   // Approximate joins (risks) deliberately do not participate.
   const tracedInsights = trace
     ? insightsForStories(trace.storyIds, {
@@ -511,7 +590,7 @@ export default function ScannerPage() {
   const tracedCount =
     tracedEventIds.size + tracedThemes.size + tracedSectors.size + tracedOppIds.size;
 
-  /** Shared card wiring for every opportunity grid in the zone. */
+  /** Shared wiring for every idea rendering (compact rows and the full grid). */
   const cardProps = (opp: ScannerOpportunity) => ({
     opportunity: opp,
     triggerEvent: triggerFor(opp),
@@ -525,14 +604,51 @@ export default function ScannerPage() {
       }),
     highlighted: tracedOppIds.has(opp.id),
   });
+
   // Cluster/dedupe/noise-filter the raw feed once per newsItems arrival —
   // pure and tested in lib/wire/tape.ts, so the component just renders it.
   const newsItems = display.newsItems;
   const tapeView = useMemo(() => (newsItems ? buildTape(newsItems) : null), [newsItems]);
 
-  // Opportunity categories — "Portfolio Improver" is computed client-side from the
-  // existing IOS fit engine (never recompute fit logic; just tag opportunities that
-  // are a good/excellent fit and not already held).
+  // ── Top Developments: deterministic ranking of this scan's events, joined
+  //    to the live pulse and the user's names. Pure (lib/wire/developments).
+  const developments = useMemo(
+    () =>
+      rankDevelopments(events, {
+        sectorPerf: pulse?.sectorPerf,
+        portfolioSymbols,
+        watchlistSymbols,
+      }),
+    [events, pulse, portfolioSymbols, watchlistSymbols],
+  );
+
+  // ── For You: the scan joined to what the user owns and follows. Uses the
+  //    FULL scan output (not the dismissed-filtered list) — a signal on
+  //    something you HOLD stays visible even if the idea was dismissed.
+  //    Built once anything has arrived (even an empty completed scan), so
+  //    "touches nothing you track" renders as a statement — null means only
+  //    "no scan yet".
+  const personalImpact = useMemo(
+    () =>
+      allOpportunities.length > 0 || result != null
+        ? buildPersonalImpact(allOpportunities, portfolioSymbols, watchlistSymbols)
+        : null,
+    [allOpportunities, result, portfolioSymbols, watchlistSymbols],
+  );
+
+  // ── Since your last scan: deltas derive at render from the stored
+  //    baseline; [] hides the strip (no fabricated changes).
+  const deltas = useMemo(
+    () => (result && fpPrev ? diffScans(fpPrev, fingerprintScan(result)) : []),
+    [result, fpPrev],
+  );
+
+  // ── Ideas: the few worth attention first; everything else behind View all.
+  const rankedIdeas = rankOpportunities([...highConviction, ...developing]);
+  const topIdeas = rankedIdeas.slice(0, TOP_IDEAS_LIMIT);
+
+  // Opportunity categories for the expanded grid — "Portfolio Improver" is
+  // computed client-side from the existing IOS fit engine.
   const categoryGroups = buildCategoryGroups(opportunities);
   if (ios?.profileReady && ios.profile.hasPortfolio) {
     const improvers = opportunities.filter((o) => {
@@ -554,13 +670,13 @@ export default function ScannerPage() {
       );
 
   const scanRunningOrDone = loading || result != null;
+  const scanMeta = result ? (fromCache ? "cached scan" : "this scan") : loading ? "streaming…" : undefined;
 
   return (
     <PageShell py="py-6" width="wide" gap="gap-6">
 
-      {/* ── Zone 1: sticky command bar. Not inside Reveal — its transform
-             would disable position:sticky. Scan status renders inline here,
-             not as a mid-page block. ── */}
+      {/* ── Sticky command bar. Not inside Reveal — its transform would
+             disable position:sticky. Scan status renders inline here. ── */}
       <CommandBar
         query={query}
         onQueryChange={setQuery}
@@ -578,12 +694,10 @@ export default function ScannerPage() {
       />
 
       <Reveal index={0} as="p" className="text-sm text-muted">
-        Headlines clustered into events, traced through cause and effect, checked against fundamentals — and scored against your portfolio and watchlist.
+        What&apos;s happening, what matters, why — and what it means for what you own.
       </Reveal>
 
-      {/* Floating scroll-spy nav — once a scan is underway or done, so it's
-          available to jump between sections as they stream in, not just
-          after everything's finished. */}
+      {/* Floating scroll-spy nav — once a scan is underway or done. */}
       {scanRunningOrDone && <SectionNav sections={WIRE_SECTIONS} />}
 
       {/* ── Error ── */}
@@ -593,10 +707,9 @@ export default function ScannerPage() {
         </div>
       )}
 
-      {/* ── Degraded scan — sections below reflect PARTIAL analysis. Rendered
-          once the result is in (or while failures stream), never silently:
-          an empty Opportunities zone with no explanation reads as "no
-          opportunities today", which is a different claim. ── */}
+      {/* ── Degraded scan — sections below reflect PARTIAL analysis. Never
+          silent: an empty zone with no explanation reads as "nothing today",
+          which is a different claim. ── */}
       {stageFailures.length > 0 && (
         <details className="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning">
           <summary className="cursor-pointer">
@@ -613,7 +726,7 @@ export default function ScannerPage() {
         </details>
       )}
 
-      {/* ── Active evidence trace — a Tape story lit up through the page ── */}
+      {/* ── Active evidence trace — a Feed story lit up through the page ── */}
       {trace && (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-accent/40 bg-accent/10 px-4 py-2.5 text-sm">
           <span className="min-w-0 truncate text-foreground">
@@ -629,65 +742,170 @@ export default function ScannerPage() {
         </div>
       )}
 
-      {/* ── Zones 2-8 — sections render as their own data streams in (see the
-          partial-message handling in runScan() above). Each falls back to a
-          skeleton while loading and not yet ready. Ordered by the question
-          each answers: regime → interpretation → ideas → context → risk. ── */}
+      {/* ── Tier 1: Market Now — live pulse, independent of the scan. The
+          one section that renders in about a second, always. ── */}
+      <WireSection id="market-now" title="Market Now">
+        <MarketNow
+          pulse={pulse}
+          pulseFailed={pulseFailed}
+          scanRegime={display.marketRegime ?? null}
+          scanMacro={display.macroSignals ?? []}
+        />
+      </WireSection>
+
+      {/* ── Since your last scan — genuine state changes only; renders
+          nothing when there's no baseline or nothing changed. ── */}
+      <DeltaStrip deltas={deltas} />
+
+      {/* ── Top Developments — the few stories that matter most, each with
+          corroboration, live reaction, your exposure, and the pipeline's
+          cause→effect chain. ── */}
+      {scanRunningOrDone && (
+        <WireSection
+          id="developments"
+          title="Top Developments"
+          badge={developments.length > 0 ? `${developments.length}` : undefined}
+          meta={scanMeta}
+        >
+          <Developments
+            developments={developments}
+            loading={loading && events.length === 0}
+            firstRead={tapeView ? tapeView.stories.slice(0, 5) : null}
+            onShowEvidence={(dev) =>
+              setEvidence({ title: dev.event.headline, storyIds: eventStoryIds(dev.event) })
+            }
+            tracedEventIds={tracedEventIds}
+          />
+        </WireSection>
+      )}
+
+      {/* ── For You — what the scan means for what you own and follow. High
+          on the page by design, and OUTSIDE the scan gate: its symbol
+          fetch/empty/failed states are real content whether or not a scan
+          ever ran, and a failed /api/watchlist must render as a statement,
+          never as a silently missing section. ── */}
+      {!symbolsLoading && (
+        <WireSection id="for-you" title="For You" meta={scanMeta}>
+          <ForYou
+            impact={personalImpact}
+            scanLoading={loading}
+            symbolsLoading={symbolsLoading}
+            symbolsFailed={symbolsFailed}
+            onRetrySymbols={refreshUserSymbols}
+            trackedCounts={{ portfolio: portfolioSymbols.length, watchlist: watchlistSymbols.length }}
+          />
+        </WireSection>
+      )}
+
       {scanRunningOrDone && (
         <div className="flex flex-col gap-8">
 
-          {/* Zone 2: Market State — regime + the ONE macro rail */}
-          {(display.marketRegime || loading) && (
-            <WireSection id="market-state" title="Market State" collapsible persist>
-              {display.marketRegime ? (
-                <div className="animate-fade-rise">
-                  <MarketRegimeBanner
-                    regime={display.marketRegime}
-                    macroSignals={display.macroSignals ?? []}
-                  />
+          {/* ── Sector Map — price rank × news sentiment, divergence first ── */}
+          <WireSection id="sector-map" title="Sector Map" collapsible persist meta="price · live | sentiment · this scan">
+            <UnifiedSectorRotation
+              impacts={display.sectorImpacts}
+              scanLoading={loading}
+              highlightedSectors={tracedSectors}
+              onShowEvidence={(sector) => {
+                const impact = (display.sectorImpacts ?? []).find(
+                  (s) => (canonicalizeSector(s.sector) ?? s.sector) === sector,
+                );
+                if (!impact) return;
+                setEvidence({
+                  title: `${sector} — news sentiment`,
+                  storyIds: storyIdsForEventIds(impact.drivingEvents, events),
+                });
+              }}
+            />
+          </WireSection>
+
+          {/* ── Emerging Themes ── */}
+          {(display.emergingThemes?.length || (loading && !display.emergingThemes)) ? (
+            <WireSection
+              id="themes"
+              title="Emerging Themes"
+              badge={display.emergingThemes?.length ? `${display.emergingThemes.length}` : undefined}
+              meta={scanMeta}
+            >
+              {display.emergingThemes && display.emergingThemes.length > 0 ? (
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {display.emergingThemes.map((theme, i) => {
+                    const storyIds = storyIdsForEventIds(theme.drivingEvents, events);
+                    return (
+                      <EmergingThemeCard
+                        key={theme.name}
+                        theme={theme}
+                        style={{ animationDelay: `${i * 40}ms` }}
+                        drivingEventCount={theme.drivingEvents.length}
+                        evidenceCount={storyIds.length > 0 ? storyIds.length : undefined}
+                        onShowEvidence={
+                          storyIds.length > 0
+                            ? () => setEvidence({ title: theme.name, storyIds })
+                            : undefined
+                        }
+                        highlighted={tracedThemes.has(theme.name)}
+                      />
+                    );
+                  })}
                 </div>
               ) : (
-                <SectionSkeleton height="h-32" />
+                <SectionSkeleton />
               )}
             </WireSection>
-          )}
+          ) : null}
 
-          {/* Zone 3: AI Market Summary — interpretation, labelled as such by
-              its accent styling; the measured panels above and below win when
-              they disagree. */}
-          {(display.marketRegime || loading) && (
-            <WireSection id="ai-summary" title="AI Market Summary">
-              {display.marketRegime ? (
-                <MarketSummaryCard
-                  regime={display.marketRegime}
-                  macroSignals={display.macroSignals ?? []}
-                  scannedAt={display.scannedAt ?? String(scanStartedAt ?? "")}
-                />
-              ) : (
-                <SectionSkeleton height="h-20" />
-              )}
-            </WireSection>
-          )}
-
-          {/* Zone 4: Opportunities — the pipeline's company-level output,
-              promoted above the fold. Category filtering is scoped to this
-              zone; it no longer hides the rest of the page. */}
+          {/* ── Risk Monitor — an empty result renders as a statement, not a
+              missing section. ── */}
           <WireSection
-            id="opportunities"
-            title="Opportunities"
-            badge={opportunities.length > 0 ? `${opportunities.length}` : undefined}
+            id="risk-monitor"
+            title="Risk Monitor"
+            badge={display.riskAlerts?.length ? `${display.riskAlerts.length}` : undefined}
+            meta={scanMeta}
+          >
+            {display.riskAlerts && display.riskAlerts.length > 0 ? (
+              <div className="overflow-hidden rounded-xl border border-border">
+                {display.riskAlerts.map((alert, i) => (
+                  <RiskAlertRow
+                    key={alert.id}
+                    alert={alert}
+                    style={{ animationDelay: `${i * 40}ms` }}
+                    onShowEvidence={() => {
+                      // Risks carry no pipeline-recorded event link — this is
+                      // an overlap join and the drawer labels it approximate.
+                      const { storyIds, approximate } = riskStoryIds(alert, events);
+                      setEvidence({ title: alert.headline, storyIds, approximate });
+                    }}
+                  />
+                ))}
+              </div>
+            ) : loading && !display.riskAlerts ? (
+              <SectionSkeleton height="h-20" />
+            ) : (
+              <p className="rounded-xl border border-border bg-surface px-4 py-6 text-center text-sm text-muted">
+                No risk alerts from this scan — no events carried bearish causal effects or geopolitical classification.
+              </p>
+            )}
+          </WireSection>
+
+          {/* ── Ideas — the few worth attention, compact; the full universe
+              behind View all (category tabs, fit ranking, everything). ── */}
+          <WireSection
+            id="ideas"
+            title="Ideas"
+            badge={opportunities.length > 0 ? `top ${Math.min(TOP_IDEAS_LIMIT, rankedIdeas.length)} of ${opportunities.length}` : undefined}
+            meta={scanMeta}
             actions={
               <>
                 {dismissedCount > 0 && (
                   <button
                     onClick={() => setDismissed([])}
                     className="text-xs text-muted transition-colors hover:text-foreground"
-                    title="Bring back every dismissed opportunity"
+                    title="Bring back every dismissed idea"
                   >
                     Restore dismissed ({dismissedCount})
                   </button>
                 )}
-                {ios?.profileReady && ios.profile.hasPortfolio && highConviction.length > 0 && (
+                {ios?.profileReady && ios.profile.hasPortfolio && rankedIdeas.length > 0 && (
                   <button
                     onClick={() => setFitRanking((v) => !v)}
                     className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[11px] font-medium transition-colors ${
@@ -708,7 +926,7 @@ export default function ScannerPage() {
               ) : (
                 <div className="flex flex-col items-center gap-1.5 rounded-xl border border-border bg-surface px-4 py-6 text-center text-sm text-muted">
                   {dismissedCount > 0 ? (
-                    <p>All {dismissedCount} opportunities from this scan are dismissed.</p>
+                    <p>All {dismissedCount} ideas from this scan are dismissed.</p>
                   ) : (
                     <>
                       <p>No company-level ideas cleared the bar in this scan.</p>
@@ -722,73 +940,68 @@ export default function ScannerPage() {
                 </div>
               )
             ) : (
-              <div className="flex flex-col gap-5">
-                {/* Category tabs */}
-                <div className="flex flex-wrap items-center gap-1.5 overflow-x-auto pb-1">
-                  <button
-                    onClick={() => setActiveCategory("all")}
-                    className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                      activeCategory === "all"
-                        ? "border-brand/40 bg-brand/10 text-brand"
-                        : "border-border text-muted hover:border-brand/30 hover:text-brand"
-                    }`}
-                  >
-                    All ({opportunities.length})
-                  </button>
-                  {CATEGORY_ORDER.filter((c) => (categoryGroups.get(c)?.length ?? 0) > 0).map((c) => (
-                    <button
-                      key={c}
-                      onClick={() => setActiveCategory(c)}
-                      className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                        activeCategory === c
-                          ? "border-brand/40 bg-brand/10 text-brand"
-                          : "border-border text-muted hover:border-brand/30 hover:text-brand"
-                      }`}
-                    >
-                      {CATEGORY_LABELS[c]} ({categoryGroups.get(c)!.length})
-                    </button>
-                  ))}
-                </div>
-
-                {/* Filtered single-category view */}
-                {activeCategory !== "all" && (
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                    {activeCategoryOpportunities.map((opp, i) => (
-                      <OpportunityCard key={opp.id} {...cardProps(opp)} style={{ animationDelay: `${i * 40}ms` }} />
-                    ))}
-                  </div>
+              <div className="flex flex-col gap-3">
+                {/* The default: a handful of compact rows. */}
+                {!showAllIdeas && (
+                  <>
+                    <ul className="overflow-hidden rounded-xl border border-border bg-surface">
+                      {topIdeas.map((opp, i) => (
+                        <IdeaRow key={opp.id} {...cardProps(opp)} style={{ animationDelay: `${i * 40}ms` }} />
+                      ))}
+                    </ul>
+                    {opportunities.length > topIdeas.length && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAllIdeas(true)}
+                        className="self-start text-xs text-accent transition-colors hover:underline"
+                      >
+                        View all {opportunities.length} ideas →
+                      </button>
+                    )}
+                  </>
                 )}
 
-                {/* Today's Opportunities (high conviction) */}
-                {activeCategory === "all" && highConviction.length > 0 && (
-                  <div className="flex flex-col gap-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-widest text-muted/60">
-                        High Conviction
-                      </span>
-                      <span className="rounded-full border border-positive/30 bg-positive/10 px-2 py-0.5 text-label font-medium text-positive">
-                        {highConviction.length}
-                      </span>
-                    </div>
-                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                      {rankOpportunities(highConviction).map((opp, i) => (
-                        <OpportunityCard key={opp.id} {...cardProps(opp)} style={{ animationDelay: `${i * 40}ms` }} />
+                {/* The full universe — category tabs + detailed cards. */}
+                {showAllIdeas && (
+                  <div className="flex flex-col gap-4">
+                    <div className="flex flex-wrap items-center gap-1.5 overflow-x-auto pb-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowAllIdeas(false)}
+                        className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-brand/30 hover:text-brand"
+                      >
+                        ← Top ideas
+                      </button>
+                      <button
+                        onClick={() => setActiveCategory("all")}
+                        className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                          activeCategory === "all"
+                            ? "border-brand/40 bg-brand/10 text-brand"
+                            : "border-border text-muted hover:border-brand/30 hover:text-brand"
+                        }`}
+                      >
+                        All ({opportunities.length})
+                      </button>
+                      {CATEGORY_ORDER.filter((c) => (categoryGroups.get(c)?.length ?? 0) > 0).map((c) => (
+                        <button
+                          key={c}
+                          onClick={() => setActiveCategory(c)}
+                          className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                            activeCategory === c
+                              ? "border-brand/40 bg-brand/10 text-brand"
+                              : "border-border text-muted hover:border-brand/30 hover:text-brand"
+                          }`}
+                        >
+                          {CATEGORY_LABELS[c]} ({categoryGroups.get(c)!.length})
+                        </button>
                       ))}
                     </div>
-                  </div>
-                )}
 
-                {/* Developing Signals */}
-                {activeCategory === "all" && developing.length > 0 && (
-                  <div className="flex flex-col gap-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-widest text-muted/60">
-                        Developing Signals
-                      </span>
-                      <span className="text-xs text-muted">· Composite 40–69</span>
-                    </div>
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                      {developing.map((opp, i) => (
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                      {(activeCategory === "all"
+                        ? rankOpportunities(opportunities)
+                        : activeCategoryOpportunities
+                      ).map((opp, i) => (
                         <OpportunityCard key={opp.id} {...cardProps(opp)} style={{ animationDelay: `${i * 40}ms` }} />
                       ))}
                     </div>
@@ -798,213 +1011,29 @@ export default function ScannerPage() {
             )}
           </WireSection>
 
-          {/* Zone 5: Emerging Themes */}
-          {(display.emergingThemes?.length || (loading && !display.emergingThemes)) ? (
-            <WireSection
-              id="emerging-themes"
-              title="Emerging Themes"
-              badge={display.emergingThemes?.length ? `${display.emergingThemes.length}` : undefined}
-            >
-              {display.emergingThemes && display.emergingThemes.length > 0 ? (
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {display.emergingThemes.map((theme, i) => {
-                    const storyIds = storyIdsForEventIds(theme.drivingEvents, events);
-                    return (
-                      <EmergingThemeCard
-                        key={theme.name}
-                        theme={theme}
-                        style={{ animationDelay: `${i * 40}ms` }}
-                        evidenceCount={storyIds.length > 0 ? storyIds.length : undefined}
-                        onShowEvidence={
-                          storyIds.length > 0
-                            ? () => setEvidence({ title: theme.name, storyIds })
-                            : undefined
-                        }
-                        highlighted={tracedThemes.has(theme.name)}
-                      />
-                    );
-                  })}
-                </div>
-              ) : (
-                <SectionSkeleton />
-              )}
-            </WireSection>
-          ) : null}
-
-          {/* Zone 6: Cause & Effect — collapsed by default. Renders even when
-              the scan produced no chains: a zone that silently disappears is
-              indistinguishable from a rendering bug (and only macro/policy/
-              geopolitics events are analyzed, so "none" is a real outcome). */}
+          {/* ── The Feed — the one raw-headline surface: this scan's clustered
+              tape, plus your holdings' news on a lazily-loaded tab. ── */}
           <WireSection
-            id="cause-effect"
-            title="Cause & Effect"
-            badge={causalEvents.length > 0 ? `${causalEvents.length}` : undefined}
+            id="feed"
+            title="The Feed"
+            badge={
+              tapeView
+                ? tapeView.clusteredArticles > 0
+                  ? `${tapeView.stories.length + tapeView.filtered.length} stories from ${tapeView.totalArticles} articles`
+                  : `${tapeView.stories.length + tapeView.filtered.length} stories`
+                : undefined
+            }
             collapsible
-            defaultCollapsed
             persist
           >
-            {causalEvents.length > 0 ? (
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {causalEvents.map((event, i) => (
-                  <CausalChainCard
-                    key={event.id}
-                    event={event}
-                    style={{ animationDelay: `${i * 60}ms` }}
-                    onShowEvidence={() =>
-                      setEvidence({ title: event.headline, storyIds: eventStoryIds(event) })
-                    }
-                    highlighted={tracedEventIds.has(event.id)}
-                  />
-                ))}
-              </div>
-            ) : loading && !display.events ? (
-              <SectionSkeleton />
-            ) : (
-              <p className="rounded-xl border border-border bg-surface px-4 py-6 text-center text-sm text-muted">
-                No cause-and-effect chains from this scan — none of its events classified as macro, policy, or geopolitics.
-              </p>
-            )}
-          </WireSection>
-
-          {/* Zone 7: Sector Rotation — ONE grid, one tile per sector, carrying
-              both datasets (price rank + news sentiment) with divergence as
-              the primary affordance. Replaces the two identically-titled
-              grids; the shared SectorRotationPanel component is untouched. */}
-          <WireSection id="sector-rotation" title="Sector Rotation" collapsible persist>
-            <UnifiedSectorRotation
-              impacts={display.sectorImpacts}
-              scanLoading={loading}
-              highlightedSectors={tracedSectors}
-              onShowEvidence={(sector) => {
-                const impact = (display.sectorImpacts ?? []).find(
-                  (s) => (canonicalizeSector(s.sector) ?? s.sector) === sector,
-                );
-                if (!impact) return;
-                setEvidence({
-                  title: `${sector} — news sentiment`,
-                  storyIds: storyIdsForEventIds(impact.drivingEvents, events),
-                });
-              }}
-            />
-          </WireSection>
-
-          {/* Zone 8: Risk Monitor — same rule as Cause & Effect: an empty
-              result renders as a statement, not a missing section. */}
-          <WireSection
-            id="risk-monitor"
-            title="Risk Monitor"
-            badge={display.riskAlerts?.length ? `${display.riskAlerts.length}` : undefined}
-          >
-            {display.riskAlerts && display.riskAlerts.length > 0 ? (
-              <div className="rounded-xl border border-border overflow-hidden">
-                {display.riskAlerts.map((alert, i) => (
-                  <RiskAlertRow
-                    key={alert.id}
-                    alert={alert}
-                    style={{ animationDelay: `${i * 40}ms` }}
-                    onShowEvidence={() => {
-                      // Risks carry no pipeline-recorded event link (that
-                      // needs an additive field in extractRiskAlerts, whose
-                      // file another session is instrumenting) — this is an
-                      // overlap join and the drawer labels it approximate.
-                      const { storyIds, approximate } = riskStoryIds(alert, events);
-                      setEvidence({ title: alert.headline, storyIds, approximate });
-                    }}
-                  />
-                ))}
-              </div>
-            ) : loading && !display.riskAlerts ? (
-              <SectionSkeleton height="h-20" />
-            ) : (
-              <p className="rounded-xl border border-border bg-surface px-4 py-6 text-center text-sm text-muted">
-                No risk alerts from this scan — no events carried bearish causal effects or geopolitical classification.
-              </p>
-            )}
-          </WireSection>
-
-        </div>
-      )}
-
-      {/* Zone 9: Portfolio Impact — deliberately OUTSIDE the result/loading
-          gate. Holdings news fetches independently of the AI pipeline (its own
-          streaming route, own loading state), so it's real content the moment
-          the page loads; the scan-derived impact cards join it when ready.
-
-          Always mounted once the symbols fetch settles: a failed /api/watchlist
-          or /api/portfolio used to silently unmount the whole zone —
-          indistinguishable from having no holdings. Same explicit-state rule
-          as Cause & Effect / Risk Monitor: fetch failure and genuine emptiness
-          each say so in words. */}
-      {!symbolsLoading && (
-        <WireSection id="portfolio-impact" title="Portfolio Impact">
-          <div className="flex flex-col gap-5">
-            {symbolsFailed.length > 0 && (
-              <p className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning">
-                <span>
-                  Couldn&apos;t load your {symbolsFailed.join(" and ")} — impact matching below
-                  {symbolsFailed.length === 2 ? " is unavailable" : " is incomplete"}.
-                </span>
-                <button
-                  type="button"
-                  onClick={refreshUserSymbols}
-                  className="shrink-0 rounded border border-warning/40 px-2 py-0.5 text-xs transition-colors hover:bg-warning/20"
-                >
-                  Retry
-                </button>
-              </p>
-            )}
-            {symbolsFailed.length === 0 &&
-              watchlistSymbols.length === 0 &&
-              portfolioSymbols.length === 0 && (
-                <p className="rounded-xl border border-border bg-surface px-4 py-6 text-center text-sm text-muted">
-                  Nothing tracked yet — add symbols to your watchlist or holdings to your
-                  portfolio and each scan will flag signals on names you own or follow.
-                </p>
-              )}
-            {/* Full scan output, not the dismissed-filtered list — a signal on
-                something you HOLD stays visible even if the idea was dismissed. */}
-            {allOpportunities.length > 0 &&
-              (watchlistSymbols.length > 0 || portfolioSymbols.length > 0) && (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <WatchlistImpact opportunities={allOpportunities} watchlistSymbols={watchlistSymbols} />
-                  <PortfolioImpact opportunities={allOpportunities} portfolioSymbols={portfolioSymbols} />
-                </div>
-              )}
-            <PortfolioWatch />
-          </div>
-        </WireSection>
-      )}
-
-      {/* Zone 10: The Tape — the raw feed, last and collapsed by default. A
-          scan's insights live above; this is the firehose for verification. */}
-      {scanRunningOrDone && (tapeView || loading) && (
-        <WireSection
-          id="the-tape"
-          title="The Tape"
-          badge={
-            tapeView
-              ? tapeView.clusteredArticles > 0
-                ? `${tapeView.stories.length + tapeView.filtered.length} stories from ${tapeView.totalArticles} articles`
-                : `${tapeView.stories.length + tapeView.filtered.length} stories`
-              : undefined
-          }
-          collapsible
-          defaultCollapsed
-          persist
-        >
-          {/* The standalone Source Explorer folded into evidence linking:
-              per-story sources live in each row's expander, and every insight
-              above opens its own sources in the drawer. */}
-          {tapeView ? (
-            <Tape
-              view={tapeView}
+            <TheFeed
+              tapeView={tapeView}
               tracedStoryId={trace?.id ?? null}
               onTrace={(story) => setTrace((prev) => (prev?.id === story.id ? null : story))}
             />
-          ) : (
-            <SectionSkeleton height="h-56" />
-          )}
-        </WireSection>
+          </WireSection>
+
+        </div>
       )}
 
       {/* ── Evidence drawer — one click from any insight to its sources ── */}
@@ -1016,7 +1045,7 @@ export default function ScannerPage() {
         />
       )}
 
-      {/* ── Empty state ── */}
+      {/* ── Empty state (rare — the page auto-scans on first visit) ── */}
       {!result && !loading && !error && (
         <div className="flex flex-col gap-8">
           <div className="flex flex-col items-center gap-5 rounded-xl border border-border bg-surface py-14 text-center">
@@ -1032,7 +1061,7 @@ export default function ScannerPage() {
               <p className="max-w-md text-xs leading-5 text-muted">
                 The Wire collects signals from all sources, clusters stories,
                 maps cause-and-effect chains, cross-references fundamentals, and surfaces
-                investment opportunities — not just headlines.
+                what it means for your names — not just headlines.
               </p>
             </div>
             <button

@@ -176,7 +176,11 @@ export async function POST(request: Request) {
 
   // The funded path's executeTrades() already wrote its own pre-execution
   // snapshot; writing a second here would create an unpairable extra row.
-  if (!fundingSnapshotId) captureSnapshot(preEvaluation, "pre-execution", body.objective ?? null);
+  // Either way the pre-execution snapshot id is returned as `snapshotId`, so a
+  // caller can offer Undo (POST /api/portfolio/optimize/undo) for a plain buy
+  // exactly as it can for a funded one — restoring that snapshot reverts the
+  // whole raw ledger, funding sells and buy lot alike.
+  const snapshotId = fundingSnapshotId ?? captureSnapshot(preEvaluation, "pre-execution", body.objective ?? null);
 
   try {
     addUniversalLot({
@@ -221,6 +225,7 @@ export async function POST(request: Request) {
       totalCost: shares * quote.price,
       holding,
       fundingSnapshotId,
+      snapshotId,
     },
     { status: 201 },
   );

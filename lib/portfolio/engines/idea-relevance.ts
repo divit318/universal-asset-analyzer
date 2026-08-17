@@ -1,7 +1,7 @@
 /**
- * The Idea Decision Engine — turns a pipeline row into an answerable decision.
+ * The Idea Decision Engine — turns a tracked idea into an answerable decision.
  *
- * Every card in the pipeline has to answer one question: *should I own more of
+ * Every idea on the Watchlist has to answer one question: *should I own more of
  * this, less of this, or something else instead?* This module answers it, and
  * shows its work. It is the counterpart to `decision.ts`: that one narrates a
  * proposed TRADE, this one narrates an IDEA.
@@ -10,7 +10,7 @@
  * Nothing here computes a score. Relevance is `computePortfolioFit()`
  * (lib/ios/fit-scorer.ts) — the same deterministic engine the Watchlist,
  * Compare, Research, Wire and DCF pages already score against, so the number on
- * a pipeline card and the number on the watchlist row are the same number by
+ * a board card and the number on the table row are the same number by
  * construction rather than by coincidence. This module only:
  *
  *   1. converts fit into an ACTION ORDERING (impact, not score — see below),
@@ -36,7 +36,7 @@
  * ── One authority per claim ────────────────────────────────────────────────
  * When the recommendation engine has simulated a trade for a symbol, its verdict
  * wins and this module quotes it (`linkedTrade`), because that engine measures a
- * real health delta through the real portfolio. Fit never contradicts it: fit
+ * real alignment delta through the real portfolio. Fit never contradicts it: fit
  * answers "does this belong in the book?", the trade engine answers "what should
  * I do about it today?". Where they would overlap, this module states the trade
  * engine's answer and labels the fit number as a sizing reference.
@@ -46,22 +46,24 @@
  */
 
 import type { PortfolioFitAnalysis, FitDimension, FitTier } from "../../ios/types";
-import { STAGE_LABEL, type PipelineRow } from "../../idea-stage";
+import { WORKFLOW_LABEL, type IdeaWorkflow } from "../../ideas/evidence";
+import type { IdeaRow } from "../../ideas/rows";
 import type { ScoreExplanation } from "../../home/explain";
-import type { IdeaStage } from "../../types";
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                       */
 /* -------------------------------------------------------------------------- */
 
 /**
- * What this idea is FOR. Deliberately not a buy/sell rating: the pipeline's job
- * is to route attention, and only the trade engine (which simulates) is allowed
- * to say "buy $12,000 of this".
+ * What this idea is FOR. Deliberately not a buy/sell rating: the Watchlist's
+ * job is to route attention, and only the trade engine (which simulates) is
+ * allowed to say "buy $12,000 of this".
  */
 export type IdeaVerdict =
-  /** Fits, and the work hasn't been done — move it to Researching. */
+  /** No research evidence exists yet — the honest ask is to do the work. */
   | "research"
+  /** Research evidence exists; the investment view hasn't been written. */
+  | "thesis"
   /** A thesis exists; the remaining step is a decision. */
   | "decide"
   /** Held and sized in line with its fit — no action. */
@@ -84,6 +86,7 @@ export type IdeaVerdict =
 
 export const VERDICT_LABEL: Record<IdeaVerdict, string> = {
   research: "Research next",
+  thesis: "Write thesis",
   decide: "Decide",
   hold: "Hold",
   "no-case": "No case yet",
@@ -94,7 +97,7 @@ export const VERDICT_LABEL: Record<IdeaVerdict, string> = {
 
 /** The five questions every recommendation must answer, each grounded in a number. */
 export interface IdeaRationale {
-  /** Why am I seeing this? — provenance plus how it entered the pipeline. */
+  /** Why am I seeing this? — provenance plus how it entered the watchlist. */
   whySeeing: string;
   /** What problem does this solve? — the portfolio weakness it addresses. */
   whatProblem: string;
@@ -117,11 +120,11 @@ export interface ExpectedImprovement {
   positionHhiAfter: number;
   /** Sector/class exposure this would fill, when it fills one. */
   fills: string | null;
-  /** One sentence stating all of the above. Never a health-score claim. */
+  /** One sentence stating all of the above. Never an alignment-score claim. */
   summary: string;
 }
 
-/** A real alternative from the same pipeline — never a fabricated comparison. */
+/** A real alternative from the same watchlist — never a fabricated comparison. */
 export interface IdeaPeer {
   symbol: string;
   fitScore: number;
@@ -137,14 +140,14 @@ export interface LinkedTrade {
   rationale: string;
   amount: number;
   /** MEASURED by simulating the trade — the trade engine's number, not ours. */
-  healthDelta: number | null;
+  alignmentDelta: number | null;
   confidence: number;
   alternativesEvaluated: number;
 }
 
 export interface IdeaAssessment {
   symbol: string;
-  stage: IdeaStage;
+  workflow: IdeaWorkflow;
   fit: PortfolioFitAnalysis | null;
   /** Ordering key — see the module header. Null when fit couldn't be computed. */
   impactPct: number | null;
@@ -183,8 +186,8 @@ export interface IdeaPortfolioContext {
    * make the before/after pair a comparison of two different scales.
    */
   positionHhi: number;
-  /** Health score 0-100, quoted only as context — never recomputed. */
-  healthScore: number | null;
+  /** Alignment score 0-100, quoted only as context — never recomputed. */
+  alignmentScore: number | null;
   /** symbol → % of portfolio value, from the allocation engine. */
   weights: Map<string, number>;
   /** symbol → sector, for peer comparison. */
@@ -202,7 +205,7 @@ export const EMPTY_IDEA_CONTEXT: IdeaPortfolioContext = {
   hasPortfolio: false,
   totalValue: 0,
   positionHhi: 0,
-  healthScore: null,
+  alignmentScore: null,
   weights: new Map(),
   sectors: new Map(),
   missingSectors: [],
@@ -282,13 +285,13 @@ function strongest(fit: PortfolioFitAnalysis, impact: "positive" | "negative"): 
 const ACTIONABLE_TIERS: FitTier[] = ["excellent", "good"];
 
 function verdictFor(
-  row: PipelineRow,
+  row: IdeaRow,
   fit: PortfolioFitAnalysis | null,
   weight: number | null,
   trade: LinkedTrade | null,
 ): IdeaVerdict {
   // The trade engine simulated something for this symbol. It measured a real
-  // health delta; we did not. Its answer is the answer.
+  // alignment delta; we did not. Its answer is the answer.
   if (trade) return "trade-proposed";
 
   if (row.held) {
@@ -297,31 +300,33 @@ function verdictFor(
     return surplus > SIZING_TOLERANCE_PCT ? "review-sizing" : "hold";
   }
 
-  if (row.stage === "thesis") return "decide";
-  if (!fit) return "research";
+  // The workflow is derived from EVIDENCE (lib/ideas/evidence.ts), so these
+  // verdicts can no longer contradict what the user actually did: "research"
+  // is only ever said about a name with no research on record, and a written
+  // thesis reads as a decision waiting, never as work still to do.
+  if (row.workflow === "ready" || row.workflow === "waiting") return "decide";
+  const ask: IdeaVerdict = row.workflow === "working" ? "thesis" : "research";
+  if (!fit) return ask;
   if (fit.fitTier === "poor" || fit.fitTier === "avoid") return "deprioritize";
   // Never "hold" for something unheld — see the note on `no-case`.
-  return ACTIONABLE_TIERS.includes(fit.fitTier) ? "research" : "no-case";
+  return ACTIONABLE_TIERS.includes(fit.fitTier) ? ask : "no-case";
 }
 
 /* -------------------------------------------------------------------------- */
 /* The five questions                                                          */
 /* -------------------------------------------------------------------------- */
 
-function whySeeing(row: PipelineRow, ctx: IdeaPortfolioContext): string {
+function whySeeing(row: IdeaRow, ctx: IdeaPortfolioContext): string {
   const base = row.originLabel;
-  if (row.held && !row.tracked) {
-    return `${base}. It is in the pipeline because you hold it — the Owned column is derived from your ledger, not maintained separately.`;
-  }
   if (row.held) return `${base}. Shown as Owned because your ledger holds it today.`;
   if (!ctx.hasPortfolio) {
     return `${base}. With no positions recorded, relevance is generic rather than personalized.`;
   }
-  return `${base}. It has been in ${STAGE_LABEL[row.stage]} for ${row.daysInStage}d.`;
+  return `${base}. ${WORKFLOW_LABEL[row.workflow]}; last activity ${row.idleDays}d ago.`;
 }
 
 function whatProblem(
-  row: PipelineRow,
+  row: IdeaRow,
   fit: PortfolioFitAnalysis | null,
   weight: number | null,
 ): string {
@@ -351,7 +356,7 @@ function whatProblem(
  * "Why now?" — only ever a measured, checkable fact. Never a market call: no
  * part of this app knows whether today is a good day to buy something.
  */
-function whyNow(row: PipelineRow, fit: PortfolioFitAnalysis | null, price: number | null): string {
+function whyNow(row: IdeaRow, fit: PortfolioFitAnalysis | null, price: number | null): string {
   if (row.targetPrice != null && price != null && price > 0) {
     const gap = ((row.targetPrice - price) / price) * 100;
     const dir = row.targetDirection ?? (row.targetPrice < price ? "below" : "above");
@@ -366,15 +371,15 @@ function whyNow(row: PipelineRow, fit: PortfolioFitAnalysis | null, price: numbe
 
   if (fit?.capReason) return `A hard constraint applies today: ${fit.capReason}.`;
 
-  if (!row.held && row.daysInStage >= 30) {
-    return `No timing signal. It has sat in ${STAGE_LABEL[row.stage]} for ${row.daysInStage}d without a decision, which is itself the reason to close it out.`;
+  if (!row.held && row.idleDays >= 30) {
+    return `No timing signal. Nothing has happened to it in ${row.idleDays}d, which is itself the reason to close it out.`;
   }
   if (row.held) return "No timing signal — this is a sizing question, not an entry one.";
-  return `No timing signal. ${row.daysInStage}d in ${STAGE_LABEL[row.stage]}; nothing here claims today is special.`;
+  return `No timing signal. Last activity ${row.idleDays}d ago; nothing here claims today is special.`;
 }
 
 function ifIgnored(
-  row: PipelineRow,
+  row: IdeaRow,
   fit: PortfolioFitAnalysis | null,
   weight: number | null,
   ctx: IdeaPortfolioContext,
@@ -504,8 +509,8 @@ function explanationFor(
 /* -------------------------------------------------------------------------- */
 
 function peersFor(
-  row: PipelineRow,
-  scored: Array<{ row: PipelineRow; fit: PortfolioFitAnalysis | null; impact: number | null }>,
+  row: IdeaRow,
+  scored: Array<{ row: IdeaRow; fit: PortfolioFitAnalysis | null; impact: number | null }>,
   ctx: IdeaPortfolioContext,
   fit: PortfolioFitAnalysis | null,
 ): IdeaPeer[] {
@@ -541,7 +546,7 @@ function peersFor(
 
 function headlineFor(
   verdict: IdeaVerdict,
-  row: PipelineRow,
+  row: IdeaRow,
   fit: PortfolioFitAnalysis | null,
   weight: number | null,
   trade: LinkedTrade | null,
@@ -563,17 +568,24 @@ function headlineFor(
       return "A thesis exists; this is waiting on a decision, not more research.";
     case "deprioritize":
       return fit?.capReason ?? "Measurably poor fit for this portfolio.";
+    case "thesis":
+      // Research evidence exists — the claim is about the missing VIEW, never
+      // about missing work. Saying "hasn't been researched" here was the bug
+      // this whole model replaces.
+      return fit
+        ? `Fits this portfolio (${fit.fitScore}/100); research exists, the investment view doesn't.`
+        : "Research exists; the investment view hasn't been written.";
     case "research":
-      return fit ? `Fits this portfolio (${fit.fitScore}/100) and hasn't been researched.` : "Not assessed yet.";
+      return fit ? `Fits this portfolio (${fit.fitScore}/100) — no research on record yet.` : "Not assessed yet.";
   }
 }
 
 /**
- * Assess every pipeline row. Deterministic: same rows + same fits + same context
+ * Assess every tracked idea. Deterministic: same rows + same fits + same context
  * produce the same output, in the same order.
  */
 export function buildIdeaAssessments(input: {
-  rows: PipelineRow[];
+  rows: IdeaRow[];
   /** symbol → the fit engine's output. Absent = not assessable yet, never zero. */
   fits: Map<string, PortfolioFitAnalysis>;
   /** symbol → live price, for the "why now?" target proximity fact. */
@@ -617,7 +629,7 @@ export function buildIdeaAssessments(input: {
 
     return {
       symbol: row.symbol,
-      stage: row.stage,
+      workflow: row.workflow,
       fit,
       impactPct: impact,
       priority: rank,
@@ -642,11 +654,11 @@ export function buildIdeaAssessments(input: {
 }
 
 /**
- * "Why this one and not another" — stated against the real alternatives in the
- * pipeline, with this idea's own impact for direct comparison.
+ * "Why this one and not another" — stated against the real alternatives on the
+ * watchlist, with this idea's own impact for direct comparison.
  */
 function whyThisOneText(
-  row: PipelineRow,
+  row: IdeaRow,
   fit: PortfolioFitAnalysis | null,
   peers: IdeaPeer[],
   rank: number,
@@ -658,7 +670,7 @@ function whyThisOneText(
   }
   const standing = `Ranks ${rank} of ${total} tracked ideas on expected impact (${pct1(impact)} of the portfolio)`;
   if (peers.length === 0) {
-    return `${standing}. Nothing else tracked shares its exposure, so the pipeline holds no like-for-like alternative.`;
+    return `${standing}. Nothing else tracked shares its exposure, so the watchlist holds no like-for-like alternative.`;
   }
   const ahead = peers.filter((p) => p.impactPct < impact).length;
   const named = peers.map((p) => `${p.symbol} (fit ${p.fitScore}, ${pct1(p.impactPct)})`).join(", ");
