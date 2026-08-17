@@ -112,6 +112,7 @@ export function analysisIdempotencyKey(
  * its TaskType parameter) because analysis.ts records the resolved id on job
  * rows and cached results, and a second runtime would slot back in here.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function resolveProvider(_taskType: TaskType): AnalysisProviderId {
   return "chain";
 }

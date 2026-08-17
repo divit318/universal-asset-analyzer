@@ -300,7 +300,7 @@ export default function ComparePage() {
       : (params.get("symbols")?.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean) ?? []);
 
     if (urlSyms.length > 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       setSymbols(urlSyms);
       for (const s of urlSyms) focus?.recordFocus(s);
     } else {
@@ -339,7 +339,7 @@ export default function ComparePage() {
       return;
     }
     prefilledRef.current = true;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setInput(focus.mostRecent);
   }, [focus?.mostRecent, symbols.length, input]);
 
@@ -388,7 +388,7 @@ export default function ComparePage() {
       return;
     }
     // fetchCompare only sets state after an await, so this is safe to call here.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     void fetchCompare(symbols);
   }, [symbols, fetchCompare]);
 
@@ -433,7 +433,7 @@ export default function ComparePage() {
   useEffect(() => {
     if (assetClass === "equity" || classSymbols.length === 0) return;
     // fetchClassCompare only sets state after an await, so this is safe to call here.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     void fetchClassCompare(assetClass, classSymbols);
   }, [assetClass, classSymbols, fetchClassCompare]);
 
@@ -475,7 +475,7 @@ export default function ComparePage() {
     aiAbortRef.current?.abort();
     aiGen.current += 1; // invalidate any response still in flight
     benchmarkRetries.current = 0;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setAiResult(null);
   }, [symbols]);
 

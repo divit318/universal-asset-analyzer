@@ -17,7 +17,6 @@
  */
 
 import { runAnalysis } from "./ai/analysis";
-import { resolveProvider } from "./ai/analysis-provider";
 import { LooseObjectSchema } from "./ai/schemas/loose";
 import { AgentFindingWireSchema, IC_SCHEMA_VERSION } from "./ai/schemas/ic";
 import { taskForAgentDomain } from "./ai/task-registry";
