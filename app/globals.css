@@ -705,6 +705,8 @@ body::before {
 [data-mk-root] .mk-btn:focus-visible {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 45%, transparent);
 }
+/* Press: an instant, tiny sink — tactile confirmation on every mk-btn. */
+[data-mk-root] .mk-btn:active { transform: scale(0.985); }
 /* Primary: brass edge, warm charcoal metal, brass lettering. */
 [data-mk-root] .mk-btn-primary {
   background: linear-gradient(160deg, color-mix(in srgb, var(--brand) 62%, transparent), color-mix(in srgb, var(--brand) 26%, transparent));

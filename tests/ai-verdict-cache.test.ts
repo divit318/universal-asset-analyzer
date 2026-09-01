@@ -18,7 +18,13 @@ function url(query: string): URL {
   return new URL(`http://localhost/api/ai/report?${query}`);
 }
 
-beforeEach(() => {});
+// stableVerdictIdentity folds resolveAiMode() into the key, and resolveAiMode
+// reads the DEVELOPER'S persisted ~/.uaa mode file when UAA_AI_MODE is unset —
+// so on any machine whose mode isn't "balanced" these expectations would fail
+// on machine state, not code. Pin the ambient mode for the whole file.
+beforeEach(() => {
+  process.env.UAA_AI_MODE = "balanced";
+});
 
 describe("personalizationParams", () => {
   it("returns an empty object for an unpersonalized request", () => {

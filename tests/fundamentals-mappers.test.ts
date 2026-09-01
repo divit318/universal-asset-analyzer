@@ -9,8 +9,36 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { classifyTx, mapInsider, mapAnalyst } from "@/lib/fundamentals";
+import { classifyTx, mapInsider, mapAnalyst, mapSnapshot } from "@/lib/fundamentals";
 import { describeFiling } from "@/lib/edgar";
+
+/* ── mapSnapshot: equity vs fund yield fields ────────────────────────────── */
+
+describe("mapSnapshot yields", () => {
+  it("maps the equity dividendYield and the fund `yield` field independently", () => {
+    // Yahoo populates summaryDetail.dividendYield for single equities ONLY;
+    // funds carry summaryDetail.yield (mirrored in defaultKeyStatistics.yield).
+    // Probed live 2026-08-14: BND {dividendYield: null, yield: 0.0403}.
+    const equity = mapSnapshot("MO", { summaryDetail: { dividendYield: 0.0652 } });
+    expect(equity.dividendYield).toBeCloseTo(0.0652, 6);
+    expect(equity.fundYield).toBeNull();
+
+    const bondFund = mapSnapshot("BND", { summaryDetail: { yield: 0.0403 } });
+    expect(bondFund.dividendYield).toBeNull();
+    expect(bondFund.fundYield).toBeCloseTo(0.0403, 6);
+  });
+
+  it("falls back to defaultKeyStatistics.yield when summaryDetail has none", () => {
+    const snap = mapSnapshot("SGOV", { defaultKeyStatistics: { yield: 0.0379 } });
+    expect(snap.fundYield).toBeCloseTo(0.0379, 6);
+  });
+
+  it("keeps a genuine zero fund yield as 0, distinct from unknown (null)", () => {
+    // GLDM (a bullion trust) reports yield: 0 — factually no distributions.
+    expect(mapSnapshot("GLDM", { summaryDetail: { yield: 0 } }).fundYield).toBe(0);
+    expect(mapSnapshot("XXXX", {}).fundYield).toBeNull();
+  });
+});
 
 /* ── classifyTx ──────────────────────────────────────────────────────────── */
 

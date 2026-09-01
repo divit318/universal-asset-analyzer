@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import { guardedExport } from "@/lib/download";
 import { getAssetClass, getMetric, isAssetClassId, unavailableMetrics } from "@/lib/assets/registry";
+import { scoreArgb, SCORING_METHODOLOGY_VERSION } from "@/lib/recommendation";
 import type { AssetClassId } from "@/lib/assets/types";
 import type { RankedCandidate } from "@/lib/screener/types";
 
@@ -27,19 +28,11 @@ const HEADER_FILL: ExcelJS.Fill = {
 };
 const HEADER_FONT: Partial<ExcelJS.Font> = { bold: true, color: { argb: "FFFFFFFF" }, size: 10 };
 
-function scoreFill(v: number | null): string {
-  if (v == null) return "FFFFFFFF";
-  if (v >= 70) return "FFD1FAE5";
-  if (v >= 45) return "FFFEF9C3";
-  return "FFFEE2E2";
-}
-
-function scoreFont(v: number | null): string {
-  if (v == null) return "FF6B7280";
-  if (v >= 70) return "FF065F46";
-  if (v >= 45) return "FF92400E";
-  return "FF991B1B";
-}
+/** Canonical export palette + bands (lib/recommendation.ts) — previously a
+ *  private 70/45 table here, so a spreadsheet colored a 72 green while the UI
+ *  needed 60 for the same tier. */
+const scoreFill = (v: number | null): string => scoreArgb(v).fill;
+const scoreFont = (v: number | null): string => scoreArgb(v).font;
 
 /** Excel number formats, from the registry's declared unit. */
 function numberFormat(unit: string): string {
@@ -86,6 +79,9 @@ async function buildScreenerExport(req: Request): Promise<Response> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "Universal Asset Analyzer";
   wb.created = new Date();
+  // A spreadsheet outlives the UI that produced it — record which scoring
+  // methodology (bands, palette) colored it.
+  wb.subject = `Scoring methodology ${SCORING_METHODOLOGY_VERSION}`;
 
   /* ── Sheet 1: results ── */
   const ws = wb.addWorksheet(`${def.label} Screen`, {

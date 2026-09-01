@@ -290,6 +290,19 @@ export function impliedUpside(
   return ((fairValuePerShare - price) / price) * 100;
 }
 
+/**
+ * Text tone for a margin of safety: ≥20% is a real discount (the classic
+ * value-investing threshold), 0–20% is thin, negative means paying above fair
+ * value. Was duplicated verbatim across the valuation page, the valuation
+ * register, and the research valuation strip — one place now.
+ */
+export function marginOfSafetyTone(mos: number | null): string {
+  if (mos == null) return "text-muted";
+  if (mos >= 20) return "text-positive";
+  if (mos >= 0) return "text-yellow-500 light:text-yellow-700";
+  return "text-negative";
+}
+
 /* -------------------------------------------------------------------------- */
 /* Input parsing                                                               */
 /* -------------------------------------------------------------------------- */

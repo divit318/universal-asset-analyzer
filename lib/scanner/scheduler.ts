@@ -34,7 +34,10 @@ let running = false;
 async function tick(): Promise<void> {
   if (running) return; // previous run still in flight — never overlap
   const snapshot = getLatestScannerSnapshot();
-  if (snapshot && snapshot.freshness.level === "fresh") return; // still current — skip the heavy pipeline
+  // Still current — skip the heavy pipeline. A methodology-stale snapshot is
+  // never "current" regardless of age: its verdicts were banded under older
+  // rules, so the scheduler is the automatic rerun path (ruling 2026-08-17).
+  if (snapshot && snapshot.freshness.level === "fresh" && !snapshot.methodologyStale) return;
 
   // A user-triggered scan (any parameters) is already occupying the local
   // model, which serializes generations — piling the auto-scan on top would

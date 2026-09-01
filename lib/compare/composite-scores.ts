@@ -16,7 +16,11 @@
  * the platform follows.
  */
 
-/** Clamp `value` into [min, max], map onto 0-100, and flip if lower is better. */
+import { norm } from "../score-math";
+
+/** Clamp `value` into [min, max], map onto 0-100, and flip if lower is better.
+ *  A thin wrapper over the platform's one normalization primitive
+ *  (lib/score-math's `norm`) — previously a private re-implementation. */
 function boundedScore(
   value: number | null,
   min: number,
@@ -24,15 +28,13 @@ function boundedScore(
   higherBetter: boolean,
 ): number | null {
   if (value == null || !Number.isFinite(value)) return null;
-  const clamped = Math.max(min, Math.min(max, value));
-  const pct = ((clamped - min) / (max - min)) * 100;
-  return higherBetter ? pct : 100 - pct;
+  return higherBetter ? norm(value, min, max) : norm(value, max, min);
 }
 
 /** Log-scale variant for metrics that span orders of magnitude (AUM, volume). */
 function boundedLogScore(value: number | null, min: number, max: number): number | null {
   if (value == null || !Number.isFinite(value) || value <= 0) return null;
-  return boundedScore(Math.log10(value), Math.log10(min), Math.log10(max), true);
+  return norm(Math.log10(value), Math.log10(min), Math.log10(max));
 }
 
 /** Mean of whatever's present; null only when every input is null. */

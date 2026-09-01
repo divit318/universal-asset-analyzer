@@ -270,7 +270,12 @@ describe("POST /api/export/dcf", () => {
 /* -------------------------------------------------------------------------- */
 
 describe("GET /api/export/watchlist", () => {
-  it("returns csv content-type and Content-Disposition header", async () => {
+  // The route's first import pulls the full watchlist/quote stack, and that
+  // cold module load is load-sensitive under the parallel suite (passes in
+  // 2.7s in isolation, times out at the 5s default with suites competing —
+  // 2026-08-17, same machine-load flake class as the scanner stage-wiring
+  // pair). Explicit timeout, per vitest's own advice for long-running tests.
+  it("returns csv content-type and Content-Disposition header", { timeout: 30_000 }, async () => {
     const { GET } = await import("@/app/api/export/watchlist/route");
 
     // Watchlist reads from DB — it may be empty, that's fine; we just check format
@@ -288,7 +293,7 @@ describe("GET /api/export/watchlist", () => {
     expect(text).toContain("Company Name");
   });
 
-  it("keeps the user's target and the analyst consensus in separate columns", async () => {
+  it("keeps the user's target and the analyst consensus in separate columns", { timeout: 30_000 }, async () => {
     // The two must never collapse into one "Target" column: one is the user's own
     // number, the other is the street's.
     const { GET } = await import("@/app/api/export/watchlist/route");

@@ -51,6 +51,7 @@ import { useIOSSafe } from "@/lib/ios-context";
 import { PortfolioFitBadge } from "@/app/_components/portfolio-fit-badge";
 import { PageShell, Skeleton } from "@/app/_components/ui";
 import type { PortfolioFitAnalysis } from "@/lib/ios/types";
+import { fitMeterTone } from "@/lib/ios/unified-action";
 
 // Base asset classes only (lib/assets/registry.ts): market variants like
 // indiaEquity are a geography, not an asset class — Indian equities compare
@@ -300,7 +301,7 @@ export default function ComparePage() {
       : (params.get("symbols")?.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean) ?? []);
 
     if (urlSyms.length > 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       setSymbols(urlSyms);
       for (const s of urlSyms) focus?.recordFocus(s);
     } else {
@@ -339,7 +340,7 @@ export default function ComparePage() {
       return;
     }
     prefilledRef.current = true;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setInput(focus.mostRecent);
   }, [focus?.mostRecent, symbols.length, input]);
 
@@ -388,7 +389,7 @@ export default function ComparePage() {
       return;
     }
     // fetchCompare only sets state after an await, so this is safe to call here.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     void fetchCompare(symbols);
   }, [symbols, fetchCompare]);
 
@@ -433,7 +434,7 @@ export default function ComparePage() {
   useEffect(() => {
     if (assetClass === "equity" || classSymbols.length === 0) return;
     // fetchClassCompare only sets state after an await, so this is safe to call here.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     void fetchClassCompare(assetClass, classSymbols);
   }, [assetClass, classSymbols, fetchClassCompare]);
 
@@ -475,7 +476,7 @@ export default function ComparePage() {
     aiAbortRef.current?.abort();
     aiGen.current += 1; // invalidate any response still in flight
     benchmarkRetries.current = 0;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setAiResult(null);
   }, [symbols]);
 
@@ -1767,8 +1768,8 @@ function PortfolioFitSection({
           display: (f: PortfolioFitAnalysis) => string;
           render?: (f: PortfolioFitAnalysis, i: number) => ReactNode;
         }
-        const scoreTone = (score: number) =>
-          score >= 65 ? "text-positive" : score >= 45 ? "text-warning" : "text-negative";
+        // Canonical fit-tier edges — previously a private 65/45 table.
+        const scoreTone = (score: number) => fitMeterTone(score).text;
         const fitRows: FitRow[] = [
           {
             label: "Portfolio Fit Score",

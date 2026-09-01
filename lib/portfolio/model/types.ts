@@ -403,6 +403,15 @@ export interface Holding {
   factors: FactorSensitivities;
 
   /**
+   * Economic non-base-currency exposure share, in [0,1]. From the same
+   * risk-model resolution as `factors` (ResolvedFactors.fxExposure), with a
+   * denomination fallback when the resolution has nothing to say. Optional so
+   * hand-built test fixtures need not declare it; `normalizeHoldings` always
+   * sets it. Consumers treat null as "unknown → fall back to denomination".
+   */
+  fxExposure?: number | null;
+
+  /**
    * Class-native metrics for display and for this class's own scoring. NEVER
    * summed or compared across classes — a bond's duration and an equity's P/E do
    * not live in the same space.

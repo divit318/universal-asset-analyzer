@@ -5,18 +5,16 @@ import {
   RECOMMENDATION_ARC as ARC_COLOR,
   RECOMMENDATION_LABEL as REC_LABEL,
   RECOMMENDATION_TONE as REC_STYLE,
+  scoreMeterTone,
 } from "@/lib/recommendation";
 import { CountUp } from "@/app/_components/count-up";
 import { Reveal } from "@/app/_components/reveal";
 import { ScoreRing } from "@/app/_components/score-ring";
 import { ValueBar } from "@/app/_components/value-bar";
 
-/** Track bar color based on a 0-100 value */
+/** Track bar color based on a 0-100 value — the canonical meter grammar. */
 function barColor(v: number | null) {
-  if (v == null) return "bg-border";
-  if (v >= 60)   return "bg-positive";
-  if (v >= 42)   return "bg-warning";
-  return "bg-negative";
+  return v == null ? "bg-border" : scoreMeterTone(v).bar;
 }
 
 const pct1 = (v: number | null) =>

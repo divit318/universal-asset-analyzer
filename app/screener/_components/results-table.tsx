@@ -14,6 +14,7 @@ import { Sparkles } from "lucide-react";
 import { askAi } from "@/app/_components/ask-ai";
 import { getAssetClass, getMetric, universeLabel } from "@/lib/assets/registry";
 import type { AssetClassId } from "@/lib/assets/types";
+import { scoreMeterTone } from "@/lib/recommendation";
 import { formatMetricValue } from "@/lib/screener/format";
 import { OwnershipCell } from "./ownership-cell";
 import { MARGINAL_SLACK } from "@/lib/screener/filter-engine";
@@ -60,26 +61,11 @@ const COLUMN_HELP: Record<string, string> = {
 };
 
 /**
- * Colour the match score using the app's semantic tokens.
- *
- * Previously raw Tailwind palette values (emerald/sky/amber/rose), which do not
- * respond to the theme and drifted from the canonical recommendation tones in
- * lib/recommendation.ts.
+ * Colour the match score with the canonical 3-step meter grammar
+ * (lib/recommendation.ts scoreMeterTone). Previously a private 75/55/35 band
+ * table here, so a 76 turned green in this table while the same number needed
+ * 78 to reach the top tier anywhere else.
  */
-function scoreTone(score: number): string {
-  if (score >= 75) return "text-positive";
-  if (score >= 55) return "text-brand";
-  if (score >= 35) return "text-warning";
-  return "text-negative";
-}
-
-/** Fill tone for the Match bar — same bands as scoreTone, as backgrounds. */
-function scoreBarTone(score: number): string {
-  if (score >= 75) return "bg-positive";
-  if (score >= 55) return "bg-brand";
-  if (score >= 35) return "bg-warning";
-  return "bg-negative";
-}
 
 /**
  * The Match score as a number + a small bar. The bar exists for scanability:
@@ -94,11 +80,11 @@ function MatchScore({ row }: { row: RankedCandidate }) {
     <span className="inline-flex items-center justify-end gap-1.5">
       <span aria-hidden className="h-1 w-9 overflow-hidden rounded-full bg-surface-3">
         <span
-          className={`block h-full rounded-full ${scoreBarTone(row.rankScore)}`}
+          className={`block h-full rounded-full ${scoreMeterTone(row.rankScore).bar}`}
           style={{ width: `${Math.max(0, Math.min(100, row.rankScore))}%` }}
         />
       </span>
-      <span className={`font-semibold ${scoreTone(row.rankScore)}`}>{row.rankScore}</span>
+      <span className={`font-semibold ${scoreMeterTone(row.rankScore).text}`}>{row.rankScore}</span>
     </span>
   );
 }

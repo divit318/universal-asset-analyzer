@@ -145,6 +145,13 @@ export interface WhatChanged {
   newFindings: string[];
   /** Titles of previous findings no longer detected. */
   resolvedFindings: string[];
+  /**
+   * True when the baseline snapshot was produced under a different
+   * SCORING_METHODOLOGY_VERSION (or before versions were recorded). The diff
+   * is still rendered — it is the user's real history — but the UI shows a
+   * staleness note with a rerun action rather than blanking anything.
+   */
+  baselineMethodologyStale: boolean;
 }
 
 /* ────────────────────────────── Coverage ────────────────────────────── */

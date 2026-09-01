@@ -6,6 +6,8 @@ import {
 } from "@/lib/india-snapshot";
 import type { ScreenerInCompany, ScreenerInStatements } from "@/lib/screener-in";
 import { indianFiscalLabel } from "@/lib/format";
+import { scoreToRecommendation } from "@/lib/recommendation";
+import type { Recommendation } from "@/lib/types";
 
 /** Minimal ScreenerInCompany with sensible empty defaults; override per test. */
 function company(overrides: Partial<ScreenerInCompany> = {}): ScreenerInCompany {
@@ -266,6 +268,27 @@ describe("overallVerdict", () => {
     expect(overallVerdict(50).label).toBe("Hold");
     expect(overallVerdict(35).label).toBe("Reduce");
     expect(overallVerdict(10).label).toBe("Avoid");
+  });
+
+  it("bands at the canonical TIER_EDGES, not a private India table", () => {
+    // Previously banded at 78/62/46/30, so a 61 read "Hold" here while every
+    // other surface called the same 61 a Buy-tier score.
+    const labelFor: Record<Recommendation, string> = {
+      STRONG_BUY: "Strong Buy",
+      BUY: "Accumulate",
+      HOLD: "Hold",
+      SELL: "Reduce",
+      STRONG_SELL: "Avoid",
+    };
+    for (let s = 0; s <= 100; s++) {
+      expect(overallVerdict(s).label, `composite ${s}`).toBe(labelFor[scoreToRecommendation(s)]);
+    }
+  });
+
+  it("exposes the shared Recommendation as the canonical band of the composite", () => {
+    const c = industrialCompany({ roce: 28, roe: 24, pe: 14, dividendYield: 2 });
+    const snap = computeIndiaSnapshot(c, deriveIndiaFundamentals(c));
+    expect(snap.recommendation).toBe(scoreToRecommendation(snap.composite));
   });
 });
 

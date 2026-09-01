@@ -13,6 +13,7 @@ import {
   VALUATION_METHOD_SCOPE,
 } from "@/lib/valuation/case";
 import { CASE_FLAG_DETAIL, CASE_FLAG_LABEL, type CaseFlag } from "@/lib/valuation/summary";
+import { marginOfSafetyTone } from "@/lib/valuation/dcf";
 
 /**
  * The Valuation Register — your book of cases.
@@ -238,13 +239,11 @@ function RegisterTableRow({ row }: { row: RegisterRow }) {
   // A margin of safety is only meaningful against a fair value someone
   // believes. Until the user owns at least one assumption the row's number is
   // the machine seed's, so the cell abstains instead of printing a huge red
-  // percentage the user never expressed.
+  // percentage the user never expressed. Tone itself stays centralized in
+  // marginOfSafetyTone, which already renders a null as the muted abstention.
   const owned = row.ownedKeys.length > 0;
   const mos = owned ? row.result.marginOfSafety : null;
-  const mosTone = mos == null ? "text-muted"
-    : mos >= 20 ? "text-positive"
-    : mos >= 0 ? "text-yellow-500 light:text-yellow-700"
-    : "text-negative";
+  const mosTone = marginOfSafetyTone(mos);
 
   return (
     <tr className="border-b border-border last:border-b-0 hover:bg-surface-2">

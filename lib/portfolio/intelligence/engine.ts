@@ -92,6 +92,7 @@ export function snapshotOf(
 export function diffSnapshots(
   current: IntelligenceSnapshot,
   prev: IntelligenceSnapshot | null,
+  baselineMethodologyStale = false,
 ): WhatChanged {
   if (!prev) {
     return {
@@ -102,6 +103,7 @@ export function diffSnapshots(
       resized: [],
       newFindings: [],
       resolvedFindings: [],
+      baselineMethodologyStale: false,
     };
   }
 
@@ -134,6 +136,7 @@ export function diffSnapshots(
     resized,
     newFindings,
     resolvedFindings,
+    baselineMethodologyStale,
   };
 }
 
@@ -184,7 +187,7 @@ export async function buildPortfolioIntelligence(parts: IntelligenceParts): Prom
       prev = null;
     }
   }
-  const whatChanged = diffSnapshots(current, prev);
+  const whatChanged = diffSnapshots(current, prev, stored?.methodologyStale ?? false);
   if (!prev || whatChanged.changed) {
     putPortfolioIntelligenceSnapshot(JSON.stringify(current), generatedAt);
   }

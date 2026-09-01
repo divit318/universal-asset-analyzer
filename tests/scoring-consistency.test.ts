@@ -10,7 +10,7 @@
  * primitive both engines normalize with.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, expectTypeOf } from "vitest";
 import { lerp, norm } from "@/lib/score-math";
 import { computeScore } from "@/lib/scoring";
 import {
@@ -18,10 +18,27 @@ import {
   scoreToRecommendation,
   scoreLabel,
   scoreTone,
+  scoreGrade,
+  scoreStep,
+  scoreMeterTone,
+  scoreArgb,
+  scoreToOpportunityVerdict,
+  scoreDirection,
   RECOMMENDATION_LABEL,
   RECOMMENDATION_TONE,
+  RECOMMENDATION_ARGB,
+  SCORE_GRADE_LABEL,
+  OPPORTUNITY_VERDICT,
+  OPPORTUNITY_VERDICT_ORDER,
+  SCORING_METHODOLOGY_VERSION,
 } from "@/lib/recommendation";
-import type { AnalystConsensus, FundamentalsSnapshot, Recommendation } from "@/lib/types";
+import type {
+  AnalystConsensus,
+  FundamentalsSnapshot,
+  Recommendation,
+  StockFundamentals,
+  StockMetrics,
+} from "@/lib/types";
 
 const snap = (o: Partial<FundamentalsSnapshot> = {}): FundamentalsSnapshot =>
   ({ sector: null, ...o }) as unknown as FundamentalsSnapshot;
@@ -193,6 +210,101 @@ describe("cross-surface score identity", () => {
     // India leans harder on fundamentals and much less on analysts, so a
     // strongly-bullish analyst set moves the US score more than the Indian one.
     expect(us.composite).not.toBe(india.composite);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Derived vocabularies — one band table, many words                          */
+/* -------------------------------------------------------------------------- */
+
+describe("derived vocabularies stay glued to the canonical bands", () => {
+  it("grade words are total, distinct, and flip exactly at the tier edges", () => {
+    const recs: Recommendation[] = ["STRONG_BUY", "BUY", "HOLD", "SELL", "STRONG_SELL"];
+    expect(new Set(recs.map((r) => SCORE_GRADE_LABEL[r])).size).toBe(recs.length);
+    for (let s = 0; s <= 100; s++) {
+      expect(scoreGrade(s)).toBe(SCORE_GRADE_LABEL[scoreToRecommendation(s)]);
+    }
+    for (const edge of TIER_EDGES) {
+      expect(scoreGrade(edge)).not.toBe(scoreGrade(edge - 1));
+    }
+  });
+
+  it("opportunity verdicts are total, ordered worst→best, and flip exactly at the tier edges", () => {
+    // The Scanner previously banded at 75/60/45 and Thematic at 80/65/50/35 —
+    // the same word over two different score ranges. Both engines now call
+    // scoreToOpportunityVerdict, so this is the only mapping that can exist.
+    const recs: Recommendation[] = ["STRONG_SELL", "SELL", "HOLD", "BUY", "STRONG_BUY"];
+    expect(recs.map((r) => OPPORTUNITY_VERDICT[r])).toEqual(OPPORTUNITY_VERDICT_ORDER);
+    for (let s = 0; s <= 100; s++) {
+      expect(scoreToOpportunityVerdict(s)).toBe(OPPORTUNITY_VERDICT[scoreToRecommendation(s)]);
+    }
+    expect(scoreToOpportunityVerdict(78)).toBe("exceptional");
+    expect(scoreToOpportunityVerdict(77)).toBe("strong");
+    expect(scoreToOpportunityVerdict(60)).toBe("strong");
+    expect(scoreToOpportunityVerdict(59)).toBe("moderate");
+    expect(scoreToOpportunityVerdict(42)).toBe("moderate");
+    expect(scoreToOpportunityVerdict(41)).toBe("weak");
+    expect(scoreToOpportunityVerdict(25)).toBe("weak");
+    expect(scoreToOpportunityVerdict(24)).toBe("avoid");
+  });
+
+  it("the 3-step meter grammar agrees with the bands and with scoreDirection", () => {
+    for (let s = 0; s <= 100; s++) {
+      const step = scoreStep(s);
+      const dir = scoreDirection(s);
+      // A bar can never be green while the badge is Hold/Sell, and vice versa.
+      expect(step === "high").toBe(dir === "bullish");
+      expect(step === "mid").toBe(dir === "neutral");
+      expect(step === "low").toBe(dir === "bearish");
+      // The tone classes are the step, expressed as classes.
+      const tone = scoreMeterTone(s);
+      expect(tone.text).toBe(step === "high" ? "text-positive" : step === "mid" ? "text-warning" : "text-negative");
+      expect(tone.bar).toBe(step === "high" ? "bg-positive" : step === "mid" ? "bg-warning" : "bg-negative");
+    }
+  });
+
+  it("export ARGB colors follow the same steps, and tiers map to the same palette", () => {
+    for (let s = 0; s <= 100; s++) {
+      expect(scoreArgb(s)).toEqual(RECOMMENDATION_ARGB[scoreToRecommendation(s)]);
+    }
+    // Missing data is visually distinct from every scored step.
+    const missing = scoreArgb(null);
+    for (let s = 0; s <= 100; s++) expect(scoreArgb(s)).not.toEqual(missing);
+  });
+
+  it("names a methodology version for artifacts that outlive the UI", () => {
+    expect(SCORING_METHODOLOGY_VERSION).toMatch(/^\d{4}-\d{2}\.\d+$/);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* fundamentals_cache stores inputs, never scores                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The decision NOT to methodology-version fundamentals_cache (2026-08-17
+ * follow-up, ruling 1) rests on exactly one invariant: the cached shape,
+ * StockFundamentals, carries RAW INPUTS only — scores are recomputed after
+ * the live-price merge on every read (lib/dataset.ts assembleMetrics). These
+ * are compile-time assertions: if anyone re-adds a score-shaped field to the
+ * cached type, `tsc --noEmit` fails and the versioning decision must be
+ * revisited.
+ */
+describe("fundamentals cache shape (type-level)", () => {
+  it("StockFundamentals carries no score-shaped field", () => {
+    expectTypeOf<StockFundamentals>().not.toHaveProperty("scores");
+    expectTypeOf<StockFundamentals>().not.toHaveProperty("score");
+    expectTypeOf<StockFundamentals>().not.toHaveProperty("composite");
+    expectTypeOf<StockFundamentals>().not.toHaveProperty("overall");
+    expectTypeOf<StockFundamentals>().not.toHaveProperty("recommendation");
+    expectTypeOf<StockFundamentals>().not.toHaveProperty("verdict");
+    expectTypeOf<StockFundamentals>().not.toHaveProperty("rankScore");
+  });
+
+  it("the Omit is doing real work — the un-cached StockMetrics DOES carry scores", () => {
+    // If StockMetrics ever loses `scores`, the Omit in StockFundamentals
+    // becomes vacuous and this whole invariant silently stops meaning anything.
+    expectTypeOf<StockMetrics>().toHaveProperty("scores");
   });
 });
 

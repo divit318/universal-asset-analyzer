@@ -55,6 +55,23 @@ export function fitTier(score: number): FitTier {
   return "avoid";
 }
 
+const FIT_METER_TONE: Record<FitTier, { text: string; bar: string }> = {
+  excellent: { text: "text-positive", bar: "bg-positive" },
+  good: { text: "text-positive", bar: "bg-positive" },
+  neutral: { text: "text-warning", bar: "bg-warning" },
+  poor: { text: "text-negative", bar: "bg-negative" },
+  avoid: { text: "text-negative", bar: "bg-negative" },
+};
+
+/** Meter colors for a 0-100 FIT score, derived from the fit tiers — the fit
+ *  counterpart of lib/recommendation.ts's scoreMeterTone. Fit is NOT a
+ *  directional call (see lib/score-kinds.ts), so its meters must color at the
+ *  fit tier edges, not at the Buy/Hold band edges — but they must all use the
+ *  SAME fit edges, not a per-component table. */
+export function fitMeterTone(score: number): { text: string; bar: string } {
+  return FIT_METER_TONE[fitTier(score)];
+}
+
 export interface UnifiedActionInput {
   /** Standalone Research Score (0-100), null when no scorer covered the asset. */
   researchScore: number | null;

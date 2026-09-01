@@ -831,6 +831,8 @@ export interface HomeDigest {
     status: CardStatus;
     opportunities: OpportunitySnapshotItem[];
     scannerFreshness: Freshness | null;
+    /** Snapshot predates the current scoring methodology — banner + rerun, never blank. */
+    scannerMethodologyStale: boolean;
   };
   watchlistIntelligence: WatchlistIntelligence;
   upcomingEvents: { status: CardStatus; events: UpcomingEventLite[] };

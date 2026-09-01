@@ -20,6 +20,13 @@ export interface ScannerSnapshot {
   result: ScannerResult;
   generatedAt: string;
   freshness: Freshness;
+  /**
+   * True when the snapshot predates the current SCORING_METHODOLOGY_VERSION
+   * (its opportunity verdicts were banded under older rules). Surfaces must
+   * still render it — it is the user's last real scan — but with a visible
+   * staleness note and a rerun action, never a blank (ruling 2026-08-17).
+   */
+  methodologyStale: boolean;
 }
 
 /** Best-effort — never triggers a live pipeline run; Scanner itself owns that (heavy, multi-minute) workflow. */
@@ -28,7 +35,12 @@ export function getLatestScannerSnapshot(): ScannerSnapshot | null {
   if (!row) return null;
   try {
     const result = JSON.parse(row.result) as ScannerResult;
-    return { result, generatedAt: row.generatedAt, freshness: freshness(row.generatedAt, 1) };
+    return {
+      result,
+      generatedAt: row.generatedAt,
+      freshness: freshness(row.generatedAt, 1),
+      methodologyStale: row.methodologyStale,
+    };
   } catch {
     return null;
   }

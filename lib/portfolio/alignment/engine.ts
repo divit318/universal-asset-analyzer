@@ -247,6 +247,10 @@ export function alignmentLabelOf(score: number): string {
   return "Misaligned";
 }
 
+// The score → severity mapping (alignmentToneOf) lives in ./tone.ts — a
+// zero-dependency module client components can import — on the same 70/55
+// edges as alignmentLabelOf above. Contract-tested together.
+
 /* -------------------------------------------------------------------------- */
 /* Theme scaffolding                                                           */
 /* -------------------------------------------------------------------------- */
@@ -847,7 +851,11 @@ function exposureTheme(alloc: PortfolioAllocation, risk: UniversalRisk, policy: 
   const classifiedPct = clamp(100 - geo.unclassifiedPct);
   const topRegion = geo.slices[0] ?? null;
   const topOfClassified = topRegion && classifiedPct > 0 ? (topRegion.weight / classifiedPct) * 100 : null;
-  const fx = risk.foreignCurrencyPct;
+  // ECONOMIC FX exposure (look-through), not denomination: an unhedged
+  // USD-quoted international fund counts at its FX pass-through, a hedged fund
+  // at zero, and an ADR the same as its local listing — the theme's stated
+  // "unhedged foreign-currency share" measured venue-independently.
+  const fx = risk.fxExposurePct;
 
   if (level === 0) {
     return factOnly(

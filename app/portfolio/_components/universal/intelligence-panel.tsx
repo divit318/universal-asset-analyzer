@@ -132,7 +132,7 @@ export function IntelligencePanel({
       </Card>
 
       {/* ── What changed ──────────────────────────────────────────────── */}
-      <WhatChangedCard whatChanged={data.whatChanged} />
+      <WhatChangedCard whatChanged={data.whatChanged} onRerun={refresh} />
 
       {/* ── Findings, most consequential first ────────────────────────── */}
       {data.findings.map((f, i) => (
@@ -160,7 +160,7 @@ export function IntelligencePanel({
 
 /* ────────────────────────── What changed ────────────────────────── */
 
-function WhatChangedCard({ whatChanged: wc }: { whatChanged: WhatChanged }) {
+function WhatChangedCard({ whatChanged: wc, onRerun }: { whatChanged: WhatChanged; onRerun: () => void }) {
   const rows: { label: string; text: string }[] = [];
   if (wc.holdingsAdded.length > 0) rows.push({ label: "Added", text: wc.holdingsAdded.join(", ") });
   if (wc.holdingsRemoved.length > 0) rows.push({ label: "Removed", text: wc.holdingsRemoved.join(", ") });
@@ -183,6 +183,17 @@ function WhatChangedCard({ whatChanged: wc }: { whatChanged: WhatChanged }) {
           <span className="text-[10px] text-muted/60">since {formatDate(wc.since)}</span>
         )}
       </div>
+      {wc.baselineMethodologyStale && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2">
+          <span className="text-[11px] leading-relaxed text-warning">
+            The baseline this diff compares against was produced under an older scoring
+            methodology — treat the &quot;since&quot; comparison as approximate.
+          </span>
+          <button onClick={onRerun} className="shrink-0 text-[11px] font-semibold text-warning hover:underline">
+            Rerun analysis
+          </button>
+        </div>
+      )}
       {wc.since == null ? (
         <p className="text-[11px] leading-relaxed text-muted">
           First analysis — this run is the baseline. From now on, every run reports the

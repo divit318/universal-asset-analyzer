@@ -147,7 +147,7 @@ is the decision/label layer and the normalization primitive.
 **`lib/composite.ts` — batch dimensional scorer (the Screener engine).**
 - Pure sector-aware sub-scores (value / growth / quality / financialHealth /
   momentum) + weighted `overall`, all 0–100, via `computeScores(m)`.
-- Input: `ScorableMetrics` (precomputed `StockMetrics` from the 24h dataset cache).
+- Input: `ScorableMetrics` (precomputed `StockMetrics` from the 12h dataset cache).
   Never fetches analyst consensus or statements — that is what makes it cheap
   enough to score 1000+ names.
 - Used by: `lib/dataset.ts` (Screener), `lib/scanner/fundamental-gate.ts`.
@@ -166,38 +166,77 @@ is the decision/label layer and the normalization primitive.
 everywhere it appears):
 - `lib/recommendation.ts` — canonical score→`Recommendation` bands (78/60/42/25),
   labels, and badge tones. Both engines and all UI route through this; never
-  hardcode band cutoffs or a label/color map in a component.
-- `lib/score-math.ts` — the shared clamp-lerp (`lerp`/`norm`) both engines normalize with.
+  hardcode band cutoffs or a label/color map in a component. It also owns every
+  vocabulary and palette *derived* from those bands:
+  - `scoreGrade` / `SCORE_GRADE_LABEL` — non-directional grade words
+    (Excellent/Good/Fair/Weak/Poor) for dimension scores.
+  - `scoreToOpportunityVerdict` / `OPPORTUNITY_VERDICT` — opportunity vocabulary
+    (exceptional/strong/moderate/weak/avoid) used by the Scanner and Thematic.
+  - India verdict labels (Strong Buy/Accumulate/Hold/Reduce/Avoid) map from the
+    same tiers in `lib/india-snapshot.ts`.
+  - `scoreStep` / `scoreMeterTone` — the 3-step color grammar for every 0-100
+    meter (green ≥ 60, amber ≥ 42, red below), aligned to the bands so a green
+    bar can never sit beside a Hold badge.
+  - `scoreArgb` / `RECOMMENDATION_ARGB` — the ARGB palette Excel exports color with.
+  - `SCORING_METHODOLOGY_VERSION` — stamped into export metadata; bump it when
+    the bands or any derived vocabulary changes.
+- `lib/score-math.ts` — the shared clamp-lerp (`lerp`/`norm`) both engines
+  normalize with (also consumed by the asset-class scorers and
+  `lib/compare/composite-scores.ts`).
 - `lib/sector.ts` — the shared `sectorGroup()` both engines classify with.
 - Consistency contract: `tests/scoring-consistency.test.ts`.
 
+**To change the canonical scoring interpretation** (bands, grades, verdicts,
+meter colors): edit `lib/recommendation.ts` only, bump
+`SCORING_METHODOLOGY_VERSION`, and run `tests/scoring-consistency.test.ts` —
+every consumer derives from it.
+
+**Known open calibration question — India verdict bands.** The India snapshot
+(`lib/india-snapshot.ts`) originally banded its verdict at a private
+78/62/46/30 table. The 2026-08-17 consistency audit collapsed it onto the
+canonical TIER_EDGES (78/60/42/25) as a **correctness fix, not a
+calibration**: the old edges were an unsourced, evenly-spaced 16-point ladder
+introduced without rationale in checkpoint `32f6b24` — the same commit that
+created `lib/recommendation.ts` — and the module was already exporting the
+shared `Recommendation` enum, so a composite of 61 read HOLD on the India
+page while every other surface called the same 61 BUY-tier. What the collapse
+does NOT settle: the canonical edges themselves are US-derived
+(`INDIA_GAP_ANALYSIS.md` item 31 makes the same point about
+`lib/composite.ts`'s normalisation ranges), and the India composite is built
+from screener.in fundamentals with India-calibrated factor bands, so its
+score DISTRIBUTION may sit differently under the shared edges. **Re-fitting
+India-specific verdict edges to a measured Indian score distribution is
+deferred work**: it requires a scored universe large enough to fit against
+(the local cache held 34 names at audit time), and any refit must land as a
+named market variant derived from `lib/recommendation.ts` (a second
+`TIER_EDGES` table with its own vocabulary over the same primitive) — never
+as a private band table, and never colliding with the shared `Recommendation`
+enum, which is the bug the collapse fixed.
+
 ---
 
-### Fundamental Screener (`lib/fundamental-screener.ts`)
-**Purpose**: Multi-filter stock screening with cached fundamentals + live prices.
+### Screener dataset + filter engine (`lib/dataset.ts`, `lib/screener/`)
+**Purpose**: Multi-filter screening with cached fundamentals + live prices.
+(The old `lib/fundamental-screener.ts` no longer exists; its roles split into
+`lib/dataset.ts` (data assembly) and `lib/screener/` (filters, percentile
+ranking, formats).)
 
 **Workflow:**
-1. Cache fundamentals in SQLite (24h TTL, refreshed on load)
-2. Fetch live prices from Yahoo
+1. Cache raw fundamentals in SQLite (12h TTL, refreshed in the background)
+2. Fetch live prices from Yahoo (one batch quote per 200 names)
 3. Merge cached fundamentals + live prices
-4. Apply filters (sector, P/E range, market cap, etc.)
-5. Score with `lib/composite.ts`
+4. Apply filters (`lib/screener/filter-engine.ts`)
+5. Score with `lib/composite.ts`; rank matches with `lib/screener/ranking.ts` (percentile-based)
 6. Sort and return
 
-**Inputs:**
-- `ScreenerCriteria`: sector, price range, P/E range, market cap range, sort field
-
-**Outputs:**
-- Array of `ScreenerRow` (symbol, name, price, score, metrics)
-
 **Caching Strategy**:
-- Fundamentals: 24h TTL in `fundamentals_cache` table
+- Fundamentals: 12h TTL in `fundamentals_cache` table — RAW INPUTS only
 - Live prices: always fresh, fetched per request
-- Scorer results: computed on the fly (not cached)
+- Scores: recomputed on every read after the price merge, never cached
 
 **Used By**: `/screener` page, Thematic engine, comparison workflows.
 
-**Related**: `lib/dataset.ts` (merges fundamentals + prices), `lib/yahoo-screener.ts` (Yahoo Finance API adapter).
+**Related**: `lib/yahoo-screener.ts` (Yahoo Finance API adapter).
 
 ---
 
@@ -724,8 +763,8 @@ Watchlist Intelligence structured alerts), `app/_components/ui/data-table.tsx`.
 - `research_session` (id, symbol, created_at, updated_at) — copilot sessions
 - `research_message` (session_id, role, content, created_at) — copilot messages
 - `research_notes` (symbol, content, created_at)
-- `fundamentals_cache` (symbol, data JSON, updated_at) — 24h TTL
-- `scanner_cache` (cache_key, result JSON, created_at) — event screener results
+- `fundamentals_cache` (symbol, data JSON, updated_at) — 12h TTL, raw inputs only (scores recomputed on read)
+- `scanner_cache` (cache_key, result JSON, created_at) — scan/AI results; keys prefixed with `SCORING_METHODOLOGY_VERSION` so a methodology bump is a cache miss
 - `intel_event` (fingerprint, symbol, status, created_at) — intel rail suppression ledger; statuses age out at different rates (shown 30m, opened 3d, dismissed 14d)
 
 **Pattern**: All read/write operations via `lib/db.ts` CRUD functions. Never direct SQLite calls from pages/routes.
@@ -825,7 +864,7 @@ Watchlist Intelligence structured alerts), `app/_components/ui/data-table.tsx`.
 
 ---
 
-### DCF Valuation (`app/dcf/page.tsx`)
+### DCF Valuation (`app/valuation/page.tsx`, `lib/valuation/`)
 **Purpose**: Intrinsic value calculator with sensitivity analysis.
 
 **Inputs:**

@@ -1429,6 +1429,20 @@ export interface ResolvedFactors {
   factors: FactorSensitivities;
   /** Effective duration actually used, for display. Null for non-bond models. */
   duration: number | null;
+  /**
+   * The share of this holding's value that is ECONOMICALLY exposed to non-base
+   * currencies, in [0,1] — the same FX_PASS_THROUGH the stress tests apply, so
+   * the currency-diversification dimension and the `usd` factor cannot disagree.
+   *
+   * This is what makes currency exposure venue-independent: VEA (USD-quoted,
+   * foreign mandate) carries 0.85; a foreign single name carries 0.7 whether it
+   * is held as the local listing or as a USD ADR; a hedged international fund
+   * carries 0; foreign cash carries 1. Reading the QUOTE currency instead — the
+   * pre-2026-08 behaviour — found no FX exposure in any international fund ever
+   * offered to a US investor, while paying full credit for a listing-venue swap
+   * that changes nothing economic.
+   */
+  fxExposure: number;
   evidence: string[];
 }
 
@@ -1577,7 +1591,31 @@ export function buildFactors(
     if (factors[k] === 0) delete factors[k];
   }
 
-  return { modelId: model.id, label: model.label, factors, duration, evidence };
+  return {
+    modelId: model.id,
+    label: model.label,
+    factors,
+    duration,
+    fxExposure: fxExposureOfResolution(resolution),
+    evidence,
+  };
+}
+
+/**
+ * Economic non-base-currency exposure share of a resolved model, in [0,1] —
+ * the single definition behind ResolvedFactors.fxExposure. FX pairs: a pair
+ * long the base currency has none; every other pair IS a currency position.
+ * Everything else: the model's FX_PASS_THROUGH when the resolution flagged
+ * foreign exposure — defaulting to full translation exposure (1) for a
+ * foreign-flagged model with no declared pass-through — and 0 otherwise.
+ * Exported so the holdings normalizer can derive a holding's fxExposure from
+ * the same resolution it already runs for classification.
+ */
+export function fxExposureOfResolution(resolution: RiskModelResolution): number {
+  const { model } = resolution;
+  if (model.kind === "fx") return model.id === "fx_long_base" ? 0 : 1;
+  if (!resolution.foreignCurrency) return 0;
+  return Math.max(0, Math.min(1, model.fxPassThrough ?? 1));
 }
 
 /** Classify and build in one call — what every adapter uses. */

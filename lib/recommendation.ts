@@ -15,7 +15,15 @@
  * Pure, zero-dependency, client-safe.
  */
 
-import type { Recommendation } from "./types";
+import type { OpportunityVerdict, Recommendation } from "./types";
+
+/**
+ * Version of the canonical interpretation layer (bands, grade/verdict
+ * vocabularies, tones). Bump when TIER_EDGES or any derived vocabulary
+ * mapping changes, so artifacts that outlive the UI (Excel/PDF exports)
+ * can state which methodology produced them.
+ */
+export const SCORING_METHODOLOGY_VERSION = "2026-08.1";
 
 /** Lower inclusive edges of the HOLD, BUY, and STRONG_BUY tiers (and the
  *  SELL/STRONG_SELL split). Exported so confidence logic can measure how far a
@@ -89,3 +97,107 @@ export function scoreLabel(score: number): string {
 export function scoreTone(score: number): string {
   return RECOMMENDATION_TONE[scoreToRecommendation(score)];
 }
+
+/* -------------------------------------------------------------------------- */
+/* Derived vocabularies — same 5 tiers, domain-appropriate words               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Non-directional quality-grade words for a 0–100 dimension score (a bucket,
+ * a pillar, a sub-score). Same tier edges as the recommendation bands, so a
+ * dimension graded "Good" and a composite badged "Buy" can never disagree
+ * about what the same number means. Use where a Buy/Sell label would assert
+ * a directional call the score does not make.
+ */
+export const SCORE_GRADE_LABEL: Record<Recommendation, string> = {
+  STRONG_BUY: "Excellent",
+  BUY: "Good",
+  HOLD: "Fair",
+  SELL: "Weak",
+  STRONG_SELL: "Poor",
+};
+
+/** Grade word for a raw 0–100 score. */
+export function scoreGrade(score: number): string {
+  return SCORE_GRADE_LABEL[scoreToRecommendation(score)];
+}
+
+/**
+ * Opportunity-attractiveness vocabulary (Scanner opportunities, Thematic
+ * themes). Previously the Scanner banded at 75/60/45 and Thematic at
+ * 80/65/50/35 — the same word ("exceptional") over two different meanings.
+ * Both now derive from the one canonical band table.
+ */
+export const OPPORTUNITY_VERDICT: Record<Recommendation, OpportunityVerdict> = {
+  STRONG_BUY: "exceptional",
+  BUY: "strong",
+  HOLD: "moderate",
+  SELL: "weak",
+  STRONG_SELL: "avoid",
+};
+
+/** Worst → best, for verdict-capping logic (e.g. Thematic's capital-cycle cap). */
+export const OPPORTUNITY_VERDICT_ORDER: OpportunityVerdict[] = [
+  "avoid",
+  "weak",
+  "moderate",
+  "strong",
+  "exceptional",
+];
+
+/** Opportunity verdict for a raw 0–100 score. */
+export function scoreToOpportunityVerdict(score: number): OpportunityVerdict {
+  return OPPORTUNITY_VERDICT[scoreToRecommendation(score)];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Three-step visual grammar for 0–100 meters                                 */
+/* -------------------------------------------------------------------------- */
+
+/** Coarse 3-step read of a 0–100 score, aligned to the BUY (60) and HOLD (42)
+ *  edges: BUY tiers are "high", HOLD is "mid", SELL tiers are "low". The one
+ *  reduction every 3-color meter must use, so a bar that turns green at 60 on
+ *  one page cannot turn green at 55 or 75 on another. */
+export function scoreStep(score: number): "high" | "mid" | "low" {
+  const rec = scoreToRecommendation(score);
+  if (rec === "STRONG_BUY" || rec === "BUY") return "high";
+  if (rec === "HOLD") return "mid";
+  return "low";
+}
+
+const METER_TONE: Record<ReturnType<typeof scoreStep>, { text: string; bar: string; arc: string }> = {
+  high: { text: "text-positive", bar: "bg-positive", arc: "text-positive" },
+  mid: { text: "text-warning", bar: "bg-warning", arc: "text-warning" },
+  low: { text: "text-negative", bar: "bg-negative", arc: "text-negative" },
+};
+
+/** Text / bar-fill / arc classes for a 0–100 meter, from the canonical steps. */
+export function scoreMeterTone(score: number): { text: string; bar: string; arc: string } {
+  return METER_TONE[scoreStep(score)];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Excel (ARGB) palette for server-side exports                               */
+/* -------------------------------------------------------------------------- */
+
+const ARGB_BY_STEP: Record<ReturnType<typeof scoreStep>, { fill: string; font: string }> = {
+  high: { fill: "FFD1FAE5", font: "FF065F46" },
+  mid: { fill: "FFFEF9C3", font: "FF92400E" },
+  low: { fill: "FFFEE2E2", font: "FF991B1B" },
+};
+
+const ARGB_MISSING = { fill: "FFFFFFFF", font: "FF6B7280" };
+
+/** Cell fill + font ARGB for a 0–100 score in an Excel export. Null-safe. */
+export function scoreArgb(score: number | null | undefined): { fill: string; font: string } {
+  return score == null || Number.isNaN(score) ? ARGB_MISSING : ARGB_BY_STEP[scoreStep(score)];
+}
+
+/** Cell fill + font ARGB for a recommendation tier in an Excel export. */
+export const RECOMMENDATION_ARGB: Record<Recommendation, { fill: string; font: string }> = {
+  STRONG_BUY: ARGB_BY_STEP.high,
+  BUY: ARGB_BY_STEP.high,
+  HOLD: ARGB_BY_STEP.mid,
+  SELL: ARGB_BY_STEP.low,
+  STRONG_SELL: ARGB_BY_STEP.low,
+};

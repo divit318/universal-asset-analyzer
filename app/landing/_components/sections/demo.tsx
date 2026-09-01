@@ -353,7 +353,7 @@ export function Demo({ section, index }: SectionProps) {
             <button
               type="submit"
               disabled={!value.trim() || running}
-              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full bg-brand px-5 text-sm font-semibold text-background outline-none transition-colors hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/40 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full bg-brand px-5 text-sm font-semibold text-background outline-none transition-[background-color,transform] duration-[120ms] hover:bg-brand-strong active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-brand/40 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Cpu className="h-4 w-4" strokeWidth={2} aria-hidden="true" />
               Analyze

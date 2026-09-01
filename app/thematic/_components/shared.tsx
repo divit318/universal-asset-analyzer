@@ -7,11 +7,12 @@
  */
 
 import { CountUp } from "@/app/_components/count-up";
+import { scoreMeterTone } from "@/lib/recommendation";
 
+/** Canonical 3-step meter grammar — previously a private 70/40 table that
+ *  disagreed with every other 0-100 meter in the app. */
 export function scoreTone(pct: number): { text: string; bar: string } {
-  if (pct >= 70) return { text: "text-positive", bar: "bg-positive" };
-  if (pct >= 40) return { text: "text-warning", bar: "bg-warning" };
-  return { text: "text-negative", bar: "bg-negative" };
+  return scoreMeterTone(pct);
 }
 
 /** A 0–10 stage score, rendered as one legible figure rather than a bare number. */

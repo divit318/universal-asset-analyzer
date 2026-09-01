@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo, type CSSProperties } from "react";
 import type { SectorImpact, SectorRotationSnapshot, RotationClass } from "@/lib/types";
 import { buildUnifiedSectorTiles, type UnifiedSectorTile } from "@/lib/wire/sector-divergence";
 import { Skeleton } from "@/app/_components/ui";
+import { strengthBarTone } from "./strength";
 
 /**
  * Unified Sector Rotation — one tile per sector carrying BOTH datasets that
@@ -38,7 +39,7 @@ const DIR_STYLE = {
 };
 
 function StrengthBar({ value }: { value: number }) {
-  const color = value >= 70 ? "bg-positive" : value >= 40 ? "bg-accent" : "bg-muted/40";
+  const color = strengthBarTone(value);
   return (
     <div className="h-0.5 w-full rounded-full bg-surface-3 overflow-hidden">
       <div

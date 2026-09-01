@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { StripResponse } from "@/app/api/valuation/strip/route";
 import { formatCurrency } from "@/lib/format";
 import { IMPLIED_GROWTH_LABEL, IMPLIED_GROWTH_CAVEAT } from "@/lib/valuation/case";
+import { marginOfSafetyTone } from "@/lib/valuation/dcf";
 
 /**
  * The Research Hub's valuation strip — read-only, by design.
@@ -109,10 +110,7 @@ export function ValuationStrip({ symbol, price }: Props) {
 
   /* ── Owned case: the user's own fair value has earned its authority. ── */
   const mos = summary.result.marginOfSafety;
-  const mosTone = mos == null ? "text-muted"
-    : mos >= 20 ? "text-positive"
-    : mos >= 0 ? "text-yellow-500 light:text-yellow-700"
-    : "text-negative";
+  const mosTone = marginOfSafetyTone(mos);
   // Beyond −100% a percentage stops meaning anything to a human — say it as a
   // multiple instead ("price is 3.4× your case").
   const priceMultiple = mos != null && mos <= -100 ? 1 - mos / 100 : null;

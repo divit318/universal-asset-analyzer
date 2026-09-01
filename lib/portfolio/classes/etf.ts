@@ -71,37 +71,33 @@ export const etfAdapter: PortfolioClassAdapter = {
     };
   },
 
+  /**
+   * Scored on COST ALONE. There used to be a 30% distribution-yield leg, which
+   * contradicted this file's own header ("cost and the exposure it buys") and
+   * the health engine's no-yield-chasing rule: it let a 0.35%-fee
+   * high-distribution fund tie a 0.03% broad index fund, and once fund yields
+   * flow from the provider (ContextFundamentals.dividendYield now falls back to
+   * the fund `yield` field) it would have paid for yield twice — once here as
+   * "quality" and once in the Income dimension, where income belongs. A fund's
+   * distribution rate is a MANDATE (income vs total-return), not a merit; its
+   * expense ratio is the one attribute that is knowable in advance and
+   * compounds against the holder with certainty.
+   */
   score(raw, ctx) {
     const f = raw.symbol ? ctx.fundamentals.get(raw.symbol.toUpperCase()) : undefined;
     if (!f) return null;
 
-    const inputs = [f.expenseRatio, f.dividendYield];
-    const conf = coverage(inputs);
-    if (conf === 0) return null;
+    const conf = coverage([f.expenseRatio]);
+    if (conf === 0 || f.expenseRatio == null) return null;
 
     const why: string[] = [];
-    let weighted = 0;
-    let used = 0;
+    // 0.03% (a broad index fund) → ~100; 1.0%+ → 0.
+    const s = lerpScore(f.expenseRatio, 1.0, 0.03);
+    if (f.expenseRatio <= 0.10) why.push(`Low cost (${f.expenseRatio.toFixed(2)}% expense ratio)`);
+    if (f.expenseRatio >= 0.75) why.push(`Expensive (${f.expenseRatio.toFixed(2)}% expense ratio)`);
 
-    if (f.expenseRatio != null) {
-      // 0.03% (a broad index fund) → ~100; 1.0%+ → 0. Cost is the one thing about a
-      // fund that is knowable in advance and compounds with certainty.
-      const s = lerpScore(f.expenseRatio, 1.0, 0.03);
-      weighted += s * 0.7;
-      used += 0.7;
-      if (f.expenseRatio <= 0.10) why.push(`Low cost (${f.expenseRatio.toFixed(2)}% expense ratio)`);
-      if (f.expenseRatio >= 0.75) why.push(`Expensive (${f.expenseRatio.toFixed(2)}% expense ratio)`);
-    }
-    if (f.dividendYield != null) {
-      const y = f.dividendYield > 1 ? f.dividendYield : f.dividendYield * 100;
-      const s = lerpScore(y, 0, 5);
-      weighted += s * 0.3;
-      used += 0.3;
-    }
-
-    if (used === 0) return null;
     return {
-      score: Math.round(shrinkToConfidence(weighted / used, conf)),
+      score: Math.round(shrinkToConfidence(s, conf)),
       confidence: Math.round(conf),
       why: why.slice(0, 3),
     };

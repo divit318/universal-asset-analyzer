@@ -132,6 +132,7 @@ function evaluation(): PortfolioEvaluation {
       duration: null,
       creditSensitivity: null,
       foreignCurrencyPct: 0,
+      fxExposurePct: 0,
       illiquidPct: 0,
       illiquidHoldings: 0,
       inflationSensitivity: -1.2,

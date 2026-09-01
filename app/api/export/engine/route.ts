@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import { guardedExport } from "@/lib/download";
+import { RECOMMENDATION_ARGB, RECOMMENDATION_LABEL, SCORING_METHODOLOGY_VERSION } from "@/lib/recommendation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,40 +31,22 @@ function normaliseSignal(raw: string): string {
   return raw.trim().toUpperCase().replace(/\s+/g, "_");
 }
 
-const SIGNAL_LABEL: Record<string, string> = {
-  "STRONG_BUY":  "Strong Buy",
-  "BUY":         "Buy",
-  "HOLD":        "Hold",
-  "SELL":        "Sell",
-  "STRONG_SELL": "Strong Sell",
-};
-const SIGNAL_FILL: Record<string, string> = {
-  "STRONG_BUY":  "FFD1FAE5",
-  "BUY":         "FFD1FAE5",
-  "HOLD":        "FFFEF9C3",
-  "SELL":        "FFFEE2E2",
-  "STRONG_SELL": "FFFEE2E2",
-};
-const SIGNAL_FONT: Record<string, string> = {
-  "STRONG_BUY":  "FF065F46",
-  "BUY":         "FF065F46",
-  "HOLD":        "FF92400E",
-  "SELL":        "FF991B1B",
-  "STRONG_SELL": "FF991B1B",
-};
+// Tier labels/palette come from the canonical maps in lib/recommendation.ts.
+// The engine's signal is its own vocabulary (emitted in z-score space by
+// engine/daily_run.py, see lib/engine-desk.ts) but it shares the five tier
+// names, so the export styles it with the same palette as every other export.
+const SIGNAL_LABEL: Record<string, string> = { ...RECOMMENDATION_LABEL };
+const SIGNAL_ARGB: Record<string, { fill: string; font: string }> = { ...RECOMMENDATION_ARGB };
 
-function scoreColor(v: number | null): string {
-  if (v == null) return "FFFFFFFF";
-  if (v >= 70) return "FFD1FAE5";
-  if (v >= 45) return "FFFEF9C3";
-  return "FFFEE2E2";
-}
-function scoreFont(v: number | null): string {
-  if (v == null) return "FF6B7280";
-  if (v >= 70) return "FF065F46";
-  if (v >= 45) return "FF92400E";
-  return "FF991B1B";
-}
+/**
+ * Factor/composite cells hold cross-sectional z-scores (0 = universe median,
+ * ±2 ≈ 2nd/98th percentile) — NOT 0-100 scores. This export previously colored
+ * them against 70/45 thresholds (every cell read red) — color by sign instead,
+ * exactly like the desk UI's ZBar.
+ */
+const Z_POS_FONT = "FF065F46";
+const Z_NEG_FONT = "FF991B1B";
+const zFont = (v: number): string => (v >= 0 ? Z_POS_FONT : Z_NEG_FONT);
 
 const NAVY: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
 const BLUE: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1E40AF" } };
@@ -89,6 +72,7 @@ async function buildEngineExport(req: Request): Promise<Response> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "Universal Asset Analyzer";
   wb.created = new Date();
+  wb.subject = `Scoring methodology ${SCORING_METHODOLOGY_VERSION}`;
 
   /* ── Sheet 1: Full Scorecard ── */
   const ws = wb.addWorksheet("Scorecard", { views: [{ state: "frozen", xSplit: 2, ySplit: 2 }] });
@@ -133,12 +117,12 @@ async function buildEngineExport(req: Request): Promise<Response> {
   hRow.height = 28;
   ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: 2, column: 16 } };
 
-  const scoreScore = (ws: ExcelJS.Worksheet, rowNum: number, col: number, val: number) => {
+  // A z-score cell: signed two-decimal figure, colored by sign like the desk UI.
+  const zScoreCell = (ws: ExcelJS.Worksheet, rowNum: number, col: number, val: number) => {
     const cell = ws.getCell(rowNum, col);
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: scoreColor(val) } };
-    cell.font = { size: 9, bold: val >= 70, color: { argb: scoreFont(val) } };
+    cell.font = { size: 9, bold: Math.abs(val) >= 1.5, color: { argb: zFont(val) } };
     cell.alignment = { horizontal: "center", vertical: "middle" };
-    cell.numFmt = "0.0";
+    cell.numFmt = "+0.00;-0.00";
   };
 
   sorted.forEach((row, i) => {
@@ -171,40 +155,43 @@ async function buildEngineExport(req: Request): Promise<Response> {
     // Signal cell — normalise to UPPER_SNAKE_CASE for lookup
     const sigNorm = normaliseSignal(row.signal);
     const sigCell = ws.getCell(rn, 5);
+    const sigArgb = SIGNAL_ARGB[sigNorm];
     sigCell.value = SIGNAL_LABEL[sigNorm] ?? row.signal;
-    sigCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: SIGNAL_FILL[sigNorm] ?? "FFFFFFFF" } };
-    sigCell.font = { bold: true, size: 9, color: { argb: SIGNAL_FONT[sigNorm] ?? "FF374151" } };
+    sigCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: sigArgb?.fill ?? "FFFFFFFF" } };
+    sigCell.font = { bold: true, size: 9, color: { argb: sigArgb?.font ?? "FF374151" } };
     sigCell.alignment = { horizontal: "center", vertical: "middle" };
 
-    // Score columns (6-13)
-    scoreScore(ws, rn, 6, row.composite_score);
-    scoreScore(ws, rn, 7, row.momentum_score);
-    scoreScore(ws, rn, 8, row.quality_score);
-    scoreScore(ws, rn, 9, row.value_score);
-    scoreScore(ws, rn, 10, row.low_vol_score);
-    scoreScore(ws, rn, 11, row.revision_score);
-    scoreScore(ws, rn, 12, row.regime_score);
-    scoreScore(ws, rn, 13, row.forecast_score);
+    // Score columns (6-13) — cross-sectional z-scores, colored by sign
+    zScoreCell(ws, rn, 6, row.composite_score);
+    zScoreCell(ws, rn, 7, row.momentum_score);
+    zScoreCell(ws, rn, 8, row.quality_score);
+    zScoreCell(ws, rn, 9, row.value_score);
+    zScoreCell(ws, rn, 10, row.low_vol_score);
+    zScoreCell(ws, rn, 11, row.revision_score);
+    zScoreCell(ws, rn, 12, row.regime_score);
+    zScoreCell(ws, rn, 13, row.forecast_score);
 
-    // MC upside %
+    // MC upside — already a fraction (0.35 = +35%), exactly as the desk UI
+    // renders it. Was divided by 100 a second time here.
     const mcCell = ws.getCell(rn, 14);
     mcCell.numFmt = '+0.0%;-0.0%';
-    mcCell.value = row.mc_upside / 100;
+    mcCell.value = row.mc_upside;
     mcCell.font = { size: 9, color: { argb: row.mc_upside >= 0 ? "FF065F46" : "FF991B1B" } };
     mcCell.alignment = { horizontal: "right", vertical: "middle" };
 
-    // Kelly
+    // Kelly — a 0-1 fraction of capital (desk UI shows kelly_fraction × 100 %).
     const kellyCell = ws.getCell(rn, 15);
     kellyCell.numFmt = '0.00%';
-    kellyCell.value = row.kelly_fraction / 100;
+    kellyCell.value = row.kelly_fraction;
     kellyCell.alignment = { horizontal: "right", vertical: "middle" };
 
-    // Confidence
+    // Confidence — a 0-1 probability (desk UI shows confidence × 100 %).
+    // Was divided by 100 a second time and color-compared against 70/45.
     const confCell = ws.getCell(rn, 16);
     confCell.numFmt = '0.0%';
-    confCell.value = row.confidence / 100;
+    confCell.value = row.confidence;
     confCell.alignment = { horizontal: "right", vertical: "middle" };
-    confCell.font = { size: 9, color: { argb: row.confidence >= 70 ? "FF065F46" : row.confidence >= 45 ? "FF92400E" : "FF991B1B" } };
+    confCell.font = { size: 9, color: { argb: row.confidence >= 0.70 ? "FF065F46" : row.confidence >= 0.45 ? "FF92400E" : "FF991B1B" } };
 
     r.height = 17;
   });
@@ -236,8 +223,8 @@ async function buildEngineExport(req: Request): Promise<Response> {
   signalOrder.forEach((sig) => {
     const count = signalCounts[sig] ?? 0;
     const r = wsSumm.addRow([SIGNAL_LABEL[sig] ?? sig, count]);
-    r.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: SIGNAL_FILL[sig] ?? "FFFFFFFF" } };
-    r.getCell(1).font = { bold: true, size: 9, color: { argb: SIGNAL_FONT[sig] ?? "FF374151" } };
+    r.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: SIGNAL_ARGB[sig]?.fill ?? "FFFFFFFF" } };
+    r.getCell(1).font = { bold: true, size: 9, color: { argb: SIGNAL_ARGB[sig]?.font ?? "FF374151" } };
     r.getCell(2).alignment = { horizontal: "center" };
     r.getCell(2).font = { size: 9, bold: true };
     r.height = 16;
@@ -270,7 +257,7 @@ async function buildEngineExport(req: Request): Promise<Response> {
     strongBuys.forEach((r, i) => {
       const row = wsSumm.addRow([r.symbol, r.composite_score]);
       row.getCell(1).font = { bold: true, size: 9, color: { argb: "FF1D4ED8" } };
-      row.getCell(2).numFmt = "0.0"; row.getCell(2).alignment = { horizontal: "center" };
+      row.getCell(2).numFmt = "+0.00;-0.00"; row.getCell(2).alignment = { horizontal: "center" };
       row.eachCell((cell) => { cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: i % 2 === 0 ? "FFD1FAE5" : "FFECFDf5" } }; });
       row.height = 16;
     });
@@ -281,7 +268,7 @@ async function buildEngineExport(req: Request): Promise<Response> {
   wsG.columns = [{ width: 20 }, { width: 70 }];
   wsG.addRow(["Factor", "Description"]).eachCell((cell) => { cell.fill = NAVY; cell.font = WHITE_FONT; });
   const glossary: [string, string][] = [
-    ["Composite Score", "Weighted blend of all 10 factors — the primary ranking signal (0–100)"],
+    ["Composite Score", "IC-weighted sum of the factor z-scores — the primary ranking signal (z-score: 0 = universe median, +2 ≈ 98th percentile)"],
     ["Momentum Score", "Price trend relative to peers: 1-year return, proximity to 52W high, SMA crossovers"],
     ["Quality Score", "Return on capital efficiency: ROE, ROIC, gross margins, earnings consistency"],
     ["Value Score", "Cheapness relative to fundamentals: P/E, EV/EBITDA, FCF Yield, P/Book"],

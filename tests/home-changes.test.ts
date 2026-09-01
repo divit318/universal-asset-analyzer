@@ -125,6 +125,7 @@ function digestSource(overrides: Partial<FingerprintSource> = {}): FingerprintSo
       status: "ok",
       opportunities: [{ symbol: "msft", combinedScore: 78, fitTier: "good", fitSummary: "" }],
       scannerFreshness: null,
+      scannerMethodologyStale: false,
     },
     watchlistIntelligence: {
       status: "ok",

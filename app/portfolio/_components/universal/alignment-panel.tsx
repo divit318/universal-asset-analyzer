@@ -6,6 +6,7 @@ import { Badge, Button, Card } from "@/app/_components/ui";
 import { askAi } from "@/app/_components/ask-ai";
 import { describePolicy, GOAL_LABEL, HORIZON_LABEL, type InvestorPolicy } from "@/lib/portfolio/alignment/policy";
 import type { AlignmentReport, AlignmentTheme } from "@/lib/portfolio/alignment/engine";
+import { alignmentToneOf } from "@/lib/portfolio/alignment/tone";
 import type { Tab } from "./dashboard-nav";
 
 /**
@@ -38,11 +39,12 @@ const STATUS_META = {
   aligned: { label: "Aligned", bar: "bg-positive", text: "text-positive" },
 } as const;
 
+/** Canonical alignment severity (lib/portfolio/alignment/tone.ts) — previously
+ *  a private 70/55 table here. */
 function scoreTone(score: number | null): string {
   if (score == null) return "text-muted";
-  if (score >= 70) return "text-positive";
-  if (score < 55) return "text-warning";
-  return "text-foreground";
+  const tone = alignmentToneOf(score);
+  return tone === "positive" ? "text-positive" : tone === "warning" ? "text-warning" : "text-foreground";
 }
 
 /* ── Where each theme can actually be worked on ────────────────────────────

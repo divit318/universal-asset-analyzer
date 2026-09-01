@@ -102,6 +102,9 @@ export interface OpportunitySnapshotCard {
   healthIssues: ThreatItem[];
   opportunities: OpportunitySnapshotItem[];
   scannerFreshness: Freshness | null;
+  /** Snapshot verdicts were banded under an older SCORING_METHODOLOGY_VERSION —
+   *  render them WITH a staleness note and a rerun action, never blank. */
+  scannerMethodologyStale: boolean;
 }
 
 export interface SectorAttentionCard {
@@ -294,7 +297,7 @@ export function buildOpportunitySnapshot(
 
   const snapshot = getLatestScannerSnapshot();
   if (!snapshot) {
-    return { status: "empty", healthIssues, opportunities: [], scannerFreshness: null };
+    return { status: "empty", healthIssues, opportunities: [], scannerFreshness: null, scannerMethodologyStale: false };
   }
 
   const portfolioSymbols = new Set(
@@ -327,8 +330,17 @@ export function buildOpportunitySnapshot(
     fitDetail: r.fitDetail ?? null,
   }));
 
-  const status: CardStatus = snapshot.freshness.level === "stale" ? "degraded" : "ok";
-  return { status, healthIssues, opportunities, scannerFreshness: snapshot.freshness };
+  // Time-stale OR methodology-stale both degrade the card: either way the
+  // verdicts shown were not produced by the current pipeline run.
+  const status: CardStatus =
+    snapshot.freshness.level === "stale" || snapshot.methodologyStale ? "degraded" : "ok";
+  return {
+    status,
+    healthIssues,
+    opportunities,
+    scannerFreshness: snapshot.freshness,
+    scannerMethodologyStale: snapshot.methodologyStale,
+  };
 }
 
 /** Exported for unit testing — pure, no I/O. */

@@ -86,6 +86,17 @@ export interface SimHolding {
   /** AI "why this holding / why this weight". Regenerated when edits change it. */
   rationale: string | null;
   addedBy: "ai" | "user";
+  /**
+   * Class-specific payload, forwarded verbatim to RawHolding.meta so a
+   * simulated holding can express what a real ledger row can. The case that
+   * motivated it: the cash adapter reads `meta.yieldPct` (a user-stated HYSA/
+   * MMF APY) for income and quality, and without a meta channel a SIMULATED
+   * cash sleeve was structurally forced to score as idle cash — the simulator
+   * silently under-scored every book it evaluated relative to the same book
+   * held for real. Optional; absent means what it means on a real row: nothing
+   * stated, no favorable assumption made.
+   */
+  meta?: Record<string, unknown>;
 }
 
 /** AI summary blurb + strategy tags, mirroring the Dashboard thesis banner. */

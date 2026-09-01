@@ -5,14 +5,14 @@ import {
   RECOMMENDATION_ARC as ARC_COLOR,
   RECOMMENDATION_LABEL as REC_LABEL,
   RECOMMENDATION_TONE as REC_STYLE,
+  scoreMeterTone,
 } from "@/lib/recommendation";
 import { CountUp } from "./count-up";
 import { Reveal } from "./reveal";
 import { ScoreRing } from "./score-ring";
 import { ValueBar } from "./value-bar";
 
-const barColor = (v: number | null) =>
-  v == null ? "bg-border" : v >= 60 ? "bg-positive" : v >= 42 ? "bg-warning" : "bg-negative";
+const barColor = (v: number | null) => (v == null ? "bg-border" : scoreMeterTone(v).bar);
 
 const whole = (v: number) => String(Math.round(v));
 

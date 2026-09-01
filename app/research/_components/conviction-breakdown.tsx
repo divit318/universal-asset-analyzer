@@ -1,15 +1,18 @@
 "use client";
 
 import type { RiskItem, RiskLevel, ScoreResult } from "@/lib/types";
+// Only the meter grammar is needed here: the recommendation arc/label/tone
+// imports served the ScoreRing block, which this panel no longer renders.
+import { scoreMeterTone } from "@/lib/recommendation";
 import { CountUp } from "@/app/_components/count-up";
 import { LoadingPanel } from "@/app/_components/loading-panel";
 import { Reveal } from "@/app/_components/reveal";
 import { ValueBar } from "@/app/_components/value-bar";
 
+/** Canonical 3-step meter grammar — previously a private 65/42 table that
+ *  turned green 5 points later than every other bar in the app. */
 function barColor(pct: number) {
-  if (pct >= 65) return "bg-positive";
-  if (pct >= 42) return "bg-warning";
-  return "bg-negative";
+  return scoreMeterTone(pct).bar;
 }
 
 function confidenceLabel(pct: number) {

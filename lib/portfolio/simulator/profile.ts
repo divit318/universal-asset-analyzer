@@ -291,7 +291,18 @@ export function parseSimHoldings(input: unknown): { holdings: SimHolding[] } | {
     const rationale = typeof h.rationale === "string" ? h.rationale : null;
     const addedBy = HOLDING_SOURCES.has(h.addedBy as string) ? (h.addedBy as "ai" | "user") : "user";
 
-    holdings.push({ symbol, name, assetClass, currency, quantity, targetWeight, rationale, addedBy });
+    // Optional class-specific payload (SimHolding.meta) — validated as a plain
+    // object and passed through, so e.g. a cash sleeve can state its APY the way
+    // a real ledger row does. Absent stays absent; no default is fabricated.
+    const meta =
+      h.meta && typeof h.meta === "object" && !Array.isArray(h.meta)
+        ? (h.meta as Record<string, unknown>)
+        : undefined;
+
+    holdings.push({
+      symbol, name, assetClass, currency, quantity, targetWeight, rationale, addedBy,
+      ...(meta ? { meta } : {}),
+    });
   }
   return { holdings };
 }

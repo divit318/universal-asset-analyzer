@@ -2,6 +2,7 @@
 
 import type { ScreenerInCompany } from "@/lib/screener-in";
 import { computeIndiaSnapshot, type IndiaDerivedFundamentals } from "@/lib/india-snapshot";
+import { scoreGrade, scoreMeterTone } from "@/lib/recommendation";
 import { CountUp } from "@/app/_components/count-up";
 import { Reveal } from "@/app/_components/reveal";
 import { ScoreRing } from "@/app/_components/score-ring";
@@ -12,12 +13,17 @@ import { ValueBar } from "@/app/_components/value-bar";
 /* the research page's DecisionHero). This file is presentation only.          */
 /* -------------------------------------------------------------------------- */
 
+/** Canonical grade words + meter tone — previously a private 80/65/48/32 grade
+ *  table that disagreed with the canonical tiers by up to 7 points. */
 function toGrade(score: number): { label: string; color: string; bg: string } {
-  if (score >= 80) return { label: "Excellent", color: "text-positive", bg: "bg-positive/10 border-positive/30" };
-  if (score >= 65) return { label: "Good", color: "text-positive", bg: "bg-positive/8 border-positive/20" };
-  if (score >= 48) return { label: "Fair", color: "text-warning", bg: "bg-warning/10 border-warning/30" };
-  if (score >= 32) return { label: "Weak", color: "text-negative", bg: "bg-negative/8 border-negative/20" };
-  return { label: "Poor", color: "text-negative", bg: "bg-negative/10 border-negative/30" };
+  const tone = scoreMeterTone(score);
+  const bg =
+    tone.text === "text-positive"
+      ? "bg-positive/10 border-positive/30"
+      : tone.text === "text-warning"
+        ? "bg-warning/10 border-warning/30"
+        : "bg-negative/10 border-negative/30";
+  return { label: scoreGrade(score), color: tone.text, bg };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -50,7 +56,7 @@ function ScorePill({ label, score, index }: { label: string; score: number | nul
         value={score}
         height="h-1.5"
         trackClassName="bg-surface-3"
-        barClassName={score >= 65 ? "bg-positive" : score >= 45 ? "bg-warning" : "bg-negative"}
+        barClassName={scoreMeterTone(score).bar}
       />
       <span className="font-mono text-sm font-semibold tabular-nums">
         <CountUp value={score} format={(v) => String(Math.round(v))} durationMs={800} />
@@ -90,7 +96,7 @@ export function InvestmentSnapshot({ company, derived }: InvestmentSnapshotProps
             score={composite}
             size={64}
             strokeWidth={4}
-            arcClassName={composite >= 65 ? "text-positive" : composite >= 45 ? "text-warning" : "text-negative"}
+            arcClassName={scoreMeterTone(composite).arc}
             valueClassName="text-xl font-bold"
             caption="/100"
             label={`Composite score ${composite} out of 100`}
