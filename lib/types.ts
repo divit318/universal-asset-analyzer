@@ -539,6 +539,19 @@ export interface FundProfileData {
   // relative-performance signal that doesn't require picking a benchmark ticker.
   categoryRelativeReturns: { oneYear: number | null; threeYear: number | null };
   risk: { beta: number | null; alpha: number | null; stdDev: number | null; sharpeRatio: number | null } | null;
+  /**
+   * AMFI/SEBI scheme classification for Indian mutual funds, resolved from the
+   * official AMFI scheme master (lib/amfi.ts getAmfiSchemeInfo). Indian funds
+   * are judged CATEGORY-relative — a small-cap fund and a liquid fund must not
+   * share performance/risk criteria (SEBI's 2017 categorization is the norm) —
+   * so this drives the India scoring path in lib/fund-scoring.ts. Null when
+   * unresolved; absent for non-Indian funds.
+   */
+  amfiCategory?: { group: "equity" | "debt" | "hybrid" | "solution" | "other"; category: string } | null;
+  /** Direct vs regular plan, from the AMFI scheme match. The direct/regular TER gap is ~0.6-0.9pp for active equity. */
+  amfiPlan?: "direct" | "regular" | null;
+  /** The matched official AMFI scheme name (provenance + index-fund benchmark detection). */
+  amfiSchemeName?: string | null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -765,7 +778,13 @@ export interface MomentumSignal {
 
 /** The three independent decision signals that drive the recommendation. */
 export interface DecisionSignals {
-  fundamentals: number; // 0-100 (== total)
+  /**
+   * 0-100 (== total). Null when NOT ONE fundamental factor had real data —
+   * mk() half-credits absent inputs, so a symbol with no fundamentals at all
+   * (an index, a fall-through quoteType) would otherwise report a confident-
+   * looking ~51 assembled entirely from those defaults.
+   */
+  fundamentals: number | null;
   analysts: number | null; // 0-100
   momentum: number | null; // 0-100
   /** 0-100, from the Capital Allocation bucket. Null when computeScore() wasn't given the inputs to score it meaningfully differently from n/a. */
@@ -782,6 +801,14 @@ export interface ScoreResult {
   confidence: number; // 0-100
   rationale: string;
   signals: DecisionSignals;
+  /**
+   * How many fundamental factors carried real data, out of how many were
+   * applicable. `available: 0` means every bucket below is half-credit
+   * padding — the UI must say so rather than render the numbers as findings.
+   * Optional because the per-asset-class scorers (fund/crypto/forex/
+   * commodity) build their buckets from price data, not fundamentals.
+   */
+  fundamentalCoverage?: { available: number; total: number };
 }
 
 export type RiskLevel = "low" | "medium" | "high";

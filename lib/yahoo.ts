@@ -17,7 +17,7 @@
 import YahooFinance from "yahoo-finance2";
 import type { FundProfileData, FundSectorWeight, HistoryPoint, OptionContract, OptionsChainData, OptionsExpirationChain, Quote, SymbolSuggestion } from "./types";
 import { computeMacroSummary, YIELD_CURVE_SYMBOLS, type MacroSummary, type YieldLevels } from "./macro-analysis";
-import { getAmfiTerForFund } from "./amfi";
+import { getAmfiTerForFund, getAmfiSchemeInfo } from "./amfi";
 import { getDataset } from "./platform/data-layer";
 import { countryForSuggestion } from "./market";
 import type { CacheMeta } from "./platform/types";
@@ -859,15 +859,26 @@ async function buildFundProfile(symbol: string): Promise<FundProfileData> {
   // Yahoo/Morningstar carries no TER for Indian mutual funds (the zero-encoded
   // gap mapFundProfile nulls out). AMFI — the industry body — publishes it
   // monthly per scheme, so an INR fund with no expense ratio gets one more
-  // chance from the official source. Best-effort by construction: getAmfiTerForFund
-  // returns null on any failure, and an unfilled expense ratio stays null.
-  if (fund.expenseRatio == null && fund.currency === "INR") {
+  // chance from the official source. The AMFI scheme master additionally
+  // resolves the SEBI category and direct/regular plan — the classification
+  // Indian fund analysis is built on (lib/fund-scoring.ts India path).
+  // Best-effort by construction: both helpers return null on any failure, and
+  // unresolved fields stay null.
+  if (fund.currency === "INR") {
     const name = raw.price?.longName ?? null;
     if (name) {
-      const amfi = await getAmfiTerForFund(name, fund.family);
-      if (amfi) {
-        fund.expenseRatio = amfi.ter;
+      const [ter, scheme] = await Promise.all([
+        fund.expenseRatio == null ? getAmfiTerForFund(name, fund.family) : Promise.resolve(null),
+        getAmfiSchemeInfo(name, fund.family),
+      ]);
+      if (ter) {
+        fund.expenseRatio = ter.ter;
         fund.expenseRatioSource = "amfi";
+      }
+      if (scheme) {
+        fund.amfiCategory = { group: scheme.category.group, category: scheme.category.category };
+        fund.amfiPlan = scheme.isDirect ? "direct" : "regular";
+        fund.amfiSchemeName = scheme.schemeName;
       }
     }
   }

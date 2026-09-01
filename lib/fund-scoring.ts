@@ -16,6 +16,7 @@ import type { DecisionSignals, FundProfileData, HistoryPoint, ScoreResult } from
 import { mk, bucket } from "./score-math";
 import { scoreToRecommendation } from "./recommendation";
 import { computeMomentum } from "./scoring";
+import { indiaFundBuckets } from "./fund-scoring-india";
 
 const pct = (v: number) => `${(v * 100).toFixed(2)}%`;
 
@@ -111,13 +112,25 @@ export function computeFundScore(
    * fund's composite is formed.
    */
   precomputedMomentum?: number | null,
+  /**
+   * The fund's category benchmark history (India path only) — enables
+   * tracking difference for passive funds and benchmark-relative rolling
+   * returns for active ones. Optional: omitted, those factors degrade to
+   * honest absolute/consistency readings. Callers get the right series from
+   * indiaCategoryBenchmark (lib/fund-scoring-india.ts).
+   */
+  benchmarkHistory?: HistoryPoint[],
 ): ScoreResult {
-  const cost = costBucket(fund);
-  const diversification = diversificationBucket(fund);
-  const performance = performanceBucket(fund);
-  const risk = riskBucket(fund);
+  // Indian mutual funds/ETFs are judged by SEBI-category-aware criteria —
+  // TER vs the Indian fee regime, rolling returns, category-sized risk,
+  // tracking difference for passive funds (see lib/fund-scoring-india.ts and
+  // ADR-002). The blend below stays shared, so composites remain comparable.
+  const india = indiaFundBuckets(fund, history, benchmarkHistory);
+  const parts = india
+    ? india.parts
+    : [costBucket(fund), diversificationBucket(fund), performanceBucket(fund), riskBucket(fund)];
 
-  const buckets = [cost.bucket, diversification.bucket, performance.bucket, risk.bucket];
+  const buckets = parts.map((p) => p.bucket);
   const totalPoints = buckets.reduce((s, b) => s + b.points, 0);
   const totalMax = buckets.reduce((s, b) => s + b.max, 0);
   const total = totalMax > 0 ? Math.round((totalPoints / totalMax) * 100) : 50;
@@ -128,8 +141,8 @@ export function computeFundScore(
   const composite = momentumScore != null ? Math.round(total * 0.75 + momentumScore * 0.25) : total;
   const recommendation = scoreToRecommendation(composite);
 
-  const dataCount = cost.dataCount + diversification.dataCount + performance.dataCount + risk.dataCount;
-  const dataTotal = cost.total + diversification.total + performance.total + risk.total;
+  const dataCount = parts.reduce((s, p) => s + p.dataCount, 0);
+  const dataTotal = parts.reduce((s, p) => s + p.total, 0);
   const confidence = dataTotal > 0 ? Math.round((dataCount / dataTotal) * 100) : 0;
 
   const signals: DecisionSignals = {
@@ -152,7 +165,9 @@ export function computeFundScore(
   const hasCategoryBaseline =
     fund.categoryRelativeReturns.oneYear != null || fund.categoryRelativeReturns.threeYear != null;
   const rationaleParts = [
-    `Fund score ${total}/100 (cost, diversification, ${hasCategoryBaseline ? "category-relative performance" : "absolute performance — no category baseline available"}, risk-adjusted quality)${momentumScore != null ? `, blended with a ${momentumScore}/100 momentum reading` : ""}.`,
+    india
+      ? `Fund score ${total}/100, judged as ${india.categoryLabel} under SEBI's categorization (cost vs the Indian TER regime, rolling returns${india.benchmarkLabel ? ` vs ${india.benchmarkLabel}` : ""}, category-sized risk)${momentumScore != null ? `, blended with a ${momentumScore}/100 momentum reading` : ""}.`
+      : `Fund score ${total}/100 (cost, diversification, ${hasCategoryBaseline ? "category-relative performance" : "absolute performance — no category baseline available"}, risk-adjusted quality)${momentumScore != null ? `, blended with a ${momentumScore}/100 momentum reading` : ""}.`,
   ];
   if (strengths.length) rationaleParts.push(`Strengths: ${strengths.join("; ")}.`);
   if (concerns.length) rationaleParts.push(`Watch: ${concerns.join("; ")}.`);

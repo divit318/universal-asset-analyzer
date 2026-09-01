@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { normalizeSymbol } from "@/lib/market";
 import { getFundProfile, getHistory } from "@/lib/yahoo";
 import { computeFundScore } from "@/lib/fund-scoring";
+import { indiaCategoryBenchmark } from "@/lib/fund-scoring-india";
 import { fundSectionInsight, type FundInsightSection } from "@/lib/ai-fund-research";
-import type { FundProfileData, ScoreResult } from "@/lib/types";
+import type { FundProfileData, HistoryPoint, ScoreResult } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,8 +22,18 @@ export async function GET(request: Request) {
   }
 
   try {
-    const [fund, history] = await Promise.all([getFundProfile(symbol), getHistory(symbol, 730)]);
-    const score = computeFundScore(fund, history);
+    // 5y of history: the India path scores rolling 3-year returns, which need
+    // more than the 2y the momentum blend alone required.
+    const [fund, history] = await Promise.all([getFundProfile(symbol), getHistory(symbol, 1825)]);
+    // Indian funds are judged against their SEBI-category benchmark when one
+    // is defensible (tracking difference for passive funds, relative rolling
+    // returns for active). Best-effort: a failed benchmark fetch degrades to
+    // the honest absolute readings.
+    const bench = indiaCategoryBenchmark(fund);
+    const benchmarkHistory: HistoryPoint[] | undefined = bench
+      ? await getHistory(bench.symbol, 1825).catch(() => undefined)
+      : undefined;
+    const score = computeFundScore(fund, history, undefined, benchmarkHistory);
     return NextResponse.json({ fund, score });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Fund data lookup failed";

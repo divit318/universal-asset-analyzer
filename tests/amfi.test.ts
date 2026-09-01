@@ -3,7 +3,12 @@ import {
   amfiAmcId,
   isDirectPlan,
   matchAmfiScheme,
+  matchAmfiSchemeInfo,
+  mergeTerPages,
+  normalizeAmfiCategory,
+  parseNavAll,
   parseTerRows,
+  terPageCount,
   yahooSchemeBase,
 } from "@/lib/amfi";
 
@@ -102,5 +107,216 @@ describe("parseTerRows", () => {
   it("drops nameless rows and survives an empty payload", () => {
     expect(parseTerRows([{ R_TER: "1.0" }])).toEqual([]);
     expect(parseTerRows([])).toEqual([]);
+  });
+});
+
+describe("terPageCount", () => {
+  it("reads the API's pageCount — PPFAS MF_ID=64 reports {page:1,pageSize:100,total:217,pageCount:3} live (2026-09)", () => {
+    expect(terPageCount({ page: 1, pageSize: 100, total: 217, pageCount: 3 })).toBe(3);
+  });
+
+  it("derives from total/pageSize when pageCount is absent", () => {
+    expect(terPageCount({ pageSize: 100, total: 217 })).toBe(3);
+    expect(terPageCount({ pageSize: 100, total: 100 })).toBe(1);
+  });
+
+  it("defaults to a single page on missing or garbage meta", () => {
+    expect(terPageCount(undefined)).toBe(1);
+    expect(terPageCount({})).toBe(1);
+    expect(terPageCount({ pageCount: NaN })).toBe(1);
+    expect(terPageCount({ pageCount: 0 })).toBe(1);
+  });
+
+  it("clamps a runaway pageCount", () => {
+    expect(terPageCount({ pageCount: 1_000_000 })).toBe(500);
+  });
+});
+
+describe("mergeTerPages", () => {
+  it("concatenates pages in order", () => {
+    expect(mergeTerPages([[1, 2], [3], [4, 5]])).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("returns null when any page is missing — a partial table must not silently match", () => {
+    expect(mergeTerPages([[1, 2], null, [4]])).toBeNull();
+    expect(mergeTerPages([undefined])).toBeNull();
+  });
+
+  it("handles the single-page case", () => {
+    expect(mergeTerPages([[1]])).toEqual([1]);
+    expect(mergeTerPages([[]])).toEqual([]);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* NAVAll scheme master                                                       */
+/* -------------------------------------------------------------------------- */
+
+// Fixture mirrors the live NAVAll.txt shape verbatim (fetched 2026-09-01 via
+// www.amfiindia.com/spages/NAVAll.txt → portal redirect): a global header
+// line, blank-line-separated section headers, bare AMC lines, and 8-column
+// scheme rows. Codes/ISINs/NAVs below are the live values for those schemes.
+const NAVALL_FIXTURE = `Scheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Plan;Option;Net Asset Value;Date
+ 
+Open Ended Schemes(Equity Scheme - Flexi Cap Fund)
+ 
+PPFAS Mutual Fund
+ 
+122639;INF879O01027;-;Parag Parikh Flexi Cap Fund;Direct Plan;Growth;90.7827;31-Aug-2026
+153964;-;INF879O01308;Parag Parikh Flexi Cap Fund;Direct Plan;Monthly IDCW Payout;90.7827;31-Aug-2026
+122640;INF879O01019;-;Parag Parikh Flexi Cap Fund;Regular Plan;Growth;82.7201;31-Aug-2026
+153965;-;INF879O01324;Parag Parikh Flexi Cap Fund;Regular Plan;Monthly IDCW Payout;82.7195;31-Aug-2026
+ 
+quant Mutual Fund
+ 
+109830;INF966L01457;-;Quant Flexi Cap Fund;Regular Plan;Growth Option;107.9699;31-Aug-2026
+ 
+Open Ended Schemes(Debt Scheme - Liquid Fund)
+ 
+PPFAS Mutual Fund
+ 
+141685;INF879O01100;INF879O01118;Parag Parikh Liquid Fund;Regular Plan;Growth;1425.1234;31-Aug-2026
+garbage;INF000000000;-;Broken Row Without Numeric Code;Regular Plan;Growth;10.0;31-Aug-2026
+141686;too;few;fields
+148888;-;-;Nav Unavailable Fund;Regular Plan;Growth;N.A.;31-Aug-2026
+`;
+
+describe("parseNavAll", () => {
+  const entries = parseNavAll(NAVALL_FIXTURE);
+
+  it("parses scheme rows under their section + AMC context", () => {
+    const flexi = entries.find((e) => e.schemeCode === 122640);
+    expect(flexi).toMatchObject({
+      schemeName: "Parag Parikh Flexi Cap Fund",
+      isins: ["INF879O01019"],
+      nav: 82.7201, // live Regular-Growth NAV, 31-Aug-2026
+      amcName: "PPFAS Mutual Fund",
+      schemeType: "Open Ended",
+      rawCategory: "Equity Scheme - Flexi Cap Fund",
+      plan: "Regular Plan",
+      option: "Growth",
+    });
+  });
+
+  it("tracks AMC changes within a section and section changes across the file", () => {
+    expect(entries.find((e) => e.schemeCode === 109830)?.amcName).toBe("quant Mutual Fund");
+    const liquid = entries.find((e) => e.schemeCode === 141685);
+    expect(liquid?.amcName).toBe("PPFAS Mutual Fund");
+    expect(liquid?.rawCategory).toBe("Debt Scheme - Liquid Fund");
+    expect(liquid?.isins).toEqual(["INF879O01100", "INF879O01118"]);
+  });
+
+  it("skips the header line and malformed rows, and nulls an N.A. NAV", () => {
+    expect(entries.map((e) => e.schemeCode)).toEqual([122639, 153964, 122640, 153965, 109830, 141685, 148888]);
+    const na = entries.find((e) => e.schemeCode === 148888);
+    expect(na?.nav).toBeNull();
+    expect(na?.isins).toEqual([]);
+  });
+});
+
+describe("normalizeAmfiCategory", () => {
+  // Every raw string below is a real NAVAll section name (live file, 2026-09).
+  it("normalizes the SEBI equity categories", () => {
+    expect(normalizeAmfiCategory("Equity Scheme - Large Cap Fund")).toMatchObject({ group: "equity", category: "Large Cap" });
+    expect(normalizeAmfiCategory("Equity Scheme - Large & Mid Cap Fund")).toMatchObject({ group: "equity", category: "Large & Mid Cap" });
+    expect(normalizeAmfiCategory("Equity Scheme - Small Cap Fund")).toMatchObject({ group: "equity", category: "Small Cap" });
+    expect(normalizeAmfiCategory("Equity Scheme - Flexi Cap Fund")).toMatchObject({ group: "equity", category: "Flexi Cap" });
+    expect(normalizeAmfiCategory("Equity Scheme - ELSS")).toMatchObject({ group: "equity", category: "ELSS" });
+    // Both spellings of the sectoral/thematic section exist in the live file.
+    expect(normalizeAmfiCategory("Equity Scheme - Sectoral/ Thematic")).toMatchObject({ group: "equity", category: "Sectoral/Thematic" });
+    expect(normalizeAmfiCategory("Equity Schemes - Thematic Fund")).toMatchObject({ group: "equity", category: "Sectoral/Thematic" });
+    expect(normalizeAmfiCategory("Equity Schemes - ELSS- Tax Saver Fund")).toMatchObject({ group: "equity", category: "ELSS" });
+  });
+
+  it("normalizes debt categories", () => {
+    expect(normalizeAmfiCategory("Debt Scheme - Liquid Fund")).toMatchObject({ group: "debt", category: "Liquid" });
+    expect(normalizeAmfiCategory("Debt Scheme - Corporate Bond Fund")).toMatchObject({ group: "debt", category: "Corporate Bond" });
+    expect(normalizeAmfiCategory("Debt Scheme - Ultra Short Duration Fund")).toMatchObject({ group: "debt", category: "Ultra Short Duration" });
+    expect(normalizeAmfiCategory("Debt Scheme - Medium to Long Duration Fund")).toMatchObject({ group: "debt", category: "Medium to Long Duration" });
+    expect(normalizeAmfiCategory("Debt Scheme - Banking and PSU Fund")).toMatchObject({ group: "debt", category: "Banking and PSU" });
+    expect(normalizeAmfiCategory("Income/Debt Oriented Schemes - 10-year Constant Maturity Gilt Fund")).toMatchObject({ group: "debt", category: "Gilt with 10 year Constant Duration" });
+    expect(normalizeAmfiCategory("Debt Scheme - Floater Fund")).toMatchObject({ group: "debt", category: "Floater" });
+  });
+
+  it("normalizes hybrid and solution categories, including both balanced-advantage spellings", () => {
+    expect(normalizeAmfiCategory("Hybrid Scheme - Dynamic Asset Allocation or Balanced Advantage")).toMatchObject({ group: "hybrid", category: "Balanced Advantage" });
+    expect(normalizeAmfiCategory("Hybrid Schemes - Balanced Advantage Fund/ Dynamic Asset Allocation")).toMatchObject({ group: "hybrid", category: "Balanced Advantage" });
+    expect(normalizeAmfiCategory("Hybrid Scheme - Arbitrage Fund")).toMatchObject({ group: "hybrid", category: "Arbitrage" });
+    expect(normalizeAmfiCategory("Solution Oriented Scheme - Retirement Fund")).toMatchObject({ group: "solution", category: "Retirement" });
+    expect(normalizeAmfiCategory("Solution Oriented Scheme - Children’s Fund")).toMatchObject({ group: "solution", category: "Children's" });
+  });
+
+  it("normalizes the 'other' group", () => {
+    expect(normalizeAmfiCategory("Other Scheme - Index Funds")).toMatchObject({ group: "other", category: "Index Fund" });
+    expect(normalizeAmfiCategory("Index Funds - Equity Funds")).toMatchObject({ group: "other", category: "Index Fund" });
+    expect(normalizeAmfiCategory("Other Scheme - Gold ETF")).toMatchObject({ group: "other", category: "Gold ETF" });
+    expect(normalizeAmfiCategory("Other Scheme - FoF Overseas")).toMatchObject({ group: "other", category: "FoF Overseas" });
+    expect(normalizeAmfiCategory("Exchange Traded Funds (ETFs) - Equity ETF")).toMatchObject({ group: "other", category: "ETF" });
+  });
+
+  it("keeps unknown sections best-effort: group inferred, category = raw", () => {
+    // "Growth" and "Income" are legacy (pre-2017) close-ended section names in the live file.
+    expect(normalizeAmfiCategory("Growth")).toMatchObject({ group: "equity", category: "Growth" });
+    expect(normalizeAmfiCategory("Income")).toMatchObject({ group: "debt", category: "Income" });
+    expect(normalizeAmfiCategory("Something Entirely New")).toMatchObject({ group: "other", category: "Something Entirely New" });
+    expect(normalizeAmfiCategory("Equity Scheme - Quantum Leap Fund").group).toBe("equity");
+  });
+});
+
+describe("matchAmfiSchemeInfo", () => {
+  const master = parseNavAll(NAVALL_FIXTURE);
+
+  it("resolves a Regular Growth Yahoo name to the Regular/Growth entry (never the Direct plan)", () => {
+    // Yahoo's live name for schemeCode 122640 is "Parag Parikh Flexi Cap Reg Gr".
+    const info = matchAmfiSchemeInfo("Parag Parikh Flexi Cap Reg Gr", "PPFAS Asset Management Pvt. Ltd", master);
+    expect(info).toMatchObject({
+      schemeCode: 122640,
+      schemeName: "Parag Parikh Flexi Cap Fund",
+      isDirect: false,
+      isGrowth: true,
+      nav: 82.7201,
+    });
+    expect(info?.category).toMatchObject({ group: "equity", category: "Flexi Cap" });
+  });
+
+  it("resolves the Direct plan and the IDCW option to their own entries", () => {
+    expect(matchAmfiSchemeInfo("Parag Parikh Flexi Cap Dir Gr", "PPFAS Asset Management Pvt. Ltd", master)?.schemeCode).toBe(122639);
+    const idcw = matchAmfiSchemeInfo("Parag Parikh Flexi Cap Reg IDCW", "PPFAS Asset Management Pvt. Ltd", master);
+    expect(idcw?.schemeCode).toBe(153965);
+    expect(idcw?.isGrowth).toBe(false);
+  });
+
+  it("restricts to the AMC when the family maps — quant's Flexi Cap does not shadow PPFAS's", () => {
+    const info = matchAmfiSchemeInfo("Quant Flexi Cap Gr", "Quant Money Managers Ltd", master);
+    expect(info?.schemeCode).toBe(109830);
+    expect(info?.isDirect).toBe(false);
+  });
+
+  it("searches all schemes when the family is unknown, still unambiguous", () => {
+    expect(matchAmfiSchemeInfo("Parag Parikh Liquid Reg Gr", null, master)?.schemeCode).toBe(141685);
+  });
+
+  it("returns null rather than guessing across an ambiguity or a missing scheme", () => {
+    expect(matchAmfiSchemeInfo("PPFAS Balanced Advantage Reg Gr", "PPFAS Asset Management Pvt. Ltd", master)).toBeNull();
+    // Two distinct schemes, identical token sets after stopword removal → tie → null.
+    const tied = parseNavAll(NAVALL_FIXTURE.replace("Quant Flexi Cap Fund", "Parag Parikh Flexi Cap Scheme"));
+    expect(matchAmfiSchemeInfo("Parag Parikh Flexi Cap Reg Gr", null, tied)).toBeNull();
+  });
+
+  it("detects growth vs IDCW on legacy 6-column rows where the option lives in the name", () => {
+    const legacy = parseNavAll(
+      [
+        "Open Ended Schemes(Equity Scheme - Large Cap Fund)",
+        "HDFC Mutual Fund",
+        "100119;INF179K01BE2;-;HDFC Large Cap Fund - Regular Plan - Growth;1050.50;31-Aug-2026",
+        "100122;INF179K01BC6;INF179K01BD4;HDFC Large Cap Fund - Regular Plan - IDCW;45.20;31-Aug-2026",
+      ].join("\n"),
+    );
+    expect(legacy).toHaveLength(2);
+    expect(legacy[0].plan).toBeNull();
+    const info = matchAmfiSchemeInfo("HDFC Large Cap Gr", "HDFC Asset Management Co Ltd", legacy);
+    expect(info?.schemeCode).toBe(100119);
+    expect(info?.isGrowth).toBe(true);
+    expect(info?.isDirect).toBe(false);
   });
 });
