@@ -23,11 +23,14 @@ export default function IndiaResearchRedirect() {
     const params = new URLSearchParams(window.location.search);
     const sym = params.get("symbol");
     if (sym) {
-      // Strip .NS/.BO suffix if present — the search bar will show the Yahoo
-      // Finance suggestion (RELIANCE.NS) but screener-in API handles raw form.
-      const clean = sym.toUpperCase().replace(/\.(NS|BO)$/i, "");
-      // Append .NS so the Yahoo Finance quote resolves correctly for India.
-      router.replace(`/research?symbol=${encodeURIComponent(clean + ".NS")}`);
+      // Keep an explicit exchange suffix. This used to strip .NS/.BO and then
+      // unconditionally re-append .NS, silently rewriting every BSE deep link
+      // (RELIANCE.BO → RELIANCE.NS) to a different listing. Only a bare symbol
+      // gets .NS added, so the Yahoo quote resolves to India rather than to a
+      // same-named US ticker.
+      const upper = sym.trim().toUpperCase();
+      const target = /\.(NS|BO)$/.test(upper) ? upper : `${upper}.NS`;
+      router.replace(`/research?symbol=${encodeURIComponent(target)}`);
     } else {
       router.replace("/research");
     }

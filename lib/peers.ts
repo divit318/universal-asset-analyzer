@@ -103,8 +103,27 @@ async function loadSectorMetrics(
   return map;
 }
 
+/**
+ * NSE/BSE listings. The peer set below is the S&P 500, so an Indian name gets
+ * benchmarked against US companies: TCS.NS resolved to "Information
+ * Technology" and was compared with AAPL/MSFT/NVDA/…, reporting a peer median
+ * P/E of 28x for an Indian IT company. Unlabelled and simply wrong.
+ *
+ * lib/research-bundle.ts already skipped this step for India, but that guard
+ * only protected the Research page — lib/ai/context.ts (the AI's evidence),
+ * lib/intel/engine.ts, and the /api/report export all called straight through
+ * and got the US medians. The check belongs here, at the one place that can
+ * guarantee it. India's real peer set comes from screener.in (RankedPeers).
+ */
+function isIndianListing(symbol: string): boolean {
+  return /\.(NS|BO)$/i.test(symbol.trim());
+}
+
 /** Compare a symbol against the median of its S&P 500 sector peers. */
 export async function getPeerComparison(symbol: string): Promise<PeerComparison> {
+  if (isIndianListing(symbol)) {
+    return { sector: "", peerCount: 0, target: EMPTY, median: EMPTY };
+  }
   const sector = await sectorOf(symbol);
   if (!sector) return { sector: "", peerCount: 0, target: EMPTY, median: EMPTY };
 

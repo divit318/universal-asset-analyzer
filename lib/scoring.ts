@@ -15,10 +15,10 @@ import type {
   SectorRotationEntry,
 } from "./types";
 import { sectorGroup } from "./sector";
-// Type-only import — lib/market.ts has zero runtime deps beyond ./types, so
-// this is safe in client bundles, unlike importing lib/sector-rotation.ts
-// (which pulls in node:sqlite via lib/db.ts).
-import type { MarketRegion } from "./market";
+// lib/market.ts has zero runtime deps beyond ./types, so importing it is safe
+// in client bundles, unlike importing lib/sector-rotation.ts (which pulls in
+// node:sqlite via lib/db.ts). detectMarket powers bandMarket() below.
+import { detectMarket, type MarketRegion } from "./market";
 import { lerp, mk, bucket } from "./score-math";
 import { totalReturnClose } from "./prices";
 import { scoreToRecommendation, RECOMMENDATION_LABEL, TIER_EDGES } from "./recommendation";
@@ -34,21 +34,45 @@ const ratio = (v: number) => v.toFixed(2);
 const pe = (v: number | null | undefined) => (v != null ? `${v.toFixed(2)}x` : "n/a");
 
 /* -------------------------------------------------------------------------- */
-/* Buckets (sector-aware)                                                     */
+/* Buckets (sector- and market-aware)                                          */
 /* -------------------------------------------------------------------------- */
+
+/** [worst, best] normalization band, in `mk()`'s argument order. */
+type Band = readonly [worst: number, best: number];
+
+/**
+ * Market calibration for a snapshot, from the symbol suffix alone — derived
+ * INSIDE the bucket scorers so no caller can accidentally score an NSE name
+ * on US bands (Phase 2 audit; see lib/composite.ts for the same pattern and
+ * the band rationale). Suffix-only on purpose: an ADR is a US listing priced
+ * by US investors and keeps US bands. lib/market.ts has zero runtime deps
+ * beyond ./types, so the runtime import stays client-bundle-safe.
+ */
+function bandMarket(s: FundamentalsSnapshot): "US" | "IN" {
+  return detectMarket({ symbol: s.symbol, currency: "", exchange: null, assetType: null }) === "IN"
+    ? "IN"
+    : "US";
+}
+
+/** The band for this market — `inBand` only where the Indian norm differs. */
+const pickBand = (mkt: "US" | "IN", usBand: Band, inBand?: Band): Band =>
+  mkt === "IN" && inBand ? inBand : usBand;
 
 export function scoreValuation(s: FundamentalsSnapshot, a: AnalystConsensus) {
   const sg = sectorGroup(s.sector);
+  const mkt = bandMarket(s);
   const fwdRatio =
     s.forwardPE != null && s.trailingPE != null && s.trailingPE !== 0
       ? s.forwardPE / s.trailingPE
       : null;
 
   if (sg === "financials") {
-    // Banks: P/E is less distorted than for industrials, but still apply tighter range
+    // Banks: P/E is less distorted than for industrials, but still apply tighter
+    // range. IN: private-sector banks normally trade 15-25x (PSU banks 7-15x),
+    // so 18x is mid-range for the group, not the worst case.
     return bucket("Valuation", [
       mk("Analyst upside", a.upsidePercent, -15, 30, 12, (v) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}% to target`),
-      mk("Forward P/E", s.forwardPE, 18, 8, 10, (v) => `Fwd P/E ${pe(v)}`),
+      mk("Forward P/E", s.forwardPE, ...pickBand(mkt, [18, 8], [26, 10]), 10, (v) => `Fwd P/E ${pe(v)}`),
       mk("Forward vs trailing P/E", fwdRatio, 1.2, 0.7, 8, () =>
         s.forwardPE != null ? `Fwd P/E ${pe(s.forwardPE)} vs ${pe(s.trailingPE)}` : "n/a",
       ),
@@ -64,10 +88,13 @@ export function scoreValuation(s: FundamentalsSnapshot, a: AnalystConsensus) {
       ),
     ]);
   }
-  // default / REITs
+  // default / REITs. IN PEG band: Indian quality compounders structurally carry
+  // a growth premium — TCS ~3 and HUL ~3.7 scored 0/10 on the US band (Phase 2
+  // audit) despite being the market's reference franchises; a sub-1 PEG in
+  // India usually signals a cyclical top, not a bargain.
   return bucket("Valuation", [
     mk("Analyst upside", a.upsidePercent, -15, 30, 12, (v) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}% to target`),
-    mk("PEG ratio", s.pegRatio, 3, 0.8, 10, (v) => `PEG ${ratio(v)}`),
+    mk("PEG ratio", s.pegRatio, ...pickBand(mkt, [3, 0.8], [4, 1.0]), 10, (v) => `PEG ${ratio(v)}`),
     mk("Forward vs trailing P/E", fwdRatio, 1.2, 0.6, 8, () =>
       s.forwardPE != null ? `Fwd P/E ${pe(s.forwardPE)} vs ${pe(s.trailingPE)}` : "n/a",
     ),
@@ -79,6 +106,7 @@ export function scoreQuality(
   st: FinancialStatements | null,
 ) {
   const sg = sectorGroup(s.sector);
+  const mkt = bandMarket(s);
   const latestNetIncome = st?.netIncome.at(-1)?.value ?? null;
   const latestFcf = st?.freeCashFlow.at(-1)?.value ?? s.freeCashflow ?? null;
   const fcfQuality =
@@ -93,9 +121,11 @@ export function scoreQuality(
     // for every bank — a Quality of 25/25 for any profitable lender read as
     // fake. ROA (the classic bank-quality metric) replaces it, and the ROE
     // ceiling sits at 22% so a genuinely elite franchise still isn't "perfect".
+    // IN: ROE floor rises with the ~6.5% G-sec hurdle, and 1.8-2% ROA is
+    // already elite for an Indian bank (US majors reach 3% on fee income).
     return bucket("Quality", [
-      mk("Return on equity", s.returnOnEquity, 0.05, 0.22, 9, (v) => `ROE ${pct(v)}`),
-      mk("Return on assets", s.returnOnAssets, 0.005, 0.03, 8, (v) => `ROA ${(v * 100).toFixed(1)}%`),
+      mk("Return on equity", s.returnOnEquity, ...pickBand(mkt, [0.05, 0.22], [0.08, 0.22]), 9, (v) => `ROE ${pct(v)}`),
+      mk("Return on assets", s.returnOnAssets, ...pickBand(mkt, [0.005, 0.03], [0.005, 0.02]), 8, (v) => `ROA ${(v * 100).toFixed(1)}%`),
       mk("Net margin", s.profitMargins, 0.10, 0.40, 8, (v) => `Net margin ${pct(v)}`),
     ]);
   }
@@ -107,9 +137,11 @@ export function scoreQuality(
       mk("FCF / net income", fcfQuality, 0.4, 1.1, 8, (v) => `FCF/NI ${ratio(v)}`),
     ]);
   }
-  // default
+  // default. IN: the ROE floor rises with the ~6.5% G-sec hurdle — a 5% ROE
+  // destroys value in India. Margins/FCF-conversion are business-model driven
+  // and keep one band across markets.
   return bucket("Quality", [
-    mk("Return on equity", s.returnOnEquity, 0.05, 0.25, 9, (v) => `ROE ${pct(v)}`),
+    mk("Return on equity", s.returnOnEquity, ...pickBand(mkt, [0.05, 0.25], [0.08, 0.25]), 9, (v) => `ROE ${pct(v)}`),
     mk("Operating margin", s.operatingMargins, 0.05, 0.3, 8, (v) => `Op margin ${pct(v)}`),
     mk("FCF / net income", fcfQuality, 0.4, 1.1, 8, (v) => `FCF/NI ${ratio(v)}`),
   ]);
@@ -120,6 +152,7 @@ export function scoreGrowth(
   st: FinancialStatements | null,
 ) {
   const sg = sectorGroup(s.sector);
+  const mkt = bandMarket(s);
 
   if (sg === "utilities") {
     // Regulated utility growing revenue 5% YoY is doing very well
@@ -142,16 +175,18 @@ export function scoreGrowth(
       mk("Revenue CAGR", st?.revenueCagr, -0.01, 0.20, 8, (v) => `Rev CAGR ${pct(v)}`),
     ]);
   }
-  // default
+  // default. IN: bands shift up by roughly the ~5pp nominal-GDP differential —
+  // flat revenue in a 10-11% nominal economy is losing share in real terms.
   return bucket("Growth", [
-    mk("Revenue growth", s.revenueGrowth, 0, 0.2, 9, (v) => `Rev growth ${v >= 0 ? "+" : ""}${pct(v)}`),
-    mk("Earnings growth", s.earningsGrowth, 0, 0.25, 8, (v) => `EPS growth ${v >= 0 ? "+" : ""}${pct(v)}`),
-    mk("Revenue CAGR", st?.revenueCagr, 0, 0.2, 8, (v) => `Rev CAGR ${pct(v)}`),
+    mk("Revenue growth", s.revenueGrowth, ...pickBand(mkt, [0, 0.2], [0.05, 0.25]), 9, (v) => `Rev growth ${v >= 0 ? "+" : ""}${pct(v)}`),
+    mk("Earnings growth", s.earningsGrowth, ...pickBand(mkt, [0, 0.25], [0.05, 0.3]), 8, (v) => `EPS growth ${v >= 0 ? "+" : ""}${pct(v)}`),
+    mk("Revenue CAGR", st?.revenueCagr, ...pickBand(mkt, [0, 0.2], [0.03, 0.23]), 8, (v) => `Rev CAGR ${pct(v)}`),
   ]);
 }
 
 export function scoreHealth(s: FundamentalsSnapshot) {
   const sg = sectorGroup(s.sector);
+  const mkt = bandMarket(s);
   const netDebtToEbitda =
     s.totalDebt != null && s.totalCash != null && s.ebitda != null && s.ebitda !== 0
       ? (s.totalDebt - s.totalCash) / s.ebitda
@@ -194,9 +229,10 @@ export function scoreHealth(s: FundamentalsSnapshot) {
       mk("Net debt / EBITDA", netDebtToEbitda, 10, 3, 6, (v) => `Net debt/EBITDA ${ratio(v)}`),
     ]);
   }
-  // default
+  // default. IN: corporate India deleveraged hard post-2015 (IBC era) — D/E
+  // above ~1.5x is already an outlier for the general group.
   return bucket("Financial Health", [
-    mk("Debt / equity", s.debtToEquity, 2, 0.2, 8, (v) => `D/E ${ratio(v)}`),
+    mk("Debt / equity", s.debtToEquity, ...pickBand(mkt, [2, 0.2], [1.5, 0.2]), 8, (v) => `D/E ${ratio(v)}`),
     mk("Current ratio", s.currentRatio, 0.8, 2, 6, (v) => `Current ${ratio(v)}`),
     mk("Net debt / EBITDA", netDebtToEbitda, 4, 0, 6, (v) => `Net debt/EBITDA ${ratio(v)}`),
   ]);
@@ -211,10 +247,18 @@ export function scoreHealth(s: FundamentalsSnapshot) {
  */
 export function scoreCapitalAllocation(s: FundamentalsSnapshot, st: FinancialStatements | null) {
   const sg = sectorGroup(s.sector);
+  const mkt = bandMarket(s);
   const om = st?.operatingMargin ?? [];
   const marginTrendPp = om.length >= 2 ? om.at(-1)!.value - om[0].value : null;
 
-  const dividendRange = sg === "utilities" || sg === "reits" ? { worst: 0, best: 0.06 } : { worst: 0, best: 0.04 };
+  // IN default: the Nifty's aggregate dividend yield runs ~1.2-1.5%, so a 3%
+  // payer is already a high-distribution name — 4% is a US-market bar.
+  const dividendRange =
+    sg === "utilities" || sg === "reits"
+      ? { worst: 0, best: 0.06 }
+      : mkt === "IN"
+        ? { worst: 0, best: 0.03 }
+        : { worst: 0, best: 0.04 };
 
   return bucket("Capital Allocation", [
     mk("FCF growth (CAGR)", st?.fcfCagr, -0.05, 0.15, 10, (v) => `FCF CAGR ${v >= 0 ? "+" : ""}${pct(v)}`),
@@ -397,12 +441,17 @@ function buildRationale(
   const strengths = byRatio.filter((f) => f.points / f.max >= 0.6).slice(0, 2);
   const concerns = [...byRatio].reverse().filter((f) => f.points / f.max <= 0.4).slice(0, 2);
 
-  const sig = [`fundamentals ${signals.fundamentals}`];
+  const sig: string[] = [];
+  if (signals.fundamentals != null) sig.push(`fundamentals ${signals.fundamentals}`);
   if (signals.analysts != null) sig.push(`analysts ${signals.analysts}`);
   if (signals.momentum != null) sig.push(`momentum ${signals.momentum}`);
   if (signals.sectorRotation != null) sig.push(`sector rotation ${signals.sectorRotation}`);
 
-  const parts: string[] = [`${RECOMMENDATION_LABEL[rec]} — ${sig.join(", ")} (all /100).`];
+  // No signal resolved at all — say that, rather than open with a bare dash
+  // and let the reader assume the numbers were simply omitted for brevity.
+  const parts: string[] = sig.length
+    ? [`${RECOMMENDATION_LABEL[rec]} — ${sig.join(", ")} (all /100).`]
+    : ["No fundamental, analyst, or momentum signal is available for this instrument."];
   if (strengths.length) parts.push(`Strengths: ${strengths.map((f) => f.detail).join(", ")}.`);
   if (concerns.length) parts.push(`Watch: ${concerns.map((f) => f.detail).join(", ")}.`);
   return parts.join(" ");
@@ -429,23 +478,43 @@ export function computeScore(
   const analysts = analystSignal(analyst);
   const momentumScore = momentum?.score ?? null;
 
+  // How much of the fundamental picture is real. mk() half-credits every
+  // absent input, so a symbol Yahoo has no fundamentals for at all (an index,
+  // an unmapped quoteType falling through to the equity path) still sums to a
+  // plausible ~51/100. Coverage is what tells those apart from a genuinely
+  // mediocre company, and every fundamental-derived signal below is gated on
+  // it — otherwise the blend reports padding as though it were evidence.
+  const dataCount = parts.reduce((s, p) => s + p.dataCount, 0);
+  const factorCount = parts.reduce((s, p) => s + p.total, 0);
+  const completeness = factorCount ? dataCount / factorCount : 0;
+  const hasFundamentals = dataCount > 0;
+
   // Capital Allocation is always computed (needs only snapshot/statements,
   // already required args) and always contributes to the blend. Sector
   // Rotation is opt-in — only appended when a caller explicitly threads a
   // rotation entry through, since most existing callers don't have one.
-  const capAllocBucket = scoreCapitalAllocation(snapshot, statements).bucket;
-  const capitalAllocationScore = Math.round((capAllocBucket.points / capAllocBucket.max) * 100);
+  const capAlloc = scoreCapitalAllocation(snapshot, statements);
+  const capAllocBucket = capAlloc.bucket;
+  const capitalAllocationScore =
+    capAlloc.dataCount > 0
+      ? Math.round((capAllocBucket.points / capAllocBucket.max) * 100)
+      : null;
   buckets.push(capAllocBucket);
 
   let sectorRotationScore: number | null = null;
   if (sectorRotation !== undefined) {
-    const sectorBucket = scoreSectorMomentum(sectorRotation).bucket;
-    sectorRotationScore = Math.round((sectorBucket.points / sectorBucket.max) * 100);
+    const sectorPart = scoreSectorMomentum(sectorRotation);
+    const sectorBucket = sectorPart.bucket;
+    // A null rotation entry half-credits all three factors into a flat 50.
+    // That is the absence of a reading, not a neutral reading.
+    if (sectorPart.dataCount > 0) {
+      sectorRotationScore = Math.round((sectorBucket.points / sectorBucket.max) * 100);
+    }
     buckets.push(sectorBucket);
   }
 
   const signals: DecisionSignals = {
-    fundamentals: total,
+    fundamentals: hasFundamentals ? total : null,
     analysts,
     momentum: momentumScore,
     capitalAllocation: capitalAllocationScore,
@@ -457,34 +526,38 @@ export function computeScore(
   // Blend the available signals. Fundamentals anchor the call; analyst consensus,
   // price momentum, capital allocation discipline, and sector leadership refine
   // it. Weights renormalize when a signal is missing (the wSum divide below).
-  const weighted: [number, number][] = [
-    [total, w.fundamentals],
-    [capitalAllocationScore, w.capitalAllocation],
-  ];
+  const weighted: [number, number][] = [];
+  if (hasFundamentals) weighted.push([total, w.fundamentals]);
+  if (capitalAllocationScore != null) weighted.push([capitalAllocationScore, w.capitalAllocation]);
   if (analysts != null) weighted.push([analysts, w.analysts]);
   if (momentumScore != null) weighted.push([momentumScore, w.momentum]);
   if (sectorRotationScore != null) weighted.push([sectorRotationScore, w.sectorRotation]);
   const wSum = weighted.reduce((s, [, w]) => s + w, 0);
-  const composite = Math.round(weighted.reduce((s, [v, w]) => s + v * w, 0) / wSum);
+  // wSum === 0 means no signal of any kind resolved. Fall back to the raw
+  // bucket sum rather than dividing by zero; `fundamentalCoverage` below is
+  // what tells the caller the number is not evidence.
+  const composite = wSum
+    ? Math.round(weighted.reduce((s, [v, w]) => s + v * w, 0) / wSum)
+    : total;
 
   const rec = scoreToRecommendation(composite);
 
   // Confidence blends three things: how complete the fundamental data is, how
   // far the composite sits from a tier boundary, and how much the independent
   // signals agree with one another.
-  const dataCount = parts.reduce((s, p) => s + p.dataCount, 0);
-  const factorCount = parts.reduce((s, p) => s + p.total, 0);
-  const completeness = factorCount ? dataCount / factorCount : 0;
-
   const nearestEdge = Math.min(...TIER_EDGES.map((e) => Math.abs(composite - e)));
   const clarity = Math.min(1, nearestEdge / 15);
 
-  const sigVals = [total, analysts, momentumScore].filter((v): v is number => v != null);
-  const mean = sigVals.reduce((s, v) => s + v, 0) / sigVals.length;
-  const spread = Math.sqrt(
-    sigVals.reduce((s, v) => s + (v - mean) ** 2, 0) / sigVals.length,
+  const sigVals = [signals.fundamentals, analysts, momentumScore].filter(
+    (v): v is number => v != null,
   );
-  const agreement = Math.max(0, 1 - spread / 35); // 0 spread → 1, ≥35 spread → 0
+  const mean = sigVals.length ? sigVals.reduce((s, v) => s + v, 0) / sigVals.length : 0;
+  const spread = sigVals.length
+    ? Math.sqrt(sigVals.reduce((s, v) => s + (v - mean) ** 2, 0) / sigVals.length)
+    : 0;
+  // With one signal the spread is trivially 0 — that is not agreement, and it
+  // must not buy back the confidence the missing fundamentals just cost.
+  const agreement = sigVals.length > 1 ? Math.max(0, 1 - spread / 35) : 0;
 
   const confidence = Math.round(
     clamp(45 + completeness * 22 + clarity * 16 + agreement * 17, 0, 95),
@@ -498,6 +571,7 @@ export function computeScore(
     confidence,
     rationale: buildRationale(rec, signals, buckets),
     signals,
+    fundamentalCoverage: { available: dataCount, total: factorCount },
   };
 }
 
@@ -642,6 +716,7 @@ export function assessRisks(
   insider: InsiderActivity,
 ): RiskItem[] {
   const sg = sectorGroup(s.sector);
+  const mkt = bandMarket(s);
 
   // Valuation risk
   let valLevel: RiskLevel = "low";
@@ -650,7 +725,9 @@ export function assessRisks(
     valLevel = worse(valLevel, "medium");
     valReasons.push(`${a.upsidePercent.toFixed(0)}% vs target`);
   }
-  if (s.pegRatio != null && s.pegRatio > 2.5) {
+  // IN threshold matches the higher PEG scoring band — the market's reference
+  // compounders sit near 3 and must not all carry a "high valuation risk" flag.
+  if (s.pegRatio != null && s.pegRatio > (mkt === "IN" ? 3.5 : 2.5)) {
     valLevel = worse(valLevel, "high");
     valReasons.push(`PEG ${ratio(s.pegRatio)}`);
   } else if (s.priceToBook != null && s.priceToBook > 15) {

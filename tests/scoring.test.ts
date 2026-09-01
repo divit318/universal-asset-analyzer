@@ -107,9 +107,48 @@ describe("computeScore", () => {
     expect(withEntry.buckets.find((b) => b.name === "Sector Rotation")).toBeDefined();
     expect(withEntry.signals.sectorRotation).not.toBeNull();
 
+    // The bucket still renders (so the UI shows the factors as n/a), but the
+    // SIGNAL is null: a null entry half-credits all three factors into a flat
+    // 50, and a flat 50 read as "neutral rotation" would drag a real composite
+    // toward the middle on the strength of data nobody has.
     const explicitNull = computeScore(snap(), null, analyst(), null, null);
     expect(explicitNull.buckets.find((b) => b.name === "Sector Rotation")).toBeDefined();
-    expect(explicitNull.signals.sectorRotation).not.toBeNull(); // degrades to half-credit, not absent
+    expect(explicitNull.signals.sectorRotation).toBeNull();
+  });
+
+  it("reports no fundamentals signal at all when not one factor has data", () => {
+    const empty: FundamentalsSnapshot = {
+      symbol: "^GSPC", financialCurrency: null, price: null, sector: null, industry: null,
+      trailingPE: null, forwardPE: null, pegRatio: null, priceToBook: null, dividendYield: null,
+      returnOnEquity: null, returnOnAssets: null, grossMargins: null, operatingMargins: null,
+      profitMargins: null, ebitdaMargins: null, revenueGrowth: null, earningsGrowth: null,
+      debtToEquity: null, currentRatio: null, quickRatio: null, freeCashflow: null,
+      operatingCashflow: null, totalCash: null, totalDebt: null, ebitda: null,
+      enterpriseToEbitda: null, priceToSalesTrailing12Months: null,
+    };
+    const noAnalysts: AnalystConsensus = {
+      targetMean: null, targetHigh: null, targetLow: null, upsidePercent: null,
+      recommendationKey: null, numberOfOpinions: null,
+      strongBuy: 0, buy: 0, hold: 0, sell: 0, strongSell: 0,
+      epsRevisionsUp30d: null, epsRevisionsDown30d: null, epsSurprises: [],
+    };
+    const r = computeScore(empty, null, noAnalysts, null, null);
+
+    // An index has no financials. Half-credit padding used to sum to ~51/100
+    // and be reported as a real "fundamentals" reading beside a HOLD verdict.
+    expect(r.fundamentalCoverage).toEqual({ available: 0, total: r.fundamentalCoverage!.total });
+    expect(r.fundamentalCoverage!.available).toBe(0);
+    expect(r.signals.fundamentals).toBeNull();
+    expect(r.signals.capitalAllocation).toBeNull();
+    expect(r.signals.sectorRotation).toBeNull();
+    expect(r.rationale).not.toMatch(/fundamentals \d/);
+    expect(Number.isFinite(r.composite)).toBe(true);
+  });
+
+  it("still reports a fundamentals signal when even one factor has data", () => {
+    const r = computeScore(snap(), null, analyst());
+    expect(r.fundamentalCoverage!.available).toBeGreaterThan(0);
+    expect(r.signals.fundamentals).toBe(r.total);
   });
 
   it("India weighting leans on fundamentals/sector over analyst consensus vs. the US default", () => {

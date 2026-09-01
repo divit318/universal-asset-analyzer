@@ -346,10 +346,39 @@ export function scoreQuality(c: ScreenerInCompany, d: IndiaDerivedFundamentals):
   return scoreBucket(factors);
 }
 
+/**
+ * Median P/E of the company's screener.in peer set — its actual Indian
+ * industry comparables, not a fixed band. Requires 3+ peers with a usable
+ * P/E so one odd peer can't define "normal". This is the sector-relative
+ * context absolute bands can't carry: 45x is rich for a refiner and ordinary
+ * for an FMCG franchise.
+ */
+export function peerMedianPe(peers: ScreenerInCompany["peers"]): number | null {
+  const pes = (peers ?? [])
+    .map((p) => Number.parseFloat(p.pe ?? ""))
+    .filter((v) => Number.isFinite(v) && v > 0 && v < 200);
+  if (pes.length < 3) return null;
+  const s = pes.sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
 export function scoreValuation(c: ScreenerInCompany, d: IndiaDerivedFundamentals): BucketScore {
+  const medianPe = peerMedianPe(c.peers);
+  const peVsPeers = c.pe != null && c.pe > 0 && medianPe != null ? c.pe / medianPe : null;
   const factors: Factor[] = [
-    { label: "P/E", max: 35, points: c.pe == null ? null : bandLow(c.pe, [[12, 35], [18, 28], [25, 20], [35, 12], [50, 6]], 2) },
-    { label: "EV/EBITDA", max: 30, points: d.evToEbitda == null ? null : bandLow(d.evToEbitda, [[8, 30], [12, 22], [16, 14], [22, 7]], 2) },
+    // `c.pe <= 0` is scored as absent, not as cheap. bandLow returns at the
+    // first threshold the value clears, so a P/E of 0 or -12 satisfied
+    // `<= 12` and took the full 35/35 — ranking a loss-making company as the
+    // cheapest name in the universe. screener.in currently blanks negative
+    // P/Es, so this is a guard against the provider starting to emit them
+    // rather than a live defect, but the failure mode is silent and severe.
+    { label: "P/E", max: 25, points: c.pe == null || c.pe <= 0 ? null : bandLow(c.pe, [[12, 25], [18, 20], [25, 14], [35, 9], [50, 4]], 2) },
+    // Peer-relative P/E: the screener.in peer table was previously fetched
+    // for display only (Phase 2 dead wire) — it is the Indian-market answer
+    // to "cheap relative to WHAT?".
+    { label: "P/E vs industry peers", max: 20, points: peVsPeers == null ? null : bandLow(peVsPeers, [[0.7, 20], [0.9, 16], [1.1, 11], [1.4, 6]], 1) },
+    { label: "EV/EBITDA", max: 20, points: d.evToEbitda == null ? null : bandLow(d.evToEbitda, [[8, 20], [12, 15], [16, 9], [22, 5]], 1) },
     { label: "P/B", max: 20, points: d.priceToBook == null ? null : bandLow(d.priceToBook, [[2, 20], [4, 14], [7, 8]], 2) },
     { label: "dividend yield", max: 15, points: c.dividendYield == null ? null : band(c.dividendYield, [[3, 15], [2, 10], [1, 5]], 0) },
   ];

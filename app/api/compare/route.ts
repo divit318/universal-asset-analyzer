@@ -143,9 +143,16 @@ export async function GET(request: Request) {
            `null` is a meaningful value here and distinct from `undefined`: it
            means "checked, this sector has no rotation entry", which still adds the
            bucket. So it is passed through rather than defaulted away. */
-        const sectorRotation = parts.snapshot?.sector
-          ? findSectorRotationEntry(getLatestSectorRotation(), parts.snapshot.sector)
-          : null;
+        const market = detectMarket(quote);
+        // Non-US listings get `undefined` (bucket omitted entirely): the
+        // rotation snapshot measures US SPDR sector ETFs, and an Indian stock
+        // must not inherit a US sector's momentum (Phase 2 audit).
+        const sectorRotation =
+          market !== "US"
+            ? undefined
+            : parts.snapshot?.sector
+              ? findSectorRotationEntry(getLatestSectorRotation(), parts.snapshot.sector)
+              : null;
 
         const score = computeScore(
           parts.snapshot,
@@ -156,7 +163,7 @@ export async function GET(request: Request) {
           // Market-aware weighting: India leans harder on fundamentals because
           // analyst coverage is sparser. Research does this too, so omitting it
           // here would be a second source of divergence for NSE/BSE names.
-          detectMarket(quote),
+          market,
         );
         const oneYearReturn = computeOneYearReturn(history);
 
