@@ -4,7 +4,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { TrendingUp, TrendingDown, Clock3, FileText, Network, Link2, Bookmark, Wallet } from "lucide-react";
+import { TrendingUp, TrendingDown, FileText, Bookmark, Wallet } from "lucide-react";
 import type {
   Filing,
   FundamentalsData,
@@ -45,9 +45,7 @@ import {
 } from "@/lib/format";
 
 // Universal components
-import { DownloadIcon } from "./_components/download-icon";
 import { SymbolSearch } from "@/app/_components/symbol-search";
-import { LoadingMark } from "@/app/_components/loading-mark";
 import { LoadingPanel, LoadingLine } from "@/app/_components/loading-panel";
 import { Reveal } from "@/app/_components/reveal";
 import { CountUp } from "@/app/_components/count-up";
@@ -58,6 +56,7 @@ import { ResearchCopilot } from "./_components/copilot/research-copilot";
 import type { AskAIPayload } from "./_components/pattern-analysis-panel";
 import { RESEARCH_ACTIONS } from "@/lib/ai/actions";
 import { ResearchNotes } from "./_components/research-notes";
+import { MastheadMoreMenu } from "./_components/masthead-more-menu";
 import { DecisionHero } from "./_components/decision-hero";
 import { ValuationStrip } from "./_components/valuation-strip";
 import { MovementExplainerCard } from "@/app/_components/movement-explainer-card";
@@ -66,7 +65,7 @@ import { WhySection } from "./_components/why-section";
 import { CompanyOrientation, readAssetProfile } from "./_components/company-orientation";
 import { PriceAlertAction } from "./_components/price-alert-action";
 import { ResearchConfidenceMeter } from "./_components/research-confidence-meter";
-import { MacroContextLadder } from "./_components/macro-context-ladder";
+import { useIntelCards } from "@/app/_components/intel-rail";
 import { WhyNowCard } from "./_components/why-now-card";
 import { SectorContextCard } from "./_components/sector-context-card";
 import { PortfolioDecisionCard } from "./_components/portfolio-decision-card";
@@ -139,7 +138,6 @@ import { useToast } from "@/app/_components/toast";
 import { useIOSSafe } from "@/lib/ios-context";
 import { PortfolioFitPanel } from "@/app/_components/portfolio-fit-panel";
 import { PositionActionCard } from "./_components/position-action-card";
-import { CollapsibleSection } from "@/app/_components/collapsible-section";
 import { PageShell, PageHeader, Card, Button, Input, Tabs, type TabItem } from "@/app/_components/ui";
 
 // The interactive price chart bundles the candlestick pattern engine — the
@@ -452,7 +450,12 @@ function ResearchWorkspace({
   const fundamentals = fundamentalsEntry.data;
   const peers = peersEntry.data;
   const sectorRotationEntry = sectorRotationStoreEntry.data ?? null;
-  const fundsLoading = fundamentalsEntry.status === "loading";
+  // The bundle only runs its fundamentals step for equities (see the
+  // `opts.isEquity` guard in lib/research-bundle.ts), so for an index or any
+  // other non-equity the dataset entry never leaves "loading". Reading that
+  // status literally pinned the Conviction and Ownership tabs to a permanent
+  // "Scoring fundamentals, analyst consensus, and momentum…" skeleton.
+  const fundsLoading = isEquity && fundamentalsEntry.status === "loading";
   const fundsError = fundamentalsEntry.error;
 
   // Sector/industry for the identity line + description fallback. The profile
@@ -782,6 +785,11 @@ function ResearchWorkspace({
   });
   const verdict = verdictStream.verdict;
 
+  // Contextual intelligence for this symbol — rendered inside "Why Now?"
+  // rather than as the floating IntelRail overlay (which occluded this page's
+  // own context rail at ≤1700px).
+  const intel = useIntelCards({ surface: "research", symbols: [quote.symbol] });
+
   async function downloadReport() {
     if (downloading) return;
     setDownloading(true);
@@ -884,14 +892,16 @@ function ResearchWorkspace({
                   (0P0001BA9B.BO) nobody searches by or remembers — the fund
                   NAME is its identity, so it leads. Ticker-first stays right
                   for everything with a real ticker. */}
+              {/* The h1: with a symbol loaded the instrument IS the page —
+                  the "Research Hub" PageHeader only renders on the empty state. */}
               {isMutualFund && quote.name && quote.name !== quote.symbol ? (
                 <>
-                  <span className="text-xl font-semibold tracking-tight">{quote.name}</span>
+                  <h1 className="text-xl font-semibold tracking-tight">{quote.name}</h1>
                   <span className="font-mono text-sm text-muted">{quote.symbol}</span>
                 </>
               ) : (
                 <>
-                  <span className="font-mono text-xl font-semibold tracking-tight">{quote.symbol}</span>
+                  <h1 className="font-mono text-xl font-semibold tracking-tight">{quote.symbol}</h1>
                   <span className="text-sm text-muted">{quote.name}</span>
                 </>
               )}
@@ -929,26 +939,12 @@ function ResearchWorkspace({
             <DataProvenance source="yahoo" asOf={quoteUpdatedAt} ttlHours={0.02} liveLabel />
           </div>
 
-          {/* Action row */}
+          {/* Action row — the decisions an investor takes FROM this page stay
+              visible (price alert, IC report, watchlist, portfolio); navigation
+              and utilities (journal, exposure, copy link, Excel export) live in
+              the ⋯ menu. Eight simultaneous buttons was eight claims on
+              attention in the masthead. */}
           <div className="flex flex-wrap items-center gap-1.5">
-            <Link
-              href={`/journal?symbol=${encodeURIComponent(quote.symbol)}`}
-              className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-2 text-sm text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
-            >
-              <Clock3 className="h-4 w-4" strokeWidth={1.75} /> Journal
-            </Link>
-            <Link
-              href={`/exposure?issuer=${encodeURIComponent(quote.symbol)}`}
-              className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-2 text-sm text-muted outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
-            >
-              <Network className="h-4 w-4" strokeWidth={1.75} /> Exposure
-            </Link>
-            <button
-              onClick={onCopyLink}
-              className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-2 text-sm text-muted outline-none transition-[color,background-color,transform] duration-150 hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/40 active:scale-[0.97]"
-            >
-              <Link2 className="h-4 w-4" strokeWidth={1.75} /> Copy link
-            </button>
             {/* Entry point into the EXISTING watchlist alert system (monitor →
                 crossing detection → notification bell) — a user-defined
                 monitoring action, so it lives here with the other utility
@@ -969,7 +965,6 @@ function ResearchWorkspace({
               }
               onTracked={onTracked}
             />
-            <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
             {/* IC Report is an equity workflow (signal library, 9-agent
                 network, DCF engine — see app/ic-report). Funds, crypto,
                 commodities, forex and macro don't get a dead button. The
@@ -984,14 +979,6 @@ function ResearchWorkspace({
                 IC Report
               </Link>
             )}
-            <button
-              onClick={downloadReport}
-              disabled={downloading}
-              className="inline-flex items-center gap-1.5 rounded-control border border-brand/40 bg-brand-muted px-3 py-2 text-sm font-medium text-brand outline-none transition-[color,background-color,transform] duration-150 hover:bg-brand/20 focus-visible:ring-2 focus-visible:ring-brand/40 disabled:opacity-50 enabled:active:scale-[0.97]"
-            >
-              {downloading ? <LoadingMark size={16} label="Generating report" /> : <DownloadIcon />}
-              {downloading ? "Generating…" : "Excel Report"}
-            </button>
             <button
               onClick={onSave}
               disabled={saved}
@@ -1009,6 +996,12 @@ function ResearchWorkspace({
               <Wallet className="h-4 w-4" strokeWidth={1.75} />
               Add to Portfolio
             </button>
+            <MastheadMoreMenu
+              symbol={quote.symbol}
+              onCopyLink={onCopyLink}
+              onDownloadReport={() => void downloadReport()}
+              downloading={downloading}
+            />
           </div>
         </div>
 
@@ -1046,12 +1039,10 @@ function ResearchWorkspace({
       </Reveal>
 
       {/* ── 2b. Research confidence — data coverage of the research inputs.
-             Deliberately alone on this row: the investment-personality badge
-             that used to sit beside it now lives in the masthead's orientation
-             layer (investment characteristics), so coverage can never be
-             misread as a quality/growth signal. ── */}
+             A quiet caption chip tucked under the masthead: metadata earns
+             visual weight only when coverage is genuinely degraded. ── */}
       {isEquity && (
-        <Reveal index={1}>
+        <Reveal index={1} className="-mt-4">
           <ResearchConfidenceMeter
             fundamentals={fundamentals ?? null}
             fundamentalsLoading={fundsLoading}
@@ -1074,9 +1065,17 @@ function ResearchWorkspace({
           // Score computed above — the exact same number the fit scorer
           // inherited, so the hero, the fit panel, and the Conviction tab are
           // structurally reading one figure.
+          // A ScoreResult with zero fundamental coverage carries no verdict
+          // worth stating: its composite collapses to whatever single signal
+          // survived (usually raw momentum), so an index would headline
+          // "STRONG BUY 83/100" off price action alone. Withhold the call —
+          // the hero then falls back to the AI's word, exactly as it does for
+          // macro. The asset-class scorers (fund/crypto/forex/commodity) leave
+          // fundamentalCoverage undefined and are unaffected.
+          const noFundamentals = researchScoreResult?.fundamentalCoverage?.available === 0;
           const headlineScore = isIndiaEquity
             ? (indiaSnapshot ? { composite: indiaSnapshot.composite, recommendation: indiaSnapshot.recommendation } : null)
-            : researchScoreResult
+            : researchScoreResult && !noFundamentals
               ? { composite: researchScoreResult.composite, recommendation: researchScoreResult.recommendation }
               : null;
           return (
@@ -1102,33 +1101,19 @@ function ResearchWorkspace({
       <div className="grid min-w-0 gap-5 min-[1600px]:grid-cols-[minmax(0,1fr)_400px] min-[1600px]:items-start">
       <div className="flex min-w-0 flex-col gap-5 min-[1600px]:order-2">
 
-      {/* ── 3b. Why Now — timing context that appears nowhere else on the page ── */}
+      {/* ── 3b. Why Now — timing context that appears nowhere else on the page.
+             Contextual intel leads render here as bullets: they used to float
+             over this very rail as a fixed overlay (IntelRail), covering the
+             cards beneath at ≤1700px. Same intelligence, in the hierarchy. ── */}
       <Reveal index={3}>
         <WhyNowCard
           sectorEntry={sectorRotationEntry}
           topMovementDriver={movementExplanation?.drivers[0]?.description ?? null}
           nearestTimelineHeadline={nearestTimelineEvent?.title ?? null}
+          intelCards={intel.cards}
+          onIntelActivate={intel.activate}
         />
       </Reveal>
-
-      {/* ── 3c. Macro Context — secondary context, collapsed so the answer leads.
-             Only mounts once at least one rung has real data; a collapsed bar
-             that expands to three "Unavailable" chips is dead weight. ── */}
-      {isEquity && (sectorRotationEntry || (isIndia ? indiaSnapshot : fundamentals?.score)) && (
-        <Reveal index={4}>
-          <CollapsibleSection title="Macro context" subtitle="Market · sector · company regime">
-            <MacroContextLadder
-              sectorEntry={sectorRotationEntry}
-              industry={fundamentals?.snapshot?.industry}
-              recommendation={
-                isIndia
-                  ? indiaSnapshot?.recommendation ?? null
-                  : fundamentals?.score?.recommendation ?? null
-              }
-            />
-          </CollapsibleSection>
-        </Reveal>
-      )}
 
       {/* ── 4. Portfolio Fit + Portfolio Decision — personalised context for this user ── */}
       {ios?.profileReady && portfolioFit && (
@@ -1300,6 +1285,26 @@ function ResearchWorkspace({
                 Yield curve data unavailable.
               </div>
             )
+          ) : !isEquity ? (
+            // Reached by instruments with no dedicated engine and no
+            // fundamentals — indices above all. The equity ConvictionBreakdown
+            // below would render "connect an AI provider", blaming a missing
+            // integration for data that does not exist for this asset type.
+            <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface px-5 py-8 text-center">
+              <p className="text-sm font-medium text-foreground">
+                No conviction score for this instrument
+              </p>
+              {/* quote.assetType is Yahoo's own label ("INDEX", "OPTION", …)
+                  and is what the masthead already shows. detectAssetClass is
+                  deliberately NOT used here: it maps unrecognized types to
+                  "equity", which would caption an index "is equity, not an
+                  operating company". */}
+              <p className="mx-auto max-w-md text-xs leading-5 text-muted">
+                {quote.name} is {quote.assetType ? `${quote.assetType.toLowerCase()} data` : "not an operating company"} —
+                there are no company financials to underwrite. Use the price chart and the
+                Details tab; the verdict above is based on price behaviour alone.
+              </p>
+            </div>
           ) : (
             <ConvictionBreakdown
               score={fundamentals?.score ?? null}
@@ -1746,7 +1751,11 @@ function ResearchWorkspace({
                 </div>
               )}
 
-              {!fundamentals && !fundsLoading && !hasOwnership && !isIndia && (
+              {/* The `!isIndia` guard exists because Indian EQUITIES render
+                  their shareholding blocks above instead. An Indian index has
+                  neither, so without the isIndiaEquity narrowing the tab
+                  rendered completely blank for ^NSEI. */}
+              {!fundamentals && !fundsLoading && !hasOwnership && !isIndiaEquity && (
                 <div className="rounded-xl border border-border bg-surface p-6 text-center text-sm text-muted">
                   Ownership data not available for this symbol.
                 </div>
@@ -2255,25 +2264,19 @@ function ResearchPageInner() {
     // Pairs with the ≥1600px two-column layout inside ResearchWorkspace.
     <PageShell gap="gap-6" py="py-10" width="wide">
       <ArrivalHighlight targetId={highlightTarget} />
-      {/* The description is an ONBOARDING affordance, so it is shown only while
-          there is nothing to research yet.
-        
-          It is a 300-character feature list, and it used to sit above the company
-          header on every load — pushing NVDA's price, market cap and ranges below
-          y=220 on a 1000px viewport so that ~170px of the most valuable space on
-          the page was occupied by prose the user had already read. Once a symbol is
-          loaded, the instrument is the headline. */}
-      <PageHeader
-        title="Research Hub"
-        description={
-          data
-            ? undefined
-            : "Equities, funds, crypto, commodities, forex and macro across US, India, Japan and Europe by ticker — plus derivatives, real estate, private markets and structured products."
-        }
-      />
+      {/* Entry chrome decays once a symbol is loaded: the page title and
+          onboarding description disappear (the company masthead below carries
+          the h1), and the mode pills fold onto the search row. The user has
+          chosen a company — the company is the headline, not the tool. */}
+      {!data && (
+        <PageHeader
+          title="Research Hub"
+          description="Equities, funds, crypto, commodities, forex and macro across US, India, Japan and Europe by ticker — plus derivatives, real estate, private markets and structured products."
+        />
+      )}
 
       {/* Search bar */}
-      <div className="flex flex-col gap-2">
+      <div className={data ? "flex flex-wrap items-center gap-2" : "flex flex-col gap-2"}>
         <div className="flex gap-2">
           {(Object.keys(SEARCH_MODE_LABEL) as SearchMode[]).map((mode) => (
             <button
@@ -2298,7 +2301,7 @@ function ResearchPageInner() {
           }}
           // A ticker is 1–5 characters; a viewport-wide input reads as a form,
           // not a command line. Capped, with the button right beside it.
-          className="flex max-w-2xl gap-2"
+          className="flex min-w-[280px] max-w-2xl flex-1 gap-2"
         >
           {searchMode === "ticker" ? (
             <SymbolSearch
@@ -2315,7 +2318,7 @@ function ResearchPageInner() {
           </Button>
         </form>
         {searchMode !== "ticker" && (
-          <p className="text-xs text-muted">
+          <p className="w-full text-xs text-muted">
             {searchMode === "real_estate"
               ? "Opens Manual Assets with this address already searched via RentCast."
               : "Opens Manual Assets with this company already searched via SEC EDGAR."}

@@ -9,6 +9,10 @@ import type { PortfolioContextForAI } from "@/lib/ai/types";
 import type { AskAIPayload } from "../pattern-analysis-panel";
 import { AI_RECOVERY_HINT } from "@/lib/ai/availability";
 
+/** The six actions that lead the chip row — the questions that most often
+ *  start a research session. The rest stay one "More" click away. */
+const PRIMARY_ACTION_IDS = ["thesis", "bull", "bear", "valuation", "risk", "earnings"];
+
 /**
  * The persistent AI Equity Research Copilot. It stays attached to the currently
  * selected stock, automatically knows the company context, and is the primary
@@ -43,6 +47,7 @@ export function ResearchCopilot({
   } = useCopilot(symbol);
 
   const [input, setInput] = useState("");
+  const [showAllActions, setShowAllActions] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const streaming = status === "streaming";
 
@@ -113,12 +118,15 @@ export function ResearchCopilot({
 
       {/* Predefined research actions — equity-specific (bull/bear case, filings,
           capital allocation, etc.); hidden for funds and other non-equity
-          classes where none of these 15 prompts apply. */}
+          classes where none of these prompts apply. Six chips lead; the full
+          set is one click away — sixteen simultaneous suggestions was a menu
+          pretending to be a shortcut row. Every capability stays reachable. */}
       {isEquity ? (
-        // Horizontal scroll with a fading right edge, so a chip clipped
-        // mid-word reads as "more to scroll" rather than a rendering bug.
-        <div className="flex gap-2 overflow-x-auto border-b border-border px-4 py-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [mask-image:linear-gradient(to_right,black_calc(100%-2.5rem),transparent)]">
-          {RESEARCH_ACTIONS.map((a) => (
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
+          {(showAllActions
+            ? RESEARCH_ACTIONS
+            : PRIMARY_ACTION_IDS.map((id) => RESEARCH_ACTIONS.find((a) => a.id === id)).filter((a) => a != null)
+          ).map((a) => (
             <button
               key={a.id}
               disabled={streaming || status === "init"}
@@ -128,6 +136,14 @@ export function ResearchCopilot({
               {a.label}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => setShowAllActions((v) => !v)}
+            aria-expanded={showAllActions}
+            className="shrink-0 rounded-full px-2 py-1 text-xs text-muted transition-colors hover:text-foreground"
+          >
+            {showAllActions ? "Less" : `More (${RESEARCH_ACTIONS.length - PRIMARY_ACTION_IDS.length}) ▾`}
+          </button>
         </div>
       ) : null}
 

@@ -1,18 +1,20 @@
 "use client";
 
-import { CountUp } from "@/app/_components/count-up";
+import { useState } from "react";
 import { LoadingLine } from "@/app/_components/loading-panel";
-import { ValueBar } from "@/app/_components/value-bar";
 import type { FundamentalsData, PeerComparison } from "@/lib/types";
 
 /**
- * Page-level data-coverage meter.
+ * Page-level data-coverage indicator.
  *
  * Reads the SAME store entries the page renders from (fundamentals, peers,
- * filings, news), so it can never contradict the tabs below it. The previous
- * version asked /api/research/context — a separate fetch with its own failure
- * modes — and routinely reported "Missing: Financial statements" eight lines
- * above a fully populated Financials tab.
+ * filings, news), so it can never contradict the tabs below it.
+ *
+ * Metadata earns visual weight only when it affects the decision: with full
+ * coverage this is one quiet caption line the eye can skip; with datasets
+ * genuinely missing it turns amber and names them. The full dataset list is
+ * one click away either way. (It used to be a full-width card with a green
+ * progress bar — a whole row announcing that nothing was wrong.)
  *
  * A dataset still in flight is counted as PENDING, not missing: "missing" is
  * only claimed once its fetch has actually settled without data.
@@ -27,12 +29,6 @@ interface Props {
   newsCount: number;
 }
 
-function barColor(pct: number) {
-  if (pct >= 80) return "bg-positive";
-  if (pct >= 50) return "bg-warning";
-  return "bg-negative";
-}
-
 export function ResearchConfidenceMeter({
   fundamentals,
   fundamentalsLoading,
@@ -41,9 +37,11 @@ export function ResearchConfidenceMeter({
   filingsCount,
   newsCount,
 }: Props) {
+  const [open, setOpen] = useState(false);
+
   if (fundamentalsLoading && !fundamentals) {
     return (
-      <div className="flex h-10 items-center rounded-lg border border-border bg-surface-2 px-4">
+      <div className="flex justify-end px-1">
         <LoadingLine message="Checking data coverage…" className="text-caption" />
       </div>
     );
@@ -64,23 +62,39 @@ export function ResearchConfidenceMeter({
 
   const available = datasets.filter((d) => d.ok);
   const missing = datasets.filter((d) => !d.ok && !d.pending);
-  const pct = Math.round((available.length / datasets.length) * 100);
+  const degraded = missing.length > 0;
 
   return (
-    <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-2 px-4 py-2.5">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[10px] font-semibold uppercase tracking-widest text-muted">Research Confidence</span>
-        <span className="font-mono text-xs tabular-nums text-muted">
-          {available.length}/{datasets.length} datasets ·{" "}
-          <CountUp value={filingsCount} format={(v) => String(Math.round(v))} /> filings ·{" "}
-          <CountUp value={newsCount} format={(v) => String(Math.round(v))} /> news
+    <div className="flex flex-col items-end gap-1 px-1">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        title="Coverage of the research inputs on this page — metadata, not a signal. The AI verdict's data confidence reflects any gap."
+        className={`inline-flex items-center gap-1.5 rounded-control px-1.5 py-0.5 text-caption tabular-nums transition-colors hover:bg-surface-2 ${
+          degraded ? "text-warning" : "text-muted"
+        }`}
+      >
+        <span aria-hidden className={`h-1.5 w-1.5 rounded-full ${degraded ? "bg-warning" : "bg-positive/70"}`} />
+        <span>
+          Data coverage {available.length}/{datasets.length}
+          {degraded ? ` — missing ${missing.map((d) => d.label).join(", ")}` : ""}
         </span>
-      </div>
-      <ValueBar value={pct} barClassName={barColor(pct)} trackClassName="bg-surface" />
-      {missing.length > 0 && (
-        <p className="text-[10px] text-muted/70">
-          Missing: {missing.map((d) => d.label).join(", ")} — AI confidence reflects this gap.
-        </p>
+        <span aria-hidden className={`text-[9px] transition-transform ${open ? "rotate-180" : ""}`}>▾</span>
+      </button>
+
+      {open && (
+        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-caption text-muted">
+          {datasets.map((d) => (
+            <span key={d.label} className="inline-flex items-center gap-1">
+              <span aria-hidden className={d.ok ? "text-positive" : d.pending ? "text-muted" : "text-warning"}>
+                {d.ok ? "✓" : d.pending ? "…" : "–"}
+              </span>
+              {d.label}
+            </span>
+          ))}
+          <span className="tabular-nums">{filingsCount} filings · {newsCount} news</span>
+        </div>
       )}
     </div>
   );

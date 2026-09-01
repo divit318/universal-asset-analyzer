@@ -12,6 +12,10 @@ import {
 } from "recharts";
 import type { ClassCompareEntry } from "@/lib/compare/types";
 import { CHART_SERIES, useChartTheme } from "@/app/_components/chart-theme";
+// formatMarketCap's default-USD "$" is EARNED here: ClassCompareEntry carries
+// no currency because non-equity class universes are USD-denominated by
+// construction ("-USD" crypto pairs — see lib/compare/types.ts). If a
+// per-entry quote currency is ever added, thread it into both calls below.
 import { formatMarketCap } from "@/lib/format";
 
 const COLORS = CHART_SERIES;

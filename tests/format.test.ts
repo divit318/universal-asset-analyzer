@@ -142,6 +142,17 @@ describe("formatMarketCap", () => {
   it("handles null", () => {
     expect(formatMarketCap(null)).toBe("—");
   });
+  it("keeps USD output identical when the currency is passed explicitly (or missing)", () => {
+    expect(formatMarketCap(2_900_000_000_000, "USD")).toBe("$2.90T");
+    expect(formatMarketCap(2_900_000_000_000, null)).toBe("$2.90T");
+    expect(formatMarketCap(2_900_000_000_000, undefined)).toBe("$2.90T");
+  });
+  it("labels non-USD quote currencies with their own symbol/units, never a blanket dollar", () => {
+    // INR compacts in Indian units via formatCompactCurrency: ₹, crore.
+    expect(formatMarketCap(1.5e12, "INR")).toBe("₹1,50,000 Cr");
+    expect(formatMarketCap(3_400_000_000, "JPY")).toBe("¥3.40B");
+    expect(formatMarketCap(3_400_000_000, "INR")).not.toContain("$");
+  });
 });
 
 /* All expected strings below are hand-computed from the documented rules

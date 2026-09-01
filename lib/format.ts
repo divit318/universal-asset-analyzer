@@ -133,16 +133,24 @@ export function formatCompact(value: number | null | undefined): string {
 }
 
 /**
- * Compact dollar amount for USD-QUOTED instruments ONLY (crypto "-USD" pairs,
- * USD futures, AI spend). Anything with a listing/reporting currency must use
- * {@link formatCompactCurrency} instead — this helper cannot say anything but
- * "$", and putting it in front of an INR/JPY/KRW figure mislabels the number
- * by the FX rate. (2026-08-14 audit: every non-USD-guaranteed call site was
- * migrated off this function; new call sites must be USD-guaranteed.)
+ * Compact market-cap-scale amount. Historically USD-only ("$" hardcoded),
+ * which made it a footgun for anything not USD-guaranteed; it now takes the
+ * quote currency and delegates non-USD codes to {@link formatCompactCurrency}
+ * (₹ crore/lakh for INR, per-currency symbols elsewhere). The default stays
+ * USD so the legacy USD-guaranteed call sites (crypto "-USD" pairs, USD
+ * futures, AI spend) render byte-for-byte as before — but any call site that
+ * HAS a currency in scope should pass it rather than rely on the default.
+ * (2026-08-14 audit: every non-USD-guaranteed call site was migrated off this
+ * function; new currency-less call sites must be USD-guaranteed.)
  */
-export function formatMarketCap(value: number | null | undefined): string {
+export function formatMarketCap(
+  value: number | null | undefined,
+  currency: string | null | undefined = "USD",
+): string {
   if (!isRenderable(value)) return "—";
-  return `$${formatCompact(value)}`;
+  const code = (currency ?? "USD").toUpperCase();
+  if (code === "USD") return `$${formatCompact(value)}`;
+  return formatCompactCurrency(value, currency);
 }
 
 /**

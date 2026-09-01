@@ -106,15 +106,23 @@ describe("Excel research report wires currency end to end", () => {
   });
 });
 
-describe("portfolio export prices each position in its own currency", () => {
+describe("portfolio export reports in the portfolio's base currency, from the page's own evaluation", () => {
+  // The export used to price each row in its own quote currency and sum a
+  // mixed-currency book unconverted (with a disclosure). It now reads the
+  // SAME evaluation the Portfolio page renders — FX applied, manual assets
+  // included — so the export can never disagree with the page beside it.
   const route = src("app/api/export/portfolio/route.ts");
 
-  it("Excel money cells take the per-row quote currency numFmt", () => {
-    expect(route).toContain("excelMoneyFormat(p.quote?.currency)");
+  it("rows come from buildEvaluation(), not the legacy ticker-only table", () => {
+    expect(route).toContain("buildEvaluation()");
+    expect(route).not.toContain("listPortfolio()");
   });
-  it("mixed-currency books get unlabelled totals plus a disclosure, not a false symbol", () => {
-    expect(route).toContain("TOTAL (mixed currencies — unconverted sum)");
-    expect(route).toContain("totals are unconverted sums");
+  it("Excel money cells share ONE base-currency numFmt", () => {
+    expect(route).toContain("excelMoneyFormat(baseCurrency)");
+  });
+  it("foreign-currency books get a conversion disclosure, not unconverted sums", () => {
+    expect(route).toContain("Foreign-currency holdings are converted to");
+    expect(route).not.toContain("totals are unconverted sums");
   });
 });
 

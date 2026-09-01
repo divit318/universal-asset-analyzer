@@ -65,6 +65,8 @@ function fit(over: Partial<PortfolioFitAnalysis> & { symbol: string }): Portfoli
     },
     reasons: over.reasons ?? ["Fills a sector the portfolio has no exposure to", "Aligns with the stated objective"],
     tradeoffs: over.tradeoffs ?? ["Increases US concentration"],
+    policyInsight: over.policyInsight ?? null,
+    policyAdjustment: over.policyAdjustment ?? 0,
     suggestedAllocationPct: over.suggestedAllocationPct ?? 3,
     suggestedAmount: over.suggestedAmount ?? 30_000,
     projectedHHI: over.projectedHHI ?? 3_300,

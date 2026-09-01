@@ -23,12 +23,12 @@
  */
 
 import { runPlan, stepValue } from "../platform/orchestrator";
+import { dominantBenchmark } from "../benchmarks";
 import { getMissionContext, buildOpportunitySnapshot, buildSectorAttention, type MissionControlContext, type UpcomingEventLite } from "../mission-control";
 import { getPortfolioReport, type UniversalPortfolioReport } from "../portfolio/report";
 import { getCalendarEvents } from "../calendar";
-import { listWatchlist, listLots, listNotifications } from "../db";
-import { getHistory, getQuote, getQuotes } from "../yahoo";
-import { portfolioPerformance } from "../portfolio-performance";
+import { listWatchlist, listNotifications } from "../db";
+import { isEmptyPerformance } from "../portfolio/performance";
 import { buildMarketIntelligence } from "./market-intel";
 import { buildPortfolioPulse } from "./pulse";
 import { buildEquityCurve, EQUITY_CURVE_DAYS } from "./equity-curve";
@@ -58,13 +58,15 @@ import {
 } from "./changes";
 import { buildSymbolContext } from "./symbol-context";
 import { buildDashboardFacts } from "./facts";
-import { dominantBenchmark } from "../benchmarks";
 import { marketToday, marketDayPlus } from "./clock";
 import { MIN_DAYS_TO_ANNUALIZE, type ChangeFeed, type EquityCurve, type HomeDigest, type PortfolioPerformanceSummary } from "./contracts";
-import type { PortfolioLot, WatchlistItem } from "../types";
+import type { WatchlistItem } from "../types";
 
-// Fallback for degraded/empty states only; live performance benchmarks
-// against the market the book mostly holds (lib/benchmarks.ts).
+// Last-resort fallback for degraded/empty states when NO holdings are known
+// either (report step failed too, so there are no symbols to derive a market
+// from); when holdings survived, the degraded equity-curve label uses
+// dominantBenchmark over them instead (see buildHomeDigest). Live performance
+// always benchmarks against the market the book mostly holds (lib/benchmarks.ts).
 const BENCHMARK = "SPY";
 
 /* ------------------------------------------------------------------ */
@@ -72,86 +74,49 @@ const BENCHMARK = "SPY";
 /* ------------------------------------------------------------------ */
 
 /**
- * Reuses `portfolioPerformance()` — the same XIRR + benchmark engine
- * /api/portfolio/performance calls. The homepage shows the three headline
- * numbers; the full position-level breakdown stays on /portfolio.
+ * The homepage's performance summary, read OFF the universal report's own
+ * performance block — the exact object the Portfolio page's headline tile and
+ * Performance tab render.
+ *
+ * This used to rebuild `portfolioPerformance()` here with its own quote batch
+ * and its own benchmark fetch, which is the documented "two surfaces over one
+ * portfolio must share one snapshot" failure: quotes are cached for seconds
+ * and not persisted, so Home and /portfolio priced the same book at different
+ * instants and could disagree on XIRR and the benchmark gap. One block, one
+ * snapshot, zero extra fetches — Home now cannot disagree with the tab.
  */
-async function buildPerformance(): Promise<PortfolioPerformanceSummary> {
-  const lots = listLots();
-  if (lots.length === 0) {
+function performanceFromReport(report: UniversalPortfolioReport | undefined): PortfolioPerformanceSummary {
+  const block = report?.performance;
+  if (!report || !block || isEmptyPerformance(block)) {
     return { status: "empty", xirrPct: null, holdingDays: 0, totalReturnPct: 0, totalReturnDollar: 0, benchmark: null };
   }
 
-  const bySymbol = new Map<string, PortfolioLot[]>();
-  for (const l of lots) {
-    const list = bySymbol.get(l.symbol);
-    if (list) list.push(l);
-    else bySymbol.set(l.symbol, [l]);
-  }
-
-  const earliest = lots.reduce((min, l) => (l.tradeDate < min ? l.tradeDate : min), lots[0].tradeDate);
-  const daysSinceFirst = Math.ceil((Date.now() - Date.parse(earliest)) / 86_400_000) + 7;
-
-  // Synthetic tickers never reach the provider. `upsertCash()` stores cash as a
-  // `CASH-<CCY>` lot, and sending that to Yahoo not only can't resolve it — it costs
-  // OTHER symbols in the same batch their quotes (on the Portfolio's book it silently
-  // dropped a forex position), and it produces a cache key no other surface shares.
-  // Cash is excluded from these figures either way, because `priceBySymbol` never
-  // resolves it — which is correct, and now the exclusion costs nothing else.
-  const quotableSymbols = [...bySymbol.keys()].filter((s) => !s.toUpperCase().startsWith("CASH-"));
-
-  const benchmark = dominantBenchmark(quotableSymbols);
-  const [quotes, benchHistory, benchQuote] = await Promise.all([
-    getQuotes(quotableSymbols),
-    getHistory(benchmark.symbol, Math.max(30, daysSinceFirst)).catch(() => []),
-    getQuote(benchmark.symbol).catch(() => null),
-  ]);
-
-  const priceBySymbol = new Map(quotes.map((q) => [q.symbol.toUpperCase(), q.price]));
-  const benchPriceNow = benchQuote?.price ?? benchHistory.at(-1)?.close ?? 0;
-
-  const perf = portfolioPerformance(
-    bySymbol,
-    (s) => priceBySymbol.get(s.toUpperCase()) ?? null,
-    new Date().toISOString(),
-    benchHistory.length > 0 && benchPriceNow > 0
-      ? {
-          symbol: benchmark.symbol,
-          history: benchHistory.map((h) => ({ date: h.date.slice(0, 10), close: h.close })),
-          priceNow: benchPriceNow,
-        }
-      : undefined,
-  );
-
-  // `portfolioPerformance()` returns every rate as a RATIO (-0.048 = -4.8%),
-  // including totalReturnPct despite the name. Scale once, here, so no renderer
-  // has to remember. Getting this wrong printed "-0.0%" next to "-$25,369".
+  // `portfolioPerformance()` returns every rate as a RATIO (-0.048 = -4.8%)
+  // except `total.pct`, which is already in percent. Scale once, here, so no
+  // renderer has to remember. Getting this wrong printed "-0.0%" next to "-$25,369".
   const asPct = (ratio: number) => ratio * 100;
 
   // Annualizing a portfolio younger than a quarter produces a number that is
   // arithmetically correct and practically meaningless — see MIN_DAYS_TO_ANNUALIZE.
-  const canAnnualize = perf.holdingDays >= MIN_DAYS_TO_ANNUALIZE;
-  const xirrPct = canAnnualize && perf.xirr != null ? asPct(perf.xirr) : null;
+  const canAnnualize = block.holdingDays >= MIN_DAYS_TO_ANNUALIZE;
 
   return {
     status: "ok",
-    xirrPct,
-    holdingDays: perf.holdingDays,
-    // `total` is the whole-portfolio figure the Portfolio page's headline renders,
-    // already in percent — one definition of "total return" across every surface.
-    // This used to be `perf.totalReturnPct`, whose denominator summed transaction
-    // flows including synthetic cash lots and so understated the return by ~40%.
-    totalReturnPct: perf.total.pct,
-    totalReturnDollar: perf.total.pnl,
+    xirrPct: canAnnualize && block.xirr != null ? asPct(block.xirr) : null,
+    holdingDays: block.holdingDays,
+    // `total` is the whole-portfolio figure the Portfolio page's headline renders
+    // — one definition of "total return" across every surface, by construction.
+    totalReturnPct: block.total.pct,
+    totalReturnDollar: block.total.pnl,
     // The benchmark comparison is XIRR-vs-XIRR, so it inherits the same gate:
     // if we won't annualize the portfolio, we can't honestly annualize the gap.
     benchmark:
-      canAnnualize && perf.benchmark && perf.xirr != null && perf.benchmark.xirr != null
+      canAnnualize && block.benchmark && block.xirr != null && block.benchmark.xirr != null
         ? {
-            symbol: perf.benchmark.symbol,
-            portfolioPct: asPct(perf.xirr),
-            benchmarkPct: asPct(perf.benchmark.xirr),
-            excessPct: asPct(perf.benchmark.outperformancePct ?? 0),
+            symbol: block.benchmark.symbol,
+            portfolioPct: asPct(block.xirr),
+            benchmarkPct: asPct(block.benchmark.xirr),
+            excessPct: asPct(block.benchmark.outperformancePct ?? 0),
           }
         : null,
   };
@@ -177,7 +142,13 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
     { id: "calendar", run: () => getCalendarEvents() },
     { id: "watchlist", run: async () => listWatchlist() },
     { id: "notifications", run: async () => listNotifications(20) },
-    { id: "performance", run: () => buildPerformance() },
+    // Derived from the report's own performance block — never a second quote
+    // batch (see performanceFromReport).
+    {
+      id: "performance",
+      dependsOn: ["report"],
+      run: async (deps) => performanceFromReport(deps.report as UniversalPortfolioReport | undefined),
+    },
 
     // The Book card's 90-day return index. Rides the same cached `history`
     // dataset the performance step uses; a failure degrades the sparkline alone.
@@ -304,7 +275,21 @@ export async function buildHomeDigest(): Promise<HomeDigest> {
 
     equityCurve:
       equityCurve ??
-      { status: "degraded", windowDays: EQUITY_CURVE_DAYS, points: [], portfolioPct: null, benchmarkPct: null, benchmarkSymbol: BENCHMARK, coveragePct: null },
+      {
+        status: "degraded",
+        windowDays: EQUITY_CURVE_DAYS,
+        points: [],
+        portfolioPct: null,
+        benchmarkPct: null,
+        // Degraded state, but market-aware when it can be: benchmark against
+        // the market the surviving holdings mostly live in (NIFTY 50 for an
+        // India book), exactly as the live curve would have. SPY only when
+        // the report step failed too and no symbols are known at all.
+        benchmarkSymbol: report
+          ? dominantBenchmark(report.holdings.map((h) => h.symbol).filter((s): s is string => s != null)).symbol
+          : BENCHMARK,
+        coveragePct: null,
+      },
 
     activity,
 

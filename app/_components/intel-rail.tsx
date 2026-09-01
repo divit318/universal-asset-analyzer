@@ -49,7 +49,11 @@ function deriveContext(
   focusSymbol: string | null,
   focusSymbols: string[],
 ): RailContext | null {
-  if (pathname === "/research" || pathname.startsWith("/research/") || pathname === "/valuation" || pathname === "/ic-report") {
+  // /research is deliberately absent: the Research page consumes the same
+  // intel via useIntelCards() and renders it INSIDE its "Why Now?" card. A
+  // fixed overlay was occluding the page's own context rail at ≤1700px —
+  // intelligence must join the page's hierarchy, not float over it.
+  if (pathname === "/valuation" || pathname === "/ic-report") {
     // The focus spine updates when the user switches symbols in-page (the URL
     // often doesn't), so it wins over the initial deep-link param.
     const symbol = focusSymbol ?? searchParams.get("symbol")?.trim().toUpperCase() ?? null;
@@ -63,10 +67,130 @@ function deriveContext(
     const symbols = fromUrl.length >= 2 ? fromUrl : focusSymbols.slice(0, 3);
     return symbols.length >= 2 ? { surface: "compare", symbols: symbols.slice(0, 4) } : null;
   }
-  if (pathname === "/portfolio") return { surface: "portfolio", symbols: [] };
+  // /portfolio is deliberately absent too: the Portfolio page renders the same
+  // intel as a quiet row under "Know this" (useIntelCards) — the fixed overlay
+  // was covering the Alignment tile and the Biggest Mismatch card on a page
+  // that is full-width at every viewport.
   if (pathname === "/watchlist") return { surface: "watchlist", symbols: [] };
   if (pathname === "/wire") return { surface: "wire", symbols: [] };
   return null;
+}
+
+/**
+ * Headless intel consumer for pages that render intelligence INSIDE their own
+ * layout instead of as a floating overlay (Research → "Why Now?" card,
+ * Portfolio → the row under "Know this").
+ *
+ * Same contract as the rail: debounced fetch, two re-polls while the AI pass
+ * is pending, "shown" reported once per card after it has genuinely been on
+ * screen, "opened" reported through `activate`. Cards a user acts on are
+ * hidden locally for the session, exactly like the rail's behaviour.
+ */
+export function useIntelCards(
+  context: { surface: IntelSurface; symbols: string[] } | null,
+  maxCards = 2,
+): {
+  cards: IntelCard[];
+  activate: (card: IntelCard) => void;
+} {
+  const router = useRouter();
+  const [result, setResult] = useState<{ key: string; cards: IntelCard[] } | null>(null);
+  const [used, setUsed] = useState<ReadonlySet<string>>(new Set());
+  const shownReported = useRef<Set<string>>(new Set());
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const symbols = context?.symbols.map((s) => s.trim().toUpperCase()).filter(Boolean) ?? [];
+  const surface = context?.surface ?? null;
+  const contextKey = surface ? `${surface}:${symbols.join(",")}` : null;
+
+  useEffect(() => {
+    for (const t of timers.current) clearTimeout(t);
+    timers.current = [];
+    if (!contextKey || !surface) return;
+
+    const controller = new AbortController();
+    const load = async (): Promise<boolean> => {
+      if (document.hidden) return false;
+      try {
+        const params = new URLSearchParams({ surface });
+        if (symbols.length > 0) params.set("symbols", symbols.join(","));
+        const res = await fetch(`/api/intel?${params}`, { signal: controller.signal });
+        if (!res.ok) return false;
+        const json = (await res.json()) as IntelResponse;
+        if (controller.signal.aborted) return false;
+        setResult({ key: contextKey, cards: json.cards });
+        return json.aiPending;
+      } catch {
+        return false; // ambient context: failure renders as nothing
+      }
+    };
+
+    timers.current.push(
+      setTimeout(() => {
+        void load().then((aiPending) => {
+          if (!aiPending) return;
+          for (const delay of AI_POLL_MS) {
+            timers.current.push(setTimeout(() => void load(), delay));
+          }
+        });
+      }, DEBOUNCE_MS),
+    );
+
+    return () => {
+      controller.abort();
+      for (const t of timers.current) clearTimeout(t);
+      timers.current = [];
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contextKey]);
+
+  const cards = useMemo(() => {
+    if (!result || result.key !== contextKey) return [];
+    return result.cards.filter((c) => !used.has(c.id)).slice(0, maxCards);
+  }, [result, contextKey, used, maxCards]);
+
+  useEffect(() => {
+    if (cards.length === 0) return;
+    const t = setTimeout(() => {
+      for (const card of cards) {
+        if (shownReported.current.has(card.id)) continue;
+        shownReported.current.add(card.id);
+        reportIntelEvent(card.id, "shown", card.symbol);
+      }
+    }, SHOWN_AFTER_MS);
+    return () => clearTimeout(t);
+  }, [cards]);
+
+  const activate = useCallback(
+    (card: IntelCard) => {
+      reportIntelEvent(card.id, "opened", card.symbol);
+      setUsed((prev) => new Set(prev).add(card.id));
+      if (card.action.kind === "assistant" && card.action.prompt) {
+        window.dispatchEvent(new CustomEvent(OPEN_ASSISTANT_EVENT, { detail: { question: card.action.prompt } }));
+        return;
+      }
+      const href = card.action.href;
+      if (!href) return;
+      if (/^https?:\/\//i.test(href)) {
+        window.open(href, "_blank", "noopener,noreferrer");
+      } else {
+        router.push(href);
+      }
+    },
+    [router],
+  );
+
+  return { cards, activate };
+}
+
+function reportIntelEvent(id: string, status: "shown" | "dismissed" | "opened", symbol?: string) {
+  void fetch("/api/intel/event", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, status, symbol }),
+  }).catch(() => {
+    /* suppression is best-effort — never surfaces */
+  });
 }
 
 export function IntelRail() {

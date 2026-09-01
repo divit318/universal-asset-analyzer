@@ -6,7 +6,7 @@
  * source of truth for how a percent or a currency renders.
  */
 
-import { formatPercent, formatCompact } from "@/lib/format";
+import { formatPercent, formatCompactCurrency } from "@/lib/format";
 
 /**
  * Signed percent, e.g. +1.2% / −0.5%. Uses a true minus sign for alignment.
@@ -23,17 +23,23 @@ export function fmtSignedPct(value: number | null | undefined, digits = 1): stri
   return formatPercent(value, digits).replace("-", "−");
 }
 
-/** Signed, compact currency: +$2.3K / −$1.5K. */
-export function fmtSignedMoney(value: number | null | undefined): string {
+/**
+ * Signed, compact currency: +$2.3K / −$1.5K — in the portfolio's BASE
+ * currency (+₹2.3 L for an INR book), threaded by the caller. Defaults to
+ * USD so existing US call sites render identically; symbol lookup and INR
+ * crore/lakh units come from lib/format's formatCompactCurrency, never
+ * reimplemented here.
+ */
+export function fmtSignedMoney(value: number | null | undefined, currency: string = "USD"): string {
   if (value == null || Number.isNaN(value)) return "—";
   const sign = value > 0 ? "+" : value < 0 ? "−" : "";
-  return `${sign}$${formatCompact(Math.abs(value))}`;
+  return `${sign}${formatCompactCurrency(Math.abs(value), currency)}`;
 }
 
-/** Compact currency without a forced sign: $455.3K. */
-export function fmtMoney(value: number | null | undefined): string {
+/** Compact currency without a forced sign: $455.3K / ₹4.6 Cr. Same currency contract as {@link fmtSignedMoney}. */
+export function fmtMoney(value: number | null | undefined, currency: string = "USD"): string {
   if (value == null || Number.isNaN(value)) return "—";
-  return `$${formatCompact(value)}`;
+  return formatCompactCurrency(value, currency);
 }
 
 /**

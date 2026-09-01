@@ -62,44 +62,66 @@ interface Props {
   news?: NewsItem[];
 }
 
+/** The hero renders the top two catalysts and risks verbatim; this tab must
+ *  add evidence, not restate it. Keep in sync with DecisionHero's slice(0, 2). */
+const SHOWN_IN_HERO = 2;
+
 export function WhySection({ verdict, verdictLoading, risks, news }: Props) {
   if (verdictLoading && !verdict) return <Skeleton />;
+
+  // Only what the hero did NOT already show. When the model returned two-ish
+  // bullets per side, the old full lists repeated the hero word for word —
+  // a section that tells the reader nothing new is noise, so it disappears.
+  const moreCatalysts = verdict?.catalysts.slice(SHOWN_IN_HERO) ?? [];
+  const moreRisks = verdict?.risks.slice(SHOWN_IN_HERO) ?? [];
+
+  // What will actually render. The fallback below used to test whether the
+  // INPUTS existed (`!verdict && …`), not whether any of them survived the
+  // slicing above — so a verdict whose two catalysts and two risks were all
+  // consumed by the hero, on a symbol with no fundamental risks and no news
+  // (any index, and any quiet equity), produced a completely blank tab.
+  const hasBeyondHero = moreCatalysts.length > 0 || moreRisks.length > 0;
+  const hasRisks = (risks?.length ?? 0) > 0;
+  const hasNews = (news?.length ?? 0) > 0;
+  const hasAnything = hasBeyondHero || hasRisks || hasNews;
 
   return (
     <div className="flex flex-col gap-7">
 
-      {/* ── 2-col: Why Own / Why Avoid ── */}
-      {verdict && (
+      {/* ── 2-col: Why Own / Why Avoid — beyond the hero's summary ── */}
+      {(moreCatalysts.length > 0 || moreRisks.length > 0) && (
         <div className="grid gap-5 sm:grid-cols-2">
-          {/* Why Own */}
-          <div className="flex flex-col gap-3 rounded-xl border border-positive/15 bg-positive/5 p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-positive/80">
-              Why Own
-            </p>
-            <ul className="space-y-2">
-              {verdict.catalysts.map((c, i) => (
-                <Reveal key={i} as="li" index={i} className="flex gap-2.5 text-sm leading-5 text-foreground/85">
-                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-positive/60" />
-                  {c}
-                </Reveal>
-              ))}
-            </ul>
-          </div>
+          {moreCatalysts.length > 0 && (
+            <div className="flex flex-col gap-3 rounded-xl border border-positive/15 bg-positive/5 p-4">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-positive/80">
+                Why Own <span className="normal-case tracking-normal text-muted/60">· beyond the verdict summary</span>
+              </p>
+              <ul className="space-y-2">
+                {moreCatalysts.map((c, i) => (
+                  <Reveal key={i} as="li" index={i} className="flex gap-2.5 text-sm leading-5 text-foreground/85">
+                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-positive/60" />
+                    {c}
+                  </Reveal>
+                ))}
+              </ul>
+            </div>
+          )}
 
-          {/* Why Avoid */}
-          <div className="flex flex-col gap-3 rounded-xl border border-negative/15 bg-negative/5 p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-negative/80">
-              Why Avoid
-            </p>
-            <ul className="space-y-2">
-              {verdict.risks.map((r, i) => (
-                <Reveal key={i} as="li" index={i} className="flex gap-2.5 text-sm leading-5 text-foreground/85">
-                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-negative/60" />
-                  {r}
-                </Reveal>
-              ))}
-            </ul>
-          </div>
+          {moreRisks.length > 0 && (
+            <div className="flex flex-col gap-3 rounded-xl border border-negative/15 bg-negative/5 p-4">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-negative/80">
+                Why Avoid <span className="normal-case tracking-normal text-muted/60">· beyond the verdict summary</span>
+              </p>
+              <ul className="space-y-2">
+                {moreRisks.map((r, i) => (
+                  <Reveal key={i} as="li" index={i} className="flex gap-2.5 text-sm leading-5 text-foreground/85">
+                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-negative/60" />
+                    {r}
+                  </Reveal>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 
@@ -173,10 +195,14 @@ export function WhySection({ verdict, verdictLoading, risks, news }: Props) {
         </div>
       )}
 
-      {/* Fallback if nothing to show */}
-      {!verdict && (!risks || risks.length === 0) && (!news || news.length === 0) && (
+      {/* Fallback if nothing rendered above. Distinguishes "the verdict said
+          everything already" from "there is no verdict" — the second is a
+          setup problem the user can act on, the first is not. */}
+      {!hasAnything && (
         <div className="rounded-xl border border-border bg-surface px-5 py-8 text-center text-sm text-muted">
-          Investment analysis not yet available. Connect an AI provider in Settings to generate the AI verdict.
+          {verdict
+            ? "Everything the analysis found is already shown in the verdict above — no additional catalysts, risks, or recent developments for this symbol."
+            : "Investment analysis not yet available. Connect an AI provider in Settings to generate the AI verdict."}
         </div>
       )}
     </div>

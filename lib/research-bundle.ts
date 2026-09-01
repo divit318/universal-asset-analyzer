@@ -30,7 +30,7 @@ import { getIndianFilings, isIndianEquitySymbol } from "./india-news";
 import { getCompanyNews } from "./news";
 import { getPeerComparison } from "./peers";
 import { buildFundamentalsData } from "./fundamentals-data";
-import { findSectorRotationEntry, getLatestSectorRotation } from "./sector-rotation";
+import { sectorRotationEntryFor, getLatestSectorRotation } from "./sector-rotation";
 import { runPlan, stepError, stepValue } from "./platform/orchestrator";
 import type { PlanStep } from "./platform/types";
 import type {
@@ -158,7 +158,8 @@ export function researchPlan(symbol: string, opts: { isEquity: boolean }): PlanS
         run: async (deps) => {
           const sector = (deps.fundamentals as FundamentalsData | null)?.snapshot?.sector;
           if (!sector) return null;
-          return findSectorRotationEntry(getLatestSectorRotation(), sector);
+          // Null for non-US listings: the snapshot measures US SPDR ETFs.
+          return sectorRotationEntryFor(symbol, getLatestSectorRotation(), sector);
         },
       },
     );
