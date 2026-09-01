@@ -211,7 +211,11 @@ def _compute_signal(composite: float, confidence: float) -> str:
 
 
 def _fetch_10y_yield() -> float | None:
-    """Current 10Y Treasury yield as a fraction, or None if unavailable."""
+    """Current US 10Y Treasury yield as a fraction, or None if unavailable.
+
+    US universes ONLY — ^TNX is the US Treasury yield and must never scale an
+    India universe (see INDIA_10Y_GSEC_YIELD below).
+    """
     try:
         from engine.data.macro_loader import _yf_close
         tnx = _yf_close("^TNX", period="5d")
@@ -220,6 +224,14 @@ def _fetch_10y_yield() -> float | None:
     except Exception:
         pass
     return None
+
+
+# India 10Y G-sec yield: a static Damodaran-2025-vintage estimate (6.5%),
+# matching lib/valuation/wacc.ts's IN riskFree. Deliberately static — no
+# reliable free live GOI yield feed exists (Yahoo carries no ^TNX equivalent
+# for Indian sovereigns), and quietly scaling an India universe by the US
+# Treasury yield is worse than an honest, documented constant.
+INDIA_10Y_GSEC_YIELD = 0.065
 
 
 def _regime_conditional_value_weight(
@@ -234,12 +246,17 @@ def _regime_conditional_value_weight(
     Higher rates → value premium expands (duration discount hits growth stocks more).
 
     `yield_10y` is passed in so the caller can prefetch it concurrently with the
-    other macro calls; when omitted the fetch happens here as before.
+    other macro calls; when omitted the fetch happens here as before. It is a
+    US (^TNX) yield, so for an India universe it is IGNORED and the static
+    INDIA_10Y_GSEC_YIELD applies instead — India's value premium must scale on
+    India's own rate regime, not the Fed's.
     """
     # Market-specific base
     base = 0.20 if universe_is_india else 0.10
 
-    if yield_10y is None:
+    if universe_is_india:
+        yield_10y = INDIA_10Y_GSEC_YIELD
+    elif yield_10y is None:
         yield_10y = _fetch_10y_yield()
     if yield_10y is not None:
         rate_scale = float(np.clip((yield_10y - 0.02) / 0.03, 0.5, 1.5))
