@@ -14,9 +14,28 @@
 
 import type { Greeks } from "./black-scholes";
 import { blackScholesGreeks } from "./black-scholes";
+import { riskFreeRate } from "./benchmarks";
+import { detectMarket } from "./market";
 import type { OptionContract, OptionsChainData } from "./types";
 
-const RISK_FREE_RATE = 0.0425; // matches lib/portfolio-analytics.ts's default T-bill assumption
+/** US fallback rate (~3M T-bill), matching lib/portfolio-analytics.ts's default
+ *  assumption. Only the fallback — the Greeks below price with the market-aware
+ *  rate from {@link riskFreeRateForUnderlying}: an NSE option (RELIANCE.NS)
+ *  discounted at the US T-bill rate misprices every rate-sensitive Greek. */
+const RISK_FREE_RATE = 0.0425;
+
+/**
+ * Risk-free rate for an options underlying, derived from its listing market.
+ * The chain payload carries only the underlying's symbol (no currency/exchange
+ * — see OptionsChainData), so region detection rides on the symbol suffix via
+ * lib/market.ts, and lib/benchmarks.ts owns the per-region rates (US ~3M
+ * T-bill 4.25%; IN ~10Y GOI 6.5%, the same figure the valuation layer uses).
+ */
+export function riskFreeRateForUnderlying(symbol: string | null | undefined): number {
+  if (!symbol) return RISK_FREE_RATE;
+  const region = detectMarket({ symbol, currency: "", exchange: null, assetType: null });
+  return riskFreeRate(region);
+}
 
 export interface DerivativesSummary {
   underlyingSymbol: string;
@@ -132,14 +151,15 @@ export function computeDerivativesSummary(chain: OptionsChainData): DerivativesS
   const atmCall = near ? closestToPrice(near.calls, price) : null;
   const atmPut = near ? closestToPrice(near.puts, price) : null;
   const timeToExpiry = near ? yearsUntil(near.expirationDate) : 0;
+  const rate = riskFreeRateForUnderlying(chain.underlyingSymbol);
 
   const atmCallGreeks =
     atmCall && nearAtm.iv != null
-      ? blackScholesGreeks({ spot: price, strike: atmCall.strike, timeToExpiryYears: timeToExpiry, riskFreeRate: RISK_FREE_RATE, volatility: nearAtm.iv / 100, isCall: true })
+      ? blackScholesGreeks({ spot: price, strike: atmCall.strike, timeToExpiryYears: timeToExpiry, riskFreeRate: rate, volatility: nearAtm.iv / 100, isCall: true })
       : null;
   const atmPutGreeks =
     atmPut && nearAtm.iv != null
-      ? blackScholesGreeks({ spot: price, strike: atmPut.strike, timeToExpiryYears: timeToExpiry, riskFreeRate: RISK_FREE_RATE, volatility: nearAtm.iv / 100, isCall: false })
+      ? blackScholesGreeks({ spot: price, strike: atmPut.strike, timeToExpiryYears: timeToExpiry, riskFreeRate: rate, volatility: nearAtm.iv / 100, isCall: false })
       : null;
 
   return {

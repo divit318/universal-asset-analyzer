@@ -8,9 +8,11 @@
  * Everything is in the symbol's reporting currency, and `currency` says which.
  */
 
-import { getQuoteSummary } from "../yahoo";
+import { getHistory, getQuote, getQuoteSummary } from "../yahoo";
 import { getFinancialStatementsYahoo } from "../statements";
-import type { FinancialStatements } from "../types";
+import { marketBenchmark } from "../benchmarks";
+import type { FinancialStatements, HistoryPoint } from "../types";
+import { betaVsBenchmark, type BetaSource } from "./beta";
 import { computeWacc, debtToEquityFromYahoo, waccRegionFor, type WaccBreakdown } from "./wacc";
 
 /** Unwrap Yahoo's { raw, fmt } wrapper or a bare number. */
@@ -70,6 +72,8 @@ export interface ValuationFacts {
   /** Growth the business actually delivered, and what that figure measures. */
   deliveredGrowth: DeliveredGrowth;
   beta: number | null;
+  /** Where `beta` came from — home-benchmark regression, Yahoo, or the 1.0 default. */
+  betaSource: BetaSource;
   /** Ratio, e.g. 1.45 — already converted from Yahoo's percentage. */
   debtToEquity: number | null;
   wacc: WaccBreakdown;
@@ -127,14 +131,31 @@ export async function fetchValuationFacts(symbol: string): Promise<ValuationFact
   // Statements are fetched alongside the quote rather than after it: the growth
   // assumption depends on them, and the Research Hub strip is on a latency
   // budget. Their failure is non-fatal — the TTM proxy covers it.
-  const [summaryResult, statementsResult] = await Promise.allSettled([
+  // getQuote (the `quote` endpoint) is fetched alongside, purely for price.
+  // quoteSummary's `price` module is a DIFFERENT Yahoo endpoint and it goes
+  // stale on non-equities: for BTC-USD it served regularMarketPrice 63,925
+  // while the live quote was 78,141 — a 22% gap that made the valuation
+  // workspace contradict the masthead and the chart on the same screen.
+  // getQuote is what every other surface in the app reads, so taking price
+  // from it is what keeps them agreeing. Non-fatal: quoteSummary still covers
+  // it if the quote call fails.
+  // Non-US listings need a home-benchmark beta regression (see resolveBeta):
+  // the histories are kicked off with the other fetches when the suffix alone
+  // already settles the region, so the common .NS/.BO path pays no extra trip.
+  const provisionalRegion = waccRegionFor(symbol, null);
+  const historyPromises =
+    provisionalRegion === "IN" ? betaHistoryPromises(symbol, provisionalRegion) : null;
+
+  const [summaryResult, statementsResult, quoteResult] = await Promise.allSettled([
     getQuoteSummary(symbol, ["financialData", "defaultKeyStatistics", "price"]),
     getFinancialStatementsYahoo(symbol),
+    getQuote(symbol),
   ]);
 
   if (summaryResult.status === "rejected") throw summaryResult.reason;
   const raw = summaryResult.value as Record<string, unknown>;
   const statements = statementsResult.status === "fulfilled" ? statementsResult.value : null;
+  const livePrice = quoteResult.status === "fulfilled" ? num(quoteResult.value?.price) : null;
 
   const fd = (raw.financialData ?? {}) as Record<string, unknown>;
   const ks = (raw.defaultKeyStatistics ?? {}) as Record<string, unknown>;
@@ -143,15 +164,22 @@ export async function fetchValuationFacts(symbol: string): Promise<ValuationFact
   const currency = ((pr.currency as string | undefined) ?? "USD").toUpperCase();
   const totalDebt = num(fd.totalDebt);
   const totalCash = num(fd.totalCash);
-  const beta = num(ks.beta);
   const debtToEquity = debtToEquityFromYahoo(num(fd.debtToEquity));
   const region = waccRegionFor(symbol, currency);
+  const { beta, betaSource } = await resolveBeta(
+    symbol,
+    region,
+    num(ks.beta),
+    // Currency-only IN detection (no .NS/.BO suffix) misses the concurrent
+    // kick-off above; fetch late rather than use the wrong-index beta.
+    historyPromises ?? (region === "IN" ? betaHistoryPromises(symbol, region) : null),
+  );
 
   return {
     symbol,
     name: (pr.longName as string | undefined) ?? (pr.shortName as string | undefined) ?? symbol,
     currency,
-    price: num(fd.currentPrice) ?? num(pr.regularMarketPrice),
+    price: livePrice ?? num(pr.regularMarketPrice) ?? num(fd.currentPrice),
     baseFcf: num(fd.freeCashflow),
     sharesOutstanding: num(ks.sharesOutstanding),
     totalDebt,
@@ -160,11 +188,53 @@ export async function fetchValuationFacts(symbol: string): Promise<ValuationFact
     operatingMargins: num(fd.operatingMargins),
     deliveredGrowth: deriveDeliveredGrowth(statements, num(fd.revenueGrowth)),
     beta,
+    betaSource,
     debtToEquity,
     wacc: computeWacc({ beta, debtToEquity, region }),
     terminalGrowth: TERMINAL_GROWTH_DEFAULT[region],
     fcfHistory: statements?.freeCashFlow ?? [],
   };
+}
+
+/** ~550 calendar days comfortably covers the 252-trading-day beta window. */
+const BETA_HISTORY_DAYS = 550;
+
+function betaHistoryPromises(symbol: string, region: "IN") {
+  const bench = marketBenchmark(region);
+  return {
+    asset: getHistory(symbol, BETA_HISTORY_DAYS).catch(() => []),
+    benchmark: getHistory(bench.symbol, BETA_HISTORY_DAYS).catch(() => []),
+  };
+}
+
+/**
+ * The beta a CAPM discount rate may actually use.
+ *
+ * Yahoo's `beta` is S&P 500-relative for EVERY listing, home market or not.
+ * For NSE/BSE names that reads 0.15–0.4 where the NIFTY-relative figure is
+ * ~1.0 — low enough to push the cost of equity BELOW the Indian risk-free
+ * rate (Phase 2 audit; measured TCS 0.164 vs 0.89 true). So for the IN
+ * region the vendor figure is never used: beta is regressed against
+ * NIFTY 50 from price history, and when the history is too thin the fallback
+ * is the 1.0 prior — NOT Yahoo's wrong-index number. US listings keep the
+ * Yahoo figure (the S&P 500 IS their home benchmark).
+ */
+async function resolveBeta(
+  symbol: string,
+  region: "US" | "IN",
+  yahooBeta: number | null,
+  histories: { asset: Promise<HistoryPoint[]>; benchmark: Promise<HistoryPoint[]> } | null,
+): Promise<{ beta: number | null; betaSource: BetaSource }> {
+  if (region !== "IN") {
+    return { beta: yahooBeta, betaSource: yahooBeta != null ? "yahoo" : "default" };
+  }
+  if (histories) {
+    const [asset, benchmark] = await Promise.all([histories.asset, histories.benchmark]);
+    const computed = betaVsBenchmark(asset, benchmark);
+    if (computed != null) return { beta: computed, betaSource: "benchmark_regression" };
+  }
+  // null → computeWacc's DEFAULT_BETA (1.0) applies; label it as the default.
+  return { beta: null, betaSource: "default" };
 }
 
 /**

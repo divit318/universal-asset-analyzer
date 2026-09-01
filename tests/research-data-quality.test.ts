@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 import { scoreQuality } from "@/lib/scoring";
 import { isRelevantToSymbol } from "@/lib/news";
-import { computeDerivativesSummary, isDerivativesSummaryComplete } from "@/lib/derivatives-analysis";
+import { computeDerivativesSummary, isDerivativesSummaryComplete, riskFreeRateForUnderlying } from "@/lib/derivatives-analysis";
 import type { FundamentalsSnapshot, NewsItem, OptionsChainData } from "@/lib/types";
 
 /* ── Quality bucket calibration (financials) ─────────────────────────────── */
@@ -142,5 +142,37 @@ describe("options chain quality gating", () => {
     expect(summary.atmIV).toBeLessThan(60);
     expect(summary.atmPutGreeks).not.toBeNull();
     expect(isDerivativesSummaryComplete(summary)).toBe(true);
+  });
+});
+
+/* ── Market-aware risk-free rate (audit item 11) ─────────────────────────── */
+
+describe("derivatives risk-free rate is market-aware", () => {
+  it("prices US underlyings at the US T-bill rate and NSE/BSE underlyings at the India 10Y GOI rate", () => {
+    expect(riskFreeRateForUnderlying("SYF")).toBe(0.0425);
+    expect(riskFreeRateForUnderlying("RELIANCE.NS")).toBe(0.065);
+    expect(riskFreeRateForUnderlying("TATASTEEL.BO")).toBe(0.065);
+    // No symbol at all falls back to the US rate rather than throwing.
+    expect(riskFreeRateForUnderlying(null)).toBe(0.0425);
+  });
+
+  it("the ATM Greeks actually feel the rate: same chain, .NS underlying ≠ US underlying", () => {
+    const near = {
+      expirationDate: new Date(Date.now() + 90 * 86_400_000).toISOString().slice(0, 10),
+      calls: [contract(80, 0.32, 500)],
+      puts: [contract(77.5, 0.34, 400)],
+    };
+    const chainFor = (underlyingSymbol: string): OptionsChainData => ({
+      underlyingSymbol,
+      underlyingPrice: 79.25,
+      expirationDates: [near.expirationDate],
+      chains: [near],
+    });
+    const us = computeDerivativesSummary(chainFor("SYF"));
+    const india = computeDerivativesSummary(chainFor("RELIANCE.NS"));
+    expect(us.atmCallGreeks).not.toBeNull();
+    expect(india.atmCallGreeks).not.toBeNull();
+    // Higher risk-free ⇒ higher call delta (forward drifts up); rho/theta shift too.
+    expect(india.atmCallGreeks!.delta).toBeGreaterThan(us.atmCallGreeks!.delta);
   });
 });

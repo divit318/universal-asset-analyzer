@@ -25,7 +25,7 @@ import {
   MOVEMENT_SCHEMA_VERSION,
 } from "./ai/schemas/movement";
 import { extractJsonObject } from "./json-extract";
-import { getLatestSectorRotation, findSectorRotationEntry } from "./sector-rotation";
+import { getLatestSectorRotation, findSectorRotationEntry, sectorRotationEntryFor } from "./sector-rotation";
 import { getScannerCache, putScannerCache } from "./db";
 import { JSON_SCHEMA_LEAD_IN } from "@/lib/ai/prompts";
 import type {
@@ -232,8 +232,9 @@ export async function explainMovement(
     news = companyNews.map((n) => ({ headline: n.headline, publishedAt: n.publishedAt, summary: n.summary }));
 
     const effectiveSector = sector ?? null;
-    const rotation = getLatestSectorRotation();
-    const rotationEntry = findSectorRotationEntry(rotation, effectiveSector);
+    // Gated per listing: an NSE stock's move must not be "explained" by a US
+    // SPDR sector ETF's rank (the snapshot measures US ETFs only).
+    const rotationEntry = sectorRotationEntryFor(subject, getLatestSectorRotation(), effectiveSector);
     if (rotationEntry) {
       sectorContext = `SECTOR CONTEXT: ${effectiveSector} is currently rank ${rotationEntry.rank}/11 by relative strength (${rotationEntry.classification}), 1-month return ${rotationEntry.returns["1m"]?.toFixed(1) ?? "n/a"}%.`;
     }

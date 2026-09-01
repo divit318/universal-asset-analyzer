@@ -20,10 +20,18 @@ interface RegionParams {
   taxRate: number;
 }
 
-/** Damodaran 2025 inputs. India carries a higher 10Y GOI yield and ERP. */
+/**
+ * Damodaran 2025 inputs. India carries a higher 10Y GOI yield and ERP.
+ *
+ * India's pre-tax cost of debt is the GOI 10Y plus a ~200bp large-cap credit
+ * spread — it was previously 5%, i.e. BELOW India's own risk-free rate, which
+ * understated WACC for every levered Indian name. Static estimates by design
+ * (no reliable free live GOI/credit-spread feed); revisit with the vintage.
+ * Mirrored by engine/models/monte_carlo.py — tests/valuation.test.ts pins parity.
+ */
 const REGION_PARAMS: Record<WaccRegion, RegionParams> = {
   US: { riskFree: 0.044, erp: 0.055, costOfDebt: 0.05, taxRate: 0.21 },
-  IN: { riskFree: 0.065, erp: 0.060, costOfDebt: 0.05, taxRate: 0.2517 },
+  IN: { riskFree: 0.065, erp: 0.060, costOfDebt: 0.085, taxRate: 0.2517 },
 };
 
 export const WACC_FLOOR = 0.04;

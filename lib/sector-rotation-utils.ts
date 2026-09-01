@@ -14,6 +14,7 @@
  */
 
 import type { SectorRotationSnapshot, SectorRotationEntry } from "./types";
+import { detectMarket } from "./market";
 
 /** Look up a single sector's current rotation entry, e.g. for portfolio holding context. */
 export function findSectorRotationEntry(
@@ -22,6 +23,28 @@ export function findSectorRotationEntry(
 ): SectorRotationEntry | null {
   if (!snapshot || !sector) return null;
   return snapshot.sectors.find((s) => s.sector === sector) ?? null;
+}
+
+/**
+ * The rotation entry a specific LISTING may use — null for anything not
+ * US-listed.
+ *
+ * The whole rotation snapshot is computed from the 11 US SPDR sector ETFs
+ * (SECTOR_ETFS in lib/sector-rotation.ts) and entries are keyed by sector
+ * name alone, so before this gate existed TCS.NS inherited XLK's momentum
+ * and POLYCAB.NS inherited XLI's — a US signal scoring an Indian stock
+ * (Phase 2 audit, CRITICAL). Every symbol-scoped consumer must use this
+ * instead of findSectorRotationEntry; no NIFTY-sector rotation exists yet,
+ * so for non-US listings the honest answer is "no reading", not a proxy.
+ */
+export function sectorRotationEntryFor(
+  symbol: string,
+  snapshot: SectorRotationSnapshot | null | undefined,
+  sector: string | null | undefined,
+): SectorRotationEntry | null {
+  const market = detectMarket({ symbol, currency: "", exchange: null, assetType: null });
+  if (market !== "US") return null;
+  return findSectorRotationEntry(snapshot, sector);
 }
 
 /**

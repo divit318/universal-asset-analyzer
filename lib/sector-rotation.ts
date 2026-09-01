@@ -14,7 +14,7 @@
 
 import { getHistory } from "./yahoo";
 import { getLatestSectorRotationSnapshots, putSectorRotationSnapshot } from "./db";
-import { findSectorRotationEntry, deriveRotationSummary } from "./sector-rotation-utils";
+import { findSectorRotationEntry, sectorRotationEntryFor, deriveRotationSummary } from "./sector-rotation-utils";
 import type {
   HistoryPoint,
   RotationWindow,
@@ -27,7 +27,7 @@ export type { RotationWindow, RotationClass, SectorRotationEntry, SectorRotation
 // Re-exported so existing callers of lib/sector-rotation.ts don't need to
 // change their import path — see lib/sector-rotation-utils.ts for why the
 // implementation lives in a separate zero-I/O module.
-export { findSectorRotationEntry };
+export { findSectorRotationEntry, sectorRotationEntryFor };
 
 export interface SectorEtf {
   ticker: string;

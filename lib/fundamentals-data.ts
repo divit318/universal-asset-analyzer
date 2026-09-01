@@ -132,10 +132,15 @@ export async function buildFundamentalsData(symbol: string): Promise<Fundamental
   // Market-aware scoring: symbol suffix alone (no live quote needed here)
   // is enough for detectMarket()'s IN/JP/HK/AU/EU branches, which is what
   // distinguishes India research's fundamentals-over-analyst-consensus
-  // weighting. Sector rotation entry is a cheap synchronous DB read.
+  // weighting. Sector rotation entry is a cheap synchronous DB read —
+  // US listings only: the snapshot measures US SPDR sector ETFs, so for a
+  // non-US listing the bucket is OMITTED (undefined) rather than half-credited
+  // — TCS must not inherit XLK's momentum (Phase 2 audit).
   const market = detectMarket({ symbol, currency: "", exchange: null, assetType: null });
-  const rotation = getLatestSectorRotation();
-  const sectorRotationEntry = findSectorRotationEntry(rotation, parts.snapshot.sector);
+  const sectorRotationEntry =
+    market === "US"
+      ? findSectorRotationEntry(getLatestSectorRotation(), parts.snapshot.sector)
+      : undefined;
 
   const score = computeScore(parts.snapshot, statements, parts.analyst, momentum, sectorRotationEntry, market);
   const risks = assessRisks(parts.snapshot, statements, parts.analyst, parts.insider);
