@@ -18,6 +18,10 @@ interface ManageResult {
   remainingQuantity: number;
   remainingValue: number;
   snapshotId: string | null;
+  /** Base-currency cash the executor actually drew to fund a buy. */
+  cashDrawn: number;
+  /** Buy dollars cash could NOT cover — recorded as new capital, and said out loud. */
+  unfunded: number;
 }
 
 /**
@@ -130,6 +134,8 @@ export function ManageHoldingModal({ holding, onClose, onSuccess, initialTxMode,
         remainingQuantity: json.remainingQuantity,
         remainingValue: json.remainingValue,
         snapshotId: json.snapshotId ?? null,
+        cashDrawn: typeof json.cashDrawn === "number" ? json.cashDrawn : 0,
+        unfunded: typeof json.unfunded === "number" ? json.unfunded : 0,
       });
       onSuccess();
     } catch (e) {
@@ -194,6 +200,21 @@ export function ManageHoldingModal({ holding, onClose, onSuccess, initialTxMode,
               <p className="text-xs text-muted">
                 Remaining: {result.remainingQuantity.toLocaleString(undefined, { maximumFractionDigits: 6 })} {holding.unit} · {formatCurrency(result.remainingValue)}
               </p>
+              {/* Where the money went/came from — never implied. */}
+              {result.action === "buy" && !isCash && (
+                <p className="text-xs text-muted" role="status">
+                  {result.unfunded > 0.5
+                    ? `${formatCurrency(result.cashDrawn)} drawn from tracked cash · ${formatCurrency(result.unfunded)} recorded as new capital (cash didn't cover the full amount).`
+                    : result.cashDrawn > 0.5
+                      ? "Paid from tracked cash — the cash balance was reduced by this amount."
+                      : "Recorded as new capital — no tracked cash to draw on."}
+                </p>
+              )}
+              {result.action === "sell" && !isCash && (
+                <p className="text-xs text-muted" role="status">
+                  Proceeds credited to tracked cash.
+                </p>
+              )}
             </>
           )}
           {error && <p className="text-xs text-negative" role="alert">{error}</p>}

@@ -26,6 +26,7 @@ import { computeCashAllocation } from "@/lib/portfolio/engines/cash";
 import { candidateSymbols } from "@/lib/portfolio/engines/candidates";
 import { OBJECTIVES, constraintsFromPolicy, type Objective, type Constraints } from "@/lib/portfolio/engines/optimize";
 import { buildCashDepositLots, executeTradeBatch, captureSnapshot, summaryOf } from "@/lib/portfolio/engines/transaction";
+import { invalidateDataset } from "@/lib/platform";
 import type { PortfolioAssetClass } from "@/lib/portfolio/model/types";
 
 export const runtime = "nodejs";
@@ -91,6 +92,11 @@ export async function POST(request: Request) {
       toBuy.map((item) => ({ symbol: item.symbol, name: item.name, assetClass: item.assetClass, dollarAmount: item.dollarAmount, reason: item.reason })),
     );
     executeTradeBatch(lots, []);
+    // executeTradeBatch is the raw DB primitive — unlike executeTrades()/
+    // addUniversalLot() it does NOT invalidate the cached report, so a cash
+    // deployment left every surface serving the pre-deposit book for up to the
+    // cache TTL. The ledger just changed; say so.
+    invalidateDataset("portfolioReport");
     // The deposit lot itself is bookkeeping, not one of the user's selected buys.
     const executedCount = lots.length - 1;
 

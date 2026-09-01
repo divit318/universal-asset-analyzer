@@ -36,7 +36,12 @@ function attentionPrefixesFor(thesisKey: string): string[] {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// `null` must stay null: `Number(null)` is 0, and storing a fabricated 0 as a
+// revival baseline (subject weight, theme score) made "no baseline" look like
+// "dismissed at 0%" — which reason 2 of revivalReason could then measure
+// growth against, spuriously reviving a considered "no".
 const num = (v: unknown, lo: number, hi: number): number | null => {
+  if (v == null || v === "") return null;
   const n = Number(v);
   return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : null;
 };

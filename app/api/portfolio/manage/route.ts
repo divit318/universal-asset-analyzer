@@ -144,6 +144,13 @@ export async function POST(request: Request) {
       );
     }
 
+    // A buy here draws its cost from tracked cash (the executor's balancing
+    // lot), capped at the cash that exists. The capped remainder is UNFUNDED —
+    // tracked value grew by that much out of nothing — and this route used to
+    // compute it and drop it on the floor. Money must never appear without the
+    // response saying so.
+    const cashDrawn = body.action === "buy" ? Math.max(0, dollarDelta - result.unfunded) : 0;
+
     return NextResponse.json({
       ok: true,
       action: body.action,
@@ -152,6 +159,8 @@ export async function POST(request: Request) {
       removed: remaining == null,
       remainingQuantity: remaining?.quantity ?? 0,
       remainingValue: remaining?.valuation.valueBase ?? 0,
+      cashDrawn,
+      unfunded: result.unfunded,
       before,
       after: summaryOf(after.evaluation),
     });

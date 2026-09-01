@@ -54,7 +54,7 @@ function Metric({
   scale: "absolute" | "relative";
   format: (v: number) => string;
   higherIsBetter?: boolean;
-  hint: string;
+  hint?: string | null;
 }) {
   const tone: TrajectoryTone =
     d.tone === "neutral" ? "neutral" : higherIsBetter ? d.tone : d.tone === "positive" ? "negative" : "positive";
@@ -69,12 +69,24 @@ function Metric({
         <span className={`font-mono text-[11px] font-semibold tabular-nums ${toneClass}`}>{d.text}</span>
       </div>
       <TrajectoryChart points={series} tone={tone} scale={scale} format={format} />
-      <span className="text-[10px] leading-snug text-muted/70">{hint}</span>
+      {hint && <span className="text-[10px] leading-snug text-muted/70">{hint}</span>}
     </div>
   );
 }
 
-export function TrajectoryPanel({ trajectory }: { trajectory: PortfolioTrajectory | null }) {
+export function TrajectoryPanel({
+  trajectory,
+  current,
+}: {
+  trajectory: PortfolioTrajectory | null;
+  /**
+   * Today's live readings. Snapshots are only written around executions, so
+   * the last stored point goes stale between trades — headlining it put a
+   * different "Portfolio alignment" number here than the tile above showed.
+   * The live value is the headline; the snapshots stay as the trend.
+   */
+  current?: { score: number | null; topAssetClassWeight: number | null; asOf: string };
+}) {
   if (!trajectory || trajectory.points.length < 2) {
     return (
       <Card className="flex flex-col gap-1 p-5">
@@ -90,10 +102,30 @@ export function TrajectoryPanel({ trajectory }: { trajectory: PortfolioTrajector
 
   const t = trajectory;
   const points: TrajectoryPoint[] = t.points;
+  const first = points[0];
   const last = points[points.length - 1];
   const lastChange = t.changes[0] ?? null;
+
+  // Live end-point. Across a score-definition change the engine's delta (or
+  // its honest null) stands — two rulers have no comparable difference.
+  const liveScore = current?.score ?? null;
+  const liveConc = current?.topAssetClassWeight ?? null;
+  const scoreNow = !t.scoreDefinitionChanged && liveScore != null ? liveScore : last.score;
+  const concNow = liveConc ?? last.topAssetClassWeight;
+  const scoreDelta =
+    t.scoreDefinitionChanged || liveScore == null ? t.scoreDelta : liveScore - first.score;
+  const concentrationDelta =
+    liveConc == null
+      ? t.concentrationDelta
+      : Math.round((liveConc - first.topAssetClassWeight) * 10) / 10;
+
+  // The report's own pricing time — pure per render, and the honest "now":
+  // it is the moment the live score was actually measured.
+  const asOf = current?.asOf ? Date.parse(current.asOf) : Date.parse(last.at);
   const scoreSeries = points.map((p) => ({ t: Date.parse(p.at), v: p.score }));
+  if (!t.scoreDefinitionChanged && liveScore != null) scoreSeries.push({ t: asOf, v: liveScore });
   const concentrationSeries = points.map((p) => ({ t: Date.parse(p.at), v: p.topAssetClassWeight }));
+  if (liveConc != null) concentrationSeries.push({ t: asOf, v: liveConc });
 
   return (
     <Card className="flex flex-col gap-4 p-5">
@@ -101,14 +133,15 @@ export function TrajectoryPanel({ trajectory }: { trajectory: PortfolioTrajector
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted">Trajectory</h3>
           <p className="mt-1 text-[11px] text-muted/70">
-            Where this portfolio has moved over {t.windowDays === 0 ? "the recorded history" : `${t.windowDays} days`},
-            across {points.length} recorded states.
+            {points.length} recorded states over{" "}
+            {t.windowDays === 0 ? "the recorded history" : `${t.windowDays} days`}, ending at today&apos;s
+            live reading.
           </p>
         </div>
-        <Badge variant={t.scoreDelta == null || Math.abs(t.scoreDelta) < 1 ? "neutral" : t.scoreDelta > 0 ? "positive" : "warning"}>
-          {t.scoreDelta == null || Math.abs(t.scoreDelta) < 1
+        <Badge variant={scoreDelta == null || Math.abs(scoreDelta) < 1 ? "neutral" : scoreDelta > 0 ? "positive" : "warning"}>
+          {scoreDelta == null || Math.abs(scoreDelta) < 1
             ? "Stable"
-            : t.scoreDelta > 0
+            : scoreDelta > 0
               ? "Improving"
               : "Deteriorating"}
         </Badge>
@@ -117,26 +150,26 @@ export function TrajectoryPanel({ trajectory }: { trajectory: PortfolioTrajector
       <div className="grid gap-2 sm:grid-cols-2">
         <Metric
           label="Portfolio alignment"
-          now={`${last.score}`}
-          d={delta(t.scoreDelta, "")}
+          now={`${scoreNow}`}
+          d={delta(scoreDelta, "")}
           series={scoreSeries}
           scale="absolute"
           format={(v) => v.toFixed(0)}
           hint={
             t.scoreDefinitionChanged
               ? "Earlier points used the retired universal health score; newer ones score against your own policy. The step between regimes is a definition change, not a portfolio change."
-              : "Full 0-100 scale and a real time axis, so a few points read as a few points."
+              : null
           }
         />
         <Metric
           label="Largest asset class"
-          now={`${last.topAssetClassWeight.toFixed(1)}%`}
-          d={delta(t.concentrationDelta, "pp")}
+          now={`${concNow.toFixed(1)}%`}
+          d={delta(concentrationDelta, "pp")}
           series={concentrationSeries}
           scale="relative"
           format={(v) => `${v.toFixed(1)}%`}
           higherIsBetter={false}
-          hint="Concentration drift. Rising means the book is narrowing, whether or not you chose that."
+          hint="Rising means the book is narrowing, whether or not you chose that."
         />
       </div>
 
@@ -203,11 +236,11 @@ export function TrajectoryPanel({ trajectory }: { trajectory: PortfolioTrajector
         </div>
       )}
 
-      <p className="text-[10px] leading-relaxed text-muted/60">
-        Portfolio value is deliberately not plotted here: it rises when you add money, so a
-        value line blends contributions with returns. Alignment and concentration are unaffected
-        by deposits, which is what makes them readable as trends. For return over time, see
-        Performance.
+      <p
+        className="text-[10px] leading-relaxed text-muted/60"
+        title="Portfolio value is deliberately not plotted here: it rises when you add money, so a value line blends contributions with returns. Alignment and concentration are unaffected by deposits, which is what makes them readable as trends."
+      >
+        Value is not plotted — deposits move it. For return over time, see Performance.
       </p>
     </Card>
   );

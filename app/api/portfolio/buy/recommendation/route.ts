@@ -33,7 +33,7 @@ import { computePositionSizing, computePositionSizingAtAmount } from "@/lib/port
 import { deriveAssetSignal, type AssetSignal } from "@/lib/portfolio/engines/asset-signal";
 import { computeRecommendations } from "@/lib/portfolio/engines/recommend";
 import { isIndivisibleHolding } from "@/lib/portfolio/engines/transaction";
-import { OBJECTIVES, constraintsFromPolicy, type Objective, type Constraints } from "@/lib/portfolio/engines/optimize";
+import { OBJECTIVES, CASH_SETTLEMENT_TOLERANCE, availableBaseCash, constraintsFromPolicy, type Objective, type Constraints } from "@/lib/portfolio/engines/optimize";
 import { type PortfolioAssetClass } from "@/lib/portfolio/model/types";
 import { assetClassFromQuoteType } from "@/lib/portfolio/classes/reference/risk-models";
 import { buildAiExplanation, buildHeadline, buildPositionSizingWhy, buildSummary } from "@/lib/portfolio/engines/position-size-explain";
@@ -58,13 +58,21 @@ async function loadAssetSignal(symbol: string, livePrice: number | null): Promis
     ]);
     if (!data) return null;
 
-    // The user's own valuation case outranks analyst consensus when one exists.
+    // The user's own valuation case outranks analyst consensus — but only a
+    // case the user has actually authored counts as theirs. Every symbol
+    // acquires a machine-seeded case from a single workspace visit, and
+    // feeding that seed's upside into sizing under the banner of "your
+    // valuation case" let a naive historical-growth DCF silently overrule
+    // the street (a −95% seed upside was once crushing buy recommendations
+    // the user never expressed a view on).
     let caseUpside: number | null = null;
     try {
       const vcase = getValuationCase(symbol);
       if (vcase) {
         const summary = summarizeForDisplay(vcase, livePrice, null);
-        if (!summary.result.invalidReason) caseUpside = summary.result.impliedUpside;
+        if (summary.ownedKeys.length > 0 && !summary.result.invalidReason) {
+          caseUpside = summary.result.impliedUpside;
+        }
       }
     } catch {
       // A broken valuation case must not take down the whole signal.
@@ -93,9 +101,15 @@ interface RecommendationBody {
   amount?: number;
 }
 
-/** How much can be funded from cash on hand alone, vs. how much would need to come from selling something. */
+/**
+ * How much can be funded from cash on hand alone, vs. how much would need to
+ * come from selling something. Uses the engine's settlement tolerance rather
+ * than Math.round — rounding once made a $0.60 deficit read as fundable and a
+ * float-dust boundary read as a shortfall.
+ */
 function fundingShortfall(recommendedAmount: number, cashAvailable: number) {
-  return Math.max(0, Math.round(recommendedAmount - cashAvailable));
+  const deficit = recommendedAmount - cashAvailable;
+  return deficit <= CASH_SETTLEMENT_TOLERANCE ? 0 : deficit;
 }
 
 export async function POST(request: Request) {
@@ -149,9 +163,11 @@ export async function POST(request: Request) {
       ? computePositionSizingAtAmount(evaluation, { symbol, name, assetClass }, body.amount!, objective, ctx, signal)
       : computePositionSizing(evaluation, { symbol, name, assetClass }, objective, ctx, constraints, body.customTarget, signal);
 
-    const cashAvailable = Math.round(
-      evaluation.holdings.reduce((s, h) => s + (h.assetClass === "cash" ? h.valuation.valueBase : 0), 0),
-    );
+    // The engine's own definition of drawable cash — BASE-currency lots only,
+    // exactly the set the executor's cash draw can actually reach. Summing all
+    // cash regardless of currency here once promised funding that EUR cash
+    // could never deliver.
+    const cashAvailable = availableBaseCash(evaluation.holdings, ctx.baseCurrency);
     const shortfall = fundingShortfall(plan.recommendedAmount, cashAvailable);
 
     // Reuse the exact same trade-recommendation engine the Decision Center uses to

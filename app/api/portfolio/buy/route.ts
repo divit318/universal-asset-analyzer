@@ -14,7 +14,7 @@
 import { NextResponse } from "next/server";
 import { isValidSymbol } from "@/lib/market";
 import { getQuotes } from "@/lib/yahoo";
-import { addUniversalLot, captureSnapshot, executeTrades, isIndivisibleHolding, type TradeToExecute } from "@/lib/portfolio/engines/transaction";
+import { addUniversalLot, captureSnapshot, executeTrades, isIndivisibleHolding, planCashDraw, type TradeToExecute } from "@/lib/portfolio/engines/transaction";
 import { buildEvaluation } from "@/lib/portfolio/report";
 import { listRawHoldings } from "@/lib/portfolio/store";
 import { TICKER_PRICED_ASSET_CLASSES, type PortfolioAssetClass } from "@/lib/portfolio/model/types";
@@ -42,6 +42,17 @@ interface BuyBody {
   assetClass?: string;
   /** Funding: sell these existing holdings (by dollar amount) before recording the buy. */
   sellFirst?: SellFirstInput[];
+  /**
+   * Funding: draw the purchase cost from the portfolio's tracked base-currency
+   * cash (across ALL cash lots), resolved server-side against a FRESH
+   * evaluation at execution time — never against whatever cash figure the
+   * client happened to be holding. Full-fund or nothing: when cash (plus any
+   * `sellFirst` proceeds) doesn't cover the cost within the settlement
+   * tolerance, no cash is drawn and the response says `fundedFromCash: false`
+   * with the available figure — the buy is then recorded as new capital, and
+   * the caller must say so. Cash is never fabricated negative.
+   */
+  fundFromCash?: boolean;
   /** Objective the sell trades are recorded under — cosmetic (ledger provenance), does not affect execution. */
   objective?: Objective;
   /** Optional trade date (YYYY-MM-DD); defaults to today in addUniversalLot. */
@@ -133,7 +144,29 @@ export async function POST(request: Request) {
   // and lib/portfolio/history.ts DROPS an unpaired pre — so no purchase ever
   // produced a graded ChangeOutcome. Bookend the change like the other two
   // execute routes (optimize/execute, allocate-cash/execute) do.
-  const preEvaluation = (await buildEvaluation()).evaluation;
+  const { ctx, evaluation: preEvaluation } = await buildEvaluation();
+  const baseCurrency = (ctx.baseCurrency || "USD").toUpperCase();
+
+  // A cash draw is denominated in the BASE currency while the buy books in the
+  // QUOTE currency. `amount` (like the booked lot) is in the quote currency;
+  // the draw converts it at the same rate the evaluation values the position
+  // with (ctx.fx: base units per 1 quote unit), so cash down equals position
+  // value up — conserved by construction. When the rate could NOT be resolved
+  // (ctx carries it at a silent 1:1 — the documented worst failure mode),
+  // refuse rather than draw a wrong number.
+  const quoteCcy = (quote.currency || baseCurrency).toUpperCase();
+  const fxToBase = ctx.fx[quoteCcy] ?? null;
+  if (body.fundFromCash && quoteCcy !== baseCurrency) {
+    const unresolved = (ctx.unresolvedCurrencies ?? []).includes(quoteCcy);
+    if (fxToBase == null || unresolved) {
+      return NextResponse.json(
+        {
+          error: `${symbol} trades in ${quoteCcy} and no reliable ${quoteCcy}→${baseCurrency} rate is available right now — funding this purchase from tracked cash would draw the wrong amount. Record it as new capital instead, or retry when FX resolves.`,
+        },
+        { status: 400 },
+      );
+    }
+  }
 
   // Funding: raise cash by selling existing holdings BEFORE recording the buy —
   // the same atomic, self-cash-balancing batch executor the Optimize tab already
@@ -163,6 +196,31 @@ export async function POST(request: Request) {
   const shares = quantity ?? amount! / quote.price;
   if (!Number.isFinite(shares) || shares <= 0) {
     return NextResponse.json({ error: "Computed share quantity was zero or invalid" }, { status: 400 });
+  }
+
+  // Funding: draw the cost from tracked base-currency cash, resolved HERE
+  // against fresh state — after any sellFirst proceeds have landed in cash, so
+  // "sells cover the shortfall, cash covers the rest" works as one plan. The
+  // client's cash figure is never trusted: it is whatever the report said when
+  // that page rendered, which is stale the moment anything else executes.
+  let fundedFromCash = false;
+  let cashDrawn = 0;
+  let cashAvailable: number | null = null;
+  if (body.fundFromCash) {
+    // Cost in QUOTE currency, converted to base at the context's own rate —
+    // 1 when the quote already trades in base (fx always maps base→1).
+    const costQuote = amount ?? shares * quote.price;
+    const costBase = costQuote * (fxToBase ?? 1);
+    const drawEvaluation = fundingSnapshotId != null ? (await buildEvaluation()).evaluation : preEvaluation;
+    const plan = planCashDraw(drawEvaluation, costBase, baseCurrency);
+    cashAvailable = plan.available;
+    if (plan.covered && plan.trades.length > 0) {
+      const drawResult = executeTrades(drawEvaluation, plan.trades, body.objective ?? "maximize_sharpe");
+      // The FIRST pre-execution snapshot is the undo point for the whole batch.
+      fundingSnapshotId = fundingSnapshotId ?? drawResult.snapshotId;
+      fundedFromCash = true;
+      cashDrawn = costBase;
+    }
   }
 
   // One classification authority, at booking time too — see risk-models.ts. Whatever
@@ -226,6 +284,14 @@ export async function POST(request: Request) {
       holding,
       fundingSnapshotId,
       snapshotId,
+      // Funding truth, decided server-side at execution time. `fundedFromCash:
+      // false` on a fundFromCash request means tracked cash didn't cover the
+      // cost — the buy was recorded as new capital and the caller must say so.
+      // `cashDrawn`/`cashAvailable` are in the portfolio's BASE currency.
+      fundedFromCash,
+      cashDrawn,
+      cashAvailable,
+      baseCurrency,
     },
     { status: 201 },
   );

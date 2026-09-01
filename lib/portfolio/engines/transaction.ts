@@ -383,6 +383,57 @@ export function buildCashDepositLots(
 }
 
 /**
+ * Plan how to fund a base-currency purchase from the portfolio's own cash.
+ *
+ * ONE definition of "can cash pay for this", shared by every buy surface. The
+ * bugs this replaces each rolled their own: the Decision Center's buy dialog
+ * compared against the LARGEST cash lot only (a checking + money-market split
+ * read as "insufficient cash" while the Cash tile showed plenty), with no
+ * tolerance (a $10,000.00 buy against $9,999.9999997 of float-summed cash
+ * read as unfundable), against a value captured whenever the report was built
+ * (stale after any other execution).
+ *
+ * Sums EVERY base-currency cash holding — the same set availableBaseCash()
+ * counts, so the check can never disagree with the executor — and drains
+ * largest-first. Full-fund or nothing: a partial draw would silently turn
+ * "funded from cash" into "partly new money", which is exactly the phantom
+ * capital this engine exists to prevent. `covered` is decided within
+ * CASH_SETTLEMENT_TOLERANCE so float dust can never flip it. Pure — no I/O.
+ */
+export function planCashDraw(
+  evaluation: PortfolioEvaluation,
+  cost: number,
+  baseCurrency: string,
+): { covered: boolean; available: number; trades: TradeToExecute[] } {
+  const base = (baseCurrency || "USD").toUpperCase();
+  const cashLots = evaluation.holdings
+    .filter((h) => h.assetClass === "cash" && h.currency.toUpperCase() === base && h.valuation.valueBase > 0)
+    .sort((a, b) => b.valuation.valueBase - a.valuation.valueBase);
+  const available = cashLots.reduce((s, h) => s + h.valuation.valueBase, 0);
+
+  if (!(cost > 0) || available < cost - CASH_SETTLEMENT_TOLERANCE) {
+    return { covered: false, available, trades: [] };
+  }
+
+  const trades: TradeToExecute[] = [];
+  let remaining = cost;
+  for (const h of cashLots) {
+    if (remaining <= CASH_SETTLEMENT_TOLERANCE) break;
+    const draw = Math.min(remaining, h.valuation.valueBase);
+    trades.push({
+      holdingId: h.id,
+      symbol: h.symbol,
+      name: h.name,
+      assetClass: h.assetClass,
+      dollarDelta: -draw,
+      reason: "Cash drawn to fund purchase",
+    });
+    remaining -= draw;
+  }
+  return { covered: true, available, trades };
+}
+
+/**
  * Signed net cash flow of a batch of ledger writes: a buy consumes cash (+), a
  * sell releases it (−), and exiting a manual asset releases its whole value.
  *

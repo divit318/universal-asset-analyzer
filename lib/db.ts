@@ -3736,7 +3736,17 @@ interface DecisionDismissalRow {
   title: string;
 }
 
-/** Persist (or refresh) the investor's dismissal of one underlying decision thesis. */
+/**
+ * Persist (or refresh) the investor's dismissal of one underlying decision thesis.
+ *
+ * Idempotent for identical context: a duplicate click re-sends the exact same
+ * revival baseline, and updating `dismissed_at` for it would change the report
+ * cache's memory version — every duplicate click used to bust the freshly
+ * rebuilding report and restart a full ~20s build. The WHERE clause makes a
+ * true duplicate a no-op, while a genuine re-dismissal of a REVIVED thesis
+ * (whose context is different by construction — that difference is what
+ * revived it) still refreshes the stored baseline. `IS NOT` is null-safe.
+ */
 export function dismissDecisionThesis(
   portfolioId: number,
   d: {
@@ -3759,7 +3769,12 @@ export function dismissDecisionThesis(
          theme_id = excluded.theme_id,
          theme_score = excluded.theme_score,
          subject_weight_pct = excluded.subject_weight_pct,
-         title = excluded.title`,
+         title = excluded.title
+       WHERE decision_dismissal.policy_updated_at IS NOT excluded.policy_updated_at
+          OR decision_dismissal.theme_id IS NOT excluded.theme_id
+          OR decision_dismissal.theme_score IS NOT excluded.theme_score
+          OR decision_dismissal.subject_weight_pct IS NOT excluded.subject_weight_pct
+          OR decision_dismissal.title IS NOT excluded.title`,
     )
     .run(portfolioId, d.thesisKey, d.dismissedAt, d.policyUpdatedAt, d.themeId, d.themeScore, d.subjectWeightPct, d.title);
 }

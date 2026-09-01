@@ -261,6 +261,18 @@ describe("applyDecisionMemory — dismissed stays dismissed until material chang
     expect(verdict.active.map(thesisKeyOf)).not.toContain("reduce:AAPL");
     expect(e.alignment.themes.find((t) => t.id === "concentration")!.status).toBe("mismatch");
   });
+
+  it("a zero baseline means NO baseline: it cannot spuriously revive a thesis whose symbol is held", () => {
+    // Rows written before the dismiss routes kept null baselines null stored 0
+    // where "no weight at dismissal" was meant (`Number(null)` is 0). AAPL sits
+    // at ~26% of this book — measured against a fabricated 0 baseline that is
+    // ≥5pp of "growth", and the considered "no" would silently expire.
+    const corrupt = { ...dismissalNow(), subjectWeightPct: 0 };
+    expect(revivalReason(corrupt, trim!, e)).toBeNull();
+    const verdict = applyDecisionMemory(recs, [corrupt], e);
+    expect(verdict.active.map(thesisKeyOf)).not.toContain("reduce:AAPL");
+    expect(verdict.suppressed.map((s) => thesisKeyOf(s.rec))).toContain("reduce:AAPL");
+  });
 });
 
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -294,6 +306,35 @@ describe("decision_dismissal persistence", () => {
 
     undismissDecisionThesis(1, "reduce:QQQM");
     expect(listDecisionDismissals(1)).toEqual([]);
+  });
+
+  it("a duplicate dismissal (identical context) is a no-op: dismissed_at must not move", () => {
+    // dismissed_at feeds the report cache's memory version. The rage-click on
+    // an unresponsive button used to re-upsert the same row with a fresh
+    // timestamp — busting the cache of the report already rebuilding for the
+    // FIRST click and restarting the whole ~20s build per extra click.
+    const d = {
+      thesisKey: "gap:no_bonds",
+      dismissedAt: "2026-08-15T10:00:00.000Z",
+      policyUpdatedAt: "2026-08-15T15:17:32.570Z",
+      themeId: "resilience",
+      themeScore: 32,
+      subjectWeightPct: null,
+      title: "Add intermediate US Treasury duration via IEF",
+    };
+    dismissDecisionThesis(1, d);
+    dismissDecisionThesis(1, { ...d, dismissedAt: "2026-08-15T10:00:05.000Z" }); // the duplicate click
+    const [row] = listDecisionDismissals(1).filter((x) => x.thesisKey === "gap:no_bonds");
+    expect(row.dismissedAt).toBe("2026-08-15T10:00:00.000Z");
+
+    // A REVIVED thesis re-dismissed under a different context is a NEW
+    // decision — the baseline (and its timestamp) must refresh.
+    dismissDecisionThesis(1, { ...d, dismissedAt: "2026-08-16T09:00:00.000Z", themeScore: 18 });
+    const [rebaselined] = listDecisionDismissals(1).filter((x) => x.thesisKey === "gap:no_bonds");
+    expect(rebaselined.dismissedAt).toBe("2026-08-16T09:00:00.000Z");
+    expect(rebaselined.themeScore).toBe(18);
+
+    undismissDecisionThesis(1, "gap:no_bonds");
   });
 });
 

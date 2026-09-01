@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Card, Badge, Button } from "@/app/_components/ui";
 import { CollapsibleSection } from "@/app/_components/collapsible-section";
 import { askAi } from "@/app/_components/ask-ai";
+import { useToast } from "@/app/_components/toast";
 import { formatCurrency } from "@/lib/format";
 import { ImpactRow, StateRow } from "./impact-display";
 import { resolveDecisionExecution, executionLabel, type DecisionExecution } from "./decision-action";
@@ -234,6 +235,7 @@ function DecisionActions({
   onLaunch,
   onNavigate,
   onDismiss,
+  dismissing = false,
 }: {
   decision: Decision;
   execution: DecisionExecution;
@@ -241,6 +243,8 @@ function DecisionActions({
   onNavigate?: (tab: Tab, anchor?: string, opts?: { holdingsFilter?: string }) => void;
   /** Record "I considered this — stop repeating it" in the shared decision memory. */
   onDismiss?: (decision: Decision) => void;
+  /** The dismissal POST for THIS card is in flight — label it and refuse duplicate clicks. */
+  dismissing?: boolean;
 }) {
   const router = useRouter();
   const rec = decision.recommendation;
@@ -257,7 +261,7 @@ function DecisionActions({
             amount: execution.amount,
             title: rec.title,
             recommendationId: rec.id,
-            cashHolding: null, // filled by DecisionCenter, which knows the cash position
+            cashAvailable: 0, // filled by DecisionCenter, which knows the cash position
           },
         });
         break;
@@ -355,10 +359,12 @@ function DecisionActions({
           <button
             type="button"
             onClick={() => onDismiss(decision)}
+            disabled={dismissing}
+            aria-busy={dismissing}
             title="I've considered this — don't show this idea again unless my policy changes or the situation gets materially worse. The engine will look for different actions instead."
-            className="ml-auto rounded-sm text-[11px] text-muted hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+            className="ml-auto rounded-sm text-[11px] text-muted hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 disabled:pointer-events-none disabled:opacity-60"
           >
-            Dismiss — I&apos;ve considered this
+            {dismissing ? "Dismissing…" : "Dismiss — I've considered this"}
           </button>
         )}
       </div>
@@ -376,6 +382,7 @@ function DecisionCardView({
   onLaunch,
   onNavigate,
   onDismiss,
+  dismissing = false,
 }: {
   decision: Decision;
   alignment: AlignmentReport;
@@ -386,6 +393,7 @@ function DecisionCardView({
   onLaunch: (flow: Flow) => void;
   onNavigate?: (tab: Tab, anchor?: string, opts?: { holdingsFilter?: string }) => void;
   onDismiss?: (decision: Decision) => void;
+  dismissing?: boolean;
 }) {
   const rec = decision.recommendation;
   const tone = ACTION_TONE[rec.action];
@@ -436,7 +444,7 @@ function DecisionCardView({
         <Badge variant="neutral">{decision.executionTime}</Badge>
       </div>
 
-      <DecisionActions decision={decision} execution={execution} onLaunch={onLaunch} onNavigate={onNavigate} onDismiss={onDismiss} />
+      <DecisionActions decision={decision} execution={execution} onLaunch={onLaunch} onNavigate={onNavigate} onDismiss={onDismiss} dismissing={dismissing} />
 
       <div className="flex flex-col gap-1.5 rounded-lg border border-border/60 bg-surface/30 px-3 py-2 text-[11px] leading-relaxed text-muted">
         <span><strong className="text-foreground">Liquidity: </strong>{decision.liquidityImpact}</span>
@@ -526,72 +534,175 @@ export function DecisionCenter({
   onNavigate?: (tab: Tab, anchor?: string, opts?: { holdingsFilter?: string }) => void;
 }) {
   const [flow, setFlow] = useState<Flow | null>(null);
+  const toast = useToast();
 
-  // The largest base-currency cash position — the honest funding source a
-  // gap-fill buy offers to draw from. Computed once here, not per card.
-  const cashHolding = holdings
+  /* ── Dismiss/restore: answer the click, not the rebuild ──────────────────
+     The write is a millisecond; the report that PROVES it is a full rebuild
+     (market context and all), which can take tens of seconds. The first
+     version made the click wait for the rebuild with no pending state and a
+     swallowed catch — so "Dismiss" looked dead, got rage-clicked, and every
+     duplicate click invalidated the report being rebuilt for the previous
+     one. These two maps close that gap:
+
+       pending    thesisKey → verb in flight. Disables the button, labels it
+                  ("Dismissing…"), and refuses duplicate clicks.
+       overrides  thesisKey → the optimistic verdict, applied to the rendered
+                  lists immediately and rolled back (with an error toast) if
+                  the write fails. Pruned once a refreshed report reflects the
+                  action, so the report — never stale local state — is what a
+                  later build's revivals are judged against. */
+  const [pending, setPending] = useState<Map<string, "dismiss" | "restore">>(new Map());
+  const [overrides, setOverrides] = useState<
+    Map<string, { kind: "dismissed"; title: string; dismissedAt: string } | { kind: "restored" }>
+  >(new Map());
+
+  const suppressedKeys = new Set(suppressedDecisions.map((s) => s.thesisKey));
+  // Prune during render when a NEW report arrives (the storing-previous-render
+  // pattern, not an effect): once the report reflects an override, the report
+  // speaks — a lingering "dismissed" override would wrongly hide the card if a
+  // later build legitimately REVIVES the thesis.
+  const [prunedAgainst, setPrunedAgainst] = useState(suppressedDecisions);
+  if (prunedAgainst !== suppressedDecisions) {
+    setPrunedAgainst(suppressedDecisions);
+    if (overrides.size > 0) {
+      const next = new Map(overrides);
+      for (const [key, o] of overrides) {
+        if (pending.has(key)) continue; // still in flight — this report cannot reflect it yet
+        if ((o.kind === "dismissed") === suppressedKeys.has(key)) next.delete(key);
+      }
+      if (next.size !== overrides.size) setOverrides(next);
+    }
+  }
+
+  const setPendingFor = (key: string, verb: "dismiss" | "restore" | null) =>
+    setPending((prev) => {
+      const next = new Map(prev);
+      if (verb) next.set(key, verb);
+      else next.delete(key);
+      return next;
+    });
+
+  // TOTAL base-currency cash across every cash lot — the same set the engine's
+  // availableBaseCash() counts. Taking only the largest lot here is how a
+  // checking + money-market split once read as "insufficient cash" while the
+  // Cash tile showed plenty. Display/default only: the route re-resolves the
+  // draw against fresh state at execution.
+  const cashAvailable = holdings
     .filter((h) => h.assetClass === "cash" && h.currency.toUpperCase() === baseCurrency.toUpperCase())
-    .sort((a, b) => b.valuation.valueBase - a.valuation.valueBase)[0] ?? null;
+    .reduce((s, h) => s + h.valuation.valueBase, 0);
 
   const launch = (f: Flow) => {
     if (f.type === "buy_new") {
-      f = { ...f, context: { ...f.context, cashHolding: cashHolding ? { id: cashHolding.id, valueBase: cashHolding.valuation.valueBase } : null } };
+      f = { ...f, context: { ...f.context, cashAvailable } };
     }
     setFlow(f);
+  };
+
+  const restore = async (thesisKey: string) => {
+    if (pending.has(thesisKey)) return;
+    setPendingFor(thesisKey, "restore");
+    setOverrides((prev) => new Map(prev).set(thesisKey, { kind: "restored" }));
+    try {
+      const res = await fetch("/api/portfolio/decisions/dismiss", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ portfolioId, thesisKey }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? `Restore failed (${res.status})`);
+      }
+      onExecuted();
+    } catch (err) {
+      // Roll back to whatever the report says — the write did not happen.
+      setOverrides((prev) => {
+        const next = new Map(prev);
+        next.delete(thesisKey);
+        return next;
+      });
+      toast(err instanceof Error ? err.message : "Restore failed", "error");
+    } finally {
+      setPendingFor(thesisKey, null);
+    }
   };
 
   // "I've considered this" — recorded against the UNDERLYING thesis with the
   // context revival is judged on, then the report rebuilds without it and the
   // engine surfaces different work (or researched discoveries) instead.
-  const dismiss = (decision: Decision) => {
+  const dismiss = async (decision: Decision) => {
     const rec = decision.recommendation;
+    const thesisKey = thesisKeyOf(rec);
+    if (pending.has(thesisKey)) return;
     const theme = rec.theme ? alignment.themes.find((t) => t.id === rec.theme) : null;
     const holding = rec.symbol
       ? holdings.find((h) => h.symbol?.toUpperCase() === rec.symbol!.toUpperCase())
       : null;
-    fetch("/api/portfolio/decisions/dismiss", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        portfolioId,
-        thesisKey: thesisKeyOf(rec),
-        title: rec.title,
-        policyUpdatedAt,
-        themeId: rec.theme,
-        themeScore: theme?.score ?? null,
-        subjectWeightPct: holding ? Math.round(holding.weight * 10) / 10 : null,
-      }),
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error();
-        onExecuted();
-      })
-      .catch(() => {});
+    setPendingFor(thesisKey, "dismiss");
+    setOverrides((prev) =>
+      new Map(prev).set(thesisKey, { kind: "dismissed", title: rec.title, dismissedAt: new Date().toISOString() }),
+    );
+    try {
+      const res = await fetch("/api/portfolio/decisions/dismiss", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          portfolioId,
+          thesisKey,
+          title: rec.title,
+          policyUpdatedAt,
+          themeId: rec.theme,
+          themeScore: theme?.score ?? null,
+          subjectWeightPct: holding ? Math.round(holding.weight * 10) / 10 : null,
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? `Dismiss failed (${res.status})`);
+      }
+      toast("Dismissed — it won't be suggested again without a material change", "success", {
+        action: { label: "Undo", onClick: () => void restore(thesisKey) },
+      });
+      onExecuted();
+    } catch (err) {
+      setOverrides((prev) => {
+        const next = new Map(prev);
+        next.delete(thesisKey);
+        return next;
+      });
+      toast(err instanceof Error ? err.message : "Dismiss failed", "error");
+    } finally {
+      setPendingFor(thesisKey, null);
+    }
   };
 
-  const restore = (thesisKey: string) => {
-    fetch("/api/portfolio/decisions/dismiss", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ portfolioId, thesisKey }),
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error();
-        onExecuted();
-      })
-      .catch(() => {});
-  };
+  /* The rendered lists = the report, corrected by the optimistic overrides.
+     A dismissed card leaves the queue the moment it is clicked; it joins the
+     "set aside" memory below with the same revival copy the report will carry
+     for it once the rebuild lands. */
+  const visibleDecisions = decisions.filter((d) => overrides.get(thesisKeyOf(d.recommendation))?.kind !== "dismissed");
+  const visibleSuppressed = suppressedDecisions.filter((s) => overrides.get(s.thesisKey)?.kind !== "restored");
+  for (const [key, o] of overrides) {
+    if (o.kind === "dismissed" && !suppressedKeys.has(key)) {
+      visibleSuppressed.push({
+        thesisKey: key,
+        title: o.title,
+        dismissedAt: o.dismissedAt,
+        reviveWhen:
+          "returns if your policy changes, the position grows ≥5pp past its dismissed size, or its theme falls ≥12 pts — or restore it here",
+      });
+    }
+  }
 
   // The restorable memory — rendered under the queue AND on the empty state,
   // because "nothing to do" plus an invisible pile of dismissed ideas would
   // read as the engine having gone quiet rather than having listened.
-  const suppressedList = suppressedDecisions.length > 0 && (
+  const suppressedList = visibleSuppressed.length > 0 && (
     <div className="flex flex-col gap-1.5 rounded-lg border border-border/60 bg-surface/30 px-3 py-2">
       <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">
-        Considered and set aside ({suppressedDecisions.length})
+        Considered and set aside ({visibleSuppressed.length})
       </span>
       <ul className="flex flex-col gap-1">
-        {suppressedDecisions.map((s) => (
+        {visibleSuppressed.map((s) => (
           <li key={s.thesisKey} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-[11px]">
             <span className="min-w-0 text-muted">
               <span className="text-foreground">{s.title}</span>
@@ -600,10 +711,12 @@ export function DecisionCenter({
             </span>
             <button
               type="button"
-              onClick={() => restore(s.thesisKey)}
-              className="shrink-0 rounded-sm text-[11px] text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+              onClick={() => void restore(s.thesisKey)}
+              disabled={pending.has(s.thesisKey)}
+              aria-busy={pending.get(s.thesisKey) === "restore"}
+              className="shrink-0 rounded-sm text-[11px] text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 disabled:pointer-events-none disabled:opacity-60"
             >
-              Restore
+              {pending.get(s.thesisKey) === "restore" ? "Restoring…" : "Restore"}
             </button>
           </li>
         ))}
@@ -630,14 +743,14 @@ export function DecisionCenter({
     )
   );
 
-  if (decisions.length === 0) {
+  if (visibleDecisions.length === 0) {
     return (
       <Card className="flex flex-col items-center gap-3 p-10 text-center">
         <p className="text-sm font-semibold text-foreground">
-          {suppressedDecisions.length > 0 ? "Nothing new worth making." : "No changes worth making."}
+          {visibleSuppressed.length > 0 ? "Nothing new worth making." : "No changes worth making."}
         </p>
         <p className="max-w-md text-xs leading-relaxed text-muted">
-          {suppressedDecisions.length > 0
+          {visibleSuppressed.length > 0
             ? "You've already considered the remaining candidate changes (listed below), and no different action measurably improves alignment with your policy right now. The engine keeps searching each build — including your watchlist for researched opportunities — rather than repeating what you declined."
             : alignment.confirmed
             ? "The book sits inside the limits you set. Every candidate change was simulated against your own policy and none measurably improved alignment with it — a concentration or income level you explicitly accepted is not second-guessed here. Doing nothing is the recommendation."
@@ -671,12 +784,13 @@ export function DecisionCenter({
             </button>
           </div>
         )}
+        {dialogs}
       </Card>
     );
   }
 
-  const top = decisions[0];
-  const rest = decisions.slice(1);
+  const top = visibleDecisions[0];
+  const rest = visibleDecisions.slice(1);
   const topExecution = resolveDecisionExecution(top, holdings);
 
   return (
@@ -733,7 +847,14 @@ export function DecisionCenter({
           <p className="text-[11px] leading-snug text-warning">— {top.themeTradeoff}</p>
         )}
         <ImpactRow impact={top.recommendation.impact} />
-        <DecisionActions decision={top} execution={topExecution} onLaunch={launch} onNavigate={onNavigate} onDismiss={dismiss} />
+        <DecisionActions
+          decision={top}
+          execution={topExecution}
+          onLaunch={launch}
+          onNavigate={onNavigate}
+          onDismiss={dismiss}
+          dismissing={pending.get(thesisKeyOf(top.recommendation)) === "dismiss"}
+        />
         <div className="rounded-lg border border-border/60 bg-surface/40 px-3 py-2 text-[11px] leading-relaxed text-muted">
           <strong className="text-foreground">Cost of waiting: </strong>{top.opportunityCost.description}
         </div>
@@ -754,7 +875,7 @@ export function DecisionCenter({
       {rest.length > 0 && (
         <div className="flex flex-col gap-3">
           <span className="px-1 text-[11px] font-semibold uppercase tracking-wider text-muted/70">
-            Full priority queue ({decisions.length})
+            Full priority queue ({visibleDecisions.length})
           </span>
           {rest.map((d) => (
             <DecisionCardView
@@ -768,6 +889,7 @@ export function DecisionCenter({
               onLaunch={launch}
               onNavigate={onNavigate}
               onDismiss={dismiss}
+              dismissing={pending.get(thesisKeyOf(d.recommendation)) === "dismiss"}
             />
           ))}
         </div>

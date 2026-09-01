@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteManualAsset, getManualAsset, updateManualAsset, type UpdateManualAssetInput } from "@/lib/db";
+import { invalidateDataset } from "@/lib/platform";
 import { computeManualAssetMetrics } from "@/lib/manual-asset-metrics";
 
 export const runtime = "nodejs";
@@ -33,6 +34,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
   const updated = updateManualAsset(id, body);
   if (!updated) return NextResponse.json({ error: "Manual asset not found" }, { status: 404 });
+  // A manual asset's value flows into total value, every weight and every
+  // score — the cached report describes a book that no longer exists.
+  invalidateDataset("portfolioReport");
   return NextResponse.json({ asset: updated });
 }
 
@@ -41,5 +45,6 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   const { id } = await params;
   if (!getManualAsset(id)) return NextResponse.json({ error: "Manual asset not found" }, { status: 404 });
   deleteManualAsset(id);
+  invalidateDataset("portfolioReport");
   return NextResponse.json({ ok: true });
 }

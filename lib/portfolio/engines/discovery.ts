@@ -31,6 +31,7 @@ import { datedReturns, alignPair } from "./series";
 import { normalizeHoldings } from "../model/holding";
 import { simulate, type PortfolioEvaluation, type ImpactEstimate } from "./simulate";
 import { assessConfidence } from "./confidence";
+import { buyFundingCurrency } from "./optimize";
 import { effectiveCapPct } from "../alignment/policy";
 import { assetClassFromQuoteType } from "../classes/reference/risk-models";
 import type { Holding, MarketContext, PortfolioAssetClass, RawHolding } from "../model/types";
@@ -146,8 +147,12 @@ function research(
   const holding = holdings[0];
   if (!holding) return null;
 
-  // Rule 3: the policy gates, by measurement.
-  const { impact } = simulate(evaluation, [{ kind: "buy", holding, amount }], ctx);
+  // Rule 3: the policy gates, by measurement. Funded like its own execution
+  // path: a Decision Center buy defaults to drawing tracked cash when it
+  // covers, so the gate (and the card's impact) must be measured on the
+  // cash-reduced book, not on one that grew from nowhere.
+  const fundFromCashCurrency = buyFundingCurrency(evaluation.holdings, amount, ctx.baseCurrency);
+  const { impact } = simulate(evaluation, [{ kind: "buy", holding, amount, fundFromCashCurrency }], ctx);
   if (impact.alignmentDelta != null && impact.alignmentDelta < MIN_ALIGNMENT_DELTA) return null;
   if (impact.themeDeltas.some((t) => t.delta < -MAX_THEME_SACRIFICE_PTS)) return null;
   // An exploratory position must also respect the investor's own cap trivially.
@@ -259,7 +264,13 @@ export function computeDiscovery(
           ? `Correlated with what you already own (avg r ${r.avgR.toFixed(2)}) — it extends existing bets more than it spreads them.`
           : "Any new position adds a name to monitor.",
       ],
-      change: { kind: "buy" as const, holding: r.holding, amount: r.amount },
+      change: {
+        kind: "buy" as const,
+        holding: r.holding,
+        amount: r.amount,
+        // Same funding the card's own execution path defaults to — see rule 3.
+        fundFromCashCurrency: buyFundingCurrency(evaluation.holdings, r.amount, ctx.baseCurrency),
+      },
       priority: 0,
       alternatives: [],
       alternativesEvaluated: 0,

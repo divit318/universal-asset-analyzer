@@ -339,6 +339,23 @@ describe("GET /api/export/watchlist", () => {
 
 describe("GET /api/export/portfolio?format=excel", () => {
   it("returns xlsx magic bytes", async () => {
+    // The route now reads the SAME evaluation the Portfolio page renders
+    // (manual assets included, FX applied) — mock it so the test never builds
+    // a live market context. The fake book pins the row shapes the export
+    // maps: a ticker position, a cash lot, and a symbol-less manual asset.
+    vi.doMock("@/lib/portfolio/report", () => ({
+      buildEvaluation: async () => ({
+        ctx: { baseCurrency: "USD" },
+        evaluation: {
+          totalValue: 350_000,
+          holdings: [
+            { symbol: "AAPL", name: "Apple Inc.", assetClass: "equity", currency: "USD", quantity: 100, costBasisBase: 15_000, valuation: { valueBase: 20_000 } },
+            { symbol: null, name: "USD Cash", assetClass: "cash", currency: "USD", quantity: 30_000, costBasisBase: 30_000, valuation: { valueBase: 30_000 } },
+            { symbol: null, name: "Rental Property", assetClass: "real_estate", currency: "USD", quantity: 1, costBasisBase: 250_000, valuation: { valueBase: 300_000 } },
+          ],
+        },
+      }),
+    }));
     const { GET } = await import("@/app/api/export/portfolio/route");
 
     const res = await GET(new Request("http://localhost/?format=excel"));
@@ -351,6 +368,7 @@ describe("GET /api/export/portfolio?format=excel", () => {
     const buf = await responseToUint8(res);
     expect(buf.length).toBeGreaterThan(1000);
     expect(isXlsxMagic(buf)).toBe(true);
+    vi.doUnmock("@/lib/portfolio/report");
   });
 });
 

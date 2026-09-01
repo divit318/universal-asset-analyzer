@@ -77,6 +77,7 @@ function theme(id: AlignmentTheme["id"], label: string, score: number, finding: 
     evidencePct: 100,
     facts: [],
     mismatch: null,
+    metrics: null,
   };
 }
 

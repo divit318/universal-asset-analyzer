@@ -52,6 +52,7 @@ import { SimulatorPanel } from "./_components/simulator/simulator-panel";
 import { ReadOnlyHoldings } from "./_components/universal/read-only-holdings";
 import type { PortfolioMeta } from "@/lib/db";
 import { ArrivalHighlight, useArrivalTarget } from "@/app/_components/arrival-highlight";
+import { useIntelCards } from "@/app/_components/intel-rail";
 import { useBootReady } from "@/app/_components/boot-context";
 import { Reveal } from "@/app/_components/reveal";
 import { CountUp } from "@/app/_components/count-up";
@@ -201,6 +202,30 @@ function PortfolioPageInner() {
   const cashSlice = report?.allocation.byAssetClass.slices.find((s) => s.key === "cash");
   const cash = { value: cashSlice?.value ?? 0, weight: cashSlice?.weight ?? 0 };
 
+  // Trajectory delta measured to the LIVE score, not to the last execution
+  // snapshot. Snapshots are only written around executions, so the stored
+  // last-point drifts stale between trades — the tile read "73 · +15 pts" while
+  // the engine's last−first was 66−51. One displayed delta, live end-point,
+  // shared by the tile and the Trajectory panel so they cannot disagree.
+  // Across a score-definition change the engine's null (or windowed) delta
+  // stands — two rulers have no honest difference.
+  const firstTrajectoryScore = report?.trajectory?.points[0]?.score ?? null;
+  const liveScoreDelta =
+    report?.trajectory == null
+      ? null
+      : report.trajectory.scoreDefinitionChanged || firstTrajectoryScore == null || report.alignment.score == null
+        ? report.trajectory.scoreDelta
+        : report.alignment.score - firstTrajectoryScore;
+  const firstTrajectoryAt = report?.trajectory?.points[0]?.at ?? null;
+  const liveWindowDays =
+    firstTrajectoryAt && report
+      ? Math.max(1, Math.round((Date.parse(report.generatedAt) - Date.parse(firstTrajectoryAt)) / 86_400_000))
+      : report?.trajectory?.windowDays ?? 0;
+
+  // Contextual intel (earnings dates, portfolio leads) — rendered as a quiet
+  // row under the Know-this strip, never as the floating overlay it once was.
+  const intel = useIntelCards(report && report.holdingCount > 0 ? { surface: "portfolio", symbols: [] } : null);
+
   /**
    * Holdings as a workbook. The route reads the Main Portfolio (id 1), which is
    * why the button only renders there. Restores the export the 2026-07-14
@@ -228,7 +253,7 @@ function PortfolioPageInner() {
       <ArrivalHighlight targetId={highlightTarget} />
       <PageHeader
         title="Portfolio"
-        description="Holdings, allocation, P&L, risk, and alignment with your own policy across every asset class you own — with every recommended change simulated before it's shown."
+        description="Every asset class you own, measured against your own policy — every change simulated before it's shown."
         actions={
           <div className="flex items-center gap-3">
             {/* When these numbers were priced. Without it, an overnight-stale
@@ -415,8 +440,8 @@ function PortfolioPageInner() {
                   ? "Not scorable on the available data"
                   : !report.alignment.confirmed
                     ? "vs assumed defaults — set yours"
-                    : report.trajectory?.scoreDelta != null && Math.abs(report.trajectory.scoreDelta) >= 1
-                      ? `${pct(report.trajectory.scoreDelta, 0).replace("%", "")} pts over ${report.trajectory.windowDays}d`
+                    : liveScoreDelta != null && Math.abs(liveScoreDelta) >= 1
+                      ? `${pct(liveScoreDelta, 0).replace("%", "")} pts over ${liveWindowDays}d`
                       : report.alignment.label ?? "vs your policy"
               }
               tone={
@@ -441,6 +466,38 @@ function PortfolioPageInner() {
           <Reveal index={1}>
             <KeyFactsStrip report={report} onNavigate={navigateTo} />
           </Reveal>
+
+          {/* Contextual intel (earnings coming up, portfolio leads) in the same
+              quiet register as the strip above — this used to be the floating
+              IntelRail overlay, which sat ON TOP of the Alignment tile. Same
+              intelligence, in the hierarchy. */}
+          {intel.cards.length > 0 && (
+            <Reveal index={1} className="-mt-2 flex flex-col gap-1 px-1">
+              {intel.cards.map((card) => (
+                <p key={card.id} className="flex items-baseline gap-2 text-xs leading-5 text-foreground/85">
+                  <span aria-hidden className="h-1.5 w-1.5 shrink-0 translate-y-[-1px] rounded-full bg-brand/50" />
+                  <span className="min-w-0" title={card.detail ?? undefined}>
+                    {card.title}{" "}
+                    <button
+                      type="button"
+                      onClick={() => intel.activate(card)}
+                      className="whitespace-nowrap font-medium text-brand hover:underline"
+                    >
+                      {card.action.label} →
+                    </button>
+                    {card.source === "ai" && (
+                      <span
+                        className="ml-1.5 align-middle text-[9px] uppercase tracking-wide text-muted/70"
+                        title="An AI interpretation of computed facts — the measured panels win when they disagree."
+                      >
+                        AI
+                      </span>
+                    )}
+                  </span>
+                </p>
+              ))}
+            </Reveal>
+          )}
 
           {/* AI interpretation of the figures above — independent fetch, cached
               by content hash, compact by default. Below the tiles by design:
@@ -553,13 +610,10 @@ function PortfolioPageInner() {
                         >
                           Rebalance in Optimize
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => navigateTo("simulator")}
-                          className="rounded-sm text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
-                        >
-                          Test a fix in Simulator
-                        </button>
+                        {/* "Test a fix in Simulator" was cut from this row: Optimize
+                            already simulates every change before showing it, so the
+                            third link promised a slower path to the same answer.
+                            Four links per finding read as a menu, not an action. */}
                         <button
                           type="button"
                           onClick={() =>
@@ -634,7 +688,17 @@ function PortfolioPageInner() {
             <div className="flex flex-col gap-4">
               <div className="grid gap-4 xl:grid-cols-2">
                 <div id="panel-trajectory" className="h-full scroll-mt-20">
-                  <TrajectoryPanel trajectory={report.trajectory} />
+                  <TrajectoryPanel
+                    trajectory={report.trajectory}
+                    // Live end-point: snapshots exist only around executions, so
+                    // without this the panel headlines a number from the last
+                    // trade date while the Alignment tile shows today's.
+                    current={{
+                      score: report.alignment.score,
+                      topAssetClassWeight: report.risk.topAssetClassWeight,
+                      asOf: report.generatedAt,
+                    }}
+                  />
                 </div>
                 <div id="panel-alignment" className="h-full scroll-mt-20">
                   <AlignmentPanel

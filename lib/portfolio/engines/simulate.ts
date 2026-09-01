@@ -70,8 +70,21 @@ export function evaluate(
 /* -------------------------------------------------------------------------- */
 
 export type PortfolioChange =
-  /** Buy more of / open a position in an existing or candidate holding. */
-  | { kind: "buy"; holding: Holding; amount: number }
+  /**
+   * Buy more of / open a position in an existing or candidate holding.
+   *
+   * `fundFromCashCurrency` — when set (to the portfolio's base currency), the
+   * simulated buy DRAWS its cost from that currency's cash holdings, capped at
+   * what exists (never negative), largest-first: the exact behaviour of the
+   * executor's cash-balancing draw. Change CREATORS set it when the execution
+   * path they feed will actually draw cash (Decision Center buys default to
+   * fund-from-cash when cash covers), so the impact numbers on the card are
+   * measured on the same book the execution produces. Left unset, the buy is
+   * additive new capital — correct for the allocate-cash flow (which deposits
+   * first) and the position-size modal (which tracks funding separately; see
+   * position-size.ts's header).
+   */
+  | { kind: "buy"; holding: Holding; amount: number; fundFromCashCurrency?: string }
   /** Sell down an existing holding by a dollar amount. */
   | { kind: "sell"; holdingId: string; amount: number }
   /** Set an existing holding to a target weight. */
@@ -94,20 +107,60 @@ function resize(h: Holding, newValueBase: number): Holding {
   };
 }
 
+/**
+ * Draw `amount` from `currency`-denominated cash holdings, capped at what
+ * exists — the simulation twin of the executor's cash-balancing lot (and of
+ * planCashDraw's largest-first order). Lots drained below $1 leave the book,
+ * same as a fully-sold holding. Never fabricates negative cash.
+ */
+function drawFromCash(holdings: Holding[], amount: number, currency: string): Holding[] {
+  if (amount < 0.5) return holdings; // executor's settlement tolerance — no dust draws
+  const cur = currency.toUpperCase();
+  const cashIds = holdings
+    .filter((h) => h.assetClass === "cash" && h.currency.toUpperCase() === cur && h.valuation.valueBase > 0)
+    .sort((a, b) => b.valuation.valueBase - a.valuation.valueBase)
+    .map((h) => h.id);
+
+  let remaining = amount;
+  const draws = new Map<string, number>();
+  for (const id of cashIds) {
+    if (remaining <= 0) break;
+    const h = holdings.find((x) => x.id === id)!;
+    const draw = Math.min(remaining, h.valuation.valueBase);
+    draws.set(id, draw);
+    remaining -= draw;
+  }
+  if (draws.size === 0) return holdings;
+
+  const out: Holding[] = [];
+  for (const h of holdings) {
+    const draw = draws.get(h.id);
+    if (draw == null) {
+      out.push(h);
+      continue;
+    }
+    const left = h.valuation.valueBase - draw;
+    if (left > 1) out.push(resize(h, left));
+  }
+  return out;
+}
+
 /** Apply a change and return the resulting holdings. Pure — never mutates. */
 export function applyChange(holdings: Holding[], change: PortfolioChange): Holding[] {
   switch (change.kind) {
     case "buy": {
       const existing = holdings.find((h) => h.id === change.holding.id);
-      if (existing) {
-        return holdings.map((h) =>
-          h.id === change.holding.id
-            ? resize(h, h.valuation.valueBase + change.amount)
-            : h,
-        );
-      }
-      // New position, sized at the proposed amount.
-      return [...holdings, resize(change.holding, change.amount)];
+      const bought = existing
+        ? holdings.map((h) =>
+            h.id === change.holding.id
+              ? resize(h, h.valuation.valueBase + change.amount)
+              : h,
+          )
+        // New position, sized at the proposed amount.
+        : [...holdings, resize(change.holding, change.amount)];
+      return change.fundFromCashCurrency
+        ? drawFromCash(bought, change.amount, change.fundFromCashCurrency)
+        : bought;
     }
 
     case "sell": {

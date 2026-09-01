@@ -102,3 +102,57 @@ describe("aggregateOpenPositions", () => {
     expect(positions.find((p) => p.symbol === "TSLA")).toBeUndefined();
   });
 });
+
+describe("synthetic reconciliation lots", () => {
+  // The screenshot importer appends ONE balancing lot to make the ledger's
+  // quantity match the broker, marked `synthetic` and priced at the current
+  // price because no execution price exists. It is bookkeeping, not a trade.
+  it("adjusts quantity but books NO realized P&L for a synthetic sell", () => {
+    const p = aggregateLots([
+      lot({ symbol: "VOO", shares: 620, price: 632, tradeDate: "2026-04-14" }),
+      lot({
+        symbol: "VOO",
+        shares: 619.92683,
+        price: 708.42,
+        kind: "sell",
+        tradeDate: "2026-08-12",
+        meta: { source: "screenshot-import", synthetic: true },
+      }),
+    ])!;
+
+    // The quantity adjustment IS the lot's purpose and must still apply.
+    expect(p.shares).toBeCloseTo(0.07317, 5);
+    // The basis of the surviving shares is untouched by a sell (average-cost).
+    expect(p.avgCost).toBeCloseTo(632, 6);
+    // 619.92683 × (708.42 − 632) = $47,374.81 of profit the user never made.
+    expect(p.realizedPnl).toBe(0);
+    expect(p.realizedEvents).toEqual([]);
+  });
+
+  it("still books realized P&L for a genuine sell", () => {
+    const p = aggregateLots([
+      lot({ shares: 10, price: 100, tradeDate: "2026-01-01" }),
+      lot({ shares: 4, price: 150, kind: "sell", tradeDate: "2026-02-01" }),
+    ])!;
+    expect(p.shares).toBe(6);
+    expect(p.realizedPnl).toBeCloseTo(200, 6); // 4 × (150 − 100)
+    expect(p.realizedEvents).toHaveLength(1);
+  });
+
+  it("counts a real sell and ignores a synthetic one in the same ledger", () => {
+    const p = aggregateLots([
+      lot({ shares: 10, price: 100, tradeDate: "2026-01-01" }),
+      lot({ shares: 2, price: 150, kind: "sell", tradeDate: "2026-02-01" }),
+      lot({
+        shares: 3,
+        price: 900,
+        kind: "sell",
+        tradeDate: "2026-03-01",
+        meta: { synthetic: true },
+      }),
+    ])!;
+    expect(p.shares).toBe(5);
+    expect(p.realizedPnl).toBeCloseTo(100, 6); // only the real 2 × (150 − 100)
+    expect(p.realizedEvents).toHaveLength(1);
+  });
+});

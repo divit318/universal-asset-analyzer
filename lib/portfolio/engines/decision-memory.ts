@@ -126,7 +126,12 @@ export function revivalReason(
   }
 
   // 2. The subject position got materially bigger (reduce/exit theses).
-  if (d.subjectWeightPct != null && rec.symbol) {
+  // A real baseline is always > 0 — a position must exist to be trimmed. A
+  // stored 0 means "no baseline" (gap/discovery theses, plus rows written
+  // before the dismiss routes kept a null baseline null instead of coercing
+  // it to 0), and measuring growth against it would spuriously revive any
+  // thesis whose proposed symbol happens to be held at ≥5%.
+  if (d.subjectWeightPct != null && d.subjectWeightPct > 0 && rec.symbol) {
     const holding = evaluation.holdings.find((h) => h.symbol?.toUpperCase() === rec.symbol!.toUpperCase());
     if (holding && holding.weight >= d.subjectWeightPct + REVIVE_WEIGHT_GAIN_PP) {
       return `${rec.symbol} grew from ${d.subjectWeightPct.toFixed(1)}% to ${holding.weight.toFixed(1)}% of the book since you dismissed it`;

@@ -33,8 +33,9 @@ export interface AssetSignal {
   recommendation: Recommendation | null;
   /** 0-100. computeScore()'s own confidence in its inputs. */
   scoreConfidence: number | null;
-  /** Best available upside vs the current price, in % — the user's own valuation case when one exists, else analyst consensus. */
+  /** Best available upside vs the current price, in % — the user's own valuation case when they have authored one, else analyst consensus. */
   upsidePct: number | null;
+  /** "valuation_case" means a case with at least one USER-authored assumption — callers must never pass a machine seed's upside. */
   upsideBasis: "valuation_case" | "analyst_consensus" | null;
   /** Bucket scores as 0-100 percentages of max, when scored. */
   qualityPct: number | null;
@@ -55,8 +56,10 @@ function bucketPct(data: FundamentalsData, name: string): number | null {
 
 /**
  * Shape the Research page's own FundamentalsData into an AssetSignal.
- * `valuationCaseUpsidePct` is the user's own fair-value case (when one exists),
- * which outranks analyst consensus — their judgment beats the street's.
+ * `valuationCaseUpsidePct` must be the upside from a USER-AUTHORED valuation
+ * case (≥1 owned assumption — the caller checks), which outranks analyst
+ * consensus: their judgment beats the street's. An untouched machine seed is
+ * nobody's judgment and must arrive here as null so the street's number wins.
  * Returns null when there is no score at all (non-equity instruments, fetch
  * failure) — the sizing engine then falls back to its signal-free path.
  */

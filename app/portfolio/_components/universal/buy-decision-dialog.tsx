@@ -15,11 +15,12 @@ import { formatCurrency } from "@/lib/format";
  * purchase flow uses — with the decision's context carried into the ledger's
  * lot meta (`source: "decision_center"`, the recommendation id, the decision
  * title as the reason). Funding is explicit and truthful: when the tracked
- * base-currency cash balance covers the amount, the default is to draw it via
- * the route's own `sellFirst` mechanism (cash down, position up — total value
- * conserved, exactly like the simulation that produced the card's impact
- * numbers assumes nothing new arrived). When it doesn't cover, we SAY the buy
- * will be recorded as new capital rather than fabricating negative cash.
+ * base-currency cash balance covers the amount, the default is `fundFromCash`,
+ * which the ROUTE resolves against fresh state across every cash lot (cash
+ * down, position up — total value conserved). When it doesn't cover, we SAY
+ * the buy will be recorded as new capital rather than fabricating negative
+ * cash — and the success screen reports what actually happened, not what the
+ * checkbox promised.
  */
 
 export interface BuyDecisionContext {
@@ -30,8 +31,13 @@ export interface BuyDecisionContext {
   /** One-line "what and why" repeated inside the dialog so context travels. */
   title: string;
   recommendationId: string;
-  /** Largest base-currency cash holding, for the fund-from-cash option. */
-  cashHolding: { id: string; valueBase: number } | null;
+  /**
+   * Total base-currency cash across EVERY cash lot — display/default only.
+   * The actual funding decision is made server-side against fresh state
+   * (`fundFromCash`), so this figure being stale can never mis-fund a buy;
+   * at worst the checkbox's caption is a page-load old.
+   */
+  cashAvailable: number;
 }
 
 interface BuyResult {
@@ -40,6 +46,12 @@ interface BuyResult {
   currency: string;
   totalCost: number;
   snapshotId: string | null;
+  /** Server-side truth: whether tracked cash actually funded this purchase. */
+  fundedFromCash: boolean;
+  /** Base-currency figures from the route's own funding resolution. */
+  cashDrawn: number;
+  cashAvailable: number | null;
+  baseCurrency: string;
 }
 
 export function BuyDecisionDialog({ context, onClose, onExecuted }: {
@@ -50,9 +62,12 @@ export function BuyDecisionDialog({ context, onClose, onExecuted }: {
 }) {
   const { quote, loading: quoteLoading, error: quoteError, refetch } = useFreshQuote(context.symbol, true);
 
+  /** Same tolerance the engine settles cash with — a float-dust boundary must never flip "covered". */
+  const CASH_TOLERANCE = 0.5;
+
   const [value, setValue] = useState(String(context.amount));
   const [drawFromCash, setDrawFromCash] = useState(
-    context.cashHolding != null && context.cashHolding.valueBase >= context.amount,
+    context.cashAvailable >= context.amount - CASH_TOLERANCE,
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,9 +81,9 @@ export function BuyDecisionDialog({ context, onClose, onExecuted }: {
   const price = quote?.price ?? null;
   const estShares = validAmount && price ? amount / price : null;
 
-  const cash = context.cashHolding;
-  const cashCovers = cash != null && validAmount && cash.valueBase >= amount;
-  // The checkbox only ever offers what the route can honour: a full draw.
+  const cashAvailable = context.cashAvailable;
+  const cashCovers = validAmount && cashAvailable >= amount - CASH_TOLERANCE;
+  // Display-only default; the route re-resolves against fresh cash either way.
   const effectiveDraw = drawFromCash && cashCovers;
 
   async function submit() {
@@ -85,9 +100,9 @@ export function BuyDecisionDialog({ context, onClose, onExecuted }: {
           symbol: context.symbol,
           name: context.name,
           amount,
-          sellFirst: effectiveDraw && cash
-            ? [{ holdingId: cash.id, amount, reason: `Funding decision: ${context.title}` }]
-            : undefined,
+          // Server-resolved: drawn across ALL base-currency cash lots against
+          // fresh state, or recorded as new capital when cash doesn't cover.
+          fundFromCash: effectiveDraw || undefined,
           meta: {
             source: "decision_center",
             recommendationId: context.recommendationId,
@@ -103,6 +118,10 @@ export function BuyDecisionDialog({ context, onClose, onExecuted }: {
         currency: json.currency,
         totalCost: json.totalCost,
         snapshotId: json.snapshotId ?? json.fundingSnapshotId ?? null,
+        fundedFromCash: json.fundedFromCash === true,
+        cashDrawn: typeof json.cashDrawn === "number" ? json.cashDrawn : 0,
+        cashAvailable: typeof json.cashAvailable === "number" ? json.cashAvailable : null,
+        baseCurrency: typeof json.baseCurrency === "string" ? json.baseCurrency : "USD",
       });
       onExecuted();
     } catch (e) {
@@ -154,8 +173,23 @@ export function BuyDecisionDialog({ context, onClose, onExecuted }: {
               </p>
               <p className="text-xs text-muted">
                 {formatCurrency(result.totalCost, result.currency)} total
-                {effectiveDraw ? " · funded from portfolio cash" : " · recorded as new capital"}
+                {result.fundedFromCash
+                  ? result.currency.toUpperCase() !== result.baseCurrency
+                    // Cross-currency: the draw happened in the base currency at
+                    // the evaluation's own FX rate — show the actual figure.
+                    ? ` · ${formatCurrency(result.cashDrawn, result.baseCurrency)} drawn from portfolio cash`
+                    : " · funded from portfolio cash"
+                  : " · recorded as new capital"}
               </p>
+              {/* The request asked for cash funding but the fresh server-side
+                  check found it didn't cover — say so instead of letting the
+                  checkbox's stale promise stand. */}
+              {effectiveDraw && !result.fundedFromCash && (
+                <p className="text-xs text-warning" role="status">
+                  Tracked cash{result.cashAvailable != null ? ` (${formatCurrency(result.cashAvailable)})` : ""} no longer
+                  covered this amount at execution, so no cash was drawn.
+                </p>
+              )}
             </>
           )}
           {error && <p className="text-xs text-negative" role="alert">{error}</p>}
@@ -226,8 +260,10 @@ export function BuyDecisionDialog({ context, onClose, onExecuted }: {
           </div>
         </Field>
 
-        {/* Funding — explicit, never implied. */}
-        {cash && cashCovers ? (
+        {/* Funding — explicit, never implied. The figure shown is TOTAL cash
+            across every base-currency lot; the draw itself is re-resolved
+            server-side against fresh state at execution. */}
+        {cashCovers ? (
           <label className="flex items-start gap-2 rounded-lg border border-border bg-surface/40 px-3 py-2.5 text-xs">
             <input
               type="checkbox"
@@ -236,14 +272,14 @@ export function BuyDecisionDialog({ context, onClose, onExecuted }: {
               className="mt-0.5 accent-brand"
             />
             <span className="leading-relaxed text-muted">
-              <strong className="text-foreground">Fund from portfolio cash</strong> ({formatCurrency(cash.valueBase)} available).
+              <strong className="text-foreground">Fund from portfolio cash</strong> ({formatCurrency(cashAvailable)} available).
               Unchecked, the purchase is recorded as new capital instead.
             </span>
           </label>
         ) : (
           <p className="rounded-lg border border-border bg-surface/40 px-3 py-2.5 text-[11px] leading-relaxed text-muted">
-            {cash && cash.valueBase > 0
-              ? `Tracked cash (${formatCurrency(cash.valueBase)}) doesn't cover this amount, so the purchase will be recorded as new capital — UAA never fabricates a negative cash balance.`
+            {cashAvailable > 0
+              ? `Tracked cash (${formatCurrency(cashAvailable)}) doesn't cover this amount, so the purchase will be recorded as new capital — UAA never fabricates a negative cash balance.`
               : "No tracked cash to draw on — the purchase will be recorded as new capital added to the portfolio."}
           </p>
         )}

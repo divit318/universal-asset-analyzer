@@ -109,6 +109,10 @@ export function AddHoldingDialog({ open, onClose, onSaved }: {
   const [currency, setCurrency] = useState("USD");
   const [currencyTouched, setCurrencyTouched] = useState(false);
   const [yieldPct, setYieldPct] = useState("");
+  // Off by default: adding a holding RECORDS a position you already own (new
+  // capital). Checked, the entry's cost is drawn from tracked cash instead —
+  // resolved server-side against fresh state, full-fund or nothing.
+  const [fundFromCash, setFundFromCash] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -139,6 +143,7 @@ export function AddHoldingDialog({ open, onClose, onSaved }: {
     setSymbol(""); setName(""); setNameTouched(false);
     setQuantity(""); setAvgCost(""); setAvgCostTouched(false);
     setCurrency("USD"); setCurrencyTouched(false); setYieldPct("");
+    setFundFromCash(false);
   }
 
   function handleClassChange(next: PortfolioAssetClass) {
@@ -190,6 +195,7 @@ export function AddHoldingDialog({ open, onClose, onSaved }: {
         body.name = name.trim() || symbol.trim().toUpperCase();
         body.quantity = Number(quantity);
         body.avgCost = Number(avgCost);
+        if (fundFromCash) body.fundFromCash = true;
       }
 
       const res = await fetch("/api/portfolio", {
@@ -200,7 +206,18 @@ export function AddHoldingDialog({ open, onClose, onSaved }: {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Failed to save");
 
-      toast("Holding added");
+      // Say what actually happened to the ledger: an existing position is
+      // ADDED TO (a new lot), never silently replaced — and where the money
+      // came from, per the server's own funding decision.
+      const base = json.appended
+        ? `Added to existing ${json.symbol} position — now ${Number(json.newQuantity).toLocaleString(undefined, { maximumFractionDigits: 6 })} total`
+        : "Holding added";
+      const funding = fundFromCash && !isCash
+        ? json.fundedFromCash
+          ? " · paid from tracked cash"
+          : " · recorded as new capital (tracked cash didn't cover it)"
+        : "";
+      toast(base + funding);
       resetFields();
       onSaved();
       onClose();
@@ -261,6 +278,15 @@ export function AddHoldingDialog({ open, onClose, onSaved }: {
               Cash is treated as an asset, not a residual: it earns a yield, it is your
               liquidity buffer, and it loses purchasing power to inflation. Recording the
               yield lets the engine judge whether it is working or sitting idle.
+            </p>
+            {/* SET semantics, said out loud: this records what the balance IS,
+                replacing any existing entry for the currency — a correction,
+                not a deposit. Depositing money that then gets invested is the
+                Decisions tab's "Allocate new cash" flow. */}
+            <p className="-mt-1 text-[11px] leading-relaxed text-warning/80">
+              This sets your tracked {currency || "USD"} cash balance to this amount, replacing any
+              existing {currency || "USD"} cash entry. To deposit new money and invest it, use
+              Decisions → Allocate new cash.
             </p>
           </>
         ) : (
@@ -332,6 +358,26 @@ export function AddHoldingDialog({ open, onClose, onSaved }: {
                 Avg cost prefilled with today&apos;s price — edit it if you bought at a different price.
               </p>
             )}
+            {/* Funding semantics, said out loud — and choosable. Default is
+                RECORDING a position you already own (new capital); the checkbox
+                pays for the entry from tracked cash instead, resolved
+                server-side (full-fund or nothing, never negative cash). */}
+            <label className="flex items-start gap-2 rounded-lg border border-border bg-surface/40 px-3 py-2.5 text-xs">
+              <input
+                type="checkbox"
+                checked={fundFromCash}
+                onChange={(e) => setFundFromCash(e.target.checked)}
+                className="mt-0.5 accent-brand"
+              />
+              <span className="leading-relaxed text-muted">
+                <strong className="text-foreground">Pay from tracked cash</strong>
+                {Number(quantity) > 0 && Number(avgCost) > 0
+                  ? ` (${formatCurrency(Number(quantity) * Number(avgCost))} drawn from your cash balance)`
+                  : ""}
+                . Unchecked, the entry is recorded as new capital — a position you already owned.
+                If you already hold this symbol, the entry is added to the existing position as a new lot.
+              </span>
+            </label>
           </>
         )}
 

@@ -294,6 +294,23 @@ export function availableBaseCash(holdings: readonly Holding[], baseCurrency: st
 }
 
 /**
+ * The `fundFromCashCurrency` marker for a simulated buy that the Decision
+ * Center will execute: base currency when tracked cash covers the amount
+ * (within the settlement tolerance — the execution default is then a full
+ * cash draw), undefined when it doesn't (execution then records new capital
+ * and draws nothing). Keeps the card's simulated impact measured on the same
+ * book its own execution path produces.
+ */
+export function buyFundingCurrency(
+  holdings: readonly Holding[],
+  amount: number,
+  baseCurrency: string,
+): string | undefined {
+  const base = (baseCurrency || "USD").toUpperCase();
+  return availableBaseCash(holdings, base) >= amount - CASH_SETTLEMENT_TOLERANCE ? base : undefined;
+}
+
+/**
  * Can this set of trades be paid for?
  *
  * A rebalancing plan's buys and sells are NOT expected to tie out, and that is the

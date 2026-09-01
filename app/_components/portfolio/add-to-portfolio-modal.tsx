@@ -36,7 +36,12 @@ interface BuyResult {
   /** Alignment score (0-100) before/after — null when the book is unscorable. */
   alignmentBefore: number | null;
   alignmentAfter: number | null;
+  /** Server-side truth: whether tracked cash (after any funding sells) actually paid for this. */
+  fundedFromCash: boolean;
 }
+
+/** Same tolerance the engine settles cash with — float dust must never flip "covered". */
+const CASH_TOLERANCE = 0.5;
 
 /**
  * The single objective every recommendation in this modal is computed under.
@@ -206,9 +211,13 @@ export function AddToPortfolioModal({
   const finalAllocationPct = currentMatchesAmount ? current!.recommendedAllocationPct : estimatedAllocationPct;
   const cashRemaining = finalAmount != null ? cashAvailable - finalAmount : null;
 
+  // Raw difference with the engine's settlement tolerance — Math.round here
+  // once made a $0.60 deficit read as fundable and a float-dust boundary read
+  // as a shortfall. Rounded only where it is DISPLAYED.
   const shortfall = useMemo(() => {
     if (finalAmount == null) return 0;
-    return Math.max(0, Math.round(finalAmount - cashAvailable));
+    const deficit = finalAmount - cashAvailable;
+    return deficit <= CASH_TOLERANCE ? 0 : deficit;
   }, [finalAmount, cashAvailable]);
 
   // ---- Validation ----
@@ -246,6 +255,13 @@ export function AddToPortfolioModal({
       const sellFirst = fundingSource !== "cash" && shortfall > 0
         ? pickSellsForShortfall(current?.sellSuggestions ?? [], shortfall)
         : undefined;
+      // Every funding mode in this modal means "pay for it from the portfolio"
+      // — sells cover any shortfall, cash covers the rest. The draw itself is
+      // resolved server-side against fresh state (after the sells land in
+      // cash). This flag was previously never sent, so "Fund from cash"
+      // recorded the buy as NEW CAPITAL and cash was never debited: a phantom
+      // deposit exactly equal to the purchase.
+      const fundFromCash = true;
 
       const feesToSend = Number.isFinite(feesNum) && feesNum >= 0 ? feesNum : undefined;
       const meta: Record<string, unknown> = { source: "research_buy" };
@@ -263,6 +279,7 @@ export function AddToPortfolioModal({
           name: item.name,
           amount: finalAmount,
           sellFirst,
+          fundFromCash,
           objective: OBJECTIVE,
           tradeDate: tradeDate || undefined,
           fees: feesToSend,
@@ -281,6 +298,7 @@ export function AddToPortfolioModal({
         totalCost: json.totalCost,
         alignmentBefore: current?.before.alignment.score ?? null,
         alignmentAfter: current?.after.alignment.score ?? null,
+        fundedFromCash: json.fundedFromCash === true,
       };
 
       try {
@@ -362,6 +380,11 @@ export function AddToPortfolioModal({
           <p className="font-mono text-xl font-bold">{formatCurrency(result.totalCost, result.currency)}</p>
           <p className="text-xs text-muted">
             {result.shares.toLocaleString(undefined, { maximumFractionDigits: 6 })} sh of {result.symbol} at {formatCurrency(result.price, result.currency)}/share
+          </p>
+          <p className="text-xs text-muted" role="status">
+            {result.fundedFromCash
+              ? "Paid from portfolio cash — the cash balance was reduced by this amount."
+              : "Recorded as new capital — tracked cash didn't cover it, so no cash was drawn."}
           </p>
           {result.alignmentBefore != null && result.alignmentAfter != null && (
             <div className="mt-1 w-full rounded-lg border border-border bg-surface-2 px-4 py-2">

@@ -91,8 +91,25 @@ export function aggregateLots(lots: PortfolioLot[]): PositionAggregate | null {
       // Realize against current basis on the shares actually held; fees reduce it.
       const basisShares = Math.min(lot.shares, Math.max(shares, 0));
       const realized = basisShares * (lot.price - avgCost) - lot.fees;
-      realizedPnl += realized;
-      realizedEvents.push({ date: lot.tradeDate, amount: realized });
+
+      // …unless the sell is a RECONCILIATION, not a trade. The screenshot
+      // importer appends one balancing lot to make the ledger's quantity equal
+      // what the broker shows, marks it `synthetic`, and prices it at the
+      // screenshot's CURRENT price because no execution price exists — see
+      // lib/portfolio/import/types.ts, which states outright that it "does not
+      // claim to be a real trade". Treating it as one books a gain the user
+      // never made: on this book a 619.93-share reconciliation against a seeded
+      // VOO position realized $47,374.81 on a holding worth $51, and the
+      // portfolio headline read +7,474.93% / +$98,405.58 against a true -0.42%.
+      // The quantity adjustment is kept (that IS the lot's purpose); only the
+      // fabricated P&L is dropped. Mirrors isInternalCapitalLot()'s treatment
+      // of `balancing` cash plugs in lib/portfolio-performance.ts.
+      const isReconciliation = lot.meta?.synthetic === true;
+      if (!isReconciliation) {
+        realizedPnl += realized;
+        realizedEvents.push({ date: lot.tradeDate, amount: realized });
+      }
+
       shares = Math.max(0, shares - lot.shares);
       if (shares === 0) avgCost = 0; // flat → basis resets for any re-entry
     }

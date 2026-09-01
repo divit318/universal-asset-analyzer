@@ -29,6 +29,7 @@ import { CONCENTRATION_HYSTERESIS_PCT } from "../policy";
 import { EXPOSURE_TARGETS, INFLATION_TARGET_S } from "../alignment/engine";
 import { effectiveCapPct, type AlignmentThemeId } from "../alignment/policy";
 import { assessConfidence } from "./confidence";
+import { buyFundingCurrency } from "./optimize";
 
 export type RecommendationAction =
   | "ADD"
@@ -434,7 +435,15 @@ export function computeRecommendations(
         const holding = buildCandidateHolding(c, amount, ctx);
         if (!holding) continue;
 
-        const change: PortfolioChange = { kind: "buy", holding, amount };
+        // Funded like its own execution path: a Decision Center buy defaults
+        // to drawing tracked cash when it covers, so the impact on the card is
+        // measured on the cash-reduced book — not one that grew from nowhere.
+        const change: PortfolioChange = {
+          kind: "buy",
+          holding,
+          amount,
+          fundFromCashCurrency: buyFundingCurrency(evaluation.holdings, amount, ctx.baseCurrency),
+        };
         const { impact } = simulate(evaluation, [change], ctx);
         totalEvaluated++;
 

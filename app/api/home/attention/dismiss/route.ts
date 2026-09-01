@@ -74,8 +74,12 @@ export async function POST(req: Request) {
         dismissedAt: new Date(now).toISOString(),
         policyUpdatedAt: typeof t!.policyUpdatedAt === "string" ? t!.policyUpdatedAt : null,
         themeId: typeof t!.themeId === "string" ? t!.themeId : null,
-        themeScore: Number.isFinite(Number(t!.themeScore)) ? Number(t!.themeScore) : null,
-        subjectWeightPct: Number.isFinite(Number(t!.subjectWeightPct)) ? Number(t!.subjectWeightPct) : null,
+        // `Number(null)` is 0 — a typeof check keeps a null baseline null
+        // instead of storing a fabricated "dismissed at 0" the revival
+        // judgment would measure growth against.
+        themeScore: typeof t!.themeScore === "number" && Number.isFinite(t!.themeScore) ? t!.themeScore : null,
+        subjectWeightPct:
+          typeof t!.subjectWeightPct === "number" && Number.isFinite(t!.subjectWeightPct) ? t!.subjectWeightPct : null,
         title: typeof t!.title === "string" ? t!.title.slice(0, 160) : thesisKey,
       });
       invalidateDataset("portfolioReport");

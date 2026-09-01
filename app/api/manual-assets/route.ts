@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createManualAsset, listManualAssets, type CreateManualAssetInput } from "@/lib/db";
+import { invalidateDataset } from "@/lib/platform";
 import type { ManualAssetCategory } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -49,6 +50,10 @@ export async function POST(request: Request) {
 
   try {
     const asset = createManualAsset(body);
+    // Manual assets ARE portfolio holdings (listRawHoldings reads both
+    // ledgers) — without this, the Portfolio served the pre-write book from
+    // cache for up to its TTL after adding a property or a stake.
+    invalidateDataset("portfolioReport");
     return NextResponse.json({ asset }, { status: 201 });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to create manual asset";

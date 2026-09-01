@@ -10,7 +10,9 @@ import { isValidSymbol } from "@/lib/market";
 import { NextResponse } from "next/server";
 import { resolveDisplayName } from "@/lib/yahoo";
 import { listPortfolio } from "@/lib/db";
-import { listRawHoldings, upsertHolding, upsertCash, removeHolding } from "@/lib/portfolio/store";
+import { listRawHoldings, listLedgerPositionSummaries, upsertHolding, upsertCash, removeHolding } from "@/lib/portfolio/store";
+import { addUniversalLot, executeTrades, planCashDraw } from "@/lib/portfolio/engines/transaction";
+import { buildEvaluation } from "@/lib/portfolio/report";
 import { hasClassAdapter, getClassAdapter } from "@/lib/portfolio/model/adapter";
 import type { PortfolioAssetClass } from "@/lib/portfolio/model/types";
 
@@ -44,6 +46,15 @@ interface PostBody {
   amount?: number;
   yieldPct?: number;
   vehicle?: string;
+  /**
+   * Ticker holdings only: pay for this entry from tracked base-currency cash
+   * (quantity × avgCost drawn across ALL cash lots, resolved server-side
+   * against fresh state). Full-fund or nothing — when cash doesn't cover, no
+   * cash is drawn, the entry is recorded as new capital, and the response
+   * says so (`fundedFromCash: false`). Default false: adding a holding
+   * normally RECORDS a position you already own.
+   */
+  fundFromCash?: boolean;
 }
 
 /**
@@ -113,6 +124,69 @@ export async function POST(request: Request) {
     // holding added by symbol alone shows that symbol as its "name" forever
     // (an opaque Morningstar ID, for Indian mutual funds).
     const name = await resolveDisplayName(symbol, body.name);
+
+    // Optional funding: draw quantity × avgCost from tracked base-currency
+    // cash, decided against a FRESH evaluation. The draw is denominated in the
+    // BASE currency, so a funded entry in any other currency is refused rather
+    // than drawing the wrong number (same rule as /api/portfolio/buy).
+    let fundedFromCash = false;
+    let cashDrawn = 0;
+    let cashAvailable: number | null = null;
+    if (body.fundFromCash) {
+      const { ctx, evaluation } = await buildEvaluation();
+      const base = (ctx.baseCurrency || "USD").toUpperCase();
+      const entryCurrency = (body.currency ?? "USD").toUpperCase();
+      if (entryCurrency !== base) {
+        return NextResponse.json(
+          { error: `This holding is denominated in ${entryCurrency} but your portfolio cash is ${base} — funding a cross-currency entry from tracked cash isn't supported yet. Record it as new capital instead.` },
+          { status: 400 },
+        );
+      }
+      const cost = quantity * body.avgCost;
+      const plan = planCashDraw(evaluation, cost, base);
+      cashAvailable = plan.available;
+      if (plan.covered && plan.trades.length > 0) {
+        executeTrades(evaluation, plan.trades, "maximize_sharpe");
+        fundedFromCash = true;
+        cashDrawn = cost;
+      }
+    }
+
+    // "Add" must ADD. upsertHolding() replaces a symbol's whole ledger with one
+    // opening lot — correct for creating a brand-new position, and silently
+    // destructive for an existing one: adding 5 AAPL to a 10-AAPL position with
+    // three recorded lots left 5 shares, one lot, and no realized-P&L history.
+    // An existing position gets an APPENDED buy lot instead, so quantity grows
+    // and avg-cost/realized P&L stay correct via the standard lot aggregation.
+    const existing = listLedgerPositionSummaries().find((p) => p.symbol === symbol) ?? null;
+    if (existing && existing.quantity > 0) {
+      addUniversalLot({
+        symbol,
+        name,
+        shares: quantity,
+        price: body.avgCost,
+        kind: "buy",
+        assetClass: cls,
+        currency: body.currency ?? "USD",
+        unit: adapter.unit,
+        meta: { source: "add_holding", ...body.meta },
+      });
+      return NextResponse.json(
+        {
+          ok: true,
+          symbol,
+          assetClass: cls,
+          appended: true,
+          priorQuantity: existing.quantity,
+          newQuantity: existing.quantity + quantity,
+          fundedFromCash,
+          cashDrawn,
+          cashAvailable,
+        },
+        { status: 201 },
+      );
+    }
+
     upsertHolding({
       symbol,
       name,
@@ -125,7 +199,10 @@ export async function POST(request: Request) {
       unit: adapter.unit,
       meta: body.meta,
     });
-    return NextResponse.json({ ok: true, symbol, assetClass: cls }, { status: 201 });
+    return NextResponse.json(
+      { ok: true, symbol, assetClass: cls, appended: false, fundedFromCash, cashDrawn, cashAvailable },
+      { status: 201 },
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to save position";
     return NextResponse.json({ error: message }, { status: 500 });
