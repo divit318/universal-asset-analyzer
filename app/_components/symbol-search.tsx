@@ -21,6 +21,47 @@ interface Props {
 }
 
 /**
+ * Suggestions already fetched this document lifetime, keyed by the trimmed
+ * lowercase query.
+ *
+ * Typing one ticker is not one request: "MICRON" is six distinct prefixes, and
+ * at 160 ms of debounce against ~200 ms/char a normal typist fires most of them.
+ * Measured against /api/search — a prefix the server has not seen costs 0.54 to
+ * 1.19 s (a Yahoo round-trip), the same prefix again costs 10 to 22 ms (the
+ * platform's 10-minute `search` dataset). So the server cache already handles
+ * repetition ACROSS searches; what it cannot help with is the within-search
+ * case that actually happens on camera — backspacing a character, or retyping a
+ * symbol looked at a minute ago — because each keystroke still pays a full
+ * network round-trip to learn what we already knew.
+ *
+ * Module scope, not component state: the search box unmounts on every route
+ * change, and a cache that dies with it would miss the exact repeat visits it
+ * exists to serve. Bounded because an unbounded typeahead cache on a
+ * long-running SPA is a memory leak with extra steps.
+ */
+const suggestionCache = new Map<string, SymbolSuggestion[]>();
+const SUGGESTION_CACHE_MAX = 120;
+
+function readSuggestionCache(q: string): SymbolSuggestion[] | undefined {
+  const hit = suggestionCache.get(q);
+  // Re-insert to move this key to the most-recently-used end of the Map.
+  if (hit) {
+    suggestionCache.delete(q);
+    suggestionCache.set(q, hit);
+  }
+  return hit;
+}
+
+function writeSuggestionCache(q: string, results: SymbolSuggestion[]): void {
+  suggestionCache.set(q, results);
+  while (suggestionCache.size > SUGGESTION_CACHE_MAX) {
+    const oldest = suggestionCache.keys().next().value;
+    if (oldest === undefined) break;
+    suggestionCache.delete(oldest);
+  }
+}
+
+/**
  * Debounced ticker / company-name typeahead. Hits /api/search as the user types
  * and lets them pick with the mouse or arrow keys. Submitting raw text still
  * works, so power users can type "AAPL ⏎" without waiting for suggestions.
@@ -42,21 +83,43 @@ export function SymbolSearch({ value, onChange, onSelect, loading, placeholder, 
       setItems([]);
       return;
     }
+
+    // A prefix we have already resolved paints with no network and no debounce.
+    // Backspacing through a symbol is the common case this serves, and waiting
+    // 160 ms to re-display a list we are already holding is pure latency.
+    const cached = readSuggestionCache(q.toLowerCase());
+    if (cached) {
+      setItems(cached);
+      setActive(-1);
+      return;
+    }
+
     let cancelled = false;
+    // Abort supersedes the request rather than only ignoring its result. The
+    // `cancelled` flag alone left every stale keystroke's fetch running to
+    // completion, so typing six characters queued six Yahoo round-trips and the
+    // one query the user actually cared about waited behind the five it had
+    // already replaced.
+    const ctrl = new AbortController();
     const handle = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { signal: ctrl.signal });
         const json = await res.json();
         if (cancelled) return;
-        setItems((json.results as SymbolSuggestion[]) ?? []);
+        const results = (json.results as SymbolSuggestion[]) ?? [];
+        writeSuggestionCache(q.toLowerCase(), results);
+        setItems(results);
         setActive(-1);
       } catch {
-        if (!cancelled) setItems([]);
+        // An abort is the expected path for every superseded keystroke, not a
+        // failure — clearing the list on it would blank the dropdown mid-type.
+        if (!cancelled && !ctrl.signal.aborted) setItems([]);
       }
     }, 160);
     return () => {
       cancelled = true;
       clearTimeout(handle);
+      ctrl.abort();
     };
   }, [value]);
 

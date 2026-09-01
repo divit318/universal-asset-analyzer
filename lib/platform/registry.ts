@@ -223,7 +223,23 @@ export const DATASETS: Record<DatasetId, CachePolicy> = {
   // state in milliseconds while the rebuild runs behind it, which is exactly
   // the "show the last known state, honestly stamped" behaviour the north
   // star demands (the payload carries its own generatedAt).
-  homeDigest: { ttlMs: 45 * SECOND, swrMs: 30 * MINUTE, persist: false, source: "platform", label: "Home digest" },
+  //
+  // `persist: true` is what makes that sentence TRUE across a restart. With the
+  // memory-only tier, the 30-minute SWR window silently evaporated whenever the
+  // process died — so the very load the window exists for (the first one of a
+  // session) was always a full blocking rebuild. Measured 2026-09-01 on a
+  // restarted dev server whose short-TTL market datasets had aged out:
+  // `/api/home` = 10.7s, with the page showing skeletons for all of it, while
+  // `/api/portfolio/report` — same cold process, but `persist: true` — answered
+  // in 9ms from the disk tier.
+  //
+  // Serving a stale digest here is honest rather than merely fast: the payload
+  // carries `generatedAt`, the masthead renders it as "DIGEST 09:14 · REFRESHING"
+  // (app/_home/today/masthead.tsx), and every module surfaces `revalidating`.
+  // Past the SWR window it is still a miss and the caller still waits, so this
+  // widens no accuracy window — it only stops discarding an answer we already
+  // had. ~43 KB per write, at most once per 45s of active use.
+  homeDigest: { ttlMs: 45 * SECOND, swrMs: 30 * MINUTE, persist: true, source: "platform", label: "Home digest" },
 
   /* ---------------------------------------------------------------- */
   /* Contextual research intelligence (the intel rail)                  */
