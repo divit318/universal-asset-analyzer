@@ -138,7 +138,15 @@ const ENGINE_DIVERGENCE_THRESHOLD = 0.3;
 export function caseFlags(summary: ValuationSummary): CaseFlag[] {
   const flags: CaseFlag[] = [];
   if (summary.result.invalidReason !== null) flags.push("unvaluable");
-  if (summary.result.marginOfSafety != null && summary.result.marginOfSafety < 0) {
+  // "Priced above your case" is a claim about the user's judgment — a machine
+  // seed carries none, so an unowned case is only ever flagged "untouched".
+  // Without this gate every seeded growth name arrives in the Register
+  // pre-flagged red for disagreeing with assumptions nobody holds.
+  if (
+    summary.ownedKeys.length > 0 &&
+    summary.result.marginOfSafety != null &&
+    summary.result.marginOfSafety < 0
+  ) {
     flags.push("negative_margin");
   }
   if (summary.freshness === "stale") flags.push("stale");

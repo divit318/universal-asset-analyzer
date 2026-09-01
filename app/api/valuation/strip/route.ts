@@ -3,13 +3,18 @@ import { normalizeSymbol } from "@/lib/market";
 import { getValuationCase } from "@/lib/db";
 import { summarizeForDisplay, type ValuationSummary } from "@/lib/valuation/summary";
 import { getEnginePrior } from "@/lib/valuation/engine-prior";
+import type { AssumptionSource } from "@/lib/valuation/case";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export interface StripResponse {
-  /** Null when this symbol has no case — the strip then invites creating one. */
+  /** Null when this symbol has no case — the strip then renders nothing. */
   summary: ValuationSummary | null;
+  /** Stage-one growth the case currently assumes — for an untouched case, the seed's key judgment. */
+  seedGrowth: number | null;
+  /** Where that growth came from ("history" means the business's own delivered FCF CAGR). */
+  seedGrowthSource: AssumptionSource | null;
 }
 
 /**
@@ -28,12 +33,16 @@ export async function GET(request: Request) {
   }
 
   const vcase = getValuationCase(symbol);
-  if (!vcase) return NextResponse.json({ summary: null } satisfies StripResponse);
+  if (!vcase) {
+    return NextResponse.json({ summary: null, seedGrowth: null, seedGrowthSource: null } satisfies StripResponse);
+  }
 
   const priceParam = Number(url.searchParams.get("price"));
   const livePrice = Number.isFinite(priceParam) && priceParam > 0 ? priceParam : null;
 
   return NextResponse.json({
     summary: summarizeForDisplay(vcase, livePrice, getEnginePrior(symbol)),
+    seedGrowth: vcase.assumptions.growthRate1.value,
+    seedGrowthSource: vcase.assumptions.growthRate1.source,
   } satisfies StripResponse);
 }

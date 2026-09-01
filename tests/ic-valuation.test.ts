@@ -66,6 +66,24 @@ describe("reconcileWithCase", () => {
     expect(r.spread).toBeNull();
     expect(r.explanation).toContain("no headline");
   });
+
+  it("attributes the case honestly: 'your' only when an assumption is user-authored", () => {
+    // The reconciliation prose reaches the report and its exports. Calling an
+    // untouched machine seed "your valuation case" manufactures a judgment the
+    // user never made — the exact failure that put "Your Case" over a seeded
+    // number in the workspace.
+    const seed = reconcileWithCase(suiteWithHeadline(110), vcase(120))!;
+    expect(seed.explanation).not.toContain("Your valuation case");
+    expect(seed.explanation).toContain("machine seed");
+
+    const owned = vcase(120);
+    owned.assumptions = {
+      growthRate1: { locked: true },
+    } as unknown as ValuationCase["assumptions"];
+    const yours = reconcileWithCase(suiteWithHeadline(110), owned)!;
+    expect(yours.explanation).toContain("Your valuation case");
+    expect(yours.explanation).not.toContain("machine seed");
+  });
 });
 
 describe("reconcileWithPrior", () => {

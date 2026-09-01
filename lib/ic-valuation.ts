@@ -19,7 +19,7 @@
 import type { CanonicalFacts } from "./ic/canonical";
 import { defaultProposal, proposeValuationInputs, resolveProposal } from "./ic/valuation-inputs";
 import { assembleValuationSuite, type ValuationSuiteResult } from "./ic/valuation-suite";
-import type { ValuationCase } from "./valuation/case";
+import { userAuthoredKeys, type ValuationCase } from "./valuation/case";
 import { fmtMoney, fmtPercent } from "./ic/format";
 
 export type { ValuationSuiteResult } from "./ic/valuation-suite";
@@ -45,6 +45,14 @@ export function reconcileWithCase(
   const engineHeadline = suite.headline?.perShare ?? null;
   const c = suite.currency;
 
+  // Authorship must survive into the prose: a machine seed the user has never
+  // reviewed is not "your valuation case", and a report that calls it that
+  // manufactures a judgment the user never made.
+  const owned = userAuthoredKeys(vcase.assumptions).length > 0;
+  const caseLabel = owned
+    ? `Your valuation case (v${vcase.version}`
+    : `The saved valuation case (a machine seed you have not reviewed, v${vcase.version}`;
+
   if (engineHeadline == null) {
     return {
       caseFairValue,
@@ -52,7 +60,7 @@ export function reconcileWithCase(
       engineHeadline: null,
       spread: null,
       divergent: false,
-      explanation: `Your valuation case (v${vcase.version}) carries a fair value of ${fmtMoney(caseFairValue, c)}. The report engine produced no headline to compare it against${suite.blockingViolations.length > 0 ? ` (valuation blocked: ${suite.blockingViolations[0]?.invariant})` : ""}.`,
+      explanation: `${caseLabel}) carries a fair value of ${fmtMoney(caseFairValue, c)}. The report engine produced no headline to compare it against${suite.blockingViolations.length > 0 ? ` (valuation blocked: ${suite.blockingViolations[0]?.invariant})` : ""}.`,
     };
   }
 
@@ -66,8 +74,8 @@ export function reconcileWithCase(
     spread,
     divergent,
     explanation: divergent
-      ? `Your valuation case (v${vcase.version}, ${fmtMoney(caseFairValue, c)}) sits ${fmtPercent(spread)} ${direction} this report's blended estimate (${fmtMoney(engineHeadline, c)}). A spread this wide means the two disagree on growth or discount assumptions: compare the case's assumptions against the engine inputs in the valuation tab before trusting either.`
-      : `Your valuation case (v${vcase.version}, ${fmtMoney(caseFairValue, c)}) is ${fmtPercent(spread)} ${direction} this report's blended estimate (${fmtMoney(engineHeadline, c)}): within the 30% agreement band.`,
+      ? `${caseLabel}, ${fmtMoney(caseFairValue, c)}) sits ${fmtPercent(spread)} ${direction} this report's blended estimate (${fmtMoney(engineHeadline, c)}). A spread this wide means the two disagree on growth or discount assumptions: compare the case's assumptions against the engine inputs in the valuation tab before trusting either.`
+      : `${caseLabel}, ${fmtMoney(caseFairValue, c)}) is ${fmtPercent(spread)} ${direction} this report's blended estimate (${fmtMoney(engineHeadline, c)}): within the 30% agreement band.`,
   };
 }
 

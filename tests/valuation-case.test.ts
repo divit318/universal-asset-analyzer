@@ -17,6 +17,7 @@ import {
   diffAssumptions,
   isAssumptionKey,
   seedAssumptions,
+  SEED_GROWTH_BAND_PCT,
   userAuthoredKeys,
   VALUATION_TTL_HOURS,
   type AssumptionSet,
@@ -148,6 +149,43 @@ describe("seedAssumptions", () => {
   it("records which basis the growth seed was built on", () => {
     const withBasis = seedAssumptions({ ...SEED, deliveredGrowthLabel: "FCF CAGR FY2021→FY2025" });
     expect(withBasis.growthRate1.rationale).toContain("FCF CAGR FY2021→FY2025");
+  });
+
+  it("clamps a history seed into the defensible band and says so", () => {
+    // 68% delivered CAGR compounding for a decade is how a report once printed
+    // 300x-spot values; −19% prices a going concern for liquidation. Band
+    // edges from SEED_GROWTH_BAND_PCT, stated in percent (the IC report's old
+    // private clamp confused fraction with percent and seeded 18.9% growth as
+    // 0.25%).
+    const hot = seedAssumptions({ ...SEED, deliveredGrowth: 68 });
+    expect(hot.growthRate1.value).toBe(SEED_GROWTH_BAND_PCT.max);
+    expect(hot.growthRate2.value).toBeCloseTo(SEED_GROWTH_BAND_PCT.max * STAGE_TWO_FADE, 10);
+    expect(hot.growthRate1.rationale).toContain("68.0%");
+    expect(hot.growthRate1.rationale).toContain("defensible band");
+
+    const cold = seedAssumptions({ ...SEED, deliveredGrowth: -19 });
+    expect(cold.growthRate1.value).toBe(SEED_GROWTH_BAND_PCT.min);
+
+    // The TRUE delivered figure survives as the history anchor — the clamp
+    // shapes the starting assumption, never the record of what happened.
+    expect(hot.growthRate1.anchors.hist5y).toBe(68);
+    expect(cold.growthRate1.anchors.hist5y).toBe(-19);
+  });
+
+  it("does not clamp in-band history seeds or the implied-rate fallback", () => {
+    // In-band: seeded exactly at delivered, rationale free of clamp language.
+    const inBand = seedAssumptions(SEED);
+    expect(inBand.growthRate1.value).toBeCloseTo(8.1, 10);
+    expect(inBand.growthRate1.rationale).not.toContain("defensible band");
+
+    // No history → seeded at the implied rate even when it sits above the
+    // band: clamping it would break the fair-value≈price property that makes
+    // the fallback honest.
+    const dear = seedAssumptions({ ...SEED, deliveredGrowth: null, price: 2_000 });
+    expect(dear.growthRate1.source).toBe("reverse_dcf");
+    expect(dear.growthRate1.value).toBeGreaterThan(SEED_GROWTH_BAND_PCT.max);
+    const result = computeCaseResult(dear, 2_000);
+    expect(Math.abs(result.marginOfSafety!)).toBeLessThan(0.001);
   });
 
   it("treats the facts as assumptions, each carrying its provenance", () => {

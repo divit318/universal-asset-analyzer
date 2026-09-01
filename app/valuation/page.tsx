@@ -19,6 +19,7 @@ import {
   assumptionsToDcf,
   caseFreshness,
   computeCaseResult,
+  userAuthoredKeys,
   type AssumptionKey,
   type ValuationCase,
   type ValuationEvent,
@@ -169,6 +170,37 @@ export default function ValuationPage() {
   );
 
   /**
+   * Adopt the machine baseline as the user's own case: every assumption is
+   * re-committed at its current value, which locks all seven to the user.
+   * An explicit act — reviewing the numbers and taking them — rather than the
+   * old behaviour of silently presenting the seed as "your case".
+   */
+  const adoptCase = useCallback(async () => {
+    if (!vcase || saving) return;
+    setSaving(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/valuation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          symbol: vcase.symbol,
+          edits: ASSUMPTION_KEYS.map((key) => ({ key, value: vcase.assumptions[key].value })),
+          note: "Adopted the baseline as my case.",
+        }),
+      });
+      const json = (await res.json()) as { case?: ValuationCase; error?: string };
+      if (!res.ok || !json.case) throw new Error(json.error ?? "Could not adopt the case");
+      setData((d) => (d ? { ...d, case: json.case! } : d));
+      setEvents(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not adopt the case");
+    } finally {
+      setSaving(false);
+    }
+  }, [vcase, saving]);
+
+  /**
    * Ask AI to refine the case. It may only move assumptions the user has not
    * claimed; anything owned comes back as an objection instead, which is why the
    * response reports `respected` separately from `applied`.
@@ -247,8 +279,17 @@ export default function ValuationPage() {
   const computable = dcf !== null && invalidReason === null;
   const scenarios = computable && dcf ? buildScenarios(dcf) : null;
   const sensitivity = computable && dcf ? buildSensitivity(dcf) : null;
+  // Authorship decides what the result panel may claim. A margin of safety is
+  // a statement about a fair value someone believes; until at least one
+  // assumption is the user's, nobody believes this one — it is a machine
+  // baseline, and the panel must say so instead of calling it "your case".
+  const ownedCount = vcase ? userAuthoredKeys(vcase.assumptions).length : 0;
+  const isOwned = ownedCount > 0;
   const mos = vcase?.result.marginOfSafety ?? null;
   const mosColor = mos == null ? "" : mos >= 20 ? "text-positive" : mos >= 0 ? "text-yellow-500 light:text-yellow-700" : "text-negative";
+  // Bounded gap for the baseline view: (FV − price) / price can never run past
+  // −100%, unlike the margin of safety, whose denominator is the fair value.
+  const baselineVsPrice = vcase?.result.impliedUpside ?? null;
   const fresh = vcase ? caseFreshness(vcase.updatedAt) : null;
 
   const iosFit = ios?.profileReady && symbol
@@ -343,7 +384,8 @@ export default function ValuationPage() {
             price={price}
             impliedGrowth={vcase.result.impliedGrowth}
             delivered={facts?.deliveredGrowth ?? NO_DELIVERED_GROWTH}
-            yourGrowth={vcase.assumptions.growthRate1.value}
+            caseGrowth={vcase.assumptions.growthRate1.value}
+            caseGrowthOwned={vcase.assumptions.growthRate1.locked}
           />
 
           <div className="grid gap-6 lg:grid-cols-[1fr_1.5fr]">
@@ -433,22 +475,55 @@ export default function ValuationPage() {
               {scenarios && dcf ? (
                 <>
                   <div className="rounded-xl border border-border bg-surface p-5">
-                    <p className="text-label font-semibold uppercase tracking-widest text-muted/60">
-                      Your case
-                    </p>
+                    {/* Authorship gate. "Your case" and "margin of safety" are
+                        claims about the user's judgment; a machine seed has no
+                        claim to either. The baseline shows its gap to price as
+                        (FV − price)/price — bounded below at −100% — because a
+                        seed's margin of safety (denominator: the seed's own
+                        fair value) runs to four absurd digits on richly priced
+                        names. */}
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <p className="text-label font-semibold uppercase tracking-widest text-muted/60">
+                        {isOwned ? "Your case" : "UAA baseline · seeded"}
+                      </p>
+                      {isOwned ? (
+                        <p className="text-[11px] text-muted">{ownedCount} of 7 assumptions yours</p>
+                      ) : (
+                        <button
+                          onClick={() => void adoptCase()}
+                          disabled={saving}
+                          className="rounded-lg border border-brand/40 bg-brand/10 px-3 py-1.5 text-xs font-medium text-brand transition-colors hover:bg-brand/20 disabled:opacity-50"
+                        >
+                          Adopt as my case
+                        </button>
+                      )}
+                    </div>
                     <div className="mt-2 flex flex-wrap items-end gap-x-8 gap-y-3">
                       <div className="flex flex-col gap-0.5">
-                        <span className="text-[11px] uppercase tracking-wide text-muted">Fair value</span>
+                        <span className="text-[11px] uppercase tracking-wide text-muted">
+                          {isOwned ? "Fair value" : "Baseline fair value"}
+                        </span>
                         <span className="font-mono text-3xl font-bold">
                           {formatCurrency(vcase.result.fairValue, currency)}
                         </span>
                       </div>
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-[11px] uppercase tracking-wide text-muted">Margin of safety</span>
-                        <span className={`font-mono text-3xl font-bold ${mosColor}`}>
-                          {mos == null ? "—" : `${mos >= 0 ? "+" : ""}${mos.toFixed(1)}%`}
-                        </span>
-                      </div>
+                      {isOwned ? (
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-[11px] uppercase tracking-wide text-muted">Margin of safety</span>
+                          <span className={`font-mono text-3xl font-bold ${mosColor}`}>
+                            {mos == null ? "—" : `${mos >= 0 ? "+" : ""}${mos.toFixed(1)}%`}
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-[11px] uppercase tracking-wide text-muted">Baseline vs price</span>
+                          <span className="font-mono text-3xl font-bold text-muted">
+                            {baselineVsPrice == null
+                              ? "—"
+                              : `${baselineVsPrice >= 0 ? "+" : ""}${baselineVsPrice.toFixed(1)}%`}
+                          </span>
+                        </div>
+                      )}
                       <div className="flex flex-col gap-0.5">
                         <span className="text-[11px] uppercase tracking-wide text-muted">From perpetuity</span>
                         <span className="font-mono text-xl font-semibold text-muted">
@@ -456,12 +531,17 @@ export default function ValuationPage() {
                         </span>
                       </div>
                     </div>
-                    {mos != null ? (
+                    {isOwned && mos != null ? (
                       <p className="mt-2 text-xs text-muted">
                         {mos >= 30 ? "Significantly below your estimate of value."
                           : mos >= 10 ? "Modest margin of safety — check the assumptions."
                           : mos >= 0 ? "Little margin of safety at this price."
                           : "Priced above your own case."}
+                      </p>
+                    ) : !isOwned ? (
+                      <p className="mt-2 text-xs text-muted">
+                        Machine-built from the price, balance sheet and delivered growth — none of these
+                        assumptions are yours yet. Edit one, or adopt the baseline, to make it your case.
                       </p>
                     ) : null}
                   </div>
@@ -471,7 +551,8 @@ export default function ValuationPage() {
                       <ScenarioCard label="Bear" value={scenarios.bear.fairValuePerShare} price={price}
                         currency={currency} assumption={describeScenario(dcf, scenarios.bearAssumptions)} />
                       <ScenarioCard label="Base" value={scenarios.base.fairValuePerShare} price={price}
-                        currency={currency} highlight assumption="Your assumptions as saved" />
+                        currency={currency} highlight
+                        assumption={isOwned ? "Your assumptions as saved" : "The seeded assumptions as saved"} />
                       <ScenarioCard label="Bull" value={scenarios.bull.fairValuePerShare} price={price}
                         currency={currency} assumption={describeScenario(dcf, scenarios.bullAssumptions)} />
                     </div>

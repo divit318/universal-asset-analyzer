@@ -335,6 +335,21 @@ function makeAssumption(
 }
 
 /**
+ * Band a history-seeded growth assumption stays within, in percent.
+ *
+ * Delivered growth is the right seed but the wrong extreme: a 68% FCF CAGR
+ * compounding for five years values a fad at 300× spot, and a −19% CAGR
+ * (one bad cyclical trough) prices a going concern for liquidation. The seed
+ * claims only to be a defensible starting point, so it is clamped to a band a
+ * defensible starting point can live in; the TRUE delivered figure survives
+ * unclamped in the `hist5y` anchor and the rationale names the clamp.
+ * (One band for every seeding path — the IC report once applied its own copy
+ * of this idea with fraction/percent units confused, turning 18.9% delivered
+ * growth into a 0.25% seed.)
+ */
+export const SEED_GROWTH_BAND_PCT = { min: -10, max: 25 } as const;
+
+/**
  * Build the opening assumption set for a symbol.
  *
  * The growth assumption is seeded from what the business *delivered*, not from
@@ -347,7 +362,9 @@ function makeAssumption(
  *
  * When there is no growth history, the market-implied rate is used instead and
  * labelled as such. That is honest: with no independent evidence we have no
- * independent view, and a zero margin of safety says so.
+ * independent view, and a zero margin of safety says so. (The implied rate is
+ * deliberately NOT clamped — clamping it would break the fair-value-equals-
+ * price property that makes it the honest fallback.)
  */
 export function seedAssumptions(input: SeedInput): AssumptionSet {
   const now = input.now ?? new Date().toISOString();
@@ -369,11 +386,19 @@ export function seedAssumptions(input: SeedInput): AssumptionSet {
   if (input.deliveredGrowth != null) anchors.hist5y = input.deliveredGrowth;
 
   const hasHistory = input.deliveredGrowth != null && Number.isFinite(input.deliveredGrowth);
-  const growth1 = hasHistory ? input.deliveredGrowth! : implied ?? 0;
+  const clamped = hasHistory
+    ? Math.min(SEED_GROWTH_BAND_PCT.max, Math.max(SEED_GROWTH_BAND_PCT.min, input.deliveredGrowth!))
+    : null;
+  const wasClamped = hasHistory && clamped !== input.deliveredGrowth;
+  const growth1 = hasHistory ? clamped! : implied ?? 0;
   const growthSource: AssumptionSource = hasHistory ? "history" : implied != null ? "reverse_dcf" : "default";
   const basis = input.deliveredGrowthLabel?.trim();
   const growthRationale = hasHistory
-    ? `Seeded from what the business delivered: ${basis || "trailing growth"}.`
+    ? `Seeded from what the business delivered: ${basis || "trailing growth"}.${
+        wasClamped
+          ? ` Delivered ${input.deliveredGrowth!.toFixed(1)}% sits outside the seed's defensible band, so the seed holds at ${clamped!.toFixed(0)}% — the true figure stays beside it as the history anchor.`
+          : ""
+      }`
     : implied != null
       ? "No usable growth history — seeded at the rate today's price would justify."
       : "No growth history and no price — seeded flat.";

@@ -29,11 +29,13 @@ interface Props {
   impliedGrowth: number | null;
   /** What the business actually delivered, and on what basis. */
   delivered: DeliveredGrowth;
-  /** The user's own current assumption, percent. */
-  yourGrowth: number;
+  /** The case's current stage-one growth assumption, percent. */
+  caseGrowth: number;
+  /** Whether the user has authored that assumption — decides its label. */
+  caseGrowthOwned: boolean;
 }
 
-export function MarketExpectation({ currency, price, impliedGrowth, delivered, yourGrowth }: Props) {
+export function MarketExpectation({ currency, price, impliedGrowth, delivered, caseGrowth, caseGrowthOwned }: Props) {
   const gap = impliedGrowthGap(impliedGrowth, delivered.value);
 
   return (
@@ -60,14 +62,21 @@ export function MarketExpectation({ currency, price, impliedGrowth, delivered, y
           hint={delivered.label}
           warn={delivered.isProxy}
         />
-        <Figure label="Your case" value={`${yourGrowth.toFixed(1)}%`} tone="strong" />
+        {/* A seeded assumption is the machine's, not the user's — labelling it
+            "Your case" before they have touched it is how this workspace once
+            manufactured personal valuations out of a page view. */}
+        <Figure
+          label={caseGrowthOwned ? "Your case" : "Seeded case"}
+          value={`${caseGrowth.toFixed(1)}%`}
+          tone="strong"
+        />
       </div>
 
       {gap != null ? (
         <p className="text-sm leading-6">
           {gap > 0.2 ? (
             <>
-              At today&apos;s price, and given your discount rate, this business would need to{" "}
+              At today&apos;s price, and given the case&apos;s discount rate, this business would need to{" "}
               <span className="font-semibold text-warning">grow {gap.toFixed(1)}pp faster</span>{" "}
               than it has ({delivered.label}).
             </>

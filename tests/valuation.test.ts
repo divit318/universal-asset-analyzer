@@ -313,9 +313,12 @@ describe("computeWacc", () => {
     [1.0, 0.3, "US", 0.085269230769],
     [1.4, 1.45, "US", 0.072765306122],
     [0.65, 0.0, "US", 0.07975],
-    [1.1, 0.55, "IN", 0.097792419355],
+    // IN rows recomputed 2026-09-01 after the India cost-of-debt correction
+    // (5% → 8.5% = GOI 10Y + ~200bp): engine compute_wacc(beta, risk_free=0.065,
+    // erp=0.06, debt_weight=de/(1+de), cost_of_debt=0.085, tax_rate=0.2517).
+    [1.1, 0.55, "IN", 0.107085822581],
     [2.5, 3.0, "US", 0.0963],
-    [0.2, 0.1, "IN", 0.073401363636],
+    [0.2, 0.1, "IN", 0.075782318182],
   ];
 
   it.each(parity)(

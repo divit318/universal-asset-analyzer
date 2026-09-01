@@ -185,7 +185,9 @@ export default function ValuationRegisterPage() {
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Symbol</th>
                   <th className="px-3 py-2 text-right font-medium">Price</th>
-                  <th className="px-3 py-2 text-right font-medium">Your value</th>
+                  {/* "Fair value", not "Your value": the Yours? column says whose it is,
+                      and most rows start life as machine seeds nobody owns. */}
+                  <th className="px-3 py-2 text-right font-medium">Fair value</th>
                   <th className="px-3 py-2 text-right font-medium">Margin of safety</th>
                   <th className="px-3 py-2 text-right font-medium" title={IMPLIED_GROWTH_SHORT_CAVEAT}>
                     {IMPLIED_GROWTH_LABEL}
@@ -233,7 +235,12 @@ function RevaluationLine({ result }: { result: RevaluationSummary }) {
 }
 
 function RegisterTableRow({ row }: { row: RegisterRow }) {
-  const mos = row.result.marginOfSafety;
+  // A margin of safety is only meaningful against a fair value someone
+  // believes. Until the user owns at least one assumption the row's number is
+  // the machine seed's, so the cell abstains instead of printing a huge red
+  // percentage the user never expressed.
+  const owned = row.ownedKeys.length > 0;
+  const mos = owned ? row.result.marginOfSafety : null;
   const mosTone = mos == null ? "text-muted"
     : mos >= 20 ? "text-positive"
     : mos >= 0 ? "text-yellow-500 light:text-yellow-700"
@@ -254,7 +261,10 @@ function RegisterTableRow({ row }: { row: RegisterRow }) {
       <td className="px-3 py-2 text-right font-mono text-xs">
         {row.result.invalidReason ? "—" : formatCurrency(row.result.fairValue, row.currency)}
       </td>
-      <td className={`px-3 py-2 text-right font-mono text-xs font-semibold ${mosTone}`}>
+      <td
+        className={`px-3 py-2 text-right font-mono text-xs font-semibold ${mosTone}`}
+        title={owned ? undefined : "Margin of safety applies once at least one assumption is yours — this case is still the machine seed."}
+      >
         {mos == null ? "—" : `${mos >= 0 ? "+" : ""}${mos.toFixed(1)}%`}
       </td>
       <td className="px-3 py-2 text-right font-mono text-xs text-muted">

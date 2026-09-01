@@ -23,9 +23,8 @@ import { getFinancialStatements, getFinancialStatementsYahoo } from "@/lib/state
 import { getQuote } from "@/lib/yahoo";
 import { getScreenerInCompany } from "@/lib/screener-in";
 import { generateICReport, type ICProgressEvent } from "@/lib/ic-report";
-import { appendValuationEvent, getValuationCase } from "@/lib/db";
-import { computeCaseResult, seedAssumptions } from "@/lib/valuation/case";
-import { canValue, fetchValuationFacts, type ValuationFacts } from "@/lib/valuation/prefill";
+import { getValuationCase } from "@/lib/db";
+import { fetchValuationFacts, type ValuationFacts } from "@/lib/valuation/prefill";
 import { getEnginePriorEnsured } from "@/lib/valuation/engine-prior";
 import { pickModel } from "@/lib/ai/router";
 import { getRun, startRun, recordEvent, finishRun, getReport, listReports, type InFlightRun } from "@/lib/ic/store";
@@ -100,42 +99,15 @@ async function executeRun(
         .catch(() => null);
     }
 
-    // Seed a ValuationCase when none exists, with the delivered growth CLAMPED
-    // into the engine's defensible band — an unclamped 68% delivered CAGR
-    // compounding for a decade is how the old report printed 300x-spot values.
-    let valuationCase = getValuationCase(symbol);
-    const seedSafe = !(financialCurrency && tradingCurrency && financialCurrency !== tradingCurrency);
-    if (!valuationCase && vFacts && canValue(vFacts) && seedSafe) {
-      try {
-        const clampedGrowth = vFacts.deliveredGrowth.value != null
-          ? Math.max(-0.10, Math.min(0.25, vFacts.deliveredGrowth.value))
-          : null;
-        const assumptions = seedAssumptions({
-          baseFcf: vFacts.baseFcf!,
-          sharesOutstanding: vFacts.sharesOutstanding!,
-          netDebt: vFacts.netDebt ?? 0,
-          price: vFacts.price,
-          discountRate: vFacts.wacc.waccPercent,
-          terminalGrowth: vFacts.terminalGrowth,
-          deliveredGrowth: clampedGrowth,
-          deliveredGrowthLabel: clampedGrowth !== vFacts.deliveredGrowth.value
-            ? `${vFacts.deliveredGrowth.label ?? "delivered growth"} (clamped to 25% for the seed)`
-            : vFacts.deliveredGrowth.label,
-        });
-        valuationCase = appendValuationEvent({
-          symbol,
-          currency: vFacts.currency,
-          author: "reverse",
-          kind: "seeded",
-          assumptions,
-          result: computeCaseResult(assumptions, vFacts.price),
-          priceAt: vFacts.price,
-          triggerSource: "ic_report",
-        });
-      } catch {
-        /* non-fatal — the report reconciles against nothing */
-      }
-    }
+    // Reconcile against the ValuationCase only when one already exists.
+    // Generating a report must not manufacture a persisted case as a side
+    // effect: five of the eight cases in a real database turned out to be
+    // ic_report seeds the user never asked for — and this path's growth clamp
+    // treated percent as fraction (Math.min(0.25, 18.9) → a 0.25% growth
+    // seed), which is how a $102 stock got a $9.83 "fair value". No case →
+    // the report renders "no saved case to reconcile against", which the
+    // exporters already handle.
+    const valuationCase = getValuationCase(symbol);
 
     const wacc = vFacts
       ? {

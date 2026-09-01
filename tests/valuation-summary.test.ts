@@ -151,9 +151,22 @@ describe("caseFlags", () => {
     expect(flags).toContain("unvaluable");
   });
 
-  it("flags a price above the case's own value", () => {
-    const flags = caseFlags(summarizeForDisplay(makeCase(), 100_000));
-    expect(flags).toContain("negative_margin");
+  it("flags a price above the case's own value — but only once the case is someone's", () => {
+    // "Priced above your case" is a claim about the user's judgment. An
+    // untouched machine seed carries none, so however far the price runs past
+    // it, the only honest flag is "untouched" — otherwise every seeded growth
+    // name lands in the Register pre-flagged red for disagreeing with
+    // assumptions nobody holds.
+    const seedFlags = caseFlags(summarizeForDisplay(makeCase(), 100_000));
+    expect(seedFlags).not.toContain("negative_margin");
+    expect(seedFlags).toContain("untouched");
+
+    const edited = applyUserEdits(seedAssumptions(SEED), [{ key: "growthRate1", value: 7 }]);
+    const ownedFlags = caseFlags(summarizeForDisplay(
+      makeCase({ assumptions: edited, lastUserEventAt: new Date().toISOString() }),
+      100_000,
+    ));
+    expect(ownedFlags).toContain("negative_margin");
   });
 
   it("flags a case the user has never touched", () => {
