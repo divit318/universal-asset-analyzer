@@ -728,3 +728,38 @@ describe("alignment — verdict-led output", () => {
     expect(r.label).toBe(alignmentLabelOf(r.score!));
   });
 });
+
+describe("alignment — machine-readable theme metrics (the fit scorer's policy context)", () => {
+  it("every scored theme emits its measurements in real units, consistent with its own verdict", () => {
+    const r = alignmentOf(
+      P.concentrated(),
+      derivePolicy(answers({ income: "steady", inflation: "aware", exposure: "tilted" })),
+    );
+    // Scored themes carry metrics; the numbers must be the SAME ones the
+    // verdict was computed from — spot-check the ones with hand-checkable
+    // definitions rather than snapshotting everything.
+    const structure = theme(r, "structure");
+    expect(structure.metrics).not.toBeNull();
+    expect(structure.metrics!.bandLo).toBeLessThan(structure.metrics!.bandHi);
+    expect(structure.metrics!.growthEnginePct).toBeGreaterThan(0);
+
+    const concentration = theme(r, "concentration");
+    // AAPL ≈ 26.0% by the fixture's hand-summed construction; cap 20 (focused).
+    expect(concentration.metrics!.topWeightPct).toBeCloseTo(26, 0);
+    expect(concentration.metrics!.capPct).toBe(20);
+
+    const income = theme(r, "income");
+    expect(income.metrics!.requiredPct).toBe(3); // "steady" answer → 3%/yr
+    expect(income.metrics!.yieldPct).toBeGreaterThanOrEqual(0);
+
+    const liquidity = theme(r, "liquidity");
+    expect(liquidity.metrics!.cashMin).toBeLessThanOrEqual(liquidity.metrics!.cashMax);
+    expect(liquidity.metrics!.cashPct).toBeGreaterThan(0); // the book holds real cash
+  });
+
+  it("a fact-only (opted-out) theme abstains from metrics rather than judging", () => {
+    const r = alignmentOf(P.balanced(), derivePolicy(answers({ income: "no" })));
+    expect(theme(r, "income").unratedReason).toBe("opted_out");
+    expect(theme(r, "income").metrics).toBeNull();
+  });
+});

@@ -45,18 +45,15 @@ function scoreTone(score: number | null): string {
   return "text-foreground";
 }
 
-/* ── Where each theme can actually be worked on ───────────────────────────── */
+/* ── Where each theme can actually be worked on ────────────────────────────
+   At most TWO destinations per theme — the direct fix first, one analysis
+   alternative second. Three action links plus "Ask AI" under every expanded
+   theme read as a menu, and two of them were slower routes to the same
+   Optimize simulation. */
 const THEME_ACTIONS: Record<string, { label: string; tab: Tab }[]> = {
-  structure: [
-    { label: "Rebalance in Optimize", tab: "optimize" },
-    { label: "Test a mix in Simulator", tab: "simulator" },
-  ],
-  resilience: [
-    { label: "Stress-test in Risk Lab", tab: "risk" },
-    { label: "Simulate damping the swings", tab: "simulator" },
-  ],
+  structure: [{ label: "Rebalance in Optimize", tab: "optimize" }],
+  resilience: [{ label: "Stress-test in Risk Lab", tab: "risk" }],
   concentration: [
-    { label: "Simulate trimming", tab: "simulator" },
     { label: "Rebalance in Optimize", tab: "optimize" },
     { label: "See clusters in Intelligence", tab: "intelligence" },
   ],
@@ -308,32 +305,45 @@ export function AlignmentPanel({
           <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">
             Where the points went — 100 − {(100 - alignment.score)} = {alignment.score}
           </span>
+          {/* Arithmetic only. The finding sentences are deliberately NOT
+              repeated here — the summary states the worst one and each theme
+              row below carries its own; this box exists so the score's math
+              can be checked, not to diagnose a third time. */}
           <ul className="flex flex-col gap-1">
             {rated
               .map((t) => ({ t, lost: (100 - (t.scoreExact ?? 100)) * t.weightShare }))
               .filter(({ lost }) => lost >= 0.5)
               .sort((a, b) => b.lost - a.lost)
               .map(({ t, lost }) => (
-                <li key={t.id} className="flex items-start justify-between gap-3 text-[11px] leading-snug">
+                <li key={t.id} className="flex items-baseline justify-between gap-3 text-[11px] leading-snug">
                   <span className="min-w-0 text-muted">
-                    <span className="font-semibold text-foreground">{t.label}</span> — {t.finding}
+                    <span className="font-semibold text-foreground">{t.label}</span>
+                    <span className="font-mono tabular-nums"> {t.score}/100</span> at{" "}
+                    <span className="font-mono tabular-nums">{(t.weightShare * 100).toFixed(0)}%</span> weight
                   </span>
                   <span className="shrink-0 font-mono tabular-nums text-negative">−{lost.toFixed(1)} pts</span>
                 </li>
               ))}
           </ul>
-          <p className="text-[10px] leading-snug text-muted">
-            Each deduction is (100 − theme score) × the weight YOUR priorities give that theme. Change the setting and
-            the deduction changes with it — nothing here comes from a universal standard.
+          <p
+            className="text-[10px] leading-snug text-muted"
+            title="Change a setting and the deduction changes with it — nothing here comes from a universal standard."
+          >
+            Each deduction is (100 − theme score) × the weight your priorities give that theme.
           </p>
         </div>
       )}
 
-      {/* ── Biggest mismatch: your number vs the book's number ─────────────── */}
+      {/* ── Biggest mismatch: your number vs the book's number ───────────────
+          The triptych only. Its sentence used to render here too, making the
+          same diagnosis appear four times in one panel (summary, points-went,
+          this card, the theme row). The numbers ARE the card; the sentence
+          lives in the panel summary above and the theme row below. */}
       {biggest && (
         <div className="flex flex-col gap-2 rounded-lg border border-negative/25 bg-negative/[0.04] p-3.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-negative">Biggest mismatch</span>
-          <p className="text-xs leading-relaxed text-foreground">{biggest.summary}</p>
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-negative">
+            Biggest mismatch — {biggest.themeLabel}
+          </span>
           <div className="grid grid-cols-3 gap-2 rounded-md border border-border/40 bg-surface/40 px-3 py-2">
             <div className="flex flex-col">
               <span className="text-[10px] text-muted">You said</span>

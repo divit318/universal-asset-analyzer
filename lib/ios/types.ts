@@ -8,6 +8,8 @@
  */
 
 import type { CompositeScores, ScoreResult } from "@/lib/types";
+import type { AlignmentThemeId, InvestorGoal, PriorityLevel } from "@/lib/portfolio/alignment/policy";
+import type { AlignmentStatus, AlignmentMismatch } from "@/lib/portfolio/alignment/engine";
 
 /* -------------------------------------------------------------------------- */
 /* Behavioral signals — tracked across sessions in localStorage               */
@@ -51,6 +53,40 @@ export interface MarketCapWeights {
   small: number; // <$2B
 }
 
+/* -------------------------------------------------------------------------- */
+/* Policy context — the investor's priorities × the book's measured health    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One alignment theme, projected for the fit scorer: the user's own stated
+ * priority for it, the canonical health verdict (status/score computed by
+ * lib/portfolio/alignment/engine.ts — never recomputed here), and the theme's
+ * real-unit measurements for honest phrasing. `mismatch` carries the engine's
+ * own compact stated/actual/holdings strings when the theme is breached.
+ */
+export interface PolicyThemeSnapshot {
+  id: AlignmentThemeId;
+  label: string;
+  priority: PriorityLevel;
+  score: number | null;
+  status: AlignmentStatus | null;
+  metrics: Record<string, number> | null;
+  mismatch: Pick<AlignmentMismatch, "stated" | "actual" | "holdings"> | null;
+}
+
+/**
+ * The projection of the investor's policy + the alignment report that rides on
+ * the InvestmentProfile — what lets Portfolio Fit reason across "what you told
+ * us you care about" × "what the book currently does" without a second health
+ * engine. Null when the report predates this field or the book is empty.
+ */
+export interface PolicyFitContext {
+  /** False = assumed defaults. Personalized claims require a policy the user actually set. */
+  confirmed: boolean;
+  goal: InvestorGoal;
+  themes: PolicyThemeSnapshot[];
+}
+
 export interface InvestmentProfile {
   // ── User-configured ─────────────────────────────────────────────────────
   objective: PortfolioObjective;
@@ -76,6 +112,12 @@ export interface InvestmentProfile {
   hhi: number;
   /** Portfolio-alignment score vs the investor's policy, 0-100. Null = unscored. */
   alignmentScore: number | null;
+  /**
+   * The investor's policy priorities × the alignment engine's per-theme health
+   * verdicts — the canonical Portfolio Health system, projected (never
+   * recomputed) so the fit scorer can reason with it. Null when unavailable.
+   */
+  policyContext: PolicyFitContext | null;
   /** Annualized portfolio volatility % (null when insufficient history). */
   annualizedVolatility: number | null;
   /** Portfolio beta vs SPY. */
@@ -111,6 +153,7 @@ export const EMPTY_PROFILE: InvestmentProfile = {
   marketCapWeights: { large: 0, mid: 0, small: 0 },
   hhi: 0,
   alignmentScore: null,
+  policyContext: null,
   annualizedVolatility: null,
   beta: null,
   behavioral: DEFAULT_BEHAVIORAL,
@@ -230,9 +273,12 @@ export interface PortfolioFitAnalysis {
   /** The standalone Research Score this fit inherited (null when unavailable). */
   researchScore: number | null;
   /**
-   * The pure portfolio-context composite (sector, correlation, objective,
-   * style, geography, sizing) BEFORE research quality is blended in — "what
-   * does adding this do to the book", independent of how good the asset is.
+   * The portfolio-context composite (sector, correlation, objective, style,
+   * geography, sizing), INCLUDING the bounded policy × health adjustment,
+   * BEFORE research quality is blended in — "what does adding this do to the
+   * book, given what its owner said matters", independent of how good the
+   * asset is. The bridge shows the pre-adjustment blend and the shift
+   * separately.
    */
   portfolioEffectsScore: number | null;
 
@@ -266,6 +312,22 @@ export interface PortfolioFitAnalysis {
   reasons: string[];
   /** Up to 3 trade-offs or risks it introduces. */
   tradeoffs: string[];
+
+  /**
+   * THE one personalized line — "you told us X, the book currently does Y,
+   * this asset does Z, therefore W" — built from the investor's CONFIRMED
+   * policy priorities × the alignment engine's health verdicts × this asset's
+   * actual characteristics (lib/ios/policy-fit.ts). Null whenever any link in
+   * that chain is missing: no confirmed policy, no relevant health signal, or
+   * no honest connection to this asset. Never a generic compliment.
+   */
+  policyInsight: string | null;
+  /**
+   * The bounded, signed shift the policy × health context applied to the
+   * portfolio-effects composite (±POLICY_FIT_MAX_ADJUSTMENT). 0 when nothing
+   * fired. Disclosed on the bridge — never a separately displayed score.
+   */
+  policyAdjustment: number;
 
   /** Suggested % of total portfolio to allocate. */
   suggestedAllocationPct: number;

@@ -209,6 +209,20 @@ export function PortfolioFitPanel({ fit, collapsible = false, headline, classNam
         )}
       </div>
 
+      {/* The personalized verdict — the investor's own stated priorities × the
+          book's measured health × this asset (lib/ios/policy-fit.ts). Rendered
+          OUTSIDE the collapse: when it exists it is the single most
+          decision-relevant sentence on the panel, and it only exists when the
+          chain "you said X → the book does Y → this does Z" actually holds. */}
+      {fit.policyInsight && (
+        <div className="mx-4 mb-3 rounded-lg border border-accent/25 bg-accent/[0.06] px-3 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-accent/90 mb-0.5">
+            For your portfolio
+          </p>
+          <p className="text-[11px] leading-relaxed text-foreground">{fit.policyInsight}</p>
+        </div>
+      )}
+
       <div className={`collapse-grid ${open ? "is-open" : ""}`} aria-hidden={!expanded}>
         <div className="min-h-0 overflow-hidden">
           {/* Research → fit bridge: the fit score INHERITS the research score

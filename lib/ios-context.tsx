@@ -148,10 +148,16 @@ export function useIOSSafe(): IOSContextValue | null {
 
 /**
  * The report fetcher, keyed identically to how the Portfolio page's own
- * useDataset call keys its default load ("portfolioReport", "maximize_sharpe" —
- * page.tsx's initial `useState<Objective>` default). Sharing that exact key is
- * what lets the two consumers share ONE in-flight request and ONE cached result
- * instead of each independently computing the full report.
+ * useDataset call keys its default load ("portfolioReport",
+ * "maximize_sharpe|1" — page.tsx keys on `${objective}|${portfolioId}` with
+ * defaults "maximize_sharpe" and 1). Sharing that exact key is what lets the
+ * two consumers share ONE in-flight request and ONE cached result instead of
+ * each independently computing the full report — and, just as important, what
+ * makes the Portfolio page's refresh() after a policy save or trade update
+ * THIS provider's copy too. When the keys drifted apart ("maximize_sharpe" vs
+ * "maximize_sharpe|1"), a policy save re-scored the Portfolio page while the
+ * Research page's fit panel kept personalizing against the policy the user
+ * had just replaced, until a full reload.
  *
  * This used to be a raw, independent `fetch()` here — invisible to the
  * platform's client store, so IOSProvider (mounted once for the whole app) and
@@ -161,7 +167,7 @@ export function useIOSSafe(): IOSContextValue | null {
  * two of them racing each other for the same data.
  */
 async function fetchDefaultReport(signal: AbortSignal): Promise<UniversalPortfolioReport> {
-  const res = await fetch("/api/portfolio/report?objective=maximize_sharpe", { signal });
+  const res = await fetch("/api/portfolio/report?objective=maximize_sharpe&portfolioId=1", { signal });
   const json = await res.json();
   if (!res.ok) throw new Error(json.error ?? "Failed to load portfolio");
   return json as UniversalPortfolioReport;
@@ -204,7 +210,7 @@ export function IOSProvider({ children }: { children: ReactNode }) {
   const fetchWanted = deferred && !onMarketing;
   const { data: report, status: reportStatus, isInitialLoading, refresh: refreshReport } = useDataset<UniversalPortfolioReport>(
     "portfolioReport",
-    "maximize_sharpe",
+    "maximize_sharpe|1",
     fetchDefaultReport,
     { enabled: fetchWanted },
   );

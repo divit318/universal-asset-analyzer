@@ -21,6 +21,7 @@ import type {
   SectorWeight,
   StyleWeights,
   MarketCapWeights,
+  PolicyFitContext,
 } from "./types";
 import { EMPTY_PROFILE, DEFAULT_BEHAVIORAL } from "./types";
 
@@ -37,6 +38,7 @@ export interface IOSReportInput {
   marketCapWeights: MarketCapWeights;
   hhi: number;
   alignmentScore: number | null;
+  policyContext: PolicyFitContext | null;
   annualizedVolatility: number | null;
   beta: number | null;
 }
@@ -150,6 +152,30 @@ export function fromUniversalReport(report: UniversalPortfolioReport): IOSReport
     weight: Math.round(s.weight * 10) / 10,
   }));
 
+  // The canonical Portfolio Health verdicts (alignment themes) + the investor's
+  // own priorities, PROJECTED for the fit scorer — computed once by
+  // lib/portfolio/alignment/engine.ts, never recomputed here. Reports cached
+  // before themes carried `metrics` project with metrics: null and the policy
+  // consumers abstain (the 2-minute report TTL self-heals this).
+  const policyContext: PolicyFitContext | null =
+    report.alignment && report.policy
+      ? {
+          confirmed: report.policy.confirmed,
+          goal: report.policy.goal,
+          themes: report.alignment.themes.map((t) => ({
+            id: t.id,
+            label: t.label,
+            priority: t.priority,
+            score: t.score,
+            status: t.status,
+            metrics: t.metrics ?? null,
+            mismatch: t.mismatch
+              ? { stated: t.mismatch.stated, actual: t.mismatch.actual, holdings: t.mismatch.holdings }
+              : null,
+          })),
+        }
+      : null;
+
   return {
     totalValue: report.totalValue,
     positionCount: report.holdingCount,
@@ -164,6 +190,7 @@ export function fromUniversalReport(report: UniversalPortfolioReport): IOSReport
     // "position-level concentration moves X → Y" copy both assume.
     hhi: report.risk.positionHhi,
     alignmentScore: report.alignment.score,
+    policyContext,
     annualizedVolatility: report.risk.annualizedVolatility,
     beta: report.risk.beta,
   };
@@ -235,6 +262,7 @@ export function buildInvestmentProfile(
     marketCapWeights: input.marketCapWeights,
     hhi: input.hhi,
     alignmentScore: input.alignmentScore,
+    policyContext: input.policyContext,
     annualizedVolatility: input.annualizedVolatility,
     beta: input.beta,
     behavioral,

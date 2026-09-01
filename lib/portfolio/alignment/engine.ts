@@ -130,6 +130,15 @@ export interface AlignmentTheme {
   evidencePct: number;
   facts: AlignmentFact[];
   mismatch: AlignmentMismatch | null;
+  /**
+   * The theme's key measurements in REAL UNITS, machine-readable — the same
+   * numbers the finding/facts strings phrase, emitted once here so downstream
+   * consumers (the Research fit's policy context, lib/ios/policy-fit.ts) can
+   * reason about direction and magnitude without parsing display strings or
+   * recomputing anything. Keys are per-theme (documented at each theme);
+   * null when the theme abstained before measuring.
+   */
+  metrics: Record<string, number> | null;
 }
 
 export interface AlignmentReport {
@@ -273,6 +282,8 @@ interface ThemeSeed {
   mismatch: Omit<AlignmentMismatch, "themeId" | "themeLabel"> | null;
   /** "Aligned with your policy — and objectively …" — collected onto the report. */
   objectiveNote?: string | null;
+  /** See AlignmentTheme.metrics. Omitted = null (theme abstained before measuring). */
+  metrics?: Record<string, number>;
 }
 
 function seedToTheme(id: AlignmentThemeId, priority: PriorityLevel, s: ThemeSeed): AlignmentTheme {
@@ -292,6 +303,7 @@ function seedToTheme(id: AlignmentThemeId, priority: PriorityLevel, s: ThemeSeed
     evidencePct: Math.round(clamp(s.evidencePct)),
     facts: s.facts,
     mismatch: s.mismatch ? { ...s.mismatch, themeId: id, themeLabel: THEME_LABEL[id] } : null,
+    metrics: s.metrics ?? null,
   };
 }
 
@@ -421,6 +433,7 @@ function structureTheme(holdings: Holding[], policy: InvestorPolicy): ThemeSeed 
     finding,
     basis,
     evidencePct: 100,
+    metrics: { growthEnginePct: growthPct, bandLo: lo, bandHi: hi },
     facts: [
       { label: "Growth-engine share", value: `${growthPct.toFixed(1)}%`, holdings: engines },
       { label: explicitBand ? "Your explicit band" : "Band for your goal", value: `${lo.toFixed(0)}–${hi.toFixed(0)}%` },
@@ -483,6 +496,7 @@ function resilienceTheme(
     finding,
     basis: `Your stated tolerance is a ${tol}% drawdown. The book is stressed two ways — its own worst observed drawdown and the worst standard factor scenario — and judged on the worse of the two. At your limit the theme reads 75; it falls 55 points per 100% of breach.`,
     evidencePct,
+    metrics: { stressPct: stress, tolerancePct: tol },
     facts: [
       { label: "Stress estimate", value: `−${stress.toFixed(1)}%` },
       ...(observed != null ? [{ label: "Worst observed drawdown", value: `−${observed.toFixed(1)}%` }] : []),
@@ -593,6 +607,11 @@ function concentrationTheme(holdings: Holding[], risk: UniversalRisk, policy: In
     finding: parts.join(" ") + corrNote,
     basis: `Your stated cap is ${cap}% for a single position${policy.exceptions.length > 0 ? `, with named exceptions (${policy.exceptions.map((e) => `${e.symbol} ≤ ${e.maxPositionPct}%`).join(", ")})` : ""}; a correlated cluster (names with r > ${HIGH_CORRELATION_R}) counts as one bet and gets ${clusterAllowance.toFixed(0)}%. Deliberate concentration inside those limits is YOUR call and scores as aligned — only breaches of your own numbers register.`,
     evidencePct: 100,
+    metrics: {
+      topWeightPct: topWeight,
+      capPct: cap,
+      ...(biggest ? { largestClusterPct: biggest.weight, clusterAllowancePct: clusterAllowance } : {}),
+    },
     facts: [
       { label: "Largest position", value: `${topWeight.toFixed(1)}%`, holdings: judged.length ? [judged.reduce((a, b) => (b.weight > a.weight ? b : a), judged[0]).name] : [] },
       ...exceptionsApplied.map((ex) => ({
@@ -666,6 +685,7 @@ function liquidityTheme(alloc: PortfolioAllocation, risk: UniversalRisk, policy:
     finding,
     basis: `You said ${floor}% must stay reachable within days and cash should run ${cashMin}–${cashMax}%. Access is 70% of the theme, the cash band 30%; a shortfall in access bites faster than idle cash drags.`,
     evidencePct: 100,
+    metrics: { liquidPct, floorPct: floor, cashPct, cashMin, cashMax },
     facts: [
       { label: "Sellable within days", value: `${liquidPct.toFixed(1)}%` },
       { label: "Cash", value: `${cashPct.toFixed(1)}%` },
@@ -725,6 +745,7 @@ function incomeTheme(holdings: Holding[], totalValue: number, policy: InvestorPo
         : `Yields ${yieldPct.toFixed(2)}% against your ${req}% requirement — ${gap.toFixed(2)}pp short (~${Math.round((gap / 100) * totalValue).toLocaleString()}/yr of missing income).`,
     basis: `You need ${req}%/yr from this book. Meeting it scores 100; the score falls with the shortfall. Surplus yield earns nothing extra — chasing yield you don't need is not alignment.`,
     evidencePct: 100,
+    metrics: { yieldPct, requiredPct: req },
     facts: [
       { label: "Portfolio yield", value: `${yieldPct.toFixed(2)}%`, holdings: payers },
       { label: "Your requirement", value: `${req.toFixed(1)}%` },
@@ -789,6 +810,7 @@ function inflationTheme(risk: UniversalRisk, policy: InvestorPolicy): ThemeSeed 
         : `Inflation response ${s >= 0 ? "+" : ""}${s.toFixed(1)}% per +1pp surprise — at or better than the level of protection you asked for.`,
     basis: `You asked for ${level === 3 ? "strong" : level === 2 ? "meaningful" : "some"} inflation protection, which sets a floor of ${INFLATION_TARGET_S[level]}% response to a +1pp surprise. Modelled from each holding's factor loadings.`,
     evidencePct: 100 - (risk.coverage?.unmodelledPct ?? 0),
+    metrics: { sensitivityPct: s, floorPct: target },
     facts: [
       { label: "Sensitivity to +1pp surprise", value: `${s >= 0 ? "+" : ""}${s.toFixed(1)}%` },
       { label: "Your floor", value: `${target.toFixed(1)}%` },
@@ -867,6 +889,7 @@ function exposureTheme(alloc: PortfolioAllocation, risk: UniversalRisk, policy: 
         : `Largest region ${topRegion!.label} at ${topOfClassified.toFixed(0)}% of classified exposure (ceiling ${t.maxTopRegionPct}%); ${fx.toFixed(0)}% in non-base currencies${fxShort > 0 ? ` — ${fxShort.toFixed(0)}pp under the ${t.minForeignFxPct}% you'd want` : ""}.`,
     basis: `You asked for ${level === 3 ? "strong" : level === 2 ? "meaningful" : "some"} geographic spread: largest region ≤ ${t.maxTopRegionPct}% of classified value (65% of theme) and ≥ ${t.minForeignFxPct}% in non-base currencies (35%). Measured on the ${classifiedPct.toFixed(0)}% of the book that could be classified.`,
     evidencePct: classifiedPct,
+    metrics: { topRegionPct: topOfClassified, regionCeilingPct: t.maxTopRegionPct, foreignFxPct: fx, fxFloorPct: t.minForeignFxPct },
     facts: [
       { label: "Largest region (of classified)", value: `${topRegion!.label} ${topOfClassified.toFixed(0)}%` },
       { label: "Non-base currency", value: `${fx.toFixed(0)}%` },

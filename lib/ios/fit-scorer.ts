@@ -58,6 +58,7 @@ import type {
   ContextualRanking,
 } from "./types";
 import { deriveUnifiedAction, fitTier } from "./unified-action";
+import { assessPolicyFit } from "./policy-fit";
 import { scoreLabel } from "../recommendation";
 
 /* -------------------------------------------------------------------------- */
@@ -607,13 +608,34 @@ export function computePortfolioFit(
   const rawComposite = den > 0 ? num / den : 50;
   const NEUTRAL_PRIOR = 50;
   const shrunk = evidenceFrac * rawComposite + (1 - evidenceFrac) * NEUTRAL_PRIOR;
-  const portfolioEffectsScore = Math.round(shrunk);
+  const rawEffectsScore = Math.round(shrunk);
+
+  // ── Policy × Portfolio Health context (lib/ios/policy-fit.ts) ─────────────
+  // The investor's CONFIRMED priorities × the alignment engine's health
+  // verdicts × this asset — a bounded, signed shift on the effects composite
+  // covering only what the six dimensions cannot see (growth-band structure,
+  // drawdown stress, cash floor, income requirement). Zero when the policy is
+  // unconfirmed, the book is healthy, or no honest asset connection exists.
+  const policyCtx = assessPolicyFit(asset, profile, basePct);
+  const effects = clamp(shrunk + policyCtx.adjustment);
+  const portfolioEffectsScore = Math.round(effects);
 
   // ── Layer C: Portfolio Fit = Research Quality + Portfolio Effects ─────────
   const bridge: FitBridgeStep[] = [];
+  const policyBridgeStep = (): FitBridgeStep => {
+    const top = [...policyCtx.notes]
+      .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+      .slice(0, 2)
+      .map((n) => n.text);
+    return {
+      label: "Your policy & portfolio health",
+      value: portfolioEffectsScore,
+      detail: `${policyCtx.adjustment > 0 ? "+" : ""}${policyCtx.adjustment} from your stated priorities against the book's current health: ${top.join("; ")}.`,
+    };
+  };
   let preGate: number;
   if (researchScore != null) {
-    const blended = config.researchWeight * researchScore + (1 - config.researchWeight) * shrunk;
+    const blended = config.researchWeight * researchScore + (1 - config.researchWeight) * effects;
     const upliftCap = researchScore + config.maxDiversificationUplift;
     const dragFloor = researchScore - config.maxPortfolioDrag;
     preGate = Math.min(Math.max(blended, dragFloor), upliftCap);
@@ -630,11 +652,12 @@ export function computePortfolioFit(
       .map((d) => `${d.label} ${d.impact === "positive" ? "+" : "−"} (${Math.round(d.score)})`);
     bridge.push({
       label: "Portfolio effects",
-      value: portfolioEffectsScore,
+      value: rawEffectsScore,
       detail: topDims.length
-        ? `Context dimensions blend to ${portfolioEffectsScore}/100: ${topDims.join(", ")}.`
-        : `Context dimensions blend to ${portfolioEffectsScore}/100 on the evidence available.`,
+        ? `Context dimensions blend to ${rawEffectsScore}/100: ${topDims.join(", ")}.`
+        : `Context dimensions blend to ${rawEffectsScore}/100 on the evidence available.`,
     });
+    if (policyCtx.adjustment !== 0) bridge.push(policyBridgeStep());
     if (blended > upliftCap) {
       bridge.push({
         label: "Quality guardrail",
@@ -649,7 +672,7 @@ export function computePortfolioFit(
       });
     }
   } else {
-    preGate = shrunk;
+    preGate = effects;
     bridge.push({
       label: "Research quality",
       value: null,
@@ -657,9 +680,10 @@ export function computePortfolioFit(
     });
     bridge.push({
       label: "Portfolio effects",
-      value: portfolioEffectsScore,
-      detail: `Context dimensions blend to ${portfolioEffectsScore}/100 on the evidence available.`,
+      value: rawEffectsScore,
+      detail: `Context dimensions blend to ${rawEffectsScore}/100 on the evidence available.`,
     });
+    if (policyCtx.adjustment !== 0) bridge.push(policyBridgeStep());
   }
 
   // ── Hard gates ────────────────────────────────────────────────────────────
@@ -688,17 +712,25 @@ export function computePortfolioFit(
   }
 
   // ── Reasons / trade-offs — only cite evidenced dimensions ─────────────────
+  // Policy notes join the pools: positives after the concrete dimension
+  // reasons (the biggest measured effect keeps the headline), negatives FIRST
+  // among trade-offs — a conflict with the investor's own stated policy
+  // outranks a generic dimension message.
   const evidenced = dims.filter((d) => (d.confidence ?? 1) >= 0.5);
-  const reasons = evidenced
-    .filter((d) => d.impact === "positive")
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3)
-    .map((d) => d.message);
-  const tradeoffs = evidenced
-    .filter((d) => d.impact === "negative")
-    .sort((a, b) => a.score - b.score)
-    .slice(0, 3)
-    .map((d) => d.message);
+  const reasons = [
+    ...evidenced
+      .filter((d) => d.impact === "positive")
+      .sort((a, b) => b.score - a.score)
+      .map((d) => d.message),
+    ...policyCtx.notes.filter((n) => n.delta > 0).map((n) => n.text),
+  ].slice(0, 3);
+  const tradeoffs = [
+    ...policyCtx.notes.filter((n) => n.delta < 0).map((n) => n.text),
+    ...evidenced
+      .filter((d) => d.impact === "negative")
+      .sort((a, b) => a.score - b.score)
+      .map((d) => d.message),
+  ].slice(0, 3);
   if (capReason && !tradeoffs.includes(capReason)) tradeoffs.unshift(capReason);
 
   // ── Concentration projection ──────────────────────────────────────────────
@@ -730,6 +762,8 @@ export function computePortfolioFit(
       ? ["Build your portfolio to get personalized fit analysis"]
       : reasons.length ? reasons : ["Neutral portfolio impact on the evidence available"],
     tradeoffs: isGeneric ? [] : tradeoffs.slice(0, 3),
+    policyInsight: isGeneric ? null : policyCtx.insight,
+    policyAdjustment: policyCtx.adjustment,
     suggestedAllocationPct: finalPct,
     suggestedAmount: finalAmount,
     projectedHHI,
