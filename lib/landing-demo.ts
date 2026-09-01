@@ -222,7 +222,9 @@ async function analyzeEquity(symbol: string, quote: Quote): Promise<Omit<DemoAna
   ];
 
   const signals: DemoSignal[] = [
-    { label: "Fundamentals", value: score.signals.fundamentals },
+    ...(score.signals.fundamentals != null
+      ? [{ label: "Fundamentals", value: score.signals.fundamentals }]
+      : []),
     ...(score.signals.analysts != null ? [{ label: "Analysts", value: score.signals.analysts }] : []),
     ...(score.signals.momentum != null ? [{ label: "Momentum", value: score.signals.momentum }] : []),
     ...(score.signals.capitalAllocation != null

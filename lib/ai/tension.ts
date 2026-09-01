@@ -43,6 +43,7 @@
 
 import type { CompanyContext } from "./types";
 import type { AnnualPoint, FinancialStatements, ScoreResult } from "../types";
+import { evidenceBuckets } from "../score-math";
 
 /* -------------------------------------------------------------------------- */
 /* Shapes                                                                      */
@@ -117,7 +118,11 @@ export function readSignals(ctx: CompanyContext): SignalReading[] {
   const score = ctx.score;
 
   if (score) {
-    for (const b of score.buckets) {
+    // evidenceBuckets drops buckets that are entirely mk() padding. Without
+    // it, an instrument with no financials contributes six ~50% readings and
+    // the tension brief concludes "the signals agree" — a manufactured
+    // consensus among defaults, which then anchors the model's verdict.
+    for (const b of evidenceBuckets(score.buckets)) {
       if (b.max <= 0) continue;
       const pct = Math.round((b.points / b.max) * 100);
       // Factors carry the "why" the Conviction tab renders; reuse them so the

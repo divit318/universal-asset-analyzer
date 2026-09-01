@@ -18,7 +18,7 @@
  * Pure and client-safe: no I/O, imports only contracts and lib/format.
  */
 
-import { formatPercent, formatCompact, roundForDisplay } from "../format";
+import { formatPercent, formatCompactCurrency, roundForDisplay } from "../format";
 import { vixBand } from "./sentiment";
 import type { DashboardFacts, Fact, HomeDigest } from "./contracts";
 
@@ -112,8 +112,15 @@ const minus = (s: string) => s.replace("-", "−");
 /**
  * THE renderer for a fact. Signed percents, compact signed currency, plain
  * counts. Components pass a fact; they never call toFixed on its value.
+ *
+ * `currency` applies to `unit: "currency"` facts only: it is the portfolio's
+ * BASE currency (an INR book's day P&L renders "+₹1.2 L", not "+$1.2K").
+ * Defaults to USD so existing call sites render identically; symbols/units
+ * come from lib/format's formatCompactCurrency. NOTE: the digest contracts
+ * do not yet carry `baseCurrency`, so call sites cannot thread a non-USD
+ * value until Fact/HomeDigest (lib/home/contracts.ts) grows that field.
  */
-export function formatFact(f: Fact<number> | Fact<string>, style: "signed" | "plain" = "signed"): string {
+export function formatFact(f: Fact<number> | Fact<string>, style: "signed" | "plain" = "signed", currency: string = "USD"): string {
   if (f.value == null) return "—";
   if (typeof f.value === "string") return f.value;
   const v = f.value;
@@ -129,7 +136,7 @@ export function formatFact(f: Fact<number> | Fact<string>, style: "signed" | "pl
     }
     case "currency": {
       const sign = v > 0 ? "+" : v < 0 ? "−" : "";
-      const body = `$${formatCompact(Math.abs(v))}`;
+      const body = formatCompactCurrency(Math.abs(v), currency);
       return style === "plain" ? (v < 0 ? `−${body}` : body) : `${sign}${body}`;
     }
     case "level":

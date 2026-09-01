@@ -231,6 +231,7 @@ function themeFixture(
     evidencePct: 100,
     facts: [],
     mismatch: null,
+    metrics: null,
     ...over,
   };
 }
@@ -409,5 +410,17 @@ describe("dashboard facts", () => {
     const digest = digestFixture({ vix: null, pulse: { topContributors: [], alignmentFactors: [], alignmentScore: null, status: "empty" } });
     expect(formatFact(digest.facts.vixLevel)).toBe("—");
     expect(formatFact(digest.facts.dayPnlPct)).toBe("—");
+  });
+
+  it("currency facts render in the base currency handed to formatFact (USD default unchanged)", () => {
+    const dayPnl = { value: 12_500, unit: "currency" as const, precision: 2, window: "today", asOf: null, source: "test" };
+    // Default keeps the historical US rendering byte-for-byte.
+    expect(formatFact(dayPnl)).toBe("+$12.50K");
+    expect(formatFact(dayPnl, "signed", "USD")).toBe("+$12.50K");
+    // An INR book renders in ₹ with Indian units — never a hardcoded dollar.
+    expect(formatFact({ ...dayPnl, value: 125_000 }, "signed", "INR")).toBe("+₹1.25 L");
+    expect(formatFact({ ...dayPnl, value: -125_000 }, "signed", "INR")).toBe("−₹1.25 L");
+    expect(formatFact({ ...dayPnl, value: -125_000 }, "plain", "INR")).toBe("−₹1.25 L");
+    expect(formatFact({ ...dayPnl, value: 25_000_000 }, "plain", "INR")).toBe("₹2.5 Cr");
   });
 });

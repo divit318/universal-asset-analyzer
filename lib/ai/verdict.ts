@@ -38,6 +38,7 @@ import { extractJson } from "../json-extract";
 import { detectAssetClass } from "../asset-class";
 import { formatCompactCurrency, formatCurrency, formatMarketCap } from "../format";
 import { scoreDirection } from "../recommendation";
+import { evidenceBuckets } from "../score-math";
 import { getFundProfile, getHistory, getMacroSummary } from "../yahoo";
 import { computeFundScore } from "../fund-scoring";
 import { computeCryptoScore } from "../crypto-scoring";
@@ -452,9 +453,16 @@ function scoreFacts(score: {
   recommendation: string;
   buckets: { name: string; points: number; max: number; factors: { label: string; detail?: string | null }[] }[];
 }): string[] {
+  // Padded buckets are excluded: quoting them let the model report six
+  // half-credit defaults as "every factor sits at or near the midpoint",
+  // which reads as a finding of neutrality rather than an absence of data.
+  const real = evidenceBuckets(score.buckets);
+  if (real.length === 0) {
+    return ["Score breakdown: unavailable — no fundamental factor for this instrument has data."];
+  }
   return [
-    `Score breakdown: ${score.buckets.map((b) => `${b.name}=${Math.round((b.points / b.max) * 100)}%`).join(", ")}`,
-    ...score.buckets.flatMap((b) =>
+    `Score breakdown: ${real.map((b) => `${b.name}=${Math.round((b.points / b.max) * 100)}%`).join(", ")}`,
+    ...real.flatMap((b) =>
       b.factors.filter((f) => f.detail && f.detail !== "n/a").map((f) => `${f.label}: ${f.detail}`),
     ),
   ];
@@ -552,7 +560,7 @@ async function planCryptoVerdict(ctx: CompanyContext): Promise<VerdictPlan> {
   const facts = [
     `Crypto asset: ${name} (${symbol})`,
     `Price: ${formatCurrency(quote.price, quote.currency)} (${quote.changePercent >= 0 ? "+" : ""}${quote.changePercent.toFixed(2)}% today)`,
-    `Market cap: ${formatMarketCap(quote.marketCap)}`,
+    `Market cap: ${formatMarketCap(quote.marketCap, quote.currency)}`,
     `Crypto score: ${score.composite}/100 (${score.recommendation.replace(/_/g, " ")})`,
     ...scoreFacts(score),
     "This analysis is market-data only — no tokenomics, on-chain, or developer-activity data is available.",

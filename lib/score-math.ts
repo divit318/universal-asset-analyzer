@@ -68,6 +68,33 @@ export function mk(
   };
 }
 
+/**
+ * True when every factor in a bucket is {@link mk}'s absent-input padding.
+ *
+ * Such a bucket still sums to ~50% of its max, which reads as "scored, and
+ * landed mid-pack" — indistinguishable from a genuinely average company. It
+ * must never be quoted as a finding: an index fed through the equity scorer
+ * produced "Valuation=50%, Quality=52% … a marginal tilt toward the
+ * constructive side" from six buckets of pure padding. `detail === "n/a"` is
+ * exactly mk()'s marker for "no value arrived", so it is the honest test.
+ */
+export function isPaddedBucket(b: PaddingCheckable): boolean {
+  return b.factors.length > 0 && b.factors.every((f) => f.detail === "n/a");
+}
+
+/**
+ * Structural, so callers holding a narrower prompt-shaped bucket (e.g.
+ * lib/ai/verdict.ts, whose `detail` is optional) can pass it without a cast.
+ */
+interface PaddingCheckable {
+  factors: { detail?: string | null }[];
+}
+
+/** Only the buckets carrying at least one real reading. Safe to quote. */
+export function evidenceBuckets<T extends PaddingCheckable>(buckets: T[]): T[] {
+  return buckets.filter((b) => !isPaddedBucket(b));
+}
+
 /** Sum a list of factors into one named ScoreBucket, tracking how many had real data. */
 export function bucket(name: string, results: FactorResult[]): {
   bucket: ScoreBucket;

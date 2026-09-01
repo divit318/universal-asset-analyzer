@@ -127,9 +127,18 @@ export async function buildVerdictContext(rawSymbol: string): Promise<CompanyCon
   let sectorRotationEntry: SectorRotationEntry | null = null;
   if (fundamentals) {
     const market = detectMarket(quote);
-    const rotation = getLatestSectorRotation();
-    sectorRotationEntry = findSectorRotationEntry(rotation, fundamentals.snapshot.sector);
-    score = computeScore(fundamentals.snapshot, statements, fundamentals.analyst, momentum, sectorRotationEntry, market);
+    // US listings only — the rotation snapshot measures US SPDR sector ETFs
+    // (see sectorRotationEntryFor); a non-US listing gets no bucket at all.
+    sectorRotationEntry =
+      market === "US" ? findSectorRotationEntry(getLatestSectorRotation(), fundamentals.snapshot.sector) : null;
+    score = computeScore(
+      fundamentals.snapshot,
+      statements,
+      fundamentals.analyst,
+      momentum,
+      market === "US" ? sectorRotationEntry : undefined,
+      market,
+    );
     risks = assessRisks(fundamentals.snapshot, statements, fundamentals.analyst, fundamentals.insider);
   }
 
@@ -212,9 +221,17 @@ async function assembleCompanyContext(symbol: string): Promise<CompanyContext> {
   let sectorRotationEntry: SectorRotationEntry | null = null;
   if (fundamentals) {
     const market = detectMarket(quote);
-    const rotation = getLatestSectorRotation();
-    sectorRotationEntry = findSectorRotationEntry(rotation, fundamentals.snapshot.sector);
-    score = computeScore(fundamentals.snapshot, statements, fundamentals.analyst, momentum, sectorRotationEntry, market);
+    // US listings only — the rotation snapshot measures US SPDR sector ETFs.
+    sectorRotationEntry =
+      market === "US" ? findSectorRotationEntry(getLatestSectorRotation(), fundamentals.snapshot.sector) : null;
+    score = computeScore(
+      fundamentals.snapshot,
+      statements,
+      fundamentals.analyst,
+      momentum,
+      market === "US" ? sectorRotationEntry : undefined,
+      market,
+    );
     risks = assessRisks(
       fundamentals.snapshot,
       statements,

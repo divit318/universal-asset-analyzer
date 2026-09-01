@@ -22,6 +22,7 @@ import {
 import { describeOwnership } from "../ownership-insight";
 import { getScannerCache } from "../db";
 import type { MovementExplanation } from "../types";
+import { evidenceBuckets } from "../score-math";
 import type { CompanyContext, ContextBlock, ResearchIntent } from "./types";
 
 /* -------------------------------------------------------------------------- */
@@ -300,9 +301,9 @@ export function buildBlocks(ctx: CompanyContext): ContextBlock[] {
       lines([
         ["Recommendation", `${sc.recommendation.replace(/_/g, " ")} (confidence ${sc.confidence}/100)`],
         ["Composite", `${sc.composite}/100`],
-        ["Signals", `fundamentals ${sc.signals.fundamentals}, analysts ${sc.signals.analysts ?? "n/a"}, momentum ${sc.signals.momentum ?? "n/a"} (all /100)`],
+        ["Signals", `fundamentals ${sc.signals.fundamentals ?? "n/a"}, analysts ${sc.signals.analysts ?? "n/a"}, momentum ${sc.signals.momentum ?? "n/a"} (all /100)`],
       ]),
-      sc.buckets.map((b) => `${b.name}: ${b.points}/${b.max}`).join(" · "),
+      evidenceBuckets(sc.buckets).map((b) => `${b.name}: ${b.points}/${b.max}`).join(" · "),
       sc.rationale,
     ].filter(Boolean).join("\n"), 80));
   }

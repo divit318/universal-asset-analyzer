@@ -20,7 +20,7 @@ import { listWatchlist, listTimelineEventsForSymbols } from "./db";
 import { upsidePercent } from "./watchlist-metrics";
 import type { Quote, WatchlistItem, WatchlistAlert } from "./types";
 import { formatCompactCurrency, formatCurrency, formatPercent } from "./format";
-import { getLatestSectorRotation, findSectorRotationEntry } from "./sector-rotation";
+import { getLatestSectorRotation, sectorRotationEntryFor } from "./sector-rotation";
 import { aiUnavailableMessage } from "./ai/availability";
 
 export interface WatchlistPortfolioContext {
@@ -376,8 +376,10 @@ export function computeWatchlistAlerts(
       });
     }
 
-    // Sector leadership: watchlist item's sector is strengthening/leading in the Sector Rotation Engine
-    const rotationEntry = findSectorRotationEntry(rotation, s.sector);
+    // Sector leadership: watchlist item's sector is strengthening/leading in the
+    // Sector Rotation Engine. US listings only — the snapshot measures US SPDR
+    // ETFs, so an NSE name must not get a "sector tailwind" from XLK/XLI.
+    const rotationEntry = sectorRotationEntryFor(s.symbol, rotation, s.sector);
     if (rotationEntry && (rotationEntry.classification === "leading" || rotationEntry.classification === "strengthening") && rotationEntry.rankChange != null && rotationEntry.rankChange >= 2) {
       alerts.push({
         type: "sector_leadership",

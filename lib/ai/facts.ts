@@ -13,6 +13,7 @@
 
 import { formatCompactCurrency, formatCurrency, formatRatio } from "../format";
 import type { CompanyContext } from "./types";
+import { evidenceBuckets } from "../score-math";
 
 /** Portfolio personalization passed through from the client (IOS-computed, per user). */
 export interface PortfolioFacts {
@@ -69,8 +70,14 @@ export function buildEquityFacts(ctx: CompanyContext): string[] {
 
   if (score) {
     facts.push(`Composite score: ${score.composite}/100 (${score.recommendation.replace(/_/g, " ")})`);
-    const bs = score.buckets.map((b) => `${b.name}=${Math.round((b.points / b.max) * 100)}%`).join(", ");
-    facts.push(`Score breakdown: ${bs}`);
+    // Only buckets with a real reading. An all-padding bucket sums to ~50%
+    // and would otherwise be narrated as a genuine mid-pack score.
+    const real = evidenceBuckets(score.buckets);
+    facts.push(
+      real.length
+        ? `Score breakdown: ${real.map((b) => `${b.name}=${Math.round((b.points / b.max) * 100)}%`).join(", ")}`
+        : "Score breakdown: unavailable — no fundamental factor for this instrument has data.",
+    );
     if (score.rationale) facts.push(`Score rationale: ${score.rationale}`);
   }
 
